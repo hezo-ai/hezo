@@ -87,6 +87,25 @@ CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 CREATE TYPE project_doc_type AS ENUM ('tech_spec', 'implementation_plan', 'research', 'ui_design_decisions', 'marketing_plan', 'other');
 
 -------------------------------------------------------------------------------
+-- COMPANY TYPES (blueprints/recipes for creating companies)
+-------------------------------------------------------------------------------
+
+CREATE TABLE company_types (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                TEXT NOT NULL UNIQUE,
+    description         TEXT NOT NULL DEFAULT '',
+    is_builtin          BOOLEAN NOT NULL DEFAULT false,  -- true for "Software Development"
+    -- Snapshot of default config for new companies created from this type
+    agents_config       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    kb_docs_config      JSONB NOT NULL DEFAULT '[]'::jsonb,
+    preferences_config  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    mcp_servers         JSONB NOT NULL DEFAULT '[]'::jsonb,
+    mpp_config          JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-------------------------------------------------------------------------------
 -- COMPANIES
 -------------------------------------------------------------------------------
 
@@ -94,8 +113,12 @@ CREATE TABLE companies (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name                TEXT NOT NULL,
     mission             TEXT NOT NULL DEFAULT '',
+    -- The company type this company was created from
+    company_type_id     UUID REFERENCES company_types(id) ON DELETE SET NULL,
     -- Auto-derived from name, globally unique (e.g. "ACME", "NOTE")
     issue_prefix        TEXT NOT NULL UNIQUE,
+    -- Company email for outbound communication (invites, notifications)
+    email               TEXT,
     -- Company-level budget cap across all agents
     budget_monthly_cents INTEGER NOT NULL DEFAULT 50000,  -- $500 default
     budget_used_cents    INTEGER NOT NULL DEFAULT 0,
@@ -104,10 +127,6 @@ CREATE TABLE companies (
     mcp_servers         JSONB NOT NULL DEFAULT '[]'::jsonb,
     -- MPP wallet config
     mpp_config          JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
-    -- Shared Docker container for all agents in this company
-    docker_base_image   TEXT NOT NULL DEFAULT 'node:20-slim',
-    container_id        TEXT,          -- Docker container ID
-    container_status    container_status,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -205,12 +224,18 @@ CREATE INDEX idx_agents_status ON agents(company_id, status);
 -------------------------------------------------------------------------------
 
 CREATE TABLE projects (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id  UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,
-    goal        TEXT NOT NULL DEFAULT '',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    name                TEXT NOT NULL,
+    goal                TEXT NOT NULL DEFAULT '',
+    -- Docker container for this project (one container per project)
+    docker_base_image   TEXT NOT NULL DEFAULT 'node:20-slim',
+    container_id        TEXT,          -- Docker container ID
+    container_status    container_status,
+    -- Dev preview port forwarding: [{"container": 3000, "host": 13000}]
+    dev_ports           JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_projects_company ON projects(company_id);
@@ -265,7 +290,7 @@ CREATE TABLE issues (
     priority            issue_priority NOT NULL DEFAULT 'medium',
     -- Simple labels as JSONB array: ["bug", "frontend"]
     labels              JSONB NOT NULL DEFAULT '[]'::jsonb,
-    -- Execution locking: prevents two agents working on same issue
+    -- Work ownership: only one agent works on an issue at a time (may span days)
     execution_run_id    UUID,
     execution_locked_at TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),

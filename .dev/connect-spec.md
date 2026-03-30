@@ -443,6 +443,6 @@ hezo --connect-url https://connect.hezo.ai --connect-api-key hc_abc123
 # Use self-hosted
 hezo --connect-url https://my-connect.example.com
 
-# Disable Hezo Connect entirely (manual credentials only)
-hezo --no-connect
+# Local development (default: Hezo Connect at http://localhost:4100)
+hezo
 ```
