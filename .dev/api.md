@@ -1,0 +1,1756 @@
+# API Design
+
+Base URL: `http://localhost:3100/api`
+
+All responses follow:
+```json
+{ "data": <payload> }           // success
+{ "error": { "code": "...", "message": "..." } }  // error
+```
+
+Timestamps are ISO 8601. IDs are UUIDs. Money is in cents.
+
+---
+
+## Authentication
+
+Four auth methods:
+
+### Board — Better Auth session
+Email/password login via Better Auth. Session cookies used by the web UI.
+Board members must be a member of the company to access it.
+
+### Board — local trusted (no auth)
+In `local_trusted` deployment mode, requests from `localhost` / `127.0.0.1`
+are allowed without a token. This is the default for single-user local usage.
+
+### Board — API key (remote orchestrators)
+For external orchestrators (OpenClaw, scripts, AI agents controlling Hezo
+remotely). Company-scoped. Full board-level access to that company.
+
+```
+Authorization: Bearer hezo_<key>
+```
+
+The `hezo_` prefix distinguishes board API keys from agent JWTs.
+Keys are stored hashed (bcrypt). Shown once at creation, never again.
+
+### Agent — JWT
+Per-agent bearer token issued at container provisioning.
+
+```
+Authorization: Bearer <agent_jwt>
+```
+
+Agent tokens are JWTs signed with the master key (held in memory, never on disk),
+containing:
+```json
+{ "agent_id": "...", "company_id": "...", "iat": ..., "exp": ... }
+```
+
+---
+
+## Board API (Web UI)
+
+### Companies
+
+#### `GET /companies`
+List all companies.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "name": "NoteGenius AI",
+      "mission": "Build the #1 AI note-taking app",
+      "agent_count": 6,
+      "open_issue_count": 14,
+      "total_budget_cents": 24000,
+      "total_used_cents": 12700,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /companies`
+Create a company. Optionally clone from an existing company.
+
+Request:
+```json
+{
+  "name": "NoteGenius AI",
+  "mission": "Build the #1 AI note-taking app",
+  "clone_from_company_id": "uuid | null"
+}
+```
+
+`clone_from_company_id` is optional. When set, the new company is seeded with:
+- All knowledge base documents
+- All agent configurations (titles, prompts, org chart, runtimes, budgets)
+- Company-level MCP server config
+- MPP config structure (wallet keys must be set up fresh)
+
+Cloning does NOT copy: projects, repos, issues, secrets, costs, audit log, API keys.
+
+Response: full company object. On creation, the server automatically:
+
+1. Creates `~/.hezo/companies/{slug}/` folder structure with `.claude/` and auto-generated CLAUDE.md.
+2. Creates a **full agent team** from built-in templates: CEO, Architect, Engineer, QA Engineer, UI Designer, Researcher (or cloned agents if cloning).
+3. Creates a **"Setup" project** with an onboarding issue assigned to the CEO:
+   *"Set up repository access — configure deploy keys for connected GitHub account."*
+4. Provisions Docker containers for all agents (with `agent-ci` pre-installed).
+
+The UI then prompts the owner to connect platforms via OAuth (Hezo Connect):
+- **GitHub** (required) — for repo access, PRs, Actions
+- **Gmail** (recommended) — for agent email
+- Other platforms optional: Stripe, PostHog, Railway, Vercel, DigitalOcean, X, GitLab
+
+Connections can be added or removed later in company settings.
+The board lands on a company with 6 agents and one actionable issue.
+
+#### `GET /companies/:companyId`
+Get company detail.
+
+Response: full company object with summary stats (same shape as list item).
+
+#### `PATCH /companies/:companyId`
+Update company config.
+
+Request:
+```json
+{
+  "name": "NoteGenius AI",
+  "mission": "Updated mission statement",
+  "mcp_servers": [
+    { "name": "slack", "url": "https://mcp.slack.com/sse", "description": "Team Slack" }
+  ],
+  "mpp_config": {
+    "wallet_address": "0x...",
+    "wallet_key_secret_name": "MPP_WALLET_KEY",
+    "default_currency": "USD",
+    "enabled": true
+  }
+}
+```
+
+`mcp_servers` — company-level MCP servers shared by all agents. Merged with
+agent-level servers at runtime.
+
+`mpp_config` — MPP wallet configuration. The wallet private key is stored in
+the secrets vault (referenced by name). When enabled, agent containers get
+`mppx` CLI and wallet credentials injected so they can pay for HTTP 402
+services autonomously. MPP costs are debited against the agent's budget.
+
+#### `DELETE /companies/:companyId`
+Delete company and all associated data. Tears down all agent containers.
+
+---
+
+### API Keys
+
+#### `GET /companies/:companyId/api-keys`
+List API keys for a company (metadata only — key values are never returned).
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "name": "OpenClaw orchestrator",
+      "prefix": "hezo_a3b8",
+      "last_used_at": "...",
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /companies/:companyId/api-keys`
+Generate a new API key. The raw key is returned **once** in this response and
+never again.
+
+Request:
+```json
+{
+  "name": "OpenClaw orchestrator"
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "name": "OpenClaw orchestrator",
+    "key": "hezo_a3b8c9d4e5f6...full_key_here",
+    "prefix": "hezo_a3b8",
+    "created_at": "..."
+  }
+}
+```
+
+#### `DELETE /companies/:companyId/api-keys/:apiKeyId`
+Revoke an API key. Immediate. Any request using this key will fail.
+
+---
+
+### Agents
+
+#### `GET /companies/:companyId/agents`
+List agents for a company.
+
+Query params: `?status=active,idle`
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "company_id": "uuid",
+      "reports_to": "uuid | null",
+      "reports_to_title": "CTO",
+      "title": "Dev Engineer",
+      "role_description": "Senior Engineer",
+      "runtime_type": "codex",
+      "heartbeat_interval_min": 30,
+      "monthly_budget_cents": 3000,
+      "budget_used_cents": 1800,
+      "status": "active",
+      "docker_base_image": "node:20-slim",
+      "container_status": "running",
+      "last_heartbeat_at": "...",
+      "assigned_issue_count": 4,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /companies/:companyId/agents`
+Create (hire) an agent. If requested by the board directly, no approval needed.
+If requested by another agent, creates a pending approval instead.
+
+Request:
+```json
+{
+  "title": "Frontend Engineer",
+  "role_description": "Builds and maintains all user-facing interfaces",
+  "system_prompt": "You are the **Frontend Engineer** at {{company_name}}...",
+  "reports_to": "uuid",
+  "runtime_type": "claude_code",
+  "heartbeat_interval_min": 60,
+  "monthly_budget_cents": 3000,
+  "docker_base_image": "node:20-slim",
+  "mcp_servers": [
+    { "name": "postgres", "url": "stdio://npx -y @modelcontextprotocol/server-postgres", "description": "Project database" }
+  ]
+}
+```
+
+`mcp_servers` is optional. Agent-level MCP servers are merged with company-level
+MCP servers at runtime (agent-level takes precedence on name conflicts).
+
+Response: full agent object. Container provisioning starts asynchronously —
+`container_status` will be `creating` initially.
+
+#### `GET /companies/:companyId/agents/:agentId`
+Get agent detail including system prompt.
+
+Response: full agent object (same as list item + `system_prompt` + `mcp_servers` fields).
+
+#### `PATCH /companies/:companyId/agents/:agentId`
+Update agent config: title, role_description, system_prompt, heartbeat_interval_min,
+monthly_budget_cents, docker_base_image, reports_to, mcp_servers.
+
+Cannot update: status (use lifecycle endpoints), budget_used_cents (system-managed).
+
+#### `POST /companies/:companyId/agents/:agentId/pause`
+Pause an agent. Stops heartbeats, does not destroy container.
+
+#### `POST /companies/:companyId/agents/:agentId/resume`
+Resume a paused agent.
+
+#### `POST /companies/:companyId/agents/:agentId/terminate`
+Terminate an agent. Destroys the Docker container. Unassigns all issues.
+Agent record is kept for audit trail (status = `terminated`).
+
+#### `POST /companies/:companyId/agents/:agentId/rebuild`
+Tear down and rebuild the Docker container. Useful when base image or repo
+config changes. Agent keeps its identity and config.
+
+---
+
+### Org Chart
+
+#### `GET /companies/:companyId/org-chart`
+Returns the full org tree as a nested structure.
+
+Response:
+```json
+{
+  "data": {
+    "board": {
+      "children": [
+        {
+          "id": "uuid",
+          "title": "CEO",
+          "status": "active",
+          "container_status": "running",
+          "children": [
+            {
+              "id": "uuid",
+              "title": "CTO",
+              "status": "idle",
+              "container_status": "running",
+              "children": [
+                { "id": "uuid", "title": "Dev Engineer", "status": "active", "container_status": "running", "children": [] },
+                { "id": "uuid", "title": "UI Designer", "status": "active", "container_status": "running", "children": [] }
+              ]
+            },
+            {
+              "id": "uuid",
+              "title": "CMO",
+              "status": "paused",
+              "container_status": "stopped",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+---
+
+### Projects
+
+#### `GET /companies/:companyId/projects`
+List projects.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "company_id": "uuid",
+      "name": "Backend API",
+      "goal": "Ship collaboration features",
+      "repo_count": 2,
+      "open_issue_count": 5,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /companies/:companyId/projects`
+Create a project.
+
+Request:
+```json
+{
+  "name": "Backend API",
+  "goal": "Ship collaboration features"
+}
+```
+
+#### `GET /companies/:companyId/projects/:projectId`
+Get project detail including repos.
+
+Response: project object + `repos` array.
+
+#### `PATCH /companies/:companyId/projects/:projectId`
+Update name, goal.
+
+#### `DELETE /companies/:companyId/projects/:projectId`
+Delete project. Fails if there are open issues referencing it.
+
+---
+
+### Repos
+
+#### `GET /companies/:companyId/projects/:projectId/repos`
+List repos for a project.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "project_id": "uuid",
+      "short_name": "frontend",
+      "url": "https://github.com/org/frontend",
+      "host_type": "github",
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /companies/:companyId/projects/:projectId/repos`
+Add a repo. Server validates the URL pattern (GitHub only) and tests read/write
+access using the company's connected GitHub OAuth token before saving.
+
+Requires: GitHub platform must be connected for this company.
+
+Request:
+```json
+{
+  "short_name": "frontend",
+  "url": "https://github.com/org/frontend"
+}
+```
+
+Error if access test fails:
+```json
+{
+  "error": {
+    "code": "REPO_ACCESS_FAILED",
+    "message": "Cannot access this repo — check GitHub account permissions"
+  }
+}
+```
+
+Error if GitHub not connected:
+```json
+{
+  "error": {
+    "code": "GITHUB_NOT_CONNECTED",
+    "message": "Connect GitHub in company settings before adding repos"
+  }
+}
+```
+
+#### `DELETE /companies/:companyId/projects/:projectId/repos/:repoId`
+Remove a repo from a project.
+
+---
+
+### Issues
+
+#### `GET /companies/:companyId/issues`
+List issues. Supports filtering and pagination.
+
+Query params:
+- `?project_id=uuid` — filter by project
+- `?assignee_id=uuid` — filter by agent
+- `?status=open,in_progress` — comma-separated status filter
+- `?priority=urgent,high` — comma-separated priority filter
+- `?search=websocket` — full-text search on title + description
+- `?page=1&per_page=50` — pagination (default 50, max 200)
+- `?sort=created_at:desc` — sort field and direction
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "company_id": "uuid",
+      "project_id": "uuid",
+      "project_name": "Backend API",
+      "assignee_id": "uuid",
+      "assignee_title": "Dev Engineer",
+      "parent_issue_id": null,
+      "number": 47,
+      "title": "Implement WebSocket handler for real-time sync",
+      "status": "in_progress",
+      "priority": "urgent",
+      "labels": ["backend", "collab"],
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "per_page": 50,
+    "total": 14
+  }
+}
+```
+
+#### `POST /companies/:companyId/issues`
+Create an issue.
+
+Request:
+```json
+{
+  "project_id": "uuid",
+  "title": "Implement WebSocket handler for real-time sync",
+  "description": "We need a WebSocket handler that supports...",
+  "assignee_id": "uuid | null",
+  "parent_issue_id": "uuid | null",
+  "priority": "urgent",
+  "labels": ["backend", "collab"]
+}
+```
+
+`project_id` is required (enforced). `number` is auto-assigned via
+`next_issue_number()`. If `assignee_id` is set, the agent receives an event
+trigger.
+
+#### `GET /companies/:companyId/issues/:issueId`
+Full issue detail including description, goal chain, cost.
+
+Response: full issue object + computed fields:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "number": 47,
+    "title": "...",
+    "description": "...",
+    "project_id": "uuid",
+    "project_name": "Backend API",
+    "project_goal": "Ship collaboration features",
+    "company_mission": "Build the #1 AI note-taking app",
+    "assignee_id": "uuid",
+    "assignee_title": "Dev Engineer",
+    "parent_issue_id": null,
+    "status": "in_progress",
+    "priority": "urgent",
+    "labels": ["backend", "collab"],
+    "cost_cents": 234,
+    "comment_count": 4,
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+```
+
+#### `PATCH /companies/:companyId/issues/:issueId`
+Update issue fields: title, description, status, priority, assignee_id, labels.
+
+Changing `assignee_id` triggers an event on the newly assigned agent.
+Changing `status` to `done` or `closed` triggers preview cleanup.
+
+#### `DELETE /companies/:companyId/issues/:issueId`
+Delete an issue. Only allowed if status is `open` and no comments exist.
+
+---
+
+### Issue Comments
+
+#### `GET /companies/:companyId/issues/:issueId/comments`
+List all comments for an issue, ordered by created_at asc.
+
+Query params: `?include_tool_calls=true` — inline tool_calls under each
+trace-type comment.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "issue_id": "uuid",
+      "author_type": "agent",
+      "author_agent_id": "uuid",
+      "author_agent_title": "Dev Engineer",
+      "content_type": "text",
+      "content": { "text": "Starting on the WebSocket handler..." },
+      "chosen_option": null,
+      "tool_calls": [],
+      "created_at": "..."
+    },
+    {
+      "id": "uuid",
+      "author_type": "agent",
+      "author_agent_id": "uuid",
+      "author_agent_title": "Dev Engineer",
+      "content_type": "options",
+      "content": {
+        "prompt": "Which auth strategy should I implement?",
+        "options": [
+          { "id": "jwt", "label": "JWT tokens", "description": "Stateless, good for API-first" },
+          { "id": "session", "label": "Server sessions", "description": "Simpler, good for SSR" }
+        ]
+      },
+      "chosen_option": null,
+      "tool_calls": [],
+      "created_at": "..."
+    },
+    {
+      "id": "uuid",
+      "author_type": "agent",
+      "author_agent_id": "uuid",
+      "author_agent_title": "Dev Engineer",
+      "content_type": "preview",
+      "content": {
+        "filename": "auth-flow-mockup.html",
+        "label": "Auth flow mockup",
+        "description": "Interactive prototype of the login/signup flow"
+      },
+      "preview_url": "/preview/company-uuid/agent-uuid/auth-flow-mockup.html",
+      "tool_calls": [],
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /companies/:companyId/issues/:issueId/comments`
+Board posts a comment.
+
+Request:
+```json
+{
+  "content_type": "text",
+  "content": { "text": "Make sure we handle reconnection gracefully..." }
+}
+```
+
+`author_type` is always `board` for this endpoint.
+
+#### `POST /companies/:companyId/issues/:issueId/comments/:commentId/choose`
+Board picks an option on an options-type comment.
+
+Request:
+```json
+{
+  "chosen_id": "jwt"
+}
+```
+
+Sets `chosen_option` on the comment and posts a system comment recording the
+choice. Triggers the assigned agent.
+
+---
+
+### Tool Calls
+
+#### `GET /companies/:companyId/issues/:issueId/comments/:commentId/tool-calls`
+List tool calls for a specific comment.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "agent_id": "uuid",
+      "tool_name": "bash",
+      "input": { "command": "npm test -- --grep websocket" },
+      "output": { "exit_code": 0, "stdout": "..." },
+      "status": "success",
+      "duration_ms": 3400,
+      "cost_cents": 12,
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+---
+
+### Secrets
+
+#### `GET /companies/:companyId/secrets`
+List secrets (values are never returned, only metadata).
+
+Query params: `?project_id=uuid` — filter by project scope.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "company_id": "uuid",
+      "project_id": "uuid | null",
+      "project_name": "Backend API | null",
+      "name": "GITHUB_TOKEN",
+      "category": "api_token",
+      "grant_count": 2,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /companies/:companyId/secrets`
+Create a secret.
+
+Request:
+```json
+{
+  "name": "GITHUB_TOKEN",
+  "value": "ghp_abc123...",
+  "project_id": "uuid | null",
+  "category": "api_token"
+}
+```
+
+`value` is encrypted server-side before storage. Never stored or logged in
+plaintext.
+
+#### `PATCH /companies/:companyId/secrets/:secretId`
+Update a secret's value or category. Rotating a value does not revoke existing
+grants.
+
+Request:
+```json
+{
+  "value": "ghp_newtoken...",
+  "category": "api_token"
+}
+```
+
+#### `DELETE /companies/:companyId/secrets/:secretId`
+Delete a secret. Revokes all grants. Agents with this secret injected will
+lose access on next container restart.
+
+---
+
+### Secret Grants
+
+#### `GET /companies/:companyId/secrets/:secretId/grants`
+List grants for a secret.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "secret_id": "uuid",
+      "agent_id": "uuid",
+      "agent_title": "Dev Engineer",
+      "scope": "single",
+      "granted_at": "...",
+      "revoked_at": null
+    }
+  ]
+}
+```
+
+#### `POST /companies/:companyId/secrets/:secretId/grants`
+Directly grant an agent access (board action, no approval needed).
+
+Request:
+```json
+{
+  "agent_id": "uuid",
+  "scope": "single"
+}
+```
+
+If `scope` is `project`, grants access to all secrets in the same project.
+If `scope` is `company`, grants access to all secrets in the company.
+These expanded grants create individual `secret_grants` rows for each
+matching secret.
+
+#### `DELETE /companies/:companyId/secret-grants/:grantId`
+Revoke a grant. Sets `revoked_at`.
+
+---
+
+### Approvals
+
+#### `GET /approvals`
+List pending approvals across all companies (for the approval inbox).
+
+Query params: `?status=pending` (default), `?company_id=uuid`
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "company_id": "uuid",
+      "company_name": "NoteGenius AI",
+      "type": "secret_access",
+      "status": "pending",
+      "requested_by_agent_id": "uuid",
+      "requested_by_agent_title": "Dev Engineer",
+      "payload": {
+        "secret_id": "uuid",
+        "secret_name": "GITHUB_TOKEN",
+        "reason": "Need to push to feature branch for issue #47"
+      },
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /approvals/:approvalId/resolve`
+Approve or deny.
+
+Request:
+```json
+{
+  "status": "approved",
+  "resolution_note": "Approved for project scope",
+  "grant_scope": "project"
+}
+```
+
+`grant_scope` is only relevant for `secret_access` approvals. When approved,
+the system creates the grant(s) and injects the secret(s) into the agent's
+container.
+
+For `hire` approvals, approval triggers agent creation + container provisioning.
+
+---
+
+### Cost & Budget
+
+#### `GET /companies/:companyId/costs`
+List cost entries with aggregation.
+
+Query params:
+- `?agent_id=uuid`
+- `?project_id=uuid`
+- `?issue_id=uuid`
+- `?from=2026-03-01&to=2026-03-31`
+- `?group_by=agent|project|day`
+
+Response (when `group_by=agent`):
+```json
+{
+  "data": {
+    "entries": [...],
+    "summary": [
+      { "agent_id": "uuid", "agent_title": "CEO", "total_cents": 2400 },
+      { "agent_id": "uuid", "agent_title": "Dev Engineer", "total_cents": 1800 }
+    ],
+    "total_cents": 12700
+  }
+}
+```
+
+---
+
+### Audit Log
+
+#### `GET /companies/:companyId/audit-log`
+Paginated, read-only.
+
+Query params:
+- `?entity_type=agent&entity_id=uuid`
+- `?action=agent.created`
+- `?from=...&to=...`
+- `?page=1&per_page=50`
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "actor_type": "board",
+      "actor_agent_id": null,
+      "action": "agent.created",
+      "entity_type": "agent",
+      "entity_id": "uuid",
+      "details": { "title": "Frontend Engineer", "runtime_type": "claude_code" },
+      "created_at": "..."
+    }
+  ],
+  "meta": { "page": 1, "per_page": 50, "total": 234 }
+}
+```
+
+---
+
+### Connected Platforms (Hezo Connect OAuth)
+
+#### `GET /companies/:companyId/connections`
+List all connected platforms for a company.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "platform": "github",
+      "status": "active",
+      "scopes": "repo,workflow,read:org",
+      "metadata": { "username": "acme-bot", "email": "bot@acme.com" },
+      "token_expires_at": "...",
+      "connected_at": "..."
+    },
+    {
+      "id": "uuid",
+      "platform": "gmail",
+      "status": "active",
+      "scopes": "gmail.send,gmail.readonly",
+      "metadata": { "email": "company@gmail.com" },
+      "token_expires_at": "...",
+      "connected_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /companies/:companyId/connections/:platform/start`
+Initiate an OAuth connection. Returns a redirect URL that the UI opens in a
+new window/tab for the user to authorize.
+
+`platform` is one of: `github`, `gmail`, `gitlab`, `stripe`, `posthog`,
+`railway`, `vercel`, `digitalocean`, `x`.
+
+Response:
+```json
+{
+  "data": {
+    "auth_url": "https://connect.hezo.ai/auth/github/start?callback=http://localhost:3100/oauth/callback&state=encrypted_state",
+    "state": "encrypted_state_token"
+  }
+}
+```
+
+#### `GET /oauth/callback`
+OAuth callback endpoint. Called by Hezo Connect after the user authorizes.
+Receives tokens, encrypts and stores them, creates the `connected_platforms`
+row, and auto-registers the platform as a company-level MCP server.
+
+This endpoint is not called directly by the UI — it's the redirect target
+from Hezo Connect.
+
+Query params: `?state=...&access_token=...&refresh_token=...&expires_in=...&scopes=...&metadata=...`
+
+Redirects the user's browser back to the company settings page with a success
+or failure message.
+
+#### `DELETE /companies/:companyId/connections/:connectionId`
+Disconnect a platform. Revokes tokens (if the provider supports it), removes
+the MCP server registration, and deletes the connection record.
+
+#### `POST /companies/:companyId/connections/:connectionId/refresh`
+Force a token refresh. Normally handled automatically, but available for
+manual intervention when a connection is in `expired` status.
+
+Response:
+```json
+{
+  "data": {
+    "status": "active",
+    "token_expires_at": "..."
+  }
+}
+```
+
+---
+
+### Previews (proxy)
+
+#### `GET /preview/:companyId/:agentId/:filename`
+Serves a preview file from the agent's preview directory.
+
+Headers on response:
+```
+Content-Security-Policy: sandbox allow-scripts
+X-Frame-Options: SAMEORIGIN
+Cache-Control: no-store
+```
+
+Returns 404 if file doesn't exist. Returns 403 if the requesting user doesn't
+have board access to the company. Filenames are sanitized (no path traversal).
+
+---
+
+### Knowledge Base
+
+#### `GET /companies/:companyId/kb-docs`
+List all knowledge base documents for a company.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "company_id": "uuid",
+      "title": "Coding Standards",
+      "slug": "coding-standards",
+      "last_updated_by_agent_id": "uuid | null",
+      "last_updated_by_agent_title": "CTO",
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /companies/:companyId/kb-docs`
+Create a knowledge base document (board action).
+
+Request:
+```json
+{
+  "title": "Coding Standards",
+  "content": "# Coding Standards\n\n## TypeScript\n- Always use strict mode..."
+}
+```
+
+`slug` is auto-derived from the title (lowercased, spaces → hyphens).
+
+#### `GET /companies/:companyId/kb-docs/:docId`
+Get full document content.
+
+Response: full doc object including `content` field.
+
+#### `PATCH /companies/:companyId/kb-docs/:docId`
+Update a document (board action). Direct edits by the board do not require
+approval.
+
+Request:
+```json
+{
+  "title": "Coding Standards",
+  "content": "# Coding Standards\n\n## Updated content..."
+}
+```
+
+#### `DELETE /companies/:companyId/kb-docs/:docId`
+Delete a knowledge base document.
+
+---
+
+### Live Chat
+
+Each issue has a **persistent live chat** — one ongoing conversation per issue, always
+available. The assigned agent is always a participant. Board members can @-mention any
+other agent to pull them in.
+
+#### `GET /companies/:companyId/issues/:issueId/live-chat`
+Get the live chat for this issue (transcript, participants, metadata).
+The chat is auto-created when the issue is created — no "start" step needed.
+
+Response:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "issue_id": "uuid",
+    "assigned_agent_id": "uuid",
+    "active_agents": ["uuid-architect", "uuid-engineer"],
+    "message_count": 24,
+    "transcript": [
+      { "author": "board:alice", "text": "What auth strategy do you recommend?", "timestamp": "..." },
+      { "author": "agent:architect", "text": "For this API-first product, I'd suggest JWT...", "timestamp": "..." },
+      { "author": "board:alice", "text": "@engineer can you estimate effort for this?", "timestamp": "..." },
+      { "author": "agent:engineer", "text": "JWT with refresh tokens — about 2 phases...", "timestamp": "..." }
+    ],
+    "created_at": "..."
+  }
+}
+```
+
+Query params:
+- `?after=<timestamp>` — only messages after this timestamp (for polling/pagination)
+- `?limit=50` — max messages to return (default 50, from most recent)
+
+#### `WS /ws/live-chat/:issueId`
+Real-time WebSocket for the issue's live chat. Board members and agents connect
+to send and receive messages.
+
+Send a message:
+```json
+{ "type": "message", "text": "What auth strategy do you recommend?" }
+```
+
+@-mention an agent to pull them in:
+```json
+{ "type": "message", "text": "@architect what do you think about this approach?" }
+```
+
+The server detects @-mentions, wakes the mentioned agent immediately, and adds
+them to the chat. Messages are appended to the transcript in real time.
+
+Agent tool call notifications:
+```json
+{ "type": "tool_call", "agent": "engineer", "tool_name": "bash", "status": "success", "summary": "npm test — 42 passed" }
+```
+
+---
+
+### File Attachments
+
+#### `GET /companies/:companyId/issues/:issueId/attachments`
+List file attachments for an issue.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "original_filename": "screenshot.png",
+      "content_type": "image/png",
+      "byte_size": 245000,
+      "uploaded_by_agent_id": "uuid",
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /companies/:companyId/issues/:issueId/attachments`
+Upload a file attachment. Multipart form data.
+
+Max file size: 10MB. Allowed types: images, PDFs, text files, archezos, logs.
+
+Response:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "original_filename": "screenshot.png",
+    "content_type": "image/png",
+    "byte_size": 245000,
+    "sha256": "abc123...",
+    "created_at": "..."
+  }
+}
+```
+
+#### `DELETE /companies/:companyId/issues/:issueId/attachments/:attachmentId`
+Remove a file attachment from an issue. The underlying asset is deleted.
+
+---
+
+### Plugins
+
+#### `GET /plugins/registry`
+Browse and search the centralized plugin registry at plugins.hezo.ai.
+
+Query params:
+- `?search=linear` — keyword search
+- `?category=integration` — filter by category
+- `?sort=rating|downloads|updated` — sort order
+- `?page=1&per_page=20` — pagination
+
+Response:
+```json
+{
+  "data": [
+    {
+      "key": "hezo-community/linear-sync",
+      "name": "Linear Sync",
+      "description": "Two-way sync between Hezo issues and Linear tickets",
+      "version": "1.2.0",
+      "author": "hezo-community",
+      "rating": 4.7,
+      "download_count": 1240,
+      "verified": true
+    }
+  ]
+}
+```
+
+#### `GET /plugins/registry/:pluginKey`
+Get plugin detail including readme, ratings, reviews, and version history.
+
+#### `POST /companies/:companyId/plugins`
+Install a plugin from the registry.
+
+Request:
+```json
+{
+  "plugin_key": "hezo-community/linear-sync",
+  "version": "1.2.0",
+  "config": { "linear_api_key_secret": "LINEAR_API_KEY" }
+}
+```
+
+Response: full plugin object with status `installed`.
+
+#### `PATCH /companies/:companyId/plugins/:pluginId`
+Enable, disable, or update a plugin's config.
+
+Request:
+```json
+{
+  "status": "enabled",
+  "config": { "sync_interval_minutes": 5 }
+}
+```
+
+#### `DELETE /companies/:companyId/plugins/:pluginId`
+Uninstall a plugin. Stops the worker thread, cleans up state and jobs.
+
+#### `GET /companies/:companyId/plugins`
+List installed plugins for a company.
+
+---
+
+### Auth & Team
+
+#### `POST /auth/register`
+Create a new board member account.
+
+Request:
+```json
+{
+  "email": "alice@example.com",
+  "password": "...",
+  "name": "Alice"
+}
+```
+
+Response: user object + session cookie set.
+
+#### `POST /auth/login`
+Login with email/password. Sets session cookie.
+
+#### `POST /auth/logout`
+End the current session. Clears cookie.
+
+#### `POST /companies/:companyId/invites`
+Invite a new board member to the company.
+
+Request:
+```json
+{
+  "email": "bob@example.com"
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "email": "bob@example.com",
+    "code": "invite-code-here",
+    "expires_at": "..."
+  }
+}
+```
+
+The invite code can be shared out-of-band (email, chat, etc.).
+
+#### `POST /invites/:code/accept`
+Accept an invite and join the company. Requires an authenticated session.
+
+#### `GET /companies/:companyId/members`
+List board members of a company.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "user_id": "...",
+      "name": "Alice",
+      "email": "alice@example.com",
+      "role": "owner",
+      "joined_at": "..."
+    }
+  ]
+}
+```
+
+---
+
+### Board Inbox
+
+#### `GET /companies/:companyId/inbox`
+Aggregated notifications for board members: approvals, escalations, budget alerts, design reviews, etc.
+
+Query params:
+- `?status=unread` — filter by read/unread
+- `?page=1&per_page=50` — pagination
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "company_id": "uuid",
+      "type": "approval",
+      "title": "Secret access request from Dev Engineer",
+      "reference_type": "approval",
+      "reference_id": "uuid",
+      "dismissed_at": null,
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /companies/:companyId/inbox/:id/dismiss`
+Dismiss an inbox item. Sets `dismissed_at`.
+
+---
+
+## Agent API
+
+Agents call these endpoints from inside their Docker containers.
+All requests require `Authorization: Bearer <agent_token>`.
+
+Base URL: `http://host.docker.internal:3100/agent-api`
+
+The agent token encodes `agent_id` and `company_id`, so routes don't need
+those as path params.
+
+---
+
+### Heartbeat
+
+#### `POST /heartbeat`
+Agent reports in. Server returns pending work.
+
+Request:
+```json
+{
+  "container_status": "running",
+  "metrics": {
+    "memory_mb": 256,
+    "disk_mb": 1024
+  }
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "agent": {
+      "id": "uuid",
+      "title": "Dev Engineer",
+      "status": "active",
+      "system_prompt": "You are the **Frontend Engineer**...",
+      "budget_remaining_cents": 1200
+    },
+    "assigned_issues": [
+      {
+        "id": "uuid",
+        "number": 47,
+        "title": "Implement WebSocket handler...",
+        "status": "in_progress",
+        "priority": "urgent",
+        "project_name": "Backend API",
+        "project_goal": "Ship collaboration features",
+        "company_mission": "Build the #1 AI note-taking app",
+        "repos": [
+          { "short_name": "api", "url": "https://github.com/org/api" }
+        ],
+        "unread_comments": 1
+      }
+    ],
+    "notifications": [
+      { "type": "mention", "issue_id": "uuid", "issue_number": 45, "text": "@deveng can you review this?" }
+    ]
+  }
+}
+```
+
+Updates `last_heartbeat_at`. If agent status is `paused` or `terminated`,
+response includes `"agent": { "status": "paused" }` and agent should stop
+working.
+
+---
+
+### Post Comment
+
+#### `POST /issues/:issueId/comments`
+Agent posts a comment on an issue.
+
+Request (text):
+```json
+{
+  "content_type": "text",
+  "content": { "text": "Starting on the WebSocket handler..." }
+}
+```
+
+Request (options):
+```json
+{
+  "content_type": "options",
+  "content": {
+    "prompt": "Which auth strategy should I implement?",
+    "options": [
+      { "id": "jwt", "label": "JWT tokens", "description": "Stateless" },
+      { "id": "session", "label": "Server sessions", "description": "Simpler" }
+    ]
+  }
+}
+```
+
+Request (preview):
+```json
+{
+  "content_type": "preview",
+  "content": {
+    "filename": "auth-flow-mockup.html",
+    "label": "Auth flow mockup",
+    "description": "Interactive prototype"
+  }
+}
+```
+
+Server validates that the file exists in the agent's preview directory.
+
+#### @-mentions (agent-to-agent communication)
+
+All inter-agent communication happens via @-mentions in issue comments — same
+as GitHub. No side channels, no direct messaging. Everything is on the record.
+
+Text content can contain `@<agent-slug>` references. The slug is derived from
+the agent title (lowercased, spaces → hyphens, e.g. "Dev Engineer" → `dev-engineer`).
+Repo short names can also be referenced: `@frontend`, `@api`.
+
+The server parses mentions from comment content and creates notifications for
+the mentioned agent. The mentioned agent receives the notification on its next
+heartbeat (in the `notifications` array).
+
+Agents can use this to: ask questions, request reviews, escalate blockers, hand
+off context, or coordinate work across teams — all visible in the issue thread,
+all traceable in the audit log.
+
+---
+
+### Report Tool Calls
+
+#### `POST /issues/:issueId/comments/:commentId/tool-calls`
+Agent reports tool calls associated with a comment.
+
+Request:
+```json
+{
+  "tool_calls": [
+    {
+      "tool_name": "bash",
+      "input": { "command": "npm test" },
+      "output": { "exit_code": 0, "stdout": "..." },
+      "status": "success",
+      "duration_ms": 3400,
+      "cost_cents": 12
+    }
+  ]
+}
+```
+
+Each tool call with `cost_cents > 0` also creates a `cost_entries` row and
+debits the agent's budget atomically. If budget is exceeded, returns:
+```json
+{
+  "error": {
+    "code": "BUDGET_EXCEEDED",
+    "message": "Agent budget limit reached. Agent has been paused."
+  }
+}
+```
+
+---
+
+### Request Secret
+
+#### `POST /secrets/request`
+Agent requests access to a secret. Creates a pending approval.
+
+Request:
+```json
+{
+  "secret_name": "GITHUB_TOKEN",
+  "project_id": "uuid | null",
+  "reason": "Need to push to feature branch for issue #47"
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "approval_id": "uuid",
+    "status": "pending"
+  }
+}
+```
+
+#### `GET /secrets/mine`
+Agent lists secrets it currently has access to (granted, not revoked).
+
+Response:
+```json
+{
+  "data": [
+    {
+      "name": "GITHUB_TOKEN",
+      "category": "api_token",
+      "project_id": "uuid | null"
+    }
+  ]
+}
+```
+
+Note: actual values are injected as env vars in the container, never returned
+via API.
+
+---
+
+### Request Hire
+
+#### `POST /agents/request-hire`
+Agent (e.g. CTO) requests to hire a new agent. Creates a pending approval.
+
+Request:
+```json
+{
+  "title": "QA Engineer",
+  "role_description": "Automated test coverage",
+  "system_prompt": "You are the QA Engineer at {{company_name}}...",
+  "reports_to": "self",
+  "runtime_type": "claude_code",
+  "heartbeat_interval_min": 120,
+  "monthly_budget_cents": 2500,
+  "docker_base_image": "node:20-slim",
+  "reason": "We need automated test coverage before the collab feature ships."
+}
+```
+
+`"reports_to": "self"` means the new agent will report to the requesting agent.
+
+---
+
+### Create Sub-Issue
+
+#### `POST /issues/:issueId/sub-issues`
+Agent creates a sub-issue (delegation).
+
+Request:
+```json
+{
+  "title": "Write unit tests for WebSocket reconnection",
+  "description": "...",
+  "assignee_id": "uuid | null",
+  "priority": "high"
+}
+```
+
+`project_id` is inherited from the parent issue. If `assignee_id` is set to an
+agent that doesn't report to the creating agent, the request fails (agents can
+only delegate downward in the org chart).
+
+---
+
+### Get Context
+
+#### `GET /context`
+Agent retrieves its full operational context in one call. Convenience endpoint
+that combines heartbeat data with system prompt, resolved variables, and org
+chart position.
+
+Response:
+```json
+{
+  "data": {
+    "agent": {
+      "id": "uuid",
+      "title": "Dev Engineer",
+      "system_prompt_resolved": "You are the **Dev Engineer** at NoteGenius AI...",
+      "reports_to": { "id": "uuid", "title": "CTO" },
+      "direct_reports": [],
+      "budget_remaining_cents": 1200
+    },
+    "company": {
+      "id": "uuid",
+      "name": "NoteGenius AI",
+      "mission": "Build the #1 AI note-taking app"
+    },
+    "assigned_issues": [...],
+    "available_secrets": ["GITHUB_TOKEN", "NPM_TOKEN"],
+    "mcp_servers": [
+      { "name": "slack", "url": "https://mcp.slack.com/sse", "description": "Team Slack" },
+      { "name": "db", "url": "stdio://npx -y @modelcontextprotocol/server-postgres", "description": "Project database" }
+    ],
+    "mpp_enabled": true,
+    "kb_docs": [
+      { "id": "uuid", "title": "Coding Standards", "slug": "coding-standards", "updated_at": "..." }
+    ],
+    "peers": [
+      { "id": "uuid", "title": "UI Designer", "status": "active" }
+    ]
+  }
+}
+```
+
+---
+
+### Knowledge Base (agent-side)
+
+#### `GET /kb-docs`
+Agent lists all knowledge base documents for its company.
+
+Response: array of doc metadata (same shape as board list, without content).
+
+#### `GET /kb-docs/:docId`
+Agent reads a full knowledge base document.
+
+Response: full doc object including `content`.
+
+#### `POST /kb-docs/propose-update`
+Agent proposes a new document or an edit to an existing document. Creates a
+`kb_update` approval with a diff.
+
+Request (new doc):
+```json
+{
+  "title": "Error Handling Patterns",
+  "content": "# Error Handling Patterns\n\n## API Errors\n...",
+  "reason": "Established consistent error handling during WebSocket implementation"
+}
+```
+
+Request (edit existing):
+```json
+{
+  "doc_id": "uuid",
+  "content": "# Coding Standards\n\n## Updated with new patterns...",
+  "reason": "Added React Server Components conventions after frontend refactor"
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "approval_id": "uuid",
+    "status": "pending"
+  }
+}
+```
+
+The board sees the proposal in the approval inbox as a diff view (for edits)
+or a full preview (for new docs). On approval, the document is created/updated.
+
+#### `POST /plans/submit-for-review`
+Agent (typically Architect) submits an implementation plan for Product Lead
+review. Creates a `plan_review` approval.
+
+Request:
+```json
+{
+  "issue_id": "uuid",
+  "plan_summary": "Implementation plan for WebSocket auth...",
+  "plan_content": "## PRD\n...\n## Technical Spec\n...\n## Phases\n...",
+  "reason": "Ready for Product Lead review before dev work begins"
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "approval_id": "uuid",
+    "status": "pending"
+  }
+}
+```
+
+The Product Lead (or any board member) reviews the plan in the approval inbox.
+On approval, the Engineer can begin implementation.
+
+#### `POST /issues/:issueId/attachments`
+Agent uploads a file attachment to an issue (screenshot, log, diagram, etc.).
+Multipart form data, same constraints as the board endpoint.
+
+---
+
+## WebSocket (real-time updates)
+
+### `WS /ws`
+Board UI connects to receive real-time updates. Auth via session cookie or agent JWT.
+
+Server pushes events:
+
+```json
+{ "type": "comment.created", "company_id": "...", "issue_id": "...", "comment": {...} }
+{ "type": "issue.updated", "company_id": "...", "issue": {...} }
+{ "type": "agent.status_changed", "company_id": "...", "agent_id": "...", "status": "active" }
+{ "type": "approval.created", "company_id": "...", "approval": {...} }
+{ "type": "approval.resolved", "company_id": "...", "approval": {...} }
+{ "type": "agent.heartbeat", "company_id": "...", "agent_id": "...", "last_heartbeat_at": "..." }
+{ "type": "budget.warning", "company_id": "...", "agent_id": "...", "percent_used": 80 }
+{ "type": "budget.exceeded", "company_id": "...", "agent_id": "...", "agent_title": "CMO" }
+{ "type": "live_chat.started", "company_id": "...", "issue_id": "...", "session_id": "..." }
+{ "type": "live_chat.ended", "company_id": "...", "issue_id": "...", "session_id": "...", "summary": "..." }
+{ "type": "kb_doc.updated", "company_id": "...", "doc_id": "...", "title": "..." }
+{ "type": "connection.created", "company_id": "...", "platform": "github", "status": "active" }
+{ "type": "connection.expired", "company_id": "...", "platform": "gmail" }
+{ "type": "connection.disconnected", "company_id": "...", "platform": "stripe" }
+{ "type": "plan_review.submitted", "company_id": "...", "issue_id": "...", "approval_id": "..." }
+{ "type": "plan_review.approved", "company_id": "...", "issue_id": "...", "approval_id": "..." }
+{ "type": "plan_review.denied", "company_id": "...", "issue_id": "...", "approval_id": "..." }
+```
+
+Client can filter by company_id after connecting (send
+`{ "subscribe": ["company-uuid-1", "company-uuid-2"] }`).
+
+---
+
+## Audit Log Actions Reference
+
+Every mutating operation writes to `audit_log`. Standard action names:
+
+| Action | Entity Type | Trigger |
+|--------|-------------|---------|
+| `company.created` | company | Board creates company |
+| `company.updated` | company | Board updates company |
+| `company.deleted` | company | Board deletes company |
+| `company.cloned` | company | Board clones company |
+| `connection.created` | connected_platform | Board connects platform via OAuth |
+| `connection.refreshed` | connected_platform | System or board refreshes token |
+| `connection.expired` | connected_platform | System detects expired token |
+| `connection.disconnected` | connected_platform | Board disconnects platform |
+| `agent.created` | agent | Board hires or approval resolved |
+| `agent.updated` | agent | Board edits agent config |
+| `agent.paused` | agent | Board pauses or budget exceeded |
+| `agent.resumed` | agent | Board resumes |
+| `agent.terminated` | agent | Board terminates |
+| `agent.container_rebuilt` | agent | Board rebuilds container |
+| `project.created` | project | Board creates project |
+| `project.updated` | project | Board updates project |
+| `project.deleted` | project | Board deletes project |
+| `repo.added` | repo | Board adds repo to project |
+| `repo.removed` | repo | Board removes repo |
+| `issue.created` | issue | Board or agent creates issue |
+| `issue.updated` | issue | Board or agent updates issue |
+| `issue.assigned` | issue | Issue assigned to agent |
+| `issue.closed` | issue | Status changed to closed |
+| `comment.created` | issue_comment | Board or agent posts comment |
+| `option.chosen` | issue_comment | Board picks an option |
+| `secret.created` | secret | Board creates secret |
+| `secret.updated` | secret | Board rotates secret value |
+| `secret.deleted` | secret | Board deletes secret |
+| `secret.granted` | secret_grant | Board grants access |
+| `secret.revoked` | secret_grant | Board revokes access |
+| `secret.requested` | approval | Agent requests secret access |
+| `hire.requested` | approval | Agent requests hire |
+| `approval.approved` | approval | Board approves |
+| `approval.denied` | approval | Board denies |
+| `api_key.created` | api_key | Board generates API key |
+| `api_key.revoked` | api_key | Board revokes API key |
+| `kb_doc.created` | kb_doc | Board or agent (via approval) |
+| `kb_doc.updated` | kb_doc | Board or agent (via approval) |
+| `kb_doc.deleted` | kb_doc | Board deletes |
+| `kb_update.proposed` | approval | Agent proposes KB change |
+| `kb_update.approved` | approval | Board approves KB change |
+| `kb_update.denied` | approval | Board denies KB change |
+| `live_chat.started` | live_chat_session | Board starts session |
+| `live_chat.ended` | live_chat_session | Session ends |
+| `company.cloned` | company | Board clones company |
+| `budget.warning` | agent | Agent hits 80% budget |
+| `budget.exceeded` | agent | Agent hits 100% budget |
+| `budget.reset` | agent | Monthly budget reset |
