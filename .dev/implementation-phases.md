@@ -10,9 +10,10 @@
 **Goal:** A working Hezo server that can create companies, manage agents, run heartbeats, and execute work via issue tickets. Includes Hezo Connect (self-hosted, GitHub only) so that repos can be validated and cloned via OAuth from the start.
 
 **What's included:**
-- QuickDapp server with PGlite database
+- Hono server (TypeScript) with PGlite (NodeFS filesystem persistence) and live queries
+- `bun build --compile` for single executable binary output (cross-platform)
 - Master key lifecycle (generate, store canary, verify on startup)
-- Schema migration runner (all tables from `schema_migration.sql`)
+- Migration system with `_migrations` tracking table, numbered SQL files (`001_initial_schema.sql`)
 - Company CRUD (create, update, delete, list, clone)
 - Issue prefix + Linear-style identifiers (ACME-42)
 - Agent CRUD (hire, update, pause, resume, terminate)
@@ -43,6 +44,9 @@
 - Structured options (clickable choice cards)
 - Tool call tracing
 - WebSocket real-time events
+- PGlite live queries for frontend real-time data reactivity (`live.query()`, `live.changes()`)
+- MCP endpoint (Streamable HTTP at `/mcp`) — exposes Hezo operations as MCP tools for external AI agents
+- Skill file served at `GET /skill.md` — teaches AI agents how to interact with Hezo
 - Hezo Connect server (self-hosted mode, GitHub only):
   - Standalone Bun/Hono HTTP server running alongside the main Hezo app
   - GitHub OAuth flow: initiation, consent redirect, callback with browser redirect
@@ -57,7 +61,7 @@
   - Repo access validation: test GitHub API access before saving repo
   - Board inbox `oauth_request` items when GitHub not connected
   - Connected platforms UI in company settings
-- React frontend (bundled into binary):
+- React frontend (bundled into binary via `bun build --compile`):
   - Company list + creation
   - Issue list + detail (Comments tab + Live Chat tab)
   - Agent list + detail + hire form
@@ -86,7 +90,6 @@
 - No file attachments
 - No session compaction
 - No Telegram notifications
-- No MCP server config
 - No MPP payments
 
 **Auth:** `local_trusted` mode only — no login required, single user.
@@ -211,7 +214,7 @@
 
 | Phase | Focus | Key Deliverable |
 |-------|-------|----------------|
-| 1 | Core server + agents + GitHub OAuth | Working orchestration platform with Claude Code agents and GitHub repo validation via Hezo Connect |
+| 1 | Core server + agents + GitHub OAuth + MCP | Working orchestration platform with Claude Code agents, GitHub repo validation via Hezo Connect, MCP endpoint, and skill file |
 | 2 | Auth + sessions | Multi-user, long-running agent support |
 | 3 | Adapters + plugins | Gemini support, extensibility |
 | 4 | Full platform integrations | All OAuth platforms, centrally hosted Connect, MCP auto-registration |

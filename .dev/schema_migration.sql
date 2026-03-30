@@ -1,8 +1,25 @@
 -- Migration 001: Initial schema
 -- Company orchestration platform
+--
+-- NOTE: This file will be renamed to migrations/001_initial_schema.sql
+-- in the implementation. All subsequent schema changes should be added
+-- as new numbered migration files (e.g. 002_add_feature.sql).
+-- See spec.md "Migration system" section for the full migration design.
 
 -- Enable UUID generation
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-------------------------------------------------------------------------------
+-- MIGRATION TRACKING (created automatically by the migration runner,
+-- included here for reference)
+-------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS _migrations (
+    id          SERIAL PRIMARY KEY,
+    filename    TEXT NOT NULL UNIQUE,
+    applied_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    checksum    TEXT NOT NULL  -- SHA-256 of migration file contents
+);
 
 -------------------------------------------------------------------------------
 -- SYSTEM META (master key canary, config)

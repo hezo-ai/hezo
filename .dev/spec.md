@@ -35,19 +35,23 @@ Hezo ships as a single executable binary. No external database required. No clou
 
 | Component | Technology | Notes |
 |-----------|-----------|-------|
-| Base framework | QuickDapp | Single executable binary output |
-| Database | PGlite (in-memory Postgres) | Persisted to file on disk |
+| Server | Hono (TypeScript) | Lightweight HTTP framework |
+| Binary | `bun build --compile` | Single executable, cross-platform |
+| Database | PGlite with NodeFS | Filesystem-persisted embedded Postgres at `~/.hezo/pgdata` |
 | Persistence path | `~/.hezo/` by default | Overridable via `--data-dir` CLI arg |
-| Migrations | QuickDapp migration runner | Runs on every server startup |
+| Live queries | PGlite `live.query()` / `live.changes()` | Real-time UI updates without polling |
+| Migrations | Custom SQL runner | Numbered migration files, tracking table, runs on startup |
 | Encryption | AES-256-GCM | Master key held in memory only |
 | Company container | Docker Engine API | One shared container per company |
-| Frontend | React (bundled into binary) | Served by the same process |
-| Real-time | WebSocket | Board UI subscribes to company events |
+| Frontend | React (bundled into binary) | Served by the same Hono process, bundled via `bun build --compile` |
+| Real-time | PGlite live queries + WebSocket | Live queries for data reactivity, WebSocket for system events |
+| AI agent interface | MCP (Streamable HTTP) | `@modelcontextprotocol/sdk` at `/mcp` endpoint |
+| Skill file | Served at `GET /skill.md` | Teaches external AI agents how to interact with Hezo |
+| REST API | JSON over HTTP | Board + agent endpoints at `/api` |
 | OAuth gateway | Hezo Connect (self-hosted or connect.hezo.ai) | Handles OAuth flows for GitHub, Gmail, Stripe, etc. |
 | Auth | Better Auth | Email/password login, session cookies, multi-user |
 | Integrations | 9 platforms via OAuth | GitHub, Gmail, GitLab, Stripe, PostHog, Railway, Vercel, DigitalOcean, X |
 | Plugin runtime | Worker threads + dynamic import | TypeScript plugins with capability-gated APIs |
-| Plugin registry | plugins.hezo.ai | Centralized discovery, ratings, versioning |
 
 ### Master key lifecycle
 
@@ -64,7 +68,135 @@ hezo                          # Start server, prompt for master key if DB exists
 hezo --data-dir /path/to/dir  # Custom persistence directory
 hezo --master-key <key>       # Supply master key as argument
 hezo --port 3100              # Custom port (default 3100)
+hezo --connect-url <url>      # Hezo Connect OAuth gateway URL
+hezo --connect-api-key <key>  # API key for centrally hosted Connect
+hezo --no-connect             # Disable OAuth, manual credentials only
 ```
+
+### Database and persistence
+
+Hezo uses **PGlite** — an embedded Postgres that runs in-process — with filesystem persistence via **NodeFS**. No external database server is needed.
+
+```typescript
+import { PGlite } from "@electric-sql/pglite"
+import { live } from "@electric-sql/pglite/live"
+import { NodeFS } from "@electric-sql/pglite"
+
+const db = new PGlite({
+  fs: new NodeFS(dataDir),  // defaults to ~/.hezo/pgdata
+  extensions: { live },
+})
+```
+
+**Live queries** provide real-time reactivity for the frontend without polling:
+
+- `live.query(sql, params, callback)` — re-runs the query when dependent tables change, pushes only the diff from WASM to JS
+- `live.changes(sql, params, key, callback)` — emits granular insert/update/delete deltas keyed by a primary key column
+- `live.incrementalQuery()` — materializes full result sets from change streams, ideal for React integration via `useLiveIncrementalQuery()`
+
+The frontend uses PGlite React hooks (`useLiveQuery`, `useLiveIncrementalQuery`) for data-driven views (issue lists, agent status, cost dashboards). **WebSocket** is still used for non-database events: agent subprocess lifecycle, container status changes, live chat messages, and system notifications.
+
+**Future sync:** Electric-SQL sync (`@electric-sql/pglite-sync`) can enable multi-instance scenarios (e.g. read replicas, multi-device access). Not required for Phase 1.
+
+### Migration system
+
+Hezo uses a custom forward-only migration system with numbered SQL files. Migrations run automatically on every server startup, enabling safe upgrades without data loss.
+
+**Migration files** are stored as `migrations/NNN_description.sql`:
+```
+migrations/
+├── 001_initial_schema.sql     # The full initial schema
+├── 002_add_agent_model.sql    # Example: new column
+├── 003_add_mcp_tools.sql      # Example: new table
+└── ...
+```
+
+**Tracking table** (`_migrations`) records which migrations have been applied:
+```sql
+CREATE TABLE IF NOT EXISTS _migrations (
+    id          SERIAL PRIMARY KEY,
+    filename    TEXT NOT NULL UNIQUE,
+    applied_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    checksum    TEXT NOT NULL  -- SHA-256 of file contents
+);
+```
+
+**Startup behavior:**
+1. Ensure `_migrations` table exists (create if not)
+2. Read all `migrations/*.sql` files, sorted by filename
+3. Skip files already recorded in `_migrations`
+4. For each unapplied migration: run inside a transaction, record in `_migrations` with checksum
+5. Checksum verification: if a previously-applied migration file has changed, log a warning (indicates the migration was modified after being applied — this should not happen)
+
+**Design decisions:**
+- **Forward-only** — no rollback migrations. For an embedded database, the simplest recovery is restoring from a backup. Add new migrations to fix issues.
+- **Atomic per file** — each migration runs in its own transaction. If a migration fails, only that migration is rolled back, and startup halts with an error.
+- **Idempotent startup** — safe to restart at any time; already-applied migrations are skipped.
+
+### MCP endpoint
+
+Hezo exposes an **MCP (Model Context Protocol)** endpoint so external AI agents can discover and use Hezo's capabilities programmatically — without needing to know the REST API.
+
+**Transport:** Streamable HTTP at `POST /mcp` (single endpoint, bidirectional via optional SSE streaming). Uses `@modelcontextprotocol/sdk` with the `McpServer` class.
+
+**Architecture:**
+```
+┌─────────────────────────────────────────┐
+│       Hono Server (port 3100)           │
+├──────────────────┬──────────────────────┤
+│  REST API        │  MCP Endpoint        │
+│  /api/*          │  /mcp                │
+│  (Board + Agent) │  (Streamable HTTP)   │
+├──────────────────┴──────────────────────┤
+│         Shared Business Logic           │
+└─────────────────────────────────────────┘
+```
+
+MCP tools mirror the REST API surface. Both call the same underlying business logic layer. The MCP endpoint coexists with the REST API on the same Hono server and port.
+
+**Authentication:** Same as REST — local trusted (localhost), Better Auth session, or API key (`Authorization: Bearer hezo_<key>`).
+
+**Exposed MCP tools:**
+
+| Tool | Description |
+|------|-------------|
+| `list_companies` | List all companies the caller has access to |
+| `create_company` | Create a new company |
+| `list_issues` | List issues with filtering (project, status, assignee) |
+| `create_issue` | Create a new issue in a project |
+| `update_issue` | Update issue status, assignee, priority, etc. |
+| `list_agents` | List agents in a company |
+| `hire_agent` | Create a new agent from a role template or custom config |
+| `post_comment` | Post a comment on an issue |
+| `list_comments` | List comments on an issue |
+| `approve_request` | Approve a pending approval |
+| `deny_request` | Deny a pending approval |
+| `list_approvals` | List pending approvals |
+| `search_kb` | Search knowledge base documents |
+| `update_kb_doc` | Create or update a KB document |
+| `get_cost_summary` | Get cost breakdown by agent, project, or time period |
+| `list_projects` | List projects in a company |
+| `list_secrets` | List secret names (not values) in a company |
+
+Additional tools are registered dynamically when plugins are activated.
+
+### Skill file
+
+Hezo serves a **skill file** that teaches external AI agents (like Claude Code) how to interact with the system. This is the primary onboarding mechanism for AI-to-AI integration.
+
+**Served at:** `GET /skill.md` — returns a Markdown document describing Hezo's capabilities, available MCP tools, common workflows, and authentication instructions.
+
+**Also committed to the repo** at `.claude/skills/hezo/SKILL.md` so that Claude Code sessions working within a Hezo-managed repo automatically discover it.
+
+**Content includes:**
+- Overview of what Hezo is and how it works
+- Available MCP tools with parameter descriptions
+- Common workflows: create an issue, assign to an agent, monitor progress, approve requests
+- REST API endpoint summary (as a fallback for agents that don't support MCP)
+- Authentication instructions (API key setup)
+- Examples of typical interactions
+
+**Dynamically generated:** The skill file is generated at startup from the registered MCP tool definitions, ensuring it is always up-to-date with the current tool surface. Changes to MCP tools automatically update the skill file.
 
 ---
 
@@ -422,7 +554,7 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
 
 ```
 ~/.hezo/
-├── hezo.db                              # PGlite database file
+├── pgdata/                              # PGlite database (NodeFS persistence)
 ├── data/                                # Previews, temp files
 │   └── previews/{company_id}/{agent_id}/
 │
@@ -1758,7 +1890,9 @@ Three token types:
 |---------|-------------|
 | Board API | Full CRUD for companies, agents, projects, repos, issues, secrets, approvals, KB, connections, plugins, users, etc. |
 | Agent API | Heartbeat, context, comments, tool calls, delegation, secret requests, KB proposals, deploy requests. |
-| WebSocket | Real-time events for board UI. |
+| MCP Endpoint | Streamable HTTP at `/mcp`. Mirrors Board API as MCP tools for external AI agents. |
+| Skill File | `GET /skill.md`. Dynamically generated documentation for AI agent onboarding. |
+| WebSocket | Real-time system events for board UI (agent lifecycle, container status, live chat). |
 
 ---
 
