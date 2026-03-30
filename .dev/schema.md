@@ -1,18 +1,19 @@
 # Data Model — Design Decisions
 
-## 34 tables, 3 functions
+## 35 tables, 3 functions
 
 | Table | Purpose | Key relationships |
 |-------|---------|-------------------|
 | `system_meta` | Key-value config store. Holds master key canary. | Standalone. |
 | `users` | Board members (Better Auth managed). Email, password hash, name. | Standalone (auth). |
 | `sessions` | Better Auth session tokens. | belongs to user |
-| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), company-level budget. | Parent of everything. |
+| `company_types` | Company blueprints (recipes). Default agent configs, KB docs, preferences as JSONB snapshots. | Referenced by companies. |
+| `companies` | Top-level tenant. Has `email`, `company_type_id`, `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), company-level budget. | Parent of everything. |
 | `company_memberships` | Links users to companies. Roles: `owner`, `member`. | links user ↔ company |
 | `invites` | Pending invitations for new board members. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
 | `agents` | A role in the org chart. Self-referential `reports_to`. Has `slug` for @-mentions, `mcp_servers` (JSONB). | belongs to company |
-| `projects` | Group of related work under a company. | belongs to company |
+| `projects` | Group of related work under a company. Has Docker container config, dev ports. | belongs to company |
 | `repos` | Git repo (GitHub only). Short name for @-mentions. | belongs to project |
 | `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `ACME-42`). Execution lock fields. | belongs to company + project, assigned to agent |
 | `issue_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. | belongs to issue |
@@ -131,7 +132,7 @@ job (or heartbeat check) compares this to the current month boundary and resets
 ### Preview files (not in DB)
 
 HTML previews are ephemeral filesystem artifacts, not DB records. The agent writes
-to `/workspace/{project}/.previews/{agent_id}/` inside the company container, which is
+to `/workspace/.previews/{agent_id}/` inside the project container, which is
 visible on the host via the shared workspace volume at:
 ```
 ~/.hezo/companies/{slug}/projects/{project}/.previews/{agent_id}/
@@ -193,7 +194,7 @@ subprocess runtime configuration.
 
 The wallet private key is not stored in `mpp_config` — it lives in the
 `secrets` table, referenced by `wallet_key_secret_name`. When MPP is enabled,
-the company container gets `mppx` CLI and wallet credentials are injected into agent subprocesses. Every MPP
+the project container gets `mppx` CLI and wallet credentials are injected into agent subprocesses. Every MPP
 payment is reported as a tool call cost and debited against the agent's budget
 via the same `debit_agent_budget()` atomic function.
 
@@ -212,16 +213,16 @@ This ensures the user never lands on an empty company.
 
 ### Company cloning
 
-`POST /companies` accepts an optional `clone_from_company_id`. When set, the
-server copies:
-- All `kb_docs` rows (with new company_id, `last_updated_by_agent_id` set to NULL)
-- All `agents` rows (new IDs, same titles/prompts/org hierarchy, `budget_used_cents`
-  reset to 0, company container provisioned fresh)
-- Company-level `mcp_servers` array
-- `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
+`POST /companies` requires a `company_type_id`. The server clones from the
+selected company type:
+- Creates `agents` rows from `company_types.agents_config` (new IDs, `budget_used_cents`
+  reset to 0)
+- Creates `kb_docs` rows from `company_types.kb_docs_config`
+- Creates `company_preferences` row from `company_types.preferences_config`
+- Copies `mcp_servers` array from company type
+- Copies `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
 
-Also copied: `company_preferences` row (with `last_updated_by_agent_id` set to
-NULL) so the cloned company inherits the board's established working style.
+Project containers are provisioned when projects are created (not at company creation).
 
 NOT copied: projects, repos, issues, secrets, cost_entries, audit_log, api_keys,
 secret_grants, approvals, connected_platforms, project_docs. Platform connections
@@ -347,13 +348,15 @@ all companies. Issues have an `identifier` column computed as
 human-facing reference for issues — used in UI, API responses, @-mentions
 (`#ACME-42`), and git branch names.
 
-### Issue execution locking
+### Issue work ownership
 
-When an agent starts work on an issue, `execution_run_id` and
-`execution_locked_at` are set via `SELECT ... FOR UPDATE`. This prevents two
-agents from working on the same issue simultaneously. If a second agent
-tries to work on a locked issue, its wakeup is deferred with status
-`deferred_issue_execution` and promoted when the lock is released.
+When an agent begins work on an issue, `execution_run_id` and
+`execution_locked_at` are set to claim ownership. This is a work ownership
+marker, not a short-lived database lock — ownership persists across heartbeat
+cycles and may span hours or days. Only one agent works on a given issue at
+a time. If a second agent tries to work on an owned issue, its wakeup is
+deferred with status `deferred_issue_execution` and promoted when ownership
+is released (on completion, reassignment, or agent pause/termination).
 
 ### Wakeup queue
 

@@ -1998,3 +1998,63 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `budget.warning` | agent | Agent hits 80% budget |
 | `budget.exceeded` | agent | Agent hits 100% budget |
 | `budget.reset` | agent | Monthly budget reset |
+
+---
+
+## MCP Endpoint
+
+Hezo exposes an MCP (Model Context Protocol) endpoint for external AI agents to discover and invoke Hezo operations programmatically.
+
+### `POST /mcp`
+
+Streamable HTTP MCP endpoint. Uses `@modelcontextprotocol/sdk` with the `McpServer` class. Supports bidirectional messaging with optional Server-Sent Events (SSE) for streaming responses.
+
+**Authentication:** Same as REST API — local trusted, Better Auth session, or API key (`Authorization: Bearer hezo_<key>`).
+
+**Capabilities:**
+- `tools` — Hezo registers all operations as MCP tools
+- `listChanged` — tool list can change dynamically (e.g. when plugins register new tools)
+
+**Registered tools:**
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `list_companies` | List all companies | — |
+| `create_company` | Create a new company | `name`, `mission` |
+| `list_issues` | List issues with filtering | `company_id`, `project_id?`, `status?`, `assignee?` |
+| `create_issue` | Create a new issue | `company_id`, `project_id`, `title`, `description?`, `priority?` |
+| `update_issue` | Update an issue | `issue_id`, `status?`, `assignee?`, `priority?` |
+| `list_agents` | List agents in a company | `company_id` |
+| `hire_agent` | Create a new agent | `company_id`, `title`, `role_description`, `reports_to?` |
+| `post_comment` | Post a comment on an issue | `issue_id`, `content`, `content_type?` |
+| `list_comments` | List comments on an issue | `issue_id` |
+| `approve_request` | Approve a pending approval | `approval_id`, `scope?` |
+| `deny_request` | Deny a pending approval | `approval_id`, `reason?` |
+| `list_approvals` | List pending approvals | `company_id`, `type?` |
+| `search_kb` | Search knowledge base documents | `company_id`, `query` |
+| `update_kb_doc` | Create or update a KB document | `company_id`, `slug`, `title`, `content` |
+| `get_cost_summary` | Get cost breakdown | `company_id`, `group_by?` |
+| `list_projects` | List projects in a company | `company_id` |
+| `list_secrets` | List secret names (not values) | `company_id`, `project_id?` |
+
+MCP tools call the same business logic layer as REST endpoints. Additional tools are registered dynamically when plugins are activated.
+
+---
+
+## Skill File
+
+### `GET /skill.md`
+
+Returns a Markdown document that teaches external AI agents how to interact with Hezo. This is the primary onboarding mechanism for AI-to-AI integration.
+
+**Response:** `Content-Type: text/markdown`
+
+The skill file is dynamically generated at startup from the registered MCP tool definitions and includes:
+- Overview of Hezo and its purpose
+- Available MCP tools with parameter schemas and descriptions
+- Common workflows (create issue → assign agent → monitor → approve)
+- REST API endpoint summary (fallback for agents without MCP support)
+- Authentication setup instructions (API key creation)
+- Example interactions
+
+The same content is also committed to the repo at `.claude/skills/hezo/SKILL.md` for local Claude Code discovery.
