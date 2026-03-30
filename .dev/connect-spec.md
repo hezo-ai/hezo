@@ -37,8 +37,8 @@ Hezo Connect does this once, centrally, for all users.
 ```
 ┌─────────────────┐         ┌─────────────────────┐        ┌──────────────┐
 │   Hezo App      │         │   Hezo Connect       │        │   Provider   │
-│   (local)       │         │   (connect.hezo.ai)  │        │   (GitHub,   │
-│                 │         │                      │        │    Google,   │
+│   (local)       │         │   (self-hosted or    │        │   (GitHub,   │
+│                 │         │    connect.hezo.ai)  │        │    Google,   │
 │                 │  1. redirect                   │        │    etc.)     │
 │                 ├────────►│                      │        │              │
 │                 │         │  2. redirect to       │        │              │
@@ -50,9 +50,11 @@ Hezo Connect does this once, centrally, for all users.
 │                 │         │  4. exchange code     │
 │                 │         │     for tokens        │
 │  5. receive     │◄────────┤                      │
-│     tokens      │  POST   │  6. purge tokens     │
-│                 │         │     from memory       │
-│  7. encrypt +   │         └─────────────────────┘
+│     tokens via  │ redirect│  6. purge tokens     │
+│     browser     │         │     from memory       │
+│     redirect    │         └─────────────────────┘
+│                 │
+│  7. encrypt +   │
 │     store       │
 └─────────────────┘
 ```
@@ -62,8 +64,8 @@ Hezo Connect does this once, centrally, for all users.
 **Hezo Connect (this service)**
 - Holds registered OAuth apps for each supported platform
 - Handles the full OAuth dance (redirect → consent → callback → token exchange)
-- Delivers tokens to the Hezo instance via POST callback
-- Purges tokens from memory after delivery
+- Delivers tokens to the Hezo instance via browser redirect to the callback URL
+- Purges tokens from memory after redirect
 - Tracks usage for billing (centrally hosted mode)
 - Validates Hezo instance identity via API keys (centrally hosted mode)
 
@@ -81,38 +83,49 @@ Hezo Connect does this once, centrally, for all users.
 ```
 1.  Board member clicks "Connect GitHub" in Hezo UI
 2.  Hezo app redirects browser to:
-      https://connect.hezo.ai/auth/github/start
+      http://localhost:4100/auth/github/start
         ?callback=http://localhost:3100/oauth/callback
         &state={signed_payload}
         &api_key={connect_api_key}          # centrally hosted only
 3.  Hezo Connect validates the request:
       - Verify API key (centrally hosted) or skip (self-hosted)
-      - Check usage limits (centrally hosted)
-      - Verify callback URL is reachable (optional health check)
+      - Verify state signature (HMAC-SHA256)
 4.  Hezo Connect redirects browser to GitHub OAuth consent screen:
       https://github.com/login/oauth/authorize
         ?client_id={hezo_connect_github_app_id}
-        &redirect_uri=https://connect.hezo.ai/auth/github/callback
-        &scope=repo,workflow,read:org
+        &redirect_uri=http://localhost:4100/auth/github/callback
+        &scope=repo,read:org
         &state={signed_payload}
 5.  User authorizes on GitHub
 6.  GitHub redirects to:
-      https://connect.hezo.ai/auth/github/callback?code={auth_code}&state={signed_payload}
+      http://localhost:4100/auth/github/callback?code={auth_code}&state={signed_payload}
 7.  Hezo Connect exchanges the auth code for tokens:
       POST https://github.com/login/oauth/access_token
         client_id, client_secret, code, redirect_uri
-      → { access_token, refresh_token, expires_in, scope }
-8.  Hezo Connect POSTs tokens to the Hezo instance callback:
-      POST http://localhost:3100/oauth/callback
-        { platform: "github", access_token, refresh_token, expires_in, scope, metadata }
-9.  Hezo app receives tokens:
-      - Encrypts with master key (AES-256-GCM)
-      - Stores as secrets (GITHUB_ACCESS_TOKEN, GITHUB_REFRESH_TOKEN)
-      - Creates connected_platforms record
-      - Auto-registers GitHub as company-level MCP server
+      → { access_token, token_type, scope }
+8.  Hezo Connect fetches user info:
+      GET https://api.github.com/user (with access token)
+      → { login, avatar_url, email }
+9.  Hezo Connect redirects browser to the Hezo app callback with tokens:
+      http://localhost:3100/oauth/callback
+        ?platform=github
+        &access_token={access_token}
+        &scopes={scope}
+        &metadata={base64url({"username":"...","avatar_url":"..."})}
+        &state={signed_payload}
 10. Hezo Connect purges tokens from memory
-11. Browser redirects back to Hezo UI showing "GitHub connected"
+11. Hezo app receives tokens via the browser redirect:
+      - Verifies state signature
+      - Encrypts access token with master key (AES-256-GCM)
+      - Stores as secret (GITHUB_ACCESS_TOKEN)
+      - Creates connected_platforms record
+12. Browser redirects to Hezo UI showing "GitHub connected"
 ```
+
+**Note:** GitHub OAuth Apps issue non-expiring access tokens (no refresh token).
+Token delivery uses a browser redirect rather than a server-to-server POST,
+which avoids Hezo Connect needing to make outbound HTTP calls to the local
+Hezo instance.
 
 ### State parameter
 
@@ -348,9 +361,9 @@ CREATE TABLE usage_monthly (
 
 ### Token handling
 - Tokens exist in Hezo Connect memory only during the exchange (seconds)
-- After POST to the Hezo instance callback, tokens are immediately purged
+- After redirecting the browser to the Hezo app callback, tokens are immediately purged
 - No token logging, no token persistence, no token caching
-- All communication over HTTPS (enforced)
+- All communication over HTTPS in production (HTTP allowed for localhost in dev)
 
 ### State parameter security
 - HMAC-SHA256 signed with shared secret
@@ -381,7 +394,6 @@ CREATE TABLE usage_monthly (
 | Invalid/expired state | 400 | `{ "error": "invalid_state", "message": "..." }` |
 | Provider denied consent | 400 | `{ "error": "access_denied", "message": "User denied authorization" }` |
 | Token exchange failed | 502 | `{ "error": "token_exchange_failed", "message": "..." }` |
-| Callback delivery failed | 502 | `{ "error": "callback_failed", "message": "Could not reach Hezo instance" }` |
 | Invalid API key | 401 | `{ "error": "invalid_api_key" }` |
 | Abuse limit exceeded | 429 | `{ "error": "rate_limited", "message": "Too many requests" }` |
 | Rate limited | 429 | `{ "error": "rate_limited", "retry_after": 60 }` |

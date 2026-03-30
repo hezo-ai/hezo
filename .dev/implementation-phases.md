@@ -7,7 +7,7 @@
 
 ## Phase 1: Core Server + Agent Orchestration
 
-**Goal:** A working Hezo server that can create companies, manage agents, run heartbeats, and execute work via issue tickets. No OAuth, no Hezo Connect, no deployment pipeline. Agents use manually configured credentials.
+**Goal:** A working Hezo server that can create companies, manage agents, run heartbeats, and execute work via issue tickets. Includes Hezo Connect (self-hosted, GitHub only) so that repos can be validated and cloned via OAuth from the start.
 
 **What's included:**
 - QuickDapp server with PGlite database
@@ -18,7 +18,7 @@
 - Agent CRUD (hire, update, pause, resume, terminate)
 - 9 built-in role templates auto-created on company setup (DevOps starts idle)
 - Org chart with reporting lines
-- Project + repo management (manual git clone — no OAuth validation yet)
+- Project + repo management with GitHub OAuth validation (see below)
 - Issue CRUD with full status state machine (backlog → open → in_progress → review → blocked → done → closed → cancelled)
 - Issue comments (text, options, preview, trace, system)
 - Sub-issues and delegation (org-chart enforced)
@@ -43,6 +43,20 @@
 - Structured options (clickable choice cards)
 - Tool call tracing
 - WebSocket real-time events
+- Hezo Connect server (self-hosted mode, GitHub only):
+  - Standalone Bun/Hono HTTP server running alongside the main Hezo app
+  - GitHub OAuth flow: initiation, consent redirect, callback with browser redirect
+  - State parameter signing (HMAC-SHA256) for CSRF prevention
+  - Token delivery via browser redirect (not server-to-server POST)
+  - Stateless — no database, in-memory state map for in-flight OAuth nonces
+  - Dev GitHub OAuth app setup
+- GitHub OAuth integration in the main Hezo app:
+  - `POST /connections/github/start` — generate auth URL with signed state
+  - `GET /oauth/callback` — receive tokens via query params, encrypt, store
+  - `connected_platforms` record creation
+  - Repo access validation: test GitHub API access before saving repo
+  - Board inbox `oauth_request` items when GitHub not connected
+  - Connected platforms UI in company settings
 - React frontend (bundled into binary):
   - Company list + creation
   - Issue list + detail (Comments tab + Live Chat tab)
@@ -57,10 +71,14 @@
   - Secrets vault
   - Cost dashboard
   - Audit log viewer
-  - Settings page
+  - Settings page (including connected platforms)
 
 **What's NOT included:**
-- No Hezo Connect / OAuth platform connections
+- No centrally hosted Hezo Connect (connect.hezo.ai) — self-hosted only
+- No non-GitHub platform connections (Gmail, Stripe, etc. — Phase 4)
+- No auto-registration of platforms as MCP servers (Phase 4)
+- No token refresh lifecycle (Phase 4)
+- No agent-initiated OAuth link requests (Phase 4)
 - No multi-user auth (localhost trusted mode only)
 - No plugin system
 - No Gemini/Codex adapters (Claude Code only)
@@ -73,7 +91,7 @@
 
 **Auth:** `local_trusted` mode only — no login required, single user.
 
-**Agent credentials:** Manually configured via secrets vault. Board member adds GitHub tokens, API keys, etc. as secrets and grants them to agents. No OAuth flow.
+**Agent credentials:** GitHub access is handled via OAuth (Hezo Connect). Other credentials (API keys, etc.) are manually configured via the secrets vault.
 
 **Testing:** Vitest for unit/integration, Playwright for E2E. Template database pattern for test isolation.
 
@@ -128,31 +146,33 @@
 
 ---
 
-## Phase 4: Hezo Connect + Platform Integrations
+## Phase 4: Full Platform Integrations
 
-**Goal:** Agents can connect to GitHub, Gmail, Stripe, and other platforms via OAuth without manual credential management.
+**Goal:** Extend Hezo Connect beyond GitHub to support all platforms, add centrally hosted mode, and enable MCP auto-registration.
 
 **What's included:**
-- Hezo Connect backend (separate open-source service — see `connect-spec.md` for full spec):
-  - Self-hosted mode: free, open source, user registers their own OAuth apps
-  - Centrally hosted mode (connect.hezo.ai): managed by Hezo project, with billing, API keys, usage limits
-  - OAuth app registrations for all supported platforms
-  - OAuth dance handling (redirects, consent, callback, token exchange)
-  - Token relay to local Hezo instance
-  - Token purging after relay (never stored long-term)
-- Hezo app integration:
-  - OAuth flow initiation (redirect to Hezo Connect)
-  - Token receipt and encrypted storage
-  - Automatic token refresh (local, no Hezo Connect round-trip)
-  - Connection lifecycle (connect, disconnect, health check, refresh)
-  - Connected platforms UI in company settings
-  - Auto-registration of platforms as MCP servers
-  - OAuth link requests in tickets + board inbox (24-hour validity)
-- Platform-specific features:
-  - GitHub: repo access validation via OAuth token, git credential helper
+- Hezo Connect — centrally hosted mode (connect.hezo.ai):
+  - API key system for Hezo instances
+  - Account management (email/password, dashboard)
+  - Usage tracking and billing infrastructure
+  - Rate limiting and abuse prevention
+- Additional platform OAuth support:
   - Gmail: agent email send/receive
-  - Other platforms: Stripe, PostHog, Railway, Vercel, DigitalOcean, X, GitLab
+  - GitLab: repo access, CI/CD pipelines
+  - Stripe: payments, subscriptions, invoices
+  - PostHog: analytics queries, feature flags
+  - Railway: deploy, environment management
+  - Vercel: deployments, domains, env vars
+  - DigitalOcean: droplets, databases, apps
+  - X (Twitter): post tweets, read timeline
+- Token refresh lifecycle:
+  - Automatic access token refresh using stored refresh tokens
+  - Expired connection detection and board notification
+  - Manual refresh endpoint for intervention
+- Auto-registration of connected platforms as company-level MCP servers
+- Agent-initiated OAuth link requests (24-hour validity, board inbox + ticket comment)
 - MCP server configuration (company-level + agent-level, merged at runtime)
+- Connection lifecycle management (health checks, disconnect, re-authorize)
 
 **Depends on:** Phase 3
 
@@ -191,10 +211,10 @@
 
 | Phase | Focus | Key Deliverable |
 |-------|-------|----------------|
-| 1 | Core server + agents | Working orchestration platform with Claude Code agents |
+| 1 | Core server + agents + GitHub OAuth | Working orchestration platform with Claude Code agents and GitHub repo validation via Hezo Connect |
 | 2 | Auth + sessions | Multi-user, long-running agent support |
 | 3 | Adapters + plugins | Gemini support, extensibility |
-| 4 | Hezo Connect | OAuth platform integrations |
+| 4 | Full platform integrations | All OAuth platforms, centrally hosted Connect, MCP auto-registration |
 | 5 | Deploy + notifications | Staging/production pipeline, Telegram |
 
 Each phase produces a usable system. Phase 1 alone is a functional product — a single user can create companies, hire agents, assign work, and watch agents execute via the web UI.

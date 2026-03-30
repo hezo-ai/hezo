@@ -97,9 +97,19 @@ and a project-level secret with the same name — project scope takes precedence
 ### Repo validation
 
 The `repos.url` CHECK constraint enforces GitHub URLs at the DB level.
-The app layer additionally tests repo access using the company's connected
-GitHub OAuth token before inserting. Short names are unique within a project
-and used for @-mentions in issue comments (`@frontend`, `@api`).
+The app layer performs a two-step validation before inserting:
+
+1. **GitHub connection check** — verifies the company has an active GitHub OAuth
+   connection in `connected_platforms`. If not, the request fails with
+   `GITHUB_NOT_CONNECTED` and a board inbox item of type `oauth_request` is
+   created to prompt the user to connect GitHub via Hezo Connect.
+2. **Repo access check** — calls the GitHub API (`GET /repos/{owner}/{repo}`)
+   using the OAuth token. If the connected GitHub user doesn't have access
+   (403/404), the request fails with `REPO_ACCESS_FAILED` and includes the
+   GitHub username so the board knows which account needs to be added.
+
+Short names are unique within a project and used for @-mentions in issue
+comments (`@frontend`, `@api`).
 
 ### Audit log immutability
 
@@ -300,11 +310,17 @@ benefit from the same AES-256-GCM encryption as all other secrets.
 
 **OAuth flow:**
 1. User initiates connection via the Hezo UI
-2. Hezo app redirects to Hezo Connect (centralized OAuth gateway at connect.hezo.ai)
+2. Hezo app redirects browser to Hezo Connect (self-hosted or centrally hosted)
 3. Hezo Connect handles the OAuth dance with the provider
-4. Tokens are returned to the local Hezo app via callback
-5. Hezo app encrypts tokens, stores them as secrets, creates the connection record
+4. Hezo Connect redirects the browser back to the Hezo app's callback URL with tokens as query params
+5. Hezo app verifies the state signature, encrypts tokens, stores them as secrets, creates the connection record
 6. Hezo Connect purges tokens from memory — it never stores them long-term
+
+Token delivery uses browser redirects rather than server-to-server POST calls.
+This keeps the architecture simple and avoids Connect needing to make outbound
+HTTP calls to the local Hezo instance. In self-hosted mode, Hezo Connect is
+stateless — no database needed, just OAuth app credentials and a signing key
+as environment variables.
 
 **Token lifecycle:**
 - Access tokens are refreshed automatically by the Hezo app using the stored

@@ -585,18 +585,19 @@ Hezo Connect is a standalone backend service that handles OAuth flows on behalf 
 
 Two components work together:
 
-**Hezo Connect (remote — e.g. connect.hezo.ai)**
-- Hosted service that holds registered OAuth apps for each supported provider
+**Hezo Connect (self-hosted or connect.hezo.ai)**
+- Standalone service that holds registered OAuth apps for each supported provider
 - Handles the OAuth dance: redirects, consent screens, callbacks, token exchange
-- Returns tokens to the local Hezo instance, then purges them from memory
+- Delivers tokens to the local Hezo instance via browser redirect (not server-to-server POST)
 - Does NOT store tokens long-term — it is a transient relay
 - Open-source — users who want full self-hosting can deploy their own instance and register their own OAuth apps
 - The Hezo project runs the canonical instance so most users don't need to do anything
+- In self-hosted mode: stateless, no database, no API keys — just OAuth app credentials and a signing key
 
 **Hezo app (local)**
 - Initiates OAuth flows by redirecting to Hezo Connect
-- Receives tokens via callback
-- Encrypts and stores tokens in the local secrets vault
+- Receives tokens via browser redirect to the callback URL
+- Verifies state signature, encrypts and stores tokens in the local secrets vault
 - Handles token refresh locally using refresh tokens
 - Exposes connected platforms as company-level MCP servers
 - Manages connection lifecycle: connect, disconnect, health check, refresh
@@ -604,20 +605,24 @@ Two components work together:
 ### OAuth flow
 
 ```
-1. User clicks "Connect Gmail" in Hezo UI
-2. Hezo app redirects to: connect.hezo.ai/auth/gmail/start
+1. User clicks "Connect GitHub" in Hezo UI
+2. Hezo app redirects to: localhost:4100/auth/github/start
      ?callback=http://localhost:3100/oauth/callback
-     &state={encrypted_company_id}
-3. Hezo Connect redirects user to Google OAuth consent screen
+     &state={signed_payload_with_company_id}
+3. Hezo Connect redirects user to GitHub OAuth consent screen
 4. User authorizes
-5. Google redirects to connect.hezo.ai/auth/gmail/callback
-6. Hezo Connect exchanges auth code for access + refresh tokens
-7. Hezo Connect POSTs tokens to http://localhost:3100/oauth/callback
-8. Hezo app encrypts tokens, stores in secrets vault as:
-     GMAIL_ACCESS_TOKEN, GMAIL_REFRESH_TOKEN
+5. GitHub redirects to localhost:4100/auth/github/callback
+6. Hezo Connect exchanges auth code for access token
+7. Hezo Connect redirects browser to the Hezo app callback with tokens:
+     http://localhost:3100/oauth/callback?platform=github&access_token=...&state=...
+8. Hezo app verifies state, encrypts token, stores in secrets vault as:
+     GITHUB_ACCESS_TOKEN
 9. Hezo Connect purges tokens from memory
-10. Hezo app auto-registers Gmail as a company-level MCP server
+10. Browser redirects to Hezo UI showing "GitHub connected"
 ```
+
+Token delivery uses a browser redirect rather than a server-to-server POST. This
+avoids Hezo Connect needing to make outbound HTTP calls to the local Hezo app.
 
 ### Hezo Connect OAuth link validity
 
@@ -700,11 +705,17 @@ No SSH keys needed — the GitHub OAuth connection provides read/write access to
 
 When a repo is added to a project via the API:
 
-1. Read/write access is validated using the company's GitHub OAuth token
-2. The repo is cloned (via HTTPS + token) into `~/.hezo/companies/{company}/projects/{project}/{short_name}/`
-3. A symlink is created: `{short_name}/.claude → ../../.claude` (pointing to company-level `.claude/`)
-4. Git credential helper is configured in the repo to use the OAuth token for all operations
-5. The repo is now available to any agent working on issues in this project
+1. **GitHub connection check** — the system checks whether the company has an active GitHub OAuth connection (`connected_platforms` table). If not:
+   - The request fails with `GITHUB_NOT_CONNECTED`
+   - A board inbox item of type `oauth_request` is created automatically, prompting the board to connect GitHub via Hezo Connect
+   - The inbox item includes an actionable link to start the OAuth flow
+2. **Repo access validation** — using the company's GitHub OAuth token, the system calls the GitHub API (`GET /repos/{owner}/{repo}`) to verify the authorized GitHub user has access. If access fails (403/404):
+   - The request fails with `REPO_ACCESS_FAILED`
+   - The error message includes the GitHub username from `connected_platforms.metadata` so the board knows which account needs access: *"Cannot access this repo — the GitHub user '{username}' needs to be added to {owner}/{repo}"*
+3. The repo is cloned (via HTTPS + token) into `~/.hezo/companies/{company}/projects/{project}/{short_name}/`
+4. A symlink is created: `{short_name}/.claude → ../../.claude` (pointing to company-level `.claude/`)
+5. Git credential helper is configured in the repo to use the OAuth token for all operations
+6. The repo is now available to any agent working on issues in this project
 
 ### Agent access to repos
 

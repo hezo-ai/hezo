@@ -397,8 +397,8 @@ Response:
 ```
 
 #### `POST /companies/:companyId/projects/:projectId/repos`
-Add a repo. Server validates the URL pattern (GitHub only) and tests read/write
-access using the company's connected GitHub OAuth token before saving.
+Add a repo. Server validates the URL pattern (GitHub only) and tests access
+using the company's connected GitHub OAuth token before saving.
 
 Requires: GitHub platform must be connected for this company.
 
@@ -410,17 +410,17 @@ Request:
 }
 ```
 
-Error if access test fails:
-```json
-{
-  "error": {
-    "code": "REPO_ACCESS_FAILED",
-    "message": "Cannot access this repo — check GitHub account permissions"
-  }
-}
-```
+**Validation flow:**
 
-Error if GitHub not connected:
+1. Parse `owner/repo` from the URL
+2. Check `connected_platforms` for an active GitHub connection for this company
+3. If connected: call `GET https://api.github.com/repos/{owner}/{repo}` with the OAuth token
+4. If accessible (200): insert the repo record
+5. If not accessible (403/404): return `REPO_ACCESS_FAILED`
+6. If GitHub not connected: return `GITHUB_NOT_CONNECTED` and create a board inbox item
+
+Error if GitHub not connected (also creates a board inbox item of type
+`oauth_request` with a link to start the GitHub OAuth flow):
 ```json
 {
   "error": {
@@ -429,6 +429,20 @@ Error if GitHub not connected:
   }
 }
 ```
+
+Error if the connected GitHub account cannot access the repo:
+```json
+{
+  "error": {
+    "code": "REPO_ACCESS_FAILED",
+    "message": "Cannot access this repo — the GitHub user 'acme-bot' needs to be added to org/frontend"
+  }
+}
+```
+
+The `REPO_ACCESS_FAILED` message includes the connected GitHub username (from
+`connected_platforms.metadata.username`) so the board knows which account needs
+access to the repository.
 
 #### `DELETE /companies/:companyId/projects/:projectId/repos/:repoId`
 Remove a repo from a project.
@@ -914,17 +928,23 @@ Response:
 ```
 
 #### `GET /oauth/callback`
-OAuth callback endpoint. Called by Hezo Connect after the user authorizes.
-Receives tokens, encrypts and stores them, creates the `connected_platforms`
-row, and auto-registers the platform as a company-level MCP server.
+OAuth callback endpoint. The browser is redirected here by Hezo Connect after
+the user authorizes and Connect exchanges the auth code for tokens.
 
-This endpoint is not called directly by the UI — it's the redirect target
-from Hezo Connect.
+This endpoint is not called directly by the UI — it's the browser redirect
+target from Hezo Connect.
 
-Query params: `?state=...&access_token=...&refresh_token=...&expires_in=...&scopes=...&metadata=...`
+Query params: `?platform=github&access_token=...&scopes=...&metadata=...&state=...`
 
-Redirects the user's browser back to the company settings page with a success
-or failure message.
+On error: `?error=access_denied&platform=github&state=...`
+
+Processing:
+1. Verify the `state` parameter signature (HMAC-SHA256)
+2. Extract `company_id` from the state payload
+3. Encrypt the access token with the master key, store in `secrets` table
+4. Upsert `connected_platforms` row (status=active, token reference, scopes, metadata)
+5. Dismiss any existing `oauth_request` inbox items for this company+platform
+6. Redirect browser to company settings page with success/failure message
 
 #### `DELETE /companies/:companyId/connections/:connectionId`
 Disconnect a platform. Revokes tokens (if the provider supports it), removes
