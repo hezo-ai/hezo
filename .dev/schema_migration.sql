@@ -67,6 +67,7 @@ CREATE TYPE heartbeat_run_status AS ENUM ('queued', 'running', 'succeeded', 'fai
 CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
 CREATE TYPE membership_role AS ENUM ('owner', 'member');
 CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
+CREATE TYPE project_doc_type AS ENUM ('tech_spec', 'implementation_plan', 'research', 'ui_design_decisions', 'marketing_plan', 'other');
 
 -------------------------------------------------------------------------------
 -- COMPANIES
@@ -86,6 +87,10 @@ CREATE TABLE companies (
     mcp_servers         JSONB NOT NULL DEFAULT '[]'::jsonb,
     -- MPP wallet config
     mpp_config          JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
+    -- Shared Docker container for all agents in this company
+    docker_base_image   TEXT NOT NULL DEFAULT 'node:20-slim',
+    container_id        TEXT,          -- Docker container ID
+    container_status    container_status,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -163,12 +168,9 @@ CREATE TABLE agents (
     budget_used_cents       INTEGER NOT NULL DEFAULT 0,
     budget_reset_at         TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
     status                  agent_status NOT NULL DEFAULT 'idle',
-    docker_base_image       TEXT NOT NULL DEFAULT 'node:20-slim',
     -- Agent-level MCP servers (merged with company-level at runtime)
     -- [{ "name": "db", "url": "stdio://...", "description": "..." }]
     mcp_servers             JSONB NOT NULL DEFAULT '[]'::jsonb,
-    container_id            TEXT,          -- Docker container ID
-    container_status        container_status,
     last_heartbeat_at       TIMESTAMPTZ,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -516,6 +518,87 @@ CREATE TABLE issue_attachments (
 CREATE INDEX idx_issue_attachments_issue ON issue_attachments(issue_id);
 
 -------------------------------------------------------------------------------
+-- COMPANY PREFERENCES (board-observed working style preferences)
+-------------------------------------------------------------------------------
+
+CREATE TABLE company_preferences (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id              UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    content                 TEXT NOT NULL DEFAULT '',
+    last_updated_by_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (company_id)
+);
+
+-------------------------------------------------------------------------------
+-- COMPANY PREFERENCE REVISIONS
+-------------------------------------------------------------------------------
+
+CREATE TABLE company_preference_revisions (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    preference_id           UUID NOT NULL REFERENCES company_preferences(id) ON DELETE CASCADE,
+    revision_number         INTEGER NOT NULL,
+    content                 TEXT NOT NULL,
+    change_summary          TEXT NOT NULL DEFAULT '',
+    author_agent_id         UUID REFERENCES agents(id) ON DELETE SET NULL,
+    author_user_id          TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (preference_id, revision_number)
+);
+
+CREATE INDEX idx_company_pref_revisions_pref ON company_preference_revisions(preference_id);
+
+-------------------------------------------------------------------------------
+-- PROJECT DOCUMENTS
+-------------------------------------------------------------------------------
+
+CREATE TABLE project_docs (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id              UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    company_id              UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    doc_type                project_doc_type NOT NULL,
+    title                   TEXT NOT NULL,
+    slug                    TEXT NOT NULL,
+    content                 TEXT NOT NULL DEFAULT '',
+    created_by_agent_id     UUID REFERENCES agents(id) ON DELETE SET NULL,
+    last_updated_by_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (project_id, slug)
+);
+
+-- Enforce one doc per type per project (except 'other' which allows multiples)
+CREATE UNIQUE INDEX idx_project_docs_one_per_type
+    ON project_docs(project_id, doc_type)
+    WHERE doc_type != 'other';
+
+CREATE INDEX idx_project_docs_project ON project_docs(project_id);
+CREATE INDEX idx_project_docs_company ON project_docs(company_id);
+
+-------------------------------------------------------------------------------
+-- PROJECT DOCUMENT REVISIONS
+-------------------------------------------------------------------------------
+
+CREATE TABLE project_doc_revisions (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    doc_id                  UUID NOT NULL REFERENCES project_docs(id) ON DELETE CASCADE,
+    revision_number         INTEGER NOT NULL,
+    content                 TEXT NOT NULL,
+    change_summary          TEXT NOT NULL DEFAULT '',
+    author_agent_id         UUID REFERENCES agents(id) ON DELETE SET NULL,
+    author_user_id          TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (doc_id, revision_number)
+);
+
+CREATE INDEX idx_project_doc_revisions_doc ON project_doc_revisions(doc_id);
+
+-------------------------------------------------------------------------------
 -- KB DOCUMENT REVISIONS
 -------------------------------------------------------------------------------
 
@@ -704,6 +787,12 @@ CREATE TRIGGER trg_secrets_updated BEFORE UPDATE ON secrets
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_kb_docs_updated BEFORE UPDATE ON kb_docs
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_company_prefs_updated BEFORE UPDATE ON company_preferences
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_project_docs_updated BEFORE UPDATE ON project_docs
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_connected_platforms_updated BEFORE UPDATE ON connected_platforms

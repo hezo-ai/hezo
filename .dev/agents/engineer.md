@@ -78,6 +78,10 @@ Current date: {{current_date}}
 
 {{kb_context}}
 
+{{company_preferences_context}}
+
+{{project_docs_context}}
+
 Rules:
 - Tests are mandatory. Every code change must include automated tests. Target 90%+ coverage.
 - Documentation is mandatory. Every code change must update relevant docs.
@@ -88,6 +92,9 @@ Rules:
 - Never bypass git hooks or skip tests
 - Keep commits small and focused. One logical change per commit.
 - Your work is NOT done until the QA Engineer approves it
+- When your implementation diverges from the technical spec or implementation plan, update the relevant project documents to reflect the actual state.
+- Keep all project documents current — if a design decision changes during implementation, update the tech spec, implementation plan, and any other affected project docs.
+- Review company preferences to align implementation style with the board's preferences. When you observe new preferences in board feedback, update the company preferences document.
 ```
 
 ## Default Configuration

@@ -36,7 +36,7 @@ The `hezo_` prefix distinguishes board API keys from agent JWTs.
 Keys are stored hashed (bcrypt). Shown once at creation, never again.
 
 ### Agent — JWT
-Per-agent bearer token issued at container provisioning.
+Per-agent bearer token issued at agent creation.
 
 ```
 Authorization: Bearer <agent_jwt>
@@ -102,7 +102,7 @@ Response: full company object. On creation, the server automatically:
 2. Creates a **full agent team** from built-in templates: CEO, Architect, Engineer, QA Engineer, UI Designer, Researcher (or cloned agents if cloning).
 3. Creates a **"Setup" project** with an onboarding issue assigned to the CEO:
    *"Set up repository access — configure deploy keys for connected GitHub account."*
-4. Provisions Docker containers for all agents (with `agent-ci` pre-installed).
+4. Provisions the company Docker container (with `agent-ci` pre-installed).
 
 The UI then prompts the owner to connect platforms via OAuth (Hezo Connect):
 - **GitHub** (required) — for repo access, PRs, Actions
@@ -141,12 +141,12 @@ Request:
 agent-level servers at runtime.
 
 `mpp_config` — MPP wallet configuration. The wallet private key is stored in
-the secrets vault (referenced by name). When enabled, agent containers get
-`mppx` CLI and wallet credentials injected so they can pay for HTTP 402
+the secrets vault (referenced by name). When enabled, the company container has
+`mppx` CLI and wallet credentials are injected into agent subprocesses so they can pay for HTTP 402
 services autonomously. MPP costs are debited against the agent's budget.
 
 #### `DELETE /companies/:companyId`
-Delete company and all associated data. Tears down all agent containers.
+Delete company and all associated data. Tears down the company container.
 
 ---
 
@@ -222,8 +222,6 @@ Response:
       "monthly_budget_cents": 3000,
       "budget_used_cents": 1800,
       "status": "active",
-      "docker_base_image": "node:20-slim",
-      "container_status": "running",
       "last_heartbeat_at": "...",
       "assigned_issue_count": 4,
       "created_at": "...",
@@ -247,7 +245,6 @@ Request:
   "runtime_type": "claude_code",
   "heartbeat_interval_min": 60,
   "monthly_budget_cents": 3000,
-  "docker_base_image": "node:20-slim",
   "mcp_servers": [
     { "name": "postgres", "url": "stdio://npx -y @modelcontextprotocol/server-postgres", "description": "Project database" }
   ]
@@ -257,8 +254,7 @@ Request:
 `mcp_servers` is optional. Agent-level MCP servers are merged with company-level
 MCP servers at runtime (agent-level takes precedence on name conflicts).
 
-Response: full agent object. Container provisioning starts asynchronously —
-`container_status` will be `creating` initially.
+Response: full agent object.
 
 #### `GET /companies/:companyId/agents/:agentId`
 Get agent detail including system prompt.
@@ -267,23 +263,24 @@ Response: full agent object (same as list item + `system_prompt` + `mcp_servers`
 
 #### `PATCH /companies/:companyId/agents/:agentId`
 Update agent config: title, role_description, system_prompt, heartbeat_interval_min,
-monthly_budget_cents, docker_base_image, reports_to, mcp_servers.
+monthly_budget_cents, reports_to, mcp_servers.
 
 Cannot update: status (use lifecycle endpoints), budget_used_cents (system-managed).
 
 #### `POST /companies/:companyId/agents/:agentId/pause`
-Pause an agent. Stops heartbeats, does not destroy container.
+Pause an agent. Stops heartbeats, kills subprocess if running. Does not affect the company container.
 
 #### `POST /companies/:companyId/agents/:agentId/resume`
 Resume a paused agent.
 
 #### `POST /companies/:companyId/agents/:agentId/terminate`
-Terminate an agent. Destroys the Docker container. Unassigns all issues.
+Terminate an agent. Kills the agent's subprocess. Unassigns all issues.
 Agent record is kept for audit trail (status = `terminated`).
 
-#### `POST /companies/:companyId/agents/:agentId/rebuild`
-Tear down and rebuild the Docker container. Useful when base image or repo
-config changes. Agent keeps its identity and config.
+#### `POST /companies/:companyId/rebuild-container`
+Tear down and rebuild the company's shared Docker container. Kills all agent subprocesses,
+destroys the container, provisions a new one. Useful when base image or dependency config changes.
+All agents keep their identity and config.
 
 ---
 
@@ -302,13 +299,13 @@ Response:
           "id": "uuid",
           "title": "CEO",
           "status": "active",
-          "container_status": "running",
+
           "children": [
             {
               "id": "uuid",
               "title": "CTO",
               "status": "idle",
-              "container_status": "running",
+    
               "children": [
                 { "id": "uuid", "title": "Dev Engineer", "status": "active", "container_status": "running", "children": [] },
                 { "id": "uuid", "title": "UI Designer", "status": "active", "container_status": "running", "children": [] }
@@ -318,7 +315,7 @@ Response:
               "id": "uuid",
               "title": "CMO",
               "status": "paused",
-              "container_status": "stopped",
+    
               "children": []
             }
           ]
@@ -711,7 +708,7 @@ Request:
 
 #### `DELETE /companies/:companyId/secrets/:secretId`
 Delete a secret. Revokes all grants. Agents with this secret injected will
-lose access on next container restart.
+lose access on next subprocess invocation.
 
 ---
 
@@ -802,9 +799,9 @@ Request:
 
 `grant_scope` is only relevant for `secret_access` approvals. When approved,
 the system creates the grant(s) and injects the secret(s) into the agent's
-container.
+subprocess on next invocation.
 
-For `hire` approvals, approval triggers agent creation + container provisioning.
+For `hire` approvals, approval triggers agent creation.
 
 ---
 
@@ -1021,6 +1018,124 @@ Request:
 
 #### `DELETE /companies/:companyId/kb-docs/:docId`
 Delete a knowledge base document.
+
+---
+
+### Company Preferences
+
+#### `GET /companies/:companyId/preferences`
+Get the company preferences document.
+
+Response:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "company_id": "uuid",
+    "content": "## Code Architecture\n- Prefer functional patterns...\n\n## Design\n...",
+    "last_updated_by_agent_id": "uuid | null",
+    "last_updated_by_agent_title": "Architect",
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+```
+
+Returns an empty document (auto-created) if no preferences have been set yet.
+
+#### `PATCH /companies/:companyId/preferences`
+Update the company preferences document (board action). Creates a revision automatically.
+
+Request:
+```json
+{
+  "content": "## Code Architecture\n- Prefer functional patterns...",
+  "change_summary": "Added preference for functional patterns based on recent feedback"
+}
+```
+
+#### `GET /companies/:companyId/preferences/revisions`
+List revision history for the company preferences document.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "revision_number": 3,
+      "change_summary": "Added preference for functional patterns",
+      "author_agent_title": "Architect",
+      "author_user_name": null,
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+---
+
+### Project Documents
+
+#### `GET /companies/:companyId/projects/:projectId/docs`
+List all project documents.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "project_id": "uuid",
+      "doc_type": "tech_spec",
+      "title": "Technical Specification",
+      "slug": "technical-specification",
+      "created_by_agent_title": "Architect",
+      "last_updated_by_agent_title": "Engineer",
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+```
+
+#### `GET /companies/:companyId/projects/:projectId/docs/:docId`
+Get full project document content.
+
+Response: full doc object including `content` field.
+
+#### `POST /companies/:companyId/projects/:projectId/docs`
+Create a project document (board action).
+
+Request:
+```json
+{
+  "doc_type": "tech_spec",
+  "title": "Technical Specification",
+  "content": "# Technical Specification\n\n## Architecture\n..."
+}
+```
+
+`slug` is auto-derived from the title. Returns 409 if a document of that type already exists for the project (except `other` type).
+
+#### `PATCH /companies/:companyId/projects/:projectId/docs/:docId`
+Update a project document (board action). Creates a revision automatically.
+
+Request:
+```json
+{
+  "content": "# Technical Specification\n\n## Updated...",
+  "change_summary": "Updated API section after implementation review"
+}
+```
+
+#### `DELETE /companies/:companyId/projects/:projectId/docs/:docId`
+Delete a project document.
+
+#### `GET /companies/:companyId/projects/:projectId/docs/:docId/revisions`
+List revision history for a project document.
+
+Response: same shape as KB doc revisions.
 
 ---
 
@@ -1295,7 +1410,7 @@ Dismiss an inbox item. Sets `dismissed_at`.
 
 ## Agent API
 
-Agents call these endpoints from inside their Docker containers.
+Agents call these endpoints from inside the company's shared Docker container.
 All requests require `Authorization: Bearer <agent_token>`.
 
 Base URL: `http://host.docker.internal:3100/agent-api`
@@ -1313,7 +1428,6 @@ Agent reports in. Server returns pending work.
 Request:
 ```json
 {
-  "container_status": "running",
   "metrics": {
     "memory_mb": 256,
     "disk_mb": 1024
@@ -1495,7 +1609,7 @@ Response:
 }
 ```
 
-Note: actual values are injected as env vars in the container, never returned
+Note: actual values are injected as env vars in the agent's subprocess, never returned
 via API.
 
 ---
@@ -1515,7 +1629,6 @@ Request:
   "runtime_type": "claude_code",
   "heartbeat_interval_min": 120,
   "monthly_budget_cents": 2500,
-  "docker_base_image": "node:20-slim",
   "reason": "We need automated test coverage before the collab feature ships."
 }
 ```
@@ -1579,9 +1692,112 @@ Response:
     "kb_docs": [
       { "id": "uuid", "title": "Coding Standards", "slug": "coding-standards", "updated_at": "..." }
     ],
+    "company_preferences": {
+      "id": "uuid",
+      "content": "## Code Architecture\n- Prefer functional patterns...",
+      "updated_at": "..."
+    },
+    "project_docs": [
+      { "id": "uuid", "doc_type": "tech_spec", "title": "Technical Specification", "project_id": "uuid", "project_name": "Main App", "updated_at": "..." }
+    ],
     "peers": [
       { "id": "uuid", "title": "UI Designer", "status": "active" }
     ]
+  }
+}
+```
+
+---
+
+### Company Preferences (agent-side)
+
+#### `GET /company-preferences`
+Agent reads the company preferences document for its company.
+
+Response: full preferences object including `content`.
+
+#### `POST /company-preferences/update`
+Agent updates the company preferences document. No approval required. Creates a
+revision automatically. Auto-creates the preferences document if it doesn't exist.
+
+Request:
+```json
+{
+  "content": "## Code Architecture\n- Prefer functional patterns over class-based...",
+  "change_summary": "Observed preference for functional patterns in board feedback on issue ACME-42"
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "revision_number": 4,
+    "updated_at": "..."
+  }
+}
+```
+
+---
+
+### Project Documents (agent-side)
+
+#### `GET /project-docs?project_id=uuid`
+Agent lists project documents for a given project. If `project_id` is omitted,
+returns documents for the project of the agent's current issue.
+
+Response: array of doc metadata (same shape as board list, without content).
+
+#### `GET /project-docs/:docId`
+Agent reads a full project document.
+
+Response: full doc object including `content`.
+
+#### `POST /project-docs`
+Agent creates a project document.
+
+Request:
+```json
+{
+  "project_id": "uuid",
+  "doc_type": "tech_spec",
+  "title": "Technical Specification",
+  "content": "# Technical Specification\n\n## Architecture\n..."
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "slug": "technical-specification",
+    "created_at": "..."
+  }
+}
+```
+
+Returns 409 if a document of that type already exists for the project (except `other` type).
+
+#### `PATCH /project-docs/:docId`
+Agent updates a project document. No approval required. Creates a revision automatically.
+
+Request:
+```json
+{
+  "content": "# Technical Specification\n\n## Updated...",
+  "change_summary": "Updated API section to reflect implemented endpoint structure"
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "revision_number": 3,
+    "updated_at": "..."
   }
 }
 ```
@@ -1687,6 +1903,10 @@ Server pushes events:
 { "type": "live_chat.started", "company_id": "...", "issue_id": "...", "session_id": "..." }
 { "type": "live_chat.ended", "company_id": "...", "issue_id": "...", "session_id": "...", "summary": "..." }
 { "type": "kb_doc.updated", "company_id": "...", "doc_id": "...", "title": "..." }
+{ "type": "company_preferences.updated", "company_id": "...", "updated_by_agent_id": "..." }
+{ "type": "project_doc.created", "company_id": "...", "project_id": "...", "doc_id": "...", "doc_type": "tech_spec", "title": "..." }
+{ "type": "project_doc.updated", "company_id": "...", "project_id": "...", "doc_id": "...", "title": "..." }
+{ "type": "project_doc.deleted", "company_id": "...", "project_id": "...", "doc_id": "..." }
 { "type": "connection.created", "company_id": "...", "platform": "github", "status": "active" }
 { "type": "connection.expired", "company_id": "...", "platform": "gmail" }
 { "type": "connection.disconnected", "company_id": "...", "platform": "stripe" }
@@ -1719,7 +1939,7 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `agent.paused` | agent | Board pauses or budget exceeded |
 | `agent.resumed` | agent | Board resumes |
 | `agent.terminated` | agent | Board terminates |
-| `agent.container_rebuilt` | agent | Board rebuilds container |
+| `company.container_rebuilt` | company | Board rebuilds company container |
 | `project.created` | project | Board creates project |
 | `project.updated` | project | Board updates project |
 | `project.deleted` | project | Board deletes project |
@@ -1748,6 +1968,10 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `kb_update.proposed` | approval | Agent proposes KB change |
 | `kb_update.approved` | approval | Board approves KB change |
 | `kb_update.denied` | approval | Board denies KB change |
+| `company_preferences.updated` | company_preferences | Board or agent updates preferences |
+| `project_doc.created` | project_doc | Board or agent creates project doc |
+| `project_doc.updated` | project_doc | Board or agent updates project doc |
+| `project_doc.deleted` | project_doc | Board deletes project doc |
 | `live_chat.started` | live_chat_session | Board starts session |
 | `live_chat.ended` | live_chat_session | Session ends |
 | `company.cloned` | company | Board clones company |

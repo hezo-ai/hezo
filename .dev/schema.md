@@ -1,6 +1,6 @@
 # Data Model — Design Decisions
 
-## 30 tables, 3 functions
+## 34 tables, 3 functions
 
 | Table | Purpose | Key relationships |
 |-------|---------|-------------------|
@@ -35,6 +35,10 @@
 | `plugin_state` | Scoped key-value store for plugin data. | belongs to plugin + company |
 | `plugin_jobs` | Cron job declarations for plugins. | belongs to plugin |
 | `instance_user_roles` | Server-level admin roles. | belongs to user |
+| `company_preferences` | Company-level preference doc. Agents observe and record board working style preferences. | belongs to company |
+| `company_preference_revisions` | Version history for company preferences. | belongs to company_preference |
+| `project_docs` | Project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan). | belongs to project + company |
+| `project_doc_revisions` | Version history for project documents. | belongs to project_doc |
 | `company_issue_counters` | Helper for atomic issue numbering. | belongs to company |
 
 ## Key design decisions
@@ -117,9 +121,10 @@ job (or heartbeat check) compares this to the current month boundary and resets
 ### Preview files (not in DB)
 
 HTML previews are ephemeral filesystem artifacts, not DB records. The agent writes
-to `/workspace/.previews/` inside its container, which is bind-mounted to:
+to `/workspace/{project}/.previews/{agent_id}/` inside the company container, which is
+visible on the host via the shared workspace volume at:
 ```
-~/.hezo/data/previews/{company_id}/{agent_id}/
+~/.hezo/companies/{slug}/projects/{project}/.previews/{agent_id}/
 ```
 The web app serves these via `/preview/{company_id}/{agent_id}/{filename}`.
 A cron job expires files older than 72 hours. The only DB reference is the
@@ -151,9 +156,9 @@ be @-referenced (`@frontend`, `@api`).
 
 Agents can spawn subagents using their runtime's native parallelism (Claude
 Code subagents, Codex parallel tasks). These are ephemeral child processes
-inside the parent's container — not Hezo agents. They share the parent's budget,
-secrets, and container. Tool calls are reported under the parent. Hezo does not
-manage their lifecycle.
+inside the parent's subprocess — not Hezo agents. They share the parent's budget
+and secrets. Tool calls are reported under the parent. Hezo does not manage
+their lifecycle.
 
 ### MCP servers
 
@@ -161,8 +166,8 @@ Both `companies.mcp_servers` and `agents.mcp_servers` are JSONB arrays storing
 MCP server config: `[{ "name": "...", "url": "...", "description": "..." }]`.
 
 At runtime, company-level and agent-level lists are merged. Agent-level takes
-precedence on name conflicts. The merged list is injected into the container's
-runtime configuration.
+precedence on name conflicts. The merged list is injected into the agent's
+subprocess runtime configuration.
 
 ### MPP (Machine Payments Protocol)
 
@@ -178,7 +183,7 @@ runtime configuration.
 
 The wallet private key is not stored in `mpp_config` — it lives in the
 `secrets` table, referenced by `wallet_key_secret_name`. When MPP is enabled,
-agent containers get `mppx` CLI and wallet credentials injected. Every MPP
+the company container gets `mppx` CLI and wallet credentials are injected into agent subprocesses. Every MPP
 payment is reported as a tool call cost and debited against the agent's budget
 via the same `debit_agent_budget()` atomic function.
 
@@ -190,7 +195,7 @@ When a company is created via `POST /companies`, the server automatically:
    with pre-filled system prompts from built-in role templates
 3. Prompts the owner to connect platforms via OAuth (GitHub required, Gmail recommended)
 4. Creates a "Setup" project with an onboarding issue assigned to the CEO
-5. Provisions Docker containers for all agents (with `agent-ci` pre-installed)
+5. Provisions the company Docker container (with `agent-ci` pre-installed)
 6. Auto-generates the company CLAUDE.md with default engineering rules
 
 This ensures the user never lands on an empty company.
@@ -201,16 +206,58 @@ This ensures the user never lands on an empty company.
 server copies:
 - All `kb_docs` rows (with new company_id, `last_updated_by_agent_id` set to NULL)
 - All `agents` rows (new IDs, same titles/prompts/org hierarchy, `budget_used_cents`
-  reset to 0, containers provisioned fresh)
+  reset to 0, company container provisioned fresh)
 - Company-level `mcp_servers` array
 - `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
 
-NOT copied: projects, repos, issues, secrets, cost_entries, audit_log, api_keys,
-secret_grants, approvals, connected_platforms. Platform connections must be set
-up fresh for each company via OAuth.
+Also copied: `company_preferences` row (with `last_updated_by_agent_id` set to
+NULL) so the cloned company inherits the board's established working style.
 
 NOT copied: projects, repos, issues, secrets, cost_entries, audit_log, api_keys,
-secret_grants, approvals. The cloned company starts operationally clean.
+secret_grants, approvals, connected_platforms, project_docs. Platform connections
+must be set up fresh for each company via OAuth. Project documents are
+project-scoped and not cloned.
+
+### Company preferences
+
+`company_preferences` stores a single Markdown document per company, recording
+observed board preferences in areas like code architecture, design approach,
+research style, and team working conventions. Preferences are company-level
+(not per-member) — even with multiple board members, the company has one unified
+set of preferences that represent how the board collectively wants things done.
+
+Agents update this document directly (no approval required) as they observe
+patterns in board feedback. Every change creates a revision in
+`company_preference_revisions` for auditability. The board can also edit
+directly, review revision history, and revert.
+
+The `UNIQUE (company_id)` constraint ensures one preference document per company.
+Content is structured Markdown with sections for different preference categories
+(code architecture, design, research, team working, etc.).
+
+The `{{company_preferences_context}}` template variable in system prompts
+injects the preference document so agents can align with the board's working
+style.
+
+### Project documents
+
+`project_docs` stores project-level shared documents — technical specifications,
+implementation plans, research documents, UI design decisions, and marketing plans.
+These are living documents that agents create and maintain throughout a project's
+lifecycle. Any agent can read and update any project document.
+
+A separate table (rather than extending `kb_docs`) because project documents have
+fundamentally different semantics: they have a `doc_type` enum, belong to a
+project lifecycle, and use different access patterns. The partial unique index
+`idx_project_docs_one_per_type` enforces at most one document per type per project
+(except `other`, which allows multiples).
+
+Updates do not require approval — these are working documents actively maintained
+during development. All changes create revisions in `project_doc_revisions` for
+full audit trail. The board can review revision history and revert.
+
+The `{{project_docs_context}}` template variable in system prompts auto-injects
+all project documents for the current issue's project.
 
 ### Knowledge base
 

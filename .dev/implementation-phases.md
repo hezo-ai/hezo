@@ -26,8 +26,8 @@
 - Heartbeat engine: wakeup queue, coalescing, timer ticks
 - Issue execution locking (SELECT FOR UPDATE)
 - Orphan detection and auto-retry
-- Agent runtime: `claude_code` adapter (subprocess, Docker container)
-- Docker container lifecycle (provision, start, stop, rebuild, terminate)
+- Agent runtime: `claude_code` adapter (subprocess in company container)
+- Company Docker container lifecycle (provision, start, stop, rebuild) + agent subprocess management
 - Git worktrees for parallel work
 - Host filesystem layout (~/.hezo/)
 - Per-agent and per-company budgets with atomic debit
@@ -36,8 +36,10 @@
 - Secrets management (AES-256-GCM encryption, grants, approval flow)
 - Approval system (secret_access, hire, strategy, plan_review, kb_update)
 - Knowledge base (CRUD, agent proposals, revision history)
+- Company preferences (board working style, agent-driven updates, revision history)
+- Project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan)
 - Persistent live chat (per-issue, @-mention agents, WebSocket)
-- HTML previews (agent writes to container, served via proxy)
+- HTML previews (agent writes to shared workspace volume, served via proxy)
 - Structured options (clickable choice cards)
 - Tool call tracing
 - WebSocket real-time events
@@ -50,6 +52,8 @@
   - Approval inbox
   - Board inbox (notifications)
   - Knowledge base viewer/editor
+  - Company preferences editor
+  - Project documents tab (per-project)
   - Secrets vault
   - Cost dashboard
   - Audit log viewer
@@ -175,7 +179,7 @@
   - Notifications for inbox items (approvals, escalations, budget alerts, etc.)
 - MPP (Machine Payments Protocol):
   - Wallet config per company
-  - `mppx` CLI in agent containers
+  - `mppx` CLI in company container
   - Autonomous HTTP 402 payment flow
   - Cost tracking integration
 
