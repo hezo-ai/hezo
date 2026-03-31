@@ -1,1 +1,1 @@
-bunx biome check . && bun run typecheck && bun run build
+bunx biome check --diagnostic-level=error . && bun run typecheck && bun run build

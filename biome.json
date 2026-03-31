@@ -37,7 +37,8 @@
 			"!**/dist",
 			"!.claude",
 			"!.hezo",
-			"!.turbo"
+			"!.turbo",
+			"!**/migrations-bundle.json"
 		]
 	}
 }
