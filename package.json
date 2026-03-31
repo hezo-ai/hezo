@@ -1,0 +1,15 @@
+{
+  "name": "hezo",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "devDependencies": {
+    "turbo": "^2",
+    "typescript": "^5"
+  },
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "test": "turbo test",
+    "typecheck": "turbo typecheck"
+  }
+}
