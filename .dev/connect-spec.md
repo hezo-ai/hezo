@@ -216,7 +216,7 @@ for most users — no setup required.
 | Cost | Free | Free (pricing later) |
 | Usage tracking | None | Per-key request counts |
 | Rate limiting | None | Basic abuse prevention |
-| Account system | None | Email/password accounts |
+| Account system | None | GitHub OAuth accounts |
 | Dashboard | None | Usage stats, key management |
 
 **Account + API key flow:**
@@ -262,8 +262,8 @@ GET  /auth/:platform/callback                  Provider redirects here after con
 ### Account endpoints (centrally hosted only)
 
 ```
-POST /accounts/register                         Create account (email/password)
-POST /accounts/login                            Login (returns session token)
+GET  /accounts/auth/github                      Initiate GitHub OAuth login
+GET  /accounts/auth/callback                    OAuth callback — creates/updates account, sets session
 POST /accounts/logout                           End session
 GET  /accounts/me                               Current account info
 ```

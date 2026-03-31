@@ -82,7 +82,7 @@ CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention'
 CREATE TYPE wakeup_status AS ENUM ('queued', 'claimed', 'completed', 'failed', 'skipped', 'coalesced', 'deferred', 'cancelled');
 CREATE TYPE heartbeat_run_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'timed_out');
 CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
-CREATE TYPE membership_role AS ENUM ('owner', 'member');
+CREATE TYPE membership_role AS ENUM ('board', 'member');
 CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 CREATE TYPE project_doc_type AS ENUM ('tech_spec', 'implementation_plan', 'research', 'ui_design_decisions', 'marketing_plan', 'other');
 
@@ -136,11 +136,15 @@ CREATE TABLE companies (
 -------------------------------------------------------------------------------
 
 CREATE TABLE company_memberships (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id  UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role        membership_role NOT NULL DEFAULT 'member',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role              membership_role NOT NULL DEFAULT 'member',
+    role_title        TEXT,              -- arbitrary title, e.g. "Frontend Developer" (NULL for board)
+    permissions_text  TEXT NOT NULL DEFAULT '',  -- free-text permission description for agents
+    project_ids       JSONB,            -- if set, restricts member to these project UUIDs (NULL = all)
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     UNIQUE (company_id, user_id)
 );
@@ -153,15 +157,19 @@ CREATE INDEX idx_memberships_user ON company_memberships(user_id);
 -------------------------------------------------------------------------------
 
 CREATE TABLE invites (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id  UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    email       TEXT NOT NULL,
-    code        TEXT NOT NULL UNIQUE,
-    status      invite_status NOT NULL DEFAULT 'pending',
-    invited_by  TEXT REFERENCES users(id) ON DELETE SET NULL,
-    expires_at  TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '7 days'),
-    accepted_at TIMESTAMPTZ,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id       UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    email            TEXT NOT NULL,
+    code             TEXT NOT NULL UNIQUE,
+    status           invite_status NOT NULL DEFAULT 'pending',
+    role             membership_role NOT NULL DEFAULT 'member',
+    role_title       TEXT,
+    permissions_text TEXT NOT NULL DEFAULT '',
+    project_ids      JSONB,
+    invited_by       TEXT REFERENCES users(id) ON DELETE SET NULL,
+    expires_at       TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '7 days'),
+    accepted_at      TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_invites_company ON invites(company_id);
@@ -277,7 +285,8 @@ CREATE TABLE issues (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    assignee_id         UUID REFERENCES agents(id) ON DELETE SET NULL,
+    assignee_type       TEXT,  -- 'agent' or 'board'
+    assignee_id         UUID,  -- references agents(id) or users(id) depending on assignee_type
     parent_issue_id     UUID REFERENCES issues(id) ON DELETE SET NULL,
     blocked_by_issue_id UUID REFERENCES issues(id) ON DELETE SET NULL,
     created_by_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
@@ -925,3 +934,28 @@ BEGIN
     RETURN TRUE;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Notification preferences (per-user, per-channel routing)
+CREATE TABLE notification_preferences (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    channel          TEXT NOT NULL,  -- 'web', 'telegram', 'slack'
+    enabled          BOOLEAN NOT NULL DEFAULT true,
+    event_types      JSONB NOT NULL DEFAULT '[]',
+    telegram_chat_id TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, channel)
+);
+
+-- Slack connections (per-company Slack app config)
+CREATE TABLE slack_connections (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    bot_token_secret_id UUID NOT NULL REFERENCES secrets(id),
+    team_id             TEXT NOT NULL,
+    team_name           TEXT NOT NULL,
+    installed_by        UUID NOT NULL REFERENCES users(id),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (company_id)
+);

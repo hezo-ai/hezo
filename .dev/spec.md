@@ -40,7 +40,7 @@ Hezo ships as a single executable binary. No external database required. No clou
 | Database | PGlite with NodeFS | Filesystem-persisted embedded Postgres at `~/.hezo/pgdata` |
 | Persistence path | `~/.hezo/` by default | Overridable via `--data-dir` CLI arg |
 | Live queries | PGlite `live.query()` / `live.changes()` | Real-time UI updates without polling |
-| Migrations | Custom SQL runner | Numbered migration files, tracking table, runs on startup |
+| Migrations | Custom SQL runner | Numbered SQL files, bundled into binary via `@hiddentao/zip-json`, runs on startup |
 | Encryption | AES-256-GCM | Master key held in memory only |
 | Project containers | Docker Engine API | One container per project (all repos checked out inside) |
 | Frontend | React (bundled into binary) | Served by the same Hono process, bundled via `bun build --compile` |
@@ -49,7 +49,7 @@ Hezo ships as a single executable binary. No external database required. No clou
 | Skill file | Served at `GET /skill.md` | Teaches external AI agents how to interact with Hezo |
 | REST API | JSON over HTTP | Board + agent endpoints at `/api` |
 | OAuth gateway | Hezo Connect (self-hosted or connect.hezo.ai) | Handles OAuth flows for GitHub, Gmail, Stripe, etc. |
-| Auth | Better Auth | Email/password + GitHub/GitLab OAuth, session cookies, multi-user |
+| Auth | Better Auth | GitHub/GitLab OAuth, session cookies, multi-user (email/password deferred) |
 | Integrations | 9 platforms via OAuth | GitHub, Gmail, GitLab, Stripe, PostHog, Railway, Vercel, DigitalOcean, X |
 | Plugin runtime | Worker threads + dynamic import | TypeScript plugins with capability-gated APIs |
 
@@ -66,27 +66,43 @@ packages/
 ```
 
 - **`packages/connect`** — Hezo Connect OAuth gateway. Runs as a standalone process on port 4100. No dependency on the main server.
-- **`packages/server`** — Main Hezo app. Imports from `shared`. Embeds `web` at build time. Builds into a single self-contained binary via `bun build --compile` — the binary includes the server, the React frontend, PGlite, and all dependencies.
+- **`packages/server`** — Main Hezo app. Imports from `shared`. Embeds `web` at build time. Builds into a single self-contained binary via `bun build --compile` — the binary includes the server, the React frontend, PGlite, bundled SQL migrations (via `@hiddentao/zip-json`), and all dependencies.
 - **`packages/web`** — React frontend. Bundled into the server binary via `bun build --compile`.
 - **`packages/shared`** — Shared TypeScript types, Zod validation schemas, constants, and utilities used by both `connect` and `server`. Reduces duplication between packages.
 
 ### Master key lifecycle
 
-1. **First startup** (empty DB): server generates a random 256-bit key, displays it in the terminal, and stores the canary. No prompt needed — just generates and shows it.
-2. Server stores a canary value in `system_meta` table: `encrypt("CANARY", master_key)`.
-3. Key is held in memory only — never written to disk.
-4. **Subsequent startups** (DB has data): if `--master-key <key>` is provided on the CLI, the server uses it directly. Otherwise, the server starts in a **locked state** and the web UI shows a master key entry screen on first load. The user enters the key in the browser. Once verified, the server unlocks and serves normally.
-5. Server attempts to decrypt the canary. Wrong key → server refuses to unlock.
+The master key is held in memory only — never written to disk. It encrypts all secrets, agent JWTs, and the canary value stored in `system_meta`.
+
+**First startup** (no canary in `system_meta`):
+1. If `--master-key <key>` provided on CLI → use that key, store canary (`encrypt("CANARY", master_key)`), proceed.
+2. If no CLI key → prompt the user in the terminal:
+   - **Option A: Generate a new key.** Server generates a random 256-bit key, displays it once, and warns the user to write it down — it will not be shown again.
+   - **Option B: Enter an existing key.** User provides a key they already have.
+3. Store canary and proceed.
+
+**Subsequent startup** (canary exists in `system_meta`):
+1. If `--master-key <key>` provided on CLI → attempt to decrypt canary.
+   - **Success** → unlock, proceed normally.
+   - **Failure** → warn "incorrect master key" and prompt the user with recovery options (see below).
+2. If no CLI key → prompt the user in the terminal to enter their master key → attempt to decrypt canary.
+   - **Success** → unlock, proceed normally.
+   - **Failure** → prompt with recovery options (see below).
+
+**Recovery options** (after failed canary decryption):
+- **Re-enter a different master key.** Try again with the correct key.
+- **Generate a new master key and start fresh.** Warn that all existing instance data (secrets, companies, agents) will be lost. If confirmed, wipe the database, store a new canary, and proceed with a clean instance.
 
 ### CLI interface and default configuration
 
 ```
 hezo                          # Start server with sensible defaults
 hezo --data-dir /path/to/dir  # Custom persistence directory (default: ~/.hezo/)
-hezo --master-key <key>       # Supply master key (skip web UI prompt)
+hezo --master-key <key>       # Supply master key (skip terminal prompt)
 hezo --port 3100              # Custom port (default: 3100)
 hezo --connect-url <url>      # Hezo Connect URL (default: http://localhost:4100)
 hezo --connect-api-key <key>  # API key for centrally hosted Connect
+hezo --reset                  # Wipe existing database and start fresh
 ```
 
 **Sensible defaults for zero-config local development:**
@@ -96,7 +112,7 @@ hezo --connect-api-key <key>  # API key for centrally hosted Connect
 | Server port | `3100` | Main Hezo app |
 | Connect URL | `http://localhost:4100` | Matches local Hezo Connect default port |
 | Data directory | `~/.hezo/` | PGlite database, company data, assets |
-| Master key | *(prompt via web UI)* | Auto-generated on first startup, web UI prompt on subsequent startups |
+| Master key | *(prompt in terminal)* | Auto-generated on first startup, terminal prompt on subsequent startups |
 
 Running `hezo` with zero arguments works for local development when Hezo Connect is running on its default port (4100). No configuration file needed for the common case.
 
@@ -127,9 +143,9 @@ The frontend uses PGlite React hooks (`useLiveQuery`, `useLiveIncrementalQuery`)
 
 ### Migration system
 
-Hezo uses a custom forward-only migration system with numbered SQL files. Migrations run automatically on every server startup, enabling safe upgrades without data loss.
+Hezo uses a custom forward-only migration system with numbered SQL files. Migrations are bundled into the compiled binary and run automatically on every server startup, enabling safe upgrades without data loss.
 
-**Migration files** are stored as `migrations/NNN_description.sql`:
+**Migration files** are stored as `migrations/NNN_description.sql` in the source tree:
 ```
 migrations/
 ├── 001_initial_schema.sql     # The full initial schema
@@ -137,6 +153,13 @@ migrations/
 ├── 003_add_mcp_tools.sql      # Example: new table
 └── ...
 ```
+
+**Bundling into the binary:** Migration SQL files are compressed into a JSON archive at build time using `@hiddentao/zip-json` and embedded into the compiled binary. At startup, the server loads the compressed migrations from memory — no filesystem access needed for migration files. This ensures the binary is fully self-contained.
+
+**Build process:**
+1. `zip()` compresses all `migrations/*.sql` files into a JSON object (base64-encoded gzip with metadata)
+2. The compressed archive is written to `migrations-bundle.json` and imported by the binary entry point
+3. At startup, `unzip()` extracts the SQL content in memory and the migration runner processes it
 
 **Tracking table** (`_migrations`) records which migrations have been applied:
 ```sql
@@ -150,15 +173,18 @@ CREATE TABLE IF NOT EXISTS _migrations (
 
 **Startup behavior:**
 1. Ensure `_migrations` table exists (create if not)
-2. Read all `migrations/*.sql` files, sorted by filename
+2. Load migration SQL from the bundled archive (in memory)
 3. Skip files already recorded in `_migrations`
 4. For each unapplied migration: run inside a transaction, record in `_migrations` with checksum
 5. Checksum verification: if a previously-applied migration file has changed, log a warning (indicates the migration was modified after being applied — this should not happen)
 
+**`--reset` flag:** When provided, the server wipes the existing database directory and starts fresh before running migrations. This is useful during local development. The user is warned and must confirm (unless also providing `--master-key`, which implies non-interactive mode).
+
 **Design decisions:**
-- **Forward-only** — no rollback migrations. For an embedded database, the simplest recovery is restoring from a backup. Add new migrations to fix issues.
+- **Forward-only** — no rollback migrations. For an embedded database, the simplest recovery is restoring from a backup or using `--reset`. Add new migrations to fix issues.
 - **Atomic per file** — each migration runs in its own transaction. If a migration fails, only that migration is rolled back, and startup halts with an error.
 - **Idempotent startup** — safe to restart at any time; already-applied migrations are skipped.
+- **Bundled, not on disk** — migrations are embedded in the binary, not read from the filesystem at runtime. This keeps the binary fully portable.
 
 ### MCP endpoint
 
@@ -281,11 +307,11 @@ When a new company is created, the user selects a **company type** (see above). 
    - DevOps Engineer (reports to Architect)
    - Marketing Lead (reports to CEO)
    - Researcher (reports to CEO)
-2. **Prompts the owner to connect platforms** via OAuth (see Hezo Connect, section 5b):
+2. **Prompts the creator to connect platforms** via OAuth (see Hezo Connect, section 5b):
    - GitHub (required for repo access)
    - Gmail (recommended for agent email)
    - Others optional: Stripe, PostHog, Railway, Vercel, DigitalOcean, X, GitLab
-3. **Sets up the company email address** — the owner provides an email address for the company (e.g., `team@acme.com`). Used for sending board member invitations and company-to-human communication. Can be changed later in company settings.
+3. **Sets up the company email address** — the creator provides an email address for the company (e.g., `team@acme.com`). Used for sending board member invitations and company-to-human communication. Can be changed later in company settings.
 4. **Creates a "Setup" project** with an onboarding issue assigned to the CEO: *"Set up repository access — configure deploy keys for connected GitHub account."*
 5. **Provisions the project's Docker container** when the first project is created
 6. **Creates the `.hezo/{company}/` folder structure** on the host machine
@@ -366,6 +392,7 @@ The system prompt editor supports variables that are resolved at runtime:
 | `{{company_preferences_context}}` | Company preferences document — board working style preferences observed by agents |
 | `{{project_docs_context}}` | All project documents for the current issue's project (tech spec, implementation plan, research, UI decisions, marketing plan) |
 | `{{agent_role}}` | The agent's own title |
+| `{{requester_context}}` | When processing a human request: the requester's role (board/member), title, and permissions_text. Agents use this to decide whether to accept direction or escalate. |
 | `{{current_date}}` | ISO date at time of resolution |
 
 On agent creation, the UI provides a monospace editor with a toolbar for inserting variables, loading role templates, and Markdown preview support.
@@ -953,7 +980,7 @@ GitHub-style issue tracker. Issues are the primary interaction surface for the e
 | Title | Yes | Short description |
 | Description | No | Detailed markdown body |
 | Project | **Yes (enforced)** | Every issue must belong to a project |
-| Assignee | No | Agent assigned to work on it |
+| Assignee | No | Agent or board member assigned to work on it (polymorphic: `assignee_type` + `assignee_id`) |
 | Status | Yes | `backlog`, `open`, `in_progress`, `review`, `blocked`, `done`, `closed`, `cancelled` |
 | Priority | Yes | `urgent`, `high`, `medium`, `low` |
 | Labels | No | Free-form tags (JSONB array) |
@@ -1036,7 +1063,7 @@ Use cases: asking questions, requesting code reviews, escalating blockers, handi
 
 ### Issue assignment triggers
 
-When an issue is assigned to an agent (or reassigned), the agent receives an event trigger on its next heartbeat or immediately via notification.
+Issues can be assigned to either an agent or a board member. When assigned to an agent, the agent receives an event trigger on its next heartbeat or immediately via notification. When assigned to a board member, they are notified via the board inbox and any configured messaging channels (Telegram, Slack).
 
 ---
 
@@ -1230,7 +1257,7 @@ Each item is actionable — approve/deny buttons, links to relevant issues, quic
 
 For secret access requests, the board can choose the grant scope (single / project / company) before approving.
 
-### Board powers
+### Board powers (board role only)
 
 - Pause / resume / terminate any agent at any time
 - Override / reassign any issue at any time
@@ -1238,6 +1265,19 @@ For secret access requests, the board can choose the grant scope (single / proje
 - Approve or deny any pending request
 - View full audit log
 - Delegate specific approval types to agents
+- Access company settings, secrets vault, and plugin management
+- Invite new members (board or member role)
+
+### Member capabilities (member role)
+
+Members can participate in the day-to-day work within their project scope:
+- Create issues, post comments, participate in live chat
+- Be assigned issues and work on them
+- Direct agents (except CEO by default) — subject to `permissions_text` boundaries
+- Read knowledge base and project documents
+- Receive notifications via inbox and configured messaging channels (Telegram, Slack)
+
+Members **cannot**: modify company settings, manage budgets, hire/fire agents, access secrets, view audit log, manage plugins, or create invites.
 
 ### Audit log
 
@@ -1344,10 +1384,10 @@ When multiple events fire for the same agent in quick succession (e.g. several @
 
 ### Issue work ownership
 
-An issue can only be actively worked on by **one agent at a time**. When an agent is assigned to an issue and begins work, that agent holds exclusive ownership of the issue. This prevents multiple agents from making conflicting changes to the same codebase or producing duplicate work.
+An issue can only be actively worked on by **one agent at a time**. When an agent is assigned to an issue and begins work, that agent holds exclusive ownership of the issue. This prevents multiple agents from making conflicting changes to the same codebase or producing duplicate work. Execution locking applies only to agent-assigned issues — board-member-assigned issues have no execution lock.
 
 Work on an issue can span **hours or days** — this is not a short-lived database lock. The agent retains ownership until:
-- The issue is reassigned to a different agent
+- The issue is reassigned to a different agent or board member
 - The issue status moves to `done`, `closed`, or `cancelled`
 - The agent is paused or terminated
 - The board manually releases the assignment
@@ -1640,48 +1680,61 @@ If a plugin worker thread crashes:
 
 ### Overview
 
-Hezo uses **Better Auth** for authentication. Board members can authenticate via:
-- **Email and password** — traditional signup and login
+Hezo uses **Better Auth** for authentication. Board members authenticate via OAuth:
 - **GitHub OAuth** — sign in with an existing GitHub account (via Hezo Connect)
 - **GitLab OAuth** — sign in with an existing GitLab account (via Hezo Connect)
 
-All methods create the same Better Auth session. Access is managed through session cookies. Additional OAuth providers can be added in the future via Hezo Connect.
+Email/password authentication may be added in a future release. All OAuth methods create the same Better Auth session. Access is managed through session cookies.
 
 ### Deployment modes
 
 | Mode | Description |
 |------|-------------|
 | `local_trusted` | Default. No login required. All requests from localhost are treated as board. Suitable for single-user local usage. |
-| `authenticated` | Email/password login required. Multiple board members supported. Suitable for team usage or remote access. |
+| `authenticated` | OAuth login required. Multiple board members supported. Suitable for team usage or remote access. |
 
 The deployment mode is set via CLI flag (`--auth-mode local_trusted` or `--auth-mode authenticated`) or environment variable. Default is `local_trusted`.
 
-### Board members
+### Company members
 
-In `authenticated` mode:
-- Board members sign up with email and password
-- All board members have **equal authority** — any board member can take any board action
-- Board members are associated with companies via memberships
-- A board member can belong to multiple companies
-- The first user to sign up becomes the instance admin
+Users are linked to companies through `company_memberships` with one of two roles:
 
-### Company memberships
+| Role | Authority |
+|------|-----------|
+| **Board** | Full authority. Can direct all agents including CEO. Access all projects, settings, budgets, audit log. Hire/fire agents. Approve all requests. Invite new members. |
+| **Member** | Scoped authority. Can create issues, post comments, participate in live chat, be assigned issues. Can direct agents (except CEO by default). Cannot modify company settings, budgets, secrets, or agent configurations. Can be restricted to specific projects. |
 
-Board members are linked to companies through a `company_memberships` table. A membership grants full board access to that company. Memberships can be:
-- Created by any existing board member of the company (invite)
-- Revoked by any board member of the company
+Both roles sign in via GitHub or GitLab OAuth. All board members have **equal authority** — any board member can take any board action. A user can belong to multiple companies with different roles in each.
+
+The first user to sign in becomes a board member and the instance admin.
+
+#### Member configuration
+
+When a member is added, the inviting board member specifies:
+- **Role title** — an arbitrary title (e.g. "Frontend Developer", "Product Manager", "Intern"). Displayed in the UI and visible to agents.
+- **Permissions text** — a free-text description of what the member can and cannot do. This text is injected into agent system prompts via `{{requester_context}}` so agents respect the member's authority boundaries.
+- **Project scope** — optionally restrict the member to specific projects. If set, the member can only see and interact with those projects. If unset, the member can access all projects.
+
+**Permission enforcement** operates at two layers:
+1. **API layer (structural):** Hard boundaries enforced by the server. Board-only operations (settings, budgets, agents, secrets, audit log) are blocked for members. Project scope restrictions are enforced on all queries.
+2. **Agent layer (behavioral):** The `permissions_text` is injected into agent context when the member interacts with an agent. Agents interpret the text to decide whether to accept direction, escalate to the CEO, or refuse. This allows nuanced, role-specific boundaries without rigid permission matrices.
+
+**Example permissions_text values:**
+- *"Frontend developer. Can direct Engineer and QA Engineer on frontend tasks. Cannot modify architecture decisions or PRDs — escalate to Architect or CEO."*
+- *"Project manager for the mobile app. Full authority over issues in the Mobile project. Can direct all agents on mobile-related work."*
+- *"Intern. Can comment on issues but cannot create or assign them. Read-only access to knowledge base."*
 
 ### Invites
 
 Board members can invite others to join a company:
-1. Existing board member creates an invite (email + company)
+1. Board member creates an invite specifying: email, role (board/member), and for members: role title, permissions text, and optionally project scope
 2. System sends an invitation email **from the company email address** (see company onboarding, section 3) containing a unique invite link
 3. Invite is valid for **7 days**
-4. Recipient clicks the link and can create an account or log in using any supported auth method (email/password, GitHub OAuth, or GitLab OAuth)
-5. After authenticating, the recipient is automatically added to the company as a board member
+4. Recipient clicks the link and signs in via GitHub or GitLab OAuth
+5. After authenticating, the recipient is added to the company with the specified role and permissions
 6. Expired invites must be re-created
 
-If the company has no email address configured, invites are still generated but must be shared manually (the invite link is displayed in the UI for copying).
+If the company has no email address configured, invites are still generated but must be shared manually (the invite link is displayed in the UI for copying). Only board members can create invites.
 
 ### Instance admin
 
@@ -1690,20 +1743,41 @@ The first user to create an account is the instance admin. The instance admin ca
 - Manage the Hezo instance settings
 - View system-wide audit log
 
-### Telegram notifications
+### Messaging integrations (optional)
 
-Board members can connect their Telegram account to receive notifications about board inbox items. This is configured per-user in account settings (not company settings) and is separate from any Slack the company may have connected for agents.
+Board members can optionally interact with Hezo through Slack and/or Telegram in addition to the web UI and MCP endpoint. Both integrations are fully optional.
 
-Notifications are sent for:
-- Pending approvals
-- UI design reviews
-- Escalations
-- Budget alerts
-- Agent errors
-- QA critical findings
-- OAuth link requests
+#### Telegram bot
 
-Each notification includes a deep link back to the relevant item in the Hezo UI.
+Per-user setup in account settings. A single Telegram bot serves the entire Hezo instance. Users link their Telegram account by providing a chat ID after starting a conversation with the bot.
+
+**Capabilities:**
+- Receive notifications for board inbox items (approvals, escalations, budget alerts, agent errors, QA findings, OAuth requests, design reviews)
+- Approve or deny requests via inline keyboards
+- Create issues, post comments, and interact with agents via bot commands (`/issues`, `/approve`, `/comment`, etc.)
+- Agent messages indicate which agent is speaking
+
+**Technical:** Webhook-based via Telegram Bot API (`POST /webhooks/telegram`). Each notification includes a deep link back to the relevant item in the Hezo UI.
+
+#### Slack integration
+
+Per-company setup in company settings. A single Slack app is installed per company workspace. Each role agent posts messages with a distinct display name and avatar using `chat.postMessage` `username` and `icon_url` overrides, so agents appear as separate identities in Slack.
+
+**Capabilities:**
+- Board members receive notifications in a designated channel
+- Approve or deny requests via Slack interactive messages
+- Create issues, post comments, and @-mention agents in channels
+- Each agent's messages appear under its own name and avatar
+
+**Technical:** Events received via Slack Events API webhook (`POST /webhooks/slack`). Bot token stored encrypted in secrets vault. Configured in company settings.
+
+#### Notification preferences
+
+Per-user settings controlling which events trigger notifications and through which channel. Configured in account settings.
+
+- **Channels:** Web inbox (always on), Telegram (optional), Slack (optional)
+- **Event types:** approvals, escalations, budget_alerts, agent_errors, qa_findings, oauth_requests, design_reviews
+- **Defaults:** Web inbox only. Telegram and Slack channels are disabled until the user links their account and enables them.
 
 ---
 
@@ -1817,8 +1891,8 @@ All of this happens within one ticket. The Comments tab shows the conversation f
 | 8 | **Company workspace — Org chart tab** | Read-only tree with status indicators. Click node to inspect agent. |
 | 9 | **Company workspace — Projects tab** | List of projects with goal, repo count, issue count. Click to see filtered issue list + repo management. Project detail includes a Documents tab showing project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan). |
 | 10 | **Company workspace — Knowledge base tab** | List of .md docs with title, last updated, updated by. Click to view/edit. Version history. Board can create docs directly. |
-| 11 | **Company workspace — Settings tab** | Company mission editor, connected platforms (OAuth), secrets vault, MCP servers, MPP config, budget overview, company preferences, audit log viewer, plugin management. |
-| 12 | **Account settings** | Profile, password, Telegram notification settings. |
+| 11 | **Company workspace — Settings tab** | Board-only. Company mission editor, connected platforms (OAuth), secrets vault, MCP servers, MPP config, budget overview, company preferences, audit log viewer, plugin management, Slack integration, member management. |
+| 12 | **Account settings** | All roles. Profile, Telegram bot setup, notification preferences. |
 
 ### Navigation structure
 
@@ -1866,10 +1940,10 @@ Account settings (accessible from user menu)
 | Table | Purpose |
 |-------|---------|
 | `system_meta` | Key-value store for system config (master key canary) |
-| `users` | Board member accounts (email, password hash, admin flag) |
+| `users` | Board member accounts (email, name, admin flag). Authenticated via OAuth — no local password. |
 | `company_types` | Company blueprints (recipes). Defines default agents, KB docs, preferences for new companies. |
 | `companies` | Top-level tenant. Has `email`, `company_type_id`, `mcp_servers` (JSONB), `mpp_config` (JSONB), `budget_monthly_cents`, `budget_used_cents`. |
-| `company_memberships` | Links board members to companies |
+| `company_memberships` | Links users to companies with role (board/member), role_title, permissions_text, project_ids |
 | `invites` | Pending invitations to join a company (7-day expiry) |
 | `api_keys` | Company-scoped API keys for external orchestrators. Stored hashed. |
 | `agents` | Roles in the org chart, self-referential `reports_to`. Has `slug` for @-mentions, `mcp_servers` (JSONB). |
@@ -1899,6 +1973,8 @@ Account settings (accessible from user menu)
 | `agent_sessions` | Per-task session tracking with token usage and compaction state. |
 | `wakeup_queue` | Pending agent wakeup events with coalescing. |
 | `execution_locks` | Issue work ownership tracking — ensures only one agent works on an issue at a time. |
+| `notification_preferences` | Per-user notification routing. Channel (web/telegram/slack), event types, Telegram chat ID. |
+| `slack_connections` | Per-company Slack app config. Bot token (encrypted), team ID, team name. |
 
 ### Enums
 
@@ -1955,9 +2031,9 @@ The full API reference is maintained separately. See `api.md` for the complete e
 
 ### Authentication
 
-Three token types:
+Four token types:
 - **No token (localhost)** — unauthenticated requests from localhost allowed. Default for `local_trusted` mode.
-- **Session cookie** — for authenticated board members in `authenticated` mode. Managed by Better Auth.
+- **Session cookie** — for authenticated board members in `authenticated` mode. Set after GitHub/GitLab OAuth login. Managed by Better Auth.
 - **API key (remote orchestrators)** — `Authorization: Bearer hezo_<key>`. Company-scoped, full board access. For OpenClaw, scripts, AI agents controlling Hezo remotely.
 - **Agent JWT** — `Authorization: Bearer <jwt>`. Signed with master key. Contains `agent_id` + `company_id`.
 

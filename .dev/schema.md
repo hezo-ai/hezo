@@ -5,17 +5,17 @@
 | Table | Purpose | Key relationships |
 |-------|---------|-------------------|
 | `system_meta` | Key-value config store. Holds master key canary. | Standalone. |
-| `users` | Board members (Better Auth managed). Email, password hash, name. | Standalone (auth). |
+| `users` | Board members (Better Auth managed). Email, name. OAuth login only. | Standalone (auth). |
 | `sessions` | Better Auth session tokens. | belongs to user |
 | `company_types` | Company blueprints (recipes). Default agent configs, KB docs, preferences as JSONB snapshots. | Referenced by companies. |
 | `companies` | Top-level tenant. Has `email`, `company_type_id`, `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), company-level budget. | Parent of everything. |
-| `company_memberships` | Links users to companies. Roles: `owner`, `member`. | links user ↔ company |
-| `invites` | Pending invitations for new board members. | belongs to company |
+| `company_memberships` | Links users to companies. Roles: `board`, `member`. Has `role_title`, `permissions_text`, `project_ids`. | links user ↔ company |
+| `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
 | `agents` | A role in the org chart. Self-referential `reports_to`. Has `slug` for @-mentions, `mcp_servers` (JSONB). | belongs to company |
 | `projects` | Group of related work under a company. Has Docker container config, dev ports. | belongs to company |
 | `repos` | Git repo (GitHub only). Short name for @-mentions. | belongs to project |
-| `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `ACME-42`). Execution lock fields. | belongs to company + project, assigned to agent |
+| `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `ACME-42`). Polymorphic assignee (agent or board member). Execution lock fields. | belongs to company + project, assigned to agent or user |
 | `issue_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. | belongs to issue |
 | `issue_attachments` | Links uploaded files to issues. | links asset ↔ issue |
 | `tool_calls` | Trace log entries. Linked to a comment (the agent message that triggered them). | belongs to comment + agent |
@@ -41,6 +41,8 @@
 | `project_docs` | Project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan). | belongs to project + company |
 | `project_doc_revisions` | Version history for project documents. | belongs to project_doc |
 | `company_issue_counters` | Helper for atomic issue numbering. | belongs to company |
+| `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
+| `slack_connections` | Per-company Slack app config. Bot token encrypted in secrets. | belongs to company |
 
 ## Key design decisions
 
@@ -74,11 +76,15 @@ issue numbers. No gaps under normal operation.
 
 ### Master key lifecycle
 
-On first startup (empty DB), the server generates a 256-bit key, displays it,
-and stores `encrypt("CANARY", key)` in `system_meta`. The key is held in
-memory only — never on disk. On subsequent startups the server prompts for
-the key (or accepts `--master-key` CLI arg), decrypts the canary to verify,
-and refuses to start on mismatch.
+The master key is held in memory only — never written to disk. On first startup
+(no canary in `system_meta`), the server either uses `--master-key` from CLI or
+prompts the user to generate a new key or enter an existing one. The key is
+displayed once and the user is warned to write it down. A canary value
+(`encrypt("CANARY", key)`) is stored in `system_meta`.
+
+On subsequent startups, the server attempts to decrypt the canary using the
+provided or prompted key. On failure, the user can re-enter a different key or
+generate a new key and start fresh (all existing data is wiped).
 
 ### Secret encryption
 
@@ -350,6 +356,10 @@ human-facing reference for issues — used in UI, API responses, @-mentions
 
 ### Issue work ownership
 
+Issues use a polymorphic assignee: `assignee_type` (`agent` or `board`) +
+`assignee_id` (references `agents.id` or `users.id`). This allows both AI
+agents and board members to be assigned tickets.
+
 When an agent begins work on an issue, `execution_run_id` and
 `execution_locked_at` are set to claim ownership. This is a work ownership
 marker, not a short-lived database lock — ownership persists across heartbeat
@@ -357,6 +367,8 @@ cycles and may span hours or days. Only one agent works on a given issue at
 a time. If a second agent tries to work on an owned issue, its wakeup is
 deferred with status `deferred_issue_execution` and promoted when ownership
 is released (on completion, reassignment, or agent pause/termination).
+Execution locking applies only to agent-assigned issues — board-member-assigned
+issues have no execution lock.
 
 ### Wakeup queue
 
@@ -384,12 +396,25 @@ and retry tracking for orphan recovery.
 Each edit creates a new revision with content snapshot, change summary,
 and attribution. Supports diff between versions and revert.
 
-### Multi-user auth
+### Multi-user auth and roles
 
-`users` and `sessions` are managed by Better Auth. `company_memberships`
-links users to companies with roles (`owner`, `member`). `invites` handles
-the invitation flow with email + expiry. Both roles have equal board powers
-for MVP — the distinction exists for future permission differentiation.
+`users` and `sessions` are managed by Better Auth. All users authenticate
+via GitHub or GitLab OAuth (email/password deferred to post-MVP).
+
+`company_memberships` links users to companies with two roles: `board`
+(full authority) and `member` (scoped authority). Members have a
+`role_title` (arbitrary, e.g. "Frontend Developer"), `permissions_text`
+(free-text description of what they can do, injected into agent prompts),
+and optional `project_ids` (JSONB array restricting which projects they
+can access). Board members always have full access.
+
+Permission enforcement is two-layered: the API layer enforces structural
+boundaries (project scope, board-only endpoints), while agents interpret
+`permissions_text` to respect behavioral boundaries (e.g. "cannot modify
+PRDs — escalate to CEO").
+
+`invites` carries the intended role, title, permissions, and project scope.
+These fields are copied to `company_memberships` when accepted.
 
 ### File attachments
 
@@ -410,11 +435,21 @@ jobs.
 aggregate spending cap across all agents. The `debit_agent_budget()` function
 checks both agent-level and company-level budgets atomically.
 
-### Telegram notifications
+### Messaging integrations (optional)
 
-Per-user Telegram notifications are configured in account settings. Each user
-can link a Telegram chat via bot token + chat ID. Notifications are sent for
-events the user subscribes to (issue updates, approvals, budget alerts, etc.).
+`notification_preferences` stores per-user notification routing. Each row
+represents a channel (web, telegram, slack) with a JSONB array of subscribed
+event types and an enabled flag. Unique on `(user_id, channel)`.
+
+`slack_connections` stores per-company Slack app configuration. The bot token
+is stored encrypted in the `secrets` table (referenced via `bot_token_secret_id`).
+A single Slack app per company — agents post with distinct display names and
+avatars using `chat.postMessage` overrides.
+
+Telegram is configured per-user via `notification_preferences.telegram_chat_id`.
+A single Telegram bot serves the entire Hezo instance. Both Telegram and Slack
+function as full platform interfaces (not just notifications) — users can create
+issues, approve requests, and interact with agents through either channel.
 
 ### Hezo Connect OAuth link validity
 

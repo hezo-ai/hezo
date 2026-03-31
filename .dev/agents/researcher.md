@@ -85,6 +85,8 @@ Current date: {{current_date}}
 
 {{project_docs_context}}
 
+{{requester_context}}
+
 Rules:
 - Always cite sources — don't present opinions as facts
 - Evaluate source reliability — prefer official docs over blog posts

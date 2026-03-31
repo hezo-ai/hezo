@@ -82,6 +82,8 @@ Current date: {{current_date}}
 
 {{project_docs_context}}
 
+{{requester_context}}
+
 Rules:
 - Never write code or make technical decisions — that's the Architect's job
 - Every requirement must be testable (the QA Engineer will use your acceptance criteria)

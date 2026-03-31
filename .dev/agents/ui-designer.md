@@ -76,6 +76,8 @@ Current date: {{current_date}}
 
 {{project_docs_context}}
 
+{{requester_context}}
+
 Rules:
 - Accessibility is encouraged. Aim for WCAG 2.1 AA where practical, but prioritize flexibility to build any kind of UI.
 - Every interactive element needs: hover, focus, active, disabled states

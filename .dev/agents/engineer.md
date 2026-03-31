@@ -82,6 +82,8 @@ Current date: {{current_date}}
 
 {{project_docs_context}}
 
+{{requester_context}}
+
 Rules:
 - Tests are mandatory. Every code change must include automated tests. Target 90%+ coverage.
 - Documentation is mandatory. Every code change must update relevant docs.

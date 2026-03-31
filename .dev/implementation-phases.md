@@ -43,20 +43,23 @@
 **What's included:**
 - Hono server (TypeScript)
 - PGlite with NodeFS filesystem persistence at `~/.hezo/pgdata`
-- Migration runner: reads numbered SQL files, tracks in `_migrations` table, runs on startup
+- Migration runner: loads SQL from bundled archive (via `@hiddentao/zip-json`), tracks in `_migrations` table, runs on startup
 - `001_initial_schema.sql` applied on first run
-- Master key lifecycle: auto-generate on first run (display in terminal), web UI prompt on subsequent runs, `--master-key` CLI override
-- CLI parsing: `--data-dir`, `--master-key`, `--port`, `--connect-url`, `--connect-api-key`
+- Build step: compress `migrations/*.sql` into `migrations-bundle.json` via `zip()`, embed in binary
+- Master key lifecycle: terminal prompt on first run (generate or enter key), terminal prompt on subsequent runs (enter key or generate new + fresh start), `--master-key` CLI override
+- CLI parsing: `--data-dir`, `--master-key`, `--port`, `--connect-url`, `--connect-api-key`, `--reset`
+- `--reset` flag: wipe database and start fresh (with confirmation prompt)
 - Sensible defaults: port 3100, connect-url `http://localhost:4100`, data-dir `~/.hezo/`
 - `GET /health` endpoint
 - Test infrastructure: Vitest config, template database pattern, port allocation utility
 
 **How to test:**
-- `hezo --port 3100` starts server, prints master key on first run
+- `hezo --port 3100` starts server, prompts to generate or enter master key on first run
 - `hezo --master-key <key> --port 3100` verifies key and starts
-- Wrong master key refuses to start
+- Wrong master key prompts with recovery options (re-enter or generate new + fresh start)
 - `curl localhost:3100/health` returns 200
 - PGlite data persists at `~/.hezo/pgdata` between restarts
+- `hezo --reset` wipes database and starts fresh after confirmation
 - Migration table shows `001_initial_schema.sql` as applied
 
 **Depends on:** Nothing
@@ -228,7 +231,7 @@
 - Settings page (connected platforms, company email, MCP servers, preferences)
 - Project detail with Documents tab and Dev Preview link
 - PGlite React hooks (`useLiveQuery`, `useLiveIncrementalQuery`) for real-time data
-- Master key entry screen (shown on startup when key not provided via CLI)
+- Master key status indicator (shows locked/unlocked state in UI header)
 - `bun build --compile` producing single self-contained binary
 - Playwright E2E tests covering all major UI flows
 
@@ -245,24 +248,31 @@
 
 ---
 
-## Phase 8: Multi-User Auth + Company Email
+## Phase 8: Multi-User Auth + Roles
 
-**Goal:** Better Auth, company email invites, multiple board members, session compaction.
+**Goal:** Better Auth with OAuth login, board/member roles with permissions, company email invites, session compaction.
 
 **What's included:**
 - Better Auth integration:
-  - Email/password signup and login
-  - GitHub OAuth login for board members (via Hezo Connect)
-  - GitLab OAuth login for board members (via Hezo Connect)
+  - GitHub OAuth login (via Hezo Connect)
+  - GitLab OAuth login (via Hezo Connect)
   - Session cookies
+  - (Email/password deferred to post-MVP)
 - `authenticated` deployment mode
-- Login / register pages (with OAuth buttons)
-- Company memberships (owner, member)
+- OAuth login page (GitHub + GitLab buttons)
+- Company memberships with two roles:
+  - `board` — full authority
+  - `member` — scoped authority with `role_title`, `permissions_text`, `project_ids`
+- Permission enforcement:
+  - API layer: board-only endpoints blocked for members, project scope enforced
+  - Agent layer: `{{requester_context}}` injected into agent prompts with member's permissions_text
 - Invite system:
   - Email invites sent from company email address
+  - Invite specifies role, title, permissions, project scope
   - Invite link with unique token, 7-day expiry
-  - Recipient authenticates via email/password, GitHub OAuth, or GitLab OAuth
-- Instance admin (first user)
+  - Recipient authenticates via GitHub or GitLab OAuth
+  - Role and permissions copied to membership on accept
+- Instance admin (first user to sign in)
 - Account settings page
 - Session compaction:
   - `agent_task_sessions` table
@@ -271,10 +281,15 @@
 - File attachments (upload, download, issue linking, local storage)
 
 **How to test:**
-- Create account with email/password, log in, access company
-- Create account via GitHub OAuth, log in, access company
-- Invite a user by email — email sent from company address — recipient joins via link
-- Multiple board members collaborate on same company
+- Create account via GitHub OAuth, log in, access company as board member
+- Create account via GitLab OAuth, log in, access company
+- Invite a board member — joins with full access
+- Invite a member with role_title + permissions_text + project_ids — joins with scoped access
+- Member can create issue in allowed project
+- Member cannot access restricted project (403)
+- Member cannot access company settings or agent management (403)
+- Agent respects member's permissions_text (e.g. refuses to change PRD when permissions say not to)
+- Member cannot create invites (403)
 - Unauthorized access rejected in authenticated mode
 - Session compaction triggers after token threshold
 
@@ -339,21 +354,30 @@
 
 ---
 
-## Phase 11: Deploy + Notifications
+## Phase 11: Deploy + Messaging Integrations
 
-**Goal:** Agents can deploy to staging/production. Board members receive Telegram notifications.
+**Goal:** Agents can deploy to staging/production. Slack and Telegram integrations as optional platform interfaces.
 
 **What's included:**
 - Staging environment management (auto-deploy on push to main, Neon DB, GitHub Actions)
 - Production deployment with `deploy_production` approval gate
 - DevOps Engineer activation flow (board sets to active when ready)
-- Telegram notifications (per-user, configurable in account settings, deep links)
+- Messaging integrations (all optional):
+  - Telegram bot — per-user setup, full platform interface (notifications, approvals, issue creation, agent interaction via commands and inline keyboards)
+  - Slack integration — per-company setup, single Slack app with per-agent display names/avatars, interactive messages for approvals, channel-based interaction
+  - Notification preferences — per-user, per-channel event type routing
+  - `notification_preferences` and `slack_connections` tables
+  - Webhook endpoints: `POST /webhooks/slack`, `POST /webhooks/telegram`
 - MPP (Machine Payments Protocol): wallet config, `mppx` CLI, autonomous HTTP 402 flow
 
 **How to test:**
 - Agent pushes to main — staging auto-deploys
 - Production deploy requires board approval — deploy executes after approval
-- Telegram notification received for pending approval with working deep link
+- Link Telegram account — receive notification for pending approval with working deep link
+- Approve a request via Telegram inline keyboard — approval reflected in Hezo
+- Install Slack app — agent messages appear with distinct names/avatars
+- Approve a request via Slack interactive message
+- Notification preferences: enable/disable specific event types per channel
 - MPP payment flow completes for HTTP 402 responses
 
 **Depends on:** Phase 10
@@ -372,9 +396,9 @@
 | 5 | Knowledge + Observability | KB, preferences, project docs, audit log, live queries, WebSocket |
 | 6 | MCP + Skill File | MCP endpoint at `/mcp`, skill file at `/skill.md` |
 | 7 | React Frontend | All UI screens, bundled into single binary |
-| 8 | Multi-User Auth | Better Auth (email + OAuth), invites, memberships, session compaction |
+| 8 | Multi-User Auth + Roles | Better Auth (OAuth), board/member roles, permissions, invites, session compaction |
 | 9 | Adapters + Plugins | Gemini/Codex adapters, plugin system |
 | 10 | Full Platform Integrations | All OAuth platforms, centrally hosted Connect |
-| 11 | Deploy + Notifications | Staging/production pipeline, Telegram, MPP |
+| 11 | Deploy + Messaging | Staging/production pipeline, Slack + Telegram interfaces, notification preferences, MPP |
 
 Each phase produces a testable increment. Phase 0 can be built and verified in isolation. Phases 1–2 give a working API server testable entirely with curl. Phase 4 is where agents first run. Phase 7 adds the visual UI. Phase 8 enables team usage.

@@ -81,6 +81,8 @@ Current date: {{current_date}}
 
 {{project_docs_context}}
 
+{{requester_context}}
+
 Rules:
 - Never deploy to production without board approval
 - Always test in staging first

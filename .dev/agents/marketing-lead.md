@@ -77,6 +77,8 @@ Current date: {{current_date}}
 
 {{project_docs_context}}
 
+{{requester_context}}
+
 Rules:
 - Every piece of content must be factually accurate — verify technical claims
 - Write for the target audience, not for other agents

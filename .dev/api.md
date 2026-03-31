@@ -17,7 +17,7 @@ Timestamps are ISO 8601. IDs are UUIDs. Money is in cents.
 Four auth methods:
 
 ### Board — Better Auth session
-Email/password login via Better Auth. Session cookies used by the web UI.
+GitHub/GitLab OAuth login via Better Auth (email/password deferred). Session cookies used by the web UI.
 Board members must be a member of the company to access it.
 
 ### Board — local trusted (no auth)
@@ -51,6 +51,17 @@ containing:
 ---
 
 ## Board API (Web UI)
+
+### Permission enforcement
+
+All Board API endpoints check the caller's membership role:
+
+| Access Level | Endpoints |
+|-------------|-----------|
+| **Board only** | Company settings, agent management (hire/fire/pause/resume/terminate), budget adjustments, secrets vault, API keys, connected platforms, audit log, plugin management, invites, member management |
+| **All members** (scoped by `project_ids`) | Issues, comments, live chat, KB (read), project docs (read), inbox (filtered), notification preferences |
+
+Members with `project_ids` set can only access issues, comments, and documents within their allowed projects. Requests outside their scope return 403.
 
 ### Companies
 
@@ -456,7 +467,8 @@ List issues. Supports filtering and pagination.
 
 Query params:
 - `?project_id=uuid` — filter by project
-- `?assignee_id=uuid` — filter by agent
+- `?assignee_id=uuid` — filter by assignee (agent or board member)
+- `?assignee_type=agent|board` — filter by assignee type
 - `?status=open,in_progress` — comma-separated status filter
 - `?priority=urgent,high` — comma-separated priority filter
 - `?search=websocket` — full-text search on title + description
@@ -472,8 +484,9 @@ Response:
       "company_id": "uuid",
       "project_id": "uuid",
       "project_name": "Backend API",
+      "assignee_type": "agent",
       "assignee_id": "uuid",
-      "assignee_title": "Dev Engineer",
+      "assignee_name": "Dev Engineer",
       "parent_issue_id": null,
       "number": 47,
       "title": "Implement WebSocket handler for real-time sync",
@@ -501,6 +514,7 @@ Request:
   "project_id": "uuid",
   "title": "Implement WebSocket handler for real-time sync",
   "description": "We need a WebSocket handler that supports...",
+  "assignee_type": "agent | board | null",
   "assignee_id": "uuid | null",
   "parent_issue_id": "uuid | null",
   "priority": "urgent",
@@ -509,8 +523,9 @@ Request:
 ```
 
 `project_id` is required (enforced). `number` is auto-assigned via
-`next_issue_number()`. If `assignee_id` is set, the agent receives an event
-trigger.
+`next_issue_number()`. If `assignee_id` is set to an agent, the agent receives
+an event trigger. If set to a board member, they are notified via inbox and
+configured messaging channels.
 
 #### `GET /companies/:companyId/issues/:issueId`
 Full issue detail including description, goal chain, cost.
@@ -527,8 +542,9 @@ Response: full issue object + computed fields:
     "project_name": "Backend API",
     "project_goal": "Ship collaboration features",
     "company_mission": "Build the #1 AI note-taking app",
+    "assignee_type": "agent",
     "assignee_id": "uuid",
-    "assignee_title": "Dev Engineer",
+    "assignee_name": "Dev Engineer",
     "parent_issue_id": null,
     "status": "in_progress",
     "priority": "urgent",
@@ -542,9 +558,9 @@ Response: full issue object + computed fields:
 ```
 
 #### `PATCH /companies/:companyId/issues/:issueId`
-Update issue fields: title, description, status, priority, assignee_id, labels.
+Update issue fields: title, description, status, priority, assignee_type, assignee_id, labels.
 
-Changing `assignee_id` triggers an event on the newly assigned agent.
+Changing `assignee_id` triggers an event on the newly assigned agent, or a notification to the newly assigned board member.
 Changing `status` to `done` or `closed` triggers preview cleanup.
 
 #### `DELETE /companies/:companyId/issues/:issueId`
@@ -1329,35 +1345,33 @@ List installed plugins for a company.
 
 ### Auth & Team
 
-#### `POST /auth/register`
-Create a new board member account.
+#### `GET /auth/github`
+Initiate GitHub OAuth login. Redirects to Hezo Connect which handles the OAuth flow. On success, creates or updates the user account and sets a session cookie.
 
-Request:
-```json
-{
-  "email": "alice@example.com",
-  "password": "...",
-  "name": "Alice"
-}
-```
+#### `GET /auth/gitlab`
+Initiate GitLab OAuth login. Same flow as GitHub.
 
-Response: user object + session cookie set.
-
-#### `POST /auth/login`
-Login with email/password. Sets session cookie.
+#### `GET /auth/callback`
+OAuth callback endpoint. Receives tokens from Hezo Connect, creates/updates user, sets session cookie, redirects to the app.
 
 #### `POST /auth/logout`
 End the current session. Clears cookie.
 
 #### `POST /companies/:companyId/invites`
-Invite a new board member to the company.
+Invite a new member to the company. Board-only.
 
 Request:
 ```json
 {
-  "email": "bob@example.com"
+  "email": "bob@example.com",
+  "role": "member",
+  "role_title": "Frontend Developer",
+  "permissions_text": "Can direct Engineer and QA Engineer on frontend tasks. Cannot modify architecture decisions.",
+  "project_ids": ["uuid-1", "uuid-2"]
 }
 ```
+
+`role` defaults to `member`. For board invites, omit `role_title`, `permissions_text`, and `project_ids`. `project_ids` is optional — if omitted, the member can access all projects.
 
 Response:
 ```json
@@ -1365,6 +1379,8 @@ Response:
   "data": {
     "id": "uuid",
     "email": "bob@example.com",
+    "role": "member",
+    "role_title": "Frontend Developer",
     "code": "invite-code-here",
     "expires_at": "..."
   }
@@ -1374,10 +1390,10 @@ Response:
 The invite code can be shared out-of-band (email, chat, etc.).
 
 #### `POST /invites/:code/accept`
-Accept an invite and join the company. Requires an authenticated session.
+Accept an invite and join the company. Requires an authenticated session (OAuth login). The invite's role, title, permissions, and project scope are copied to the new membership.
 
 #### `GET /companies/:companyId/members`
-List board members of a company.
+List all members of a company.
 
 Response:
 ```json
@@ -1387,10 +1403,35 @@ Response:
       "user_id": "...",
       "name": "Alice",
       "email": "alice@example.com",
-      "role": "owner",
+      "role": "board",
+      "role_title": null,
+      "permissions_text": "",
+      "project_ids": null,
+      "joined_at": "..."
+    },
+    {
+      "user_id": "...",
+      "name": "Bob",
+      "email": "bob@example.com",
+      "role": "member",
+      "role_title": "Frontend Developer",
+      "permissions_text": "Can direct Engineer and QA Engineer on frontend tasks.",
+      "project_ids": ["uuid-1"],
       "joined_at": "..."
     }
   ]
+}
+```
+
+#### `PATCH /companies/:companyId/members/:userId`
+Update a member's role_title, permissions_text, or project_ids. Board-only.
+
+Request:
+```json
+{
+  "role_title": "Senior Frontend Developer",
+  "permissions_text": "Can direct Engineer, QA Engineer, and UI Designer.",
+  "project_ids": null
 }
 ```
 
@@ -1399,7 +1440,7 @@ Response:
 ### Board Inbox
 
 #### `GET /companies/:companyId/inbox`
-Aggregated notifications for board members: approvals, escalations, budget alerts, design reviews, etc.
+Aggregated notifications. Board members see all items (approvals, escalations, budget alerts, design reviews, etc.). Members see only items relevant to their assigned issues and project scope.
 
 Query params:
 - `?status=unread` — filter by read/unread
@@ -1425,6 +1466,67 @@ Response:
 
 #### `POST /companies/:companyId/inbox/:id/dismiss`
 Dismiss an inbox item. Sets `dismissed_at`.
+
+---
+
+### Notification Preferences
+
+#### `GET /users/me/notification-preferences`
+List notification preferences for all channels.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "channel": "web",
+      "enabled": true,
+      "event_types": ["approvals", "escalations", "budget_alerts", "agent_errors", "qa_findings", "oauth_requests", "design_reviews"]
+    },
+    {
+      "channel": "telegram",
+      "enabled": true,
+      "event_types": ["approvals", "escalations"],
+      "telegram_chat_id": "123456789"
+    }
+  ]
+}
+```
+
+#### `PUT /users/me/notification-preferences`
+Update notification preferences. Accepts an array of channel configs. Upserts by channel.
+
+---
+
+### Slack Connection
+
+#### `GET /companies/:companyId/slack-connection`
+Get Slack connection status for a company.
+
+#### `POST /companies/:companyId/slack-connection`
+Set up Slack integration for a company. Stores the bot token encrypted in secrets.
+
+Request:
+```json
+{
+  "bot_token": "xoxb-...",
+  "team_id": "T0123ABC",
+  "team_name": "My Workspace"
+}
+```
+
+#### `DELETE /companies/:companyId/slack-connection`
+Disconnect Slack from a company. Revokes the bot token secret.
+
+---
+
+### Webhooks
+
+#### `POST /webhooks/slack`
+Receives Slack Events API payloads. Handles interactive messages (approvals), slash commands, and channel messages directed at agents.
+
+#### `POST /webhooks/telegram`
+Receives Telegram Bot API webhook updates. Handles bot commands (`/issues`, `/approve`, `/comment`), inline keyboard callbacks, and text messages.
 
 ---
 
@@ -1667,6 +1769,7 @@ Request:
 {
   "title": "Write unit tests for WebSocket reconnection",
   "description": "...",
+  "assignee_type": "agent | null",
   "assignee_id": "uuid | null",
   "priority": "high"
 }
@@ -1967,7 +2070,7 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `repo.removed` | repo | Board removes repo |
 | `issue.created` | issue | Board or agent creates issue |
 | `issue.updated` | issue | Board or agent updates issue |
-| `issue.assigned` | issue | Issue assigned to agent |
+| `issue.assigned` | issue | Issue assigned to agent or board member |
 | `issue.closed` | issue | Status changed to closed |
 | `comment.created` | issue_comment | Board or agent posts comment |
 | `option.chosen` | issue_comment | Board picks an option |

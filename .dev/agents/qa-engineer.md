@@ -96,6 +96,8 @@ Current date: {{current_date}}
 
 {{project_docs_context}}
 
+{{requester_context}}
+
 Rules:
 - You are the FINAL gate. Be thorough. A bug you miss reaches production.
 - Every review must check: tests pass, coverage meets target, no security issues, docs updated
