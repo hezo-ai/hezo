@@ -3,17 +3,10 @@ import { mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { healthRoutes } from "./routes/health";
 import { BASE_SCHEMA } from "./db/schema";
+import type { HezoConfig } from "./cli";
+export type { HezoConfig };
 
 export type MasterKeyState = "unset" | "locked" | "unlocked";
-
-export interface HezoConfig {
-  port: number;
-  dataDir: string;
-  masterKey?: string;
-  connectUrl: string;
-  connectApiKey?: string;
-  reset: boolean;
-}
 
 export interface StartupResult {
   app: Hono;
@@ -105,12 +98,10 @@ function buildApp(masterKeyState: MasterKeyState): Hono {
 
   app.route("/", healthRoutes);
 
-  app.get("/api/status", (c) =>
-    c.json({
-      masterKeyState,
-      version: "0.1.0",
-    }),
-  );
+  const statusPayload = { masterKeyState, version: "0.1.0" };
+
+  app.get("/", (c) => c.json(statusPayload));
+  app.get("/api/status", (c) => c.json(statusPayload));
 
   return app;
 }

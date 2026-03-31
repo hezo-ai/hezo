@@ -18,18 +18,29 @@ bun install
 | `GITHUB_CLIENT_SECRET` | Yes | — | GitHub OAuth app client secret |
 | `STATE_SIGNING_KEY` | No | auto-generated | HMAC-SHA256 key for state parameter signing. Auto-generated on startup if not set (not persisted — set this env var for consistent signing across restarts). |
 
+Create a `.env` file in `packages/connect/` to set these locally:
+
+```bash
+# packages/connect/.env
+GITHUB_CLIENT_ID=your_id
+GITHUB_CLIENT_SECRET=your_secret
+# STATE_SIGNING_KEY=optional_hex_key
+```
+
+The server loads this file automatically on startup via `dotenv`.
+
 ### GitHub OAuth App Setup
 
 1. Go to [GitHub Settings > Developer Settings > OAuth Apps > New](https://github.com/settings/applications/new)
 2. **Application name**: `Hezo Connect Dev`
 3. **Homepage URL**: `http://localhost:3100`
 4. **Authorization callback URL**: `http://localhost:4100/auth/github/callback`
-5. Copy Client ID and Client Secret into env vars
+5. Copy Client ID and Client Secret into your `.env` file
 
 ## Dev Server
 
 ```bash
-GITHUB_CLIENT_ID=your_id GITHUB_CLIENT_SECRET=your_secret bun run dev
+bun run dev
 ```
 
 Starts on port 4100 with hot reload.

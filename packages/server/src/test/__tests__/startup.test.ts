@@ -14,6 +14,7 @@ function baseConfig(overrides: Partial<HezoConfig> = {}): HezoConfig {
     dataDir: overrides.dataDir ?? makeTempDir(),
     connectUrl: "https://connect.test",
     reset: false,
+    noOpen: false,
     ...overrides,
   };
 }

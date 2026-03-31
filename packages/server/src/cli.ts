@@ -8,6 +8,7 @@ export interface HezoConfig {
   connectUrl: string;
   connectApiKey?: string;
   reset: boolean;
+  noOpen: boolean;
 }
 
 const DEFAULT_PORT = 3100;
@@ -23,6 +24,7 @@ export function parseArgs(argv: string[] = process.argv): HezoConfig {
   let connectUrl = DEFAULT_CONNECT_URL;
   let connectApiKey: string | undefined;
   let reset = false;
+  let noOpen = false;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -47,6 +49,9 @@ export function parseArgs(argv: string[] = process.argv): HezoConfig {
       case "--reset":
         reset = true;
         break;
+      case "--no-open":
+        noOpen = true;
+        break;
     }
   }
 
@@ -57,5 +62,5 @@ export function parseArgs(argv: string[] = process.argv): HezoConfig {
     dataDir = resolve(dataDir);
   }
 
-  return { port, dataDir, masterKey, connectUrl, connectApiKey, reset };
+  return { port, dataDir, masterKey, connectUrl, connectApiKey, reset, noOpen };
 }
