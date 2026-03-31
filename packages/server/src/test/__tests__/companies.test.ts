@@ -1,10 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
-let app: Hono;
+let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let builtinTypeId: string;

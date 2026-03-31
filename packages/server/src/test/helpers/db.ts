@@ -1,6 +1,6 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import { readdirSync, readFileSync } from 'fs';
-import { join } from 'path';
 import { BASE_SCHEMA } from '../../db/schema';
 
 /** Creates a fresh in-memory PGlite instance with base tables for testing. */

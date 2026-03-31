@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { generateMasterKey, MasterKeyManager } from '../../crypto/master-key';
 import { seedBuiltins } from '../../db/seed';
 import { signBoardJwt } from '../../middleware/auth';

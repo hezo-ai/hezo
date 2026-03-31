@@ -1,18 +1,12 @@
-import { join, dirname } from "path";
-import { writeFile, mkdir } from "fs/promises";
-import { zip } from "@hiddentao/zip-json";
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { zip } from '@hiddentao/zip-json';
 
-const migrationsDir = join(import.meta.dir, "..", "migrations");
-const outputPath = join(
-  import.meta.dir,
-  "..",
-  "src",
-  "db",
-  "migrations-bundle.json",
-);
+const migrationsDir = join(import.meta.dir, '..', 'migrations');
+const outputPath = join(import.meta.dir, '..', 'src', 'db', 'migrations-bundle.json');
 
-const archive = await zip(["*.sql"], {
-  baseDir: migrationsDir,
+const archive = await zip(['*.sql'], {
+	baseDir: migrationsDir,
 });
 
 await mkdir(dirname(outputPath), { recursive: true });

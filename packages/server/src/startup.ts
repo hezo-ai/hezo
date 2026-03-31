@@ -1,7 +1,7 @@
+import { mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
-import { mkdirSync, rmSync } from 'fs';
 import { Hono } from 'hono';
-import { join } from 'path';
 import type { HezoConfig } from './cli';
 import { MasterKeyManager } from './crypto/master-key';
 import { BASE_SCHEMA } from './db/schema';
@@ -25,7 +25,7 @@ export type { HezoConfig };
 export type MasterKeyState = 'unset' | 'locked' | 'unlocked';
 
 export interface StartupResult {
-	app: Hono;
+	app: Hono<Env>;
 	port: number;
 	masterKeyState: MasterKeyState;
 }
@@ -60,7 +60,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	return { app, port: config.port, masterKeyState };
 }
 
-export function buildApp(db: PGlite, masterKeyManager: MasterKeyManager): Hono {
+export function buildApp(db: PGlite, masterKeyManager: MasterKeyManager): Hono<Env> {
 	const app = new Hono<Env>();
 
 	// Inject db and masterKeyManager into every request

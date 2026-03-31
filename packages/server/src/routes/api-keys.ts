@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -35,7 +35,13 @@ apiKeysRoutes.post('/companies/:companyId/api-keys', async (c) => {
 	const prefix = rawKey.slice(5, 13); // 8 chars after hezo_
 	const keyHash = hashKey(rawKey);
 
-	const result = await db.query(
+	const result = await db.query<{
+		id: string;
+		company_id: string;
+		name: string;
+		prefix: string;
+		created_at: string;
+	}>(
 		`INSERT INTO api_keys (company_id, name, prefix, key_hash)
      VALUES ($1, $2, $3, $4)
      RETURNING id, company_id, name, prefix, created_at`,

@@ -67,7 +67,7 @@ projectsRoutes.get('/companies/:companyId/projects/:projectId', async (c) => {
 		c.req.param('projectId'),
 	]);
 
-	return ok(c, { ...result.rows[0], repos: repos.rows });
+	return ok(c, { ...(result.rows[0] as Record<string, unknown>), repos: repos.rows });
 });
 
 projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {

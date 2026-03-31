@@ -76,7 +76,7 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 		return err(c, 'CONFLICT', `Agent with slug '${slug}' already exists in this company`, 409);
 	}
 
-	const memberResult = await db.query(
+	const memberResult = await db.query<{ id: string }>(
 		`INSERT INTO members (company_id, member_type, display_name)
      VALUES ($1, 'agent', $2)
      RETURNING id`,
@@ -270,7 +270,7 @@ agentsRoutes.get('/companies/:companyId/org-chart', async (c) => {
 	const roots: any[] = [];
 	for (const agent of byId.values()) {
 		if (agent.reports_to && byId.has(agent.reports_to)) {
-			byId.get(agent.reports_to)!.children.push(agent);
+			byId.get(agent.reports_to)?.children.push(agent);
 		} else {
 			roots.push(agent);
 		}
@@ -279,7 +279,11 @@ agentsRoutes.get('/companies/:companyId/org-chart', async (c) => {
 	return ok(c, { board: { children: roots } });
 });
 
-async function changeAgentStatus(c: any, newStatus: string, validFrom: string[]) {
+async function changeAgentStatus(
+	c: import('hono').Context<Env>,
+	newStatus: string,
+	validFrom: string[],
+) {
 	const db = c.get('db');
 	const agentId = c.req.param('agentId');
 	const companyId = c.req.param('companyId');

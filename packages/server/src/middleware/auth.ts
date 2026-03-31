@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 import { createMiddleware } from 'hono/factory';
 import { sign, verify } from 'hono/jwt';
 import type { Env } from '../lib/types';
