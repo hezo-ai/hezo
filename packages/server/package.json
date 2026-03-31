@@ -1,0 +1,23 @@
+{
+  "name": "@hezo/server",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build:migrations": "echo 'TODO: migration bundler'"
+  },
+  "dependencies": {
+    "hono": "^4",
+    "@electric-sql/pglite": "^0.2",
+    "@hiddentao/zip-json": "^1",
+    "@hezo/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^3",
+    "typescript": "^5",
+    "@types/node": "^22"
+  }
+}
