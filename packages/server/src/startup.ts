@@ -1,107 +1,151 @@
-import { Hono } from "hono";
-import { mkdirSync, rmSync } from "fs";
-import { join } from "path";
-import { healthRoutes } from "./routes/health";
-import { BASE_SCHEMA } from "./db/schema";
-import type { HezoConfig } from "./cli";
+import type { PGlite } from '@electric-sql/pglite';
+import { mkdirSync, rmSync } from 'fs';
+import { Hono } from 'hono';
+import { join } from 'path';
+import type { HezoConfig } from './cli';
+import { MasterKeyManager } from './crypto/master-key';
+import { BASE_SCHEMA } from './db/schema';
+import type { Env } from './lib/types';
+import { authMiddleware } from './middleware/auth';
+import { agentsRoutes } from './routes/agents';
+import { apiKeysRoutes } from './routes/api-keys';
+import { approvalsRoutes } from './routes/approvals';
+import { authRoutes } from './routes/auth';
+import { commentsRoutes } from './routes/comments';
+import { companiesRoutes } from './routes/companies';
+import { companyTypesRoutes } from './routes/company-types';
+import { costsRoutes } from './routes/costs';
+import { healthRoutes } from './routes/health';
+import { issuesRoutes } from './routes/issues';
+import { projectsRoutes } from './routes/projects';
+import { secretsRoutes } from './routes/secrets';
+
 export type { HezoConfig };
 
-export type MasterKeyState = "unset" | "locked" | "unlocked";
+export type MasterKeyState = 'unset' | 'locked' | 'unlocked';
 
 export interface StartupResult {
-  app: Hono;
-  port: number;
-  masterKeyState: MasterKeyState;
+	app: Hono;
+	port: number;
+	masterKeyState: MasterKeyState;
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
-  const pgDataPath = join(config.dataDir, "pgdata");
+	const pgDataPath = join(config.dataDir, 'pgdata');
 
-  if (config.reset) {
-    rmSync(pgDataPath, { recursive: true, force: true });
-  }
+	if (config.reset) {
+		rmSync(pgDataPath, { recursive: true, force: true });
+	}
 
-  mkdirSync(config.dataDir, { recursive: true });
+	mkdirSync(config.dataDir, { recursive: true });
 
-  const { PGlite } = await import("@electric-sql/pglite");
-  let db: InstanceType<typeof PGlite>;
+	const { PGlite } = await import('@electric-sql/pglite');
+	let db: InstanceType<typeof PGlite>;
 
-  try {
-    const { NodeFS } = await import("@electric-sql/pglite/nodefs");
-    db = new PGlite({ fs: new NodeFS(pgDataPath) });
-  } catch {
-    db = new PGlite();
-  }
+	try {
+		const { NodeFS } = await import('@electric-sql/pglite/nodefs');
+		db = new PGlite({ fs: new NodeFS(pgDataPath) });
+	} catch {
+		db = new PGlite();
+	}
 
-  await db.exec(BASE_SCHEMA);
-  await runAvailableMigrations(db);
+	await db.exec(BASE_SCHEMA);
+	await runAvailableMigrations(db);
+	await runSeed(db);
 
-  const masterKeyState = await resolveMasterKeyState(db, config.masterKey);
-  const app = buildApp(masterKeyState);
+	const masterKeyManager = new MasterKeyManager();
+	const masterKeyState = await resolveMasterKeyState(db, masterKeyManager, config.masterKey);
+	const app = buildApp(db, masterKeyManager);
 
-  return { app, port: config.port, masterKeyState };
+	return { app, port: config.port, masterKeyState };
 }
 
-async function runAvailableMigrations(db: any): Promise<void> {
-  try {
-    const { runMigrations, loadBundledMigrations } = await import(
-      "./db/migrate.js"
-    );
-    const migrations = await loadBundledMigrations();
-    await runMigrations(db, migrations);
-  } catch {
-    try {
-      const { runMigrations, loadFilesystemMigrations } = await import(
-        "./db/migrate.js"
-      );
-      const migrationsDir = join(
-        new URL(".", import.meta.url).pathname,
-        "..",
-        "migrations",
-      );
-      const migrations = await loadFilesystemMigrations(migrationsDir);
-      await runMigrations(db, migrations);
-    } catch {
-      console.warn(
-        "No migrations found. Run build:migrations or add migration files.",
-      );
-    }
-  }
+export function buildApp(db: PGlite, masterKeyManager: MasterKeyManager): Hono {
+	const app = new Hono<Env>();
+
+	// Inject db and masterKeyManager into every request
+	app.use('*', async (c, next) => {
+		c.set('db', db);
+		c.set('masterKeyManager', masterKeyManager);
+		return next();
+	});
+
+	// Public routes
+	app.route('/', healthRoutes);
+
+	const statusPayload = {
+		masterKeyState: masterKeyManager.getState(),
+		version: '0.1.0',
+	};
+	app.get('/', (c) => c.json(statusPayload));
+	app.get('/api/status', (c) => c.json(statusPayload));
+
+	// Auth routes (token endpoint is public, handled before auth middleware)
+	app.route('/api', authRoutes);
+
+	// Auth middleware for all /api/* routes
+	app.use('/api/*', authMiddleware);
+
+	// CRUD routes
+	app.route('/api', companyTypesRoutes);
+	app.route('/api', companiesRoutes);
+	app.route('/api', agentsRoutes);
+	app.route('/api', projectsRoutes);
+	app.route('/api', issuesRoutes);
+	app.route('/api', commentsRoutes);
+	app.route('/api', secretsRoutes);
+	app.route('/api', approvalsRoutes);
+	app.route('/api', costsRoutes);
+	app.route('/api', apiKeysRoutes);
+
+	return app;
+}
+
+async function runAvailableMigrations(db: PGlite): Promise<void> {
+	try {
+		const { runMigrations, loadBundledMigrations } = await import('./db/migrate.js');
+		const migrations = await loadBundledMigrations();
+		await runMigrations(db, migrations);
+	} catch {
+		try {
+			const { runMigrations, loadFilesystemMigrations } = await import('./db/migrate.js');
+			const migrationsDir = join(new URL('.', import.meta.url).pathname, '..', 'migrations');
+			const migrations = await loadFilesystemMigrations(migrationsDir);
+			await runMigrations(db, migrations);
+		} catch {
+			console.warn('No migrations found. Run build:migrations or add migration files.');
+		}
+	}
+}
+
+async function runSeed(db: PGlite): Promise<void> {
+	try {
+		const { seedBuiltins } = await import('./db/seed.js');
+		await seedBuiltins(db);
+	} catch {
+		// Seed module may not be available in minimal builds
+	}
 }
 
 async function resolveMasterKeyState(
-  db: any,
-  masterKey?: string,
+	db: PGlite,
+	masterKeyManager: MasterKeyManager,
+	masterKey?: string,
 ): Promise<MasterKeyState> {
-  try {
-    const { MasterKeyManager } = await import("./crypto/master-key.js");
-    const manager = new MasterKeyManager();
-    const state = await manager.initialize(db, masterKey);
+	try {
+		const state = await masterKeyManager.initialize(db, masterKey);
 
-    const messages: Record<string, string> = {
-      unlocked: "Master key verified. Server unlocked.",
-      unset: "No master key set. Set via web UI on first login.",
-      locked: masterKey
-        ? "Invalid master key provided. Server starting in locked state."
-        : "Server starting in locked state. Provide master key to unlock.",
-    };
-    console.log(messages[state]);
-    return state;
-  } catch {
-    console.warn("Master key module not available. Skipping key verification.");
-    return "unset";
-  }
-}
-
-function buildApp(masterKeyState: MasterKeyState): Hono {
-  const app = new Hono();
-
-  app.route("/", healthRoutes);
-
-  const statusPayload = { masterKeyState, version: "0.1.0" };
-
-  app.get("/", (c) => c.json(statusPayload));
-  app.get("/api/status", (c) => c.json(statusPayload));
-
-  return app;
+		const messages: Record<string, string> = {
+			unlocked: 'Master key verified. Server unlocked.',
+			unset: 'No master key set. Set via web UI on first login.',
+			locked: masterKey
+				? 'Invalid master key provided. Server starting in locked state.'
+				: 'Server starting in locked state. Provide master key to unlock.',
+		};
+		console.log(messages[state]);
+		return state;
+	} catch {
+		console.warn('Master key module not available. Skipping key verification.');
+		return 'unset';
+	}
 }

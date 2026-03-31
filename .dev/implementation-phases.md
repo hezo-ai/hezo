@@ -12,6 +12,8 @@
 
 ## Phase 0: Hezo Connect (Self-Hosted, GitHub Only)
 
+**Status:** Done (2025-03)
+
 **Goal:** A standalone OAuth relay that can handle GitHub OAuth flows. First thing built, independently testable, no dependency on the main Hezo app. Lives in `packages/connect`.
 
 **What's included:**
@@ -37,6 +39,8 @@
 ---
 
 ## Phase 1: Foundation
+
+**Status:** Done (2025-03)
 
 **Goal:** A running Hono server with an embedded database, migration system, master key, and CLI argument parsing. No business logic yet. Lives in `packages/server` with shared types in `packages/shared`.
 
