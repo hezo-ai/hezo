@@ -1,5 +1,5 @@
-import { Hono } from "hono";
+import { Hono } from 'hono';
 
 export const app = new Hono();
 
-app.get("/health", (c) => c.json({ ok: true }));
+app.get('/health', (c) => c.json({ ok: true }));

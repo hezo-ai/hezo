@@ -10,3 +10,4 @@ dist/
 migrations-bundle.json
 *.db
 .hezo/
+.claude/

@@ -1,10 +1,10 @@
-import { app } from "./app";
+import { app } from './app';
 
-const port = parseInt(process.env.PORT || "3100", 10);
+const port = parseInt(process.env.PORT || '3100', 10);
 
 console.log(`Hezo server starting on port ${port}...`);
 
 export default {
-  port,
-  fetch: app.fetch,
+	port,
+	fetch: app.fetch,
 };
