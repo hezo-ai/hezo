@@ -1,1 +1,1 @@
-bunx biome check . && bun run typecheck
+bunx biome check . && bun run typecheck && bun run build
