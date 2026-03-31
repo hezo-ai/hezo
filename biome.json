@@ -29,6 +29,15 @@
 		}
 	},
 	"files": {
-		"includes": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.json", "!**/dist", "!.claude", "!.hezo"]
+		"includes": [
+			"**/*.ts",
+			"**/*.tsx",
+			"**/*.js",
+			"**/*.json",
+			"!**/dist",
+			"!.claude",
+			"!.hezo",
+			"!.turbo"
+		]
 	}
 }

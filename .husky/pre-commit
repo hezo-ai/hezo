@@ -1,0 +1,1 @@
+bunx biome check . && bun run typecheck
