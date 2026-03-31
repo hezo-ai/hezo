@@ -463,6 +463,8 @@ The company-level `AGENTS.md` file lives in the project root and contains rules 
 
 AGENTS.md is the primary mechanism for enforcing engineering standards. It lives in the project root so that any coding agent (Claude Code, Codex, Gemini) automatically reads it — no runtime-specific configuration needed.
 
+To use AGENTS.md with Claude Code, project repos include a `CLAUDE.md` that points to it. The simplest approach is `@AGENTS.md` as the first line of `CLAUDE.md`, or a symlink (`ln -s AGENTS.md CLAUDE.md`). When hezo sets up a project repo, it creates both `AGENTS.md` and a `CLAUDE.md` pointing to it.
+
 Role-specific instructions are embedded directly in each agent's system prompt template — no separate skill files.
 
 ---

@@ -1,0 +1,208 @@
+import type { PGlite } from '@electric-sql/pglite';
+import type { Hono } from 'hono';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Env } from '../../lib/types';
+import { safeClose } from '../helpers';
+import { authHeader, createTestApp } from '../helpers/app';
+
+let app: Hono<Env>;
+let db: PGlite;
+let token: string;
+let companyId: string;
+let projectId: string;
+
+beforeAll(async () => {
+	const ctx = await createTestApp();
+	app = ctx.app;
+	db = ctx.db;
+	token = ctx.token;
+
+	const companyRes = await app.request('/api/companies', {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name: 'Issue Test Co', issue_prefix: 'ITC' }),
+	});
+	companyId = (await companyRes.json()).data.id;
+
+	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name: 'Main Project' }),
+	});
+	projectId = (await projectRes.json()).data.id;
+});
+
+afterAll(async () => {
+	await safeClose(db);
+});
+
+describe('issues CRUD', () => {
+	it('creates an issue with auto-generated identifier', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'First issue',
+				priority: 'high',
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.identifier).toBe('ITC-1');
+		expect(body.data.number).toBe(1);
+		expect(body.data.status).toBe('backlog');
+		expect(body.data.priority).toBe('high');
+	});
+
+	it('creates sequential issue numbers', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Second issue',
+			}),
+		});
+		expect(res.status).toBe(201);
+		expect((await res.json()).data.identifier).toBe('ITC-2');
+	});
+
+	it('lists issues with pagination', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues?per_page=1`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data).toHaveLength(1);
+		expect(body.meta.total).toBeGreaterThanOrEqual(2);
+		expect(body.meta.per_page).toBe(1);
+	});
+
+	it('filters issues by status', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues?status=backlog`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.every((i: any) => i.status === 'backlog')).toBe(true);
+	});
+
+	it('gets an issue by id with computed fields', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		const issue = (await listRes.json()).data[0];
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data).toHaveProperty('project_name');
+		expect(body.data).toHaveProperty('comment_count');
+		expect(body.data).toHaveProperty('cost_cents');
+	});
+
+	it('updates an issue status', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		const issue = (await listRes.json()).data[0];
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'in_progress' }),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.status).toBe('in_progress');
+	});
+
+	it('creates a sub-issue', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		const parentIssue = (await listRes.json()).data[0];
+
+		const res = await app.request(
+			`/api/companies/${companyId}/issues/${parentIssue.id}/sub-issues`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ title: 'Sub-task' }),
+			},
+		);
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.parent_issue_id).toBe(parentIssue.id);
+		expect(body.data.identifier).toBe('ITC-3');
+	});
+
+	it('manages issue dependencies', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		const issues = (await listRes.json()).data;
+
+		// Add dependency
+		const addRes = await app.request(
+			`/api/companies/${companyId}/issues/${issues[0].id}/dependencies`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ blocked_by_issue_id: issues[1].id }),
+			},
+		);
+		expect(addRes.status).toBe(201);
+
+		// List dependencies
+		const listDepsRes = await app.request(
+			`/api/companies/${companyId}/issues/${issues[0].id}/dependencies`,
+			{ headers: authHeader(token) },
+		);
+		expect(listDepsRes.status).toBe(200);
+		const deps = (await listDepsRes.json()).data;
+		expect(deps).toHaveLength(1);
+
+		// Remove dependency
+		const removeRes = await app.request(
+			`/api/companies/${companyId}/issues/${issues[0].id}/dependencies/${deps[0].id}`,
+			{ method: 'DELETE', headers: authHeader(token) },
+		);
+		expect(removeRes.status).toBe(200);
+	});
+
+	it('deletes a backlog issue with no comments', async () => {
+		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'To delete',
+			}),
+		});
+		const issue = (await createRes.json()).data;
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+	});
+
+	it('prevents deleting an in-progress issue', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		const inProgress = (await listRes.json()).data.find((i: any) => i.status === 'in_progress');
+
+		if (inProgress) {
+			const res = await app.request(`/api/companies/${companyId}/issues/${inProgress.id}`, {
+				method: 'DELETE',
+				headers: authHeader(token),
+			});
+			expect(res.status).toBe(403);
+		}
+	});
+});

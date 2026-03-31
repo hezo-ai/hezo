@@ -7,6 +7,9 @@
 	],
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.10",
+		"@commitlint/cli": "^20.5.0",
+		"@commitlint/config-conventional": "^20.5.0",
+		"husky": "^9.1.7",
 		"turbo": "^2",
 		"typescript": "^5"
 	},
@@ -16,6 +19,7 @@
 		"check:fix": "bunx biome check --write .",
 		"dev": "bun run scripts/dev.ts",
 		"test": "bun run scripts/test.ts",
-		"typecheck": "turbo typecheck"
+		"typecheck": "turbo typecheck",
+		"prepare": "husky"
 	}
 }

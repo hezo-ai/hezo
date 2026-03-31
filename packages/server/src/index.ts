@@ -1,9 +1,12 @@
+declare const Bun: { spawn: (args: string[]) => unknown };
+
 import { app } from './app';
 import { parseArgs } from './cli';
 import { startup } from './startup';
 
 const config = parseArgs();
-let serveFetch = app.fetch;
+// biome-ignore lint/suspicious/noExplicitAny: fetch signatures differ between Hono<Env> and Hono
+let serveFetch: any = app.fetch;
 
 startup(config)
 	.then((result) => {
@@ -11,7 +14,7 @@ startup(config)
 		const url = `http://localhost:${result.port}`;
 		console.log(`Hezo server running at ${url} [${result.masterKeyState}]`);
 		if (!config.noOpen) {
-			Bun.spawn(["open", url]);
+			Bun.spawn(['open', url]);
 		}
 	})
 	.catch((err) => {
