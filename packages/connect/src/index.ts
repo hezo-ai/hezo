@@ -1,10 +1,17 @@
-import { app } from './app';
+import { loadConfig } from './config.js';
+import { createApp } from './app.js';
 
-const port = parseInt(process.env.HEZO_CONNECT_PORT || '4100', 10);
+const config = loadConfig();
+const app = createApp(config);
 
-console.log(`Hezo Connect starting on port ${port}...`);
+console.log(`Hezo Connect starting on port ${config.port}...`);
+if (config.github) {
+	console.log('GitHub OAuth: configured');
+} else {
+	console.log('GitHub OAuth: not configured (set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET)');
+}
 
 export default {
-	port,
+	port: config.port,
 	fetch: app.fetch,
 };
