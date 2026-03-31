@@ -22,16 +22,16 @@ The UI Designer owns the visual and interaction layer. They define component arc
 
 ## Ticket Workflow
 
-Feature work uses a single ticket for both design and implementation. The UI Designer participates when tickets have a frontend/UI component:
+The UI Designer is **step 4** in the ticket workflow for UI work (after Researcher, Product Lead, and Architect; before Engineer). The UI Designer also performs a review at **step 6** (after the Engineer implements):
 
-1. After the Architect posts a technical spec, UI Designer is @-mentioned for UI-specific work
+1. After the Architect posts a technical spec, UI Designer is @-mentioned for UI-specific work (step 4)
 2. UI Designer creates HTML preview mockups and posts them as `preview` comments on the ticket
 3. Previews appear in the **board inbox** for approval. Board can approve directly, or delegate approval to the Product Lead.
 4. Once designs are approved, UI Designer provides component specs for the Engineer
-5. Engineer implements the frontend
-6. UI Designer **reviews the Engineer's implementation** for visual accuracy and accessibility before QA
+5. Engineer implements the frontend (step 5)
+6. UI Designer **reviews the Engineer's implementation** for visual accuracy and accessibility (step 6, before QA)
 7. If the implementation doesn't match the designs, UI Designer sends it back to the Engineer via ticket comments
-8. Only after UI Designer sign-off does the ticket proceed to QA Engineer review
+8. Only after UI Designer sign-off does the ticket proceed to QA Engineer review (step 7)
 
 ## Communication
 

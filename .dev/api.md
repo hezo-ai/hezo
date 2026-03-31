@@ -14,15 +14,20 @@ Timestamps are ISO 8601. IDs are UUIDs. Money is in cents.
 
 ## Authentication
 
-Four auth methods:
+Three auth methods:
 
-### Board — Better Auth session
-GitHub/GitLab OAuth login via Better Auth (email/password deferred). Session cookies used by the web UI.
-Board members must be a member of the company to access it.
+### Board — User JWT
+Stateless JWT signed with the master key. Issued after GitHub/GitLab OAuth login.
+Required for all human users. No session cookies.
 
-### Board — local trusted (no auth)
-In `local_trusted` deployment mode, requests from `localhost` / `127.0.0.1`
-are allowed without a token. This is the default for single-user local usage.
+```
+Authorization: Bearer <user_jwt>
+```
+
+User JWTs contain:
+```json
+{ "user_id": "...", "email": "...", "iat": ..., "exp": ... }
+```
 
 ### Board — API key (remote orchestrators)
 For external orchestrators (OpenClaw, scripts, AI agents controlling Hezo
@@ -45,8 +50,10 @@ Authorization: Bearer <agent_jwt>
 Agent tokens are JWTs signed with the master key (held in memory, never on disk),
 containing:
 ```json
-{ "agent_id": "...", "company_id": "...", "iat": ..., "exp": ... }
+{ "member_id": "...", "company_id": "...", "iat": ..., "exp": ... }
 ```
+
+`member_id` is the agent's ID in the members table (same as agent_id).
 
 ---
 
@@ -58,10 +65,10 @@ All Board API endpoints check the caller's membership role:
 
 | Access Level | Endpoints |
 |-------------|-----------|
-| **Board only** | Company settings, agent management (hire/fire/pause/resume/terminate), budget adjustments, secrets vault, API keys, connected platforms, audit log, plugin management, invites, member management |
-| **All members** (scoped by `project_ids`) | Issues, comments, live chat, KB (read), project docs (read), inbox (filtered), notification preferences |
+| **Board-only** (member_users with role='board') | Company settings, agent management (hire/fire/pause/resume/terminate), budget adjustments, secrets vault, API keys, connected platforms, audit log, plugin management, invites, member management |
+| **All members** (agents and users, scoped by `project_ids`) | Issues, comments, live chat, KB (read), project docs (read), inbox (filtered), notification preferences |
 
-Members with `project_ids` set can only access issues, comments, and documents within their allowed projects. Requests outside their scope return 403.
+Members (both agents and users) with role='member' are restricted by `project_ids` — they can only access issues, comments, and documents within their allowed projects. Requests outside their scope return 403.
 
 ### Companies
 
@@ -88,18 +95,18 @@ Response:
 ```
 
 #### `POST /companies`
-Create a company. Optionally clone from an existing company.
+Create a company. Optionally clone from a company type.
 
 Request:
 ```json
 {
   "name": "NoteGenius AI",
   "mission": "Build the #1 AI note-taking app",
-  "clone_from_company_id": "uuid | null"
+  "company_type_id": "uuid | null"
 }
 ```
 
-`clone_from_company_id` is optional. When set, the new company is seeded with:
+`company_type_id` is optional. When set, the new company is seeded from the matching company type with:
 - All knowledge base documents
 - All agent configurations (titles, prompts, org chart, runtimes, budgets)
 - Company-level MCP server config
@@ -109,11 +116,13 @@ Cloning does NOT copy: projects, repos, issues, secrets, costs, audit log, API k
 
 Response: full company object. On creation, the server automatically:
 
-1. Creates `~/.hezo/companies/{slug}/` folder structure with `.claude/` and auto-generated CLAUDE.md.
-2. Creates a **full agent team** from built-in templates: CEO, Architect, Engineer, QA Engineer, UI Designer, Researcher (or cloned agents if cloning).
+1. Creates `~/.hezo/companies/{slug}/` folder structure with auto-generated AGENTS.md.
+2. Creates a **full agent team** from built-in templates: CEO, Architect, Product Lead, Engineer, QA Engineer, UI Designer, Researcher, DevOps Engineer (starts idle), Marketing Lead (or cloned agents if cloning from a company type).
 3. Creates a **"Setup" project** with an onboarding issue assigned to the CEO:
    *"Set up repository access — configure deploy keys for connected GitHub account."*
-4. Provisions the company Docker container (with `agent-ci` pre-installed).
+4. Generates an SSH key pair for the company and registers it on the connected GitHub account.
+
+Docker container provisioning happens when the first project is created, not at company creation.
 
 The UI then prompts the owner to connect platforms via OAuth (Hezo Connect):
 - **GitHub** (required) — for repo access, PRs, Actions
@@ -121,7 +130,7 @@ The UI then prompts the owner to connect platforms via OAuth (Hezo Connect):
 - Other platforms optional: Stripe, PostHog, Railway, Vercel, DigitalOcean, X, GitLab
 
 Connections can be added or removed later in company settings.
-The board lands on a company with 6 agents and one actionable issue.
+The board lands on a company with 9 agents and one actionable issue.
 
 #### `GET /companies/:companyId`
 Get company detail.
@@ -228,7 +237,7 @@ Response:
       "reports_to_title": "CTO",
       "title": "Dev Engineer",
       "role_description": "Senior Engineer",
-      "runtime_type": "codex",
+      "runtime_type": "claude_code",
       "heartbeat_interval_min": 30,
       "monthly_budget_cents": 3000,
       "budget_used_cents": 1800,
@@ -288,10 +297,10 @@ Resume a paused agent.
 Terminate an agent. Kills the agent's subprocess. Unassigns all issues.
 Agent record is kept for audit trail (status = `terminated`).
 
-#### `POST /companies/:companyId/rebuild-container`
-Tear down and rebuild the company's shared Docker container. Kills all agent subprocesses,
-destroys the container, provisions a new one. Useful when base image or dependency config changes.
-All agents keep their identity and config.
+#### `POST /companies/:companyId/projects/:projectId/rebuild-container`
+Tear down and rebuild the project's Docker container. Kills all agent subprocesses
+in this project, destroys the container, provisions a new one. Useful when base
+image or dependency config changes. All agents keep their identity and config.
 
 ---
 
@@ -467,8 +476,7 @@ List issues. Supports filtering and pagination.
 
 Query params:
 - `?project_id=uuid` — filter by project
-- `?assignee_id=uuid` — filter by assignee (agent or board member)
-- `?assignee_type=agent|board` — filter by assignee type
+- `?assignee_id=uuid` — filter by assignee (references members.id)
 - `?status=open,in_progress` — comma-separated status filter
 - `?priority=urgent,high` — comma-separated priority filter
 - `?search=websocket` — full-text search on title + description
@@ -484,7 +492,6 @@ Response:
       "company_id": "uuid",
       "project_id": "uuid",
       "project_name": "Backend API",
-      "assignee_type": "agent",
       "assignee_id": "uuid",
       "assignee_name": "Dev Engineer",
       "parent_issue_id": null,
@@ -514,7 +521,6 @@ Request:
   "project_id": "uuid",
   "title": "Implement WebSocket handler for real-time sync",
   "description": "We need a WebSocket handler that supports...",
-  "assignee_type": "agent | board | null",
   "assignee_id": "uuid | null",
   "parent_issue_id": "uuid | null",
   "priority": "urgent",
@@ -542,7 +548,6 @@ Response: full issue object + computed fields:
     "project_name": "Backend API",
     "project_goal": "Ship collaboration features",
     "company_mission": "Build the #1 AI note-taking app",
-    "assignee_type": "agent",
     "assignee_id": "uuid",
     "assignee_name": "Dev Engineer",
     "parent_issue_id": null,
@@ -558,7 +563,7 @@ Response: full issue object + computed fields:
 ```
 
 #### `PATCH /companies/:companyId/issues/:issueId`
-Update issue fields: title, description, status, priority, assignee_type, assignee_id, labels.
+Update issue fields: title, description, status, priority, assignee_id, labels.
 
 Changing `assignee_id` triggers an event on the newly assigned agent, or a notification to the newly assigned board member.
 Changing `status` to `done` or `closed` triggers preview cleanup.
@@ -620,7 +625,7 @@ Response:
         "label": "Auth flow mockup",
         "description": "Interactive prototype of the login/signup flow"
       },
-      "preview_url": "/preview/company-uuid/agent-uuid/auth-flow-mockup.html",
+      "preview_url": "/preview/company-uuid/project-uuid/agent-uuid/auth-flow-mockup.html",
       "tool_calls": [],
       "created_at": "..."
     }
@@ -787,10 +792,10 @@ Revoke a grant. Sets `revoked_at`.
 
 ### Approvals
 
-#### `GET /approvals`
-List pending approvals across all companies (for the approval inbox).
+#### `GET /companies/:companyId/approvals`
+List pending approvals for a company.
 
-Query params: `?status=pending` (default), `?company_id=uuid`
+Query params: `?status=pending` (default)
 
 Response:
 ```json
@@ -984,7 +989,7 @@ Response:
 
 ### Previews (proxy)
 
-#### `GET /preview/:companyId/:agentId/:filename`
+#### `GET /preview/:companyId/:projectId/:agentId/:filename`
 Serves a preview file from the agent's preview directory.
 
 Headers on response:
@@ -1346,16 +1351,16 @@ List installed plugins for a company.
 ### Auth & Team
 
 #### `GET /auth/github`
-Initiate GitHub OAuth login. Redirects to Hezo Connect which handles the OAuth flow. On success, creates or updates the user account and sets a session cookie.
+Initiate GitHub OAuth login. Redirects to Hezo Connect which handles the OAuth flow. On success, creates or updates the user account and returns a signed user JWT.
 
 #### `GET /auth/gitlab`
 Initiate GitLab OAuth login. Same flow as GitHub.
 
 #### `GET /auth/callback`
-OAuth callback endpoint. Receives tokens from Hezo Connect, creates/updates user, sets session cookie, redirects to the app.
+OAuth callback endpoint. Receives tokens from Hezo Connect, creates/updates user, issues a user JWT, redirects to the app with the token.
 
 #### `POST /auth/logout`
-End the current session. Clears cookie.
+End the current session. Client discards the JWT.
 
 #### `POST /companies/:companyId/invites`
 Invite a new member to the company. Board-only.
@@ -1390,7 +1395,7 @@ Response:
 The invite code can be shared out-of-band (email, chat, etc.).
 
 #### `POST /invites/:code/accept`
-Accept an invite and join the company. Requires an authenticated session (OAuth login). The invite's role, title, permissions, and project scope are copied to the new membership.
+Accept an invite and join the company. Requires authentication (user JWT). The invite's role, title, permissions, and project scope are copied to a new member_users row.
 
 #### `GET /companies/:companyId/members`
 List all members of a company.
@@ -1400,7 +1405,9 @@ Response:
 {
   "data": [
     {
+      "id": "uuid",
       "user_id": "...",
+      "member_id": "uuid",
       "name": "Alice",
       "email": "alice@example.com",
       "role": "board",
@@ -1410,7 +1417,9 @@ Response:
       "joined_at": "..."
     },
     {
+      "id": "uuid",
       "user_id": "...",
+      "member_id": "uuid",
       "name": "Bob",
       "email": "bob@example.com",
       "role": "member",
@@ -1532,7 +1541,7 @@ Receives Telegram Bot API webhook updates. Handles bot commands (`/issues`, `/ap
 
 ## Agent API
 
-Agents call these endpoints from inside the company's shared Docker container.
+Agents call these endpoints from inside the project's Docker container.
 All requests require `Authorization: Bearer <agent_token>`.
 
 Base URL: `http://host.docker.internal:3100/agent-api`
@@ -1563,6 +1572,7 @@ Response:
   "data": {
     "agent": {
       "id": "uuid",
+      "member_id": "uuid",
       "title": "Dev Engineer",
       "status": "active",
       "system_prompt": "You are the **Frontend Engineer**...",
@@ -1769,15 +1779,14 @@ Request:
 {
   "title": "Write unit tests for WebSocket reconnection",
   "description": "...",
-  "assignee_type": "agent | null",
   "assignee_id": "uuid | null",
   "priority": "high"
 }
 ```
 
 `project_id` is inherited from the parent issue. If `assignee_id` is set to an
-agent that doesn't report to the creating agent, the request fails (agents can
-only delegate downward in the org chart).
+agent outside the creating agent's delegation scope, the request fails. Agents
+can delegate to peers (same level in the org chart) or downward.
 
 ---
 
@@ -2010,7 +2019,7 @@ Multipart form data, same constraints as the board endpoint.
 ## WebSocket (real-time updates)
 
 ### `WS /ws`
-Board UI connects to receive real-time updates. Auth via session cookie or agent JWT.
+Board UI connects to receive real-time updates. Auth via user JWT or agent JWT.
 
 Server pushes events:
 
@@ -2023,8 +2032,7 @@ Server pushes events:
 { "type": "agent.heartbeat", "company_id": "...", "agent_id": "...", "last_heartbeat_at": "..." }
 { "type": "budget.warning", "company_id": "...", "agent_id": "...", "percent_used": 80 }
 { "type": "budget.exceeded", "company_id": "...", "agent_id": "...", "agent_title": "CMO" }
-{ "type": "live_chat.started", "company_id": "...", "issue_id": "...", "session_id": "..." }
-{ "type": "live_chat.ended", "company_id": "...", "issue_id": "...", "session_id": "...", "summary": "..." }
+{ "type": "live_chat.message", "company_id": "...", "issue_id": "...", "author": "board:alice", "text": "..." }
 { "type": "kb_doc.updated", "company_id": "...", "doc_id": "...", "title": "..." }
 { "type": "company_preferences.updated", "company_id": "...", "updated_by_agent_id": "..." }
 { "type": "project_doc.created", "company_id": "...", "project_id": "...", "doc_id": "...", "doc_type": "tech_spec", "title": "..." }
@@ -2040,6 +2048,8 @@ Server pushes events:
 
 Client can filter by company_id after connecting (send
 `{ "subscribe": ["company-uuid-1", "company-uuid-2"] }`).
+
+In addition to system events, the WebSocket delivers row-level diffs for TanStack DB sync. Each diff message contains the table name, row ID, and changed fields, enabling optimistic UI updates without full refetches.
 
 ---
 
@@ -2095,9 +2105,7 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `project_doc.created` | project_doc | Board or agent creates project doc |
 | `project_doc.updated` | project_doc | Board or agent updates project doc |
 | `project_doc.deleted` | project_doc | Board deletes project doc |
-| `live_chat.started` | live_chat_session | Board starts session |
-| `live_chat.ended` | live_chat_session | Session ends |
-| `company.cloned` | company | Board clones company |
+| `live_chat.message` | live_chat | Message sent in persistent live chat |
 | `budget.warning` | agent | Agent hits 80% budget |
 | `budget.exceeded` | agent | Agent hits 100% budget |
 | `budget.reset` | agent | Monthly budget reset |
@@ -2112,7 +2120,7 @@ Hezo exposes an MCP (Model Context Protocol) endpoint for external AI agents to 
 
 Streamable HTTP MCP endpoint. Uses `@modelcontextprotocol/sdk` with the `McpServer` class. Supports bidirectional messaging with optional Server-Sent Events (SSE) for streaming responses.
 
-**Authentication:** Same as REST API — local trusted, Better Auth session, or API key (`Authorization: Bearer hezo_<key>`).
+**Authentication:** Same as REST API — user JWT, or API key (`Authorization: Bearer hezo_<key>`).
 
 **Capabilities:**
 - `tools` — Hezo registers all operations as MCP tools
@@ -2160,4 +2168,4 @@ The skill file is dynamically generated at startup from the registered MCP tool 
 - Authentication setup instructions (API key creation)
 - Example interactions
 
-The same content is also committed to the repo at `.claude/skills/hezo/SKILL.md` for local Claude Code discovery.
+The same content is also committed to the repo at `SKILL.md` in the project root for local agent discovery.

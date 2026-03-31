@@ -139,7 +139,7 @@ The `state` parameter is a signed JSON payload containing:
 }
 ```
 
-Signed with HMAC-SHA256 using a shared secret between Hezo app and Hezo Connect.
+Signed with HMAC-SHA256 by Hezo Connect. The Hezo app fetches Connect's public signing key via `GET /signing-key` on startup — no shared secret configuration needed.
 This prevents CSRF and ensures the callback goes to the right Hezo instance.
 
 ### OAuth link validity
@@ -192,7 +192,7 @@ requests. There's no account system — any Hezo instance that knows the URL can
 **Config:**
 ```env
 HEZO_CONNECT_MODE=self_hosted
-HEZO_CONNECT_PORT=4000
+HEZO_CONNECT_PORT=4100
 
 # Per-platform OAuth app credentials
 GITHUB_CLIENT_ID=...
@@ -248,6 +248,7 @@ limits are enforced and no payment is required.
 ```
 GET  /health                                    Health check + version
 GET  /platforms                                 List supported platforms + required scopes
+GET  /signing-key                                 Public key for state parameter verification
 ```
 
 ### OAuth flow endpoints
@@ -293,11 +294,11 @@ POST /admin/accounts/:id/suspend                Suspend account
 
 | Component | Technology | Notes |
 |-----------|-----------|-------|
-| Runtime | Node.js / TypeScript | Same ecosystem as Hezo |
-| Framework | Express or Hono | Lightweight HTTP server |
+| Runtime | Bun / TypeScript | Same ecosystem as Hezo |
+| Framework | Hono | Lightweight HTTP server |
 | Database | PostgreSQL | Accounts, keys, usage, billing (centrally hosted) |
 | Database (self-hosted) | SQLite or none | Minimal state needed |
-| Auth | Better Auth | Accounts for centrally hosted dashboard |
+| Auth | Custom OAuth + JWT | Accounts for centrally hosted dashboard |
 | Payments | Stripe (future) | Not needed for launch — free tier only |
 | Deployment | Docker | Single container |
 | Hosting | Railway or Fly.io | For connect.hezo.ai |
@@ -366,7 +367,7 @@ CREATE TABLE usage_monthly (
 - All communication over HTTPS in production (HTTP allowed for localhost in dev)
 
 ### State parameter security
-- HMAC-SHA256 signed with shared secret
+- HMAC-SHA256 signed by Hezo Connect. Hezo app fetches the signing key via public endpoint.
 - Contains nonce (prevents replay) and timestamp (prevents stale use)
 - Verified on callback before proceeding
 
@@ -382,7 +383,7 @@ CREATE TABLE usage_monthly (
 ### Self-hosted security
 - No API keys — trust is implicit (you control the server)
 - OAuth app secrets stored as environment variables
-- Signing key for state parameters must be configured
+- Signing key for state parameters is auto-generated on first startup and exposed via the `/signing-key` endpoint
 
 ---
 
@@ -410,8 +411,8 @@ http://localhost:3100/oauth/callback?error=access_denied&platform=github
 ### Self-hosted `.env`
 ```env
 HEZO_CONNECT_MODE=self_hosted
-HEZO_CONNECT_PORT=4000
-STATE_SIGNING_KEY=random-256-bit-key
+HEZO_CONNECT_PORT=4100
+STATE_SIGNING_KEY=random-256-bit-key  # auto-generated if not provided
 
 GITHUB_CLIENT_ID=Iv1.abc123
 GITHUB_CLIENT_SECRET=secret123
@@ -423,7 +424,7 @@ GMAIL_CLIENT_SECRET=GOCSPX-secret
 ### Centrally hosted `.env`
 ```env
 HEZO_CONNECT_MODE=centrally_hosted
-HEZO_CONNECT_PORT=4000
+HEZO_CONNECT_PORT=4100
 STATE_SIGNING_KEY=random-256-bit-key
 DATABASE_URL=postgres://...
 BETTER_AUTH_SECRET=session-signing-key

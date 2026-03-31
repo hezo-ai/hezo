@@ -30,7 +30,7 @@ The Architect is the **third step** in the ticket workflow (after Researcher and
    - **Implementation Plan** (doc_type: implementation_plan) — ordered phases with scope and dependencies
 3. Architect may live-chat with the Product Lead to clarify product intent
 4. Architect submits the spec for review (creates `plan_review` approval) — board must approve
-5. Once approved, Architect @-mentions the Engineer to begin implementation
+5. Once approved, Architect @-mentions the UI Designer (for UI work, step 4) or the Engineer (step 5) to begin
 6. Architect reviews the Engineer's work at phase boundaries
 7. Architect resolves technical questions from the Engineer during implementation
 

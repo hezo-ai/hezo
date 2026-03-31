@@ -1,50 +1,83 @@
 # Data Model — Design Decisions
 
-## 35 tables, 3 functions
+## Tables and functions
 
 | Table | Purpose | Key relationships |
 |-------|---------|-------------------|
 | `system_meta` | Key-value config store. Holds master key canary. | Standalone. |
-| `users` | Board members (Better Auth managed). Email, name. OAuth login only. | Standalone (auth). |
-| `sessions` | Better Auth session tokens. | belongs to user |
-| `company_types` | Company blueprints (recipes). Default agent configs, KB docs, preferences as JSONB snapshots. | Referenced by companies. |
+| `users` | Global human identity. Display name, avatar. One per human across all companies. | Standalone (identity). |
+| `user_auth_methods` | OAuth login methods (GitHub, GitLab). Links provider identity to user. | belongs to user |
+| `members` | Base table for all company participants (agents and users). Has `member_type` enum discriminator. Shared UUID used by child tables. | belongs to company |
+| `member_agents` | Agent-specific extension. System prompt, runtime type, budget, heartbeat, org chart. | extends member (PK = member.id) |
+| `member_users` | User-in-company extension. Role (board/member), role_title, permissions_text, project_ids. Links to global user. | extends member (PK = member.id), references user |
+| `company_types` | Company blueprints (recipes). Default agent configs, KB docs, preferences, filesystem snapshots as JSONB. | Referenced by companies. |
 | `companies` | Top-level tenant. Has `email`, `company_type_id`, `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), company-level budget. | Parent of everything. |
-| `company_memberships` | Links users to companies. Roles: `board`, `member`. Has `role_title`, `permissions_text`, `project_ids`. | links user ↔ company |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
-| `agents` | A role in the org chart. Self-referential `reports_to`. Has `slug` for @-mentions, `mcp_servers` (JSONB). | belongs to company |
 | `projects` | Group of related work under a company. Has Docker container config, dev ports. | belongs to company |
-| `repos` | Git repo (GitHub only). Short name for @-mentions. | belongs to project |
-| `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `ACME-42`). Polymorphic assignee (agent or board member). Execution lock fields. | belongs to company + project, assigned to agent or user |
+| `repos` | Git repo (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. | belongs to project |
+| `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `ACME-42`). Assignee references `members.id`. | belongs to company + project, assigned to member |
+| `issue_dependencies` | Many-to-many blocking relationships between issues. | links issue ↔ issue |
 | `issue_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. | belongs to issue |
 | `issue_attachments` | Links uploaded files to issues. | links asset ↔ issue |
-| `tool_calls` | Trace log entries. Linked to a comment (the agent message that triggered them). | belongs to comment + agent |
+| `tool_calls` | Trace log entries. Linked to a comment (the agent message that triggered them). | belongs to comment + member_agent |
 | `secrets` | Encrypted key/value. Scoped to company or company+project. | belongs to company, optionally project |
-| `secret_grants` | Which agent has access to which secret. Revocable. | links secret ↔ agent |
-| `approvals` | Pending board decisions. Polymorphic payload. | belongs to company, requested by agent |
-| `cost_entries` | Immutable spend records per agent per issue. | belongs to company + agent, optionally issue/project |
+| `secret_grants` | Which agent has access to which secret. Revocable. | links secret ↔ member_agent |
+| `approvals` | Pending board decisions. Polymorphic payload. | belongs to company, requested by member_agent |
+| `cost_entries` | Immutable spend records per agent per issue. | belongs to company + member_agent, optionally issue/project |
 | `audit_log` | Append-only. Never updated or deleted. | belongs to company |
-| `kb_docs` | Knowledge base documents. Markdown, company-scoped, slug-addressable. | belongs to company |
+| `kb_docs` | Knowledge base documents. Markdown, company-scoped, slug-addressable. AGENTS.md is a special KB doc written to disk. | belongs to company |
 | `kb_doc_revisions` | Version history for KB documents. | belongs to kb_doc |
-| `live_chat_sessions` | Real-time chat transcripts. Linked to issue + agent. | belongs to issue + agent |
+| `live_chats` | Persistent live chat per issue. One ongoing conversation. Transcript as JSONB array. | belongs to issue |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to company |
-| `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. | belongs to agent + company |
-| `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. | belongs to agent + company |
-| `agent_task_sessions` | Per-task session persistence for session compaction. | belongs to agent, keyed by task |
+| `company_ssh_keys` | Generated SSH key pairs per company. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to company |
+| `execution_locks` | Issue work ownership tracking. One agent works on an issue at a time. | belongs to issue + member_agent |
+| `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. | belongs to member_agent + company |
+| `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. | belongs to member_agent + company |
+| `agent_task_sessions` | Per-task session persistence for session compaction. | belongs to member_agent, keyed by task |
 | `assets` | Uploaded files. Provider, object key, content type, SHA-256 hash. | belongs to company |
 | `plugins` | Installed plugins. Manifest, status, config. | belongs to company |
 | `plugin_state` | Scoped key-value store for plugin data. | belongs to plugin + company |
 | `plugin_jobs` | Cron job declarations for plugins. | belongs to plugin |
-| `instance_user_roles` | Server-level admin roles. | belongs to user |
 | `company_preferences` | Company-level preference doc. Agents observe and record board working style preferences. | belongs to company |
 | `company_preference_revisions` | Version history for company preferences. | belongs to company_preference |
-| `project_docs` | Project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan). | belongs to project + company |
+| `project_docs` | Project-level shared documents (prd, tech spec, implementation plan, research, UI decisions, marketing plan). | belongs to project + company |
 | `project_doc_revisions` | Version history for project documents. | belongs to project_doc |
 | `company_issue_counters` | Helper for atomic issue numbering. | belongs to company |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
 | `slack_connections` | Per-company Slack app config. Bot token encrypted in secrets. | belongs to company |
 
 ## Key design decisions
+
+### Members base table (unified identity)
+
+Both agents and human users participate in companies as "members." The `members`
+table is the base identity table for all company participants:
+
+- `members(id UUID PK, company_id FK, member_type ENUM('agent','user'), display_name TEXT, created_at)`
+- `member_agents(id PK/FK → members.id, system_prompt, runtime_type, ...)` — agent-specific fields
+- `member_users(id PK/FK → members.id, user_id FK → users.id, role, role_title, permissions_text, project_ids)` — user-in-company fields
+
+`members.id` is the shared UUID — it IS the agent or user-in-company ID. No
+separate FK needed. All references to assignees, authors, and actors point to
+`members.id` with a single FK.
+
+The global `users` table stores cross-company identity (display_name, avatar_url).
+`user_auth_methods` stores OAuth providers (GitHub, GitLab). No email field on
+users — email may be added as an auth type later.
+
+### Custom authentication
+
+Hezo uses custom auth (no third-party auth library). OAuth only for MVP:
+
+- `users` — global identity, one per human
+- `user_auth_methods(id, user_id FK, provider ENUM, provider_user_id, created_at)` — OAuth links
+- Sessions are stateless JWTs signed with the master key. No sessions table.
+- JWT contains: `{ user_id, member_id, company_id, iat, exp }`
+- Always authenticated — no unauthenticated "local_trusted" mode
+
+First-run flow: Hezo Connect must be running → user logs in via OAuth → master
+key set in web UI → forced company creation.
 
 ### Polymorphic JSONB columns
 
@@ -59,7 +92,7 @@ The `content_type` enum discriminates the shape:
 - `trace` → `{ "summary": "4 tool calls" }` (detail lives in `tool_calls` table)
 - `system` → `{ "text": "Agent paused — budget limit reached" }`
 
-Live chat sessions are displayed in a separate tab on the issue detail view,
+Live chat is displayed in a separate tab on the issue detail view,
 not as comments in the thread.
 
 ### Atomic budget enforcement
@@ -101,9 +134,13 @@ Company-wide secrets have `project_id = NULL`. Project-scoped secrets have both
 allows the same secret name at different scopes (e.g. a company-level secret
 and a project-level secret with the same name — project scope takes precedence).
 
-### Repo validation
+### Repo storage and validation
 
-The `repos.url` CHECK constraint enforces GitHub URLs at the DB level.
+The `repos.repo_identifier` column stores the `org/repo` format (e.g.
+`acme-corp/frontend`). The full SSH URL (`git@github.com:org/repo.git`) is
+constructed at clone time. No URL CHECK constraint — validation is at the app
+layer.
+
 The app layer performs a two-step validation before inserting:
 
 1. **GitHub connection check** — verifies the company has an active GitHub OAuth
@@ -118,6 +155,19 @@ The app layer performs a two-step validation before inserting:
 Short names are unique within a project and used for @-mentions in issue
 comments (`@frontend`, `@api`).
 
+### SSH keys per company
+
+Hezo generates an SSH key pair per company for git operations. The private key
+is stored encrypted in the secrets vault. The public key is registered on the
+connected GitHub account via the OAuth API (`POST /user/keys`).
+
+The `company_ssh_keys` table tracks: `company_id`, `public_key`, `fingerprint`,
+`private_key_secret_id` (FK to secrets), `github_key_id` (for cleanup on
+disconnect), `created_at`.
+
+Git clone/push/pull uses SSH with the company's generated key. GitHub OAuth
+token is used for API calls (repo validation, PRs, Actions).
+
 ### Audit log immutability
 
 The `audit_log` table has no `updated_at`. The app layer must never issue
@@ -131,9 +181,13 @@ CREATE RULE no_delete_audit AS ON DELETE TO audit_log DO INSTEAD NOTHING;
 
 ### Budget resets
 
-`agents.budget_reset_at` tracks when the budget was last zeroed. A scheduled
+`member_agents.budget_reset_at` tracks when the budget was last zeroed. A scheduled
 job (or heartbeat check) compares this to the current month boundary and resets
 `budget_used_cents = 0` when a new month starts.
+
+When budget is exceeded mid-execution, the agent's subprocess is terminated
+immediately. A system comment is posted on the active issue. The board can
+adjust the budget and resume the agent at any time.
 
 ### Preview files (not in DB)
 
@@ -143,7 +197,7 @@ visible on the host via the shared workspace volume at:
 ```
 ~/.hezo/companies/{slug}/projects/{project}/.previews/{agent_id}/
 ```
-The web app serves these via `/preview/{company_id}/{agent_id}/{filename}`.
+The web app serves these via `/preview/{company_id}/{project_id}/{agent_id}/{filename}`.
 A cron job expires files older than 72 hours. The only DB reference is the
 `preview` content_type in `issue_comments` which stores the filename.
 
@@ -162,7 +216,8 @@ middleware parsing.
 
 Each agent has a `slug` derived from its title (lowercased, spaces → hyphens).
 For example, "Dev Engineer" → `dev-engineer`. Slugs are unique within a company
-(`UNIQUE (company_id, slug)`) to ensure unambiguous @-mentions.
+(enforced via `members.company_id` + `member_agents.slug` unique index) to
+ensure unambiguous @-mentions.
 
 All inter-agent communication happens via @-mentions in issue comments — no
 side channels, no direct messaging. The server parses `@<slug>` from comment
@@ -179,12 +234,19 @@ their lifecycle.
 
 ### MCP servers
 
-Both `companies.mcp_servers` and `agents.mcp_servers` are JSONB arrays storing
-MCP server config: `[{ "name": "...", "url": "...", "description": "..." }]`.
+Both `companies.mcp_servers` and `member_agents.mcp_servers` are JSONB arrays
+storing manually configured MCP server entries:
+`[{ "name": "...", "url": "...", "description": "..." }]`.
 
-At runtime, company-level and agent-level lists are merged. Agent-level takes
-precedence on name conflicts. The merged list is injected into the agent's
-subprocess runtime configuration.
+At runtime, the effective MCP server list is computed by merging:
+1. Manually configured company-level servers (`companies.mcp_servers`)
+2. Manually configured agent-level servers (`member_agents.mcp_servers`)
+3. Active connected platforms (auto-derived from `connected_platforms` table)
+
+Agent-level takes precedence on name conflicts with company-level. Connected
+platform servers are added automatically — they are NOT written to the JSONB
+columns. The merged list is injected into the agent's subprocess runtime
+configuration.
 
 ### MPP (Machine Payments Protocol)
 
@@ -207,13 +269,16 @@ via the same `debit_agent_budget()` atomic function.
 ### Company onboarding
 
 When a company is created via `POST /companies`, the server automatically:
-1. Creates the `~/.hezo/companies/{slug}/` folder structure including `.claude/`
-2. Creates a full agent team (CEO, Architect, Engineer, QA, UI Designer, Researcher)
-   with pre-filled system prompts from built-in role templates
+1. Creates the `~/.hezo/companies/{slug}/` folder structure
+2. Creates the full 9-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer,
+   UI Designer, DevOps Engineer, Marketing Lead, Researcher) with pre-filled system
+   prompts from built-in role templates. DevOps Engineer starts in `idle` status.
 3. Prompts the owner to connect platforms via OAuth (GitHub required, Gmail recommended)
 4. Creates a "Setup" project with an onboarding issue assigned to the CEO
-5. Provisions the company Docker container (with `agent-ci` pre-installed)
-6. Auto-generates the company CLAUDE.md with default engineering rules
+5. Generates an SSH key pair for the company and registers it on the connected GitHub account
+6. Auto-generates the company AGENTS.md KB doc with default engineering rules and writes it to disk
+
+Container provisioning happens when the first project is created, not at company creation.
 
 This ensures the user never lands on an empty company.
 
@@ -221,19 +286,19 @@ This ensures the user never lands on an empty company.
 
 `POST /companies` requires a `company_type_id`. The server clones from the
 selected company type:
-- Creates `agents` rows from `company_types.agents_config` (new IDs, `budget_used_cents`
-  reset to 0)
+- Creates `members` + `member_agents` rows from `company_types.agents_config` (new IDs,
+  `budget_used_cents` reset to 0)
 - Creates `kb_docs` rows from `company_types.kb_docs_config`
 - Creates `company_preferences` row from `company_types.preferences_config`
 - Copies `mcp_servers` array from company type
 - Copies `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
+- Restores filesystem snapshots from `company_types.filesystem_snapshot` (AGENTS.md, etc.)
 
 Project containers are provisioned when projects are created (not at company creation).
 
 NOT copied: projects, repos, issues, secrets, cost_entries, audit_log, api_keys,
-secret_grants, approvals, connected_platforms, project_docs. Platform connections
-must be set up fresh for each company via OAuth. Project documents are
-project-scoped and not cloned.
+secret_grants, approvals, connected_platforms, project_docs, SSH keys. Platform
+connections and SSH keys are generated fresh for each company.
 
 ### Company preferences
 
@@ -254,11 +319,12 @@ Content is structured Markdown with sections for different preference categories
 
 The `{{company_preferences_context}}` template variable in system prompts
 injects the preference document so agents can align with the board's working
-style.
+style. The orchestrator pre-resolves all template variables before spawning
+the agent subprocess.
 
 ### Project documents
 
-`project_docs` stores project-level shared documents — technical specifications,
+`project_docs` stores project-level shared documents — PRDs, technical specifications,
 implementation plans, research documents, UI design decisions, and marketing plans.
 These are living documents that agents create and maintain throughout a project's
 lifecycle. Any agent can read and update any project document.
@@ -268,6 +334,10 @@ fundamentally different semantics: they have a `doc_type` enum, belong to a
 project lifecycle, and use different access patterns. The partial unique index
 `idx_project_docs_one_per_type` enforces at most one document per type per project
 (except `other`, which allows multiples).
+
+The `prd` doc_type is the source of truth for product requirements. PRD changes
+require board approval — the Product Lead must get board confirmation before
+modifying the PRD.
 
 Updates do not require approval — these are working documents actively maintained
 during development. All changes create revisions in `project_doc_revisions` for
@@ -287,24 +357,35 @@ create a `kb_update` approval with a diff view. On approval, the document is
 updated and `last_updated_by_agent_id` is set. This keeps the KB current as
 agents learn patterns during their work.
 
-The `{{kb_context}}` template variable in system prompts auto-selects relevant
-KB docs based on the agent's current task and injects summaries.
+The `{{kb_context}}` template variable in system prompts injects all KB docs.
+The orchestrator pre-resolves all template variables and includes everything
+for MVP. Optimization with smart selection deferred.
 
-### Live chat sessions
+**AGENTS.md** is a special KB doc that contains company-wide engineering rules
+and agent conventions. It is stored in the database like any other KB doc but
+also written to the project root filesystem (`AGENTS.md`) so that any coding
+agent (Claude Code, Codex, Gemini) automatically reads it. On every update to
+this KB doc, the file on disk is re-written.
 
-`live_chat_sessions` stores transcripts of real-time chat between the board
-and an agent about a specific issue. The `transcript` JSONB column holds an
-ordered array of messages: `[{ "author": "board|agent", "text": "...",
-"timestamp": "..." }]`.
+### Live chat (persistent per issue)
 
-When a session ends, the agent generates a `summary` text. Live chat
-sessions are displayed in a dedicated **Live Chat tab** on the issue detail
-view — they do not appear as comments in the Comments tab.
+`live_chats` stores a single persistent conversation per issue. There are no
+discrete "sessions" — each issue has one ongoing live chat from creation.
+The `transcript` JSONB column holds an ordered array of messages:
+`[{ "author": "board:alice|agent:architect", "text": "...", "timestamp": "..." }]`.
+
+Live chat is displayed in a dedicated **Live Chat tab** on the issue detail
+view — messages do not appear as comments in the Comments tab.
+
+The assigned agent is always a participant. Board members can @-mention any
+other agent to pull them into the conversation. Mentioned agents wake
+immediately (not on next heartbeat).
 
 Constraints:
-- One active session per agent at a time (enforced in app layer)
-- Sessions are immutable after `ended_at` is set
-- Tool calls during live chat are captured in the transcript as typed entries
+- One live chat per issue (auto-created with the issue)
+- An agent can only be active in one live chat at a time
+- Tool calls during live chat are captured in the transcript
+- Agents should post a summary of Q&A outcomes as a comment on the issue for the permanent record
 
 ### Connected platforms (Hezo Connect)
 
@@ -320,14 +401,21 @@ benefit from the same AES-256-GCM encryption as all other secrets.
 2. Hezo app redirects browser to Hezo Connect (self-hosted or centrally hosted)
 3. Hezo Connect handles the OAuth dance with the provider
 4. Hezo Connect redirects the browser back to the Hezo app's callback URL with tokens as query params
-5. Hezo app verifies the state signature, encrypts tokens, stores them as secrets, creates the connection record
+5. Hezo app verifies the state signature (fetched from Connect's public key endpoint), encrypts tokens, stores them as secrets, creates the connection record
 6. Hezo Connect purges tokens from memory — it never stores them long-term
 
 Token delivery uses browser redirects rather than server-to-server POST calls.
 This keeps the architecture simple and avoids Connect needing to make outbound
 HTTP calls to the local Hezo instance. In self-hosted mode, Hezo Connect is
-stateless — no database needed, just OAuth app credentials and a signing key
-as environment variables.
+stateless — no database needed, just OAuth app credentials as environment variables.
+
+**State signing:** Hezo Connect generates the signing key and exposes it via a
+public endpoint (`GET /signing-key`). The Hezo app fetches it on startup — no
+shared secret configuration needed.
+
+**Platform token access:** All agents in a company automatically receive all
+connected platform OAuth tokens as environment variables in their subprocess.
+No per-agent role-based filtering — all agents get all tokens.
 
 **Token lifecycle:**
 - Access tokens are refreshed automatically by the Hezo app using the stored
@@ -348,27 +436,48 @@ Hezo app to it via `--connect-url`.
 ### Issue identifiers (Linear-style)
 
 Each company has an `issue_prefix` column (e.g. `ACME`, `NOTE`) auto-derived
-from the company name at creation time. The prefix is globally unique across
-all companies. Issues have an `identifier` column computed as
+from the company name at creation time. On collision, a numeric suffix is
+appended (ACME, ACME2, ACME3). The prefix is globally unique across all
+companies on the instance. Issues have an `identifier` column computed as
 `{prefix}-{number}` (e.g. `ACME-42`). The identifier is the primary
 human-facing reference for issues — used in UI, API responses, @-mentions
 (`#ACME-42`), and git branch names.
 
-### Issue work ownership
+### Issue assignees
 
-Issues use a polymorphic assignee: `assignee_type` (`agent` or `board`) +
-`assignee_id` (references `agents.id` or `users.id`). This allows both AI
-agents and board members to be assigned tickets.
+Issues have an `assignee_id` FK pointing to `members.id`. Both agents and
+human users (board members and company members) can be assigned tickets.
 
-When an agent begins work on an issue, `execution_run_id` and
-`execution_locked_at` are set to claim ownership. This is a work ownership
-marker, not a short-lived database lock — ownership persists across heartbeat
-cycles and may span hours or days. Only one agent works on a given issue at
-a time. If a second agent tries to work on an owned issue, its wakeup is
-deferred with status `deferred_issue_execution` and promoted when ownership
-is released (on completion, reassignment, or agent pause/termination).
-Execution locking applies only to agent-assigned issues — board-member-assigned
-issues have no execution lock.
+When a human is assigned an issue, they can work on it outside Hezo, pass it
+to another member (human or agent), or @-mention an agent in a comment to
+request specific help. When an agent is assigned, the standard agent execution
+flow applies.
+
+### Execution locks (separate table)
+
+The `execution_locks` table tracks issue work ownership:
+- `issue_id` FK (unique — at most one lock per issue)
+- `agent_member_id` FK → members.id
+- `heartbeat_run_id` FK
+- `locked_at` timestamp
+
+When an agent begins work on an issue, a row is inserted into `execution_locks`.
+This is a work ownership marker, not a short-lived database lock — ownership
+persists across heartbeat cycles and may span hours or days. Only one agent
+works on a given issue at a time. If a second agent tries to work on an owned
+issue, its wakeup is deferred with status `deferred_issue_execution` and
+promoted when ownership is released (on completion, reassignment, or agent
+pause/termination). Execution locking applies only to agent-assigned issues.
+
+### Issue dependencies
+
+The `issue_dependencies` join table enables many-to-many blocking:
+- `issue_id` FK — the issue that is blocked
+- `blocked_by_issue_id` FK — the issue that blocks it
+- `UNIQUE(issue_id, blocked_by_issue_id)` — no duplicate dependencies
+- `CHECK(issue_id != blocked_by_issue_id)` — no self-blocking
+
+An issue's `status` can be set to `blocked` when it has unresolved dependencies.
 
 ### Wakeup queue
 
@@ -377,12 +486,17 @@ with deduplication via `idempotency_key` and coalescing via `coalesced_count`.
 Multiple wakeups for the same agent merge context snapshots instead of creating
 duplicate runs.
 
+Event-based triggers (@-mention, assignment, option chosen, approval resolved)
+wake agents immediately — they do not wait for the next scheduled heartbeat.
+Scheduled heartbeats are a fallback for idle agents with no pending events.
+
 ### Session compaction
 
-`agent_task_sessions` stores per-task session state (keyed by agent_id +
-task_key). Sessions persist across heartbeats so agents can resume work.
-Compaction policies auto-rotate sessions when token/run/age thresholds are
-exceeded, generating handoff markdown for continuity.
+`agent_task_sessions` stores per-task session state (keyed by agent member_id +
+task_key). Each heartbeat spawns a fresh subprocess — handoff markdown from the
+previous session is injected as initial context. Compaction policies auto-rotate
+sessions when token/run/age thresholds are exceeded, generating handoff markdown
+for continuity.
 
 ### Heartbeat runs
 
@@ -396,17 +510,22 @@ and retry tracking for orphan recovery.
 Each edit creates a new revision with content snapshot, change summary,
 and attribution. Supports diff between versions and revert.
 
-### Multi-user auth and roles
+### Auth and roles
 
-`users` and `sessions` are managed by Better Auth. All users authenticate
-via GitHub or GitLab OAuth (email/password deferred to post-MVP).
+Hezo uses custom auth. All users authenticate via GitHub or GitLab OAuth
+(email/password deferred to post-MVP). Sessions are stateless JWTs signed
+with the master key — no sessions table.
 
-`company_memberships` links users to companies with two roles: `board`
-(full authority) and `member` (scoped authority). Members have a
-`role_title` (arbitrary, e.g. "Frontend Developer"), `permissions_text`
-(free-text description of what they can do, injected into agent prompts),
-and optional `project_ids` (JSONB array restricting which projects they
-can access). Board members always have full access.
+The `users` table stores global identity (display_name, avatar_url).
+`user_auth_methods` stores OAuth provider links (provider, provider_user_id).
+
+`member_users` links users to companies with two roles: `board` (full authority)
+and `member` (scoped authority). Members have a `role_title` (arbitrary, e.g.
+"Frontend Developer"), `permissions_text` (free-text description of what they
+can do, injected into agent prompts), and optional `project_ids` (JSONB array
+restricting which projects they can access). Board members always have full access.
+A user can belong to multiple companies — each company membership is a separate
+`members` + `member_users` row pair.
 
 Permission enforcement is two-layered: the API layer enforces structural
 boundaries (project scope, board-only endpoints), while agents interpret
@@ -414,7 +533,10 @@ boundaries (project scope, board-only endpoints), while agents interpret
 PRDs — escalate to CEO").
 
 `invites` carries the intended role, title, permissions, and project scope.
-These fields are copied to `company_memberships` when accepted.
+These fields are copied to `member_users` when accepted.
+
+Board member conflicts are resolved first-come-first-served — the first board
+member to approve or deny a request locks the decision.
 
 ### File attachments
 
@@ -437,9 +559,10 @@ checks both agent-level and company-level budgets atomically.
 
 ### Messaging integrations (optional)
 
-`notification_preferences` stores per-user notification routing. Each row
-represents a channel (web, telegram, slack) with a JSONB array of subscribed
-event types and an enabled flag. Unique on `(user_id, channel)`.
+`notification_preferences` stores per-user notification routing (keyed by
+`users.id`, not company-scoped members). Each row represents a channel
+(web, telegram, slack) with a JSONB array of subscribed event types and an
+enabled flag. Unique on `(user_id, channel)`.
 
 `slack_connections` stores per-company Slack app configuration. The bot token
 is stored encrypted in the `secrets` table (referenced via `bot_token_secret_id`).

@@ -32,7 +32,7 @@ The Product Lead is the **second step** in the ticket workflow (after the Resear
    - Out of scope (explicit)
 3. Product Lead opens a live chat with the board to iterate on requirements
 4. Board and Product Lead go back-and-forth until requirements are finalised and the board approves
-5. PRD is posted as a comment on the ticket and the Product Lead @-mentions the Architect
+5. PRD is stored as a project document (doc_type: `prd`) and a summary is posted as a comment on the ticket. The Product Lead @-mentions the Architect
 6. Product Lead reviews the Architect's technical spec to ensure it matches product intent
 7. After implementation, Product Lead verifies the result matches the PRD
 

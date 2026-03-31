@@ -24,7 +24,7 @@ The QA Engineer is the final approval gate for every ticket. No feature or code 
 
 ## Ticket Workflow
 
-The QA Engineer is the **fourth and final step** in the ticket workflow:
+The QA Engineer is the **final step** in the ticket workflow (step 7 for UI work, step 6 for non-UI work):
 
 1. Engineer completes implementation and @-mentions @qa-engineer
 2. QA Engineer reviews:

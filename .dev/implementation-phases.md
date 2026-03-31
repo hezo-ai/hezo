@@ -46,20 +46,20 @@
 - Migration runner: loads SQL from bundled archive (via `@hiddentao/zip-json`), tracks in `_migrations` table, runs on startup
 - `001_initial_schema.sql` applied on first run
 - Build step: compress `migrations/*.sql` into `migrations-bundle.json` via `zip()`, embed in binary
-- Master key lifecycle: terminal prompt on first run (generate or enter key), terminal prompt on subsequent runs (enter key or generate new + fresh start), `--master-key` CLI override
+- Master key lifecycle: set via web UI on first login. CLI `--master-key` arg for unlocking only (not setting).
 - CLI parsing: `--data-dir`, `--master-key`, `--port`, `--connect-url`, `--connect-api-key`, `--reset`
-- `--reset` flag: wipe database and start fresh (with confirmation prompt)
+- `--reset` flag: wipe database and start fresh
 - Sensible defaults: port 3100, connect-url `http://localhost:4100`, data-dir `~/.hezo/`
 - `GET /health` endpoint
 - Test infrastructure: Vitest config, template database pattern, port allocation utility
 
 **How to test:**
-- `hezo --port 3100` starts server, prompts to generate or enter master key on first run
-- `hezo --master-key <key> --port 3100` verifies key and starts
-- Wrong master key prompts with recovery options (re-enter or generate new + fresh start)
+- `hezo --port 3100` starts server, master key set via web UI on first login
+- `hezo --master-key <key> --port 3100` unlocks and starts
+- Wrong master key rejected with error
 - `curl localhost:3100/health` returns 200
 - PGlite data persists at `~/.hezo/pgdata` between restarts
-- `hezo --reset` wipes database and starts fresh after confirmation
+- `hezo --reset` wipes database and starts fresh
 - Migration table shows `001_initial_schema.sql` as applied
 
 **Depends on:** Nothing
@@ -93,7 +93,7 @@
 - Cost entries (create, list, budget queries)
   - `debit_agent_budget()` atomic function
 - API keys (create, list, revoke)
-- Board API authentication: `local_trusted` mode (localhost only)
+- Board API authentication: stateless JWT (always authenticated, no local_trusted mode)
 
 **How to test:**
 - Create a company type, then create a company from it — 9 agents auto-created
@@ -116,8 +116,8 @@
 - `POST /connections/github/start` — generates auth URL via Hezo Connect
 - `GET /oauth/callback` — receives token, encrypts, stores in `connected_platforms`
 - Repo CRUD with GitHub access validation (API check with OAuth token before saving)
-- Repo cloning via HTTPS + OAuth token
-- Company-level `.claude/` folder setup and symlinks
+- Repo cloning via SSH with company-generated SSH key pair (registered on GitHub via OAuth API)
+- Company-level folder setup with AGENTS.md in project root
 - Board inbox `oauth_request` items when GitHub not connected
 - Connected platforms management (connect, disconnect)
 
@@ -126,7 +126,7 @@
 - Connect a GitHub account via the OAuth flow
 - Add a repo — system validates access via GitHub API
 - Invalid repo URL or no access returns clear error
-- Repo is cloned to correct filesystem path
+- Repo is cloned via SSH to correct filesystem path
 - Token is encrypted in secrets table
 
 **Depends on:** Phase 0, Phase 2
@@ -200,16 +200,16 @@
 **What's included:**
 - MCP endpoint (Streamable HTTP at `POST /mcp`)
   - All Board API operations exposed as MCP tools
-  - Authentication via API key or local trusted
+  - Authentication via user JWT or API key
 - Skill file at `GET /skill.md`
   - Dynamically generated from registered MCP tool definitions
-  - Also committed to repo at `.claude/skills/hezo/SKILL.md`
+  - Also committed to repo at `SKILL.md` in the project root
 
 **How to test:**
 - Connect an MCP client to `localhost:3100/mcp` — tools listed and callable
 - Create an issue via MCP `create_issue` tool call — verified in DB
 - `curl localhost:3100/skill.md` returns valid Markdown listing all current tools
-- API key auth required for MCP when in `authenticated` mode
+- API key or JWT auth required for MCP
 
 **Depends on:** Phase 5
 
@@ -230,15 +230,15 @@
 - Audit log viewer
 - Settings page (connected platforms, company email, MCP servers, preferences)
 - Project detail with Documents tab and Dev Preview link
-- PGlite React hooks (`useLiveQuery`, `useLiveIncrementalQuery`) for real-time data
-- Master key status indicator (shows locked/unlocked state in UI header)
+- TanStack DB for client-side querying with row-level diffs synced over WebSocket
+- Master key setup UI (modal gate on first login, generate or enter key)
 - `bun build --compile` producing single self-contained binary
 - Playwright E2E tests covering all major UI flows
 
 **How to test:**
 - Build binary, run it, open browser — all screens render
 - Create/edit/delete operations work from UI
-- Live data updates without page refresh (live queries)
+- Live data updates without page refresh (TanStack DB + WebSocket sync)
 - Board inbox shows pending approvals with one-click actions
 - Org chart displays correct hierarchy
 - Dev preview link opens running project in new tab
@@ -250,17 +250,15 @@
 
 ## Phase 8: Multi-User Auth + Roles
 
-**Goal:** Better Auth with OAuth login, board/member roles with permissions, company email invites, session compaction.
+**Goal:** Custom auth with OAuth login, board/member roles with permissions, company email invites, session compaction.
 
 **What's included:**
-- Better Auth integration:
+- Custom auth implementation:
   - GitHub OAuth login (via Hezo Connect)
   - GitLab OAuth login (via Hezo Connect)
-  - Session cookies
-  - (Email/password deferred to post-MVP)
-- `authenticated` deployment mode
+  - Stateless JWTs signed with master key
 - OAuth login page (GitHub + GitLab buttons)
-- Company memberships with two roles:
+- Member roles via `member_users` table:
   - `board` — full authority
   - `member` — scoped authority with `role_title`, `permissions_text`, `project_ids`
 - Permission enforcement:
@@ -290,7 +288,7 @@
 - Member cannot access company settings or agent management (403)
 - Agent respects member's permissions_text (e.g. refuses to change PRD when permissions say not to)
 - Member cannot create invites (403)
-- Unauthorized access rejected in authenticated mode
+- First user flow: OAuth login → master key gate → forced company creation
 - Session compaction triggers after token threshold
 
 **Depends on:** Phase 7
@@ -304,19 +302,15 @@
 **What's included:**
 - Gemini adapter (subprocess, Gemini CLI)
 - Codex adapter
-- `bash` adapter refinements
-- `http` adapter refinements
 - Plugin system:
   - Worker thread isolation
   - Capability-gated APIs (state, events, tools, http, secrets, cron)
   - Plugin lifecycle (install, enable, disable, uninstall)
   - Crash recovery with exponential backoff
   - `@hezo/plugin-sdk` package
-  - Local plugin loading (filesystem path)
+  - Local plugin loading (filesystem path or git URL)
   - Plugin management UI
-- Plugin registry (plugins.hezo.ai):
-  - Browse, search, ratings, version management
-  - Self-hosted registry support (`--plugin-registry-url`)
+- Plugin registry (plugins.hezo.ai) out of scope for MVP — plugins are local-only
 
 **How to test:**
 - Create agent with Gemini runtime — executes via Gemini CLI
@@ -390,14 +384,14 @@
 |-------|-------|----------------|
 | 0 | Hezo Connect | Standalone GitHub OAuth relay, independently testable |
 | 1 | Foundation | Hono + PGlite + migrations + master key + CLI |
-| 2 | Core CRUD | Companies (with types), agents, issues, projects — all via REST |
+| 2 | Core CRUD | Companies (with types), agents (all 9), issues, projects — all via REST |
 | 3 | GitHub Integration | OAuth flow, token storage, repo validation and cloning |
 | 4 | Agent Execution | Docker per project, subprocesses, heartbeats, worktrees, budgets |
 | 5 | Knowledge + Observability | KB, preferences, project docs, audit log, live queries, WebSocket |
 | 6 | MCP + Skill File | MCP endpoint at `/mcp`, skill file at `/skill.md` |
 | 7 | React Frontend | All UI screens, bundled into single binary |
-| 8 | Multi-User Auth + Roles | Better Auth (OAuth), board/member roles, permissions, invites, session compaction |
-| 9 | Adapters + Plugins | Gemini/Codex adapters, plugin system |
+| 8 | Multi-User Auth + Roles | Custom auth (OAuth), board/member roles, permissions, invites, session compaction |
+| 9 | Adapters + Plugins | Gemini/Codex adapters, plugin system (local-only, no registry for MVP) |
 | 10 | Full Platform Integrations | All OAuth platforms, centrally hosted Connect |
 | 11 | Deploy + Messaging | Staging/production pipeline, Slack + Telegram interfaces, notification preferences, MPP |
 

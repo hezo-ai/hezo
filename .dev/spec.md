@@ -8,7 +8,7 @@
 
 ## 1. Product overview
 
-Hezo is a self-hosted web application that orchestrates teams of AI agents to run autonomous companies. Each agent plays a defined role (CEO, Product Lead, Architect, Engineer, etc.) and operates as a subprocess inside the company's shared Docker container. Human users — **board members** — sit at the top as the board of directors, approving decisions, managing budgets, and steering strategy. Multiple board members can collaborate on the same company.
+Hezo is a self-hosted web application that orchestrates teams of AI agents to run autonomous companies. Each agent plays a defined role (CEO, Product Lead, Architect, Engineer, etc.) and operates as a subprocess inside the project's Docker container (one container per project). Human users — **board members** — sit at the top as the board of directors, approving decisions, managing budgets, and steering strategy. Multiple board members can collaborate on the same company.
 
 One Hezo instance supports multiple companies with full data isolation. The primary interaction surface is an issue tracker — agents receive work via tickets, report progress via threaded conversations, and present options and previews to the board for review.
 
@@ -44,14 +44,15 @@ Hezo ships as a single executable binary. No external database required. No clou
 | Encryption | AES-256-GCM | Master key held in memory only |
 | Project containers | Docker Engine API | One container per project (all repos checked out inside) |
 | Frontend | React (bundled into binary) | Served by the same Hono process, bundled via `bun build --compile` |
-| Real-time | PGlite live queries + WebSocket | Live queries for data reactivity, WebSocket for system events |
+| Frontend state | TanStack DB | Client-side querying over locally synced data |
+| Real-time | WebSocket (row-level diffs) | Server pushes row inserts/updates/deletes from PGlite. Client applies diffs to TanStack DB. |
 | AI agent interface | MCP (Streamable HTTP) | `@modelcontextprotocol/sdk` at `/mcp` endpoint |
 | Skill file | Served at `GET /skill.md` | Teaches external AI agents how to interact with Hezo |
 | REST API | JSON over HTTP | Board + agent endpoints at `/api` |
 | OAuth gateway | Hezo Connect (self-hosted or connect.hezo.ai) | Handles OAuth flows for GitHub, Gmail, Stripe, etc. |
-| Auth | Better Auth | GitHub/GitLab OAuth, session cookies, multi-user (email/password deferred) |
+| Auth | Custom (OAuth + JWT) | GitHub/GitLab OAuth, stateless JWTs signed with master key (email/password deferred) |
 | Integrations | 9 platforms via OAuth | GitHub, Gmail, GitLab, Stripe, PostHog, Railway, Vercel, DigitalOcean, X |
-| Plugin runtime | Worker threads + dynamic import | TypeScript plugins with capability-gated APIs |
+| Plugin runtime | Worker threads + dynamic import | TypeScript plugins with capability-gated APIs. Registry out of scope for MVP — local-only. |
 
 ### Monorepo structure
 
@@ -76,20 +77,22 @@ The master key is held in memory only — never written to disk. It encrypts all
 
 **First startup** (no canary in `system_meta`):
 1. If `--master-key <key>` provided on CLI → use that key, store canary (`encrypt("CANARY", master_key)`), proceed.
-2. If no CLI key → prompt the user in the terminal:
-   - **Option A: Generate a new key.** Server generates a random 256-bit key, displays it once, and warns the user to write it down — it will not be shown again.
-   - **Option B: Enter an existing key.** User provides a key they already have.
+2. If no CLI key → server starts but master key is "unset". The web UI shows a **master key gate modal** on the first authenticated user's first visit:
+   - **Option A: Generate a new key.** Server generates a random 256-bit key, displays it once in the UI, and warns the user to save it — it will not be shown again.
+   - **Option B: Enter an existing key.** User provides a key they already have (e.g., restoring from backup).
 3. Store canary and proceed.
 
 **Subsequent startup** (canary exists in `system_meta`):
 1. If `--master-key <key>` provided on CLI → attempt to decrypt canary.
    - **Success** → unlock, proceed normally.
-   - **Failure** → warn "incorrect master key" and prompt the user with recovery options (see below).
-2. If no CLI key → prompt the user in the terminal to enter their master key → attempt to decrypt canary.
+   - **Failure** → server starts but in locked state. Web UI shows "incorrect master key" with option to re-enter.
+2. If no CLI key → server starts in locked state. Web UI prompts user to enter master key.
    - **Success** → unlock, proceed normally.
-   - **Failure** → prompt with recovery options (see below).
+   - **Failure** → prompt again or offer recovery.
 
-**Recovery options** (after failed canary decryption):
+**Key principle:** CLI `--master-key` is for **unlocking** (verifying the canary) on startup. The web UI is for **setting/managing** the key. The CLI never sets a new key interactively.
+
+**Recovery options** (after failed canary decryption, via web UI):
 - **Re-enter a different master key.** Try again with the correct key.
 - **Generate a new master key and start fresh.** Warn that all existing instance data (secrets, companies, agents) will be lost. If confirmed, wipe the database, store a new canary, and proceed with a clean instance.
 
@@ -112,7 +115,7 @@ hezo --reset                  # Wipe existing database and start fresh
 | Server port | `3100` | Main Hezo app |
 | Connect URL | `http://localhost:4100` | Matches local Hezo Connect default port |
 | Data directory | `~/.hezo/` | PGlite database, company data, assets |
-| Master key | *(prompt in terminal)* | Auto-generated on first startup, terminal prompt on subsequent startups |
+| Master key | *(set via web UI)* | Generated or entered in browser on first login. CLI `--master-key` for unlocking only. |
 
 Running `hezo` with zero arguments works for local development when Hezo Connect is running on its default port (4100). No configuration file needed for the common case.
 
@@ -131,13 +134,13 @@ const db = new PGlite({
 })
 ```
 
-**Live queries** provide real-time reactivity for the frontend without polling:
+**Server-side live queries** detect changes for syncing to the frontend:
 
-- `live.query(sql, params, callback)` — re-runs the query when dependent tables change, pushes only the diff from WASM to JS
-- `live.changes(sql, params, key, callback)` — emits granular insert/update/delete deltas keyed by a primary key column
-- `live.incrementalQuery()` — materializes full result sets from change streams, ideal for React integration via `useLiveIncrementalQuery()`
+- `live.changes(sql, params, key, callback)` — emits granular insert/update/delete deltas keyed by a primary key column. Used server-side to detect row changes.
 
-The frontend uses PGlite React hooks (`useLiveQuery`, `useLiveIncrementalQuery`) for data-driven views (issue lists, agent status, cost dashboards). **WebSocket** is still used for non-database events: agent subprocess lifecycle, container status changes, live chat messages, and system notifications.
+**Frontend sync:** The browser uses **TanStack DB** for client-side querying over a locally synced dataset. The server pushes **row-level diffs** (inserts, updates, deletes) over WebSocket. The client applies diffs to TanStack DB, which re-renders React components reactively. This approach gives the frontend a local query engine without needing PGlite in the browser.
+
+**WebSocket** carries both row-level diffs for data sync and system events (agent subprocess lifecycle, container status, live chat messages, notifications).
 
 **Future sync:** Electric-SQL sync (`@electric-sql/pglite-sync`) can enable multi-instance scenarios (e.g. read replicas, multi-device access). Not required for Phase 1.
 
@@ -207,7 +210,7 @@ Hezo exposes an **MCP (Model Context Protocol)** endpoint so external AI agents 
 
 MCP tools mirror the REST API surface. Both call the same underlying business logic layer. The MCP endpoint coexists with the REST API on the same Hono server and port.
 
-**Authentication:** Same as REST — local trusted (localhost), Better Auth session, or API key (`Authorization: Bearer hezo_<key>`).
+**Authentication:** Same as REST — user JWT, API key (`Authorization: Bearer hezo_<key>`), or agent JWT.
 
 **Exposed MCP tools:**
 
@@ -239,7 +242,7 @@ Hezo serves a **skill file** that teaches external AI agents (like Claude Code) 
 
 **Served at:** `GET /skill.md` — returns a Markdown document describing Hezo's capabilities, available MCP tools, common workflows, and authentication instructions.
 
-**Also committed to the repo** at `.claude/skills/hezo/SKILL.md` so that Claude Code sessions working within a Hezo-managed repo automatically discover it.
+**Also committed to the repo** at `SKILL.md` in the project root so that coding agents working within a Hezo-managed repo automatically discover it.
 
 **Content includes:**
 - Overview of what Hezo is and how it works
@@ -265,9 +268,9 @@ Hezo serves a **skill file** that teaches external AI agents (like Claude Code) 
 
 Hezo can be controlled programmatically by external AI agents (OpenClaw, custom scripts, orchestration layers) via API keys.
 
-**Two auth modes for the Board API:**
-- **No key (localhost)** — unauthenticated requests from `localhost`/`127.0.0.1` are allowed. Default for local usage.
-- **API key (remote)** — for OpenClaw, AI orchestrators, scripts. Header: `Authorization: Bearer hezo_<key>`. The `hezo_` prefix distinguishes board keys from agent JWTs.
+**Auth modes for the Board API:**
+- **User JWT** — stateless JWT issued after OAuth login. Required for all human users. The `hezo_` prefix on API keys distinguishes them from user/agent JWTs.
+- **API key (remote)** — for OpenClaw, AI orchestrators, scripts. Header: `Authorization: Bearer hezo_<key>`.
 
 API keys are company-scoped. A key grants full board-level access to that company: create/manage issues, hire agents, approve requests, manage secrets — everything the board UI can do. Keys are stored hashed (bcrypt), shown once at creation, never again. Managed in company settings (generate, revoke, view last-used).
 
@@ -297,28 +300,30 @@ The current 9-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, U
 
 When a new company is created, the user selects a **company type** (see above). The system then clones from that type and automatically:
 
-1. **Creates the agent team** defined by the selected company type. For the built-in "Software Development" type, this includes (see `agents/` for full specs):
+1. **Creates the full 9-agent team** defined by the selected company type. For the built-in "Software Development" type, this includes (see `agents/` for full specs):
    - CEO (reports to board)
    - Product Lead (reports to CEO)
    - Architect (reports to CEO)
    - Engineer (reports to Architect)
    - QA Engineer (reports to Architect)
    - UI Designer (reports to Architect)
-   - DevOps Engineer (reports to Architect)
+   - DevOps Engineer (reports to Architect) — **starts in `idle` status**
    - Marketing Lead (reports to CEO)
    - Researcher (reports to CEO)
 2. **Prompts the creator to connect platforms** via OAuth (see Hezo Connect, section 5b):
    - GitHub (required for repo access)
    - Gmail (recommended for agent email)
    - Others optional: Stripe, PostHog, Railway, Vercel, DigitalOcean, X, GitLab
-3. **Sets up the company email address** — the creator provides an email address for the company (e.g., `team@acme.com`). Used for sending board member invitations and company-to-human communication. Can be changed later in company settings.
+3. **Generates an SSH key pair** for the company and registers it on the connected GitHub account via OAuth API
 4. **Creates a "Setup" project** with an onboarding issue assigned to the CEO: *"Set up repository access — configure deploy keys for connected GitHub account."*
-5. **Provisions the project's Docker container** when the first project is created
-6. **Creates the `.hezo/{company}/` folder structure** on the host machine
+5. **Creates the `~/.hezo/companies/{slug}/` folder structure** on the host machine with AGENTS.md in the project root
+6. **Provisions the project's Docker container** when the first project is created (not at company creation)
 
 All agent system prompts are pre-filled from templates and editable. The user can delete, modify, or add agents after creation. Connected platforms can be added or removed at any time in company settings.
 
-**Note:** The DevOps Engineer is part of the core team but starts in `idle` status. It does not auto-activate at company creation. The DevOps Engineer activates when the board is ready for staging/production deployment — the board changes its status to `active` when needed.
+**Note:** The DevOps Engineer is part of the core 9-agent team but starts in `idle` status. It does not auto-activate at company creation. The DevOps Engineer activates when the board is ready for staging/production deployment — the board changes its status to `active` when needed.
+
+**First-run flow:** Hezo Connect must be running. The first user logs in via GitHub or GitLab OAuth → master key gate modal in the UI → forced company creation. No admin-without-company state.
 
 ### Connected platforms (via Hezo Connect)
 
@@ -351,8 +356,9 @@ Users can also **save an existing company as a new company type**. This snapshot
 - **Company preferences** — board working style preferences
 - **MCP server config** — company-level MCP servers
 - **MPP config** — wallet config structure (not actual wallet keys)
+- **Filesystem artifacts** — AGENTS.md and other project root files (stored as JSONB blobs)
 
-Saving as a type does **not** include: projects, repos, issues, secrets, connected platforms, cost history, audit log, or API keys. The resulting type captures institutional knowledge and team structure only.
+Saving as a type does **not** include: projects, repos, issues, secrets, connected platforms, cost history, audit log, API keys, or SSH keys. The resulting type captures institutional knowledge and team structure only.
 
 ---
 
@@ -372,7 +378,7 @@ Saving as a type does **not** include: projects, repos, issues, secrets, connect
 | Role description | Short description of responsibilities |
 | System prompt | Full prompt with variable templating (see below) |
 | Reports to | Parent agent in org chart |
-| Runtime type | `claude_code`, `codex`, `gemini`, `bash`, `http` |
+| Runtime type | `claude_code`, `codex`, `gemini` |
 | Heartbeat interval | How often the agent wakes up (default: 60 min) |
 | Monthly budget | Hard spending limit in cents |
 | MCP servers | Agent-level MCP server list (merged with company-level at runtime) |
@@ -399,7 +405,7 @@ On agent creation, the UI provides a monospace editor with a toolbar for inserti
 
 ### Built-in role templates
 
-Hezo ships with 9 built-in role templates that form the default team for the "Software Development" company type. Full specifications for each role are in `agents/{slug}.md`. Users can customize every field. All roles are starting points, not fixed — agents can be added, removed, or reconfigured.
+Hezo ships with 9 built-in role templates that form the default team for the "Software Development" company type. Full specifications for each role are in `agents/{slug}.md`. Role-specific instructions are embedded directly in the system prompt template — no separate skill files. Users can customize every field. All roles are starting points, not fixed — agents can be added, removed, or reconfigured.
 
 Users can also create **entirely new custom roles** with arbitrary titles, descriptions, system prompts, runtime types, and reporting lines. For example, a company could add a "Data Scientist", a second "Frontend Engineer", a "Security Auditor", or a "Legal Researcher" — any role the company needs. Custom roles are first-class citizens — they appear in the org chart, receive issues, participate in delegation, and have their own budgets just like built-in roles.
 
@@ -409,11 +415,11 @@ Every feature ticket follows this flow:
 
 ```
 1. Researcher → conducts research (competitive analysis, technical feasibility, market research)
-2. Product Lead → writes PRD based on research, iterates with board until requirements are finalised
+2. Product Lead → writes PRD (stored as project doc, doc_type: prd), iterates with board via live chat until requirements are finalised
 3. Architect → writes technical specification → board approves
-4. UI Designer → creates design mockups → board approves (for UI-related tickets)
-5. Engineer → implements, writes tests, updates docs
-6. UI Designer → reviews frontend implementation against design specs
+4. UI Designer → creates design mockups → board approves (for UI-related tickets; skipped for non-UI work)
+5. Engineer → implements, writes tests, updates docs. Can consult Architect during implementation.
+6. UI Designer → reviews frontend implementation against design specs (for UI-related tickets)
 7. QA Engineer → reviews and approves (final gate) OR sends back to Engineer
 ```
 
@@ -451,19 +457,19 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **Researcher** — conducts competitive analysis, technical research, and feasibility studies. First step in the ticket workflow — produces research that informs the Product Lead's PRD. Works with CEO, Architect, UI Designer, and Marketing Lead. Does NOT communicate directly with the Engineer. Reports to CEO.
 
-### CLAUDE.md and company-wide agent rules
+### AGENTS.md and company-wide agent rules
 
-The company-level `.claude/CLAUDE.md` file contains rules and conventions that apply to **all agents** in the company. This file is auto-generated during company creation and can be edited by the board or updated by agents (via KB update approval flow).
+The company-level `AGENTS.md` file lives in the project root and contains rules and conventions that apply to **all agents** in the company. This file is a KB doc stored in the database and auto-written to disk on every update. It is auto-generated during company creation and can be edited by the board or updated by agents (via KB update approval flow).
 
-The CLAUDE.md is the primary mechanism for enforcing engineering standards. It is symlinked into every repo, so every Claude Code session in the company reads it automatically.
+AGENTS.md is the primary mechanism for enforcing engineering standards. It lives in the project root so that any coding agent (Claude Code, Codex, Gemini) automatically reads it — no runtime-specific configuration needed.
 
-Additionally, each agent role has a dedicated **skill file** at `.claude/skills/{role-slug}/SKILL.md` which contains role-specific rules and best practices.
+Role-specific instructions are embedded directly in each agent's system prompt template — no separate skill files.
 
 ---
 
 ## 5a. Engineering rules and testing philosophy
 
-These rules are embedded in the engineer agent's skill file and in the company CLAUDE.md. They apply to **any agent that modifies the codebase** — not just the engineer role.
+These rules are embedded in the engineer agent's system prompt and in the company AGENTS.md. They apply to **any agent that modifies the codebase** — not just the engineer role.
 
 ### Mandatory practices for all code-modifying agents
 
@@ -513,7 +519,7 @@ Tests must be designed for **parallel execution** from day one. The default conc
 
 ### Git hooks — mandatory quality gates
 
-Every repo managed by Hezo has git hooks installed automatically via the `.claude/hooks/` directory. These are non-negotiable — agents cannot bypass them.
+Repos should commit their own git hooks (e.g., via Husky, lefthook, or `.git/hooks/`). Hezo does not inject hooks — it relies on repo-committed hooks. These are non-negotiable — agents cannot bypass them.
 
 **Pre-commit hook:**
 1. Run linter on staged files (language-appropriate: ESLint, Ruff, etc.)
@@ -524,7 +530,7 @@ Agents run tests locally using the project's test runner directly. This includes
 
 These hooks ensure that the `main` branch and all remote branches always have passing tests and clean lint. Broken code never reaches GitHub.
 
-**Lint is mandatory.** Every repo must have a linter configured. If a repo is added without one, the engineer agent's first task is to set one up. The linter config lives in the repo (committed), not in `.claude/`.
+**Lint is mandatory.** Every repo must have a linter configured. If a repo is added without one, the engineer agent's first task is to set one up. The linter config lives in the repo (committed).
 
 ### QA agent — continuous code quality assessment
 
@@ -593,9 +599,9 @@ Production deploys are **never automatic**. They always require explicit human a
 
 Hezo auto-generates a `.github/workflows/deploy.yml` in each repo when staging is first configured. The workflow handles both staging (on push to main) and production (on manual dispatch with approval). Database migrations use the repo's migration tooling (detected automatically or configured in project settings).
 
-### What goes in CLAUDE.md (company-level)
+### What goes in AGENTS.md (company-level)
 
-The auto-generated CLAUDE.md includes:
+The auto-generated AGENTS.md includes:
 - All engineering rules above (testing, parallelization, documentation)
 - Git hook rules: never bypass pre-commit or pre-push hooks
 - Lint rules: all code must pass lint before commit
@@ -611,9 +617,9 @@ The auto-generated CLAUDE.md includes:
 
 This file evolves over time as agents propose updates through the KB approval flow.
 
-### What goes in skill files (per-role)
+### Role-specific instructions (in system prompts)
 
-Each role's `.claude/skills/{role}/SKILL.md` contains role-specific instructions:
+Role-specific instructions are embedded directly in each agent's system prompt template — not in separate files. Each role's system prompt includes the relevant rules and methodologies:
 - **Product Lead:** PRD writing methodology, acceptance criteria standards, requirements gathering via live chat, scope management rules
 - **Architect:** Technical spec templates, architecture decision records, implementation phase planning, code review authority
 - **Engineer:** Parallelization rules, testing philosophy, template database patterns, port allocation, pre-push verification steps
@@ -634,57 +640,53 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
 ```
 ~/.hezo/
 ├── pgdata/                              # PGlite database (NodeFS persistence)
-├── data/                                # Previews, temp files
-│   └── previews/{company_id}/{agent_id}/
+├── data/                                # Previews, temp files, assets
 │
 └── companies/
     ├── acme-corp/                        # Company folder
-    │   ├── .claude/                      # Shared Claude Code settings
-    │   │   ├── CLAUDE.md                 # Company-wide rules and conventions
-    │   │   ├── settings.json             # Claude Code configuration
-    │   │   ├── hooks/                    # Pre/post command hooks
-    │   │   └── skills/                   # Company-wide skill files
+    │   ├── AGENTS.md                     # Company-wide rules (KB doc written to disk)
     │   │
-    │   ├── projects/
-    │   │   ├── backend-api/              # Project folder
-    │   │   │   ├── api/                  # Git clone of github.com/org/api
-    │   │   │   │   └── .claude → ../../.claude  # Symlink to company .claude
-    │   │   │   └── shared-lib/           # Git clone of github.com/org/shared
-    │   │   │       └── .claude → ../../.claude  # Symlink to company .claude
-    │   │   │
-    │   │   └── frontend/                 # Another project
-    │   │       ├── web-app/              # Git clone
-    │   │       │   └── .claude → ../../.claude
-    │   │       └── design-system/        # Git clone
-    │   │           └── .claude → ../../.claude
-    │   │
-    │   └── worktrees/                    # Git worktrees for parallel work
-    │       ├── api-feat-auth-agent-123/  # Worktree: repo=api, branch=feat/auth, agent=123
-    │       └── api-fix-tests-agent-456/
+    │   └── projects/
+    │       ├── backend-api/              # Project folder
+    │       │   ├── api/                  # Git clone of org/api (via SSH)
+    │       │   │   └── AGENTS.md → ../../../AGENTS.md  # Symlink to company AGENTS.md
+    │       │   ├── shared-lib/           # Git clone of org/shared
+    │       │   │   └── AGENTS.md → ../../../AGENTS.md
+    │       │   ├── worktrees/            # Git worktrees for parallel work (project-level)
+    │       │   │   ├── api-feat-auth-agent-123/
+    │       │   │   └── api-fix-tests-agent-456/
+    │       │   └── .previews/            # Agent preview files (per project)
+    │       │       └── {agent_id}/
+    │       │
+    │       └── frontend/                 # Another project
+    │           ├── web-app/              # Git clone
+    │           │   └── AGENTS.md → ../../../AGENTS.md
+    │           ├── worktrees/
+    │           └── .previews/
     │
     └── notegenius/                       # Another company
-        ├── .claude/
-        ├── projects/
-        └── worktrees/
+        ├── AGENTS.md
+        └── projects/
 ```
 
 **Key design decisions:**
 
-The `.claude/` folder lives at the **company level** and is **symlinked** into every repo clone within that company's projects. This means:
-- Claude Code settings, hooks, plugins, and the `CLAUDE.md` rules file are shared across all projects and repos within a company
-- These settings are NOT committed to the source code repositories — they're Hezo-managed
-- Different companies can have completely different Claude Code configurations
-- Updating company-level `.claude/` instantly propagates to all repos
+`AGENTS.md` lives at the **company level** and is **symlinked** into the root of every repo clone within that company's projects. This means:
+- The AGENTS.md rules file is shared across all projects and repos within a company
+- Any coding agent (Claude Code, Codex, Gemini) automatically reads it from the project root
+- Different companies can have completely different agent configurations
+- Updating the AGENTS.md KB doc automatically re-writes the file on disk, propagating to all repos
 
 ### Git worktrees for parallelism
 
-Repos are cloned once (bare or standard clone in the project folder). When an agent needs to work on a repo, a **git worktree** is created in the company's `worktrees/` folder. This enables:
+Repos are cloned once (via SSH) in the project folder. When an agent needs to work on a repo, a **git worktree** is created in the project's `worktrees/` folder. This enables:
 
 - Multiple agents working on the same repo simultaneously (different branches)
 - The same agent working on multiple branches in parallel via subagents
 - No conflicts between concurrent operations on the same repository
 
 Worktree naming convention: `{repo-short-name}-{branch-slug}-agent-{agent-id}`
+Worktree location: `~/.hezo/companies/{company}/projects/{project}/worktrees/`
 
 Worktrees are created on demand when an agent starts work on an issue, and cleaned up when the issue is closed or the agent is reassigned.
 
@@ -699,12 +701,12 @@ If a company has 3 projects, 3 containers run. If a project has multiple repos, 
 | Base image | Configurable per project (default: `node:20-slim`) |
 | Project mount | Host `~/.hezo/companies/{company}/projects/{project}/` → Container `/workspace/` (rw) |
 | Worktrees mount | Host `~/.hezo/companies/{company}/projects/{project}/worktrees/` → Container `/worktrees/` (rw) |
-| SSH keys | Host `~/.ssh/` → Container `/root/.ssh/` (ro) |
+| SSH keys | Company-generated SSH key injected per subprocess (from secrets vault). Host `~/.ssh/` also mounted (ro) for fallback. |
 | Git config | Host `~/.gitconfig` → Container `/root/.gitconfig` (ro) |
 | SSH agent | Host `$SSH_AUTH_SOCK` → Container `/tmp/ssh-agent.sock` (if available) |
-| `.claude` | Inherited via symlinks in the repo folders |
+| AGENTS.md | Inherited via symlinks in the repo folders (points to company-level AGENTS.md) |
 | Secrets | Injected as environment variables per subprocess (never container-wide, never written to disk) |
-| Connected platforms | OAuth tokens from connected platforms (GitHub, Gmail, etc.) injected per subprocess. Platform MCP servers available. |
+| Connected platforms | All OAuth tokens from all connected platforms injected per subprocess for all agents. Platform MCP servers available. |
 | Previews | Written to `/workspace/.previews/{agent_id}/` — visible on host via the shared volume |
 | Dev ports | Forwarded from container to host for dev preview (e.g., container:3000 → host:13000). Auto-allocated from pool. |
 | Network | `host.docker.internal:3100` for Agent API access |
@@ -721,19 +723,22 @@ Project containers support **port forwarding** so users can interact with the ru
 
 ### SSH and Git authentication
 
-The host machine's SSH configuration is mounted read-only into each project container:
+Hezo generates an SSH key pair per company and registers it on the connected GitHub account via the OAuth API (`POST /user/keys`). The private key is stored encrypted in the secrets vault.
 
-1. `~/.ssh/` (keys, config, known_hosts) is available at `/root/.ssh/`
-2. If the host has an SSH agent running (`SSH_AUTH_SOCK`), the socket is forwarded into the container
-3. `~/.gitconfig` is mounted so git identity (name, email) is consistent
-4. Git push/pull operations inside the container use the host's SSH identity transparently
-5. No need to manage SSH keys in the Hezo secrets vault for basic git operations
+At runtime, the company's SSH private key is injected into agent subprocesses for git operations:
+
+1. Company SSH key is written to a temporary file inside the container and configured via `GIT_SSH_COMMAND`
+2. Host `~/.ssh/` is also mounted read-only as a fallback (known_hosts, SSH config)
+3. Host `~/.gitconfig` is mounted so git identity (name, email) is consistent
+4. If the host has an SSH agent running (`SSH_AUTH_SOCK`), the socket is forwarded into the container
+5. Git clone/push/pull use SSH with the company-generated key
+6. GitHub OAuth token is used for GitHub API calls (repo validation, PRs, Actions) — not for git operations
 
 ### Container lifecycle
 
 | Event | What happens |
 |-------|-------------|
-| Project created | Container provisioned from the project's configured base image. All linked repos cloned inside. |
+| Project created | Container provisioned from the project's configured base image. All linked repos cloned inside via SSH. |
 | Agent heartbeat (for project issue) | Subprocess spawned inside the project's container with the agent's environment. |
 | Agent paused | Subprocess killed (if running). Container unaffected. |
 | Agent terminated | Subprocess killed. Container unaffected. Agent record kept for audit. |
@@ -745,13 +750,16 @@ The host machine's SSH configuration is mounted read-only into each project cont
 
 ### Agent subprocess model
 
-Each agent runs as a subprocess spawned inside the project's container via `docker exec`. The Hezo orchestrator spawns each agent process with:
+Each heartbeat spawns a **fresh subprocess** inside the project's container via `docker exec`. The Hezo orchestrator spawns each agent process with:
 
-- The agent's specific environment variables (secrets, OAuth tokens, JWT)
+- The agent's specific environment variables (secrets, all platform OAuth tokens, agent JWT)
 - The correct working directory (the agent's assigned worktree or project folder)
-- The agent's runtime command (e.g., `claude-code`, `codex`, etc.)
+- The agent's runtime command (e.g., `claude-code`, `codex`, `gemini`)
+- Handoff markdown from the previous session as initial context (for session continuity)
 
-Agents can be killed and restarted independently without affecting the container or other agents. If a project container crashes, all running agent subprocesses for that project are lost — orphan detection handles this by marking all active heartbeat runs as failed and re-queuing them.
+All template variables (`{{kb_context}}`, `{{project_docs_context}}`, `{{company_preferences_context}}`, etc.) are pre-resolved by the orchestrator before spawning. All KB docs and project docs are included for MVP.
+
+Agents can be killed and restarted independently without affecting the container or other agents. When budget is exceeded, the subprocess is terminated immediately. If a project container crashes, all running agent subprocesses for that project are lost — orphan detection handles this by marking all active heartbeat runs as failed and re-queuing them.
 
 ### Subagents (built-in parallelism)
 
@@ -816,7 +824,7 @@ Two components work together:
 - Does NOT store tokens long-term — it is a transient relay
 - Open-source — users who want full self-hosting can deploy their own instance and register their own OAuth apps
 - The Hezo project runs the canonical instance so most users don't need to do anything
-- In self-hosted mode: stateless, no database, no API keys — just OAuth app credentials and a signing key
+- In self-hosted mode: stateless, no database, no API keys — just OAuth app credentials (signing key auto-generated, exposed via public endpoint)
 
 **Hezo app (local)**
 - Initiates OAuth flows by redirecting to Hezo Connect
@@ -903,19 +911,22 @@ For users who want zero dependency on the canonical instance:
 
 ### Supported hosts
 
-GitHub only (MVP). URLs are validated against `github.com/*` patterns. Enforced both at the app layer and via a DB CHECK constraint. GitLab support available via OAuth connection for future use.
+GitHub only (MVP). Repos are stored as `org/repo` identifiers (e.g. `acme-corp/frontend`). Validated at the app layer via GitHub API. GitLab support available via OAuth connection for future use.
 
-### Repo access via GitHub OAuth
+### Repo access — OAuth for API, SSH for git
 
-Repos are accessed using the company's connected GitHub OAuth token (from Hezo Connect). Git operations use HTTPS with the token:
+Git operations (clone, push, pull) use **SSH** with a company-generated SSH key pair. The GitHub **OAuth token** is used for API calls (repo validation, PRs, Actions, issues).
 
 ```
-git clone https://x-access-token:{github_token}@github.com/org/repo.git
+git clone git@github.com:org/repo.git
 ```
 
-No SSH keys needed — the GitHub OAuth connection provides read/write access to all repos the authorized GitHub account can access. When a new repo URL is added to a project, the system tests access using the OAuth token before saving. If access fails, the repo is rejected with a clear error.
+Hezo generates an SSH key pair per company, stores the private key encrypted in the secrets vault, and registers the public key on the connected GitHub account via the OAuth API (`POST /user/keys`). When a new repo is added, the system tests access using the OAuth token (GitHub API) before saving. If access fails, the board is told which GitHub account needs access.
 
-**Prerequisite:** The company must have GitHub connected via Hezo Connect before repos can be added.
+**Prerequisites:**
+- The company must have GitHub connected via Hezo Connect
+- The connected GitHub account must have access to the repo
+- The company SSH key is auto-registered on the GitHub account
 
 ### Repos belong to projects
 
@@ -936,9 +947,9 @@ When a repo is added to a project via the API:
 2. **Repo access validation** — using the company's GitHub OAuth token, the system calls the GitHub API (`GET /repos/{owner}/{repo}`) to verify the authorized GitHub user has access. If access fails (403/404):
    - The request fails with `REPO_ACCESS_FAILED`
    - The error message includes the GitHub username from `connected_platforms.metadata` so the board knows which account needs access: *"Cannot access this repo — the GitHub user '{username}' needs to be added to {owner}/{repo}"*
-3. The repo is cloned (via HTTPS + token) into `~/.hezo/companies/{company}/projects/{project}/{short_name}/`
-4. A symlink is created: `{short_name}/.claude → ../../.claude` (pointing to company-level `.claude/`)
-5. Git credential helper is configured in the repo to use the OAuth token for all operations
+3. The repo is cloned (via SSH using the company's generated key) into `~/.hezo/companies/{company}/projects/{project}/{short_name}/`
+4. A symlink is created: `{short_name}/AGENTS.md → ../../../AGENTS.md` (pointing to company-level AGENTS.md)
+5. Git SSH command is configured to use the company's SSH key for all operations
 6. The repo is now available to any agent working on issues in this project
 
 ### Agent access to repos
@@ -987,7 +998,7 @@ GitHub-style issue tracker. Issues are the primary interaction surface for the e
 | Parent issue | No | For sub-issues / delegation |
 | Number | Auto | Per-company auto-incrementing (atomic) |
 | Identifier | Auto | Linear-style: `{prefix}-{number}` (e.g. `ACME-42`). Globally unique. |
-| Blocked by | No | Reference to another issue blocking this one |
+| Blocked by | No | References to other issues blocking this one (many-to-many via `issue_dependencies` table) |
 
 ### Issue status state machine
 
@@ -1049,7 +1060,7 @@ Comments in the thread can be:
 
 ### Delegation
 
-Agents can create sub-issues and assign them to their direct reports. Delegation is org-chart-enforced — an agent can only assign work downward. Sub-issues inherit the parent's project.
+Agents can create sub-issues and assign them to their direct reports or peers (agents at the same level in the org chart). Delegation allows both downward and lateral assignment. Sub-issues inherit the parent's project.
 
 ### Agent-to-agent communication
 
@@ -1063,7 +1074,7 @@ Use cases: asking questions, requesting code reviews, escalating blockers, handi
 
 ### Issue assignment triggers
 
-Issues can be assigned to either an agent or a board member. When assigned to an agent, the agent receives an event trigger on its next heartbeat or immediately via notification. When assigned to a board member, they are notified via the board inbox and any configured messaging channels (Telegram, Slack).
+Issues can be assigned to any member (agent or human user). When assigned to an agent, the agent wakes immediately (not waiting for the next heartbeat). When assigned to a human user, they are notified via the board inbox and any configured messaging channels (Telegram, Slack). Humans can work on issues outside Hezo, pass them to other members, or @-mention agents in comments for specific help.
 
 ---
 
@@ -1112,7 +1123,7 @@ Every issue has a **persistent live chat** in its Live Chat tab. This is a singl
 
 **How it works:**
 1. Board member opens the Live Chat tab on any issue
-2. The chat is always there — persistent, no "start session" step needed
+2. The chat is always there — persistent, auto-created with the issue, no "start session" step needed
 3. The assigned agent is always a participant and responds in real time (no heartbeat delay)
 4. Board member can @-mention any other agent (e.g. `@architect`, `@qa-engineer`) to bring them into the conversation. The mentioned agent receives the message and responds in real time.
 5. Multiple agents can be active in the same chat simultaneously
@@ -1125,10 +1136,12 @@ Every issue has a **persistent live chat** in its Live Chat tab. This is a singl
 - The mentioned agent wakes up immediately (not on next heartbeat) and joins the chat
 - An agent stays in the chat until the conversation moves on — no explicit "leave"
 
+**Q&A pattern:** Agents should use live chat for structured Q&A with the board — asking clarifying questions with multiple-choice options when requirements are ambiguous. After the Q&A is resolved, the agent posts a summary of the outcomes as a comment on the issue for the permanent record.
+
 **Storage:**
-- Full transcript stored as JSONB array of `{ "author": "board|agent_slug", "text": "...", "timestamp": "..." }` in a `live_chat_sessions` table
-- One session per issue (persistent, not per-conversation)
-- The assigned agent's ID is always linked to the session
+- Full transcript stored as JSONB array of `{ "author": "board:alice|agent:architect", "text": "...", "timestamp": "..." }` in a `live_chats` table
+- One chat per issue (persistent, auto-created)
+- The assigned agent's member ID is always linked
 
 **Constraints:**
 - An agent can only be active in one live chat at a time (if @-mentioned in a second issue's chat while already in one, the second request queues until the first conversation pauses)
@@ -1167,7 +1180,7 @@ Host:      ~/.hezo/companies/{slug}/projects/{project}/.previews/{agent_id}/
 
 Since the workspace is a shared volume, preview files are immediately visible on the host. The web app serves files via a proxy route:
 ```
-GET /preview/{company_id}/{agent_id}/{filename}
+GET /preview/{company_id}/{project_id}/{agent_id}/{filename}
 ```
 
 Agent emits:
@@ -1365,13 +1378,15 @@ Every agent has a heartbeat interval. Default is **60 minutes**. Configurable pe
 5. Agent posts comments, reports tool calls, creates sub-issues as needed
 6. Company container stays running for next heartbeat
 
-### Event-based triggers
+### Event-based triggers (immediate wakeup)
 
-In addition to scheduled heartbeats, agents are triggered by:
+In addition to scheduled heartbeats, agents are triggered **immediately** by:
 - Task assignment (issue assigned to them)
-- @-mention in an issue comment
+- @-mention in an issue comment or live chat
 - Option chosen by the board on one of their option cards
 - Approval resolved for one of their requests
+
+Event-triggered wakeups do not wait for the next scheduled heartbeat — the agent subprocess is spawned immediately. Scheduled heartbeats are a fallback for idle agents with no pending events.
 
 ### Wakeup queue and coalescing
 
@@ -1429,8 +1444,6 @@ Agent sessions accumulate context over time. To manage token usage and cost, eac
 | `claude_code` | Session markdown export → summarize → new session with summary as context |
 | `codex` | Task result extraction → structured handoff document |
 | `gemini` | Session markdown export → summarize → new session with summary as context |
-| `bash` | Output truncation after configurable line limit |
-| `http` | Response body truncation, header preservation |
 
 Compaction triggers:
 - Session token count exceeds adapter threshold (configurable per agent)
@@ -1572,6 +1585,7 @@ Each project has a set of living documents that agents create and maintain throu
 
 | Type | Created by | Purpose |
 |------|-----------|---------|
+| `prd` | Product Lead | Product requirements document — user stories, acceptance criteria, scope. **Changes require board approval.** |
 | `tech_spec` | Architect | Technical specification — architecture, data model, API changes, implementation phases |
 | `implementation_plan` | Architect | Ordered implementation phases with dependencies and acceptance criteria |
 | `research` | Researcher | Research findings — competitive analysis, feasibility studies, market research |
@@ -1680,33 +1694,26 @@ If a plugin worker thread crashes:
 
 ### Overview
 
-Hezo uses **Better Auth** for authentication. Board members authenticate via OAuth:
+Hezo uses **custom authentication**. All users authenticate via OAuth:
 - **GitHub OAuth** — sign in with an existing GitHub account (via Hezo Connect)
 - **GitLab OAuth** — sign in with an existing GitLab account (via Hezo Connect)
 
-Email/password authentication may be added in a future release. All OAuth methods create the same Better Auth session. Access is managed through session cookies.
+Email/password authentication may be added in a future release. Sessions are stateless JWTs signed with the master key — no server-side session storage.
 
-### Deployment modes
-
-| Mode | Description |
-|------|-------------|
-| `local_trusted` | Default. No login required. All requests from localhost are treated as board. Suitable for single-user local usage. |
-| `authenticated` | OAuth login required. Multiple board members supported. Suitable for team usage or remote access. |
-
-The deployment mode is set via CLI flag (`--auth-mode local_trusted` or `--auth-mode authenticated`) or environment variable. Default is `local_trusted`.
+Authentication is always required — there is no unauthenticated "local_trusted" mode.
 
 ### Company members
 
-Users are linked to companies through `company_memberships` with one of two roles:
+Users are linked to companies through the `members` + `member_users` tables with one of two roles:
 
 | Role | Authority |
 |------|-----------|
 | **Board** | Full authority. Can direct all agents including CEO. Access all projects, settings, budgets, audit log. Hire/fire agents. Approve all requests. Invite new members. |
 | **Member** | Scoped authority. Can create issues, post comments, participate in live chat, be assigned issues. Can direct agents (except CEO by default). Cannot modify company settings, budgets, secrets, or agent configurations. Can be restricted to specific projects. |
 
-Both roles sign in via GitHub or GitLab OAuth. All board members have **equal authority** — any board member can take any board action. A user can belong to multiple companies with different roles in each.
+Both roles sign in via GitHub or GitLab OAuth. All board members have **equal authority** — any board member can take any board action. Board member conflicts are resolved first-come-first-served (first to approve/deny locks the decision). A user can belong to multiple companies with different roles in each.
 
-The first user to sign in becomes a board member and the instance admin.
+The first user to sign in becomes the instance admin. They must create their first company immediately (no admin-without-company state).
 
 #### Member configuration
 
@@ -1935,52 +1942,49 @@ Account settings (accessible from user menu)
 
 ## 20. Data model
 
-### Tables (34+)
+### Tables
+
+See `schema.md` for the full table reference and design decisions. Key tables:
 
 | Table | Purpose |
 |-------|---------|
 | `system_meta` | Key-value store for system config (master key canary) |
-| `users` | Board member accounts (email, name, admin flag). Authenticated via OAuth — no local password. |
-| `company_types` | Company blueprints (recipes). Defines default agents, KB docs, preferences for new companies. |
-| `companies` | Top-level tenant. Has `email`, `company_type_id`, `mcp_servers` (JSONB), `mpp_config` (JSONB), `budget_monthly_cents`, `budget_used_cents`. |
-| `company_memberships` | Links users to companies with role (board/member), role_title, permissions_text, project_ids |
+| `users` | Global human identity (display_name, avatar_url). No email. |
+| `user_auth_methods` | OAuth login methods (GitHub, GitLab). Links provider to user. |
+| `members` | Base table for all company participants. Has `member_type` enum ('agent'/'user'). |
+| `member_agents` | Agent-specific extension (system_prompt, runtime, budget, heartbeat, org chart). |
+| `member_users` | User-in-company extension (role, role_title, permissions_text, project_ids). |
+| `company_types` | Company blueprints (recipes). Default agents, KB docs, preferences, filesystem snapshots. |
+| `companies` | Top-level tenant. Has `email`, `company_type_id`, `mcp_servers` (JSONB), `mpp_config` (JSONB), budget. |
 | `invites` | Pending invitations to join a company (7-day expiry) |
 | `api_keys` | Company-scoped API keys for external orchestrators. Stored hashed. |
-| `agents` | Roles in the org chart, self-referential `reports_to`. Has `slug` for @-mentions, `mcp_servers` (JSONB). |
-| `projects` | Groups of work under a company |
-| `repos` | Git repos (GitHub only). Short name for @-mentions. |
-| `issues` | Tickets. Must have a project. Per-company auto-incrementing number. Has `identifier`, `blocked_by_issue_id`. |
+| `company_ssh_keys` | Generated SSH key pairs per company. Registered on GitHub via OAuth API. |
+| `projects` | Groups of work under a company. Each gets its own Docker container. |
+| `repos` | Git repos (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. |
+| `issues` | Tickets. Must have a project. Assignee references `members.id`. |
+| `issue_dependencies` | Many-to-many blocking relationships between issues. |
 | `issue_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. |
-| `issue_attachments` | Links assets to issues (and optionally comments) |
-| `tool_calls` | Trace log entries. Linked to a comment. |
+| `execution_locks` | Issue work ownership tracking — one agent works on an issue at a time. |
 | `secrets` | Encrypted key-value. Scoped to company or company+project. |
 | `secret_grants` | Links secrets to agents. Revocable. |
 | `approvals` | Pending board decisions. Polymorphic payload. |
 | `cost_entries` | Immutable spend records. Includes `provider` and `model` fields. |
 | `audit_log` | Append-only. Never updated or deleted. |
-| `kb_docs` | Knowledge base documents. Markdown, company-scoped, slug-addressable. |
-| `kb_doc_revisions` | Version history for KB documents. Full content snapshot per revision. |
-| `company_preferences` | Company-level preferences document. One per company. Agents observe and record board working style. |
-| `company_preference_revisions` | Version history for company preferences. |
-| `project_docs` | Project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan). |
-| `project_doc_revisions` | Version history for project documents. |
-| `live_chat_sessions` | Real-time chat transcripts. Linked to issue + agent. |
-| `connected_platforms` | OAuth connections to external services (GitHub, Gmail, etc.). Tokens stored in secrets. |
-| `company_issue_counters` | Helper for atomic issue numbering. |
-| `assets` | Uploaded file metadata (filename, content type, size, storage path). |
-| `plugins` | Installed plugins. Config, capabilities, status. |
-| `plugin_state` | Key-value storage scoped to a plugin. |
-| `agent_sessions` | Per-task session tracking with token usage and compaction state. |
-| `wakeup_queue` | Pending agent wakeup events with coalescing. |
-| `execution_locks` | Issue work ownership tracking — ensures only one agent works on an issue at a time. |
-| `notification_preferences` | Per-user notification routing. Channel (web/telegram/slack), event types, Telegram chat ID. |
-| `slack_connections` | Per-company Slack app config. Bot token (encrypted), team ID, team name. |
+| `kb_docs` | Knowledge base documents. AGENTS.md is a special KB doc written to disk. |
+| `live_chats` | Persistent live chat per issue. One ongoing conversation. |
+| `project_docs` | Project-level shared documents (prd, tech spec, implementation plan, research, UI decisions, marketing plan). |
+| `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. |
+| `plugins` | Installed plugins. Config, capabilities, status. Local-only for MVP. |
+| `notification_preferences` | Per-user notification routing. |
+| `slack_connections` | Per-company Slack app config. |
 
 ### Enums
 
 ```
-agent_runtime:        claude_code, codex, gemini, bash, http
+member_type:          agent, user
+agent_runtime:        claude_code, codex, gemini
 agent_status:         active, idle, paused, terminated
+member_role:          board, member
 container_status:     creating, running, stopped, error    (tracks project container status)
 issue_status:         backlog, open, in_progress, review, blocked, done, closed, cancelled
 issue_priority:       urgent, high, medium, low
@@ -1995,8 +1999,8 @@ audit_actor_type:     board, agent, system
 repo_host_type:       github
 platform_type:        github, gmail, gitlab, stripe, posthog, railway, vercel, digitalocean, x
 connection_status:    active, expired, disconnected
-project_doc_type:     tech_spec, implementation_plan, research, ui_design_decisions, marketing_plan, other
-deployment_mode:      local_trusted, authenticated
+project_doc_type:     prd, tech_spec, implementation_plan, research, ui_design_decisions, marketing_plan, other
+auth_provider:        github, gitlab
 ```
 
 ### Atomic functions
@@ -2031,11 +2035,10 @@ The full API reference is maintained separately. See `api.md` for the complete e
 
 ### Authentication
 
-Four token types:
-- **No token (localhost)** — unauthenticated requests from localhost allowed. Default for `local_trusted` mode.
-- **Session cookie** — for authenticated board members in `authenticated` mode. Set after GitHub/GitLab OAuth login. Managed by Better Auth.
+Three token types:
+- **User JWT** — stateless JWT signed with master key. Set after GitHub/GitLab OAuth login. Contains `user_id`, `member_id`, `company_id`. Always required for human users.
 - **API key (remote orchestrators)** — `Authorization: Bearer hezo_<key>`. Company-scoped, full board access. For OpenClaw, scripts, AI agents controlling Hezo remotely.
-- **Agent JWT** — `Authorization: Bearer <jwt>`. Signed with master key. Contains `agent_id` + `company_id`.
+- **Agent JWT** — `Authorization: Bearer <jwt>`. Signed with master key. Contains `agent_id` (= member_id) + `company_id`.
 
 ### API surfaces
 
@@ -2045,7 +2048,7 @@ Four token types:
 | Agent API | Heartbeat, context, comments, tool calls, delegation, secret requests, KB proposals, deploy requests. |
 | MCP Endpoint | Streamable HTTP at `/mcp`. Mirrors Board API as MCP tools for external AI agents. |
 | Skill File | `GET /skill.md`. Dynamically generated documentation for AI agent onboarding. |
-| WebSocket | Real-time system events for board UI (agent lifecycle, container status, live chat). |
+| WebSocket | Row-level diffs for TanStack DB sync + system events (agent lifecycle, container status, live chat). |
 
 ---
 
@@ -2068,8 +2071,10 @@ Four token types:
 
 The following specification details are maintained in separate files:
 
-- **`schema.md`** — Data model design decisions, rationale for table structures, indexing strategy, and migration philosophy
+- **`schema.md`** — Data model design decisions, rationale for table structures (including members base table, custom auth, SSH keys, execution locks, issue dependencies)
 - **`api.md`** — Complete API reference with all endpoints, request/response shapes, query parameters, and WebSocket event types
+- **`connect-spec.md`** — Hezo Connect OAuth gateway specification (self-hosted and centrally hosted modes)
+- **`implementation-phases.md`** — 12 implementation phases from Phase 0 (Hezo Connect) through Phase 11 (Deploy + Messaging)
 - **`agents/`** — Full role specifications for each of the 9 built-in agent roles (`ceo.md`, `product-lead.md`, `architect.md`, `engineer.md`, `qa-engineer.md`, `ui-designer.md`, `devops-engineer.md`, `marketing-lead.md`, `researcher.md`)
 
 ## Appendix B: Endpoint count

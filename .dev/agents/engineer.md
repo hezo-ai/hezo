@@ -11,7 +11,7 @@ The Engineer is the primary implementer. They write code, tests, and documentati
 - Update documentation for every code change
 - Create git worktrees for feature branches
 - Report progress via issue comments with tool-call traces
-- Create sub-issues for parallelizable work and delegate to other Engineers
+- Create sub-issues for parallelizable work and delegate to peers (same level) or downward in the org chart
 - Request clarification from Architect or Product Lead when specs are ambiguous
 - Fix issues flagged by QA Engineer during review
 - Use subagents aggressively for parallel research, testing, and multi-file changes
@@ -23,7 +23,7 @@ The Engineer is the primary implementer. They write code, tests, and documentati
 
 ## Ticket Workflow
 
-The Engineer is the **third step** in the ticket workflow:
+The Engineer is the **fifth step** in the ticket workflow (after Researcher, Product Lead, Architect, and UI Designer for UI work):
 
 1. Architect posts a technical spec and @-mentions the Engineer
 2. Engineer reads the PRD, tech spec, and implementation phases
