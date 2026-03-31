@@ -9,8 +9,10 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"hono": "^4",
-		"@hezo/shared": "workspace:*"
+		"@hezo/shared": "workspace:*",
+		"dotenv": "^17.3.1",
+		"env-var": "^7.5.0",
+		"hono": "^4"
 	},
 	"devDependencies": {
 		"vitest": "^3",

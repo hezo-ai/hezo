@@ -11,11 +11,11 @@
 		"typescript": "^5"
 	},
 	"scripts": {
-		"build": "turbo build",
+		"build": "bun run scripts/build.ts",
 		"check": "bunx biome check .",
 		"check:fix": "bunx biome check --write .",
-		"dev": "turbo dev",
-		"test": "turbo test",
+		"dev": "bun run scripts/dev.ts",
+		"test": "bun run scripts/test.ts",
 		"typecheck": "turbo typecheck"
 	}
 }

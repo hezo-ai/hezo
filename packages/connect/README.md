@@ -79,7 +79,7 @@ Starts on port 4100 with hot reload.
 bun test
 ```
 
-26 tests covering state signing, endpoint responses, and the full OAuth flow with mocked GitHub API (dependency-injected fetch).
+44 tests covering configuration loading (defaults, validation, .env file support), state signing, endpoint responses, and the full OAuth flow with mocked GitHub API (dependency-injected fetch).
 
 ## Scripts
 
