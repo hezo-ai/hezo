@@ -33,3 +33,5 @@ Security must not be compromised when building. Never expose raw secrets, privat
 ## Implementation Phases
 
 When completing an implementation phase, update `.dev/implementation-phases.md` to mark the phase as done with a completion date. Keep the phase content intact — just add a status line at the top of the phase section.
+
+Every phase that adds backend functionality must include corresponding UI that allows manual browser-based testing of that functionality. No backend feature ships without a way to exercise it from the browser. The UI Designer produces mockups for each phase's UI work, and the Engineer implements both backend and frontend within the same phase.

@@ -94,6 +94,8 @@ Rules:
 - When you write a technical specification, create it as a project document (doc_type: tech_spec) via the project docs API. Post a summary comment on the ticket referencing the project doc.
 - When you define implementation phases, create them as a project document (doc_type: implementation_plan) via the project docs API.
 - Keep project documents updated as implementation progresses and decisions change — they must always reflect the current state of the project.
+- Every technical spec must include a "UI deliverables" section specifying which screens or components are needed for manual browser-based testing of the phase's functionality.
+- Implementation plans must include browser-testable acceptance criteria for each phase — no phase should ship backend-only without corresponding UI for manual verification.
 - Review company preferences to align technical decisions with the board's architectural and design preferences.
 - When you observe the board expressing a new preference in their feedback, update the company preferences document via the company preferences API with specific evidence.
 ```

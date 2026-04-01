@@ -139,11 +139,57 @@
 
 ---
 
+## Phase 3.5: UI Foundation + Core Screens
+
+**Goal:** A working React frontend for manual browser testing of everything built in Phases 0–3. Uses TanStack Query over REST — no WebSocket or TanStack DB yet.
+
+**What's included:**
+
+Scaffolding:
+- `packages/web`: React 19, Vite, TypeScript, TanStack Router (file-based), TanStack Query, Tailwind CSS 4, Radix UI primitives
+- Dev proxy: Vite proxies `/api/*` to `http://localhost:3100`
+- Shared types imported from `packages/shared`
+- Design tokens: color palette, spacing scale, typography
+- Base layout: sidebar navigation + main content area
+- `bun run dev` starts both server and web in parallel via Turbo
+
+Screens:
+- Master key gate — modal when `/api/status` returns `masterKeyState: "unset"` or `"locked"`. Generate new key or enter existing key.
+- Company list — card grid, create from company type
+- Company workspace — tab layout: Issues, Agents, Projects, Org Chart, KB, Settings
+- Issue list — filterable/sortable table with identifier, project, assignee, status, priority
+- Issue detail — comments thread, status transitions, assignee/priority/project editing, sub-issues, blocked-by
+- Agent list — cards with title, runtime, status, budget usage
+- Agent detail / edit / hire — form with title, system prompt, reports_to, runtime, budget; pause/resume/terminate actions
+- Org chart — tree visualization from `reports_to` hierarchy with status indicators
+- Project list + detail — repos list, filtered issues, add project/repo forms
+- GitHub connection — Settings section showing connected platforms, "Connect GitHub" button triggering OAuth flow
+- KB docs — list, view with markdown rendering, create/edit
+- Settings — secrets vault (list/create/revoke), API keys (list/create/revoke), budget overview, company preferences, project docs, connected platforms
+- Board inbox — drawer accessible from any screen (nav badge), pending approvals with approve/deny actions
+- Playwright setup with basic smoke tests (master key flow, create company, create issue)
+
+**How to test:**
+- `bun run dev` starts server (3100) and Vite (5173)
+- Open browser to `localhost:5173` — master key gate appears on first visit
+- Create a company from a company type — agents auto-created, visible in Agents tab
+- Full CRUD cycle for issues, projects, agents, KB docs, secrets, API keys from the browser
+- Connect GitHub via OAuth flow in Settings
+- Board inbox shows pending approvals with working approve/deny
+- Org chart renders correct hierarchy
+- Playwright smoke tests pass
+
+**Depends on:** Phase 3
+
+---
+
 ## Phase 4: Agent Execution
 
 **Goal:** Agents can actually run. Docker containers per project, subprocesses, heartbeats, worktrees, budget enforcement.
 
 **What's included:**
+
+Backend:
 - Project Docker container lifecycle (provision, start, stop, rebuild via Docker Engine API)
   - One container per project (all repos checked out inside)
   - Dev port forwarding for preview access
@@ -158,26 +204,39 @@
 - Host filesystem layout (`~/.hezo/companies/{id}/projects/{id}/...`)
 - Agent JWT authentication for Agent API
 
+UI:
+- Agent status indicators (polling via TanStack Query refetch intervals)
+- Container status indicators on project cards
+- Issue work ownership display — which agent is working, progress indicator
+- Cost tracking views — per-agent spend, per-issue spend, per-project spend
+- Budget enforcement UI — visual warnings at 80%+ usage, budget adjustment controls
+- "Open Preview" link on project detail for dev port forwarding
+
 **How to test:**
 - Create a project — Docker container provisioned automatically
 - Assign an issue to an agent — agent subprocess starts in project container
+- Agent status changes visible in browser (Agents tab, issue detail)
 - Multiple agents work on different issues simultaneously (separate worktrees)
-- Budget exceeded pauses agent with system comment
+- Budget exceeded pauses agent with system comment — warning visible in UI
+- Container status visible on project cards in browser
+- Cost entries appear as agent works (via polling)
 - Container crash detected and reported
 - Orphaned work re-queued after failure
-- Dev port forwarding accessible from host browser
+- "Open Preview" link opens running project in new tab
 
-**Depends on:** Phase 3
+**Depends on:** Phase 3.5
 
 ---
 
 ## Phase 5: Knowledge + Observability
 
-**Goal:** KB, preferences, project docs, audit log, live queries, WebSocket events, live chat, previews.
+**Goal:** KB revisions, audit log, live queries, WebSocket events, live chat, previews. Migrate frontend from polling to real-time.
 
 **What's included:**
-- Knowledge base CRUD (documents, revisions, agent proposals, approval flow)
-- Company preferences (document, revisions, agent-driven updates)
+
+Backend:
+- Knowledge base revisions, agent proposals, approval flow
+- Company preferences revisions, agent-driven updates
 - Project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan)
 - Audit log (append-only, never updated/deleted)
 - PGlite live queries for frontend data reactivity (`live.query()`, `live.changes()`)
@@ -186,24 +245,38 @@
 - HTML previews (agent writes to workspace volume, served via proxy)
 - Structured options (clickable choice cards)
 
+UI:
+- WebSocket connection from browser to server
+- TanStack DB migration — replace TanStack Query polling with TanStack DB backed by WebSocket row-level diffs for all entity types
+- Live Chat panel on issue detail — real-time agent conversation, session persistence across reloads
+- Tool call trace rendering — expandable trace blocks in issue comments
+- HTML preview rendering — iframe or proxy route for agent-generated previews
+- Audit log viewer in Settings
+- KB document revision history view
+- Project document revision history view
+- Real-time updates across all screens — issue status changes, agent lifecycle events, new comments all update without page refresh
+
 **How to test:**
-- Create KB doc, agent proposes edit, board approves — revision history correct
-- Audit log entries created for all significant actions
-- Tool calls visible in issue thread
-- WebSocket events fire on agent status changes
-- Live chat session persists across page reloads
-- Preview URL serves agent-generated HTML
-- Live query updates frontend without page refresh
+- Open two browser tabs — change in one reflects instantly in the other (no refresh)
+- Create KB doc, agent proposes edit, board approves — revision history visible in browser
+- Audit log entries viewable for all significant actions
+- Tool call traces render inline in issue comments
+- WebSocket events fire on agent status changes — UI updates in real-time
+- Live chat session with an agent works in real-time, persists across page reloads
+- Preview URL serves agent-generated HTML, accessible from project detail
+- Structured options render as clickable choice cards
 
 **Depends on:** Phase 4
 
 ---
 
-## Phase 6: MCP + Skill File
+## Phase 6: MCP + Skill File + Binary Build
 
-**Goal:** External AI agents can interact with Hezo via MCP or by reading the skill file.
+**Goal:** External AI agents can interact with Hezo via MCP. Single self-contained binary with bundled frontend.
 
 **What's included:**
+
+Backend:
 - MCP endpoint (Streamable HTTP at `POST /mcp`)
   - All Board API operations exposed as MCP tools
   - Authentication via user JWT or API key
@@ -211,59 +284,37 @@
   - Dynamically generated from registered MCP tool definitions
   - Also committed to repo at `SKILL.md` in the project root
 
+UI + Build:
+- `bun build --compile`: bundle `packages/web` static assets into the server binary
+- Hono serves the built frontend at `/` (static file serving from embedded assets)
+- MCP server configuration UI in Settings (add/remove/edit company-level MCP servers)
+- Skill file preview — link or inline display of `/skill.md`
+- Full Playwright E2E suite against the compiled binary
+
 **How to test:**
 - Connect an MCP client to `localhost:3100/mcp` — tools listed and callable
-- Create an issue via MCP `create_issue` tool call — verified in DB
+- Create an issue via MCP `create_issue` tool call — verified in DB and visible in browser
 - `curl localhost:3100/skill.md` returns valid Markdown listing all current tools
 - API key or JWT auth required for MCP
+- MCP servers configurable from Settings in browser
+- Build binary with `bun build --compile`, run it, open browser to `localhost:3100` — all screens render from the single binary
+- Playwright E2E tests pass against compiled binary
 
 **Depends on:** Phase 5
 
 ---
 
-## Phase 7: React Frontend
-
-**Goal:** All UI screens, bundled into the binary via `bun build --compile`.
-
-**What's included:**
-- Company list + creation (select company type)
-- Company workspace: Issues, Agents, Projects, Org Chart, KB, Settings tabs
-- Issue detail (Comments tab + Live Chat tab)
-- Agent detail + hire form (including custom role creation)
-- Approval inbox + board inbox
-- Secrets vault UI
-- Cost dashboard
-- Audit log viewer
-- Settings page (connected platforms, company email, MCP servers, preferences)
-- Project detail with Documents tab and Dev Preview link
-- TanStack DB for client-side querying with row-level diffs synced over WebSocket
-- Master key setup UI (modal gate on first login, generate or enter key)
-- `bun build --compile` producing single self-contained binary
-- Playwright E2E tests covering all major UI flows
-
-**How to test:**
-- Build binary, run it, open browser — all screens render
-- Create/edit/delete operations work from UI
-- Live data updates without page refresh (TanStack DB + WebSocket sync)
-- Board inbox shows pending approvals with one-click actions
-- Org chart displays correct hierarchy
-- Dev preview link opens running project in new tab
-- Playwright tests pass
-
-**Depends on:** Phase 6
-
----
-
-## Phase 8: Multi-User Auth + Roles
+## Phase 7: Multi-User Auth + Roles
 
 **Goal:** Custom auth with OAuth login, board/member roles with permissions, company email invites, session compaction.
 
 **What's included:**
+
+Backend:
 - Custom auth implementation:
   - GitHub OAuth login (via Hezo Connect)
   - GitLab OAuth login (via Hezo Connect)
   - Stateless JWTs signed with master key
-- OAuth login page (GitHub + GitLab buttons)
 - Member roles via `member_users` table:
   - `board` — full authority
   - `member` — scoped authority with `role_title`, `permissions_text`, `project_ids`
@@ -277,35 +328,43 @@
   - Recipient authenticates via GitHub or GitLab OAuth
   - Role and permissions copied to membership on accept
 - Instance admin (first user to sign in)
-- Account settings page
 - Session compaction:
   - `agent_task_sessions` table
   - Per-adapter compaction policies
   - Handoff markdown generation
 - File attachments (upload, download, issue linking, local storage)
 
+UI:
+- OAuth login page (GitHub + GitLab buttons)
+- Account settings page
+- Member management UI in Settings (list members, roles, permissions)
+- Invite flow UI (create invite, specify role/permissions/project scope)
+- Permission-gated navigation — members see only allowed projects, board-only sections hidden
+
 **How to test:**
-- Create account via GitHub OAuth, log in, access company as board member
-- Create account via GitLab OAuth, log in, access company
-- Invite a board member — joins with full access
+- Create account via GitHub OAuth, log in, access company as board member — all in browser
+- Create account via GitLab OAuth, log in, access company — all in browser
+- Invite a board member — joins with full access, visible in member management UI
 - Invite a member with role_title + permissions_text + project_ids — joins with scoped access
-- Member can create issue in allowed project
-- Member cannot access restricted project (403)
+- Member can create issue in allowed project via browser
+- Member cannot access restricted project (403) — UI hides restricted content
 - Member cannot access company settings or agent management (403)
 - Agent respects member's permissions_text (e.g. refuses to change PRD when permissions say not to)
 - Member cannot create invites (403)
-- First user flow: OAuth login → master key gate → forced company creation
+- First user flow: OAuth login → master key gate → forced company creation — all in browser
 - Session compaction triggers after token threshold
 
-**Depends on:** Phase 7
+**Depends on:** Phase 6
 
 ---
 
-## Phase 9: Adapters + Plugins
+## Phase 8: Adapters + Plugins
 
 **Goal:** Non-Claude-Code agent runtimes and the plugin system.
 
 **What's included:**
+
+Backend:
 - Gemini adapter (subprocess, Gemini CLI)
 - Codex adapter
 - Plugin system:
@@ -315,24 +374,30 @@
   - Crash recovery with exponential backoff
   - `@hezo/plugin-sdk` package
   - Local plugin loading (filesystem path or git URL)
-  - Plugin management UI
 - Plugin registry (plugins.hezo.ai) out of scope for MVP — plugins are local-only
 
-**How to test:**
-- Create agent with Gemini runtime — executes via Gemini CLI
-- Install a test plugin — runs in worker thread, can read/write state
-- Plugin crash is recovered with backoff
-- Plugin capabilities enforced (unauthorized API access blocked)
+UI:
+- Plugin management UI in Settings (install, enable, disable, uninstall)
+- Runtime type selector when hiring agents (Claude Code, Gemini, Codex)
 
-**Depends on:** Phase 8
+**How to test:**
+- Create agent with Gemini runtime via browser — executes via Gemini CLI
+- Install a test plugin from Settings UI — runs in worker thread, can read/write state
+- Plugin crash is recovered with backoff — status visible in Settings
+- Plugin capabilities enforced (unauthorized API access blocked)
+- Runtime type selector shows all available adapters when hiring agents in browser
+
+**Depends on:** Phase 7
 
 ---
 
-## Phase 10: Full Platform Integrations
+## Phase 9: Full Platform Integrations
 
 **Goal:** Extend Hezo Connect beyond GitHub to all supported platforms. Centrally hosted mode.
 
 **What's included:**
+
+Backend:
 - Hezo Connect — centrally hosted mode (connect.hezo.ai):
   - API key system for Hezo instances
   - Account management, usage tracking, billing infrastructure
@@ -344,21 +409,28 @@
 - MCP server configuration (company-level + agent-level, merged at runtime)
 - Connection lifecycle management (health checks, disconnect, re-authorize)
 
-**How to test:**
-- Connect Gmail, Stripe, etc. via OAuth flow
-- Token auto-refreshes before expiry
-- Expired connection triggers board notification
-- Connected platform appears as MCP server for agents
+UI:
+- Extended connected platforms UI — all OAuth providers in Settings
+- Token refresh status indicators per connection
+- MCP server auto-registration display
 
-**Depends on:** Phase 9
+**How to test:**
+- Connect Gmail, Stripe, etc. via OAuth flow in browser
+- Token auto-refreshes before expiry — status visible in Settings
+- Expired connection triggers board notification — visible in board inbox
+- Connected platform appears as MCP server for agents — visible in MCP config UI
+
+**Depends on:** Phase 8
 
 ---
 
-## Phase 11: Deploy + Messaging Integrations
+## Phase 10: Deploy + Messaging Integrations
 
 **Goal:** Agents can deploy to staging/production. Slack and Telegram integrations as optional platform interfaces.
 
 **What's included:**
+
+Backend:
 - Staging environment management (auto-deploy on push to main, Neon DB, GitHub Actions)
 - Production deployment with `deploy_production` approval gate
 - DevOps Engineer activation flow (board sets to active when ready)
@@ -370,17 +442,24 @@
   - Webhook endpoints: `POST /webhooks/slack`, `POST /webhooks/telegram`
 - MPP (Machine Payments Protocol): wallet config, `mppx` CLI, autonomous HTTP 402 flow
 
+UI:
+- Deploy status indicators — staging/production status on project detail
+- Staging and production links on project detail
+- Notification preferences page — per-user, per-channel event type routing
+- Slack connection setup in Settings
+- Telegram connection setup in Settings
+
 **How to test:**
-- Agent pushes to main — staging auto-deploys
-- Production deploy requires board approval — deploy executes after approval
-- Link Telegram account — receive notification for pending approval with working deep link
-- Approve a request via Telegram inline keyboard — approval reflected in Hezo
-- Install Slack app — agent messages appear with distinct names/avatars
+- Agent pushes to main — staging auto-deploys, status visible in project detail
+- Production deploy requires board approval — approve in browser, deploy executes
+- Link Telegram account via Settings — receive notification for pending approval with working deep link
+- Approve a request via Telegram inline keyboard — approval reflected in Hezo UI
+- Install Slack app via Settings — agent messages appear with distinct names/avatars
 - Approve a request via Slack interactive message
-- Notification preferences: enable/disable specific event types per channel
+- Notification preferences configurable from browser — enable/disable specific event types per channel
 - MPP payment flow completes for HTTP 402 responses
 
-**Depends on:** Phase 10
+**Depends on:** Phase 9
 
 ---
 
@@ -392,13 +471,13 @@
 | 1 | Foundation | Hono + PGlite + migrations + master key + CLI |
 | 2 | Core CRUD | Companies (with types), agents (all 9), issues, projects — all via REST |
 | 3 | GitHub Integration | OAuth flow, token storage, repo validation and cloning |
-| 4 | Agent Execution | Docker per project, subprocesses, heartbeats, worktrees, budgets |
-| 5 | Knowledge + Observability | KB, preferences, project docs, audit log, live queries, WebSocket |
-| 6 | MCP + Skill File | MCP endpoint at `/mcp`, skill file at `/skill.md` |
-| 7 | React Frontend | All UI screens, bundled into single binary |
-| 8 | Multi-User Auth + Roles | Custom auth (OAuth), board/member roles, permissions, invites, session compaction |
-| 9 | Adapters + Plugins | Gemini/Codex adapters, plugin system (local-only, no registry for MVP) |
-| 10 | Full Platform Integrations | All OAuth platforms, centrally hosted Connect |
-| 11 | Deploy + Messaging | Staging/production pipeline, Slack + Telegram interfaces, notification preferences, MPP |
+| 3.5 | UI Foundation + Core Screens | React app with all CRUD screens for Phases 0–3 APIs, master key gate, board inbox |
+| 4 | Agent Execution + UI | Docker per project, subprocesses, heartbeats, budgets + agent status UI, cost views |
+| 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack DB migration, live chat, real-time updates |
+| 6 | MCP + Skill File + Binary Build | MCP endpoint, skill file + `bun build --compile` single binary, Playwright E2E |
+| 7 | Multi-User Auth + Roles + UI | Custom auth (OAuth), board/member roles, permissions, invites + login page, member management |
+| 8 | Adapters + Plugins + UI | Gemini/Codex adapters, plugin system + plugin management UI, runtime selector |
+| 9 | Full Platform Integrations + UI | All OAuth platforms, centrally hosted Connect + extended connection UI |
+| 10 | Deploy + Messaging + UI | Staging/production pipeline, Slack + Telegram + deploy status, notification preferences |
 
-Each phase produces a testable increment. Phase 0 can be built and verified in isolation. Phases 1–2 give a working API server testable entirely with curl. Phase 4 is where agents first run. Phase 7 adds the visual UI. Phase 8 enables team usage.
+Each phase produces a testable increment. Phase 0 can be built and verified in isolation. Phases 1–3 give a working API server testable entirely with curl. Phase 3.5 makes everything browser-testable. From Phase 4 onward, every phase includes UI alongside backend so new functionality is always manually testable in the browser.

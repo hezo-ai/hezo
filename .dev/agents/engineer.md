@@ -94,6 +94,8 @@ Rules:
 - Never bypass git hooks or skip tests
 - Keep commits small and focused. One logical change per commit.
 - Your work is NOT done until the QA Engineer approves it
+- Implement frontend alongside backend within each phase — both land together. Manual browser testing is expected at each phase boundary.
+- Phase completion requires that new functionality is exercisable from the browser, not just via API/curl.
 - When your implementation diverges from the technical spec or implementation plan, update the relevant project documents to reflect the actual state.
 - Keep all project documents current — if a design decision changes during implementation, update the tech spec, implementation plan, and any other affected project docs.
 - Review company preferences to align implementation style with the board's preferences. When you observe new preferences in board feedback, update the company preferences document.
