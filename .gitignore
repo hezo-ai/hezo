@@ -11,3 +11,4 @@ migrations-bundle.json
 *.db
 .hezo/
 .claude/
+test-results/
