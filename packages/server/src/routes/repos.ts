@@ -1,8 +1,12 @@
+import { join } from 'node:path';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { cloneRepo } from '../services/git';
 import { parseGitHubUrl, validateRepoAccess } from '../services/github';
+import { getCompanySSHKey } from '../services/ssh-keys';
 import { getOAuthToken } from '../services/token-store';
+import { getWorkspacePath } from '../services/workspace';
 
 export const reposRoutes = new Hono<Env>();
 
@@ -87,6 +91,35 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 		 RETURNING *`,
 		[projectId, body.short_name, repoIdentifier],
 	);
+
+	const dataDir = c.get('dataDir');
+	if (dataDir) {
+		const projectResult = await db.query<{ slug: string; company_id: string }>(
+			'SELECT slug, company_id FROM projects WHERE id = $1',
+			[projectId],
+		);
+		const companySlugResult = await db.query<{ slug: string }>(
+			'SELECT slug FROM companies WHERE id = $1',
+			[projectResult.rows[0]?.company_id],
+		);
+
+		if (projectResult.rows[0] && companySlugResult.rows[0]) {
+			const workspacePath = getWorkspacePath(
+				dataDir,
+				companySlugResult.rows[0].slug,
+				projectResult.rows[0].slug,
+			);
+			const masterKeyManager = c.get('masterKeyManager');
+			const sshKey = await getCompanySSHKey(db, companyId, masterKeyManager);
+
+			if (sshKey) {
+				const targetDir = join(workspacePath, body.short_name);
+				cloneRepo(repoIdentifier, targetDir, sshKey.privateKey).catch((error) => {
+					console.error(`Failed to clone ${repoIdentifier}:`, error);
+				});
+			}
+		}
+	}
 
 	return ok(c, result.rows[0], 201);
 });

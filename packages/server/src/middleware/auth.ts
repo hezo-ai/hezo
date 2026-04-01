@@ -8,7 +8,7 @@ const PUBLIC_PATHS = ['/health', '/api/status', '/api/auth/token', '/'];
 export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 	const path = new URL(c.req.url).pathname;
 	if (PUBLIC_PATHS.includes(path)) return next();
-	if (!path.startsWith('/api')) return next();
+	if (!path.startsWith('/api') && !path.startsWith('/agent-api')) return next();
 
 	const header = c.req.header('Authorization');
 	if (!header?.startsWith('Bearer ')) {

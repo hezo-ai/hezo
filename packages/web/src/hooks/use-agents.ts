@@ -28,6 +28,7 @@ export function useAgents(companyId: string, status?: string) {
 		queryKey: ['companies', companyId, 'agents', { status }],
 		queryFn: () =>
 			api.get<Agent[]>(`/api/companies/${companyId}/agents`, status ? { status } : undefined),
+		refetchInterval: 5_000,
 	});
 }
 

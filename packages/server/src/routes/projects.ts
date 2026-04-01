@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
+import { provisionContainer, rebuildContainer, teardownContainer } from '../services/containers';
 
 export const projectsRoutes = new Hono<Env>();
 
@@ -50,10 +51,26 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 		`INSERT INTO projects (company_id, name, slug, goal, docker_base_image)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
-		[companyId, body.name.trim(), slug, body.goal ?? '', body.docker_base_image ?? 'node:20-slim'],
+		[companyId, body.name.trim(), slug, body.goal ?? '', body.docker_base_image ?? 'node:24-slim'],
 	);
 
-	return ok(c, result.rows[0], 201);
+	const project = result.rows[0] as Record<string, unknown>;
+
+	const companySlugResult = await db.query<{ slug: string }>(
+		'SELECT slug FROM companies WHERE id = $1',
+		[companyId],
+	);
+	const companySlug = companySlugResult.rows[0]?.slug;
+
+	if (companySlug) {
+		const docker = c.get('docker');
+		const dataDir = c.get('dataDir');
+		provisionContainer(db, docker, project as any, companySlug, dataDir).catch((error) => {
+			console.error(`Failed to provision container for project ${project.slug}:`, error);
+		});
+	}
+
+	return ok(c, project, 201);
 });
 
 projectsRoutes.get('/companies/:companyId/projects/:projectId', async (c) => {
@@ -141,15 +158,14 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 	const projectId = c.req.param('projectId');
 	const companyId = c.req.param('companyId');
 
-	const existing = await db.query('SELECT id FROM projects WHERE id = $1 AND company_id = $2', [
-		projectId,
-		companyId,
-	]);
+	const existing = await db.query<{ id: string; slug: string }>(
+		'SELECT id, slug FROM projects WHERE id = $1 AND company_id = $2',
+		[projectId, companyId],
+	);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Project not found', 404);
 	}
 
-	// Check for open issues
 	const openIssues = await db.query<{ count: number }>(
 		"SELECT count(*)::int AS count FROM issues WHERE project_id = $1 AND status NOT IN ('done', 'closed', 'cancelled')",
 		[projectId],
@@ -158,6 +174,66 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 		return err(c, 'CONFLICT', 'Cannot delete project with open issues', 409);
 	}
 
+	const companySlugResult = await db.query<{ slug: string }>(
+		'SELECT slug FROM companies WHERE id = $1',
+		[companyId],
+	);
+	const companySlug = companySlugResult.rows[0]?.slug;
+
+	if (companySlug) {
+		const docker = c.get('docker');
+		const dataDir = c.get('dataDir');
+		await teardownContainer(
+			db,
+			docker,
+			projectId,
+			companySlug,
+			existing.rows[0].slug,
+			dataDir,
+		).catch((error) => {
+			console.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
+		});
+	}
+
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
 	return c.json({ data: null }, 200);
+});
+
+projectsRoutes.post('/companies/:companyId/projects/:projectId/rebuild-container', async (c) => {
+	const db = c.get('db');
+	const projectId = c.req.param('projectId');
+	const companyId = c.req.param('companyId');
+
+	const projectResult = await db.query('SELECT * FROM projects WHERE id = $1 AND company_id = $2', [
+		projectId,
+		companyId,
+	]);
+	if (projectResult.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Project not found', 404);
+	}
+
+	const companySlugResult = await db.query<{ slug: string }>(
+		'SELECT slug FROM companies WHERE id = $1',
+		[companyId],
+	);
+	const companySlug = companySlugResult.rows[0]?.slug;
+	if (!companySlug) {
+		return err(c, 'NOT_FOUND', 'Company not found', 404);
+	}
+
+	const docker = c.get('docker');
+	const dataDir = c.get('dataDir');
+
+	try {
+		const containerId = await rebuildContainer(
+			db,
+			docker,
+			projectResult.rows[0] as any,
+			companySlug,
+			dataDir,
+		);
+		return ok(c, { container_id: containerId, container_status: 'running' });
+	} catch (error) {
+		return err(c, 'DOCKER_ERROR', `Failed to rebuild container: ${(error as Error).message}`, 500);
+	}
 });

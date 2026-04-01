@@ -206,7 +206,7 @@ CREATE TABLE projects (
     name                TEXT NOT NULL,
     slug                TEXT NOT NULL,
     goal                TEXT NOT NULL DEFAULT '',
-    docker_base_image   TEXT NOT NULL DEFAULT 'node:20-slim',
+    docker_base_image   TEXT NOT NULL DEFAULT 'node:24-slim',
     container_id        TEXT,
     container_status    container_status,
     designated_repo_id  UUID,

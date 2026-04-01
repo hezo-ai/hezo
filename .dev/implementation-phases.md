@@ -72,6 +72,8 @@
 
 ## Phase 2: Core CRUD
 
+**Status:** Done (2026-04)
+
 **Goal:** Full REST API for all core entities. No Docker, no agents running, no OAuth — all testable with curl.
 
 **What's included:**
@@ -186,6 +188,8 @@ Screens:
 ---
 
 ## Phase 4: Agent Execution
+
+**Status:** Done (2026-04)
 
 **Goal:** Agents can actually run. Docker containers per project, subprocesses, heartbeats, worktrees, budget enforcement.
 

@@ -6,6 +6,7 @@ import { Button } from '../../../../components/ui/button';
 import { Card } from '../../../../components/ui/card';
 import { Input } from '../../../../components/ui/input';
 import { Textarea } from '../../../../components/ui/textarea';
+import { useAgents } from '../../../../hooks/use-agents';
 import { useApiKeys, useCreateApiKey, useDeleteApiKey } from '../../../../hooks/use-api-keys';
 import {
 	useConnections,
@@ -254,10 +255,21 @@ function ApiKeysSection({ companyId }: { companyId: string }) {
 
 function BudgetSection({ companyId }: { companyId: string }) {
 	const { data: costs } = useCosts(companyId, { group_by: 'agent' });
+	const { data: agents } = useAgents(companyId);
+	const highBudgetAgents =
+		agents?.filter(
+			(a) => a.monthly_budget_cents > 0 && a.budget_used_cents / a.monthly_budget_cents > 0.8,
+		) ?? [];
 
 	return (
 		<section>
 			<h2 className="text-sm font-medium text-text-muted mb-3">Budget Overview</h2>
+			{highBudgetAgents.length > 0 && (
+				<div className="mb-3 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
+					{highBudgetAgents.length} agent{highBudgetAgents.length > 1 ? 's' : ''} at 80%+ budget
+					usage: {highBudgetAgents.map((a) => a.title).join(', ')}
+				</div>
+			)}
 			{costs?.summary?.length === 0 ? (
 				<p className="text-sm text-text-subtle">No spend recorded.</p>
 			) : (

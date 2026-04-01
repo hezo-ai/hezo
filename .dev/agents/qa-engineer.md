@@ -134,5 +134,5 @@ When reviewing tests, reject if:
 |-------|-------|
 | Heartbeat interval | 60 min |
 | Monthly budget | $40 |
-| Docker base image | node:20-slim |
+| Docker base image | node:24-slim |
 | Runtime type | claude_code |

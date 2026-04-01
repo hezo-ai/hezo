@@ -7,6 +7,7 @@ import { Card } from '../../../../components/ui/card';
 import { Textarea } from '../../../../components/ui/textarea';
 import { useAgents } from '../../../../hooks/use-agents';
 import { useComments, useCreateComment } from '../../../../hooks/use-comments';
+import { useExecutionLock } from '../../../../hooks/use-execution-locks';
 import {
 	useCreateSubIssue,
 	useDeleteIssue,
@@ -33,6 +34,7 @@ function IssueDetailPage() {
 	const { data: comments } = useComments(companyId, issueId);
 	const { data: deps } = useIssueDependencies(companyId, issueId);
 	const { data: agents } = useAgents(companyId);
+	const { data: lock } = useExecutionLock(companyId, issueId);
 	const updateIssue = useUpdateIssue(companyId, issueId);
 	const deleteIssue = useDeleteIssue(companyId);
 	const createComment = useCreateComment(companyId, issueId);
@@ -76,6 +78,17 @@ function IssueDetailPage() {
 						<span className="font-mono text-sm text-text-muted shrink-0">{issue.identifier}</span>
 						<h1 className="text-lg font-semibold">{issue.title}</h1>
 					</div>
+
+					{lock && (
+						<div className="flex items-center gap-2 mb-4 rounded-md border border-info/30 bg-info/5 px-3 py-2 text-xs">
+							<span className="w-2 h-2 rounded-full bg-info animate-pulse" />
+							<span className="text-info font-medium">{lock.member_name}</span>
+							<span className="text-text-muted">is working on this issue</span>
+							<span className="text-text-subtle ml-auto">
+								since {new Date(lock.locked_at).toLocaleTimeString()}
+							</span>
+						</div>
+					)}
 
 					{issue.description && (
 						<p className="text-sm text-text-muted mb-6 whitespace-pre-wrap">{issue.description}</p>

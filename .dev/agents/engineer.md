@@ -133,5 +133,5 @@ Rules:
 |-------|-------|
 | Heartbeat interval | 30 min |
 | Monthly budget | $50 |
-| Docker base image | node:20-slim |
+| Docker base image | node:24-slim |
 | Runtime type | claude_code |

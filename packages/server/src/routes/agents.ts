@@ -313,3 +313,23 @@ async function changeAgentStatus(
 
 	return ok(c, { status: newStatus });
 }
+
+agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs', async (c) => {
+	const db = c.get('db');
+	const agentId = c.req.param('agentId');
+
+	const result = await db.query(
+		`SELECT id, member_id, company_id, wakeup_id, status,
+		        started_at, finished_at, exit_code, error,
+		        input_tokens, output_tokens, cost_cents,
+		        stdout_excerpt, stderr_excerpt, process_pid,
+		        retry_of_run_id, process_loss_retry_count
+		 FROM heartbeat_runs
+		 WHERE member_id = $1
+		 ORDER BY started_at DESC
+		 LIMIT 20`,
+		[agentId],
+	);
+
+	return ok(c, result.rows);
+});

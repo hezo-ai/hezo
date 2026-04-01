@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { createWakeup } from '../services/wakeup';
 
 export const issuesRoutes = new Hono<Env>();
 
@@ -253,6 +254,17 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		`UPDATE issues SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
 		params,
 	);
+
+	if (body.assignee_id) {
+		const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
+			body.assignee_id,
+		]);
+		if (isAgent.rows.length > 0) {
+			createWakeup(db, body.assignee_id, companyId, 'assignment', {
+				issue_id: issueId,
+			}).catch((e) => console.error('Failed to create wakeup:', e));
+		}
+	}
 
 	return ok(c, result.rows[0]);
 });

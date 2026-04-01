@@ -43,9 +43,10 @@ function ProjectListPage() {
 							<Card className="hover:border-primary/50 transition-colors cursor-pointer">
 								<h3 className="font-medium text-sm mb-1">{p.name}</h3>
 								{p.goal && <p className="text-xs text-text-muted line-clamp-2 mb-2">{p.goal}</p>}
-								<div className="flex gap-2">
+								<div className="flex gap-2 flex-wrap">
 									<Badge color="blue">{p.repo_count} repos</Badge>
 									<Badge color="yellow">{p.open_issue_count} issues</Badge>
+									{p.container_status && <ContainerStatusBadge status={p.container_status} />}
 								</div>
 							</Card>
 						</Link>
@@ -107,6 +108,17 @@ function CreateProjectDialog({
 			</Dialog.Portal>
 		</Dialog.Root>
 	);
+}
+
+function ContainerStatusBadge({ status }: { status: string }) {
+	const config: Record<string, { color: string; label: string }> = {
+		creating: { color: 'yellow', label: 'Provisioning' },
+		running: { color: 'green', label: 'Running' },
+		stopped: { color: 'gray', label: 'Stopped' },
+		error: { color: 'red', label: 'Error' },
+	};
+	const { color, label } = config[status] ?? { color: 'gray', label: status };
+	return <Badge color={color as any}>{label}</Badge>;
 }
 
 export const Route = createFileRoute('/companies/$companyId/projects/')({

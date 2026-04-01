@@ -7,6 +7,7 @@ import { MasterKeyManager } from './crypto/master-key';
 import { BASE_SCHEMA } from './db/schema';
 import type { Env } from './lib/types';
 import { authMiddleware } from './middleware/auth';
+import { agentApiRoutes } from './routes/agent-api';
 import { agentsRoutes } from './routes/agents';
 import { apiKeysRoutes } from './routes/api-keys';
 import { approvalsRoutes } from './routes/approvals';
@@ -16,6 +17,7 @@ import { companiesRoutes } from './routes/companies';
 import { companyTypesRoutes } from './routes/company-types';
 import { connectionsRoutes } from './routes/connections';
 import { costsRoutes } from './routes/costs';
+import { executionLocksRoutes } from './routes/execution-locks';
 import { healthRoutes } from './routes/health';
 import { issuesRoutes } from './routes/issues';
 import { kbDocsRoutes } from './routes/kb-docs';
@@ -25,6 +27,8 @@ import { projectDocsRoutes } from './routes/project-docs';
 import { projectsRoutes } from './routes/projects';
 import { reposRoutes } from './routes/repos';
 import { secretsRoutes } from './routes/secrets';
+import { DockerClient } from './services/docker';
+import { HeartbeatEngine } from './services/heartbeat-engine';
 
 export type { HezoConfig };
 
@@ -40,6 +44,7 @@ export interface StartupResult {
 	app: Hono<Env>;
 	port: number;
 	masterKeyState: MasterKeyState;
+	heartbeatEngine: HeartbeatEngine;
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
@@ -70,25 +75,44 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	const connectPublicKey = await fetchConnectPublicKey(config.connectUrl);
 
-	const app = buildApp(db, masterKeyManager, {
-		dataDir: config.dataDir,
-		connectUrl: config.connectUrl,
-		connectPublicKey,
+	const docker = new DockerClient();
+	const app = buildApp(
+		db,
+		masterKeyManager,
+		{
+			dataDir: config.dataDir,
+			connectUrl: config.connectUrl,
+			connectPublicKey,
+		},
+		docker,
+	);
+
+	const heartbeatEngine = new HeartbeatEngine({
+		db,
+		docker,
+		masterKeyManager,
+		serverPort: config.port,
 	});
 
-	return { app, port: config.port, masterKeyState };
+	if (masterKeyState === 'unlocked') {
+		heartbeatEngine.start();
+	}
+
+	return { app, port: config.port, masterKeyState, heartbeatEngine };
 }
 
 export function buildApp(
 	db: PGlite,
 	masterKeyManager: MasterKeyManager,
 	config: AppConfig = { dataDir: '', connectUrl: '', connectPublicKey: '' },
+	docker: DockerClient = new DockerClient(),
 ): Hono<Env> {
 	const app = new Hono<Env>();
 
 	app.use('*', async (c, next) => {
 		c.set('db', db);
 		c.set('masterKeyManager', masterKeyManager);
+		c.set('docker', docker);
 		c.set('dataDir', config.dataDir);
 		c.set('connectUrl', config.connectUrl);
 		c.set('connectPublicKey', config.connectPublicKey);
@@ -107,8 +131,12 @@ export function buildApp(
 	// Auth routes (token endpoint is public, handled before auth middleware)
 	app.route('/api', authRoutes);
 
-	// Auth middleware for all /api/* routes
+	// Auth middleware for all /api/* and /agent-api/* routes
 	app.use('/api/*', authMiddleware);
+	app.use('/agent-api/*', authMiddleware);
+
+	// Agent API routes
+	app.route('/agent-api', agentApiRoutes);
 
 	// CRUD routes
 	app.route('/api', companyTypesRoutes);
@@ -126,6 +154,7 @@ export function buildApp(
 	app.route('/api', projectDocsRoutes);
 	app.route('/api', connectionsRoutes);
 	app.route('/api', reposRoutes);
+	app.route('/api', executionLocksRoutes);
 
 	return app;
 }

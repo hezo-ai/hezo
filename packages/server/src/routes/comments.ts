@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { createWakeup } from '../services/wakeup';
 
 export const commentsRoutes = new Hono<Env>();
 
@@ -62,12 +63,33 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		authorMemberId = auth.memberId;
 	}
 
-	const result = await db.query(
+	const result = await db.query<{ id: string }>(
 		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
      VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
      RETURNING *`,
 		[issueId, authorMemberId, body.content_type ?? 'text', JSON.stringify(body.content)],
 	);
+
+	const companyId = c.req.param('companyId');
+	const contentText = typeof body.content === 'object' ? JSON.stringify(body.content) : '';
+	const mentions = contentText.match(/@([\w-]+)/g);
+	if (mentions) {
+		for (const mention of mentions) {
+			const slug = mention.slice(1);
+			const mentioned = await db.query<{ id: string }>(
+				`SELECT ma.id FROM member_agents ma
+				 JOIN members m ON m.id = ma.id
+				 WHERE ma.slug = $1 AND m.company_id = $2`,
+				[slug, companyId],
+			);
+			if (mentioned.rows.length > 0) {
+				createWakeup(db, mentioned.rows[0].id, companyId, 'mention', {
+					issue_id: issueId,
+					comment_id: result.rows[0].id,
+				}).catch((e) => console.error('Failed to create mention wakeup:', e));
+			}
+		}
+	}
 
 	return ok(c, result.rows[0], 201);
 });
@@ -109,6 +131,22 @@ commentsRoutes.post(
 				JSON.stringify({ text: `Board selected option: ${body.chosen_id}` }),
 			],
 		);
+
+		const companyId = c.req.param('companyId');
+		const issue = await db.query<{ assignee_id: string | null }>(
+			'SELECT assignee_id FROM issues WHERE id = $1',
+			[existing.rows[0].issue_id],
+		);
+		const assigneeId = issue.rows[0]?.assignee_id;
+		if (assigneeId) {
+			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
+			if (isAgent.rows.length > 0) {
+				createWakeup(db, assigneeId, companyId, 'option_chosen', {
+					issue_id: existing.rows[0].issue_id,
+					chosen_id: body.chosen_id,
+				}).catch((e) => console.error('Failed to create option_chosen wakeup:', e));
+			}
+		}
 
 		return ok(c, result.rows[0]);
 	},

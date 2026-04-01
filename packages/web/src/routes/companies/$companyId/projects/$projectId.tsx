@@ -1,11 +1,20 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { ArrowLeft, GitBranch, Loader2, Plus, Trash2 } from 'lucide-react';
+import {
+	ArrowLeft,
+	Box,
+	ExternalLink,
+	GitBranch,
+	Loader2,
+	Plus,
+	RefreshCw,
+	Trash2,
+} from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { useIssues } from '../../../../hooks/use-issues';
-import { useProject } from '../../../../hooks/use-projects';
+import { useProject, useRebuildContainer } from '../../../../hooks/use-projects';
 import { useCreateRepo, useDeleteRepo, useRepos } from '../../../../hooks/use-repos';
 
 function ProjectDetailPage() {
@@ -15,6 +24,7 @@ function ProjectDetailPage() {
 	const { data: issues } = useIssues(companyId, { project_id: projectId });
 	const createRepo = useCreateRepo(companyId, projectId);
 	const deleteRepo = useDeleteRepo(companyId, projectId);
+	const rebuildContainer = useRebuildContainer(companyId, projectId);
 
 	const [showRepoForm, setShowRepoForm] = useState(false);
 	const [repoName, setRepoName] = useState('');
@@ -41,7 +51,48 @@ function ProjectDetailPage() {
 			</Link>
 
 			<h1 className="text-lg font-semibold mb-1">{project.name}</h1>
-			{project.goal && <p className="text-sm text-text-muted mb-6">{project.goal}</p>}
+			{project.goal && <p className="text-sm text-text-muted mb-4">{project.goal}</p>}
+
+			{/* Container */}
+			<div className="mb-6 flex items-center gap-3 rounded-lg border border-border-subtle bg-bg px-4 py-3">
+				<Box className="w-4 h-4 text-text-muted" />
+				<span className="text-sm font-medium">Container</span>
+				<ContainerStatusBadge status={project.container_status} />
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={() => rebuildContainer.mutate()}
+					disabled={rebuildContainer.isPending}
+					className="ml-auto"
+				>
+					{rebuildContainer.isPending ? (
+						<Loader2 className="w-3 h-3 animate-spin" />
+					) : (
+						<RefreshCw className="w-3 h-3" />
+					)}
+					Rebuild
+				</Button>
+			</div>
+
+			{/* Dev Ports */}
+			{project.container_status === 'running' && project.dev_ports?.length > 0 && (
+				<div className="mb-6">
+					<h2 className="text-sm font-medium text-text-muted mb-2">Dev Preview</h2>
+					<div className="flex gap-2 flex-wrap">
+						{project.dev_ports.map((p) => (
+							<a
+								key={p.host}
+								href={`http://localhost:${p.host}`}
+								target="_blank"
+								rel="noopener noreferrer"
+								className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg px-3 py-1.5 text-sm hover:border-primary/50 transition-colors"
+							>
+								<ExternalLink className="w-3 h-3" />:{p.container} → :{p.host}
+							</a>
+						))}
+					</div>
+				</div>
+			)}
 
 			{/* Repos */}
 			<div className="mb-8">
@@ -132,6 +183,18 @@ function ProjectDetailPage() {
 			</div>
 		</div>
 	);
+}
+
+function ContainerStatusBadge({ status }: { status: string | null }) {
+	if (!status) return <Badge color="gray">No container</Badge>;
+	const config: Record<string, { color: string; label: string }> = {
+		creating: { color: 'yellow', label: 'Provisioning' },
+		running: { color: 'green', label: 'Running' },
+		stopped: { color: 'gray', label: 'Stopped' },
+		error: { color: 'red', label: 'Error' },
+	};
+	const { color, label } = config[status] ?? { color: 'gray', label: status };
+	return <Badge color={color as any}>{label}</Badge>;
 }
 
 export const Route = createFileRoute('/companies/$companyId/projects/$projectId')({
