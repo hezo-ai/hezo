@@ -34,4 +34,5 @@ jobs:
         with:
           bun-version: "1.3.x"
       - run: bun install
+      - run: bunx playwright install --with-deps chromium
       - run: bun run test
