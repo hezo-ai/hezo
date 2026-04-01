@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
+import { toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
 
 export const projectsRoutes = new Hono<Env>();
@@ -37,11 +38,19 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	}
 
+	const slug = await uniqueSlug(toSlug(body.name), async (s) => {
+		const r = await db.query('SELECT 1 FROM projects WHERE company_id = $1 AND slug = $2', [
+			companyId,
+			s,
+		]);
+		return r.rows.length > 0;
+	});
+
 	const result = await db.query(
-		`INSERT INTO projects (company_id, name, goal, docker_base_image)
-     VALUES ($1, $2, $3, $4)
+		`INSERT INTO projects (company_id, name, slug, goal, docker_base_image)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
-		[companyId, body.name.trim(), body.goal ?? '', body.docker_base_image ?? 'node:20-slim'],
+		[companyId, body.name.trim(), slug, body.goal ?? '', body.docker_base_image ?? 'node:20-slim'],
 	);
 
 	return ok(c, result.rows[0], 201);
@@ -92,9 +101,19 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 	const params: unknown[] = [];
 	let idx = 1;
 
-	if (body.name?.trim() !== undefined) {
+	if (body.name?.trim()) {
+		const newSlug = await uniqueSlug(toSlug(body.name), async (s) => {
+			const r = await db.query(
+				'SELECT 1 FROM projects WHERE company_id = $1 AND slug = $2 AND id != $3',
+				[companyId, s, projectId],
+			);
+			return r.rows.length > 0;
+		});
 		sets.push(`name = $${idx}`);
 		params.push(body.name.trim());
+		idx++;
+		sets.push(`slug = $${idx}`);
+		params.push(newSlug);
 		idx++;
 	}
 	if (body.goal !== undefined) {

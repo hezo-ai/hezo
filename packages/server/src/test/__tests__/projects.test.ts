@@ -38,6 +38,7 @@ describe('projects CRUD', () => {
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.name).toBe('Backend API');
+		expect(body.data.slug).toBe('backend-api');
 		expect(body.data.company_id).toBe(companyId);
 	});
 
@@ -79,6 +80,25 @@ describe('projects CRUD', () => {
 		});
 		expect(res.status).toBe(200);
 		expect((await res.json()).data.goal).toBe('Updated goal');
+	});
+
+	it('generates unique slugs for same-named projects', async () => {
+		const res1 = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Same Name' }),
+		});
+		const res2 = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Same Name' }),
+		});
+		expect(res1.status).toBe(201);
+		expect(res2.status).toBe(201);
+		const slug1 = (await res1.json()).data.slug;
+		const slug2 = (await res2.json()).data.slug;
+		expect(slug1).toBe('same-name');
+		expect(slug2).toBe('same-name-2');
 	});
 
 	it('deletes a project with no open issues', async () => {

@@ -152,7 +152,7 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
 	const result = await db.query(
 		`SELECT i.*,
             p.name AS project_name, p.goal AS project_goal,
-            co.mission AS company_mission,
+            co.description AS company_description,
             COALESCE(ma.title, m.display_name) AS assignee_name,
             COALESCE(ma_ps.title, m_ps.display_name) AS progress_summary_updated_by_name,
             (SELECT count(*)::int FROM issue_comments ic WHERE ic.issue_id = i.id) AS comment_count,

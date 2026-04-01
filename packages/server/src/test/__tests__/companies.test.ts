@@ -35,13 +35,14 @@ describe('companies CRUD', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'NoteGenius AI',
-				mission: 'Build the #1 AI note-taking app',
+				description: 'Build the #1 AI note-taking app',
 				company_type_id: builtinTypeId,
 			}),
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.name).toBe('NoteGenius AI');
+		expect(body.data.slug).toBe('notegenius-ai');
 		expect(body.data.issue_prefix).toBe('NA');
 		expect(body.data.agent_count).toBe(9);
 	});
@@ -108,11 +109,11 @@ describe('companies CRUD', () => {
 		const res = await app.request(`/api/companies/${company.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ mission: 'Updated mission' }),
+			body: JSON.stringify({ description: 'Updated description' }),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.mission).toBe('Updated mission');
+		expect(body.data.description).toBe('Updated description');
 	});
 
 	it('deletes a company', async () => {
@@ -134,6 +135,25 @@ describe('companies CRUD', () => {
 			headers: authHeader(token),
 		});
 		expect(getRes.status).toBe(404);
+	});
+
+	it('generates unique slugs for same-named companies', async () => {
+		const res1 = await app.request('/api/companies', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Duplicate Name', issue_prefix: 'DN1' }),
+		});
+		const res2 = await app.request('/api/companies', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Duplicate Name', issue_prefix: 'DN2' }),
+		});
+		expect(res1.status).toBe(201);
+		expect(res2.status).toBe(201);
+		const slug1 = (await res1.json()).data.slug;
+		const slug2 = (await res2.json()).data.slug;
+		expect(slug1).toBe('duplicate-name');
+		expect(slug2).toBe('duplicate-name-2');
 	});
 
 	it('auto-derives issue prefix from company name', async () => {

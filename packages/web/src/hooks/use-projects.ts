@@ -6,6 +6,7 @@ export interface Project {
 	id: string;
 	company_id: string;
 	name: string;
+	slug: string;
 	goal: string | null;
 	docker_base_image: string | null;
 	repo_count: number;

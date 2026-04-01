@@ -5,9 +5,9 @@ import { queryClient } from '../lib/query-client';
 export interface Company {
 	id: string;
 	name: string;
-	mission: string | null;
+	slug: string;
+	description: string | null;
 	issue_prefix: string;
-	email: string | null;
 	company_type_id: string | null;
 	agent_count: number;
 	open_issue_count: number;
@@ -32,9 +32,8 @@ export function useCreateCompany() {
 	return useMutation({
 		mutationFn: (data: {
 			name: string;
-			mission?: string;
+			description?: string;
 			company_type_id?: string;
-			email?: string;
 			issue_prefix?: string;
 		}) => api.post<Company>('/api/companies', data),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['companies'] }),
@@ -43,7 +42,7 @@ export function useCreateCompany() {
 
 export function useUpdateCompany(id: string) {
 	return useMutation({
-		mutationFn: (data: { name?: string; mission?: string; email?: string }) =>
+		mutationFn: (data: { name?: string; description?: string }) =>
 			api.patch<Company>(`/api/companies/${id}`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['companies'] });

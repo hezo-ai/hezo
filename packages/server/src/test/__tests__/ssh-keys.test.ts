@@ -26,8 +26,8 @@ beforeAll(async () => {
 	const typeId = typesRes.rows[0].id;
 
 	const companyRes = await db.query<{ id: string }>(
-		`INSERT INTO companies (name, issue_prefix, company_type_id)
-		 VALUES ('SSH Test Co', 'ST', $1) RETURNING id`,
+		`INSERT INTO companies (name, slug, issue_prefix, company_type_id)
+		 VALUES ('SSH Test Co', 'ssh-test-co', 'ST', $1) RETURNING id`,
 		[typeId],
 	);
 	companyId = companyRes.rows[0].id;
@@ -85,8 +85,8 @@ describe('SSH key management', () => {
 
 	it('returns null for company without SSH key', async () => {
 		const otherCompanyRes = await db.query<{ id: string }>(
-			`INSERT INTO companies (name, issue_prefix, company_type_id)
-			 VALUES ('No Key Co', 'NK', (SELECT id FROM company_types LIMIT 1)) RETURNING id`,
+			`INSERT INTO companies (name, slug, issue_prefix, company_type_id)
+			 VALUES ('No Key Co', 'no-key-co', 'NK', (SELECT id FROM company_types LIMIT 1)) RETURNING id`,
 		);
 		const result = await getCompanySSHKey(db, otherCompanyRes.rows[0].id, masterKeyManager);
 		expect(result).toBeNull();

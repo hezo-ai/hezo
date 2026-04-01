@@ -86,10 +86,10 @@ CREATE TABLE company_types (
 CREATE TABLE companies (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name                 TEXT NOT NULL,
-    mission              TEXT NOT NULL DEFAULT '',
+    slug                 TEXT NOT NULL UNIQUE,
+    description          TEXT NOT NULL DEFAULT '',
     company_type_id      UUID REFERENCES company_types(id) ON DELETE SET NULL,
     issue_prefix         TEXT NOT NULL UNIQUE,
-    email                TEXT,
     budget_monthly_cents INTEGER NOT NULL DEFAULT 50000,
     budget_used_cents    INTEGER NOT NULL DEFAULT 0,
     budget_reset_at      TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
@@ -204,6 +204,7 @@ CREATE TABLE projects (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     name                TEXT NOT NULL,
+    slug                TEXT NOT NULL,
     goal                TEXT NOT NULL DEFAULT '',
     docker_base_image   TEXT NOT NULL DEFAULT 'node:20-slim',
     container_id        TEXT,
@@ -215,6 +216,7 @@ CREATE TABLE projects (
 );
 
 CREATE INDEX idx_projects_company ON projects(company_id);
+CREATE UNIQUE INDEX idx_projects_company_slug ON projects(company_id, slug);
 
 -------------------------------------------------------------------------------
 -- REPOS

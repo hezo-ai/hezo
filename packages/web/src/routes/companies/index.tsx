@@ -46,8 +46,8 @@ function CompanyListPage() {
 								<Card className="hover:border-primary/50 transition-colors cursor-pointer">
 									<div className="flex flex-col gap-2">
 										<h2 className="font-medium text-text">{company.name}</h2>
-										{company.mission && (
-											<p className="text-xs text-text-muted line-clamp-2">{company.mission}</p>
+										{company.description && (
+											<p className="text-xs text-text-muted line-clamp-2">{company.description}</p>
 										)}
 										<div className="flex gap-2 mt-1">
 											<Badge color="blue">{company.agent_count} agents</Badge>

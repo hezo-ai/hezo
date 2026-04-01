@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
-import { toIssuePrefix } from '../lib/slug';
+import { toIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
 
 export const companiesRoutes = new Hono<Env>();
@@ -20,10 +20,9 @@ companiesRoutes.get('/companies', async (c) => {
 companiesRoutes.post('/companies', async (c) => {
 	const body = await c.req.json<{
 		name: string;
-		mission?: string;
+		description?: string;
 		company_type_id?: string;
 		issue_prefix?: string;
-		email?: string;
 	}>();
 
 	if (!body.name?.trim()) {
@@ -33,7 +32,6 @@ companiesRoutes.post('/companies', async (c) => {
 	const db = c.get('db');
 	const issuePrefix = body.issue_prefix?.trim() || toIssuePrefix(body.name);
 
-	// Check prefix uniqueness
 	const prefixCheck = await db.query('SELECT id FROM companies WHERE issue_prefix = $1', [
 		issuePrefix,
 	]);
@@ -41,17 +39,16 @@ companiesRoutes.post('/companies', async (c) => {
 		return err(c, 'CONFLICT', `Issue prefix '${issuePrefix}' is already in use`, 409);
 	}
 
+	const slug = await uniqueSlug(toSlug(body.name), async (s) => {
+		const r = await db.query('SELECT 1 FROM companies WHERE slug = $1', [s]);
+		return r.rows.length > 0;
+	});
+
 	const companyResult = await db.query(
-		`INSERT INTO companies (name, mission, company_type_id, issue_prefix, email)
+		`INSERT INTO companies (name, slug, description, company_type_id, issue_prefix)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
-		[
-			body.name.trim(),
-			body.mission ?? '',
-			body.company_type_id ?? null,
-			issuePrefix,
-			body.email ?? null,
-		],
+		[body.name.trim(), slug, body.description ?? '', body.company_type_id ?? null, issuePrefix],
 	);
 	const company = companyResult.rows[0] as any;
 
@@ -115,8 +112,7 @@ companiesRoutes.patch('/companies/:companyId', async (c) => {
 
 	const body = await c.req.json<{
 		name?: string;
-		mission?: string;
-		email?: string;
+		description?: string;
 		mcp_servers?: unknown[];
 		mpp_config?: Record<string, unknown>;
 	}>();
@@ -133,9 +129,15 @@ companiesRoutes.patch('/companies/:companyId', async (c) => {
 		}
 	};
 
-	addField('name', body.name?.trim());
-	addField('mission', body.mission);
-	addField('email', body.email);
+	if (body.name?.trim()) {
+		const newSlug = await uniqueSlug(toSlug(body.name), async (s) => {
+			const r = await db.query('SELECT 1 FROM companies WHERE slug = $1 AND id != $2', [s, id]);
+			return r.rows.length > 0;
+		});
+		addField('name', body.name.trim());
+		addField('slug', newSlug);
+	}
+	addField('description', body.description);
 	addField('mcp_servers', body.mcp_servers, true);
 	addField('mpp_config', body.mpp_config, true);
 

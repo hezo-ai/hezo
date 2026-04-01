@@ -14,8 +14,7 @@ interface CreateCompanyDialogProps {
 
 export function CreateCompanyDialog({ open, onOpenChange }: CreateCompanyDialogProps) {
 	const [name, setName] = useState('');
-	const [mission, setMission] = useState('');
-	const [email, setEmail] = useState('');
+	const [description, setDescription] = useState('');
 	const [typeId, setTypeId] = useState('');
 	const { data: types } = useCompanyTypes();
 	const createCompany = useCreateCompany();
@@ -25,14 +24,12 @@ export function CreateCompanyDialog({ open, onOpenChange }: CreateCompanyDialogP
 		e.preventDefault();
 		const result = await createCompany.mutateAsync({
 			name,
-			mission: mission || undefined,
-			email: email || undefined,
+			description: description || undefined,
 			company_type_id: typeId || undefined,
 		});
 		onOpenChange(false);
 		setName('');
-		setMission('');
-		setEmail('');
+		setDescription('');
 		setTypeId('');
 		navigate({ to: '/companies/$companyId', params: { companyId: result.id } });
 	}
@@ -54,16 +51,9 @@ export function CreateCompanyDialog({ open, onOpenChange }: CreateCompanyDialogP
 					<form onSubmit={handleSubmit} className="flex flex-col gap-4">
 						<Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
 						<Input
-							label="Mission"
-							value={mission}
-							onChange={(e) => setMission(e.target.value)}
-							placeholder="Optional"
-						/>
-						<Input
-							label="Email"
-							type="email"
-							value={email}
-							onChange={(e) => setEmail(e.target.value)}
+							label="Description"
+							value={description}
+							onChange={(e) => setDescription(e.target.value)}
 							placeholder="Optional"
 						/>
 
