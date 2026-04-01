@@ -110,6 +110,24 @@ Rules:
 - Review company preferences to align quality standards with the board's expectations. When you observe new preferences in board feedback, update the company preferences document.
 ```
 
+## Test Infrastructure
+
+The test runner (`bun run scripts/test.ts`) provides:
+
+- **Duration-based scheduling**: `tests/test-run-order.json` tracks each test file's last run
+  duration in ms. Longest tests run first for optimal parallelism. This file is committed to git.
+- **Per-file isolation**: Each test file gets its own in-memory PGlite database and HTTP server
+  on a random port via `createTestContext()` / `destroyTestContext()` in `beforeAll` / `afterAll`.
+  Servers bind via Node's `http.createServer` on port 0 for automatic port allocation.
+- **Concurrency**: Default 4 parallel test files, configurable via `--concurrency N`.
+
+When reviewing tests, reject if:
+1. Tests import a shared app singleton instead of using `createTestContext()`
+2. Tests hardcode ports instead of using `ctx.baseUrl` / `ctx.port`
+3. Tests share mutable state between files (each file must be independently runnable)
+4. `afterAll` is missing `destroyTestContext()` (resource leak)
+5. Tests that need DB or HTTP skip the context pattern
+
 ## Default Configuration
 
 | Field | Value |

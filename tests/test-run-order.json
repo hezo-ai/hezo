@@ -1,0 +1,22 @@
+{
+  "packages/server/src/test/__tests__/db.test.ts": 2052,
+  "packages/server/src/test/__tests__/migrate.test.ts": 2225,
+  "packages/connect/src/test/__tests__/oauth.test.ts": 541,
+  "packages/connect/src/test/__tests__/health.test.ts": 503,
+  "packages/server/src/test/__tests__/health.test.ts": 1248,
+  "packages/server/src/test/__tests__/master-key.test.ts": 3507,
+  "packages/connect/src/test/__tests__/config.test.ts": 567,
+  "packages/connect/src/test/__tests__/state.test.ts": 574,
+  "packages/server/src/test/__tests__/startup.test.ts": 4082,
+  "packages/server/src/test/__tests__/cli.test.ts": 836,
+  "packages/server/src/test/__tests__/agents.test.ts": 1483,
+  "packages/server/src/test/__tests__/comments.test.ts": 1479,
+  "packages/server/src/test/__tests__/company-types.test.ts": 1420,
+  "packages/server/src/test/__tests__/issues.test.ts": 1467,
+  "packages/server/src/test/__tests__/projects.test.ts": 1431,
+  "packages/server/src/test/__tests__/secrets.test.ts": 1444,
+  "packages/server/src/test/__tests__/approvals.test.ts": 1409,
+  "packages/server/src/test/__tests__/api-keys.test.ts": 1204,
+  "packages/server/src/test/__tests__/companies.test.ts": 1129,
+  "packages/server/src/test/__tests__/costs.test.ts": 1116
+}

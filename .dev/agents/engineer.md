@@ -99,6 +99,29 @@ Rules:
 - Review company preferences to align implementation style with the board's preferences. When you observe new preferences in board feedback, update the company preferences document.
 ```
 
+## Test Infrastructure
+
+Tests run via `bun run scripts/test.ts` which discovers test files across packages, sorts them
+longest-first using `tests/test-run-order.json` for optimal parallelism, and runs them concurrently
+(default 4 workers, configurable via `--concurrency N`).
+
+**Every test file must be fully isolated.** Use the `createTestContext()` / `destroyTestContext()`
+pattern in `beforeAll` / `afterAll`:
+
+- **Server** (`packages/server/src/test/helpers/context.ts`):
+  Returns `{ db, app, server, baseUrl, port }` — fresh in-memory PGlite + Hono app + HTTP server on random port.
+- **Connect** (`packages/connect/src/test/helpers/context.ts`):
+  Returns `{ app, server, baseUrl, port }` — fresh Hono app + HTTP server on random port.
+
+Each context binds via Node's `http.createServer` on port 0 for automatic port allocation.
+
+Rules:
+- Never import a shared app singleton in tests — always use `ctx.app` from the test context
+- Never hardcode ports — use `ctx.baseUrl` or `ctx.port`
+- Never share mutable state between test files
+- Always call `destroyTestContext()` in `afterAll` to prevent resource leaks
+- For pure logic tests (crypto, parsing, etc.) that don't need HTTP, test functions directly
+
 ## Default Configuration
 
 | Field | Value |

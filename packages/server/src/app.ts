@@ -1,6 +1,10 @@
 import { Hono } from 'hono';
 import { healthRoutes } from './routes/health';
 
-export const app = new Hono();
+export function createApp(): Hono {
+	const app = new Hono();
+	app.route('/', healthRoutes);
+	return app;
+}
 
-app.route('/', healthRoutes);
+export const app = createApp();

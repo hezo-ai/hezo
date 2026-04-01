@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { resolve } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { Glob } from 'bun';
 
 const ROOT = resolve(import.meta.dir, '..');
@@ -62,6 +63,18 @@ async function main() {
 		process.exit(0);
 	}
 
+	const runOrderPath = resolve(ROOT, 'tests/test-run-order.json');
+	let runOrder: Record<string, number> = {};
+	try {
+		const orderFile = Bun.file(runOrderPath);
+		if (await orderFile.exists()) {
+			runOrder = await orderFile.json();
+		}
+	} catch {}
+
+	const testKey = (t: TestFile) => `${t.pkg}/${t.file}`;
+	testFiles.sort((a, b) => (runOrder[testKey(b)] || 0) - (runOrder[testKey(a)] || 0));
+
 	console.log(`Running ${testFiles.length} test file(s) with concurrency ${concurrency}...\n`);
 
 	const results: Array<{ pkg: string; file: string; passed: boolean; duration: number }> = [];
@@ -69,7 +82,7 @@ async function main() {
 
 	async function runTest(t: TestFile) {
 		const start = Date.now();
-		const proc = Bun.spawn(['npx', 'vitest', 'run', t.file], {
+		const proc = Bun.spawn(['bunx', 'vitest', 'run', t.file], {
 			cwd: resolve(ROOT, t.pkg),
 			stdout: 'inherit',
 			stderr: 'inherit',
@@ -104,6 +117,13 @@ async function main() {
 			await Promise.race(running);
 		}
 	}
+
+	const durations: Record<string, number> = {};
+	for (const r of results) {
+		durations[`${r.pkg}/${r.file}`] = r.duration;
+	}
+	mkdirSync(resolve(ROOT, 'tests'), { recursive: true });
+	await Bun.write(runOrderPath, JSON.stringify(durations, null, 2));
 
 	console.log('\n── Test Results ──');
 	for (const r of results) {

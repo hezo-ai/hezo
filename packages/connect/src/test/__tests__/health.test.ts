@@ -1,19 +1,25 @@
-import { describe, expect, it } from 'vitest';
-import { createApp } from '../../app.js';
-import type { ConnectConfig } from '../../config.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createTestContext, destroyTestContext, type ConnectTestContext } from '../helpers/context';
 
-const config: ConnectConfig = {
-	port: 4100,
-	mode: 'self_hosted',
-	stateSigningKey: 'test-key',
-	github: { clientId: 'test-id', clientSecret: 'test-secret' },
-};
+let ctx: ConnectTestContext;
 
-const app = createApp(config);
+beforeAll(async () => {
+	ctx = await createTestContext();
+});
+
+afterAll(async () => {
+	await destroyTestContext(ctx);
+});
 
 describe('GET /health', () => {
 	it('returns 200 with { ok: true }', async () => {
-		const res = await app.request('/health');
+		const res = await ctx.app.request('/health');
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true });
+	});
+
+	it('returns 200 via HTTP', async () => {
+		const res = await fetch(`${ctx.baseUrl}/health`);
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
 	});
@@ -21,7 +27,7 @@ describe('GET /health', () => {
 
 describe('GET /platforms', () => {
 	it('returns platform list with github', async () => {
-		const res = await app.request('/platforms');
+		const res = await ctx.app.request('/platforms');
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.platforms).toHaveLength(1);
@@ -35,9 +41,9 @@ describe('GET /platforms', () => {
 
 describe('GET /signing-key', () => {
 	it('returns the hex signing key', async () => {
-		const res = await app.request('/signing-key');
+		const res = await ctx.app.request('/signing-key');
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.key).toBe('test-key');
+		expect(body.key).toBe('test-signing-key');
 	});
 });
