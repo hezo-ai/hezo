@@ -11,5 +11,6 @@ export type Env = {
 		db: PGlite;
 		masterKeyManager: MasterKeyManager;
 		auth: AuthInfo;
+		dataDir: string;
 	};
 };

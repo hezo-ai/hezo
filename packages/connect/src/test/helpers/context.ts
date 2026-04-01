@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { Hono } from 'hono';
-import type { ConnectConfig } from '../../config';
 import { createApp } from '../../app';
+import type { ConnectConfig } from '../../config';
 import type { FetchFn } from '../../providers/github';
 
 export interface ConnectTestContext {

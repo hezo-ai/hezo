@@ -154,6 +154,7 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
             p.name AS project_name, p.goal AS project_goal,
             co.mission AS company_mission,
             COALESCE(ma.title, m.display_name) AS assignee_name,
+            COALESCE(ma_ps.title, m_ps.display_name) AS progress_summary_updated_by_name,
             (SELECT count(*)::int FROM issue_comments ic WHERE ic.issue_id = i.id) AS comment_count,
             (SELECT COALESCE(sum(ce.amount_cents), 0)::int FROM cost_entries ce WHERE ce.issue_id = i.id) AS cost_cents
      FROM issues i
@@ -161,6 +162,8 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
      JOIN companies co ON co.id = i.company_id
      LEFT JOIN members m ON m.id = i.assignee_id
      LEFT JOIN member_agents ma ON ma.id = i.assignee_id
+     LEFT JOIN members m_ps ON m_ps.id = i.progress_summary_updated_by
+     LEFT JOIN member_agents ma_ps ON ma_ps.id = i.progress_summary_updated_by
      WHERE i.id = $1 AND i.company_id = $2`,
 		[c.req.param('issueId'), c.req.param('companyId')],
 	);
@@ -192,6 +195,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		priority?: string;
 		assignee_id?: string | null;
 		labels?: string[];
+		progress_summary?: string | null;
 	}>();
 
 	const sets: string[] = [];
@@ -226,6 +230,17 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	if (body.labels !== undefined) {
 		sets.push(`labels = $${idx}::jsonb`);
 		params.push(JSON.stringify(body.labels));
+		idx++;
+	}
+	if (body.progress_summary !== undefined) {
+		sets.push(`progress_summary = $${idx}`);
+		params.push(body.progress_summary);
+		idx++;
+		sets.push('progress_summary_updated_at = now()');
+		const auth = c.get('auth');
+		const updatedBy = auth.type === 'agent' ? auth.memberId : null;
+		sets.push(`progress_summary_updated_by = $${idx}`);
+		params.push(updatedBy);
 		idx++;
 	}
 

@@ -17,6 +17,9 @@ import { companyTypesRoutes } from './routes/company-types';
 import { costsRoutes } from './routes/costs';
 import { healthRoutes } from './routes/health';
 import { issuesRoutes } from './routes/issues';
+import { kbDocsRoutes } from './routes/kb-docs';
+import { preferencesRoutes } from './routes/preferences';
+import { projectDocsRoutes } from './routes/project-docs';
 import { projectsRoutes } from './routes/projects';
 import { secretsRoutes } from './routes/secrets';
 
@@ -55,18 +58,19 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyState = await resolveMasterKeyState(db, masterKeyManager, config.masterKey);
-	const app = buildApp(db, masterKeyManager);
+	const app = buildApp(db, masterKeyManager, config.dataDir);
 
 	return { app, port: config.port, masterKeyState };
 }
 
-export function buildApp(db: PGlite, masterKeyManager: MasterKeyManager): Hono<Env> {
+export function buildApp(db: PGlite, masterKeyManager: MasterKeyManager, dataDir = ''): Hono<Env> {
 	const app = new Hono<Env>();
 
-	// Inject db and masterKeyManager into every request
+	// Inject db, masterKeyManager, and dataDir into every request
 	app.use('*', async (c, next) => {
 		c.set('db', db);
 		c.set('masterKeyManager', masterKeyManager);
+		c.set('dataDir', dataDir);
 		return next();
 	});
 
@@ -97,6 +101,9 @@ export function buildApp(db: PGlite, masterKeyManager: MasterKeyManager): Hono<E
 	app.route('/api', approvalsRoutes);
 	app.route('/api', costsRoutes);
 	app.route('/api', apiKeysRoutes);
+	app.route('/api', kbDocsRoutes);
+	app.route('/api', preferencesRoutes);
+	app.route('/api', projectDocsRoutes);
 
 	return app;
 }

@@ -191,6 +191,67 @@ describe('issues CRUD', () => {
 		expect(res.status).toBe(200);
 	});
 
+	it('updates and retrieves progress_summary', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		const issue = (await listRes.json()).data[0];
+
+		const summary =
+			'## Requirements\n- Build auth module\n\n## Done\n- Set up project\n\n## Next\n- Implement login';
+		const patchRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ progress_summary: summary }),
+		});
+		expect(patchRes.status).toBe(200);
+		const patched = (await patchRes.json()).data;
+		expect(patched.progress_summary).toBe(summary);
+		expect(patched.progress_summary_updated_at).toBeTruthy();
+
+		// GET detail includes progress_summary and updater name
+		const detailRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			headers: authHeader(token),
+		});
+		expect(detailRes.status).toBe(200);
+		const detail = (await detailRes.json()).data;
+		expect(detail.progress_summary).toBe(summary);
+		expect(detail.progress_summary_updated_at).toBeTruthy();
+	});
+
+	it('clears progress_summary with null', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		const issue = (await listRes.json()).data[0];
+
+		// Set it first
+		await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ progress_summary: 'Some summary' }),
+		});
+
+		// Clear it
+		const clearRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ progress_summary: null }),
+		});
+		expect(clearRes.status).toBe(200);
+		expect((await clearRes.json()).data.progress_summary).toBeNull();
+	});
+
+	it('does not include progress_summary in list view', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		expect(listRes.status).toBe(200);
+		const issues = (await listRes.json()).data;
+		// List query selects specific columns, progress_summary should not be there
+		expect(issues[0]).not.toHaveProperty('progress_summary');
+	});
+
 	it('prevents deleting an in-progress issue', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
 			headers: authHeader(token),

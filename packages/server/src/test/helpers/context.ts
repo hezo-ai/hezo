@@ -1,13 +1,14 @@
 import { createServer, type Server } from 'node:http';
-import type { Hono } from 'hono';
 import type { PGlite } from '@electric-sql/pglite';
+import type { Hono } from 'hono';
 import type { MasterKeyManager } from '../../crypto/master-key';
-import { createTestApp } from './app';
+import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
+import { createTestApp } from './app';
 
 export interface ServerTestContext {
 	db: PGlite;
-	app: Hono;
+	app: Hono<Env>;
 	server: Server;
 	baseUrl: string;
 	port: number;

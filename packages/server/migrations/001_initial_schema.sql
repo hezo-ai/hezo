@@ -61,7 +61,7 @@ CREATE TYPE heartbeat_run_status AS ENUM ('queued', 'running', 'succeeded', 'fai
 CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
 CREATE TYPE membership_role AS ENUM ('board', 'member');
 CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
-CREATE TYPE project_doc_type AS ENUM ('tech_spec', 'implementation_plan', 'research', 'ui_design_decisions', 'marketing_plan', 'other');
+-- project_doc_type enum removed: project docs now live in the designated repo's .dev/ folder
 
 -------------------------------------------------------------------------------
 -- COMPANY TYPES
@@ -203,16 +203,17 @@ CREATE INDEX idx_api_keys_company ON api_keys(company_id);
 -------------------------------------------------------------------------------
 
 CREATE TABLE projects (
-    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    name              TEXT NOT NULL,
-    goal              TEXT NOT NULL DEFAULT '',
-    docker_base_image TEXT NOT NULL DEFAULT 'node:20-slim',
-    container_id      TEXT,
-    container_status  container_status,
-    dev_ports         JSONB NOT NULL DEFAULT '[]'::jsonb,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    name                TEXT NOT NULL,
+    goal                TEXT NOT NULL DEFAULT '',
+    docker_base_image   TEXT NOT NULL DEFAULT 'node:20-slim',
+    container_id        TEXT,
+    container_status    container_status,
+    designated_repo_id  UUID,
+    dev_ports           JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_projects_company ON projects(company_id);
@@ -233,6 +234,10 @@ CREATE TABLE repos (
 );
 
 CREATE INDEX idx_repos_project ON repos(project_id);
+
+-- Deferred FK: projects.designated_repo_id → repos(id) (repos defined after projects)
+ALTER TABLE projects ADD CONSTRAINT fk_projects_designated_repo
+    FOREIGN KEY (designated_repo_id) REFERENCES repos(id) ON DELETE SET NULL;
 
 -------------------------------------------------------------------------------
 -- SECRETS
@@ -290,6 +295,9 @@ CREATE TABLE issues (
     status               issue_status NOT NULL DEFAULT 'backlog',
     priority             issue_priority NOT NULL DEFAULT 'medium',
     labels               JSONB NOT NULL DEFAULT '[]'::jsonb,
+    progress_summary             TEXT,
+    progress_summary_updated_at  TIMESTAMPTZ,
+    progress_summary_updated_by  UUID REFERENCES members(id) ON DELETE SET NULL,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -567,50 +575,8 @@ CREATE TABLE company_preference_revisions (
 
 CREATE INDEX idx_company_pref_revisions_pref ON company_preference_revisions(preference_id);
 
--------------------------------------------------------------------------------
--- PROJECT DOCUMENTS
--------------------------------------------------------------------------------
-
-CREATE TABLE project_docs (
-    id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id                UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    company_id                UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    doc_type                  project_doc_type NOT NULL,
-    title                     TEXT NOT NULL,
-    slug                      TEXT NOT NULL,
-    content                   TEXT NOT NULL DEFAULT '',
-    created_by_member_id      UUID REFERENCES members(id) ON DELETE SET NULL,
-    last_updated_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (project_id, slug)
-);
-
-CREATE UNIQUE INDEX idx_project_docs_one_per_type
-    ON project_docs(project_id, doc_type)
-    WHERE doc_type != 'other';
-
-CREATE INDEX idx_project_docs_project ON project_docs(project_id);
-CREATE INDEX idx_project_docs_company ON project_docs(company_id);
-
--------------------------------------------------------------------------------
--- PROJECT DOCUMENT REVISIONS
--------------------------------------------------------------------------------
-
-CREATE TABLE project_doc_revisions (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    doc_id           UUID NOT NULL REFERENCES project_docs(id) ON DELETE CASCADE,
-    revision_number  INTEGER NOT NULL,
-    content          TEXT NOT NULL,
-    change_summary   TEXT NOT NULL DEFAULT '',
-    author_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (doc_id, revision_number)
-);
-
-CREATE INDEX idx_project_doc_revisions_doc ON project_doc_revisions(doc_id);
+-- PROJECT DOCUMENTS and PROJECT DOCUMENT REVISIONS tables removed.
+-- Project docs now live in the designated repo's .dev/ folder, tracked by git.
 
 -------------------------------------------------------------------------------
 -- KB DOCUMENT REVISIONS
@@ -834,8 +800,7 @@ CREATE TRIGGER trg_kb_docs_updated BEFORE UPDATE ON kb_docs
 CREATE TRIGGER trg_company_prefs_updated BEFORE UPDATE ON company_preferences
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER trg_project_docs_updated BEFORE UPDATE ON project_docs
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+-- trg_project_docs_updated removed (project_docs table removed)
 
 CREATE TRIGGER trg_connected_platforms_updated BEFORE UPDATE ON connected_platforms
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
