@@ -1,3 +1,4 @@
+import { ApprovalStatus } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -16,7 +17,7 @@ export interface Approval {
 	requested_by_member_id: string | null;
 }
 
-export function useApprovals(companyId: string, status = 'pending') {
+export function useApprovals(companyId: string, status: string = ApprovalStatus.Pending) {
 	return useQuery({
 		queryKey: ['companies', companyId, 'approvals', { status }],
 		queryFn: () => api.get<Approval[]>(`/api/companies/${companyId}/approvals`, { status }),
@@ -29,7 +30,9 @@ export function useAllPendingApprovals(companyIds: string[]) {
 		queryFn: async () => {
 			const results = await Promise.all(
 				companyIds.map((id) =>
-					api.get<Approval[]>(`/api/companies/${id}/approvals`, { status: 'pending' }),
+					api.get<Approval[]>(`/api/companies/${id}/approvals`, {
+						status: ApprovalStatus.Pending,
+					}),
 				),
 			);
 			return results.flat();
@@ -46,7 +49,7 @@ export function useResolveApproval() {
 			resolution_note,
 		}: {
 			approvalId: string;
-			status: 'approved' | 'denied';
+			status: typeof ApprovalStatus.Approved | typeof ApprovalStatus.Denied;
 			resolution_note?: string;
 		}) => api.post(`/api/approvals/${approvalId}/resolve`, { status, resolution_note }),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['approvals'] }),

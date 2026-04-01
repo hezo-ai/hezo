@@ -1,13 +1,17 @@
 #!/usr/bin/env bun
+import { cpSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Command } from 'commander';
 
 const ROOT = resolve(import.meta.dir, '..');
 
-new Command()
+const program = new Command()
 	.name('build')
 	.description('Build all Hezo packages (shared → server, connect, web in parallel)')
+	.option('--compile', 'Build a single compiled binary with embedded frontend')
 	.parse();
+
+const opts = program.opts();
 
 async function run(pkg: string, cmd: string[]) {
 	const cwd = resolve(ROOT, pkg);
@@ -35,3 +39,35 @@ await Promise.all([
 ]);
 
 console.log('Build complete.');
+
+if (opts.compile) {
+	console.log('\nCompiling single binary...');
+
+	// Copy web dist to server static
+	const webDist = resolve(ROOT, 'packages/web/dist');
+	const serverStatic = resolve(ROOT, 'packages/server/static');
+
+	if (!existsSync(webDist)) {
+		console.error('packages/web/dist not found. Run web build first.');
+		process.exit(1);
+	}
+
+	mkdirSync(serverStatic, { recursive: true });
+	cpSync(webDist, serverStatic, { recursive: true });
+	console.log('Copied web assets to packages/server/static/');
+
+	// Compile binary
+	const outDir = resolve(ROOT, 'dist');
+	mkdirSync(outDir, { recursive: true });
+
+	await run('.', [
+		'bun',
+		'build',
+		'--compile',
+		'packages/server/src/index.ts',
+		'--outfile',
+		'dist/hezo',
+	]);
+
+	console.log('\nCompiled binary at dist/hezo');
+}

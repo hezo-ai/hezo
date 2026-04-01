@@ -1,30 +1,40 @@
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { extname, join, resolve } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
 import type { HezoConfig } from './cli';
 import { MasterKeyManager } from './crypto/master-key';
 import { BASE_SCHEMA } from './db/schema';
 import type { Env } from './lib/types';
+import { getToolDefs, handleMcpRequest, initMcpServer } from './mcp/server';
+import { generateSkillFile } from './mcp/skill-file';
 import { authMiddleware } from './middleware/auth';
+import { agentApiRoutes } from './routes/agent-api';
 import { agentsRoutes } from './routes/agents';
 import { apiKeysRoutes } from './routes/api-keys';
 import { approvalsRoutes } from './routes/approvals';
+import { auditLogRoutes } from './routes/audit-log';
 import { authRoutes } from './routes/auth';
 import { commentsRoutes } from './routes/comments';
 import { companiesRoutes } from './routes/companies';
 import { companyTypesRoutes } from './routes/company-types';
 import { connectionsRoutes } from './routes/connections';
 import { costsRoutes } from './routes/costs';
+import { executionLocksRoutes } from './routes/execution-locks';
 import { healthRoutes } from './routes/health';
 import { issuesRoutes } from './routes/issues';
 import { kbDocsRoutes } from './routes/kb-docs';
+import { liveChatRoutes } from './routes/live-chat';
 import { oauthCallbackRoutes } from './routes/oauth-callback';
 import { preferencesRoutes } from './routes/preferences';
+import { previewRoutes } from './routes/preview';
 import { projectDocsRoutes } from './routes/project-docs';
 import { projectsRoutes } from './routes/projects';
 import { reposRoutes } from './routes/repos';
 import { secretsRoutes } from './routes/secrets';
+import { DockerClient } from './services/docker';
+import { HeartbeatEngine } from './services/heartbeat-engine';
+import { WebSocketManager } from './services/ws';
 
 export type { HezoConfig };
 
@@ -40,6 +50,10 @@ export interface StartupResult {
 	app: Hono<Env>;
 	port: number;
 	masterKeyState: MasterKeyState;
+	heartbeatEngine: HeartbeatEngine;
+	wsManager: WebSocketManager;
+	db: PGlite;
+	masterKeyManager: MasterKeyManager;
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
@@ -70,45 +84,94 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	const connectPublicKey = await fetchConnectPublicKey(config.connectUrl);
 
-	const app = buildApp(db, masterKeyManager, {
-		dataDir: config.dataDir,
-		connectUrl: config.connectUrl,
-		connectPublicKey,
+	const docker = new DockerClient();
+	const wsManager = new WebSocketManager();
+	const app = buildApp(
+		db,
+		masterKeyManager,
+		{
+			dataDir: config.dataDir,
+			connectUrl: config.connectUrl,
+			connectPublicKey,
+		},
+		docker,
+		wsManager,
+	);
+
+	const heartbeatEngine = new HeartbeatEngine({
+		db,
+		docker,
+		masterKeyManager,
+		serverPort: config.port,
 	});
 
-	return { app, port: config.port, masterKeyState };
+	if (masterKeyState === 'unlocked') {
+		heartbeatEngine.start();
+	}
+
+	return {
+		app,
+		port: config.port,
+		masterKeyState,
+		heartbeatEngine,
+		wsManager,
+		db,
+		masterKeyManager,
+	};
 }
 
 export function buildApp(
 	db: PGlite,
 	masterKeyManager: MasterKeyManager,
 	config: AppConfig = { dataDir: '', connectUrl: '', connectPublicKey: '' },
+	docker: DockerClient = new DockerClient(),
+	wsManager: WebSocketManager = new WebSocketManager(),
 ): Hono<Env> {
 	const app = new Hono<Env>();
 
 	app.use('*', async (c, next) => {
 		c.set('db', db);
 		c.set('masterKeyManager', masterKeyManager);
+		c.set('docker', docker);
+		c.set('wsManager', wsManager);
 		c.set('dataDir', config.dataDir);
 		c.set('connectUrl', config.connectUrl);
 		c.set('connectPublicKey', config.connectPublicKey);
 		return next();
 	});
 
+	// Initialize MCP server
+	initMcpServer(db);
+
 	// Public routes
 	app.route('/', healthRoutes);
 	app.route('/', oauthCallbackRoutes);
 
-	const statusHandler = (c: any) =>
+	const statusHandler = (c: Context<Env>) =>
 		c.json({ masterKeyState: masterKeyManager.getState(), version: '0.1.0' });
 	app.get('/', statusHandler);
 	app.get('/api/status', statusHandler);
 
+	// Skill file (public)
+	app.get('/skill.md', (c) => {
+		const md = generateSkillFile(getToolDefs());
+		return c.text(md, 200, { 'Content-Type': 'text/markdown' });
+	});
+
+	// MCP endpoint (authenticated)
+	app.post('/mcp', (c) => handleMcpRequest(c));
+	app.get('/mcp', (c) => handleMcpRequest(c));
+	app.delete('/mcp', (c) => handleMcpRequest(c));
+
 	// Auth routes (token endpoint is public, handled before auth middleware)
 	app.route('/api', authRoutes);
 
-	// Auth middleware for all /api/* routes
+	// Auth middleware for all /api/* and /agent-api/* routes
 	app.use('/api/*', authMiddleware);
+	app.use('/agent-api/*', authMiddleware);
+
+	// Agent API routes
+	app.route('/agent-api', agentApiRoutes);
 
 	// CRUD routes
 	app.route('/api', companyTypesRoutes);
@@ -126,6 +189,49 @@ export function buildApp(
 	app.route('/api', projectDocsRoutes);
 	app.route('/api', connectionsRoutes);
 	app.route('/api', reposRoutes);
+	app.route('/api', executionLocksRoutes);
+	app.route('/api', liveChatRoutes);
+	app.route('/api', auditLogRoutes);
+	app.route('/api', previewRoutes);
+
+	// Static file serving for compiled binary (frontend assets)
+	const staticDir = resolve(new URL('.', import.meta.url).pathname, '..', 'static');
+	if (existsSync(staticDir)) {
+		const STATIC_MIME: Record<string, string> = {
+			'.html': 'text/html',
+			'.css': 'text/css',
+			'.js': 'application/javascript',
+			'.json': 'application/json',
+			'.png': 'image/png',
+			'.jpg': 'image/jpeg',
+			'.svg': 'image/svg+xml',
+			'.ico': 'image/x-icon',
+			'.woff2': 'font/woff2',
+		};
+
+		app.get('*', async (c) => {
+			const urlPath = new URL(c.req.url).pathname;
+			const filePath = urlPath === '/' ? '/index.html' : urlPath;
+			const fullPath = join(staticDir, filePath);
+
+			if (existsSync(fullPath)) {
+				const ext = extname(fullPath).toLowerCase();
+				const content = readFileSync(fullPath);
+				return new Response(content, {
+					headers: { 'Content-Type': STATIC_MIME[ext] || 'application/octet-stream' },
+				});
+			}
+
+			// SPA fallback
+			const indexPath = join(staticDir, 'index.html');
+			if (existsSync(indexPath)) {
+				const content = readFileSync(indexPath);
+				return new Response(content, { headers: { 'Content-Type': 'text/html' } });
+			}
+
+			return c.text('Not found', 404);
+		});
+	}
 
 	return app;
 }

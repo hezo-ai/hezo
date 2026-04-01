@@ -28,7 +28,9 @@ describe('company types CRUD', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
-		const builtin = body.data.find((t: any) => t.name === 'Software Development');
+		const builtin = body.data.find(
+			(t: Record<string, unknown>) => t.name === 'Software Development',
+		);
 		expect(builtin).toBeDefined();
 		expect(builtin.is_builtin).toBe(true);
 	});
@@ -108,7 +110,7 @@ describe('company types CRUD', () => {
 		const listRes = await app.request('/api/company-types', {
 			headers: authHeader(token),
 		});
-		const builtin = (await listRes.json()).data.find((t: any) => t.is_builtin);
+		const builtin = (await listRes.json()).data.find((t: Record<string, unknown>) => t.is_builtin);
 
 		const res = await app.request(`/api/company-types/${builtin.id}`, {
 			method: 'DELETE',

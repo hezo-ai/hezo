@@ -1,12 +1,22 @@
+import { join } from 'node:path';
+import { ApprovalType, PlatformType } from '@hezo/shared';
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
+import { cloneRepo } from '../services/git';
 import { parseGitHubUrl, validateRepoAccess } from '../services/github';
+import { getCompanySSHKey } from '../services/ssh-keys';
 import { getOAuthToken } from '../services/token-store';
+import { getWorkspacePath } from '../services/workspace';
 
 export const reposRoutes = new Hono<Env>();
 
 reposRoutes.get('/companies/:companyId/projects/:projectId/repos', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const projectId = c.req.param('projectId');
 
@@ -20,9 +30,12 @@ reposRoutes.get('/companies/:companyId/projects/:projectId/repos', async (c) => 
 });
 
 reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const projectId = c.req.param('projectId');
 
 	const body = await c.req.json<{ short_name: string; url: string }>();
@@ -36,22 +49,24 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 		return err(c, 'INVALID_URL', 'URL must be a valid GitHub repository URL', 400);
 	}
 
-	// Check if GitHub is connected
 	const connection = await db.query<{
 		id: string;
 		metadata: { username?: string };
 	}>(
 		`SELECT id, metadata FROM connected_platforms
-		 WHERE company_id = $1 AND platform = 'github' AND status = 'active'`,
-		[companyId],
+		 WHERE company_id = $1 AND platform = $2 AND status = 'active'`,
+		[companyId, PlatformType.GitHub],
 	);
 
 	if (connection.rows.length === 0) {
-		// Create an oauth_request approval item
 		await db.query(
 			`INSERT INTO approvals (company_id, type, payload)
-			 VALUES ($1, 'oauth_request'::approval_type, $2::jsonb)`,
-			[companyId, JSON.stringify({ platform: 'github', reason: 'repo_add', repo_url: body.url })],
+			 VALUES ($1, $2::approval_type, $3::jsonb)`,
+			[
+				companyId,
+				ApprovalType.OauthRequest,
+				JSON.stringify({ platform: PlatformType.GitHub, reason: 'repo_add', repo_url: body.url }),
+			],
 		);
 
 		return err(
@@ -62,14 +77,13 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 		);
 	}
 
-	// Validate access via GitHub API
-	const token = await getOAuthToken(db, masterKeyManager, companyId, 'github');
+	const token = await getOAuthToken(db, masterKeyManager, companyId, PlatformType.GitHub);
 	if (!token) {
 		return err(c, 'GITHUB_NOT_CONNECTED', 'GitHub token not found', 422);
 	}
 
-	const access = await validateRepoAccess(parsed.owner, parsed.repo, token);
-	if (!access.accessible) {
+	const repoAccess = await validateRepoAccess(parsed.owner, parsed.repo, token);
+	if (!repoAccess.accessible) {
 		const username = connection.rows[0].metadata?.username || 'the connected account';
 		return err(
 			c,
@@ -88,11 +102,51 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 		[projectId, body.short_name, repoIdentifier],
 	);
 
+	const dataDir = c.get('dataDir');
+	if (dataDir) {
+		const projectResult = await db.query<{ slug: string; company_id: string }>(
+			'SELECT slug, company_id FROM projects WHERE id = $1',
+			[projectId],
+		);
+		const companySlugResult = await db.query<{ slug: string }>(
+			'SELECT slug FROM companies WHERE id = $1',
+			[projectResult.rows[0]?.company_id],
+		);
+
+		if (projectResult.rows[0] && companySlugResult.rows[0]) {
+			const workspacePath = getWorkspacePath(
+				dataDir,
+				companySlugResult.rows[0].slug,
+				projectResult.rows[0].slug,
+			);
+			const masterKeyManager = c.get('masterKeyManager');
+			const sshKey = await getCompanySSHKey(db, companyId, masterKeyManager);
+
+			if (sshKey) {
+				const targetDir = join(workspacePath, body.short_name);
+				cloneRepo(repoIdentifier, targetDir, sshKey.privateKey).catch((error) => {
+					console.error(`Failed to clone ${repoIdentifier}:`, error);
+				});
+			}
+		}
+	}
+
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'repos',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 
 reposRoutes.delete('/companies/:companyId/projects/:projectId/repos/:repoId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const projectId = c.req.param('projectId');
 	const repoId = c.req.param('repoId');
 
@@ -105,5 +159,6 @@ reposRoutes.delete('/companies/:companyId/projects/:projectId/repos/:repoId', as
 		return err(c, 'NOT_FOUND', 'Repo not found', 404);
 	}
 
+	broadcastChange(c, `company:${companyId}`, 'repos', 'DELETE', { id: repoId });
 	return ok(c, { deleted: true });
 });

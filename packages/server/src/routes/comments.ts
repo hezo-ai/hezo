@@ -1,13 +1,29 @@
+import { AuthType, CommentContentType, WakeupSource } from '@hezo/shared';
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
+import { createWakeup } from '../services/wakeup';
 
 export const commentsRoutes = new Hono<Env>();
 
 commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const issueId = c.req.param('issueId');
 	const includeToolCalls = c.req.query('include_tool_calls') === 'true';
+
+	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		companyId,
+	]);
+	if (issueCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	}
 
 	const result = await db.query(
 		`SELECT ic.id, ic.issue_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
@@ -23,8 +39,8 @@ commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) =
 	);
 
 	if (includeToolCalls) {
-		for (const comment of result.rows as any[]) {
-			if (comment.content_type === 'trace') {
+		for (const comment of result.rows as Record<string, unknown>[]) {
+			if (comment.content_type === CommentContentType.Trace) {
 				const toolCalls = await db.query(
 					'SELECT * FROM tool_calls WHERE comment_id = $1 ORDER BY created_at ASC',
 					[comment.id],
@@ -40,9 +56,21 @@ commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) =
 });
 
 commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const issueId = c.req.param('issueId');
 	const auth = c.get('auth');
+
+	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		companyId,
+	]);
+	if (issueCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	}
 
 	const body = await c.req.json<{
 		content_type?: string;
@@ -53,29 +81,63 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
 
-	// Find the board member for this company (if board auth)
 	let authorMemberId: string | null = null;
-	if (auth.type === 'board') {
-		// For board users, author_member_id is null (board post)
+	if (auth.type === AuthType.Board) {
 		authorMemberId = null;
-	} else if (auth.type === 'agent') {
+	} else if (auth.type === AuthType.Agent) {
 		authorMemberId = auth.memberId;
 	}
 
-	const result = await db.query(
+	const result = await db.query<{ id: string }>(
 		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
      VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
      RETURNING *`,
-		[issueId, authorMemberId, body.content_type ?? 'text', JSON.stringify(body.content)],
+		[
+			issueId,
+			authorMemberId,
+			body.content_type ?? CommentContentType.Text,
+			JSON.stringify(body.content),
+		],
 	);
 
+	const contentText = typeof body.content === 'object' ? JSON.stringify(body.content) : '';
+	const mentions = contentText.match(/@([\w-]+)/g);
+	if (mentions) {
+		for (const mention of mentions) {
+			const slug = mention.slice(1);
+			const mentioned = await db.query<{ id: string }>(
+				`SELECT ma.id FROM member_agents ma
+				 JOIN members m ON m.id = ma.id
+				 WHERE ma.slug = $1 AND m.company_id = $2`,
+				[slug, companyId],
+			);
+			if (mentioned.rows.length > 0) {
+				createWakeup(db, mentioned.rows[0].id, companyId, WakeupSource.Mention, {
+					issue_id: issueId,
+					comment_id: result.rows[0].id,
+				}).catch((e) => console.error('Failed to create mention wakeup:', e));
+			}
+		}
+	}
+
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'issue_comments',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 
 commentsRoutes.post(
 	'/companies/:companyId/issues/:issueId/comments/:commentId/choose',
 	async (c) => {
+		const access = await requireCompanyAccess(c);
+		if (access instanceof Response) return access;
+
 		const db = c.get('db');
+		const { companyId } = access;
 		const commentId = c.req.param('commentId');
 
 		const body = await c.req.json<{ chosen_id: string }>();
@@ -83,7 +145,6 @@ commentsRoutes.post(
 			return err(c, 'INVALID_REQUEST', 'chosen_id is required', 400);
 		}
 
-		// Verify it's an options-type comment
 		const existing = await db.query<{ content_type: string; issue_id: string }>(
 			'SELECT content_type, issue_id FROM issue_comments WHERE id = $1',
 			[commentId],
@@ -91,7 +152,7 @@ commentsRoutes.post(
 		if (existing.rows.length === 0) {
 			return err(c, 'NOT_FOUND', 'Comment not found', 404);
 		}
-		if (existing.rows[0].content_type !== 'options') {
+		if (existing.rows[0].content_type !== CommentContentType.Options) {
 			return err(c, 'INVALID_REQUEST', 'Can only choose on options-type comments', 400);
 		}
 
@@ -100,16 +161,38 @@ commentsRoutes.post(
 			[JSON.stringify({ chosen_id: body.chosen_id }), commentId],
 		);
 
-		// Post a system comment recording the choice
 		await db.query(
 			`INSERT INTO issue_comments (issue_id, content_type, content)
-       VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
+       VALUES ($1, $2::comment_content_type, $3::jsonb)`,
 			[
 				existing.rows[0].issue_id,
+				CommentContentType.System,
 				JSON.stringify({ text: `Board selected option: ${body.chosen_id}` }),
 			],
 		);
 
+		const issue = await db.query<{ assignee_id: string | null }>(
+			'SELECT assignee_id FROM issues WHERE id = $1',
+			[existing.rows[0].issue_id],
+		);
+		const assigneeId = issue.rows[0]?.assignee_id;
+		if (assigneeId) {
+			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
+			if (isAgent.rows.length > 0) {
+				createWakeup(db, assigneeId, companyId, WakeupSource.OptionChosen, {
+					issue_id: existing.rows[0].issue_id,
+					chosen_id: body.chosen_id,
+				}).catch((e) => console.error('Failed to create option_chosen wakeup:', e));
+			}
+		}
+
+		broadcastChange(
+			c,
+			`company:${companyId}`,
+			'issue_comments',
+			'UPDATE',
+			result.rows[0] as Record<string, unknown>,
+		);
 		return ok(c, result.rows[0]);
 	},
 );

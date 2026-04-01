@@ -1,12 +1,18 @@
+import { SecretCategory } from '@hezo/shared';
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
 
 export const secretsRoutes = new Hono<Env>();
 
 secretsRoutes.get('/companies/:companyId/secrets', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const projectId = c.req.query('project_id');
 
 	let query = `
@@ -29,8 +35,11 @@ secretsRoutes.get('/companies/:companyId/secrets', async (c) => {
 });
 
 secretsRoutes.post('/companies/:companyId/secrets', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const masterKeyManager = c.get('masterKeyManager');
 
 	const body = await c.req.json<{
@@ -61,17 +70,27 @@ secretsRoutes.post('/companies/:companyId/secrets', async (c) => {
 			body.project_id ?? null,
 			body.name.trim(),
 			encryptedValue,
-			body.category ?? 'other',
+			body.category ?? SecretCategory.Other,
 		],
 	);
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'secrets',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 
 secretsRoutes.patch('/companies/:companyId/secrets/:secretId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const secretId = c.req.param('secretId');
-	const companyId = c.req.param('companyId');
 	const masterKeyManager = c.get('masterKeyManager');
 
 	const existing = await db.query('SELECT id FROM secrets WHERE id = $1 AND company_id = $2', [
@@ -123,9 +142,12 @@ secretsRoutes.patch('/companies/:companyId/secrets/:secretId', async (c) => {
 });
 
 secretsRoutes.delete('/companies/:companyId/secrets/:secretId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const secretId = c.req.param('secretId');
-	const companyId = c.req.param('companyId');
 
 	const existing = await db.query('SELECT id FROM secrets WHERE id = $1 AND company_id = $2', [
 		secretId,
@@ -136,27 +158,46 @@ secretsRoutes.delete('/companies/:companyId/secrets/:secretId', async (c) => {
 	}
 
 	await db.query('DELETE FROM secrets WHERE id = $1', [secretId]);
+	broadcastChange(c, `company:${companyId}`, 'secrets', 'DELETE', { id: secretId });
 	return c.json({ data: null }, 200);
 });
 
-// Secret Grants
 secretsRoutes.get('/companies/:companyId/secrets/:secretId/grants', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
+	const secretId = c.req.param('secretId');
+
 	const result = await db.query(
 		`SELECT sg.id, sg.secret_id, sg.member_id AS agent_id, sg.scope, sg.granted_at, sg.revoked_at,
             ma.title AS agent_title
      FROM secret_grants sg
+     JOIN secrets s ON s.id = sg.secret_id
      LEFT JOIN member_agents ma ON ma.id = sg.member_id
-     WHERE sg.secret_id = $1
+     WHERE sg.secret_id = $1 AND s.company_id = $2
      ORDER BY sg.granted_at DESC`,
-		[c.req.param('secretId')],
+		[secretId, companyId],
 	);
 	return ok(c, result.rows);
 });
 
 secretsRoutes.post('/companies/:companyId/secrets/:secretId/grants', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const secretId = c.req.param('secretId');
+
+	const secretCheck = await db.query('SELECT id FROM secrets WHERE id = $1 AND company_id = $2', [
+		secretId,
+		companyId,
+	]);
+	if (secretCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Secret not found', 404);
+	}
 
 	const body = await c.req.json<{
 		agent_id: string;
@@ -179,10 +220,19 @@ secretsRoutes.post('/companies/:companyId/secrets/:secretId/grants', async (c) =
 });
 
 secretsRoutes.delete('/companies/:companyId/secret-grants/:grantId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
+	const grantId = c.req.param('grantId');
+
 	const result = await db.query(
-		'UPDATE secret_grants SET revoked_at = now() WHERE id = $1 RETURNING *',
-		[c.req.param('grantId')],
+		`UPDATE secret_grants sg SET revoked_at = now()
+     FROM secrets s
+     WHERE sg.id = $1 AND sg.secret_id = s.id AND s.company_id = $2
+     RETURNING sg.*`,
+		[grantId, companyId],
 	);
 
 	if (result.rows.length === 0) {

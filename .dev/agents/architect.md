@@ -94,6 +94,7 @@ Rules:
 - When you write a technical specification, create it as a project document (doc_type: tech_spec) via the project docs API. Post a summary comment on the ticket referencing the project doc.
 - When you define implementation phases, create them as a project document (doc_type: implementation_plan) via the project docs API.
 - Keep project documents updated as implementation progresses and decisions change — they must always reflect the current state of the project.
+- Every technical spec must include an "Authorization" section specifying who can access each endpoint and what ownership/permission checks are required. No endpoint ships without server-side authorization enforcement and resource ownership verification.
 - Every technical spec must include a "UI deliverables" section specifying which screens or components are needed for manual browser-based testing of the phase's functionality.
 - Implementation plans must include browser-testable acceptance criteria for each phase — no phase should ship backend-only without corresponding UI for manual verification.
 - Review company preferences to align technical decisions with the board's architectural and design preferences.
@@ -106,5 +107,5 @@ Rules:
 |-------|-------|
 | Heartbeat interval | 60 min |
 | Monthly budget | $40 |
-| Docker base image | node:20-slim |
+| Docker base image | node:24-slim |
 | Runtime type | claude_code |

@@ -1,12 +1,27 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { Copy, ExternalLink, Key, Link2, Loader2, Lock, Plus, Trash2 } from 'lucide-react';
+import {
+	Copy,
+	ExternalLink,
+	FileText,
+	Key,
+	Link2,
+	Loader2,
+	Lock,
+	Plus,
+	ScrollText,
+	Server,
+	Trash2,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Card } from '../../../../components/ui/card';
 import { Input } from '../../../../components/ui/input';
 import { Textarea } from '../../../../components/ui/textarea';
+import { useAgents } from '../../../../hooks/use-agents';
 import { useApiKeys, useCreateApiKey, useDeleteApiKey } from '../../../../hooks/use-api-keys';
+import { useAuditLog } from '../../../../hooks/use-audit-log';
+import { useCompany, useUpdateCompany } from '../../../../hooks/use-companies';
 import {
 	useConnections,
 	useDeleteConnection,
@@ -27,6 +42,9 @@ function SettingsPage() {
 			<ApiKeysSection companyId={companyId} />
 			<BudgetSection companyId={companyId} />
 			<PreferencesSection companyId={companyId} />
+			<McpServersSection companyId={companyId} />
+			<SkillFileSection />
+			<AuditLogSection companyId={companyId} />
 		</div>
 	);
 }
@@ -254,10 +272,21 @@ function ApiKeysSection({ companyId }: { companyId: string }) {
 
 function BudgetSection({ companyId }: { companyId: string }) {
 	const { data: costs } = useCosts(companyId, { group_by: 'agent' });
+	const { data: agents } = useAgents(companyId);
+	const highBudgetAgents =
+		agents?.filter(
+			(a) => a.monthly_budget_cents > 0 && a.budget_used_cents / a.monthly_budget_cents > 0.8,
+		) ?? [];
 
 	return (
 		<section>
 			<h2 className="text-sm font-medium text-text-muted mb-3">Budget Overview</h2>
+			{highBudgetAgents.length > 0 && (
+				<div className="mb-3 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
+					{highBudgetAgents.length} agent{highBudgetAgents.length > 1 ? 's' : ''} at 80%+ budget
+					usage: {highBudgetAgents.map((a) => a.title).join(', ')}
+				</div>
+			)}
 			{costs?.summary?.length === 0 ? (
 				<p className="text-sm text-text-subtle">No spend recorded.</p>
 			) : (
@@ -327,6 +356,183 @@ function PreferencesSection({ companyId }: { companyId: string }) {
 				<p className="text-sm text-text-muted whitespace-pre-wrap">
 					{prefs?.content || 'No preferences set.'}
 				</p>
+			)}
+		</section>
+	);
+}
+
+function McpServersSection({ companyId }: { companyId: string }) {
+	const { data: company } = useCompany(companyId);
+	const updateCompany = useUpdateCompany(companyId);
+	const [showAdd, setShowAdd] = useState(false);
+	const [name, setName] = useState('');
+	const [url, setUrl] = useState('');
+	const [apiKey, setApiKey] = useState('');
+
+	const servers = (company?.mcp_servers ?? []) as { name: string; url: string; api_key?: string }[];
+
+	async function handleAdd(e: React.FormEvent) {
+		e.preventDefault();
+		if (!name.trim() || !url.trim()) return;
+		const entry: { name: string; url: string; api_key?: string } = {
+			name: name.trim(),
+			url: url.trim(),
+		};
+		if (apiKey.trim()) entry.api_key = apiKey.trim();
+		await updateCompany.mutateAsync({ mcp_servers: [...servers, entry] });
+		setName('');
+		setUrl('');
+		setApiKey('');
+		setShowAdd(false);
+	}
+
+	async function handleDelete(server: { name: string; url: string }) {
+		const updated = servers.filter((s) => s.name !== server.name || s.url !== server.url);
+		await updateCompany.mutateAsync({ mcp_servers: updated });
+	}
+
+	return (
+		<section>
+			<h2 className="text-sm font-medium text-text-muted mb-3 flex items-center gap-1.5">
+				<Server className="w-4 h-4" /> MCP Servers
+			</h2>
+			{servers.length === 0 && !showAdd && (
+				<p className="text-sm text-text-muted mb-2">No MCP servers configured.</p>
+			)}
+			<div className="space-y-2 mb-3">
+				{servers.map((s) => (
+					<Card key={`${s.name}-${s.url}`} className="p-3 flex items-center gap-3">
+						<div className="flex-1 min-w-0">
+							<span className="text-sm font-medium text-text">{s.name}</span>
+							<span className="text-xs text-text-muted block truncate">{s.url}</span>
+							{s.api_key && (
+								<span className="text-[10px] text-text-subtle">Key: {'*'.repeat(8)}</span>
+							)}
+						</div>
+						<Button
+							variant="ghost"
+							size="sm"
+							className="text-danger shrink-0"
+							onClick={() => handleDelete(s)}
+						>
+							<Trash2 className="w-3 h-3" />
+						</Button>
+					</Card>
+				))}
+			</div>
+			{showAdd ? (
+				<form onSubmit={handleAdd} className="space-y-2 border border-border rounded-lg p-3">
+					<Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Server name" />
+					<Input
+						value={url}
+						onChange={(e) => setUrl(e.target.value)}
+						placeholder="URL (e.g. http://localhost:8080/mcp)"
+					/>
+					<Input
+						value={apiKey}
+						onChange={(e) => setApiKey(e.target.value)}
+						placeholder="API key (optional)"
+						type="password"
+					/>
+					<div className="flex gap-2">
+						<Button type="submit" size="sm" disabled={!name.trim() || !url.trim()}>
+							Add
+						</Button>
+						<Button type="button" variant="ghost" size="sm" onClick={() => setShowAdd(false)}>
+							Cancel
+						</Button>
+					</div>
+				</form>
+			) : (
+				<Button variant="ghost" size="sm" onClick={() => setShowAdd(true)}>
+					<Plus className="w-3 h-3" /> Add MCP Server
+				</Button>
+			)}
+		</section>
+	);
+}
+
+function SkillFileSection() {
+	const [content, setContent] = useState<string | null>(null);
+	const [showPreview, setShowPreview] = useState(false);
+
+	useEffect(() => {
+		if (showPreview && content === null) {
+			fetch('/skill.md')
+				.then((r) => r.text())
+				.then(setContent)
+				.catch(() => setContent('Failed to load skill file.'));
+		}
+	}, [showPreview, content]);
+
+	return (
+		<section>
+			<h2 className="text-sm font-medium text-text-muted mb-3 flex items-center gap-1.5">
+				<FileText className="w-4 h-4" /> Skill File
+			</h2>
+			<div className="flex gap-2 mb-2">
+				<a
+					href="/skill.md"
+					target="_blank"
+					rel="noopener noreferrer"
+					className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+				>
+					<ExternalLink className="w-3.5 h-3.5" /> Open /skill.md
+				</a>
+				<Button variant="ghost" size="sm" onClick={() => setShowPreview(!showPreview)}>
+					{showPreview ? 'Hide' : 'Preview'}
+				</Button>
+			</div>
+			{showPreview && content && (
+				<pre className="text-xs bg-bg-muted border border-border rounded-lg p-3 overflow-auto max-h-64 text-text-muted whitespace-pre-wrap">
+					{content}
+				</pre>
+			)}
+		</section>
+	);
+}
+
+function AuditLogSection({ companyId }: { companyId: string }) {
+	const { data: entries } = useAuditLog(companyId);
+
+	return (
+		<section>
+			<h2 className="text-sm font-medium text-text-muted mb-3 flex items-center gap-1.5">
+				<ScrollText className="w-4 h-4" /> Audit Log
+			</h2>
+			{!entries?.length ? (
+				<p className="text-sm text-text-muted">No audit entries yet.</p>
+			) : (
+				<div className="border border-border rounded-lg overflow-hidden">
+					<table className="w-full text-xs">
+						<thead className="bg-bg-subtle">
+							<tr>
+								<th className="text-left px-3 py-2 font-medium text-text-muted">Time</th>
+								<th className="text-left px-3 py-2 font-medium text-text-muted">Actor</th>
+								<th className="text-left px-3 py-2 font-medium text-text-muted">Action</th>
+								<th className="text-left px-3 py-2 font-medium text-text-muted">Entity</th>
+							</tr>
+						</thead>
+						<tbody>
+							{entries.map((e) => (
+								<tr key={e.id} className="border-t border-border">
+									<td className="px-3 py-1.5 text-text-subtle">
+										{new Date(e.created_at).toLocaleString()}
+									</td>
+									<td className="px-3 py-1.5">
+										<span className="text-text">{e.actor_name || e.actor_type}</span>
+									</td>
+									<td className="px-3 py-1.5">
+										<Badge color="gray" className="text-[10px]">
+											{e.action}
+										</Badge>
+									</td>
+									<td className="px-3 py-1.5 text-text-muted">{e.entity_type}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
 			)}
 		</section>
 	);

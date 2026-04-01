@@ -48,6 +48,26 @@ export function useUpdateKbDoc(companyId: string, slug: string) {
 	});
 }
 
+export interface KbDocRevision {
+	id: string;
+	doc_id: string;
+	revision_number: number;
+	content: string;
+	change_summary: string;
+	author_member_id: string | null;
+	author_name: string | null;
+	created_at: string;
+}
+
+export function useKbDocRevisions(companyId: string, slug: string) {
+	return useQuery({
+		queryKey: ['companies', companyId, 'kb-docs', slug, 'revisions'],
+		queryFn: () =>
+			api.get<KbDocRevision[]>(`/api/companies/${companyId}/kb-docs/${slug}/revisions`),
+		enabled: !!slug,
+	});
+}
+
 export function useDeleteKbDoc(companyId: string) {
 	return useMutation({
 		mutationFn: (slug: string) => api.delete(`/api/companies/${companyId}/kb-docs/${slug}`),

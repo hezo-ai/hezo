@@ -23,7 +23,7 @@ beforeAll(async () => {
 	// Create a company for testing
 	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
 	const types = (await typesRes.json()).data;
-	const builtinTypeId = types.find((t: any) => t.is_builtin).id;
+	const builtinTypeId = types.find((t: Record<string, unknown>) => t.is_builtin).id;
 
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',

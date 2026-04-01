@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import type { PlatformType } from '@hezo/shared';
 import { decrypt, encrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
 
@@ -6,7 +7,7 @@ export async function storeOAuthToken(
 	db: PGlite,
 	masterKeyManager: MasterKeyManager,
 	companyId: string,
-	platform: string,
+	platform: PlatformType,
 	accessToken: string,
 	scopes: string,
 	metadata: Record<string, unknown>,
@@ -45,7 +46,7 @@ export async function getOAuthToken(
 	db: PGlite,
 	masterKeyManager: MasterKeyManager,
 	companyId: string,
-	platform: string,
+	platform: PlatformType,
 ): Promise<string | null> {
 	const encryptionKey = masterKeyManager.getKey();
 	if (!encryptionKey) throw new Error('Master key not available');
@@ -65,7 +66,7 @@ export async function getOAuthToken(
 export async function getConnection(
 	db: PGlite,
 	companyId: string,
-	platform: string,
+	platform: PlatformType,
 ): Promise<{
 	id: string;
 	platform: string;

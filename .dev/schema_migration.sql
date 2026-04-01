@@ -237,7 +237,7 @@ CREATE TABLE projects (
     name                TEXT NOT NULL,
     goal                TEXT NOT NULL DEFAULT '',
     -- Docker container for this project (one container per project)
-    docker_base_image   TEXT NOT NULL DEFAULT 'node:20-slim',
+    docker_base_image   TEXT NOT NULL DEFAULT 'node:24-slim',
     container_id        TEXT,          -- Docker container ID
     container_status    container_status,
     -- Dev preview port forwarding: [{"container": 3000, "host": 13000}]

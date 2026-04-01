@@ -13,6 +13,7 @@ import {
 	useTerminateAgent,
 	useUpdateAgent,
 } from '../../../../hooks/use-agents';
+import { useHeartbeatRuns } from '../../../../hooks/use-heartbeat-runs';
 
 const statusColors: Record<string, string> = {
 	active: 'green',
@@ -29,6 +30,7 @@ function AgentDetailPage() {
 	const pauseAgent = usePauseAgent(companyId);
 	const resumeAgent = useResumeAgent(companyId);
 	const terminateAgent = useTerminateAgent(companyId);
+	const { data: heartbeatRuns } = useHeartbeatRuns(companyId, agentId);
 
 	const [title, setTitle] = useState('');
 	const [roleDesc, setRoleDesc] = useState('');
@@ -102,6 +104,79 @@ function AgentDetailPage() {
 					</Button>
 				)}
 			</div>
+
+			{/* Budget & Status */}
+			<div className="mb-6 grid grid-cols-2 gap-4">
+				<div className="rounded-lg border border-border-subtle bg-bg p-4">
+					<div className="text-xs text-text-muted mb-2">Budget Usage</div>
+					{(() => {
+						const pct =
+							agent.monthly_budget_cents > 0
+								? Math.round((agent.budget_used_cents / agent.monthly_budget_cents) * 100)
+								: 0;
+						return (
+							<>
+								<div className="h-2 rounded-full bg-bg-muted overflow-hidden mb-1">
+									<div
+										className={`h-full rounded-full transition-all ${pct > 80 ? 'bg-danger' : pct > 60 ? 'bg-warning' : 'bg-primary'}`}
+										style={{ width: `${Math.min(pct, 100)}%` }}
+									/>
+								</div>
+								<div className="text-sm font-medium">
+									{pct}% — ${(agent.budget_used_cents / 100).toFixed(2)} / $
+									{(agent.monthly_budget_cents / 100).toFixed(2)}
+								</div>
+								{pct > 80 && (
+									<div className="text-xs text-danger mt-1">Budget nearly exhausted</div>
+								)}
+							</>
+						);
+					})()}
+				</div>
+				<div className="rounded-lg border border-border-subtle bg-bg p-4">
+					<div className="text-xs text-text-muted mb-2">Heartbeat</div>
+					<div className="text-sm">Every {agent.heartbeat_interval_min} min</div>
+					{agent.last_heartbeat_at && (
+						<div className="text-xs text-text-subtle mt-1">
+							Last: {new Date(agent.last_heartbeat_at).toLocaleString()}
+						</div>
+					)}
+				</div>
+			</div>
+
+			{/* Recent Heartbeat Runs */}
+			{heartbeatRuns && heartbeatRuns.length > 0 && (
+				<div className="mb-6">
+					<h2 className="text-sm font-medium text-text-muted mb-2">Recent Runs</h2>
+					<div className="flex flex-col gap-1">
+						{heartbeatRuns.slice(0, 5).map((run) => (
+							<div
+								key={run.id}
+								className="flex items-center gap-2 rounded-md border border-border-subtle bg-bg px-3 py-2 text-xs"
+							>
+								<Badge
+									color={
+										run.status === 'completed'
+											? 'green'
+											: run.status === 'failed'
+												? 'red'
+												: 'yellow'
+									}
+								>
+									{run.status}
+								</Badge>
+								<span className="text-text-muted">{new Date(run.started_at).toLocaleString()}</span>
+								{run.exit_code !== null && (
+									<span className="text-text-subtle ml-auto">exit: {run.exit_code}</span>
+								)}
+								{run.error && (
+									<span className="text-danger ml-2 truncate max-w-[200px]">{run.error}</span>
+								)}
+							</div>
+						))}
+					</div>
+				</div>
+			)}
 
 			<form onSubmit={handleSave} className="flex flex-col gap-4">
 				<Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} required />

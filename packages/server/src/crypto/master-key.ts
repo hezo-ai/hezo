@@ -6,7 +6,7 @@ const CANARY_PURPOSE = 'master-key-canary';
 export type MasterKeyState = 'unset' | 'locked' | 'unlocked';
 
 interface DbClient {
-	query<T = any>(sql: string, params?: any[]): Promise<{ rows: T[] }>;
+	query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
 }
 
 export class MasterKeyManager {

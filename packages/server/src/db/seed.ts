@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { AgentStatus } from '@hezo/shared';
 
 const SOFTWARE_DEV_AGENTS = [
 	{
@@ -10,7 +11,7 @@ const SOFTWARE_DEV_AGENTS = [
 		monthly_budget_cents: 2000,
 		role_description:
 			'Translates company mission into actionable strategy, delegates work across leadership, and resolves disputes between agents.',
-		status: 'active',
+		status: AgentStatus.Active,
 	},
 	{
 		title: 'Architect',
@@ -21,7 +22,7 @@ const SOFTWARE_DEV_AGENTS = [
 		monthly_budget_cents: 4000,
 		role_description:
 			'Owns technical vision, translates product requirements into technical specifications, and makes architecture decisions.',
-		status: 'active',
+		status: AgentStatus.Active,
 	},
 	{
 		title: 'Product Lead',
@@ -32,7 +33,7 @@ const SOFTWARE_DEV_AGENTS = [
 		monthly_budget_cents: 3000,
 		role_description:
 			'Owns product requirements, writes PRDs, manages scope, and ensures development aligns with company mission.',
-		status: 'active',
+		status: AgentStatus.Active,
 	},
 	{
 		title: 'Engineer',
@@ -43,7 +44,7 @@ const SOFTWARE_DEV_AGENTS = [
 		monthly_budget_cents: 5000,
 		role_description:
 			"Primary implementer who writes code, tests, and documentation based on the Architect's technical specification.",
-		status: 'active',
+		status: AgentStatus.Active,
 	},
 	{
 		title: 'QA Engineer',
@@ -54,7 +55,7 @@ const SOFTWARE_DEV_AGENTS = [
 		monthly_budget_cents: 4000,
 		role_description:
 			'Final approval gate for every ticket, responsible for test coverage, security audits, and code quality.',
-		status: 'active',
+		status: AgentStatus.Active,
 	},
 	{
 		title: 'UI Designer',
@@ -65,7 +66,7 @@ const SOFTWARE_DEV_AGENTS = [
 		monthly_budget_cents: 3000,
 		role_description:
 			'Owns visual and interaction layer, defines component architecture, and creates HTML preview mockups.',
-		status: 'active',
+		status: AgentStatus.Active,
 	},
 	{
 		title: 'DevOps Engineer',
@@ -76,7 +77,7 @@ const SOFTWARE_DEV_AGENTS = [
 		monthly_budget_cents: 3000,
 		role_description:
 			'Owns infrastructure and deployment pipeline, manages staging and production environments, and configures CI/CD.',
-		status: 'idle',
+		status: AgentStatus.Idle,
 	},
 	{
 		title: 'Marketing Lead',
@@ -87,7 +88,7 @@ const SOFTWARE_DEV_AGENTS = [
 		monthly_budget_cents: 2000,
 		role_description:
 			'Owns marketing strategy and content creation including blog posts, social media, and public-facing documentation.',
-		status: 'active',
+		status: AgentStatus.Active,
 	},
 	{
 		title: 'Researcher',
@@ -98,7 +99,7 @@ const SOFTWARE_DEV_AGENTS = [
 		monthly_budget_cents: 3000,
 		role_description:
 			'Conducts competitive analysis, technical research, and feasibility studies to inform strategic decisions.',
-		status: 'active',
+		status: AgentStatus.Active,
 	},
 ];
 

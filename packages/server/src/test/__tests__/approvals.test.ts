@@ -20,7 +20,7 @@ beforeAll(async () => {
 	const typesRes = await app.request('/api/company-types', {
 		headers: authHeader(token),
 	});
-	const typeId = (await typesRes.json()).data.find((t: any) => t.is_builtin).id;
+	const typeId = (await typesRes.json()).data.find((t: Record<string, unknown>) => t.is_builtin).id;
 
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',

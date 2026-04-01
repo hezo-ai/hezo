@@ -4,7 +4,7 @@
 		"outDir": "dist",
 		"rootDir": "src",
 		"paths": {
-			"@hezo/shared": ["../shared/src/index.ts"]
+			"@hezo/shared": ["../shared/dist/index.d.ts"]
 		}
 	},
 	"include": ["src"]

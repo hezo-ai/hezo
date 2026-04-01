@@ -119,7 +119,7 @@ async function main() {
 
 	while (queue.length > 0 || running.size > 0) {
 		while (queue.length > 0 && running.size < concurrency) {
-			const t = queue.shift()!;
+			const t = queue.shift() as string;
 			const promise = runTest(t).then(() => {
 				running.delete(promise);
 			});

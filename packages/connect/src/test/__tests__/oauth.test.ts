@@ -57,7 +57,7 @@ describe('GET /auth/:platform/start', () => {
 			'/auth/github/start?callback=http://localhost:3100/oauth/callback',
 		);
 		expect(res.status).toBe(302);
-		const location = res.headers.get('Location')!;
+		const location = res.headers.get('Location') as string;
 		const url = new URL(location);
 		expect(url.searchParams.get('error')).toBe('missing_config');
 	});
@@ -78,7 +78,7 @@ describe('GET /auth/:platform/start', () => {
 			'/auth/github/start?callback=http://localhost:3100/oauth/callback',
 		);
 		expect(res.status).toBe(302);
-		const location = res.headers.get('Location')!;
+		const location = res.headers.get('Location') as string;
 		const url = new URL(location);
 		expect(url.hostname).toBe('github.com');
 		expect(url.pathname).toBe('/login/oauth/authorize');
@@ -92,8 +92,8 @@ describe('GET /auth/:platform/start', () => {
 		const res = await app.request(
 			'/auth/github/start?callback=http://localhost:3100/oauth/callback',
 		);
-		const githubUrl = new URL(res.headers.get('Location')!);
-		const signedState = githubUrl.searchParams.get('state')!;
+		const githubUrl = new URL(res.headers.get('Location') as string);
+		const signedState = githubUrl.searchParams.get('state') as string;
 		const payload = verifyState(signedState, testKeyPair.publicKey);
 		expect(payload).not.toBeNull();
 		expect(payload?.platform).toBe('github');
@@ -170,8 +170,8 @@ describe('full OAuth flow with mocked GitHub API', () => {
 			'http://localhost:4100/auth/github/start?callback=http://localhost:3100/oauth/callback&state=user-data',
 		);
 		expect(startRes.status).toBe(302);
-		const githubUrl = new URL(startRes.headers.get('Location')!);
-		const signedState = githubUrl.searchParams.get('state')!;
+		const githubUrl = new URL(startRes.headers.get('Location') as string);
+		const signedState = githubUrl.searchParams.get('state') as string;
 
 		// Verify the state is valid with public key
 		const payload = verifyState(signedState, testKeyPair.publicKey);
@@ -187,7 +187,7 @@ describe('full OAuth flow with mocked GitHub API', () => {
 		expect(callbackRes.status).toBe(302);
 
 		// Step 3: Verify the final redirect
-		const finalUrl = new URL(callbackRes.headers.get('Location')!);
+		const finalUrl = new URL(callbackRes.headers.get('Location') as string);
 		expect(finalUrl.origin + finalUrl.pathname).toBe('http://localhost:3100/oauth/callback');
 		expect(finalUrl.searchParams.get('platform')).toBe('github');
 		expect(finalUrl.searchParams.get('access_token')).toBe('gho_mock_token');
@@ -196,7 +196,7 @@ describe('full OAuth flow with mocked GitHub API', () => {
 
 		// Verify metadata contains user info
 		const metadata = JSON.parse(
-			Buffer.from(finalUrl.searchParams.get('metadata')!, 'base64url').toString('utf8'),
+			Buffer.from(finalUrl.searchParams.get('metadata') as string, 'base64url').toString('utf8'),
 		);
 		expect(metadata.username).toBe('testuser');
 		expect(metadata.avatar_url).toBe('https://avatars.githubusercontent.com/u/1');
@@ -217,15 +217,15 @@ describe('full OAuth flow with mocked GitHub API', () => {
 		const startRes = await app.request(
 			'http://localhost:4100/auth/github/start?callback=http://localhost:3100/oauth/callback',
 		);
-		const githubUrl = new URL(startRes.headers.get('Location')!);
-		const signedState = githubUrl.searchParams.get('state')!;
+		const githubUrl = new URL(startRes.headers.get('Location') as string);
+		const signedState = githubUrl.searchParams.get('state') as string;
 
 		// Callback with the bad code
 		const callbackRes = await app.request(
 			`http://localhost:4100/auth/github/callback?code=bad-code&state=${encodeURIComponent(signedState)}`,
 		);
 		expect(callbackRes.status).toBe(302);
-		const errorUrl = new URL(callbackRes.headers.get('Location')!);
+		const errorUrl = new URL(callbackRes.headers.get('Location') as string);
 		expect(errorUrl.searchParams.get('error')).toBe('token_exchange_failed');
 		expect(errorUrl.searchParams.get('platform')).toBe('github');
 	});
@@ -242,15 +242,15 @@ describe('full OAuth flow with mocked GitHub API', () => {
 		const startRes = await app.request(
 			'http://localhost:4100/auth/github/start?callback=http://localhost:3100/oauth/callback',
 		);
-		const githubUrl = new URL(startRes.headers.get('Location')!);
-		const signedState = githubUrl.searchParams.get('state')!;
+		const githubUrl = new URL(startRes.headers.get('Location') as string);
+		const signedState = githubUrl.searchParams.get('state') as string;
 
 		// First callback succeeds
 		const first = await app.request(
 			`http://localhost:4100/auth/github/callback?code=code&state=${encodeURIComponent(signedState)}`,
 		);
 		expect(first.status).toBe(302);
-		const firstUrl = new URL(first.headers.get('Location')!);
+		const firstUrl = new URL(first.headers.get('Location') as string);
 		expect(firstUrl.searchParams.get('access_token')).toBe('gho_token');
 
 		// Second callback with same state fails (nonce consumed)
@@ -258,7 +258,7 @@ describe('full OAuth flow with mocked GitHub API', () => {
 			`http://localhost:4100/auth/github/callback?code=code&state=${encodeURIComponent(signedState)}`,
 		);
 		expect(second.status).toBe(302);
-		const secondUrl = new URL(second.headers.get('Location')!);
+		const secondUrl = new URL(second.headers.get('Location') as string);
 		expect(secondUrl.searchParams.get('error')).toBe('expired_nonce');
 	});
 });

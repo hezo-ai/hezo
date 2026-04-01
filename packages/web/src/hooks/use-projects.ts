@@ -9,6 +9,9 @@ export interface Project {
 	slug: string;
 	goal: string | null;
 	docker_base_image: string | null;
+	container_id: string | null;
+	container_status: 'creating' | 'running' | 'stopped' | 'error' | null;
+	dev_ports: Array<{ container: number; host: number }>;
 	repo_count: number;
 	open_issue_count: number;
 	created_at: string;
@@ -64,5 +67,16 @@ export function useDeleteProject(companyId: string) {
 			api.delete(`/api/companies/${companyId}/projects/${projectId}`),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] }),
+	});
+}
+
+export function useRebuildContainer(companyId: string, projectId: string) {
+	return useMutation({
+		mutationFn: () =>
+			api.post(`/api/companies/${companyId}/projects/${projectId}/rebuild-container`, {}),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] });
+			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects', projectId] });
+		},
 	});
 }

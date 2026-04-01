@@ -75,6 +75,7 @@ export const ApprovalType = {
 	KbUpdate: 'kb_update',
 	PlanReview: 'plan_review',
 	DeployProduction: 'deploy_production',
+	OauthRequest: 'oauth_request',
 } as const;
 export type ApprovalType = (typeof ApprovalType)[keyof typeof ApprovalType];
 
@@ -122,6 +123,8 @@ export const WakeupSource = {
 	OnDemand: 'on_demand',
 	Mention: 'mention',
 	Automation: 'automation',
+	OptionChosen: 'option_chosen',
+	ChatMessage: 'chat_message',
 } as const;
 export type WakeupSource = (typeof WakeupSource)[keyof typeof WakeupSource];
 
@@ -170,3 +173,36 @@ export type AuditActorType = (typeof AuditActorType)[keyof typeof AuditActorType
 
 export const RepoHostType = { GitHub: 'github' } as const;
 export type RepoHostType = (typeof RepoHostType)[keyof typeof RepoHostType];
+
+export const AuthType = { Board: 'board', ApiKey: 'api_key', Agent: 'agent' } as const;
+export type AuthType = (typeof AuthType)[keyof typeof AuthType];
+
+export const AuditEntityType = {
+	Issue: 'issue',
+	Project: 'project',
+	Agent: 'agent',
+	Company: 'company',
+	Secret: 'secret',
+	KbDoc: 'kb_doc',
+} as const;
+export type AuditEntityType = (typeof AuditEntityType)[keyof typeof AuditEntityType];
+
+export const AuditAction = {
+	Created: 'created',
+	Updated: 'updated',
+	Deleted: 'deleted',
+} as const;
+export type AuditAction = (typeof AuditAction)[keyof typeof AuditAction];
+
+export const TERMINAL_ISSUE_STATUSES = [
+	IssueStatus.Done,
+	IssueStatus.Closed,
+	IssueStatus.Cancelled,
+] as const;
+
+export const PRIORITY_ORDER: Record<IssuePriority, number> = {
+	[IssuePriority.Urgent]: 0,
+	[IssuePriority.High]: 1,
+	[IssuePriority.Medium]: 2,
+	[IssuePriority.Low]: 3,
+};

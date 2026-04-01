@@ -1,13 +1,19 @@
+import { ApprovalStatus } from '@hezo/shared';
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess, requireCompanyAccessForResource } from '../middleware/auth';
 
 export const approvalsRoutes = new Hono<Env>();
 
 approvalsRoutes.get('/companies/:companyId/approvals', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
-	const statusFilter = c.req.query('status') || 'pending';
+	const { companyId } = access;
+	const statusFilter = c.req.query('status') || ApprovalStatus.Pending;
 
 	const result = await db.query(
 		`SELECT a.id, a.company_id, a.type, a.status, a.payload, a.resolution_note,
@@ -31,8 +37,11 @@ approvalsRoutes.get('/companies/:companyId/approvals', async (c) => {
 });
 
 approvalsRoutes.post('/companies/:companyId/approvals', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 
 	const body = await c.req.json<{
 		type: string;
@@ -51,6 +60,13 @@ approvalsRoutes.post('/companies/:companyId/approvals', async (c) => {
 		[companyId, body.type, body.requested_by_member_id, JSON.stringify(body.payload)],
 	);
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'approvals',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 
@@ -58,14 +74,18 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 	const db = c.get('db');
 	const approvalId = c.req.param('approvalId');
 
-	const existing = await db.query<{ status: string }>(
-		'SELECT status FROM approvals WHERE id = $1',
+	const existing = await db.query<{ status: string; company_id: string }>(
+		'SELECT status, company_id FROM approvals WHERE id = $1',
 		[approvalId],
 	);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Approval not found', 404);
 	}
-	if (existing.rows[0].status !== 'pending') {
+
+	const resourceAccess = await requireCompanyAccessForResource(db, c, existing.rows[0].company_id);
+	if (resourceAccess instanceof Response) return resourceAccess;
+
+	if (existing.rows[0].status !== ApprovalStatus.Pending) {
 		return err(c, 'INVALID_STATE', 'Approval is already resolved', 409);
 	}
 
@@ -74,7 +94,7 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 		resolution_note?: string;
 	}>();
 
-	if (!['approved', 'denied'].includes(body.status)) {
+	if (body.status !== ApprovalStatus.Approved && body.status !== ApprovalStatus.Denied) {
 		return err(c, 'INVALID_REQUEST', "status must be 'approved' or 'denied'", 400);
 	}
 
@@ -84,5 +104,9 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 		[body.status, body.resolution_note ?? null, approvalId],
 	);
 
-	return ok(c, result.rows[0]);
+	const row = result.rows[0] as Record<string, unknown>;
+	if (row.company_id) {
+		broadcastChange(c, `company:${row.company_id}`, 'approvals', 'UPDATE', row);
+	}
+	return ok(c, row);
 });

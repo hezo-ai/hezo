@@ -56,7 +56,7 @@ function AgentListPage() {
 									<div className="flex items-start justify-between mb-2">
 										<div className="flex items-center gap-2">
 											<span
-												className={`w-2 h-2 rounded-full ${statusDot[agent.status] || 'bg-bg-elevated'}`}
+												className={`w-2 h-2 rounded-full ${statusDot[agent.status] || 'bg-bg-elevated'} ${agent.status === 'active' ? 'animate-pulse' : ''}`}
 											/>
 											<h3 className="font-medium text-sm">{agent.title}</h3>
 										</div>
@@ -71,11 +71,16 @@ function AgentListPage() {
 										<span>{agent.runtime_type}</span>
 										<span>{agent.assigned_issue_count} issues</span>
 									</div>
+									{agent.last_heartbeat_at && (
+										<div className="text-[10px] text-text-subtle mt-1">
+											Last heartbeat: {new Date(agent.last_heartbeat_at).toLocaleTimeString()}
+										</div>
+									)}
 									{agent.monthly_budget_cents > 0 && (
 										<div className="mt-2">
 											<div className="h-1.5 rounded-full bg-bg-muted overflow-hidden">
 												<div
-													className={`h-full rounded-full transition-all ${budgetPct > 80 ? 'bg-danger' : 'bg-primary'}`}
+													className={`h-full rounded-full transition-all ${budgetPct > 80 ? 'bg-danger' : budgetPct > 60 ? 'bg-warning' : 'bg-primary'}`}
 													style={{ width: `${Math.min(budgetPct, 100)}%` }}
 												/>
 											</div>

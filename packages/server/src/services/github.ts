@@ -1,4 +1,4 @@
-export type FetchFn = typeof globalThis.fetch;
+export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface RepoAccessResult {
 	accessible: boolean;

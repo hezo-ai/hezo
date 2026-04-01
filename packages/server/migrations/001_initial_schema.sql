@@ -17,6 +17,7 @@ CREATE TABLE users (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     display_name TEXT NOT NULL DEFAULT '',
     avatar_url   TEXT,
+    is_superuser BOOLEAN NOT NULL DEFAULT false,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -53,7 +54,7 @@ CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
 CREATE TYPE platform_type AS ENUM ('github', 'gmail', 'gitlab', 'stripe', 'posthog', 'railway', 'vercel', 'digitalocean', 'x');
 CREATE TYPE connection_status AS ENUM ('active', 'expired', 'disconnected');
-CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation');
+CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'chat_message');
 CREATE TYPE wakeup_status AS ENUM ('queued', 'claimed', 'completed', 'failed', 'skipped', 'coalesced', 'deferred', 'cancelled');
 CREATE TYPE heartbeat_run_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'timed_out');
 CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
@@ -206,7 +207,7 @@ CREATE TABLE projects (
     name                TEXT NOT NULL,
     slug                TEXT NOT NULL,
     goal                TEXT NOT NULL DEFAULT '',
-    docker_base_image   TEXT NOT NULL DEFAULT 'node:20-slim',
+    docker_base_image   TEXT NOT NULL DEFAULT 'node:24-slim',
     container_id        TEXT,
     container_status    container_status,
     designated_repo_id  UUID,
@@ -484,13 +485,25 @@ CREATE INDEX idx_kb_docs_company ON kb_docs(company_id);
 CREATE TABLE live_chats (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     issue_id   UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    transcript JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status     TEXT NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (issue_id)
 );
 
 CREATE INDEX idx_live_chats_issue ON live_chats(issue_id);
+
+CREATE TABLE live_chat_messages (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chat_id          UUID NOT NULL REFERENCES live_chats(id) ON DELETE CASCADE,
+    author_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
+    author_type      TEXT NOT NULL DEFAULT 'board',
+    content          TEXT NOT NULL,
+    metadata         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_chat_messages_chat ON live_chat_messages(chat_id, created_at);
 
 -------------------------------------------------------------------------------
 -- CONNECTED PLATFORMS

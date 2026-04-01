@@ -1,13 +1,29 @@
+import {
+	AuditAction,
+	AuditActorType,
+	AuditEntityType,
+	AuthType,
+	IssuePriority,
+	IssueStatus,
+	WakeupSource,
+} from '@hezo/shared';
 import { Hono } from 'hono';
+import { auditLog } from '../lib/audit';
+import { broadcastChange } from '../lib/broadcast';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
+import { createWakeup } from '../services/wakeup';
 
 export const issuesRoutes = new Hono<Env>();
 
 issuesRoutes.get('/companies/:companyId/issues', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const { page, perPage, offset } = parsePagination(c);
 
 	const conditions: string[] = ['i.company_id = $1'];
@@ -55,21 +71,18 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
 
 	const where = conditions.join(' AND ');
 
-	// Sort
 	const sortParam = c.req.query('sort') || 'created_at:desc';
 	const [sortField, sortDir] = sortParam.split(':');
 	const allowedSorts = ['created_at', 'updated_at', 'priority', 'number'];
 	const sortColumn = allowedSorts.includes(sortField) ? sortField : 'created_at';
 	const sortDirection = sortDir === 'asc' ? 'ASC' : 'DESC';
 
-	// Count
 	const countResult = await db.query<{ count: number }>(
 		`SELECT count(*)::int AS count FROM issues i WHERE ${where}`,
 		params,
 	);
 	const total = countResult.rows[0].count;
 
-	// Fetch
 	const dataParams = [...params, perPage, offset];
 	const result = await db.query(
 		`SELECT i.id, i.company_id, i.project_id, i.assignee_id, i.parent_issue_id,
@@ -91,8 +104,11 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
 });
 
 issuesRoutes.post('/companies/:companyId/issues', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 
 	const body = await c.req.json<{
 		project_id: string;
@@ -108,7 +124,6 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'project_id and title are required', 400);
 	}
 
-	// Get issue prefix
 	const companyResult = await db.query<{ issue_prefix: string }>(
 		'SELECT issue_prefix FROM companies WHERE id = $1',
 		[companyId],
@@ -117,7 +132,6 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 		return err(c, 'NOT_FOUND', 'Company not found', 404);
 	}
 
-	// Get next number atomically
 	const numberResult = await db.query<{ number: number }>(
 		'SELECT next_issue_number($1) AS number',
 		[companyId],
@@ -128,7 +142,7 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 	const result = await db.query(
 		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,
                          number, identifier, title, description, status, priority, labels)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'backlog', $9::issue_priority, $10::jsonb)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb)
      RETURNING *`,
 		[
 			companyId,
@@ -139,16 +153,36 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 			identifier,
 			body.title.trim(),
 			body.description ?? '',
-			body.priority ?? 'medium',
+			IssueStatus.Backlog,
+			body.priority ?? IssuePriority.Medium,
 			JSON.stringify(body.labels ?? []),
 		],
 	);
 
-	return ok(c, result.rows[0], 201);
+	const issue = result.rows[0] as Record<string, unknown>;
+	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', issue);
+	auditLog(
+		db,
+		companyId,
+		AuditActorType.Board,
+		null,
+		AuditAction.Created,
+		AuditEntityType.Issue,
+		issue.id as string,
+		{
+			identifier,
+		},
+	).catch(() => {});
+	return ok(c, issue, 201);
 });
 
 issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
+
 	const result = await db.query(
 		`SELECT i.*,
             p.name AS project_name, p.goal AS project_goal,
@@ -165,7 +199,7 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
      LEFT JOIN members m_ps ON m_ps.id = i.progress_summary_updated_by
      LEFT JOIN member_agents ma_ps ON ma_ps.id = i.progress_summary_updated_by
      WHERE i.id = $1 AND i.company_id = $2`,
-		[c.req.param('issueId'), c.req.param('companyId')],
+		[c.req.param('issueId'), companyId],
 	);
 
 	if (result.rows.length === 0) {
@@ -176,9 +210,12 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
 });
 
 issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const issueId = c.req.param('issueId');
-	const companyId = c.req.param('companyId');
 
 	const existing = await db.query(
 		'SELECT id, status FROM issues WHERE id = $1 AND company_id = $2',
@@ -238,14 +275,14 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		idx++;
 		sets.push('progress_summary_updated_at = now()');
 		const auth = c.get('auth');
-		const updatedBy = auth.type === 'agent' ? auth.memberId : null;
+		const updatedBy = auth.type === AuthType.Agent ? auth.memberId : null;
 		sets.push(`progress_summary_updated_by = $${idx}`);
 		params.push(updatedBy);
 		idx++;
 	}
 
 	if (sets.length === 0) {
-		return ok(c, (existing as any).rows[0]);
+		return ok(c, existing.rows[0]);
 	}
 
 	params.push(issueId);
@@ -254,13 +291,34 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		params,
 	);
 
+	if (body.assignee_id) {
+		const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
+			body.assignee_id,
+		]);
+		if (isAgent.rows.length > 0) {
+			createWakeup(db, body.assignee_id, companyId, WakeupSource.Assignment, {
+				issue_id: issueId,
+			}).catch((e) => console.error('Failed to create wakeup:', e));
+		}
+	}
+
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'issues',
+		'UPDATE',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0]);
 });
 
 issuesRoutes.delete('/companies/:companyId/issues/:issueId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const issueId = c.req.param('issueId');
-	const companyId = c.req.param('companyId');
 
 	const existing = await db.query<{ status: string }>(
 		'SELECT status FROM issues WHERE id = $1 AND company_id = $2',
@@ -270,11 +328,13 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId', async (c) => {
 		return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	}
 
-	if (!['backlog', 'open'].includes(existing.rows[0].status)) {
+	if (
+		existing.rows[0].status !== IssueStatus.Backlog &&
+		existing.rows[0].status !== IssueStatus.Open
+	) {
 		return err(c, 'FORBIDDEN', 'Can only delete issues with status backlog or open', 403);
 	}
 
-	// Check for comments
 	const comments = await db.query<{ count: number }>(
 		'SELECT count(*)::int AS count FROM issue_comments WHERE issue_id = $1',
 		[issueId],
@@ -284,16 +344,18 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId', async (c) => {
 	}
 
 	await db.query('DELETE FROM issues WHERE id = $1', [issueId]);
+	broadcastChange(c, `company:${companyId}`, 'issues', 'DELETE', { id: issueId });
 	return c.json({ data: null }, 200);
 });
 
-// Sub-issues
 issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const parentIssueId = c.req.param('issueId');
 
-	// Verify parent exists
 	const parent = await db.query<{ project_id: string }>(
 		'SELECT project_id FROM issues WHERE id = $1 AND company_id = $2',
 		[parentIssueId, companyId],
@@ -328,7 +390,7 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 	const result = await db.query(
 		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,
                          number, identifier, title, description, status, priority, labels)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'backlog', $9::issue_priority, $10::jsonb)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb)
      RETURNING *`,
 		[
 			companyId,
@@ -339,16 +401,26 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 			identifier,
 			body.title.trim(),
 			body.description ?? '',
-			body.priority ?? 'medium',
+			IssueStatus.Backlog,
+			body.priority ?? IssuePriority.Medium,
 			JSON.stringify(body.labels ?? []),
 		],
 	);
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'issues',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 
-// Dependencies
 issuesRoutes.get('/companies/:companyId/issues/:issueId/dependencies', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const result = await db.query(
 		`SELECT d.id, d.issue_id, d.blocked_by_issue_id, d.created_at,
@@ -362,6 +434,9 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId/dependencies', async (c)
 });
 
 issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const issueId = c.req.param('issueId');
 	const body = await c.req.json<{ blocked_by_issue_id: string }>();
@@ -390,6 +465,9 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
 });
 
 issuesRoutes.delete('/companies/:companyId/issues/:issueId/dependencies/:depId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	await db.query('DELETE FROM issue_dependencies WHERE id = $1', [c.req.param('depId')]);
 	return c.json({ data: null }, 200);
