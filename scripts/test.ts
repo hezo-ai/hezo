@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Glob } from 'bun';
 
 const ROOT = resolve(import.meta.dir, '..');
