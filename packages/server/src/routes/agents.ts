@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
@@ -113,6 +114,13 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 		[memberId],
 	);
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'member_agents',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 
@@ -204,6 +212,13 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		params,
 	);
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'member_agents',
+		'UPDATE',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0]);
 });
 
@@ -242,6 +257,10 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/terminate', async (c) =
 		[agentId],
 	);
 
+	broadcastChange(c, `company:${companyId}`, 'member_agents', 'UPDATE', {
+		id: agentId,
+		status: 'terminated',
+	});
 	return ok(c, { status: 'terminated' });
 });
 
@@ -265,9 +284,10 @@ agentsRoutes.get('/companies/:companyId/org-chart', async (c) => {
 		status: string;
 		reports_to: string | null;
 	}[];
-	const byId = new Map(agents.map((a) => [a.id, { ...a, children: [] as any[] }]));
+	type AgentNode = (typeof agents)[number] & { children: AgentNode[] };
+	const byId = new Map(agents.map((a) => [a.id, { ...a, children: [] as AgentNode[] }]));
 
-	const roots: any[] = [];
+	const roots: AgentNode[] = [];
 	for (const agent of byId.values()) {
 		if (agent.reports_to && byId.has(agent.reports_to)) {
 			byId.get(agent.reports_to)?.children.push(agent);
@@ -311,6 +331,10 @@ async function changeAgentStatus(
 		agentId,
 	]);
 
+	broadcastChange(c, `company:${companyId}`, 'member_agents', 'UPDATE', {
+		id: agentId,
+		status: newStatus,
+	});
 	return ok(c, { status: newStatus });
 }
 

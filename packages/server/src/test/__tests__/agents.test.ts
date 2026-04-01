@@ -20,7 +20,7 @@ beforeAll(async () => {
 	const typesRes = await app.request('/api/company-types', {
 		headers: authHeader(token),
 	});
-	const typeId = (await typesRes.json()).data.find((t: any) => t.is_builtin).id;
+	const typeId = (await typesRes.json()).data.find((t: Record<string, unknown>) => t.is_builtin).id;
 
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
@@ -55,7 +55,7 @@ describe('agents CRUD', () => {
 		const body = await res.json();
 		// DevOps Engineer starts idle
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
-		expect(body.data.every((a: any) => a.status === 'idle')).toBe(true);
+		expect(body.data.every((a: Record<string, unknown>) => a.status === 'idle')).toBe(true);
 	});
 
 	it('gets an agent by id with full detail', async () => {
@@ -63,7 +63,7 @@ describe('agents CRUD', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
-		const ceo = agents.find((a: any) => a.slug === 'ceo');
+		const ceo = agents.find((a: Record<string, unknown>) => a.slug === 'ceo');
 
 		const res = await app.request(`/api/companies/${companyId}/agents/${ceo.id}`, {
 			headers: authHeader(token),
@@ -96,7 +96,7 @@ describe('agents CRUD', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
-		const engineer = agents.find((a: any) => a.slug === 'engineer');
+		const engineer = agents.find((a: Record<string, unknown>) => a.slug === 'engineer');
 
 		const res = await app.request(`/api/companies/${companyId}/agents/${engineer.id}`, {
 			method: 'PATCH',
@@ -113,7 +113,7 @@ describe('agents CRUD', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
-		const researcher = agents.find((a: any) => a.slug === 'researcher');
+		const researcher = agents.find((a: Record<string, unknown>) => a.slug === 'researcher');
 
 		const res = await app.request(`/api/companies/${companyId}/agents/${researcher.id}/pause`, {
 			method: 'POST',
@@ -129,7 +129,7 @@ describe('agents CRUD', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
-		const researcher = agents.find((a: any) => a.slug === 'researcher');
+		const researcher = agents.find((a: Record<string, unknown>) => a.slug === 'researcher');
 
 		const res = await app.request(`/api/companies/${companyId}/agents/${researcher.id}/resume`, {
 			method: 'POST',
@@ -145,7 +145,7 @@ describe('agents CRUD', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
-		const marketingLead = agents.find((a: any) => a.slug === 'marketing-lead');
+		const marketingLead = agents.find((a: Record<string, unknown>) => a.slug === 'marketing-lead');
 
 		const res = await app.request(
 			`/api/companies/${companyId}/agents/${marketingLead.id}/terminate`,
@@ -165,7 +165,7 @@ describe('agents CRUD', () => {
 		expect(body.data.board).toBeDefined();
 		expect(body.data.board.children.length).toBeGreaterThan(0);
 		// CEO should be at top level with children
-		const ceo = body.data.board.children.find((c: any) => c.title === 'CEO');
+		const ceo = body.data.board.children.find((c: Record<string, unknown>) => c.title === 'CEO');
 		expect(ceo).toBeDefined();
 		expect(ceo.children.length).toBeGreaterThan(0);
 	});

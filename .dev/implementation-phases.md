@@ -236,6 +236,8 @@ UI:
 
 ## Phase 5: Knowledge + Observability
 
+**Status:** Done (2026-04)
+
 **Goal:** KB revisions, audit log, live queries, WebSocket events, live chat, previews. Migrate frontend from polling to real-time.
 
 **What's included:**
@@ -278,6 +280,8 @@ UI:
 
 ## Phase 6: MCP + Skill File + Binary Build
 
+**Status:** Done (2026-04)
+
 **Goal:** External AI agents can interact with Hezo via MCP. Single self-contained binary with bundled frontend.
 
 **What's included:**
@@ -310,9 +314,9 @@ UI + Build:
 
 ---
 
-## Phase 7: Multi-User Auth + Roles
+## Phase 6.5: Auth + Session Compaction
 
-**Goal:** Custom auth with OAuth login, board/member roles with permissions, company email invites, session compaction.
+**Goal:** Custom auth with OAuth login for human board members. Session compaction for agent task continuity. No member roles, invites, or permissions yet — all authenticated users are board members.
 
 **What's included:**
 
@@ -321,8 +325,37 @@ Backend:
   - GitHub OAuth login (via Hezo Connect)
   - GitLab OAuth login (via Hezo Connect)
   - Stateless JWTs signed with master key
+  - `member_users` table — all users created as `board` role
+- Instance admin (first user to sign in)
+- Session compaction:
+  - `agent_task_sessions` table
+  - Per-adapter compaction policies
+  - Handoff markdown generation
+
+UI:
+- OAuth login page (GitHub + GitLab buttons)
+- Account settings page
+- First user flow: OAuth login → master key gate → forced company creation
+
+**How to test:**
+- Create account via GitHub OAuth, log in, access company as board member — all in browser
+- Create account via GitLab OAuth, log in, access company — all in browser
+- First user flow: OAuth login → master key gate → forced company creation — all in browser
+- Session compaction triggers after token threshold
+- Unauthorized requests rejected with 401
+
+**Depends on:** Phase 6
+
+---
+
+## Phase 7: Multi-User Roles + Invites
+
+**Goal:** Member roles with scoped permissions, company email invites, file attachments. Extends Phase 6.5 auth from board-only to multi-role.
+
+**What's included:**
+
+Backend:
 - Member roles via `member_users` table:
-  - `board` — full authority
   - `member` — scoped authority with `role_title`, `permissions_text`, `project_ids`
 - Permission enforcement:
   - API layer: board-only endpoints blocked for members, project scope enforced
@@ -333,23 +366,14 @@ Backend:
   - Invite link with unique token, 7-day expiry
   - Recipient authenticates via GitHub or GitLab OAuth
   - Role and permissions copied to membership on accept
-- Instance admin (first user to sign in)
-- Session compaction:
-  - `agent_task_sessions` table
-  - Per-adapter compaction policies
-  - Handoff markdown generation
 - File attachments (upload, download, issue linking, local storage)
 
 UI:
-- OAuth login page (GitHub + GitLab buttons)
-- Account settings page
 - Member management UI in Settings (list members, roles, permissions)
 - Invite flow UI (create invite, specify role/permissions/project scope)
 - Permission-gated navigation — members see only allowed projects, board-only sections hidden
 
 **How to test:**
-- Create account via GitHub OAuth, log in, access company as board member — all in browser
-- Create account via GitLab OAuth, log in, access company — all in browser
 - Invite a board member — joins with full access, visible in member management UI
 - Invite a member with role_title + permissions_text + project_ids — joins with scoped access
 - Member can create issue in allowed project via browser
@@ -357,10 +381,8 @@ UI:
 - Member cannot access company settings or agent management (403)
 - Agent respects member's permissions_text (e.g. refuses to change PRD when permissions say not to)
 - Member cannot create invites (403)
-- First user flow: OAuth login → master key gate → forced company creation — all in browser
-- Session compaction triggers after token threshold
 
-**Depends on:** Phase 6
+**Depends on:** Phase 6.5
 
 ---
 
@@ -481,7 +503,8 @@ UI:
 | 4 | Agent Execution + UI | Docker per project, subprocesses, heartbeats, budgets + agent status UI, cost views |
 | 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack DB migration, live chat, real-time updates |
 | 6 | MCP + Skill File + Binary Build | MCP endpoint, skill file + `bun build --compile` single binary, Playwright E2E |
-| 7 | Multi-User Auth + Roles + UI | Custom auth (OAuth), board/member roles, permissions, invites + login page, member management |
+| 6.5 | Auth + Session Compaction | Custom OAuth auth (board members only), session compaction + login page, account settings |
+| 7 | Multi-User Roles + Invites | Member roles, scoped permissions, email invites + member management UI |
 | 8 | Adapters + Plugins + UI | Gemini/Codex adapters, plugin system + plugin management UI, runtime selector |
 | 9 | Full Platform Integrations + UI | All OAuth platforms, centrally hosted Connect + extended connection UI |
 | 10 | Deploy + Messaging + UI | Staging/production pipeline, Slack + Telegram + deploy status, notification preferences |

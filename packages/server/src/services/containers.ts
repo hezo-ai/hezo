@@ -5,7 +5,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { DockerClient } from './docker';
 import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
 
-interface ProjectRow {
+export interface ProjectRow {
 	id: string;
 	company_id: string;
 	slug: string;

@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { cloneRepo } from '../services/git';
@@ -121,6 +122,13 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 		}
 	}
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'repos',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 
@@ -138,5 +146,7 @@ reposRoutes.delete('/companies/:companyId/projects/:projectId/repos/:repoId', as
 		return err(c, 'NOT_FOUND', 'Repo not found', 404);
 	}
 
+	const companyId = c.req.param('companyId');
+	broadcastChange(c, `company:${companyId}`, 'repos', 'DELETE', { id: repoId });
 	return ok(c, { deleted: true });
 });

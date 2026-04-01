@@ -37,7 +37,9 @@ beforeAll(async () => {
 		headers: authHeader(token),
 	});
 	// Use the engineer (has 5000 budget)
-	agentId = (await agentsRes.json()).data.find((a: any) => a.slug === 'engineer').id;
+	agentId = (await agentsRes.json()).data.find(
+		(a: Record<string, unknown>) => a.slug === 'engineer',
+	).id;
 });
 
 afterAll(async () => {

@@ -5,7 +5,8 @@ export type WakeupSource =
 	| 'assignment'
 	| 'mention'
 	| 'option_chosen'
-	| 'approval_resolved';
+	| 'approval_resolved'
+	| 'chat_message';
 
 const COALESCING_WINDOW_MS = 10_000;
 

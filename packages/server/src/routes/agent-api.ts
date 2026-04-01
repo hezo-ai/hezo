@@ -71,7 +71,12 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 		[memberId, companyId],
 	);
 
-	const notifications = await db.query(
+	const notifications = await db.query<{
+		id: string;
+		issue_id: string;
+		issue_number: number;
+		issue_identifier: string;
+	}>(
 		`SELECT ic.id, ic.issue_id, i.number AS issue_number, i.identifier AS issue_identifier,
 		        ic.content, ic.author_member_id
 		 FROM issue_comments ic
@@ -98,7 +103,7 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 			budget_remaining_cents: budgetRemaining,
 		},
 		assigned_issues: issues.rows,
-		notifications: notifications.rows.map((n: any) => ({
+		notifications: notifications.rows.map((n) => ({
 			type: 'mention',
 			issue_id: n.issue_id,
 			issue_number: n.issue_number,

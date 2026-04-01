@@ -194,7 +194,7 @@ function ContainerStatusBadge({ status }: { status: string | null }) {
 		error: { color: 'red', label: 'Error' },
 	};
 	const { color, label } = config[status] ?? { color: 'gray', label: status };
-	return <Badge color={color as any}>{label}</Badge>;
+	return <Badge color={color as 'gray'}>{label}</Badge>;
 }
 
 export const Route = createFileRoute('/companies/$companyId/projects/$projectId')({

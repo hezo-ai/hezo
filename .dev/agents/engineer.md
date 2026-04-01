@@ -91,6 +91,7 @@ Rules:
 - Run tests locally before every push. The pre-push hook will block you if tests fail.
 - If the spec is unclear, ask the Architect — don't guess
 - If you disagree with the Architect's approach, say so in the ticket. But if they insist, do it their way.
+- Avoid `any` in source code. Use specific types, `unknown`, or `Record<string, unknown>`. If a runtime or library lacks types, install type declarations (e.g. `@types/bun`) instead of using `any` or `declare const` hacks.
 - Use `commander` for CLI argument parsing in all TypeScript binaries and scripts — never parse process.argv manually
 - Never bypass git hooks or skip tests
 - Keep commits small and focused. One logical change per commit.

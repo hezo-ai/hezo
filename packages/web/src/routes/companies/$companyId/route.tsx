@@ -1,10 +1,12 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router';
 import { Sidebar } from '../../../components/sidebar';
 import { useCompany } from '../../../hooks/use-companies';
+import { useWebSocket } from '../../../hooks/use-websocket';
 
 function CompanyLayout() {
 	const { companyId } = Route.useParams();
 	const { data: company } = useCompany(companyId);
+	useWebSocket(companyId);
 
 	return (
 		<div className="flex flex-1 overflow-hidden">

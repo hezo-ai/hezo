@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 
@@ -50,6 +51,14 @@ executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c
 		[issueId, body.member_id],
 	);
 
+	const companyId = c.req.param('companyId');
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'execution_locks',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 
@@ -62,5 +71,7 @@ executionLocksRoutes.delete('/companies/:companyId/issues/:issueId/lock', async 
 		[issueId],
 	);
 
+	const companyId = c.req.param('companyId');
+	broadcastChange(c, `company:${companyId}`, 'execution_locks', 'DELETE', { issue_id: issueId });
 	return ok(c, { released: true });
 });

@@ -1,8 +1,14 @@
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
-import { provisionContainer, rebuildContainer, teardownContainer } from '../services/containers';
+import {
+	type ProjectRow,
+	provisionContainer,
+	rebuildContainer,
+	teardownContainer,
+} from '../services/containers';
 
 export const projectsRoutes = new Hono<Env>();
 
@@ -55,6 +61,7 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 	);
 
 	const project = result.rows[0] as Record<string, unknown>;
+	broadcastChange(c, `company:${companyId}`, 'projects', 'INSERT', project);
 
 	const companySlugResult = await db.query<{ slug: string }>(
 		'SELECT slug FROM companies WHERE id = $1',
@@ -65,9 +72,11 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 	if (companySlug) {
 		const docker = c.get('docker');
 		const dataDir = c.get('dataDir');
-		provisionContainer(db, docker, project as any, companySlug, dataDir).catch((error) => {
-			console.error(`Failed to provision container for project ${project.slug}:`, error);
-		});
+		provisionContainer(db, docker, project as unknown as ProjectRow, companySlug, dataDir).catch(
+			(error) => {
+				console.error(`Failed to provision container for project ${project.slug}:`, error);
+			},
+		);
 	}
 
 	return ok(c, project, 201);
@@ -150,6 +159,13 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 		params,
 	);
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'projects',
+		'UPDATE',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0]);
 });
 
@@ -196,6 +212,7 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 	}
 
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
+	broadcastChange(c, `company:${companyId}`, 'projects', 'DELETE', { id: projectId });
 	return c.json({ data: null }, 200);
 });
 
@@ -228,7 +245,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/rebuild-container
 		const containerId = await rebuildContainer(
 			db,
 			docker,
-			projectResult.rows[0] as any,
+			projectResult.rows[0] as ProjectRow,
 			companySlug,
 			dataDir,
 		);

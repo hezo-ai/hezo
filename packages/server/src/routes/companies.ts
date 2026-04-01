@@ -1,3 +1,4 @@
+import type { PGlite } from '@electric-sql/pglite';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { toIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
@@ -50,7 +51,7 @@ companiesRoutes.post('/companies', async (c) => {
      RETURNING *`,
 		[body.name.trim(), slug, body.description ?? '', body.company_type_id ?? null, issuePrefix],
 	);
-	const company = companyResult.rows[0] as any;
+	const company = companyResult.rows[0] as { id: string; [key: string]: unknown };
 
 	// Initialize issue counter
 	await db.query('INSERT INTO company_issue_counters (company_id, next_number) VALUES ($1, 1)', [
@@ -59,7 +60,7 @@ companiesRoutes.post('/companies', async (c) => {
 
 	// Auto-create agents from company type
 	if (body.company_type_id) {
-		const typeResult = await db.query<{ agents_config: any }>(
+		const typeResult = await db.query<{ agents_config: AgentConfig[] | null }>(
 			'SELECT agents_config FROM company_types WHERE id = $1',
 			[body.company_type_id],
 		);
@@ -181,7 +182,7 @@ interface AgentConfig {
 }
 
 async function createAgentsFromConfig(
-	db: any,
+	db: PGlite,
 	companyId: string,
 	agentsConfig: AgentConfig[],
 ): Promise<void> {
@@ -189,7 +190,7 @@ async function createAgentsFromConfig(
 	const slugToMemberId = new Map<string, string>();
 
 	for (const agent of agentsConfig) {
-		const memberResult = await db.query(
+		const memberResult = await db.query<{ id: string }>(
 			`INSERT INTO members (company_id, member_type, display_name)
        VALUES ($1, 'agent', $2)
        RETURNING id`,

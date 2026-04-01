@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 
@@ -65,6 +66,13 @@ secretsRoutes.post('/companies/:companyId/secrets', async (c) => {
 		],
 	);
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'secrets',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 
@@ -136,6 +144,7 @@ secretsRoutes.delete('/companies/:companyId/secrets/:secretId', async (c) => {
 	}
 
 	await db.query('DELETE FROM secrets WHERE id = $1', [secretId]);
+	broadcastChange(c, `company:${companyId}`, 'secrets', 'DELETE', { id: secretId });
 	return c.json({ data: null }, 200);
 });
 

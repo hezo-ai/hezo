@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 
@@ -56,6 +57,13 @@ preferencesRoutes.patch('/companies/:companyId/preferences', async (c) => {
 			 RETURNING *`,
 			[companyId, body.content, authorMemberId],
 		);
+		broadcastChange(
+			c,
+			`company:${companyId}`,
+			'company_preferences',
+			'INSERT',
+			result.rows[0] as Record<string, unknown>,
+		);
 		return ok(c, result.rows[0], 201);
 	}
 
@@ -82,6 +90,13 @@ preferencesRoutes.patch('/companies/:companyId/preferences', async (c) => {
 		[body.content, authorMemberId, companyId],
 	);
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'company_preferences',
+		'UPDATE',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0]);
 });
 

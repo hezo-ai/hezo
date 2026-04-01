@@ -1,7 +1,7 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 import { authenticate } from './helpers';
 
-async function createCompanyWithAgents(page: any) {
+async function createCompanyWithAgents(page: Page) {
 	// Get company type ID and create company via API so agents are auto-created
 	const typesRes = await page.request.get('/api/company-types', {
 		headers: { Authorization: `Bearer ${await getToken(page)}` },
@@ -21,7 +21,7 @@ async function createCompanyWithAgents(page: any) {
 	return company.data;
 }
 
-async function getToken(page: any): Promise<string> {
+async function getToken(page: Page): Promise<string> {
 	const tokenRes = await page.request.post('/api/auth/token', {
 		data: { master_key: 'e2e-test-master-key-0123456789abcdef0123456789abcdef' },
 	});

@@ -16,6 +16,24 @@ export function usePreferences(companyId: string) {
 	});
 }
 
+export interface PreferenceRevision {
+	id: string;
+	preference_id: string;
+	revision_number: number;
+	content: string;
+	change_summary: string;
+	author_name: string | null;
+	created_at: string;
+}
+
+export function usePreferenceRevisions(companyId: string) {
+	return useQuery({
+		queryKey: ['companies', companyId, 'preferences', 'revisions'],
+		queryFn: () =>
+			api.get<PreferenceRevision[]>(`/api/companies/${companyId}/preferences/revisions`),
+	});
+}
+
 export function useUpdatePreferences(companyId: string) {
 	return useMutation({
 		mutationFn: (data: { content: string; change_summary?: string }) =>

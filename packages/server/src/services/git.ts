@@ -16,7 +16,7 @@ function spawn(
 			{ cwd: opts.cwd, env: { ...process.env, ...opts.env } },
 			(error, stdout, stderr) => {
 				resolve({
-					exitCode: error ? ((error as any).code ?? 1) : 0,
+					exitCode: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
 					stdout: stdout?.toString() ?? '',
 					stderr: stderr?.toString() ?? '',
 				});

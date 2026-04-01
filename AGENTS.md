@@ -1,5 +1,7 @@
 # Agent Guidelines
 
+Note that dev docs (prd, schema, impl phases, etc) are in `.dev` folder.
+
 ## Commands
 
 - `bun run test` — run all tests across all packages in parallel (unit, integration, and e2e)
@@ -37,6 +39,10 @@ End-to-end tests live in `tests/e2e/` and use Playwright. The Playwright config 
 E2E tests verify full-stack user flows through the browser. They are included in `bun run test` by default but can be skipped with `--skip-e2e` or run in isolation with `--e2e`.
 
 All UI changes must include e2e tests covering the affected user flows. E2E test files use the `.spec.ts` extension and import helpers from `./helpers`. Use the `authenticate(page)` helper to bypass the master key gate in tests that don't specifically test authentication.
+
+## Type Safety
+
+Avoid `any` in source code. Use specific types, `unknown`, `Record<string, unknown>`, or typed generics instead. If a library lacks type declarations, install them (e.g. `@types/bun` for Bun APIs) rather than falling back to `any` or `declare const` hacks. The only acceptable place for `any` is test files where JSON response shapes are unpredictable.
 
 ## Security
 

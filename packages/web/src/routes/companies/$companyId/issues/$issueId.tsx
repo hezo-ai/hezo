@@ -1,12 +1,14 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { ArrowLeft, Loader2, MessageSquare, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Loader2, MessageCircle, MessageSquare, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { type CommentData, CommentRenderer } from '../../../../components/comment-renderers';
+import { LiveChatPanel } from '../../../../components/live-chat-panel';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Card } from '../../../../components/ui/card';
 import { Textarea } from '../../../../components/ui/textarea';
 import { useAgents } from '../../../../hooks/use-agents';
-import { useComments, useCreateComment } from '../../../../hooks/use-comments';
+import { useChooseOption, useComments, useCreateComment } from '../../../../hooks/use-comments';
 import { useExecutionLock } from '../../../../hooks/use-execution-locks';
 import {
 	useCreateSubIssue,
@@ -38,11 +40,13 @@ function IssueDetailPage() {
 	const updateIssue = useUpdateIssue(companyId, issueId);
 	const deleteIssue = useDeleteIssue(companyId);
 	const createComment = useCreateComment(companyId, issueId);
+	const chooseOption = useChooseOption(companyId, issueId);
 	const createSubIssue = useCreateSubIssue(companyId, issueId);
 	const removeDep = useRemoveDependency(companyId, issueId);
 	const [commentText, setCommentText] = useState('');
 	const [subIssueTitle, setSubIssueTitle] = useState('');
 	const [showSubForm, setShowSubForm] = useState(false);
+	const [activeTab, setActiveTab] = useState<'comments' | 'chat'>('comments');
 
 	if (isLoading || !issue) return <div className="p-6 text-text-muted">Loading...</div>;
 
@@ -124,54 +128,90 @@ function IssueDetailPage() {
 						</div>
 					)}
 
-					{/* Comments */}
+					{/* Comments / Chat tabs */}
 					<div className="border-t border-border pt-4">
-						<h3 className="text-sm font-medium text-text-muted mb-3 flex items-center gap-1.5">
-							<MessageSquare className="w-4 h-4" />
-							Comments ({comments?.length ?? 0})
-						</h3>
-						<div className="flex flex-col gap-3 mb-4">
-							{comments?.map((c) => (
-								<Card key={c.id} className="p-3">
-									<div className="flex items-center gap-2 mb-1.5">
-										<span className="text-xs font-medium text-text">{c.author_name}</span>
-										<Badge
-											color={c.author_type === 'board' ? 'purple' : 'blue'}
-											className="text-[10px]"
-										>
-											{c.author_type}
-										</Badge>
-										<span className="text-xs text-text-subtle ml-auto">
-											{new Date(c.created_at).toLocaleString()}
-										</span>
-									</div>
-									{c.content_type === 'system' ? (
-										<p className="text-xs text-text-subtle italic">{c.content}</p>
-									) : (
-										<p className="text-sm text-text whitespace-pre-wrap">{c.content}</p>
-									)}
-								</Card>
-							))}
+						<div className="flex gap-4 mb-3">
+							<button
+								type="button"
+								onClick={() => setActiveTab('comments')}
+								className={`text-sm font-medium flex items-center gap-1.5 pb-1 border-b-2 transition-colors ${
+									activeTab === 'comments'
+										? 'border-primary text-text'
+										: 'border-transparent text-text-muted hover:text-text'
+								}`}
+							>
+								<MessageSquare className="w-4 h-4" />
+								Comments ({comments?.length ?? 0})
+							</button>
+							<button
+								type="button"
+								onClick={() => setActiveTab('chat')}
+								className={`text-sm font-medium flex items-center gap-1.5 pb-1 border-b-2 transition-colors ${
+									activeTab === 'chat'
+										? 'border-primary text-text'
+										: 'border-transparent text-text-muted hover:text-text'
+								}`}
+							>
+								<MessageCircle className="w-4 h-4" />
+								Live Chat
+							</button>
 						</div>
 
-						<form onSubmit={handleComment} className="flex flex-col gap-2">
-							<Textarea
-								value={commentText}
-								onChange={(e) => setCommentText(e.target.value)}
-								placeholder="Add a comment..."
-								className="min-h-[60px]"
-							/>
-							<div className="flex justify-end">
-								<Button
-									type="submit"
-									size="sm"
-									disabled={!commentText.trim() || createComment.isPending}
-								>
-									{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-									Comment
-								</Button>
+						{activeTab === 'comments' ? (
+							<>
+								<div className="flex flex-col gap-3 mb-4">
+									{comments?.map((c) => (
+										<Card key={c.id} className="p-3">
+											<div className="flex items-center gap-2 mb-1.5">
+												<span className="text-xs font-medium text-text">{c.author_name}</span>
+												<Badge
+													color={c.author_type === 'board' ? 'purple' : 'blue'}
+													className="text-[10px]"
+												>
+													{c.author_type}
+												</Badge>
+												<span className="text-xs text-text-subtle ml-auto">
+													{new Date(c.created_at).toLocaleString()}
+												</span>
+											</div>
+											<CommentRenderer
+												comment={c as unknown as CommentData}
+												onChooseOption={(commentId, chosenId) =>
+													chooseOption.mutate({ commentId, chosen_id: chosenId })
+												}
+											/>
+										</Card>
+									))}
+								</div>
+
+								<form onSubmit={handleComment} className="flex flex-col gap-2">
+									<Textarea
+										value={commentText}
+										onChange={(e) => setCommentText(e.target.value)}
+										placeholder="Add a comment..."
+										className="min-h-[60px]"
+									/>
+									<div className="flex justify-end">
+										<Button
+											type="submit"
+											size="sm"
+											disabled={!commentText.trim() || createComment.isPending}
+										>
+											{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+											Comment
+										</Button>
+									</div>
+								</form>
+							</>
+						) : (
+							<div className="h-80 border border-border rounded-lg overflow-hidden">
+								<LiveChatPanel
+									companyId={companyId}
+									issueId={issueId}
+									agents={agents?.map((a) => ({ slug: a.slug, title: a.title })) ?? []}
+								/>
 							</div>
-						</form>
+						)}
 					</div>
 
 					{/* Sub-issues */}

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 
@@ -51,6 +52,13 @@ approvalsRoutes.post('/companies/:companyId/approvals', async (c) => {
 		[companyId, body.type, body.requested_by_member_id, JSON.stringify(body.payload)],
 	);
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'approvals',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 
@@ -84,5 +92,9 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 		[body.status, body.resolution_note ?? null, approvalId],
 	);
 
-	return ok(c, result.rows[0]);
+	const row = result.rows[0] as Record<string, unknown>;
+	if (row.company_id) {
+		broadcastChange(c, `company:${row.company_id}`, 'approvals', 'UPDATE', row);
+	}
+	return ok(c, row);
 });

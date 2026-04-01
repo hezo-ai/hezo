@@ -1,0 +1,77 @@
+export enum WsMessageType {
+	Connected = 'connected',
+	RowChange = 'row_change',
+	ChatMessage = 'chat_message',
+	AgentLifecycle = 'agent_lifecycle',
+	Error = 'error',
+}
+
+export enum WsClientAction {
+	Subscribe = 'subscribe',
+	Unsubscribe = 'unsubscribe',
+	Chat = 'chat',
+}
+
+export type ChangeAction = 'INSERT' | 'UPDATE' | 'DELETE';
+
+export interface WsRowChangeMessage {
+	type: WsMessageType.RowChange;
+	table: string;
+	action: ChangeAction;
+	row: Record<string, unknown>;
+}
+
+export interface WsChatMessage {
+	type: WsMessageType.ChatMessage;
+	issueId: string;
+	message: {
+		id: string;
+		chatId: string;
+		authorMemberId: string | null;
+		authorType: string;
+		content: string;
+		createdAt: string;
+	};
+}
+
+export interface WsAgentLifecycleMessage {
+	type: WsMessageType.AgentLifecycle;
+	memberId: string;
+	status: string;
+}
+
+export interface WsConnectedMessage {
+	type: WsMessageType.Connected;
+}
+
+export interface WsErrorMessage {
+	type: WsMessageType.Error;
+	code: string;
+	message: string;
+}
+
+export type WsServerMessage =
+	| WsRowChangeMessage
+	| WsChatMessage
+	| WsAgentLifecycleMessage
+	| WsConnectedMessage
+	| WsErrorMessage;
+
+export interface WsSubscribeAction {
+	action: WsClientAction.Subscribe;
+	room: string;
+}
+
+export interface WsUnsubscribeAction {
+	action: WsClientAction.Unsubscribe;
+	room: string;
+}
+
+export interface WsChatAction {
+	action: WsClientAction.Chat;
+	issueId: string;
+	content: string;
+	mentions?: string[];
+}
+
+export type WsClientMessage = WsSubscribeAction | WsUnsubscribeAction | WsChatAction;

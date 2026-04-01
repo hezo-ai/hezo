@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { DockerClient } from '../services/docker';
+import type { WebSocketManager } from '../services/ws';
 
 export type AuthInfo =
 	| { type: 'board'; userId: string }
@@ -12,6 +13,7 @@ export type Env = {
 		db: PGlite;
 		masterKeyManager: MasterKeyManager;
 		docker: DockerClient;
+		wsManager: WebSocketManager;
 		auth: AuthInfo;
 		dataDir: string;
 		connectUrl: string;

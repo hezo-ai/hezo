@@ -17,6 +17,7 @@
 	},
 	"scripts": {
 		"build": "bun run scripts/build.ts",
+		"build:compile": "bun run scripts/build.ts --compile",
 		"check": "bunx biome check .",
 		"check:fix": "bunx biome check --write .",
 		"dev": "bun run scripts/dev.ts",

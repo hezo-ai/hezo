@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
@@ -73,6 +74,13 @@ kbDocsRoutes.post('/companies/:companyId/kb-docs', async (c) => {
 		[companyId, body.title.trim(), slug, body.content ?? '', authorMemberId],
 	);
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'kb_docs',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 
@@ -168,6 +176,13 @@ kbDocsRoutes.patch('/companies/:companyId/kb-docs/:slug', async (c) => {
 		params,
 	);
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'kb_docs',
+		'UPDATE',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0]);
 });
 
@@ -177,16 +192,20 @@ kbDocsRoutes.delete('/companies/:companyId/kb-docs/:slug', async (c) => {
 	const companyId = c.req.param('companyId');
 	const slug = c.req.param('slug');
 
-	const existing = await db.query('SELECT id FROM kb_docs WHERE company_id = $1 AND slug = $2', [
-		companyId,
-		slug,
-	]);
+	const existing = await db.query<{ id: string }>(
+		'SELECT id FROM kb_docs WHERE company_id = $1 AND slug = $2',
+		[companyId, slug],
+	);
 
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'KB document not found', 404);
 	}
 
 	await db.query('DELETE FROM kb_docs WHERE company_id = $1 AND slug = $2', [companyId, slug]);
+	broadcastChange(c, `company:${companyId}`, 'kb_docs', 'DELETE', {
+		id: existing.rows[0].id,
+		slug,
+	});
 	return c.json({ data: null }, 200);
 });
 

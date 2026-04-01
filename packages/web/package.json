@@ -27,6 +27,7 @@
 		"react": "^19",
 		"react-dom": "^19",
 		"react-markdown": "^10",
+		"reconnecting-websocket": "^4.4.0",
 		"remark-gfm": "^4"
 	},
 	"devDependencies": {

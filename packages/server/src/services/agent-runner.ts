@@ -152,7 +152,11 @@ function buildTaskPrompt(systemPrompt: string, issue: IssueInfo): string {
 	].join('\n');
 }
 
-async function createHeartbeatRun(db: PGlite, agent: AgentInfo, issue: IssueInfo): Promise<string> {
+async function createHeartbeatRun(
+	db: PGlite,
+	agent: AgentInfo,
+	_issue: IssueInfo,
+): Promise<string> {
 	const result = await db.query<{ id: string }>(
 		`INSERT INTO heartbeat_runs (member_id, company_id, status)
 		 VALUES ($1, $2, 'running'::heartbeat_run_status)

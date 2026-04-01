@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 
@@ -48,8 +49,9 @@ apiKeysRoutes.post('/companies/:companyId/api-keys', async (c) => {
 		[companyId, body.name.trim(), prefix, keyHash],
 	);
 
-	// Return the raw key once
-	return ok(c, { ...result.rows[0], key: rawKey }, 201);
+	const row = result.rows[0];
+	broadcastChange(c, `company:${companyId}`, 'api_keys', 'INSERT', row as Record<string, unknown>);
+	return ok(c, { ...row, key: rawKey }, 201);
 });
 
 apiKeysRoutes.delete('/companies/:companyId/api-keys/:apiKeyId', async (c) => {
@@ -66,5 +68,6 @@ apiKeysRoutes.delete('/companies/:companyId/api-keys/:apiKeyId', async (c) => {
 	}
 
 	await db.query('DELETE FROM api_keys WHERE id = $1', [apiKeyId]);
+	broadcastChange(c, `company:${companyId}`, 'api_keys', 'DELETE', { id: apiKeyId });
 	return c.json({ data: null }, 200);
 });

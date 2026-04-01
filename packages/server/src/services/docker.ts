@@ -48,7 +48,6 @@ export class DockerClient {
 			method,
 			headers: body ? { 'Content-Type': 'application/json' } : undefined,
 			body: body ? JSON.stringify(body) : undefined,
-			// @ts-expect-error Bun supports unix socket via fetch
 			unix: this.socketPath,
 		});
 		return res;

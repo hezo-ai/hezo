@@ -15,6 +15,9 @@ export default defineConfig({
 			'/api': serverUrl,
 			'/oauth': serverUrl,
 			'/health': serverUrl,
+			'/mcp': serverUrl,
+			'/skill.md': serverUrl,
+			'/ws': { target: serverUrl.replace('http', 'ws'), ws: true },
 		},
 	},
 });

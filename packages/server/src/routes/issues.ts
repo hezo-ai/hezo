@@ -1,4 +1,6 @@
 import { Hono } from 'hono';
+import { auditLog } from '../lib/audit';
+import { broadcastChange } from '../lib/broadcast';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -145,7 +147,12 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 		],
 	);
 
-	return ok(c, result.rows[0], 201);
+	const issue = result.rows[0] as Record<string, unknown>;
+	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', issue);
+	auditLog(db, companyId, 'board', null, 'created', 'issue', issue.id as string, {
+		identifier,
+	}).catch(() => {});
+	return ok(c, issue, 201);
 });
 
 issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
@@ -246,7 +253,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	}
 
 	if (sets.length === 0) {
-		return ok(c, (existing as any).rows[0]);
+		return ok(c, existing.rows[0]);
 	}
 
 	params.push(issueId);
@@ -266,6 +273,13 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		}
 	}
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'issues',
+		'UPDATE',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0]);
 });
 
@@ -296,6 +310,7 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId', async (c) => {
 	}
 
 	await db.query('DELETE FROM issues WHERE id = $1', [issueId]);
+	broadcastChange(c, `company:${companyId}`, 'issues', 'DELETE', { id: issueId });
 	return c.json({ data: null }, 200);
 });
 
@@ -356,6 +371,13 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 		],
 	);
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'issues',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 

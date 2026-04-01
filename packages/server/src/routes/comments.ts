@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { createWakeup } from '../services/wakeup';
@@ -24,7 +25,7 @@ commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) =
 	);
 
 	if (includeToolCalls) {
-		for (const comment of result.rows as any[]) {
+		for (const comment of result.rows as Record<string, unknown>[]) {
 			if (comment.content_type === 'trace') {
 				const toolCalls = await db.query(
 					'SELECT * FROM tool_calls WHERE comment_id = $1 ORDER BY created_at ASC',
@@ -91,6 +92,13 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		}
 	}
 
+	broadcastChange(
+		c,
+		`company:${companyId}`,
+		'issue_comments',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
 	return ok(c, result.rows[0], 201);
 });
 
@@ -148,6 +156,13 @@ commentsRoutes.post(
 			}
 		}
 
+		broadcastChange(
+			c,
+			`company:${companyId}`,
+			'issue_comments',
+			'UPDATE',
+			result.rows[0] as Record<string, unknown>,
+		);
 		return ok(c, result.rows[0]);
 	},
 );

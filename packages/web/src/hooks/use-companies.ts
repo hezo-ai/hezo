@@ -9,6 +9,7 @@ export interface Company {
 	description: string | null;
 	issue_prefix: string;
 	company_type_id: string | null;
+	mcp_servers: unknown[];
 	agent_count: number;
 	open_issue_count: number;
 	created_at: string;
@@ -42,7 +43,7 @@ export function useCreateCompany() {
 
 export function useUpdateCompany(id: string) {
 	return useMutation({
-		mutationFn: (data: { name?: string; description?: string }) =>
+		mutationFn: (data: { name?: string; description?: string; mcp_servers?: unknown[] }) =>
 			api.patch<Company>(`/api/companies/${id}`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['companies'] });
