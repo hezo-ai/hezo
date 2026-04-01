@@ -8,6 +8,7 @@
         "@biomejs/biome": "^2.4.10",
         "@commitlint/cli": "^20.5.0",
         "@commitlint/config-conventional": "^20.5.0",
+        "@playwright/test": "^1",
         "commander": "^14.0.3",
         "husky": "^9.1.7",
         "turbo": "^2",
@@ -76,7 +77,6 @@
         "remark-gfm": "^4",
       },
       "devDependencies": {
-        "@playwright/test": "^1",
         "@tailwindcss/vite": "^4",
         "@tanstack/router-plugin": "^1",
         "@types/react": "^19",

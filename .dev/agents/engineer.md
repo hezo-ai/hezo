@@ -97,6 +97,7 @@ Rules:
 - Your work is NOT done until the QA Engineer approves it
 - Implement frontend alongside backend within each phase — both land together. Manual browser testing is expected at each phase boundary.
 - Phase completion requires that new functionality is exercisable from the browser, not just via API/curl.
+- When a phase adds user-facing functionality, add Playwright e2e tests in `tests/e2e/` covering the critical user flows. Use `authenticate(page)` from `tests/e2e/helpers.ts` to skip auth in non-auth tests. E2e tests are optional but strongly recommended for any phase that touches UI.
 - When your implementation diverges from the technical spec or implementation plan, update the relevant project documents to reflect the actual state.
 - Keep all project documents current — if a design decision changes during implementation, update the tech spec, implementation plan, and any other affected project docs.
 - Review company preferences to align implementation style with the board's preferences. When you observe new preferences in board feedback, update the company preferences document.
@@ -106,7 +107,8 @@ Rules:
 
 Tests run via `bun run scripts/test.ts` which discovers test files across packages, sorts them
 longest-first using `tests/test-run-order.json` for optimal parallelism, and runs them concurrently
-(default 4 workers, configurable via `--concurrency N`).
+(default 4 workers, configurable via `--concurrency N`). After unit/integration tests, Playwright e2e
+tests from `tests/e2e/` run automatically (skip with `--skip-e2e`, run alone with `--e2e`).
 
 **Every test file must be fully isolated.** Use the `createTestContext()` / `destroyTestContext()`
 pattern in `beforeAll` / `afterAll`:

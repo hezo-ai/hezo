@@ -13,6 +13,8 @@ const program = new Command()
 	.option('--concurrency <n>', 'Number of parallel test workers', '4')
 	.option('--pattern <str>', 'Filter test files by substring match')
 	.option('--package <name>', 'Run tests only in a specific package')
+	.option('--skip-e2e', 'Skip Playwright e2e tests')
+	.option('--e2e', 'Run only Playwright e2e tests')
 	.parse();
 
 const opts = program.opts();
@@ -20,6 +22,8 @@ const bail = opts.bail as boolean;
 const concurrency = Number.parseInt(opts.concurrency, 10);
 const pattern = opts.pattern as string | undefined;
 const packageFilter = opts.package as string | undefined;
+const skipE2E = opts.skipE2e as boolean;
+const e2eFlag = opts.e2e as boolean;
 
 const TEST_PACKAGES = ['packages/server', 'packages/connect'];
 
@@ -63,9 +67,10 @@ async function discoverTests(): Promise<TestFile[]> {
 async function main() {
 	await buildShared();
 
-	const testFiles = await discoverTests();
+	const e2eOnly = e2eFlag;
+	const testFiles = e2eOnly ? [] : await discoverTests();
 
-	if (testFiles.length === 0) {
+	if (testFiles.length === 0 && !e2eOnly) {
 		console.log('No test files found.');
 		process.exit(0);
 	}
@@ -132,17 +137,34 @@ async function main() {
 	mkdirSync(resolve(ROOT, 'tests'), { recursive: true });
 	await Bun.write(runOrderPath, JSON.stringify(durations, null, 2));
 
-	console.log('\n── Test Results ──');
-	for (const r of results) {
-		const icon = r.passed ? '\u2713' : '\u2717';
-		const label = `${r.pkg}/${r.file}`;
-		console.log(`  ${icon} ${label} (${r.duration}ms)`);
+	if (results.length > 0) {
+		console.log('\n── Unit/Integration Test Results ──');
+		for (const r of results) {
+			const icon = r.passed ? '\u2713' : '\u2717';
+			const label = `${r.pkg}/${r.file}`;
+			console.log(`  ${icon} ${label} (${r.duration}ms)`);
+		}
+
+		const passCount = results.filter((r) => r.passed).length;
+		console.log(`\n${passCount}/${results.length} passed`);
 	}
 
-	const passCount = results.filter((r) => r.passed).length;
-	console.log(`\n${passCount}/${results.length} passed`);
+	const runE2E = !skipE2E && (!packageFilter || e2eOnly);
+	let e2ePassed = true;
 
-	if (failed) process.exit(1);
+	if (runE2E) {
+		console.log('\n── E2E Tests ──');
+		const proc = Bun.spawn(['bunx', 'playwright', 'test'], {
+			cwd: ROOT,
+			stdout: 'inherit',
+			stderr: 'inherit',
+			env: { ...process.env, NODE_ENV: 'test' },
+		});
+		e2ePassed = (await proc.exited) === 0;
+		console.log(`\nE2E: ${e2ePassed ? 'passed' : 'FAILED'}`);
+	}
+
+	if (failed || !e2ePassed) process.exit(1);
 }
 
 main();

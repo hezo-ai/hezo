@@ -2,7 +2,9 @@
 
 ## Commands
 
-- `bun run test` — run all tests across all packages in parallel
+- `bun run test` — run all tests across all packages in parallel (unit, integration, and e2e)
+- `bun run test --skip-e2e` — run only unit/integration tests (no Playwright)
+- `bun run test --e2e` — run only Playwright e2e tests
 - `bun run build` — build all packages
 - `bun run check` — lint/format check (biome)
 - `bun run check:fix` — auto-fix lint/format issues
@@ -25,6 +27,14 @@ Pre-v1, do **not** create new migration files. Instead, modify `packages/server/
 ## Testing
 
 Tests must actually test functionality — not just assert that code runs without throwing. If something is too difficult to mock for a unit test, write an integration test instead. Prefer integration tests over heavily-mocked unit tests.
+
+## E2E Tests
+
+End-to-end tests live in `tests/e2e/` and use Playwright. The Playwright config at root `playwright.config.ts` auto-starts all three services (server on :3100, connect on :4100, web on :5173).
+
+E2E tests verify full-stack user flows through the browser. They are included in `bun run test` by default but can be skipped with `--skip-e2e` or run in isolation with `--e2e`.
+
+When a phase adds user-facing functionality, corresponding e2e tests should be added to `tests/e2e/` to cover the critical paths. E2E test files use the `.spec.ts` extension and import helpers from `./helpers`. Use the `authenticate(page)` helper to bypass the master key gate in tests that don't specifically test authentication.
 
 ## Security
 
