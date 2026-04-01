@@ -457,13 +457,27 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **Researcher** — conducts competitive analysis, technical research, and feasibility studies. First step in the ticket workflow — produces research that informs the Product Lead's PRD. Works with CEO, Architect, UI Designer, and Marketing Lead. Does NOT communicate directly with the Engineer. Reports to CEO.
 
-### AGENTS.md and company-wide agent rules
+### AGENTS.md — two tiers
 
-The company-level `AGENTS.md` file lives in the project root and contains rules and conventions that apply to **all agents** in the company. This file is a KB doc stored in the database and auto-written to disk on every update. It is auto-generated during company creation and can be edited by the board or updated by agents (via KB update approval flow).
+**Company-level AGENTS.md** is a KB doc stored in the `kb_docs` table. It contains company-wide rules and conventions. Editable via the Hezo UI. Injected into agent context at runtime via `{{kb_context}}` or `{{company_agents_md}}`. It is NOT written to disk or symlinked — it lives purely in the DB.
 
-AGENTS.md is the primary mechanism for enforcing engineering standards. It lives in the project root so that any coding agent (Claude Code, Codex, Gemini) automatically reads it — no runtime-specific configuration needed.
+**Project-level AGENTS.md** lives at the root of each project's designated repo. This is the primary mechanism for enforcing project-specific engineering standards. Any coding agent (Claude Code, Codex, Gemini) automatically reads it from the repo root — no runtime-specific configuration needed.
 
-To use AGENTS.md with Claude Code, project repos include a `CLAUDE.md` that points to it. The simplest approach is `@AGENTS.md` as the first line of `CLAUDE.md`, or a symlink (`ln -s AGENTS.md CLAUDE.md`). When hezo sets up a project repo, it creates both `AGENTS.md` and a `CLAUDE.md` pointing to it.
+Each repo in a project has its own `AGENTS.md` at its root. The designated repo's AGENTS.md is the primary source. Non-designated repos' AGENTS.md files reference the designated repo's `.dev/` docs. A `CLAUDE.md` at the repo root points to AGENTS.md (`@AGENTS.md`).
+
+### Designated repo and project documents
+
+When a project is created, a repo must be added (create new or add existing). The first repo added becomes the **designated repo** (`projects.designated_repo_id`). It holds project documents in a `.dev/` folder and AGENTS.md at the repo root. Even if more repos are added later, the first one remains the designated repo.
+
+Project documents in `.dev/`:
+- `spec.md` — tech spec
+- `prd.md` — product requirements (board approval required for agent changes)
+- `implementation-phases.md` — ordered implementation plan
+- `research.md` — research findings
+- `ui-design-decisions.md` — design rationale
+- Other ad-hoc documents
+
+These are tracked by git — revision history comes from `git log`. Agents read/write these files directly. PRD changes by agents require board approval; all other docs are updated freely.
 
 Role-specific instructions are embedded directly in each agent's system prompt template — no separate skill files.
 
@@ -646,14 +660,18 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
 │
 └── companies/
     ├── acme-corp/                        # Company folder
-    │   ├── AGENTS.md                     # Company-wide rules (KB doc written to disk)
-    │   │
     │   └── projects/
     │       ├── backend-api/              # Project folder
-    │       │   ├── api/                  # Git clone of org/api (via SSH)
-    │       │   │   └── AGENTS.md → ../../../AGENTS.md  # Symlink to company AGENTS.md
-    │       │   ├── shared-lib/           # Git clone of org/shared
-    │       │   │   └── AGENTS.md → ../../../AGENTS.md
+    │       │   ├── api/                  # Git clone of org/api — DESIGNATED REPO
+    │       │   │   ├── AGENTS.md         # Project-level agent rules (repo root)
+    │       │   │   ├── CLAUDE.md         # @AGENTS.md
+    │       │   │   └── .dev/             # Project documents
+    │       │   │       ├── spec.md
+    │       │   │       ├── prd.md
+    │       │   │       └── implementation-phases.md
+    │       │   ├── shared-lib/           # Git clone of org/shared (non-designated)
+    │       │   │   ├── AGENTS.md         # References designated repo's .dev/ docs
+    │       │   │   └── CLAUDE.md         # @AGENTS.md
     │       │   ├── worktrees/            # Git worktrees for parallel work (project-level)
     │       │   │   ├── api-feat-auth-agent-123/
     │       │   │   └── api-fix-tests-agent-456/
@@ -661,23 +679,25 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
     │       │       └── {agent_id}/
     │       │
     │       └── frontend/                 # Another project
-    │           ├── web-app/              # Git clone
-    │           │   └── AGENTS.md → ../../../AGENTS.md
+    │           ├── web-app/              # Git clone — DESIGNATED REPO
+    │           │   ├── AGENTS.md
+    │           │   ├── CLAUDE.md
+    │           │   └── .dev/
     │           ├── worktrees/
     │           └── .previews/
     │
     └── notegenius/                       # Another company
-        ├── AGENTS.md
         └── projects/
 ```
 
 **Key design decisions:**
 
-`AGENTS.md` lives at the **company level** and is **symlinked** into the root of every repo clone within that company's projects. This means:
-- The AGENTS.md rules file is shared across all projects and repos within a company
-- Any coding agent (Claude Code, Codex, Gemini) automatically reads it from the project root
-- Different companies can have completely different agent configurations
-- Updating the AGENTS.md KB doc automatically re-writes the file on disk, propagating to all repos
+`AGENTS.md` lives at the **repo root** of each project's designated repo. Project documents live in `.dev/` inside the designated repo. This means:
+- Each project has its own AGENTS.md with project-specific rules
+- Company-level rules are in the KB docs DB table, injected at runtime
+- Any coding agent (Claude Code, Codex, Gemini) automatically reads AGENTS.md from the repo root
+- Project documents are tracked by git with full revision history
+- Non-designated repos reference the designated repo's `.dev/` docs via their own AGENTS.md
 
 ### Git worktrees for parallelism
 
@@ -706,7 +726,8 @@ If a company has 3 projects, 3 containers run. If a project has multiple repos, 
 | SSH keys | Company-generated SSH key injected per subprocess (from secrets vault). Host `~/.ssh/` also mounted (ro) for fallback. |
 | Git config | Host `~/.gitconfig` → Container `/root/.gitconfig` (ro) |
 | SSH agent | Host `$SSH_AUTH_SOCK` → Container `/tmp/ssh-agent.sock` (if available) |
-| AGENTS.md | Inherited via symlinks in the repo folders (points to company-level AGENTS.md) |
+| AGENTS.md | Per-repo at repo root. Designated repo's AGENTS.md is the primary source. Non-designated repos reference it. |
+| Project docs | In designated repo's `.dev/` folder, accessible at `/workspace/{repo-short-name}/.dev/` |
 | Secrets | Injected as environment variables per subprocess (never container-wide, never written to disk) |
 | Connected platforms | All OAuth tokens from all connected platforms injected per subprocess for all agents. Platform MCP servers available. |
 | Previews | Written to `/workspace/.previews/{agent_id}/` — visible on host via the shared volume |
@@ -1001,6 +1022,9 @@ GitHub-style issue tracker. Issues are the primary interaction surface for the e
 | Number | Auto | Per-company auto-incrementing (atomic) |
 | Identifier | Auto | Linear-style: `{prefix}-{number}` (e.g. `ACME-42`). Globally unique. |
 | Blocked by | No | References to other issues blocking this one (many-to-many via `issue_dependencies` table) |
+| Progress summary | No | Concise markdown summary of requirements, what's done, and what's next. Updated by agents when they start/finish work on the issue. Collapsed by default in UI. |
+| Progress summary updated at | Auto | Timestamp of last progress summary update |
+| Progress summary updated by | Auto | Member (agent) who last updated the progress summary |
 
 ### Issue status state machine
 
@@ -1041,6 +1065,7 @@ The primary work surface. Contains two tabs:
 **Comments tab (default):**
 - Threaded conversation between board and agents
 - Collapsible trace logs per agent message (tool calls, decisions)
+- **Progress summary** — appears after the latest comment, collapsed by default. Shows the current state of work: requirements, what's done, what's next. Updated by agents when they start/finish work. Expandable to view full markdown content. When an agent operates on an issue, a `trace`-type comment is posted capturing the agent run (progress summary changes, link to run output, sub-operations).
 
 **Live Chat tab:**
 - List of all live chat sessions for this issue
@@ -1498,9 +1523,11 @@ Paginated, filterable by entity type, action, actor, and date range. Read-only.
 
 ---
 
-## 15. Company knowledge base
+## 15. Company knowledge base (DB-stored, company-level)
 
-Each company has a knowledge base — a collection of Markdown documents that define how things are done across all projects. These are living documents that agents reference and update as the company evolves.
+Each company has a knowledge base — a collection of Markdown documents stored in the `kb_docs` table that define company-wide standards across all projects. These include company-level AGENTS.md. They are living documents that agents reference and update as the company evolves.
+
+Note: project-level documents (tech spec, PRD, implementation plan) are stored in the designated repo's `.dev/` folder, not in the KB. See section 17.
 
 ### Purpose
 
@@ -1512,10 +1539,11 @@ The knowledge base holds company-wide standards and practices:
 - Testing and QA processes
 - Deployment and DevOps procedures
 - Onboarding guides for new agents
+- Company-level AGENTS.md (rules for all agents across all projects)
 
 ### How it works
 
-Knowledge base documents are `.md` files stored in the database, scoped to a company. Every agent in the company can read them. The knowledge base content is injected into agent context via the `{{kb_context}}` template variable (summaries of relevant docs based on the agent's current task).
+Knowledge base documents are stored in the `kb_docs` table, scoped to a company. Every agent in the company can read them. The knowledge base content is injected into agent context at runtime via the `{{kb_context}}` template variable. Company-level AGENTS.md is injected via `{{company_agents_md}}`.
 
 ### Agent-driven updates
 
@@ -1579,43 +1607,43 @@ Accessible from the company workspace **Settings tab** as a "Preferences" subsec
 
 ---
 
-## 17. Project-level shared documents
+## 17. Project-level shared documents (file-based, in designated repo)
 
-Each project has a set of living documents that agents create and maintain throughout the project lifecycle. These documents are the authoritative source of truth for the project's current state.
+Each project has a set of living documents stored as files in the designated repo's `.dev/` folder. These are tracked by git, giving full revision history for free. They are the authoritative source of truth for the project's current state.
 
 ### Document types
 
-| Type | Created by | Purpose |
+| File | Created by | Purpose |
 |------|-----------|---------|
-| `prd` | Product Lead | Product requirements document — user stories, acceptance criteria, scope. **Changes require board approval.** |
-| `tech_spec` | Architect | Technical specification — architecture, data model, API changes, implementation phases |
-| `implementation_plan` | Architect | Ordered implementation phases with dependencies and acceptance criteria |
-| `research` | Researcher | Research findings — competitive analysis, feasibility studies, market research |
-| `ui_design_decisions` | UI Designer | Design rationale, component decisions, interaction patterns, board-approved directions |
-| `marketing_plan` | Marketing Lead | Positioning, messaging, channels, timeline, success metrics |
-| `other` | Any agent | Ad-hoc project documents |
-
-At most one document per type per project (except `other`, which allows multiples).
+| `prd.md` | Product Lead | Product requirements — user stories, acceptance criteria, scope. **Agent changes require board approval.** |
+| `spec.md` | Architect | Technical specification — architecture, data model, API changes |
+| `implementation-phases.md` | Architect | Ordered implementation phases with dependencies and acceptance criteria |
+| `research.md` | Researcher | Research findings — competitive analysis, feasibility studies |
+| `ui-design-decisions.md` | UI Designer | Design rationale, component decisions, interaction patterns |
+| `marketing-plan.md` | Marketing Lead | Positioning, messaging, channels, timeline |
+| Other `.md` files | Any agent | Ad-hoc project documents |
 
 ### Living documents
 
-Project documents must always reflect the current state of decisions and codebase. **Any agent** can update any project document — not just the creator. When implementation diverges from the spec, when QA findings change the design, or when board feedback shifts the direction, the relevant documents must be updated.
+Project documents must always reflect the current state of decisions and codebase. **Any agent** can update any project document — not just the creator. When implementation diverges from the spec, the relevant `.dev/` documents must be updated. A session-end hook ensures agents update `.dev/` docs after making changes.
 
-### No approval required for updates
+### No approval required for updates (except PRD)
 
-Project documents are working documents actively maintained during development. Updates do not require approval. All changes create revisions for full audit trail. The board can review revision history and revert.
+Project documents are working documents actively maintained during development. Agents read/write them directly as files. Revision history comes from git. The board can view history via `git log` in the UI.
 
 ### PRD changes require board approval
 
-The one exception: when changes to a project document imply a change to product requirements, the Product Lead must update the PRD and get board approval before proceeding. The PRD drives everything downstream — tech spec, design, implementation — so requirements changes must be confirmed with the board.
+When an agent tries to update `prd.md` via the API, the system creates a pending approval instead of writing directly. Board approves → file is written. Board members can edit `prd.md` directly without approval.
 
 ### How it works
 
-Documents are stored in the `project_docs` table with full revision history in `project_doc_revisions`. Agents create documents via the Agent API and post a summary comment on the ticket referencing the project doc. All agents see project documents via the `{{project_docs_context}}` template variable.
+Documents are stored as files in `{designated-repo}/.dev/`. Agents access them directly from the filesystem (inside the container at `/workspace/{repo-short-name}/.dev/`). The API provides CRUD endpoints that read/write files on the host filesystem. Revision history comes from git.
+
+The `project_docs` and `project_doc_revisions` DB tables have been removed — git handles project-level doc storage and versioning.
 
 ### Project documents in the UI
 
-Accessible from the project detail view as a new **Documents tab**. Shows all project docs with type badges, title, last updated info, and last updater. Click to view/edit with Markdown editor. Revision history accessible from the document view.
+Accessible from the project detail view as a **Documents tab**. The UI uses the project docs API (`GET/PUT/DELETE /projects/:id/docs/:filename`) to browse and edit documents. Revision history served via `git log`.
 
 ---
 
