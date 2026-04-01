@@ -1,0 +1,55 @@
+@import 'tailwindcss';
+
+:root {
+	--color-bg: #09090b;
+	--color-bg-subtle: #18181b;
+	--color-bg-muted: #27272a;
+	--color-bg-elevated: #3f3f46;
+	--color-border: #3f3f46;
+	--color-border-subtle: #27272a;
+	--color-text: #fafafa;
+	--color-text-muted: #a1a1aa;
+	--color-text-subtle: #71717a;
+	--color-primary: #6366f1;
+	--color-primary-hover: #818cf8;
+	--color-success: #22c55e;
+	--color-warning: #f59e0b;
+	--color-danger: #ef4444;
+	--color-info: #3b82f6;
+
+	--font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+	--font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+@theme {
+	--color-bg: var(--color-bg);
+	--color-bg-subtle: var(--color-bg-subtle);
+	--color-bg-muted: var(--color-bg-muted);
+	--color-bg-elevated: var(--color-bg-elevated);
+	--color-border: var(--color-border);
+	--color-border-subtle: var(--color-border-subtle);
+	--color-text: var(--color-text);
+	--color-text-muted: var(--color-text-muted);
+	--color-text-subtle: var(--color-text-subtle);
+	--color-primary: var(--color-primary);
+	--color-primary-hover: var(--color-primary-hover);
+	--color-success: var(--color-success);
+	--color-warning: var(--color-warning);
+	--color-danger: var(--color-danger);
+	--color-info: var(--color-info);
+}
+
+body {
+	margin: 0;
+	background: var(--color-bg);
+	color: var(--color-text);
+	font-family: var(--font-sans);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+	border-color: var(--color-border);
+}

@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import { verifyOAuthState } from '../crypto/state';
 import type { Env } from '../lib/types';
+import { registerSSHKeyOnGitHub } from '../services/github';
 import { generateCompanySSHKey, getCompanySSHKey, updateGitHubKeyId } from '../services/ssh-keys';
 import { storeOAuthToken } from '../services/token-store';
-import { registerSSHKeyOnGitHub } from '../services/github';
 
 export const oauthCallbackRoutes = new Hono<Env>();
 
@@ -17,7 +17,7 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 
 	if (error) {
 		const message = c.req.query('message') || error;
-		return c.redirect(`/#/error?message=${encodeURIComponent(message)}`);
+		return c.redirect(`/error?message=${encodeURIComponent(message)}`);
 	}
 
 	if (!state || !platform) {
@@ -80,5 +80,5 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 		[companyId, platform],
 	);
 
-	return c.redirect(`/#/companies/${companyId}/settings?connected=${platform}`);
+	return c.redirect(`/companies/${companyId}/settings?connected=${platform}`);
 });

@@ -2,7 +2,11 @@ import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { generateMasterKey, MasterKeyManager } from '../../crypto/master-key';
 import { seedBuiltins } from '../../db/seed';
-import { generateCompanySSHKey, getCompanySSHKey, updateGitHubKeyId } from '../../services/ssh-keys';
+import {
+	generateCompanySSHKey,
+	getCompanySSHKey,
+	updateGitHubKeyId,
+} from '../../services/ssh-keys';
 import { createTestDbWithMigrations } from '../helpers/db';
 
 let db: PGlite;
@@ -17,7 +21,7 @@ beforeAll(async () => {
 
 	// Create a company
 	const typesRes = await db.query<{ id: string }>(
-		"SELECT id FROM company_types WHERE is_builtin = true LIMIT 1",
+		'SELECT id FROM company_types WHERE is_builtin = true LIMIT 1',
 	);
 	const typeId = typesRes.rows[0].id;
 

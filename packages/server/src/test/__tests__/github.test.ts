@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseGitHubUrl, validateRepoAccess, type FetchFn } from '../../services/github';
+import { type FetchFn, parseGitHubUrl, validateRepoAccess } from '../../services/github';
 
 describe('parseGitHubUrl', () => {
 	it('parses https://github.com/owner/repo', () => {

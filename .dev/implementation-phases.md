@@ -141,6 +141,8 @@
 
 ## Phase 3.5: UI Foundation + Core Screens
 
+**Status:** Done (2026-04)
+
 **Goal:** A working React frontend for manual browser testing of everything built in Phases 0–3. Uses TanStack Query over REST — no WebSocket or TanStack DB yet.
 
 **What's included:**

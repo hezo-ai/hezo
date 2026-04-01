@@ -10,10 +10,11 @@
 		"build:migrations": "bun run scripts/bundle-migrations.ts"
 	},
 	"dependencies": {
-		"hono": "^4",
 		"@electric-sql/pglite": "^0.2",
+		"@hezo/shared": "workspace:*",
 		"@hiddentao/zip-json": "^1",
-		"@hezo/shared": "workspace:*"
+		"commander": "^14.0.3",
+		"hono": "^4"
 	},
 	"devDependencies": {
 		"vitest": "^3",

@@ -38,7 +38,8 @@
 			"!.claude",
 			"!.hezo",
 			"!.turbo",
-			"!**/migrations-bundle.json"
+			"!**/migrations-bundle.json",
+			"!**/routeTree.gen.ts"
 		]
 	}
 }

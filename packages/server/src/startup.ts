@@ -99,12 +99,10 @@ export function buildApp(
 	app.route('/', healthRoutes);
 	app.route('/', oauthCallbackRoutes);
 
-	const statusPayload = {
-		masterKeyState: masterKeyManager.getState(),
-		version: '0.1.0',
-	};
-	app.get('/', (c) => c.json(statusPayload));
-	app.get('/api/status', (c) => c.json(statusPayload));
+	const statusHandler = (c: any) =>
+		c.json({ masterKeyState: masterKeyManager.getState(), version: '0.1.0' });
+	app.get('/', statusHandler);
+	app.get('/api/status', statusHandler);
 
 	// Auth routes (token endpoint is public, handled before auth middleware)
 	app.route('/api', authRoutes);

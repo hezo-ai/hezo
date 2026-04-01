@@ -1,7 +1,13 @@
 #!/usr/bin/env bun
 import { resolve } from 'node:path';
+import { Command } from 'commander';
 
 const ROOT = resolve(import.meta.dir, '..');
+
+new Command()
+	.name('build')
+	.description('Build all Hezo packages (shared → server, connect, web in parallel)')
+	.parse();
 
 async function run(pkg: string, cmd: string[]) {
 	const cwd = resolve(ROOT, pkg);
@@ -25,6 +31,7 @@ await Promise.all([
 		await run('packages/server', ['bun', 'run', 'build:migrations']);
 	})(),
 	run('packages/connect', ['bun', 'run', 'build']),
+	run('packages/web', ['bun', 'run', 'build']),
 ]);
 
 console.log('Build complete.');

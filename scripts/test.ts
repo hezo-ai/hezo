@@ -2,17 +2,24 @@
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Glob } from 'bun';
+import { Command } from 'commander';
 
 const ROOT = resolve(import.meta.dir, '..');
 
-const args = process.argv.slice(2);
-const bail = args.includes('--bail');
-const concurrencyIdx = args.indexOf('--concurrency');
-const concurrency = concurrencyIdx >= 0 ? Number.parseInt(args[concurrencyIdx + 1] || '4', 10) : 4;
-const patternIdx = args.indexOf('--pattern');
-const pattern = patternIdx >= 0 ? args[patternIdx + 1] : undefined;
-const packageIdx = args.indexOf('--package');
-const packageFilter = packageIdx >= 0 ? args[packageIdx + 1] : undefined;
+const program = new Command()
+	.name('test')
+	.description('Run Hezo test suite across all packages')
+	.option('--bail', 'Stop on first test failure')
+	.option('--concurrency <n>', 'Number of parallel test workers', '4')
+	.option('--pattern <str>', 'Filter test files by substring match')
+	.option('--package <name>', 'Run tests only in a specific package')
+	.parse();
+
+const opts = program.opts();
+const bail = opts.bail as boolean;
+const concurrency = Number.parseInt(opts.concurrency, 10);
+const pattern = opts.pattern as string | undefined;
+const packageFilter = opts.package as string | undefined;
 
 const TEST_PACKAGES = ['packages/server', 'packages/connect'];
 

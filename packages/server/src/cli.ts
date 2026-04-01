@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { Command } from 'commander';
 
 export interface HezoConfig {
 	port: number;
@@ -16,51 +17,39 @@ const DEFAULT_DATA_DIR = '~/.hezo';
 const DEFAULT_CONNECT_URL = 'http://localhost:4100';
 
 export function parseArgs(argv: string[] = process.argv): HezoConfig {
-	const args = argv.slice(2);
+	const program = new Command()
+		.name('hezo')
+		.description('Hezo server — self-hosted AI agent management platform')
+		.option('--port <port>', 'Server port', String(DEFAULT_PORT))
+		.option('--data-dir <path>', 'Data directory', DEFAULT_DATA_DIR)
+		.option('--master-key <key>', 'Master key for unlocking')
+		.option('--connect-url <url>', 'Hezo Connect URL', DEFAULT_CONNECT_URL)
+		.option('--connect-api-key <key>', 'Hezo Connect API key')
+		.option('--reset', 'Reset database and start fresh')
+		.option('--no-open', 'Do not auto-open the browser')
+		.parse(argv);
 
-	let port = DEFAULT_PORT;
-	let dataDir = DEFAULT_DATA_DIR;
-	let masterKey: string | undefined;
-	let connectUrl = DEFAULT_CONNECT_URL;
-	let connectApiKey: string | undefined;
-	let reset = false;
-	let noOpen = false;
+	const opts = program.opts();
 
-	for (let i = 0; i < args.length; i++) {
-		switch (args[i]) {
-			case '--port':
-				port = parseInt(args[++i], 10);
-				if (Number.isNaN(port) || port < 1 || port > 65535) {
-					throw new Error(`Invalid port: ${args[i]}. Must be 1-65535.`);
-				}
-				break;
-			case '--data-dir':
-				dataDir = args[++i];
-				break;
-			case '--master-key':
-				masterKey = args[++i];
-				break;
-			case '--connect-url':
-				connectUrl = args[++i];
-				break;
-			case '--connect-api-key':
-				connectApiKey = args[++i];
-				break;
-			case '--reset':
-				reset = true;
-				break;
-			case '--no-open':
-				noOpen = true;
-				break;
-		}
+	const port = Number.parseInt(opts.port, 10);
+	if (Number.isNaN(port) || port < 1 || port > 65535) {
+		throw new Error(`Invalid port: ${opts.port}. Must be 1-65535.`);
 	}
 
-	// Resolve tilde to home directory
+	let dataDir: string = opts.dataDir;
 	if (dataDir.startsWith('~')) {
 		dataDir = resolve(homedir(), dataDir.slice(2));
 	} else {
 		dataDir = resolve(dataDir);
 	}
 
-	return { port, dataDir, masterKey, connectUrl, connectApiKey, reset, noOpen };
+	return {
+		port,
+		dataDir,
+		masterKey: opts.masterKey,
+		connectUrl: opts.connectUrl,
+		connectApiKey: opts.connectApiKey,
+		reset: opts.reset ?? false,
+		noOpen: opts.open === false,
+	};
 }

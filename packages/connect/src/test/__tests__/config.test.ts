@@ -132,11 +132,9 @@ describe('loadConfig .env file loading', () => {
 		const envPath = join(tempDir, '.env');
 		writeFileSync(
 			envPath,
-			[
-				'HEZO_CONNECT_PORT=9090',
-				'GITHUB_CLIENT_ID=env-id',
-				'GITHUB_CLIENT_SECRET=env-secret',
-			].join('\n'),
+			['HEZO_CONNECT_PORT=9090', 'GITHUB_CLIENT_ID=env-id', 'GITHUB_CLIENT_SECRET=env-secret'].join(
+				'\n',
+			),
 		);
 		const config = loadConfig({ envPath });
 		expect(config.port).toBe(9090);

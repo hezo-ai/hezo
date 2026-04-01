@@ -43,7 +43,9 @@ export function loadConfig(options?: LoadConfigOptions): ConnectConfig {
 		const keypair = generateStateKeyPair();
 		statePrivateKey = keypair.privateKey;
 		statePublicKey = keypair.publicKey;
-		console.log('Auto-generated Ed25519 state signing keypair (set STATE_PRIVATE_KEY env var to persist)');
+		console.log(
+			'Auto-generated Ed25519 state signing keypair (set STATE_PRIVATE_KEY env var to persist)',
+		);
 	}
 
 	const githubClientId = get('GITHUB_CLIENT_ID').asString();

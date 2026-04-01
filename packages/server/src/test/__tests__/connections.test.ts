@@ -1,8 +1,8 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { signOAuthState } from '../../crypto/state';
 import type { MasterKeyManager } from '../../crypto/master-key';
+import { signOAuthState } from '../../crypto/state';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
@@ -73,7 +73,11 @@ describe('connections CRUD', () => {
 		it('stores token and creates connection on valid callback', async () => {
 			const state = await signOAuthState({ company_id: companyId }, masterKeyManager);
 			const metadata = Buffer.from(
-				JSON.stringify({ username: 'test-bot', avatar_url: 'https://example.com/avatar', email: 'test@example.com' }),
+				JSON.stringify({
+					username: 'test-bot',
+					avatar_url: 'https://example.com/avatar',
+					email: 'test@example.com',
+				}),
 			).toString('base64url');
 
 			const res = await app.request(
@@ -133,10 +137,10 @@ describe('connections CRUD', () => {
 			const connections = (await connRes.json()).data;
 			const connectionId = connections[0].id;
 
-			const res = await app.request(
-				`/api/companies/${companyId}/connections/${connectionId}`,
-				{ method: 'DELETE', headers: authHeader(token) },
-			);
+			const res = await app.request(`/api/companies/${companyId}/connections/${connectionId}`, {
+				method: 'DELETE',
+				headers: authHeader(token),
+			});
 			expect(res.status).toBe(200);
 			const body = await res.json();
 			expect(body.data.deleted).toBe(true);

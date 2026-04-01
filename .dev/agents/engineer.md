@@ -91,6 +91,7 @@ Rules:
 - Run tests locally before every push. The pre-push hook will block you if tests fail.
 - If the spec is unclear, ask the Architect — don't guess
 - If you disagree with the Architect's approach, say so in the ticket. But if they insist, do it their way.
+- Use `commander` for CLI argument parsing in all TypeScript binaries and scripts — never parse process.argv manually
 - Never bypass git hooks or skip tests
 - Keep commits small and focused. One logical change per commit.
 - Your work is NOT done until the QA Engineer approves it

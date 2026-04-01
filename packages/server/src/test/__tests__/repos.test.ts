@@ -1,8 +1,8 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { signOAuthState } from '../../crypto/state';
 import type { MasterKeyManager } from '../../crypto/master-key';
+import { signOAuthState } from '../../crypto/state';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
@@ -68,10 +68,9 @@ describe('repos CRUD', () => {
 	});
 
 	it('creates an oauth_request approval when GitHub not connected', async () => {
-		const approvalsRes = await app.request(
-			`/api/companies/${companyId}/approvals?status=pending`,
-			{ headers: authHeader(token) },
-		);
+		const approvalsRes = await app.request(`/api/companies/${companyId}/approvals?status=pending`, {
+			headers: authHeader(token),
+		});
 		const approvals = (await approvalsRes.json()).data;
 		const oauthApprovals = approvals.filter((a: any) => a.type === 'oauth_request');
 		expect(oauthApprovals.length).toBeGreaterThan(0);

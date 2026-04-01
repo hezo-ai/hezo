@@ -1,0 +1,167 @@
+import { createFileRoute, Link } from '@tanstack/react-router';
+import { ArrowLeft, Loader2, Pause, Play, Skull } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Badge } from '../../../../components/ui/badge';
+import { Button } from '../../../../components/ui/button';
+import { Input } from '../../../../components/ui/input';
+import { Textarea } from '../../../../components/ui/textarea';
+import {
+	useAgent,
+	useAgents,
+	usePauseAgent,
+	useResumeAgent,
+	useTerminateAgent,
+	useUpdateAgent,
+} from '../../../../hooks/use-agents';
+
+const statusColors: Record<string, string> = {
+	active: 'green',
+	idle: 'blue',
+	paused: 'yellow',
+	terminated: 'gray',
+};
+
+function AgentDetailPage() {
+	const { companyId, agentId } = Route.useParams();
+	const { data: agent, isLoading } = useAgent(companyId, agentId);
+	const { data: agents } = useAgents(companyId);
+	const updateAgent = useUpdateAgent(companyId, agentId);
+	const pauseAgent = usePauseAgent(companyId);
+	const resumeAgent = useResumeAgent(companyId);
+	const terminateAgent = useTerminateAgent(companyId);
+
+	const [title, setTitle] = useState('');
+	const [roleDesc, setRoleDesc] = useState('');
+	const [systemPrompt, setSystemPrompt] = useState('');
+	const [reportsTo, setReportsTo] = useState('');
+	const [budget, setBudget] = useState('');
+	const [heartbeat, setHeartbeat] = useState('');
+
+	useEffect(() => {
+		if (agent) {
+			setTitle(agent.title);
+			setRoleDesc(agent.role_description ?? '');
+			setSystemPrompt(agent.system_prompt ?? '');
+			setReportsTo(agent.reports_to ?? '');
+			setBudget(String(agent.monthly_budget_cents / 100));
+			setHeartbeat(String(agent.heartbeat_interval_min));
+		}
+	}, [agent]);
+
+	if (isLoading || !agent) return <div className="p-6 text-text-muted">Loading...</div>;
+
+	const otherAgents = agents?.filter((a) => a.id !== agentId && a.status !== 'terminated') ?? [];
+
+	async function handleSave(e: React.FormEvent) {
+		e.preventDefault();
+		await updateAgent.mutateAsync({
+			title,
+			role_description: roleDesc || undefined,
+			system_prompt: systemPrompt || undefined,
+			reports_to: reportsTo || null,
+			monthly_budget_cents: Math.round(Number.parseFloat(budget) * 100),
+			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
+		});
+	}
+
+	return (
+		<div className="p-6 max-w-2xl">
+			<Link
+				to="/companies/$companyId/agents"
+				params={{ companyId }}
+				className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text mb-4"
+			>
+				<ArrowLeft className="w-3.5 h-3.5" /> Agents
+			</Link>
+
+			<div className="flex items-center gap-3 mb-6">
+				<h1 className="text-lg font-semibold">{agent.title}</h1>
+				<Badge color={statusColors[agent.status] as 'gray'}>{agent.status}</Badge>
+			</div>
+
+			<div className="flex gap-2 mb-6">
+				{agent.status === 'active' && (
+					<Button variant="secondary" size="sm" onClick={() => pauseAgent.mutate(agentId)}>
+						<Pause className="w-3 h-3" /> Pause
+					</Button>
+				)}
+				{agent.status === 'paused' && (
+					<Button variant="secondary" size="sm" onClick={() => resumeAgent.mutate(agentId)}>
+						<Play className="w-3 h-3" /> Resume
+					</Button>
+				)}
+				{agent.status !== 'terminated' && (
+					<Button
+						variant="destructive"
+						size="sm"
+						onClick={() => {
+							if (confirm('Terminate this agent?')) terminateAgent.mutate(agentId);
+						}}
+					>
+						<Skull className="w-3 h-3" /> Terminate
+					</Button>
+				)}
+			</div>
+
+			<form onSubmit={handleSave} className="flex flex-col gap-4">
+				<Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} required />
+				<Textarea
+					label="Role Description"
+					value={roleDesc}
+					onChange={(e) => setRoleDesc(e.target.value)}
+				/>
+				<Textarea
+					label="System Prompt"
+					value={systemPrompt}
+					onChange={(e) => setSystemPrompt(e.target.value)}
+					className="min-h-[160px] font-mono text-xs"
+				/>
+
+				<label className="flex flex-col gap-1.5">
+					<span className="text-sm text-text-muted">Reports To</span>
+					<select
+						value={reportsTo}
+						onChange={(e) => setReportsTo(e.target.value)}
+						className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-primary"
+					>
+						<option value="">None (Board)</option>
+						{otherAgents.map((a) => (
+							<option key={a.id} value={a.id}>
+								{a.title}
+							</option>
+						))}
+					</select>
+				</label>
+
+				<div className="grid grid-cols-2 gap-4">
+					<Input
+						label="Monthly Budget ($)"
+						type="number"
+						step="0.01"
+						min="0"
+						value={budget}
+						onChange={(e) => setBudget(e.target.value)}
+					/>
+					<Input
+						label="Heartbeat (min)"
+						type="number"
+						min="1"
+						value={heartbeat}
+						onChange={(e) => setHeartbeat(e.target.value)}
+					/>
+				</div>
+
+				<div className="flex justify-end gap-2 mt-2">
+					<Button type="submit" disabled={updateAgent.isPending}>
+						{updateAgent.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+						Save Changes
+					</Button>
+				</div>
+			</form>
+		</div>
+	);
+}
+
+export const Route = createFileRoute('/companies/$companyId/agents/$agentId')({
+	component: AgentDetailPage,
+});

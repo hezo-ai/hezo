@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { signOAuthState, verifyConnectState, verifyOAuthState } from '../../crypto/state';
 import { generateMasterKey, MasterKeyManager } from '../../crypto/master-key';
+import { signOAuthState, verifyConnectState, verifyOAuthState } from '../../crypto/state';
 import { createTestDbWithMigrations } from '../helpers/db';
 
 describe('verifyConnectState (Ed25519)', () => {
@@ -31,10 +31,18 @@ describe('verifyConnectState (Ed25519)', () => {
 	});
 
 	it('returns null for tampered payload', () => {
-		const payload = { callback_url: 'http://localhost:3100', platform: 'github', nonce: 'n', timestamp: 't' };
+		const payload = {
+			callback_url: 'http://localhost:3100',
+			platform: 'github',
+			nonce: 'n',
+			timestamp: 't',
+		};
 		const signed = signForTest(payload);
 		const [, sig] = signed.split('.');
-		const tampered = Buffer.from(JSON.stringify({ ...payload, platform: 'evil' })).toString('base64url') + '.' + sig;
+		const tampered =
+			Buffer.from(JSON.stringify({ ...payload, platform: 'evil' })).toString('base64url') +
+			'.' +
+			sig;
 		expect(verifyConnectState(tampered, publicKey)).toBeNull();
 	});
 
@@ -43,7 +51,12 @@ describe('verifyConnectState (Ed25519)', () => {
 			privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
 			publicKeyEncoding: { type: 'spki', format: 'pem' },
 		});
-		const signed = signForTest({ callback_url: 'x', platform: 'github', nonce: 'n', timestamp: 't' });
+		const signed = signForTest({
+			callback_url: 'x',
+			platform: 'github',
+			nonce: 'n',
+			timestamp: 't',
+		});
 		expect(verifyConnectState(signed, other.publicKey)).toBeNull();
 	});
 

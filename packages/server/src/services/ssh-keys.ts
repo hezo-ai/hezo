@@ -85,10 +85,10 @@ export async function updateGitHubKeyId(
 	companyId: string,
 	githubKeyId: number,
 ): Promise<void> {
-	await db.query(
-		'UPDATE company_ssh_keys SET github_key_id = $1 WHERE company_id = $2',
-		[githubKeyId, companyId],
-	);
+	await db.query('UPDATE company_ssh_keys SET github_key_id = $1 WHERE company_id = $2', [
+		githubKeyId,
+		companyId,
+	]);
 }
 
 function pemToSSHPublicKey(pem: string): string {

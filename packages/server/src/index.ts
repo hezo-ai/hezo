@@ -14,7 +14,7 @@ startup(config)
 		const url = `http://localhost:${result.port}`;
 		console.log(`Hezo server running at ${url} [${result.masterKeyState}]`);
 		if (!config.noOpen) {
-			Bun.spawn(['open', url]);
+			Bun.spawn(['open', 'http://localhost:5173']);
 		}
 	})
 	.catch((err) => {
