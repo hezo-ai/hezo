@@ -10,6 +10,8 @@ let db: PGlite;
 let token: string;
 let companyId: string;
 let issueId: string;
+let agentSlug: string;
+let agentId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -37,6 +39,16 @@ beforeAll(async () => {
 		body: JSON.stringify({ project_id: projectId, title: 'Test Issue' }),
 	});
 	issueId = (await issueRes.json()).data.id;
+
+	// Create an agent for mention testing
+	const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title: 'Chat Bot' }),
+	});
+	const agent = (await agentRes.json()).data;
+	agentId = agent.id;
+	agentSlug = agent.slug;
 });
 
 afterAll(async () => {
@@ -82,5 +94,45 @@ describe('live chat', () => {
 			body: JSON.stringify({ content: '' }),
 		});
 		expect(res.status).toBe(400);
+	});
+
+	it('creates a wakeup when message mentions an agent', async () => {
+		// Clear existing wakeups
+		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/chat/messages`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: `Hey @${agentSlug} please review this` }),
+		});
+		expect(res.status).toBe(201);
+
+		// Allow async wakeup creation to complete
+		await new Promise((r) => setTimeout(r, 100));
+
+		const wakeups = await db.query(
+			"SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'chat_message'",
+			[agentId],
+		);
+		expect(wakeups.rows.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('does not create a wakeup for messages without mentions', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/chat/messages`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: 'Just a regular message' }),
+		});
+		expect(res.status).toBe(201);
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		const wakeups = await db.query(
+			"SELECT * FROM agent_wakeup_requests WHERE company_id = $1 AND source = 'chat_message'",
+			[companyId],
+		);
+		expect(wakeups.rows.length).toBe(0);
 	});
 });

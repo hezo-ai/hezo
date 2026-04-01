@@ -9,7 +9,10 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let companyId: string;
+let projectId: string;
 let issueId: string;
+let agentId: string;
+let agentSlug: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -29,7 +32,7 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Main' }),
 	});
-	const projectId = (await projectRes.json()).data.id;
+	projectId = (await projectRes.json()).data.id;
 
 	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
 		method: 'POST',
@@ -37,6 +40,16 @@ beforeAll(async () => {
 		body: JSON.stringify({ project_id: projectId, title: 'Test Issue' }),
 	});
 	issueId = (await issueRes.json()).data.id;
+
+	// Create an agent for mention/wakeup testing
+	const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title: 'Comment Bot' }),
+	});
+	const agent = (await agentRes.json()).data;
+	agentId = agent.id;
+	agentSlug = agent.slug;
 });
 
 afterAll(async () => {
@@ -109,5 +122,83 @@ describe('comments CRUD', () => {
 		expect(chooseRes.status).toBe(200);
 		const chosenBody = await chooseRes.json();
 		expect(chosenBody.data.chosen_option.chosen_id).toBe('a');
+	});
+});
+
+describe('comment @mention wakeups', () => {
+	it('creates a mention wakeup when comment contains @agent-slug', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: `@${agentSlug} take a look at this` },
+			}),
+		});
+		expect(res.status).toBe(201);
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		const wakeups = await db.query(
+			"SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'",
+			[agentId],
+		);
+		expect(wakeups.rows.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('creates option_chosen wakeup when choosing option on issue assigned to agent', async () => {
+		// Create a new issue assigned to the agent
+		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Agent Assigned Issue',
+				assignee_id: agentId,
+			}),
+		});
+		const assignedIssueId = (await issueRes.json()).data.id;
+
+		// Create an options comment
+		const commentRes = await app.request(
+			`/api/companies/${companyId}/issues/${assignedIssueId}/comments`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					content_type: 'options',
+					content: {
+						prompt: 'Which?',
+						options: [
+							{ id: 'x', label: 'X' },
+							{ id: 'y', label: 'Y' },
+						],
+					},
+				}),
+			},
+		);
+		const optionsCommentId = (await commentRes.json()).data.id;
+
+		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+
+		// Choose an option
+		await app.request(
+			`/api/companies/${companyId}/issues/${assignedIssueId}/comments/${optionsCommentId}/choose`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ chosen_id: 'x' }),
+			},
+		);
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		const wakeups = await db.query(
+			"SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'option_chosen'",
+			[agentId],
+		);
+		expect(wakeups.rows.length).toBeGreaterThanOrEqual(1);
 	});
 });

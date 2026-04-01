@@ -179,3 +179,45 @@ describe('agents CRUD', () => {
 		expect(res.status).toBe(409);
 	});
 });
+
+describe('heartbeat runs', () => {
+	it('returns empty array when no runs exist', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const agent = agents[0];
+
+		const res = await app.request(`/api/companies/${companyId}/agents/${agent.id}/heartbeat-runs`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data).toEqual([]);
+	});
+
+	it('returns runs after inserting heartbeat records', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const agent = agents[0];
+
+		// Insert a heartbeat run directly
+		await db.query(
+			`INSERT INTO heartbeat_runs (member_id, company_id, status, started_at, finished_at, exit_code, stdout_excerpt)
+			 VALUES ($1, $2, 'succeeded', now() - interval '5 minutes', now(), 0, 'All done')`,
+			[agent.id, companyId],
+		);
+
+		const res = await app.request(`/api/companies/${companyId}/agents/${agent.id}/heartbeat-runs`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.length).toBeGreaterThanOrEqual(1);
+		expect(body.data[0].status).toBe('succeeded');
+		expect(body.data[0].exit_code).toBe(0);
+		expect(body.data[0].stdout_excerpt).toBe('All done');
+	});
+});

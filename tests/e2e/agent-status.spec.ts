@@ -90,3 +90,60 @@ test('project detail shows container section with rebuild button', async ({ page
 	// Verify container section with rebuild button
 	await expect(page.getByRole('button', { name: /Rebuild/i })).toBeVisible({ timeout: 5000 });
 });
+
+test('agent detail page allows editing title', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const company = await createCompanyWithAgents(page);
+	const token = await getToken(page);
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const agents = await agentsRes.json();
+	const agent = agents.data.find((a: any) => a.status === 'active');
+
+	await page.goto(`/companies/${company.id}/agents/${agent.id}`);
+
+	// Edit the title
+	const titleInput = page.getByLabel('Title');
+	await expect(titleInput).toBeVisible({ timeout: 5000 });
+	await titleInput.fill(`${agent.title} Updated`);
+
+	// Save
+	await page.getByRole('button', { name: 'Save Changes' }).click();
+
+	// Verify the heading updates
+	await expect(page.getByText(`${agent.title} Updated`).first()).toBeVisible({ timeout: 5000 });
+});
+
+test('agent pause and resume lifecycle', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const company = await createCompanyWithAgents(page);
+	const token = await getToken(page);
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const agents = await agentsRes.json();
+	const activeAgent = agents.data.find((a: any) => a.status === 'active');
+
+	await page.goto(`/companies/${company.id}/agents/${activeAgent.id}`);
+
+	// Click Pause
+	const pauseBtn = page.getByRole('button', { name: /Pause/i });
+	await expect(pauseBtn).toBeVisible({ timeout: 5000 });
+	await pauseBtn.click();
+
+	// Verify paused badge
+	await expect(page.getByText('paused')).toBeVisible({ timeout: 5000 });
+
+	// Resume should now be visible
+	const resumeBtn = page.getByRole('button', { name: /Resume/i });
+	await expect(resumeBtn).toBeVisible({ timeout: 5000 });
+	await resumeBtn.click();
+
+	// Verify idle badge (resume sets to idle)
+	await expect(page.getByText('idle')).toBeVisible({ timeout: 5000 });
+});

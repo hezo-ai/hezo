@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { broadcastEvent } from '../../lib/broadcast';
 import { WebSocketManager, type WsSocket } from '../../services/ws';
 
 function createMockWs(): WsSocket & { _sent: string[] } {
@@ -104,5 +105,21 @@ describe('WebSocketManager', () => {
 	it('handles broadcast to non-existent room gracefully', () => {
 		const mgr = new WebSocketManager();
 		mgr.broadcast('nonexistent', { type: 'test' });
+	});
+});
+
+describe('broadcastEvent helper', () => {
+	it('sends event with type and data merged', () => {
+		const mgr = new WebSocketManager();
+		const ws = createMockWs();
+		mgr.subscribe(ws, 'company:abc');
+
+		broadcastEvent(mgr, 'company:abc', 'chat_message', { issueId: '123', content: 'hi' });
+
+		expect(ws._sent).toHaveLength(1);
+		const parsed = JSON.parse(ws._sent[0]);
+		expect(parsed.type).toBe('chat_message');
+		expect(parsed.issueId).toBe('123');
+		expect(parsed.content).toBe('hi');
 	});
 });

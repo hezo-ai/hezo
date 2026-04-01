@@ -58,4 +58,44 @@ describe('audit log', () => {
 		const body = await res.json();
 		expect(body.data.every((e: Record<string, unknown>) => e.entity_type === 'agent')).toBe(true);
 	});
+
+	it('filters by action', async () => {
+		await auditLog(db, companyId, 'board', null, 'deleted', 'project', null);
+
+		const res = await app.request(`/api/companies/${companyId}/audit-log?action=deleted`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.length).toBeGreaterThanOrEqual(1);
+		expect(body.data.every((e: Record<string, unknown>) => e.action === 'deleted')).toBe(true);
+	});
+
+	it('filters by date range', async () => {
+		const future = new Date(Date.now() + 86400000).toISOString();
+		const res = await app.request(`/api/companies/${companyId}/audit-log?from=${future}`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data).toEqual([]);
+	});
+
+	it('supports pagination', async () => {
+		// Insert several entries
+		for (let i = 0; i < 5; i++) {
+			await auditLog(db, companyId, 'system', null, 'created', 'issue', null, { i });
+		}
+
+		const res = await app.request(`/api/companies/${companyId}/audit-log?page=1&per_page=2`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.length).toBeLessThanOrEqual(2);
+		expect(body.meta).toBeDefined();
+		expect(body.meta.page).toBe(1);
+		expect(body.meta.per_page).toBe(2);
+		expect(body.meta.total).toBeGreaterThanOrEqual(5);
+	});
 });

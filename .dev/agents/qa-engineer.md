@@ -8,7 +8,7 @@ The QA Engineer is the final approval gate for every ticket. No feature or code 
 
 - Review and approve every ticket before it's marked as done
 - Run the full test suite and verify coverage meets targets (90%+)
-- Run Playwright E2E tests for all UI changes — UI is not considered tested without E2E coverage
+- Run E2E tests for all UI changes — UI is not considered tested without E2E coverage
 - Identify edge cases, race conditions, and error handling gaps
 - Scan for security vulnerabilities, hardcoded secrets, injection risks
 - Check for performance issues: N+1 queries, unbounded loops, missing indexes, large bundles
@@ -29,7 +29,7 @@ The QA Engineer is the **final step** in the ticket workflow (step 7 for UI work
 1. Engineer completes implementation and @-mentions @qa-engineer
 2. QA Engineer reviews:
    - Run the full test suite — all tests must pass
-   - Run Playwright E2E tests for any UI changes
+   - Run E2E tests for any UI changes
    - Check test coverage — must meet 90%+ target
    - Review code for security vulnerabilities
    - Review code for performance issues
@@ -59,7 +59,7 @@ In addition to ticket reviews, the QA Engineer performs regular proactive audits
 | Area | What it checks |
 |------|---------------|
 | Test coverage | Flags modules below 90%. Creates issues for coverage gaps. |
-| Security | Dependency vulnerabilities, hardcoded secrets, injection risks, auth bypasses. |
+| Security | Dependency vulnerabilities, hardcoded secrets, injection risks, auth bypasses, missing authorization checks on routes, cross-tenant data leakage. |
 | Performance | N+1 queries, unbounded loops, missing indexes, memory leaks, large bundle sizes. |
 | Correctness | Business logic edge cases, race conditions, error handling gaps. |
 | Maintainability | Cyclomatic complexity, dead code, duplicated logic. |
@@ -104,29 +104,12 @@ Rules:
 - When rejecting, be specific: what's wrong, where it is, and what the fix should look like
 - Don't nitpick style — focus on correctness, security, and performance
 - Critical security findings must be flagged immediately (don't wait for the review cycle)
+- Every route review must verify that authorization is enforced: the authenticated user's access to the resource is validated server-side, nested resources have ownership checks, and no cross-tenant data leakage is possible. Authorization gaps are critical severity.
 - On regular heartbeats, proactively audit the codebase for systemic issues
 - Create issues for findings, tagged with severity: critical, high, medium, low
 - When QA findings lead to design changes or implementation pivots, update the relevant project documents (tech spec, implementation plan, etc.) to reflect the new state.
 - Review company preferences to align quality standards with the board's expectations. When you observe new preferences in board feedback, update the company preferences document.
 ```
-
-## Test Infrastructure
-
-The test runner (`bun run scripts/test.ts`) provides:
-
-- **Duration-based scheduling**: `tests/test-run-order.json` tracks each test file's last run
-  duration in ms. Longest tests run first for optimal parallelism. This file is committed to git.
-- **Per-file isolation**: Each test file gets its own in-memory PGlite database and HTTP server
-  on a random port via `createTestContext()` / `destroyTestContext()` in `beforeAll` / `afterAll`.
-  Servers bind via Node's `http.createServer` on port 0 for automatic port allocation.
-- **Concurrency**: Default 4 parallel test files, configurable via `--concurrency N`.
-
-When reviewing tests, reject if:
-1. Tests import a shared app singleton instead of using `createTestContext()`
-2. Tests hardcode ports instead of using `ctx.baseUrl` / `ctx.port`
-3. Tests share mutable state between files (each file must be independently runnable)
-4. `afterAll` is missing `destroyTestContext()` (resource leak)
-5. Tests that need DB or HTTP skip the context pattern
 
 ## Default Configuration
 

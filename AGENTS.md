@@ -13,6 +13,10 @@ Note that dev docs (prd, schema, impl phases, etc) are in `.dev` folder.
 - `bun run typecheck` — TypeScript type checking
 - `bun run dev` — start dev servers
 
+## Agent Role Docs
+
+Agent role definitions in `.dev/agents/` are generic — they define how each role behaves across any project, not just Hezo. When updating agent role docs, write rules and system prompts that apply to any codebase. Hezo-specific tooling, file paths, and conventions belong here in AGENTS.md.
+
 ## Documentation
 
 The `.dev/` folder contains project specifications, schema definitions, API design, and implementation plans. These docs must stay in sync with the codebase — when code changes, update the relevant docs to reflect the current state.
@@ -32,6 +36,31 @@ All codebase changes must include corresponding tests. Backend changes require u
 
 Tests must actually test functionality — not just assert that code runs without throwing. If something is too difficult to mock for a unit test, write an integration test instead. Prefer integration tests over heavily-mocked unit tests.
 
+### Test Infrastructure
+
+Tests run via `bun run scripts/test.ts` which discovers test files across packages, sorts them longest-first using `tests/test-run-order.json` for optimal parallelism, and runs them concurrently (default 4 workers, configurable via `--concurrency N`). After unit/integration tests, Playwright e2e tests from `tests/e2e/` run automatically (skip with `--skip-e2e`, run alone with `--e2e`).
+
+**Every test file must be fully isolated.** Use the `createTestContext()` / `destroyTestContext()` pattern in `beforeAll` / `afterAll`:
+
+- **Server** (`packages/server/src/test/helpers/context.ts`): Returns `{ db, app, server, baseUrl, port }` — fresh in-memory PGlite + Hono app + HTTP server on random port.
+- **Connect** (`packages/connect/src/test/helpers/context.ts`): Returns `{ app, server, baseUrl, port }` — fresh Hono app + HTTP server on random port.
+
+Each context binds via Node's `http.createServer` on port 0 for automatic port allocation.
+
+Rules:
+- Never import a shared app singleton in tests — always use `ctx.app` from the test context
+- Never hardcode ports — use `ctx.baseUrl` or `ctx.port`
+- Never share mutable state between test files
+- Always call `destroyTestContext()` in `afterAll` to prevent resource leaks
+- For pure logic tests (crypto, parsing, etc.) that don't need HTTP, test functions directly
+
+When reviewing tests, reject if:
+1. Tests import a shared app singleton instead of using `createTestContext()`
+2. Tests hardcode ports instead of using `ctx.baseUrl` / `ctx.port`
+3. Tests share mutable state between files (each file must be independently runnable)
+4. `afterAll` is missing `destroyTestContext()` (resource leak)
+5. Tests that need DB or HTTP skip the context pattern
+
 ## E2E Tests
 
 End-to-end tests live in `tests/e2e/` and use Playwright. The Playwright config at root `playwright.config.ts` auto-starts all three services (server on :3100, connect on :4100, web on :5173).
@@ -44,9 +73,24 @@ All UI changes must include e2e tests covering the affected user flows. E2E test
 
 Avoid `any` in source code. Use specific types, `unknown`, `Record<string, unknown>`, or typed generics instead. If a library lacks type declarations, install them (e.g. `@types/bun` for Bun APIs) rather than falling back to `any` or `declare const` hacks. The only acceptable place for `any` is test files where JSON response shapes are unpredictable.
 
+## Conventions
+
+- Use `commander` for CLI argument parsing in all TypeScript binaries and scripts — never parse `process.argv` manually.
+
 ## Security
 
 Security must not be compromised when building. Never expose raw secrets, private keys, or signing keys via endpoints or logs. Use asymmetric cryptography for cross-service verification. Validate and sanitize all external input. Encrypt sensitive data at rest. Use timing-safe comparisons for signature verification.
+
+### Route Authorization
+
+Every API route must enforce authorization — never trust URL parameters alone.
+
+- **Company scoping is mandatory.** Every route that takes `:companyId` must verify the authenticated user has access to that company. Board users can be members of multiple companies, so verify membership per-request (not assumed from the token). Agent and API key auth already carry `companyId` — verify it matches the route parameter.
+- **Resource ownership is mandatory.** Every route that takes a nested resource (`:issueId`, `:secretId`, `:commentId`, etc.) must verify the resource belongs to the parent `:companyId` via a WHERE clause or JOIN. Never operate on a resource ID without confirming it belongs to the target company.
+- **Global endpoints must still be scoped.** Endpoints without `:companyId` in the path (e.g., approval resolution) must still verify the authenticated user has access to the resource's company before allowing the operation.
+- **WebSocket room subscriptions must be authorized.** Verify the subscriber's company membership matches the room before allowing subscription.
+- **MCP tool handlers must enforce the same authorization as their REST equivalents.** Pass caller identity into tool handlers and validate company access.
+- **Use `timingSafeEqual` for all secret/hash comparisons.** Never use `===` to compare hashes, tokens, or signatures.
 
 ## Implementation Phases
 
