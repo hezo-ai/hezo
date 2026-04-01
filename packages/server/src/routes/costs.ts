@@ -2,12 +2,16 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
 
 export const costsRoutes = new Hono<Env>();
 
 costsRoutes.get('/companies/:companyId/costs', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const agentId = c.req.query('agent_id');
 	const projectId = c.req.query('project_id');
 	const issueId = c.req.query('issue_id');
@@ -90,7 +94,6 @@ costsRoutes.get('/companies/:companyId/costs', async (c) => {
 		return ok(c, { summary: result.rows, total_cents: totalCents });
 	}
 
-	// Default: list entries
 	const result = await db.query<{ amount_cents: number }>(
 		`SELECT ce.* FROM cost_entries ce WHERE ${where} ORDER BY ce.created_at DESC`,
 		params,
@@ -100,8 +103,11 @@ costsRoutes.get('/companies/:companyId/costs', async (c) => {
 });
 
 costsRoutes.post('/companies/:companyId/costs', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 
 	const body = await c.req.json<{
 		member_id: string;
@@ -115,7 +121,6 @@ costsRoutes.post('/companies/:companyId/costs', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'member_id and positive amount_cents are required', 400);
 	}
 
-	// Attempt budget debit
 	const debitResult = await db.query<{ debit_agent_budget: boolean }>(
 		'SELECT debit_agent_budget($1, $2)',
 		[body.member_id, body.amount_cents],

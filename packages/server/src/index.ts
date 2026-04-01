@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
+import { AuthType } from '@hezo/shared';
 import { verify } from 'hono/jwt';
 import { app } from './app';
 import { parseArgs } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
+import { safeCompareHex } from './middleware/auth';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { startup } from './startup';
 
@@ -31,8 +33,8 @@ async function validateToken(token: string): Promise<WsData['auth'] | null> {
 		);
 		if (result.rows.length === 0) return null;
 		const tokenHash = createHash('sha256').update(token).digest('hex');
-		if (tokenHash !== result.rows[0].key_hash) return null;
-		return { type: 'api_key', companyId: result.rows[0].company_id };
+		if (!safeCompareHex(tokenHash, result.rows[0].key_hash)) return null;
+		return { type: AuthType.ApiKey, companyId: result.rows[0].company_id };
 	}
 
 	try {
@@ -41,18 +43,42 @@ async function validateToken(token: string): Promise<WsData['auth'] | null> {
 		const payload = await verify(token, secret, 'HS256');
 		if (payload.member_id && payload.company_id) {
 			return {
-				type: 'agent',
+				type: AuthType.Agent,
 				memberId: payload.member_id as string,
 				companyId: payload.company_id as string,
 			};
 		}
 		if (payload.user_id) {
-			return { type: 'board', userId: payload.user_id as string };
+			let isSuperuser = false;
+			if (dbRef) {
+				const userResult = await dbRef.query<{ is_superuser: boolean }>(
+					'SELECT is_superuser FROM users WHERE id = $1',
+					[payload.user_id],
+				);
+				isSuperuser = userResult.rows[0]?.is_superuser ?? false;
+			}
+			return { type: AuthType.Board, userId: payload.user_id as string, isSuperuser };
 		}
 		return null;
 	} catch {
 		return null;
 	}
+}
+
+async function canAccessCompany(auth: WsData['auth'], companyId: string): Promise<boolean> {
+	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
+		return auth.companyId === companyId;
+	}
+	if (auth.type === AuthType.Board) {
+		if (auth.isSuperuser) return true;
+		if (!dbRef) return false;
+		const result = await dbRef.query(
+			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.company_id = $2',
+			[auth.userId, companyId],
+		);
+		return result.rows.length > 0;
+	}
+	return false;
 }
 
 startup(config)
@@ -112,11 +138,17 @@ export default {
 		close(ws: Bun.ServerWebSocket<WsConnectionData>) {
 			wsManager?.unsubscribeAll(ws as unknown as WsSocket);
 		},
-		message(ws: Bun.ServerWebSocket<WsConnectionData>, msg: string | Buffer) {
+		async message(ws: Bun.ServerWebSocket<WsConnectionData>, msg: string | Buffer) {
 			if (!wsManager) return;
 			try {
 				const data = JSON.parse(typeof msg === 'string' ? msg : msg.toString());
 				if (data.action === 'subscribe' && typeof data.room === 'string') {
+					// Authorize room subscriptions
+					const match = data.room.match(/^company:(.+)$/);
+					if (match) {
+						const allowed = await canAccessCompany(ws.data.auth, match[1]);
+						if (!allowed) return;
+					}
 					wsManager.subscribe(ws as unknown as WsSocket, data.room);
 				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {
 					wsManager.unsubscribe(ws as unknown as WsSocket, data.room);

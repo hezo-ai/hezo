@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
+import { ContainerStatus } from '@hezo/shared';
 import type { DockerClient } from './docker';
 import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
 
@@ -25,10 +26,10 @@ export async function provisionContainer(
 	companySlug: string,
 	dataDir: string,
 ): Promise<string> {
-	await db.query(
-		"UPDATE projects SET container_status = 'creating'::container_status WHERE id = $1",
-		[project.id],
-	);
+	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
+		ContainerStatus.Creating,
+		project.id,
+	]);
 
 	try {
 		const projectDir = ensureProjectWorkspace(dataDir, companySlug, project.slug);
@@ -98,16 +99,16 @@ export async function provisionContainer(
 		await docker.startContainer(Id);
 
 		await db.query(
-			"UPDATE projects SET container_id = $1, container_status = 'running'::container_status WHERE id = $2",
-			[Id, project.id],
+			'UPDATE projects SET container_id = $1, container_status = $2::container_status WHERE id = $3',
+			[Id, ContainerStatus.Running, project.id],
 		);
 
 		return Id;
 	} catch (error) {
-		await db.query(
-			"UPDATE projects SET container_status = 'error'::container_status WHERE id = $1",
-			[project.id],
-		);
+		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
+			ContainerStatus.Error,
+			project.id,
+		]);
 		throw error;
 	}
 }
@@ -176,7 +177,7 @@ export async function syncContainerStatus(
 ): Promise<string> {
 	try {
 		const info = await docker.inspectContainer(containerId);
-		const status = info.State.Running ? 'running' : 'stopped';
+		const status = info.State.Running ? ContainerStatus.Running : ContainerStatus.Stopped;
 		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 			status,
 			projectId,
@@ -184,10 +185,10 @@ export async function syncContainerStatus(
 		return status;
 	} catch {
 		await db.query(
-			"UPDATE projects SET container_status = 'error'::container_status, container_id = NULL WHERE id = $1",
-			[projectId],
+			'UPDATE projects SET container_status = $1::container_status, container_id = NULL WHERE id = $2',
+			[ContainerStatus.Error, projectId],
 		);
-		return 'error';
+		return ContainerStatus.Error;
 	}
 }
 

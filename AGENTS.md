@@ -76,6 +76,11 @@ Avoid `any` in source code. Use specific types, `unknown`, `Record<string, unkno
 ## Conventions
 
 - Use `commander` for CLI argument parsing in all TypeScript binaries and scripts — never parse `process.argv` manually.
+- Use shared constants and enums from `@hezo/shared` (`packages/shared/src/types/common.ts`) instead of hardcoded string literals. Never use raw strings for status values, entity types, approval types, or other enumerated values in application code. If a new enum value is needed, add it to the shared package first.
+
+## Database Transactions
+
+Use transactions (`BEGIN`/`COMMIT`) for any operation that performs multiple writes that must succeed or fail together. Prefer transactions over `SELECT ... FOR UPDATE` — wrap the entire read-modify-write sequence in a transaction instead of locking individual rows. This applies to multi-step creation flows (e.g. creating a parent record then child records), bulk updates, and any sequence where partial completion would leave the database in an inconsistent state.
 
 ## Security
 

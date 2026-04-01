@@ -2,12 +2,25 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
 
 export const executionLocksRoutes = new Hono<Env>();
 
 executionLocksRoutes.get('/companies/:companyId/issues/:issueId/lock', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const issueId = c.req.param('issueId');
+
+	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		companyId,
+	]);
+	if (issueCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	}
 
 	const result = await db.query(
 		`SELECT el.id, el.issue_id, el.member_id, el.locked_at,
@@ -27,8 +40,20 @@ executionLocksRoutes.get('/companies/:companyId/issues/:issueId/lock', async (c)
 });
 
 executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const issueId = c.req.param('issueId');
+
+	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		companyId,
+	]);
+	if (issueCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	}
 
 	const body = await c.req.json<{ member_id: string }>();
 	if (!body.member_id) {
@@ -51,7 +76,6 @@ executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c
 		[issueId, body.member_id],
 	);
 
-	const companyId = c.req.param('companyId');
 	broadcastChange(
 		c,
 		`company:${companyId}`,
@@ -63,15 +87,26 @@ executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c
 });
 
 executionLocksRoutes.delete('/companies/:companyId/issues/:issueId/lock', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const issueId = c.req.param('issueId');
+
+	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		companyId,
+	]);
+	if (issueCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	}
 
 	await db.query(
 		'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
 		[issueId],
 	);
 
-	const companyId = c.req.param('companyId');
 	broadcastChange(c, `company:${companyId}`, 'execution_locks', 'DELETE', { issue_id: issueId });
 	return ok(c, { released: true });
 });

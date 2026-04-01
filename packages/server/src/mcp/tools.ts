@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { ApprovalStatus, CommentContentType, IssuePriority, IssueStatus } from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
@@ -160,7 +161,7 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			const identifier = `${companyResult.rows[0].issue_prefix}-${num}`;
 			const r = await db.query(
 				`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier, title, description, status, priority)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, 'backlog', $8::issue_priority) RETURNING *`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority) RETURNING *`,
 				[
 					args.company_id,
 					args.project_id,
@@ -169,7 +170,8 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 					identifier,
 					args.title,
 					args.description ?? '',
-					args.priority ?? 'medium',
+					IssueStatus.Backlog,
+					args.priority ?? IssuePriority.Medium,
 				],
 			);
 			return r.rows[0];
@@ -307,8 +309,8 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 		},
 		async (args, db) => {
 			const r = await db.query(
-				`INSERT INTO issue_comments (issue_id, content_type, content) VALUES ($1, 'text'::comment_content_type, $2::jsonb) RETURNING *`,
-				[args.issue_id, JSON.stringify({ text: args.content })],
+				`INSERT INTO issue_comments (issue_id, content_type, content) VALUES ($1, $2::comment_content_type, $3::jsonb) RETURNING *`,
+				[args.issue_id, CommentContentType.Text, JSON.stringify({ text: args.content })],
 			);
 			return r.rows[0];
 		},
@@ -325,8 +327,8 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 		},
 		async (args, db) => {
 			const r = await db.query(
-				`SELECT * FROM approvals WHERE company_id = $1 AND status = 'pending' ORDER BY created_at DESC`,
-				[args.company_id],
+				`SELECT * FROM approvals WHERE company_id = $1 AND status = $2::approval_status ORDER BY created_at DESC`,
+				[args.company_id, ApprovalStatus.Pending],
 			);
 			return r.rows;
 		},
@@ -339,7 +341,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 		'Approve or deny an approval',
 		{
 			approval_id: z.string().describe('Approval ID'),
-			status: z.enum(['approved', 'denied']).describe('Resolution status'),
+			status: z
+				.enum([ApprovalStatus.Approved, ApprovalStatus.Denied])
+				.describe('Resolution status'),
 			resolution_note: z.string().optional().describe('Note'),
 		},
 		async (args, db) => {

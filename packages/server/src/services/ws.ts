@@ -4,7 +4,13 @@ export interface WsEvent {
 }
 
 export interface WsData {
-	auth: { type: string; companyId?: string; userId?: string; memberId?: string };
+	auth: {
+		type: string;
+		companyId?: string;
+		userId?: string;
+		memberId?: string;
+		isSuperuser?: boolean;
+	};
 	rooms: Set<string>;
 }
 

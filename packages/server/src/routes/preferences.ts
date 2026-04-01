@@ -1,14 +1,18 @@
+import { AuthType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
 
 export const preferencesRoutes = new Hono<Env>();
 
-// Get company preferences
 preferencesRoutes.get('/companies/:companyId/preferences', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 
 	const result = await db.query(
 		`SELECT cp.*, COALESCE(ma.title, m.display_name) AS last_updated_by_name
@@ -26,10 +30,12 @@ preferencesRoutes.get('/companies/:companyId/preferences', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-// Update company preferences (auto-creates if not exists)
 preferencesRoutes.patch('/companies/:companyId/preferences', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const auth = c.get('auth');
 
 	const body = await c.req.json<{
@@ -41,16 +47,14 @@ preferencesRoutes.patch('/companies/:companyId/preferences', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
 
-	const authorMemberId = auth.type === 'agent' ? auth.memberId : null;
+	const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 
-	// Check if preferences exist
 	const existing = await db.query<{ id: string; content: string }>(
 		'SELECT id, content FROM company_preferences WHERE company_id = $1',
 		[companyId],
 	);
 
 	if (existing.rows.length === 0) {
-		// Create new preferences
 		const result = await db.query(
 			`INSERT INTO company_preferences (company_id, content, last_updated_by_member_id)
 			 VALUES ($1, $2, $3)
@@ -69,7 +73,6 @@ preferencesRoutes.patch('/companies/:companyId/preferences', async (c) => {
 
 	const pref = existing.rows[0];
 
-	// Create revision of current content before updating
 	const revResult = await db.query<{ max_rev: number }>(
 		'SELECT COALESCE(MAX(revision_number), 0)::int AS max_rev FROM company_preference_revisions WHERE preference_id = $1',
 		[pref.id],
@@ -82,7 +85,6 @@ preferencesRoutes.patch('/companies/:companyId/preferences', async (c) => {
 		[pref.id, nextRev, pref.content, body.change_summary ?? '', authorMemberId],
 	);
 
-	// Update preferences
 	const result = await db.query(
 		`UPDATE company_preferences SET content = $1, last_updated_by_member_id = $2
 		 WHERE company_id = $3
@@ -100,10 +102,12 @@ preferencesRoutes.patch('/companies/:companyId/preferences', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-// List preference revisions
 preferencesRoutes.get('/companies/:companyId/preferences/revisions', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 
 	const pref = await db.query<{ id: string }>(
 		'SELECT id FROM company_preferences WHERE company_id = $1',

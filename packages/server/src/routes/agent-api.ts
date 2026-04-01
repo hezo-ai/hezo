@@ -1,3 +1,10 @@
+import {
+	AgentStatus,
+	ApprovalType,
+	AuthType,
+	IssuePriority,
+	TERMINAL_ISSUE_STATUSES,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -8,7 +15,7 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 	const db = c.get('db');
 	const auth = c.get('auth');
 
-	if (auth.type !== 'agent') {
+	if (auth.type !== AuthType.Agent) {
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
@@ -38,7 +45,7 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 	const agentRow = agent.rows[0];
 	const budgetRemaining = agentRow.monthly_budget_cents - agentRow.budget_used_cents;
 
-	if (agentRow.status === 'paused' || agentRow.status === 'terminated') {
+	if (agentRow.status === AgentStatus.Paused || agentRow.status === AgentStatus.Terminated) {
 		return ok(c, {
 			agent: {
 				id: agentRow.id,
@@ -50,6 +57,8 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 			notifications: [],
 		});
 	}
+
+	const terminalPlaceholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${i + 3}`).join(', ');
 
 	const issues = await db.query(
 		`SELECT i.id, i.number, i.identifier, i.title, i.description, i.status, i.priority,
@@ -64,11 +73,24 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 		 JOIN projects p ON p.id = i.project_id
 		 JOIN companies co ON co.id = i.company_id
 		 WHERE i.assignee_id = $1 AND i.company_id = $2
-		   AND i.status NOT IN ('done', 'closed', 'cancelled')
+		   AND i.status NOT IN (${terminalPlaceholders})
 		 ORDER BY
-		   CASE i.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
+		   CASE i.priority
+		     WHEN ${`$${TERMINAL_ISSUE_STATUSES.length + 3}`} THEN 0
+		     WHEN ${`$${TERMINAL_ISSUE_STATUSES.length + 4}`} THEN 1
+		     WHEN ${`$${TERMINAL_ISSUE_STATUSES.length + 5}`} THEN 2
+		     WHEN ${`$${TERMINAL_ISSUE_STATUSES.length + 6}`} THEN 3
+		   END,
 		   i.created_at ASC`,
-		[memberId, companyId],
+		[
+			memberId,
+			companyId,
+			...TERMINAL_ISSUE_STATUSES,
+			IssuePriority.Urgent,
+			IssuePriority.High,
+			IssuePriority.Medium,
+			IssuePriority.Low,
+		],
 	);
 
 	const notifications = await db.query<{
@@ -117,11 +139,20 @@ agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
 	const db = c.get('db');
 	const auth = c.get('auth');
 
-	if (auth.type !== 'agent') {
+	if (auth.type !== AuthType.Agent) {
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
 	const issueId = c.req.param('issueId');
+
+	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		auth.companyId,
+	]);
+	if (issueCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	}
+
 	const body = await c.req.json<{
 		content_type: string;
 		content: Record<string, unknown>;
@@ -145,11 +176,29 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 	const db = c.get('db');
 	const auth = c.get('auth');
 
-	if (auth.type !== 'agent') {
+	if (auth.type !== AuthType.Agent) {
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
+	const issueId = c.req.param('issueId');
 	const commentId = c.req.param('commentId');
+
+	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		auth.companyId,
+	]);
+	if (issueCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	}
+
+	const commentCheck = await db.query(
+		'SELECT id FROM issue_comments WHERE id = $1 AND issue_id = $2',
+		[commentId, issueId],
+	);
+	if (commentCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Comment not found', 404);
+	}
+
 	const body = await c.req.json<{
 		tool_calls: Array<{
 			tool_name: string;
@@ -185,7 +234,6 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 		results.push(result.rows[0]);
 
 		if (tc.cost_cents && tc.cost_cents > 0) {
-			const issueId = c.req.param('issueId');
 			const issue = await db.query<{ project_id: string }>(
 				'SELECT project_id FROM issues WHERE id = $1',
 				[issueId],
@@ -210,7 +258,8 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 			);
 
 			if (!debitResult.rows[0]?.debit_agent_budget) {
-				await db.query("UPDATE member_agents SET status = 'paused'::agent_status WHERE id = $1", [
+				await db.query(`UPDATE member_agents SET status = $1::agent_status WHERE id = $2`, [
+					AgentStatus.Paused,
 					auth.memberId,
 				]);
 				return c.json(
@@ -233,7 +282,7 @@ agentApiRoutes.post('/secrets/request', async (c) => {
 	const db = c.get('db');
 	const auth = c.get('auth');
 
-	if (auth.type !== 'agent') {
+	if (auth.type !== AuthType.Agent) {
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
@@ -249,10 +298,11 @@ agentApiRoutes.post('/secrets/request', async (c) => {
 
 	const result = await db.query<{ id: string; status: string }>(
 		`INSERT INTO approvals (company_id, type, payload)
-		 VALUES ($1, 'secret_access'::approval_type, $2::jsonb)
+		 VALUES ($1, $2::approval_type, $3::jsonb)
 		 RETURNING id, status`,
 		[
 			auth.companyId,
+			ApprovalType.SecretAccess,
 			JSON.stringify({
 				member_id: auth.memberId,
 				secret_name: body.secret_name,
@@ -269,7 +319,7 @@ agentApiRoutes.get('/secrets/mine', async (c) => {
 	const db = c.get('db');
 	const auth = c.get('auth');
 
-	if (auth.type !== 'agent') {
+	if (auth.type !== AuthType.Agent) {
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 

@@ -105,6 +105,7 @@ Rules:
 - Don't nitpick style — focus on correctness, security, and performance
 - Critical security findings must be flagged immediately (don't wait for the review cycle)
 - Every route review must verify that authorization is enforced: the authenticated user's access to the resource is validated server-side, nested resources have ownership checks, and no cross-tenant data leakage is possible. Authorization gaps are critical severity.
+- Reject code that uses hardcoded string literals for values that have defined constants or enums. All status comparisons, type checks, and enumerated values must reference shared constants.
 - On regular heartbeats, proactively audit the codebase for systemic issues
 - Create issues for findings, tagged with severity: critical, high, medium, low
 - When QA findings lead to design changes or implementation pivots, update the relevant project documents (tech spec, implementation plan, etc.) to reflect the new state.

@@ -1,4 +1,7 @@
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
+import type { PGlite } from '@electric-sql/pglite';
+import { AuthType } from '@hezo/shared';
+import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { sign, verify } from 'hono/jwt';
 import type { Env } from '../lib/types';
@@ -42,7 +45,7 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 		}
 
 		const tokenHash = createHash('sha256').update(token).digest('hex');
-		const matched = tokenHash === result.rows[0].key_hash;
+		const matched = safeCompareHex(tokenHash, result.rows[0].key_hash);
 		if (!matched) {
 			return c.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid API key' } }, 401);
 		}
@@ -50,7 +53,7 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 		// Update last_used_at
 		await db.query('UPDATE api_keys SET last_used_at = now() WHERE id = $1', [result.rows[0].id]);
 
-		c.set('auth', { type: 'api_key', companyId: result.rows[0].company_id });
+		c.set('auth', { type: AuthType.ApiKey, companyId: result.rows[0].company_id });
 		return next();
 	}
 
@@ -62,12 +65,18 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 
 		if (payload.member_id && payload.company_id) {
 			c.set('auth', {
-				type: 'agent',
+				type: AuthType.Agent,
 				memberId: payload.member_id as string,
 				companyId: payload.company_id as string,
 			});
 		} else if (payload.user_id) {
-			c.set('auth', { type: 'board', userId: payload.user_id as string });
+			const db = c.get('db');
+			const userResult = await db.query<{ is_superuser: boolean }>(
+				'SELECT is_superuser FROM users WHERE id = $1',
+				[payload.user_id],
+			);
+			const isSuperuser = userResult.rows[0]?.is_superuser ?? false;
+			c.set('auth', { type: AuthType.Board, userId: payload.user_id as string, isSuperuser });
 		} else {
 			return c.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid token payload' } }, 401);
 		}
@@ -101,4 +110,83 @@ export async function signAgentJwt(
 		secret,
 		'HS256',
 	);
+}
+
+export function safeCompareHex(a: string, b: string): boolean {
+	const bufA = Buffer.from(a, 'hex');
+	const bufB = Buffer.from(b, 'hex');
+	if (bufA.length !== bufB.length) return false;
+	return timingSafeEqual(bufA, bufB);
+}
+
+export async function requireCompanyAccess(
+	c: Context<Env>,
+): Promise<{ companyId: string } | Response> {
+	const auth = c.get('auth');
+	const companyId = c.req.param('companyId');
+
+	if (!companyId) {
+		return c.json({ error: { code: 'BAD_REQUEST', message: 'Missing companyId' } }, 400);
+	}
+
+	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
+		if (auth.companyId !== companyId) {
+			return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
+		}
+		return { companyId };
+	}
+
+	// Superusers can access any company
+	if (auth.isSuperuser) {
+		return { companyId };
+	}
+
+	// Board auth — verify membership per-request
+	const db = c.get('db');
+	const result = await db.query(
+		'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.company_id = $2',
+		[auth.userId, companyId],
+	);
+	if (result.rows.length === 0) {
+		return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
+	}
+	return { companyId };
+}
+
+export async function requireCompanyAccessForResource(
+	db: PGlite,
+	c: Context<Env>,
+	resourceCompanyId: string,
+): Promise<{ companyId: string } | Response> {
+	const auth = c.get('auth');
+
+	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
+		if (auth.companyId !== resourceCompanyId) {
+			return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
+		}
+		return { companyId: resourceCompanyId };
+	}
+
+	// Superusers can access any company
+	if (auth.isSuperuser) {
+		return { companyId: resourceCompanyId };
+	}
+
+	// Board auth
+	const result = await db.query(
+		'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.company_id = $2',
+		[auth.userId, resourceCompanyId],
+	);
+	if (result.rows.length === 0) {
+		return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
+	}
+	return { companyId: resourceCompanyId };
+}
+
+export function requireSuperuser(c: Context<Env>): Response | null {
+	const auth = c.get('auth');
+	if (auth.type !== AuthType.Board || !auth.isSuperuser) {
+		return c.json({ error: { code: 'FORBIDDEN', message: 'Superuser access required' } }, 403);
+	}
+	return null;
 }

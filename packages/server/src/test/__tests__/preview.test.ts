@@ -33,7 +33,10 @@ beforeAll(async () => {
 		connectUrl: 'http://localhost:4100',
 		connectPublicKey: '',
 	});
-	token = await signBoardJwt(masterKeyManager, 'test-user');
+	const userResult = await db.query<{ id: string }>(
+		"INSERT INTO users (display_name, is_superuser) VALUES ('Test Admin', true) RETURNING id",
+	);
+	token = await signBoardJwt(masterKeyManager, userResult.rows[0].id);
 
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',

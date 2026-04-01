@@ -21,6 +21,19 @@ authRoutes.post('/auth/token', async (c) => {
 		return err(c, 'UNAUTHORIZED', 'Invalid master key', 401);
 	}
 
-	const token = await signBoardJwt(masterKeyManager, 'board-bootstrap');
+	const existing = await db.query<{ id: string }>(
+		'SELECT id FROM users WHERE is_superuser = true LIMIT 1',
+	);
+	let userId: string;
+	if (existing.rows.length > 0) {
+		userId = existing.rows[0].id;
+	} else {
+		const inserted = await db.query<{ id: string }>(
+			"INSERT INTO users (display_name, is_superuser) VALUES ('Admin', true) RETURNING id",
+		);
+		userId = inserted.rows[0].id;
+	}
+
+	const token = await signBoardJwt(masterKeyManager, userId);
 	return ok(c, { token }, 200);
 });

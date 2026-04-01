@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { AgentStatus, IssuePriority, TERMINAL_ISSUE_STATUSES, WakeupStatus } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
 import type { DockerClient } from './docker';
@@ -84,11 +85,11 @@ export class HeartbeatEngine {
 		}>(
 			`SELECT id, member_id, company_id, source, payload
 			 FROM agent_wakeup_requests
-			 WHERE status = 'queued'::wakeup_status
+			 WHERE status = $2::wakeup_status
 			   AND created_at < $1
 			 ORDER BY created_at ASC
 			 LIMIT 10`,
-			[coalescingCutoff],
+			[coalescingCutoff, WakeupStatus.Queued],
 		);
 
 		for (const wakeup of wakeups.rows) {
@@ -97,8 +98,8 @@ export class HeartbeatEngine {
 			}
 
 			await this.db.query(
-				"UPDATE agent_wakeup_requests SET status = 'claimed'::wakeup_status, claimed_at = now() WHERE id = $1",
-				[wakeup.id],
+				'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = now() WHERE id = $2',
+				[WakeupStatus.Claimed, wakeup.id],
 			);
 
 			await this.activateAgent(wakeup.member_id, wakeup.company_id, wakeup.id);
@@ -114,11 +115,11 @@ export class HeartbeatEngine {
 			`SELECT ma.id, m.company_id, ma.heartbeat_interval_min
 			 FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE ma.status IN ('active', 'idle')
+			 WHERE ma.status IN ($1, $2)
 			   AND (ma.last_heartbeat_at IS NULL
 			        OR ma.last_heartbeat_at + (ma.heartbeat_interval_min || ' minutes')::interval < now())
 			 LIMIT 5`,
-			[],
+			[AgentStatus.Active, AgentStatus.Idle],
 		);
 
 		for (const agent of dueAgents.rows) {
@@ -144,13 +145,13 @@ export class HeartbeatEngine {
 
 		if (
 			agent.rows.length === 0 ||
-			agent.rows[0].status === 'paused' ||
-			agent.rows[0].status === 'terminated'
+			agent.rows[0].status === AgentStatus.Paused ||
+			agent.rows[0].status === AgentStatus.Terminated
 		) {
 			if (wakeupId) {
 				await this.db.query(
-					"UPDATE agent_wakeup_requests SET status = 'skipped'::wakeup_status WHERE id = $1",
-					[wakeupId],
+					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
+					[WakeupStatus.Skipped, wakeupId],
 				);
 			}
 			return;
@@ -168,19 +169,27 @@ export class HeartbeatEngine {
 			`SELECT id, identifier, title, description, status, priority, project_id
 			 FROM issues
 			 WHERE assignee_id = $1 AND company_id = $2
-			   AND status NOT IN ('done', 'closed', 'cancelled')
+			   AND status NOT IN ($3, $4, $5)
 			 ORDER BY
-			   CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
+			   CASE priority WHEN $6 THEN 0 WHEN $7 THEN 1 WHEN $8 THEN 2 WHEN $9 THEN 3 END,
 			   created_at ASC
 			 LIMIT 1`,
-			[memberId, companyId],
+			[
+				memberId,
+				companyId,
+				...TERMINAL_ISSUE_STATUSES,
+				IssuePriority.Urgent,
+				IssuePriority.High,
+				IssuePriority.Medium,
+				IssuePriority.Low,
+			],
 		);
 
 		if (issues.rows.length === 0) {
 			if (wakeupId) {
 				await this.db.query(
-					"UPDATE agent_wakeup_requests SET status = 'completed'::wakeup_status, completed_at = now() WHERE id = $1",
-					[wakeupId],
+					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2',
+					[WakeupStatus.Completed, wakeupId],
 				);
 			}
 			return;
@@ -200,8 +209,8 @@ export class HeartbeatEngine {
 		if (project.rows.length === 0 || !project.rows[0].container_id) {
 			if (wakeupId) {
 				await this.db.query(
-					"UPDATE agent_wakeup_requests SET status = 'failed'::wakeup_status WHERE id = $1",
-					[wakeupId],
+					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
+					[WakeupStatus.Failed, wakeupId],
 				);
 			}
 			return;
@@ -252,7 +261,7 @@ export class HeartbeatEngine {
 				if (wakeupId) {
 					await this.db.query(
 						`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
-						[result.success ? 'completed' : 'failed', wakeupId],
+						[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
 					);
 				}
 			})

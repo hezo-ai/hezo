@@ -1,3 +1,4 @@
+import { ApprovalStatus, ApprovalType, PlatformType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { verifyOAuthState } from '../crypto/state';
 import type { Env } from '../lib/types';
@@ -24,7 +25,6 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 		return c.text('Missing state or platform parameter', 400);
 	}
 
-	// Verify server's own HMAC signature on the state
 	const statePayload = await verifyOAuthState(state, masterKeyManager);
 	if (!statePayload) {
 		return c.text('Invalid or tampered state parameter', 400);
@@ -48,11 +48,17 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 		}
 	}
 
-	// Store encrypted token and upsert connection
-	await storeOAuthToken(db, masterKeyManager, companyId, platform, accessToken, scopes, metadata);
+	await storeOAuthToken(
+		db,
+		masterKeyManager,
+		companyId,
+		platform as PlatformType,
+		accessToken,
+		scopes,
+		metadata,
+	);
 
-	// Generate SSH key for the company if it doesn't exist, then register on GitHub
-	if (platform === 'github') {
+	if (platform === PlatformType.GitHub) {
 		try {
 			let sshKey = await getCompanySSHKey(db, companyId, masterKeyManager);
 			if (!sshKey) {
@@ -72,12 +78,17 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 		}
 	}
 
-	// Dismiss pending oauth_request approvals for this company+platform
 	await db.query(
-		`UPDATE approvals SET status = 'approved'::approval_status, resolution_note = 'Auto-resolved: platform connected', resolved_at = now()
-		 WHERE company_id = $1 AND type = 'oauth_request'::approval_type AND status = 'pending'::approval_status
-		   AND payload->>'platform' = $2`,
-		[companyId, platform],
+		`UPDATE approvals SET status = $1::approval_status, resolution_note = 'Auto-resolved: platform connected', resolved_at = now()
+		 WHERE company_id = $2 AND type = $3::approval_type AND status = $4::approval_status
+		   AND payload->>'platform' = $5`,
+		[
+			ApprovalStatus.Approved,
+			companyId,
+			ApprovalType.OauthRequest,
+			ApprovalStatus.Pending,
+			platform,
+		],
 	);
 
 	return c.redirect(`/companies/${companyId}/settings?connected=${platform}`);

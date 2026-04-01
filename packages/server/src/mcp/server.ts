@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
+import { AuthType } from '@hezo/shared';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Context } from 'hono';
 import { verify } from 'hono/jwt';
-import type { Env } from '../lib/types';
+import type { AuthInfo, Env } from '../lib/types';
+import { safeCompareHex } from '../middleware/auth';
 import { registerTools, type ToolDef } from './tools';
 
 let mcpServer: McpServer | null = null;
@@ -21,33 +23,50 @@ export function getToolDefs(): ToolDef[] {
 	return toolDefs;
 }
 
-async function authenticateRequest(c: Context<Env>): Promise<boolean> {
+async function authenticateRequest(c: Context<Env>): Promise<AuthInfo | null> {
 	const header = c.req.header('Authorization');
-	if (!header?.startsWith('Bearer ')) return false;
+	if (!header?.startsWith('Bearer ')) return null;
 
 	const token = header.slice(7);
 	const masterKeyManager = c.get('masterKeyManager');
-	if (masterKeyManager.getState() !== 'unlocked') return false;
+	if (masterKeyManager.getState() !== 'unlocked') return null;
 
 	if (token.startsWith('hezo_')) {
 		const db = c.get('db');
 		const prefix = token.slice(5, 13);
-		const result = await db.query<{ key_hash: string }>(
-			'SELECT key_hash FROM api_keys WHERE prefix = $1',
+		const result = await db.query<{ company_id: string; key_hash: string }>(
+			'SELECT company_id, key_hash FROM api_keys WHERE prefix = $1',
 			[prefix],
 		);
-		if (result.rows.length === 0) return false;
+		if (result.rows.length === 0) return null;
 		const tokenHash = createHash('sha256').update(token).digest('hex');
-		return tokenHash === result.rows[0].key_hash;
+		if (!safeCompareHex(tokenHash, result.rows[0].key_hash)) return null;
+		return { type: AuthType.ApiKey, companyId: result.rows[0].company_id };
 	}
 
 	try {
 		const jwtKey = await masterKeyManager.getJwtKey();
 		const secret = jwtKey.toString('base64');
-		await verify(token, secret, 'HS256');
-		return true;
+		const payload = await verify(token, secret, 'HS256');
+		if (payload.member_id && payload.company_id) {
+			return {
+				type: AuthType.Agent,
+				memberId: payload.member_id as string,
+				companyId: payload.company_id as string,
+			};
+		}
+		if (payload.user_id) {
+			const db = c.get('db');
+			const userResult = await db.query<{ is_superuser: boolean }>(
+				'SELECT is_superuser FROM users WHERE id = $1',
+				[payload.user_id],
+			);
+			const isSuperuser = userResult.rows[0]?.is_superuser ?? false;
+			return { type: AuthType.Board, userId: payload.user_id as string, isSuperuser };
+		}
+		return null;
 	} catch {
-		return false;
+		return null;
 	}
 }
 
@@ -59,8 +78,8 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 		);
 	}
 
-	const authenticated = await authenticateRequest(c);
-	if (!authenticated) {
+	const auth = await authenticateRequest(c);
+	if (!auth) {
 		return c.json(
 			{ jsonrpc: '2.0', error: { code: -32000, message: 'Unauthorized' }, id: null },
 			401,

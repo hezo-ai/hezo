@@ -3,6 +3,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { Hono } from 'hono';
 import { err } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
 import { getWorkspacePath } from '../services/workspace';
 
 export const previewRoutes = new Hono<Env>();
@@ -24,9 +25,12 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 previewRoutes.get('/companies/:companyId/projects/:projectId/preview/*', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const projectId = c.req.param('projectId');
 
 	if (!dataDir) {
@@ -52,7 +56,6 @@ previewRoutes.get('/companies/:companyId/projects/:projectId/preview/*', async (
 	const requestedPath = c.req.path.split('/preview/')[1] || 'index.html';
 	const resolvedPath = resolve(join(workspacePath, requestedPath));
 
-	// Prevent directory traversal
 	const normalizedWorkspace = normalize(workspacePath);
 	if (!resolvedPath.startsWith(normalizedWorkspace)) {
 		return err(c, 'FORBIDDEN', 'Path traversal not allowed', 403);

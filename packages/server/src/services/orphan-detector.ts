@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { ApprovalType, HeartbeatRunStatus, WakeupSource } from '@hezo/shared';
 import { createWakeup } from './wakeup';
 
 const MAX_RETRIES = 3;
@@ -13,9 +14,9 @@ export async function detectOrphans(db: PGlite, runningPids: Set<number>): Promi
 	}>(
 		`SELECT id, member_id, company_id, process_pid, process_loss_retry_count
 		 FROM heartbeat_runs
-		 WHERE status = 'running'::heartbeat_run_status
+		 WHERE status = $1::heartbeat_run_status
 		   AND started_at < now() - interval '5 minutes'`,
-		[],
+		[HeartbeatRunStatus.Running],
 	);
 
 	let orphanCount = 0;
@@ -29,12 +30,12 @@ export async function detectOrphans(db: PGlite, runningPids: Set<number>): Promi
 
 		await db.query(
 			`UPDATE heartbeat_runs
-			 SET status = 'failed'::heartbeat_run_status,
+			 SET status = $2::heartbeat_run_status,
 			     finished_at = now(),
 			     error = 'Orphaned: process no longer running',
 			     process_loss_retry_count = process_loss_retry_count + 1
 			 WHERE id = $1`,
-			[run.id],
+			[run.id, HeartbeatRunStatus.Failed],
 		);
 
 		await db.query(
@@ -43,16 +44,17 @@ export async function detectOrphans(db: PGlite, runningPids: Set<number>): Promi
 		);
 
 		if (run.process_loss_retry_count + 1 < MAX_RETRIES) {
-			await createWakeup(db, run.member_id, run.company_id, 'timer', {
+			await createWakeup(db, run.member_id, run.company_id, WakeupSource.Timer, {
 				reason: 'orphan_retry',
 				retry_count: run.process_loss_retry_count + 1,
 			});
 		} else {
 			await db.query(
 				`INSERT INTO approvals (company_id, type, payload)
-				 VALUES ($1, 'strategy'::approval_type, $2::jsonb)`,
+				 VALUES ($1, $2::approval_type, $3::jsonb)`,
 				[
 					run.company_id,
+					ApprovalType.Strategy,
 					JSON.stringify({
 						type: 'agent_error',
 						member_id: run.member_id,

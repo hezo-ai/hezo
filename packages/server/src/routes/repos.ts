@@ -1,8 +1,10 @@
 import { join } from 'node:path';
+import { ApprovalType, PlatformType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
 import { cloneRepo } from '../services/git';
 import { parseGitHubUrl, validateRepoAccess } from '../services/github';
 import { getCompanySSHKey } from '../services/ssh-keys';
@@ -12,6 +14,9 @@ import { getWorkspacePath } from '../services/workspace';
 export const reposRoutes = new Hono<Env>();
 
 reposRoutes.get('/companies/:companyId/projects/:projectId/repos', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const projectId = c.req.param('projectId');
 
@@ -25,9 +30,12 @@ reposRoutes.get('/companies/:companyId/projects/:projectId/repos', async (c) => 
 });
 
 reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const projectId = c.req.param('projectId');
 
 	const body = await c.req.json<{ short_name: string; url: string }>();
@@ -41,22 +49,24 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 		return err(c, 'INVALID_URL', 'URL must be a valid GitHub repository URL', 400);
 	}
 
-	// Check if GitHub is connected
 	const connection = await db.query<{
 		id: string;
 		metadata: { username?: string };
 	}>(
 		`SELECT id, metadata FROM connected_platforms
-		 WHERE company_id = $1 AND platform = 'github' AND status = 'active'`,
-		[companyId],
+		 WHERE company_id = $1 AND platform = $2 AND status = 'active'`,
+		[companyId, PlatformType.GitHub],
 	);
 
 	if (connection.rows.length === 0) {
-		// Create an oauth_request approval item
 		await db.query(
 			`INSERT INTO approvals (company_id, type, payload)
-			 VALUES ($1, 'oauth_request'::approval_type, $2::jsonb)`,
-			[companyId, JSON.stringify({ platform: 'github', reason: 'repo_add', repo_url: body.url })],
+			 VALUES ($1, $2::approval_type, $3::jsonb)`,
+			[
+				companyId,
+				ApprovalType.OauthRequest,
+				JSON.stringify({ platform: PlatformType.GitHub, reason: 'repo_add', repo_url: body.url }),
+			],
 		);
 
 		return err(
@@ -67,14 +77,13 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 		);
 	}
 
-	// Validate access via GitHub API
-	const token = await getOAuthToken(db, masterKeyManager, companyId, 'github');
+	const token = await getOAuthToken(db, masterKeyManager, companyId, PlatformType.GitHub);
 	if (!token) {
 		return err(c, 'GITHUB_NOT_CONNECTED', 'GitHub token not found', 422);
 	}
 
-	const access = await validateRepoAccess(parsed.owner, parsed.repo, token);
-	if (!access.accessible) {
+	const repoAccess = await validateRepoAccess(parsed.owner, parsed.repo, token);
+	if (!repoAccess.accessible) {
 		const username = connection.rows[0].metadata?.username || 'the connected account';
 		return err(
 			c,
@@ -133,7 +142,11 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 });
 
 reposRoutes.delete('/companies/:companyId/projects/:projectId/repos/:repoId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const projectId = c.req.param('projectId');
 	const repoId = c.req.param('repoId');
 
@@ -146,7 +159,6 @@ reposRoutes.delete('/companies/:companyId/projects/:projectId/repos/:repoId', as
 		return err(c, 'NOT_FOUND', 'Repo not found', 404);
 	}
 
-	const companyId = c.req.param('companyId');
 	broadcastChange(c, `company:${companyId}`, 'repos', 'DELETE', { id: repoId });
 	return ok(c, { deleted: true });
 });

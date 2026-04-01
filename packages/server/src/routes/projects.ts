@@ -1,8 +1,10 @@
+import { ContainerStatus, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
 import {
 	type ProjectRow,
 	provisionContainer,
@@ -12,23 +14,33 @@ import {
 
 export const projectsRoutes = new Hono<Env>();
 
+const terminalStatusList = TERMINAL_ISSUE_STATUSES.map((s) => `'${s}'`).join(', ');
+
 projectsRoutes.get('/companies/:companyId/projects', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
+
 	const result = await db.query(
 		`SELECT p.*,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
-       (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN ('done', 'closed', 'cancelled'))::int AS open_issue_count
+       (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN (${terminalStatusList}))::int AS open_issue_count
      FROM projects p
      WHERE p.company_id = $1
      ORDER BY p.created_at DESC`,
-		[c.req.param('companyId')],
+		[companyId],
 	);
 	return ok(c, result.rows);
 });
 
 projectsRoutes.post('/companies/:companyId/projects', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 
 	const companyCheck = await db.query('SELECT id FROM companies WHERE id = $1', [companyId]);
 	if (companyCheck.rows.length === 0) {
@@ -83,32 +95,40 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 });
 
 projectsRoutes.get('/companies/:companyId/projects/:projectId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
+	const projectId = c.req.param('projectId');
+
 	const result = await db.query(
 		`SELECT p.*,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
-       (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN ('done', 'closed', 'cancelled'))::int AS open_issue_count
+       (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN (${terminalStatusList}))::int AS open_issue_count
      FROM projects p
      WHERE p.id = $1 AND p.company_id = $2`,
-		[c.req.param('projectId'), c.req.param('companyId')],
+		[projectId, companyId],
 	);
 
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Project not found', 404);
 	}
 
-	// Also fetch repos
 	const repos = await db.query('SELECT * FROM repos WHERE project_id = $1 ORDER BY short_name', [
-		c.req.param('projectId'),
+		projectId,
 	]);
 
 	return ok(c, { ...(result.rows[0] as Record<string, unknown>), repos: repos.rows });
 });
 
 projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const projectId = c.req.param('projectId');
-	const companyId = c.req.param('companyId');
 
 	const existing = await db.query('SELECT id FROM projects WHERE id = $1 AND company_id = $2', [
 		projectId,
@@ -170,9 +190,12 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 });
 
 projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const projectId = c.req.param('projectId');
-	const companyId = c.req.param('companyId');
 
 	const existing = await db.query<{ id: string; slug: string }>(
 		'SELECT id, slug FROM projects WHERE id = $1 AND company_id = $2',
@@ -183,7 +206,7 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 	}
 
 	const openIssues = await db.query<{ count: number }>(
-		"SELECT count(*)::int AS count FROM issues WHERE project_id = $1 AND status NOT IN ('done', 'closed', 'cancelled')",
+		`SELECT count(*)::int AS count FROM issues WHERE project_id = $1 AND status NOT IN (${terminalStatusList})`,
 		[projectId],
 	);
 	if (openIssues.rows[0].count > 0) {
@@ -217,9 +240,12 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 });
 
 projectsRoutes.post('/companies/:companyId/projects/:projectId/rebuild-container', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const projectId = c.req.param('projectId');
-	const companyId = c.req.param('companyId');
 
 	const projectResult = await db.query('SELECT * FROM projects WHERE id = $1 AND company_id = $2', [
 		projectId,
@@ -249,7 +275,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/rebuild-container
 			companySlug,
 			dataDir,
 		);
-		return ok(c, { container_id: containerId, container_status: 'running' });
+		return ok(c, { container_id: containerId, container_status: ContainerStatus.Running });
 	} catch (error) {
 		return err(c, 'DOCKER_ERROR', `Failed to rebuild container: ${(error as Error).message}`, 500);
 	}

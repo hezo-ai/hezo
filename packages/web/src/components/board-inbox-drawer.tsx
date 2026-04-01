@@ -1,3 +1,4 @@
+import { ApprovalStatus } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Check, Loader2, X } from 'lucide-react';
 import type { Approval } from '../hooks/use-approvals';
@@ -60,7 +61,10 @@ export function BoardInboxDrawer({ open, onOpenChange, approvals }: BoardInboxDr
 											variant="secondary"
 											disabled={resolveApproval.isPending}
 											onClick={() =>
-												resolveApproval.mutate({ approvalId: a.id, status: 'approved' })
+												resolveApproval.mutate({
+													approvalId: a.id,
+													status: ApprovalStatus.Approved,
+												})
 											}
 										>
 											{resolveApproval.isPending ? (
@@ -75,7 +79,9 @@ export function BoardInboxDrawer({ open, onOpenChange, approvals }: BoardInboxDr
 											variant="ghost"
 											className="text-danger"
 											disabled={resolveApproval.isPending}
-											onClick={() => resolveApproval.mutate({ approvalId: a.id, status: 'denied' })}
+											onClick={() =>
+												resolveApproval.mutate({ approvalId: a.id, status: ApprovalStatus.Denied })
+											}
 										>
 											<X className="w-3 h-3" /> Deny
 										</Button>

@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { signAgentJwt } from '../middleware/auth';
 import type { DockerClient } from './docker';
@@ -52,7 +53,7 @@ export async function runAgent(
 ): Promise<RunResult> {
 	const startTime = Date.now();
 
-	if (!project.container_id || project.container_status !== 'running') {
+	if (!project.container_id || project.container_status !== ContainerStatus.Running) {
 		return {
 			success: false,
 			exitCode: -1,
@@ -100,7 +101,7 @@ export async function runAgent(
 		const success = execInfo.ExitCode === 0;
 
 		await updateHeartbeatRun(deps.db, heartbeatRunId, {
-			status: success ? 'completed' : 'failed',
+			status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
 			exitCode: execInfo.ExitCode,
 			durationMs,
 			stdout: stdout.slice(0, 10000),
@@ -119,7 +120,7 @@ export async function runAgent(
 		const durationMs = Date.now() - startTime;
 
 		await updateHeartbeatRun(deps.db, heartbeatRunId, {
-			status: 'failed',
+			status: HeartbeatRunStatus.Failed,
 			exitCode: -1,
 			durationMs,
 			stderr: (error as Error).message,
@@ -159,9 +160,9 @@ async function createHeartbeatRun(
 ): Promise<string> {
 	const result = await db.query<{ id: string }>(
 		`INSERT INTO heartbeat_runs (member_id, company_id, status)
-		 VALUES ($1, $2, 'running'::heartbeat_run_status)
+		 VALUES ($1, $2, $3::heartbeat_run_status)
 		 RETURNING id`,
-		[agent.id, agent.company_id],
+		[agent.id, agent.company_id, HeartbeatRunStatus.Running],
 	);
 	return result.rows[0].id;
 }

@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
 
 export const apiKeysRoutes = new Hono<Env>();
 
@@ -11,29 +12,36 @@ function hashKey(key: string): string {
 }
 
 apiKeysRoutes.get('/companies/:companyId/api-keys', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
+
 	const result = await db.query(
 		`SELECT id, company_id, name, prefix, last_used_at, created_at
      FROM api_keys
      WHERE company_id = $1
      ORDER BY created_at DESC`,
-		[c.req.param('companyId')],
+		[companyId],
 	);
 	return ok(c, result.rows);
 });
 
 apiKeysRoutes.post('/companies/:companyId/api-keys', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 
 	const body = await c.req.json<{ name: string }>();
 	if (!body.name?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	}
 
-	// Generate key: hezo_ + 32 random hex chars
 	const rawKey = `hezo_${randomBytes(16).toString('hex')}`;
-	const prefix = rawKey.slice(5, 13); // 8 chars after hezo_
+	const prefix = rawKey.slice(5, 13);
 	const keyHash = hashKey(rawKey);
 
 	const result = await db.query<{
@@ -55,9 +63,12 @@ apiKeysRoutes.post('/companies/:companyId/api-keys', async (c) => {
 });
 
 apiKeysRoutes.delete('/companies/:companyId/api-keys/:apiKeyId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const apiKeyId = c.req.param('apiKeyId');
-	const companyId = c.req.param('companyId');
 
 	const existing = await db.query('SELECT id FROM api_keys WHERE id = $1 AND company_id = $2', [
 		apiKeyId,

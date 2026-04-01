@@ -13,3 +13,9 @@ packages/server/static/
 .hezo/
 .claude/
 test-results/
+
+# TSC build artifacts in src (output goes to dist/)
+packages/*/src/**/*.js
+packages/*/src/**/*.js.map
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map

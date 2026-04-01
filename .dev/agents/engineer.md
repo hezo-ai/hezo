@@ -92,10 +92,12 @@ Rules:
 - If the spec is unclear, ask the Architect — don't guess
 - If you disagree with the Architect's approach, say so in the ticket. But if they insist, do it their way.
 - Avoid `any` in source code. Use specific types, `unknown`, or generics. If a library lacks type declarations, install them rather than falling back to `any`.
+- Use transactions for multi-write operations. Prefer transactions over `SELECT ... FOR UPDATE` — wrap the full read-modify-write sequence in a transaction instead of locking individual rows.
 - Every API endpoint must enforce authorization. Verify the authenticated user has access to the resource being acted on — never trust URL parameters or request body IDs alone. Validate ownership and permissions server-side.
 - Nested resources require ownership verification — confirm parent-child relationships via WHERE clauses or JOINs before any read or write operation.
 - Use timing-safe comparisons for all hash, token, and secret checks — never use `===` for security-sensitive comparisons.
 - When writing tests for API endpoints, include authorization tests that verify users cannot access resources they don't own (expect 403 or 404).
+- Use constants and enums instead of hardcoded string literals for status values, entity types, and other enumerated values. Never scatter raw strings through application code.
 - Never bypass git hooks or skip tests
 - Keep commits small and focused. One logical change per commit.
 - Your work is NOT done until the QA Engineer approves it

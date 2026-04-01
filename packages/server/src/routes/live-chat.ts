@@ -1,14 +1,28 @@
+import { AuthType, WakeupSource } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastEvent } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
 import { createWakeup } from '../services/wakeup';
 
 export const liveChatRoutes = new Hono<Env>();
 
 liveChatRoutes.get('/companies/:companyId/issues/:issueId/chat/messages', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
+	const { companyId } = access;
 	const issueId = c.req.param('issueId');
+
+	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		companyId,
+	]);
+	if (issueCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	}
 
 	const chat = await db.query<{ id: string }>('SELECT id FROM live_chats WHERE issue_id = $1', [
 		issueId,
@@ -34,20 +48,30 @@ liveChatRoutes.get('/companies/:companyId/issues/:issueId/chat/messages', async 
 });
 
 liveChatRoutes.post('/companies/:companyId/issues/:issueId/chat/messages', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const issueId = c.req.param('issueId');
 	const auth = c.get('auth');
+
+	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		companyId,
+	]);
+	if (issueCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	}
 
 	const body = await c.req.json<{ content: string }>();
 	if (!body.content?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
 
-	const authorMemberId = auth.type === 'agent' ? auth.memberId : null;
-	const authorType = auth.type === 'agent' ? 'agent' : 'board';
+	const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+	const authorType = auth.type === AuthType.Agent ? AuthType.Agent : AuthType.Board;
 
-	// Upsert the chat session
 	const chatResult = await db.query<{ id: string }>(
 		`INSERT INTO live_chats (issue_id)
 		 VALUES ($1)
@@ -66,14 +90,12 @@ liveChatRoutes.post('/companies/:companyId/issues/:issueId/chat/messages', async
 
 	const message = result.rows[0] as Record<string, unknown>;
 
-	// Broadcast via WebSocket
 	const wsManager = c.get('wsManager');
 	broadcastEvent(wsManager, `company:${companyId}`, 'chat_message', {
 		issueId,
 		message,
 	});
 
-	// Parse @-mentions and create wakeups
 	const mentions = body.content.match(/@([\w-]+)/g);
 	if (mentions) {
 		for (const mention of mentions) {
@@ -85,7 +107,7 @@ liveChatRoutes.post('/companies/:companyId/issues/:issueId/chat/messages', async
 				[slug, companyId],
 			);
 			if (mentioned.rows.length > 0) {
-				createWakeup(db, mentioned.rows[0].id, companyId, 'chat_message', {
+				createWakeup(db, mentioned.rows[0].id, companyId, WakeupSource.ChatMessage, {
 					issue_id: issueId,
 					chat_message_id: message.id,
 				}).catch((e) => console.error('Failed to create chat_message wakeup:', e));

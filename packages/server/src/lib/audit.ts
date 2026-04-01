@@ -1,12 +1,13 @@
 import type { PGlite } from '@electric-sql/pglite';
+import type { AuditAction, AuditActorType, AuditEntityType } from '@hezo/shared';
 
 export async function auditLog(
 	db: PGlite,
 	companyId: string,
-	actorType: 'board' | 'agent' | 'system',
+	actorType: AuditActorType,
 	actorMemberId: string | null,
-	action: string,
-	entityType: string,
+	action: AuditAction,
+	entityType: AuditEntityType,
 	entityId: string | null,
 	details?: Record<string, unknown>,
 ): Promise<void> {

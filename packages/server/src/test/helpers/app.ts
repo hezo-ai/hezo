@@ -25,7 +25,10 @@ export async function createTestApp() {
 		connectUrl: 'http://localhost:4100',
 		connectPublicKey: TEST_CONNECT_PUBLIC_KEY,
 	});
-	const token = await signBoardJwt(masterKeyManager, 'test-user');
+	const userResult = await db.query<{ id: string }>(
+		"INSERT INTO users (display_name, is_superuser) VALUES ('Test Admin', true) RETURNING id",
+	);
+	const token = await signBoardJwt(masterKeyManager, userResult.rows[0].id);
 
 	return { app, db, token, masterKeyHex, masterKeyManager };
 }

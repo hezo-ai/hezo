@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { ApprovalType, AuthType } from '@hezo/shared';
 import { Hono } from 'hono';
 import {
 	deleteDocFile,
@@ -10,6 +11,7 @@ import {
 } from '../lib/docs';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
 
 export const projectDocsRoutes = new Hono<Env>();
 
@@ -19,10 +21,6 @@ interface DesignatedRepoInfo {
 	repoShortName: string;
 }
 
-/**
- * Resolve the designated repo's identifying info for a project.
- * Returns null if the project doesn't have a designated repo.
- */
 async function getDesignatedRepoInfo(
 	db: PGlite,
 	companyId: string,
@@ -54,11 +52,13 @@ async function getDesignatedRepoInfo(
 	};
 }
 
-// List all files in .dev/ folder
 projectDocsRoutes.get('/companies/:companyId/projects/:projectId/docs', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
-	const info = await getDesignatedRepoInfo(db, c.req.param('companyId'), c.req.param('projectId'));
+	const info = await getDesignatedRepoInfo(db, access.companyId, c.req.param('projectId'));
 
 	if (!info) {
 		return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
@@ -81,12 +81,14 @@ projectDocsRoutes.get('/companies/:companyId/projects/:projectId/docs', async (c
 	);
 });
 
-// Read a specific doc file
 projectDocsRoutes.get('/companies/:companyId/projects/:projectId/docs/:filename', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
 	const filename = c.req.param('filename');
-	const info = await getDesignatedRepoInfo(db, c.req.param('companyId'), c.req.param('projectId'));
+	const info = await getDesignatedRepoInfo(db, access.companyId, c.req.param('projectId'));
 
 	if (!info) {
 		return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
@@ -107,13 +109,15 @@ projectDocsRoutes.get('/companies/:companyId/projects/:projectId/docs/:filename'
 	return ok(c, { filename, path: `.dev/${filename}`, content });
 });
 
-// Write/update a doc file
 projectDocsRoutes.put('/companies/:companyId/projects/:projectId/docs/:filename', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
 	const filename = c.req.param('filename');
 	const auth = c.get('auth');
-	const info = await getDesignatedRepoInfo(db, c.req.param('companyId'), c.req.param('projectId'));
+	const info = await getDesignatedRepoInfo(db, access.companyId, c.req.param('projectId'));
 
 	if (!info) {
 		return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
@@ -124,14 +128,13 @@ projectDocsRoutes.put('/companies/:companyId/projects/:projectId/docs/:filename'
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
 
-	// PRD approval gate: agents cannot directly write prd.md
-	if (filename === 'prd.md' && auth.type === 'agent') {
-		// Create a pending approval instead of writing directly
+	if (filename === 'prd.md' && auth.type === AuthType.Agent) {
 		await db.query(
 			`INSERT INTO approvals (company_id, type, requested_by_member_id, payload)
-			 VALUES ($1, 'strategy'::approval_type, $2, $3::jsonb)`,
+			 VALUES ($1, $2::approval_type, $3, $4::jsonb)`,
 			[
-				c.req.param('companyId'),
+				access.companyId,
+				ApprovalType.Strategy,
 				auth.memberId,
 				JSON.stringify({ action: 'update_prd', filename, content: body.content }),
 			],
@@ -150,12 +153,14 @@ projectDocsRoutes.put('/companies/:companyId/projects/:projectId/docs/:filename'
 	return ok(c, { filename, path: `.dev/${filename}`, content: body.content });
 });
 
-// Delete a doc file
 projectDocsRoutes.delete('/companies/:companyId/projects/:projectId/docs/:filename', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
 	const filename = c.req.param('filename');
-	const info = await getDesignatedRepoInfo(db, c.req.param('companyId'), c.req.param('projectId'));
+	const info = await getDesignatedRepoInfo(db, access.companyId, c.req.param('projectId'));
 
 	if (!info) {
 		return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
@@ -176,11 +181,13 @@ projectDocsRoutes.delete('/companies/:companyId/projects/:projectId/docs/:filena
 	return c.json({ data: null }, 200);
 });
 
-// Read AGENTS.md from repo root
 projectDocsRoutes.get('/companies/:companyId/projects/:projectId/agents-md', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
-	const info = await getDesignatedRepoInfo(db, c.req.param('companyId'), c.req.param('projectId'));
+	const info = await getDesignatedRepoInfo(db, access.companyId, c.req.param('projectId'));
 
 	if (!info) {
 		return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
@@ -201,11 +208,13 @@ projectDocsRoutes.get('/companies/:companyId/projects/:projectId/agents-md', asy
 	return ok(c, { filename: 'AGENTS.md', content });
 });
 
-// Write AGENTS.md to repo root
 projectDocsRoutes.put('/companies/:companyId/projects/:projectId/agents-md', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
-	const info = await getDesignatedRepoInfo(db, c.req.param('companyId'), c.req.param('projectId'));
+	const info = await getDesignatedRepoInfo(db, access.companyId, c.req.param('projectId'));
 
 	if (!info) {
 		return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);

@@ -1,12 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-
-export type WakeupSource =
-	| 'timer'
-	| 'assignment'
-	| 'mention'
-	| 'option_chosen'
-	| 'approval_resolved'
-	| 'chat_message';
+import { type WakeupSource, WakeupStatus } from '@hezo/shared';
 
 const COALESCING_WINDOW_MS = 10_000;
 
@@ -21,8 +14,8 @@ export async function createWakeup(
 	if (idempotencyKey) {
 		const existing = await db.query<{ id: string }>(
 			`SELECT id FROM agent_wakeup_requests
-			 WHERE idempotency_key = $1 AND status = 'queued'::wakeup_status`,
-			[idempotencyKey],
+			 WHERE idempotency_key = $1 AND status = $2::wakeup_status`,
+			[idempotencyKey, WakeupStatus.Queued],
 		);
 		if (existing.rows.length > 0) {
 			return existing.rows[0].id;
@@ -32,10 +25,10 @@ export async function createWakeup(
 	const coalescingCutoff = new Date(Date.now() - COALESCING_WINDOW_MS).toISOString();
 	const coalesceResult = await db.query<{ id: string; payload: Record<string, unknown> }>(
 		`SELECT id, payload FROM agent_wakeup_requests
-		 WHERE member_id = $1 AND status = 'queued'::wakeup_status
+		 WHERE member_id = $1 AND status = $3::wakeup_status
 		   AND created_at > $2
 		 ORDER BY created_at DESC LIMIT 1`,
-		[memberId, coalescingCutoff],
+		[memberId, coalescingCutoff, WakeupStatus.Queued],
 	);
 
 	if (coalesceResult.rows.length > 0) {
