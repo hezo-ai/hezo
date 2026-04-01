@@ -26,6 +26,8 @@ Pre-v1, do **not** create new migration files. Instead, modify `packages/server/
 
 ## Testing
 
+All codebase changes must include corresponding tests. Backend changes require unit or integration tests. UI changes require e2e tests. No change ships without test coverage for the new or modified behavior.
+
 Tests must actually test functionality — not just assert that code runs without throwing. If something is too difficult to mock for a unit test, write an integration test instead. Prefer integration tests over heavily-mocked unit tests.
 
 ## E2E Tests
@@ -34,7 +36,7 @@ End-to-end tests live in `tests/e2e/` and use Playwright. The Playwright config 
 
 E2E tests verify full-stack user flows through the browser. They are included in `bun run test` by default but can be skipped with `--skip-e2e` or run in isolation with `--e2e`.
 
-When a phase adds user-facing functionality, corresponding e2e tests should be added to `tests/e2e/` to cover the critical paths. E2E test files use the `.spec.ts` extension and import helpers from `./helpers`. Use the `authenticate(page)` helper to bypass the master key gate in tests that don't specifically test authentication.
+All UI changes must include e2e tests covering the affected user flows. E2E test files use the `.spec.ts` extension and import helpers from `./helpers`. Use the `authenticate(page)` helper to bypass the master key gate in tests that don't specifically test authentication.
 
 ## Security
 

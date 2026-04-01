@@ -10,8 +10,10 @@ test('can create a company and see agents', async ({ page }) => {
 	await page.getByLabel('Name').fill('Test Corp');
 	await page.getByRole('button', { name: 'Create' }).click();
 
-	await expect(page.getByText('Issues')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
 
-	await page.getByText('Agents').click();
-	await expect(page.locator('[class*="card"]').first()).toBeVisible({ timeout: 5000 });
+	await page.getByRole('link', { name: 'Agents' }).click();
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible({
+		timeout: 5000,
+	});
 });

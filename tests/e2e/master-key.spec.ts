@@ -1,21 +1,17 @@
 import { expect, test } from '@playwright/test';
+import { authenticate } from './helpers';
 
-test('shows master key gate on first visit', async ({ page }) => {
+test('loads app when server is pre-unlocked', async ({ page }) => {
 	await page.goto('/');
-	await expect(page.getByText('Set Master Key')).toBeVisible();
+	await authenticate(page);
+	await expect(page.getByRole('heading', { name: 'Companies', exact: true })).toBeVisible({
+		timeout: 10000,
+	});
 });
 
-test('can set master key and proceed', async ({ page }) => {
+test('authenticated user can navigate to companies', async ({ page }) => {
 	await page.goto('/');
-	await expect(page.getByText('Set Master Key')).toBeVisible();
-
-	await page.getByRole('button', { name: 'Generate Key' }).click();
-	await page.getByRole('button', { name: 'Copy to clipboard' }).click();
-
-	const keyInput = page.getByPlaceholder('Paste generated key to confirm');
-	const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
-	await keyInput.fill(clipboardText);
-
-	await page.getByRole('button', { name: 'Set Key & Continue' }).click();
-	await expect(page.getByText('Companies')).toBeVisible({ timeout: 10000 });
+	await authenticate(page);
+	await page.goto('/companies');
+	await expect(page.getByRole('button', { name: 'New Company' })).toBeVisible({ timeout: 10000 });
 });

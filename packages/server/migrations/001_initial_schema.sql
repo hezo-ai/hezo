@@ -1,12 +1,10 @@
 -- Initial schema for the company orchestration platform
 
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
 -------------------------------------------------------------------------------
 -- SYSTEM META
 -------------------------------------------------------------------------------
 
-CREATE TABLE system_meta (
+CREATE TABLE IF NOT EXISTS system_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
