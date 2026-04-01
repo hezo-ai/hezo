@@ -98,6 +98,7 @@ Rules:
 - Use timing-safe comparisons for all hash, token, and secret checks — never use `===` for security-sensitive comparisons.
 - When writing tests for API endpoints, include authorization tests that verify users cannot access resources they don't own (expect 403 or 404).
 - Use constants and enums instead of hardcoded string literals for status values, entity types, and other enumerated values. Never scatter raw strings through application code.
+- Never commit generated build artifacts (`.js`, `.d.ts`, `.js.map`, `.d.ts.map`) in source directories. Build output belongs in `dist/`, not alongside `.ts` source files.
 - Never bypass git hooks or skip tests
 - Keep commits small and focused. One logical change per commit.
 - Your work is NOT done until the QA Engineer approves it

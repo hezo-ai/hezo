@@ -73,6 +73,10 @@ All UI changes must include e2e tests covering the affected user flows. E2E test
 
 Avoid `any` in source code. Use specific types, `unknown`, `Record<string, unknown>`, or typed generics instead. If a library lacks type declarations, install them (e.g. `@types/bun` for Bun APIs) rather than falling back to `any` or `declare const` hacks. The only acceptable place for `any` is test files where JSON response shapes are unpredictable.
 
+## Build Artifacts
+
+Never commit generated build output (`.js`, `.d.ts`, `.js.map`, `.d.ts.map`) that lives alongside source files. TypeScript compiles to `dist/` — files in `src/` are source only. If generated files appear in `src/`, delete them. The `.gitignore` excludes these patterns under `packages/*/src/`.
+
 ## Conventions
 
 - Use `commander` for CLI argument parsing in all TypeScript binaries and scripts — never parse `process.argv` manually.
