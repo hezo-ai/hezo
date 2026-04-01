@@ -49,7 +49,7 @@ CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace',
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'company');
-CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'strategy', 'kb_update', 'plan_review', 'deploy_production');
+CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'strategy', 'kb_update', 'plan_review', 'deploy_production', 'oauth_request');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
 CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
@@ -267,7 +267,9 @@ CREATE TABLE company_ssh_keys (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id            UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     public_key            TEXT NOT NULL,
+    fingerprint           TEXT,
     private_key_secret_id UUID REFERENCES secrets(id) ON DELETE SET NULL,
+    github_key_id         INTEGER,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (company_id)
 );
@@ -405,7 +407,7 @@ CREATE TABLE approvals (
     company_id             UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     type                   approval_type NOT NULL,
     status                 approval_status NOT NULL DEFAULT 'pending',
-    requested_by_member_id UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    requested_by_member_id UUID REFERENCES members(id) ON DELETE CASCADE,
     payload                JSONB NOT NULL,
     resolved_at            TIMESTAMPTZ,
     resolution_note        TEXT,

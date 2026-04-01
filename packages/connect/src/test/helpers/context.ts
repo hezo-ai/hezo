@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { Hono } from 'hono';
 import { createApp } from '../../app';
-import type { ConnectConfig } from '../../config';
+import { type ConnectConfig, generateStateKeyPair } from '../../config';
 import type { FetchFn } from '../../providers/github';
 
 export interface ConnectTestContext {
@@ -11,11 +11,17 @@ export interface ConnectTestContext {
 	port: number;
 }
 
+const testKeyPair = generateStateKeyPair();
+
+export const TEST_STATE_PRIVATE_KEY = testKeyPair.privateKey;
+export const TEST_STATE_PUBLIC_KEY = testKeyPair.publicKey;
+
 export function defaultTestConfig(overrides?: Partial<ConnectConfig>): ConnectConfig {
 	return {
 		port: 0,
 		mode: 'self_hosted',
-		stateSigningKey: 'test-signing-key',
+		statePrivateKey: TEST_STATE_PRIVATE_KEY,
+		statePublicKey: TEST_STATE_PUBLIC_KEY,
 		github: { clientId: 'test-id', clientSecret: 'test-secret' },
 		...overrides,
 	};

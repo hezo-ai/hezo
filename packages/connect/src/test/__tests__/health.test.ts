@@ -40,10 +40,11 @@ describe('GET /platforms', () => {
 });
 
 describe('GET /signing-key', () => {
-	it('returns the hex signing key', async () => {
+	it('returns the Ed25519 public key in PEM format', async () => {
 		const res = await ctx.app.request('/signing-key');
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.key).toBe('test-signing-key');
+		expect(body.key).toContain('-----BEGIN PUBLIC KEY-----');
+		expect(body.key).toContain('-----END PUBLIC KEY-----');
 	});
 });

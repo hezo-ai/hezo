@@ -89,7 +89,7 @@ Hezo Connect does this once, centrally, for all users.
         &api_key={connect_api_key}          # centrally hosted only
 3.  Hezo Connect validates the request:
       - Verify API key (centrally hosted) or skip (self-hosted)
-      - Verify state signature (HMAC-SHA256)
+      - Verify state signature (Ed25519)
 4.  Hezo Connect redirects browser to GitHub OAuth consent screen:
       https://github.com/login/oauth/authorize
         ?client_id={hezo_connect_github_app_id}
@@ -139,7 +139,7 @@ The `state` parameter is a signed JSON payload containing:
 }
 ```
 
-Signed with HMAC-SHA256 by Hezo Connect. The Hezo app fetches Connect's public signing key via `GET /signing-key` on startup — no shared secret configuration needed.
+Signed with Ed25519 by Hezo Connect. The Hezo app fetches Connect's public key via `GET /signing-key` on startup — no shared secret needed.
 This prevents CSRF and ensures the callback goes to the right Hezo instance.
 
 ### OAuth link validity
@@ -367,7 +367,7 @@ CREATE TABLE usage_monthly (
 - All communication over HTTPS in production (HTTP allowed for localhost in dev)
 
 ### State parameter security
-- HMAC-SHA256 signed by Hezo Connect. Hezo app fetches the signing key via public endpoint.
+- Ed25519 signed by Hezo Connect. Hezo app fetches the signing key via public endpoint.
 - Contains nonce (prevents replay) and timestamp (prevents stale use)
 - Verified on callback before proceeding
 
@@ -412,7 +412,7 @@ http://localhost:3100/oauth/callback?error=access_denied&platform=github
 ```env
 HEZO_CONNECT_MODE=self_hosted
 HEZO_CONNECT_PORT=4100
-STATE_SIGNING_KEY=random-256-bit-key  # auto-generated if not provided
+STATE_PRIVATE_KEY=random-256-bit-key  # auto-generated if not provided
 
 GITHUB_CLIENT_ID=Iv1.abc123
 GITHUB_CLIENT_SECRET=secret123
@@ -425,7 +425,7 @@ GMAIL_CLIENT_SECRET=GOCSPX-secret
 ```env
 HEZO_CONNECT_MODE=centrally_hosted
 HEZO_CONNECT_PORT=4100
-STATE_SIGNING_KEY=random-256-bit-key
+STATE_PRIVATE_KEY=random-256-bit-key
 DATABASE_URL=postgres://...
 BETTER_AUTH_SECRET=session-signing-key
 # STRIPE_SECRET_KEY=sk_live_...       # Future: when pricing is added

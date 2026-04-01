@@ -22,10 +22,10 @@
   - `GET /health` — returns `{ "ok": true }`
   - `GET /auth/github/start?callback=...&state=...` — redirects to GitHub OAuth consent screen with signed state
   - `GET /auth/github/callback` — exchanges auth code for token, redirects back to caller with token in query params
-- HMAC-SHA256 state parameter signing for CSRF prevention
+- Ed25519 state parameter signing for CSRF prevention
 - In-memory nonce map for in-flight OAuth flows (no database)
 - Token delivery via browser redirect (not server-to-server POST)
-- Environment config: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `STATE_SIGNING_KEY`
+- Environment config: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `STATE_PRIVATE_KEY`
 
 **How to test:**
 - `curl localhost:4100/health` returns 200
@@ -113,6 +113,8 @@
 ---
 
 ## Phase 3: GitHub Integration
+
+**Status:** Done (2026-04)
 
 **Goal:** Connect Phase 0 (Hezo Connect) to the main app. OAuth callback, token storage, repo validation.
 

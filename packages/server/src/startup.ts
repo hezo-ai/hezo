@@ -14,18 +14,27 @@ import { authRoutes } from './routes/auth';
 import { commentsRoutes } from './routes/comments';
 import { companiesRoutes } from './routes/companies';
 import { companyTypesRoutes } from './routes/company-types';
+import { connectionsRoutes } from './routes/connections';
 import { costsRoutes } from './routes/costs';
 import { healthRoutes } from './routes/health';
 import { issuesRoutes } from './routes/issues';
 import { kbDocsRoutes } from './routes/kb-docs';
+import { oauthCallbackRoutes } from './routes/oauth-callback';
 import { preferencesRoutes } from './routes/preferences';
 import { projectDocsRoutes } from './routes/project-docs';
 import { projectsRoutes } from './routes/projects';
+import { reposRoutes } from './routes/repos';
 import { secretsRoutes } from './routes/secrets';
 
 export type { HezoConfig };
 
 export type MasterKeyState = 'unset' | 'locked' | 'unlocked';
+
+export interface AppConfig {
+	dataDir: string;
+	connectUrl: string;
+	connectPublicKey: string;
+}
 
 export interface StartupResult {
 	app: Hono<Env>;
@@ -58,24 +67,37 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyState = await resolveMasterKeyState(db, masterKeyManager, config.masterKey);
-	const app = buildApp(db, masterKeyManager, config.dataDir);
+
+	const connectPublicKey = await fetchConnectPublicKey(config.connectUrl);
+
+	const app = buildApp(db, masterKeyManager, {
+		dataDir: config.dataDir,
+		connectUrl: config.connectUrl,
+		connectPublicKey,
+	});
 
 	return { app, port: config.port, masterKeyState };
 }
 
-export function buildApp(db: PGlite, masterKeyManager: MasterKeyManager, dataDir = ''): Hono<Env> {
+export function buildApp(
+	db: PGlite,
+	masterKeyManager: MasterKeyManager,
+	config: AppConfig = { dataDir: '', connectUrl: '', connectPublicKey: '' },
+): Hono<Env> {
 	const app = new Hono<Env>();
 
-	// Inject db, masterKeyManager, and dataDir into every request
 	app.use('*', async (c, next) => {
 		c.set('db', db);
 		c.set('masterKeyManager', masterKeyManager);
-		c.set('dataDir', dataDir);
+		c.set('dataDir', config.dataDir);
+		c.set('connectUrl', config.connectUrl);
+		c.set('connectPublicKey', config.connectPublicKey);
 		return next();
 	});
 
 	// Public routes
 	app.route('/', healthRoutes);
+	app.route('/', oauthCallbackRoutes);
 
 	const statusPayload = {
 		masterKeyState: masterKeyManager.getState(),
@@ -104,8 +126,23 @@ export function buildApp(db: PGlite, masterKeyManager: MasterKeyManager, dataDir
 	app.route('/api', kbDocsRoutes);
 	app.route('/api', preferencesRoutes);
 	app.route('/api', projectDocsRoutes);
+	app.route('/api', connectionsRoutes);
+	app.route('/api', reposRoutes);
 
 	return app;
+}
+
+async function fetchConnectPublicKey(connectUrl: string): Promise<string> {
+	try {
+		const res = await fetch(`${connectUrl}/signing-key`);
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const { key } = (await res.json()) as { key: string };
+		console.log('Fetched Connect signing public key.');
+		return key;
+	} catch {
+		console.warn('Could not fetch Connect signing key. OAuth flows will be unavailable.');
+		return '';
+	}
 }
 
 async function runAvailableMigrations(db: PGlite): Promise<void> {

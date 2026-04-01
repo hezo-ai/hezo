@@ -1,4 +1,4 @@
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createPrivateKey, createPublicKey, randomUUID, sign, verify } from 'node:crypto';
 
 export interface StatePayload {
 	callback_url: string;
@@ -8,27 +8,32 @@ export interface StatePayload {
 	original_state?: string;
 }
 
-export function signState(payload: StatePayload, signingKey: string): string {
+export interface StateKeyPair {
+	privateKey: string; // PEM
+	publicKey: string; // PEM
+}
+
+export function signState(payload: StatePayload, privateKeyPem: string): string {
 	const json = JSON.stringify(payload);
-	const signature = createHmac('sha256', signingKey).update(json).digest('hex');
 	const encoded = Buffer.from(json).toString('base64url');
+	const key = createPrivateKey(privateKeyPem);
+	const signature = sign(null, Buffer.from(encoded), key).toString('base64url');
 	return `${encoded}.${signature}`;
 }
 
-export function verifyState(signedState: string, signingKey: string): StatePayload | null {
+export function verifyState(signedState: string, publicKeyPem: string): StatePayload | null {
 	const dotIndex = signedState.lastIndexOf('.');
 	if (dotIndex === -1) return null;
 
 	const encoded = signedState.substring(0, dotIndex);
 	const signature = signedState.substring(dotIndex + 1);
 
-	const json = Buffer.from(encoded, 'base64url').toString('utf8');
-	const expectedSignature = createHmac('sha256', signingKey).update(json).digest('hex');
-
-	if (signature.length !== expectedSignature.length) return null;
-	if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) return null;
-
 	try {
+		const key = createPublicKey(publicKeyPem);
+		const valid = verify(null, Buffer.from(encoded), key, Buffer.from(signature, 'base64url'));
+		if (!valid) return null;
+
+		const json = Buffer.from(encoded, 'base64url').toString('utf8');
 		return JSON.parse(json) as StatePayload;
 	} catch {
 		return null;

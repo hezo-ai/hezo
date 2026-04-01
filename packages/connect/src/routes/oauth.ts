@@ -69,7 +69,7 @@ export function oauthRoutes(
 		const originalState = c.req.query('state');
 		if (originalState) payload.original_state = originalState;
 
-		const signedState = signState(payload, config.stateSigningKey);
+		const signedState = signState(payload, config.statePrivateKey);
 
 		const connectCallbackUrl = new URL(c.req.url);
 		connectCallbackUrl.pathname = `/auth/${platform}/callback`;
@@ -100,7 +100,7 @@ export function oauthRoutes(
 			return c.json({ error: 'invalid_state', message: 'Missing state parameter' }, 400);
 		}
 
-		const payload = verifyState(stateParam, config.stateSigningKey);
+		const payload = verifyState(stateParam, config.statePublicKey);
 		if (!payload) {
 			return c.json({ error: 'invalid_state', message: 'Invalid state signature' }, 400);
 		}

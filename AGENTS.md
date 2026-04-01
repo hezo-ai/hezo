@@ -1,5 +1,14 @@
 # Agent Guidelines
 
+## Commands
+
+- `bun run test` — run all tests across all packages in parallel
+- `bun run build` — build all packages
+- `bun run check` — lint/format check (biome)
+- `bun run check:fix` — auto-fix lint/format issues
+- `bun run typecheck` — TypeScript type checking
+- `bun run dev` — start dev servers
+
 ## Documentation
 
 The `.dev/` folder contains project specifications, schema definitions, API design, and implementation plans. These docs must stay in sync with the codebase — when code changes, update the relevant docs to reflect the current state.
@@ -16,6 +25,10 @@ Pre-v1, do **not** create new migration files. Instead, modify `packages/server/
 ## Testing
 
 Tests must actually test functionality — not just assert that code runs without throwing. If something is too difficult to mock for a unit test, write an integration test instead. Prefer integration tests over heavily-mocked unit tests.
+
+## Security
+
+Security must not be compromised when building. Never expose raw secrets, private keys, or signing keys via endpoints or logs. Use asymmetric cryptography for cross-service verification. Validate and sanitize all external input. Encrypt sensitive data at rest. Use timing-safe comparisons for signature verification.
 
 ## Implementation Phases
 

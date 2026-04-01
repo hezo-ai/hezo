@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../app.js';
-import type { ConnectConfig } from '../../config.js';
+import { type ConnectConfig, generateStateKeyPair } from '../../config.js';
 import { verifyState } from '../../crypto/state.js';
 import type { FetchFn } from '../../providers/github.js';
 
-const SIGNING_KEY = 'test-signing-key-for-oauth-tests';
+const testKeyPair = generateStateKeyPair();
 
 function makeConfig(github?: { clientId: string; clientSecret: string }): ConnectConfig {
 	return {
 		port: 4100,
 		mode: 'self_hosted',
-		stateSigningKey: SIGNING_KEY,
+		statePrivateKey: testKeyPair.privateKey,
+		statePublicKey: testKeyPair.publicKey,
 		github,
 	};
 }
@@ -85,6 +86,19 @@ describe('GET /auth/:platform/start', () => {
 		expect(url.searchParams.get('scope')).toBe('repo,workflow,read:org');
 		expect(url.searchParams.get('state')).toBeTruthy();
 	});
+
+	it('state is verifiable with public key', async () => {
+		const app = createApp(makeConfig({ clientId: 'cid', clientSecret: 'secret' }));
+		const res = await app.request(
+			'/auth/github/start?callback=http://localhost:3100/oauth/callback',
+		);
+		const githubUrl = new URL(res.headers.get('Location')!);
+		const signedState = githubUrl.searchParams.get('state')!;
+		const payload = verifyState(signedState, testKeyPair.publicKey);
+		expect(payload).not.toBeNull();
+		expect(payload?.platform).toBe('github');
+		expect(payload?.callback_url).toBe('http://localhost:3100/oauth/callback');
+	});
 });
 
 describe('GET /auth/:platform/callback', () => {
@@ -111,6 +125,31 @@ describe('GET /auth/:platform/callback', () => {
 		const body = await res.json();
 		expect(body.error).toBe('unsupported_platform');
 	});
+
+	it('rejects state signed with a different key', async () => {
+		const otherKeyPair = generateStateKeyPair();
+		const otherConfig = makeConfig({ clientId: 'id', clientSecret: 'secret' });
+		const app = createApp(otherConfig);
+
+		// Sign state with a different private key
+		const { signState } = await import('../../crypto/state.js');
+		const forgedState = signState(
+			{
+				callback_url: 'http://localhost:3100/oauth/callback',
+				platform: 'github',
+				nonce: 'nonce',
+				timestamp: new Date().toISOString(),
+			},
+			otherKeyPair.privateKey,
+		);
+
+		const res = await app.request(
+			`/auth/github/callback?code=test-code&state=${encodeURIComponent(forgedState)}`,
+		);
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error).toBe('invalid_state');
+	});
 });
 
 describe('full OAuth flow with mocked GitHub API', () => {
@@ -134,8 +173,8 @@ describe('full OAuth flow with mocked GitHub API', () => {
 		const githubUrl = new URL(startRes.headers.get('Location')!);
 		const signedState = githubUrl.searchParams.get('state')!;
 
-		// Verify the state is valid
-		const payload = verifyState(signedState, SIGNING_KEY);
+		// Verify the state is valid with public key
+		const payload = verifyState(signedState, testKeyPair.publicKey);
 		expect(payload).not.toBeNull();
 		expect(payload?.callback_url).toBe('http://localhost:3100/oauth/callback');
 		expect(payload?.platform).toBe('github');

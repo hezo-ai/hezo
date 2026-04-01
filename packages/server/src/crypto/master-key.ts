@@ -23,6 +23,10 @@ export class MasterKeyManager {
 		return this.key;
 	}
 
+	getMasterKeyHex(): string | null {
+		return this.masterKeyHex;
+	}
+
 	async initialize(db: DbClient, masterKeyHex?: string): Promise<MasterKeyState> {
 		const canary = await this.loadCanary(db);
 

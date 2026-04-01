@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { generateStateKeyPair } from '../../config.js';
 import {
 	createNonce,
 	NonceStore,
@@ -7,8 +8,8 @@ import {
 	verifyState,
 } from '../../crypto/state.js';
 
-describe('signState + verifyState', () => {
-	const signingKey = 'test-signing-key-256-bits-long-abc';
+describe('signState + verifyState (Ed25519)', () => {
+	const { privateKey, publicKey } = generateStateKeyPair();
 	const payload: StatePayload = {
 		callback_url: 'http://localhost:3100/oauth/callback',
 		platform: 'github',
@@ -17,41 +18,47 @@ describe('signState + verifyState', () => {
 	};
 
 	it('roundtrips successfully', () => {
-		const signed = signState(payload, signingKey);
-		const result = verifyState(signed, signingKey);
+		const signed = signState(payload, privateKey);
+		const result = verifyState(signed, publicKey);
 		expect(result).toEqual(payload);
 	});
 
 	it('preserves original_state when present', () => {
 		const withState = { ...payload, original_state: 'user-state-abc' };
-		const signed = signState(withState, signingKey);
-		const result = verifyState(signed, signingKey);
+		const signed = signState(withState, privateKey);
+		const result = verifyState(signed, publicKey);
 		expect(result).toEqual(withState);
 	});
 
 	it('returns null for tampered payload', () => {
-		const signed = signState(payload, signingKey);
+		const signed = signState(payload, privateKey);
 		const [_encoded, signature] = signed.split('.');
 		const tampered =
 			Buffer.from(JSON.stringify({ ...payload, platform: 'evil' })).toString('base64url') +
 			'.' +
 			signature;
-		expect(verifyState(tampered, signingKey)).toBeNull();
+		expect(verifyState(tampered, publicKey)).toBeNull();
 	});
 
 	it('returns null for tampered signature', () => {
-		const signed = signState(payload, signingKey);
+		const signed = signState(payload, privateKey);
 		const tampered = `${signed.slice(0, -4)}xxxx`;
-		expect(verifyState(tampered, signingKey)).toBeNull();
+		expect(verifyState(tampered, publicKey)).toBeNull();
 	});
 
-	it('returns null with a different signing key', () => {
-		const signed = signState(payload, signingKey);
-		expect(verifyState(signed, 'different-key')).toBeNull();
+	it('returns null with a different keypair', () => {
+		const other = generateStateKeyPair();
+		const signed = signState(payload, privateKey);
+		expect(verifyState(signed, other.publicKey)).toBeNull();
 	});
 
 	it('returns null for input without a dot separator', () => {
-		expect(verifyState('nodothere', signingKey)).toBeNull();
+		expect(verifyState('nodothere', publicKey)).toBeNull();
+	});
+
+	it('returns null for completely invalid input', () => {
+		expect(verifyState('', publicKey)).toBeNull();
+		expect(verifyState('abc.def', publicKey)).toBeNull();
 	});
 });
 

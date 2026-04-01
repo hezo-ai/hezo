@@ -12,5 +12,7 @@ export type Env = {
 		masterKeyManager: MasterKeyManager;
 		auth: AuthInfo;
 		dataDir: string;
+		connectUrl: string;
+		connectPublicKey: string;
 	};
 };

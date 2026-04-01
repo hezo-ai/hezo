@@ -40,8 +40,8 @@ approvalsRoutes.post('/companies/:companyId/approvals', async (c) => {
 		payload: Record<string, unknown>;
 	}>();
 
-	if (!body.type || !body.requested_by_member_id || !body.payload) {
-		return err(c, 'INVALID_REQUEST', 'type, requested_by_member_id, and payload are required', 400);
+	if (!body.type || !body.payload) {
+		return err(c, 'INVALID_REQUEST', 'type and payload are required', 400);
 	}
 
 	const result = await db.query(

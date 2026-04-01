@@ -960,7 +960,7 @@ Query params: `?platform=github&access_token=...&scopes=...&metadata=...&state=.
 On error: `?error=access_denied&platform=github&state=...`
 
 Processing:
-1. Verify the `state` parameter signature (HMAC-SHA256)
+1. Verify the `state` parameter signature
 2. Extract `company_id` from the state payload
 3. Encrypt the access token with the master key, store in `secrets` table
 4. Upsert `connected_platforms` row (status=active, token reference, scopes, metadata)

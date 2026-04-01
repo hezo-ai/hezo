@@ -31,7 +31,11 @@ beforeAll(async () => {
 	const masterKeyHex = generateMasterKey();
 	await masterKeyManager.initialize(db, masterKeyHex);
 	await seedBuiltins(db);
-	app = buildApp(db, masterKeyManager, tempDataDir);
+	app = buildApp(db, masterKeyManager, {
+		dataDir: tempDataDir,
+		connectUrl: '',
+		connectPublicKey: '',
+	});
 	token = await signBoardJwt(masterKeyManager, 'test-user');
 
 	// Create company
