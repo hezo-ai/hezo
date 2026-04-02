@@ -316,8 +316,6 @@ UI + Build:
 
 ## Phase 6.5: Auth + Session Compaction
 
-**Status:** Done (2026-04)
-
 **Goal:** Custom auth with OAuth login for human board members. Session compaction for agent task continuity. No member roles, invites, or permissions yet — all authenticated users are board members.
 
 **What's included:**

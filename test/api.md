@@ -66,7 +66,7 @@ All Board API endpoints check the caller's membership role:
 | Access Level | Endpoints |
 |-------------|-----------|
 | **Board-only** (member_users with role='board') | Company settings, agent management (hire/fire/pause/resume/terminate), budget adjustments, secrets vault, API keys, connected platforms, audit log, plugin management, invites, member management |
-| **All members** (agents and users, scoped by `project_ids`) | Issues, comments, live chat, KB (read), project docs (file-based, read/write), inbox (filtered), notification preferences |
+| **All members** (agents and users, scoped by `project_ids`) | Issues, comments, live chat, KB (read), project docs (read), inbox (filtered), notification preferences |
 
 Members (both agents and users) with role='member' are restricted by `project_ids` — they can only access issues, comments, and documents within their allowed projects. Requests outside their scope return 403.
 
@@ -1118,56 +1118,65 @@ Response:
 
 ### Project Documents
 
-Project documents are file-based — stored as `.dev/*.md` files in the project's designated repo worktree. The project must have a `designated_repo_id` set. Returns 404 if no designated repo is configured.
-
 #### `GET /companies/:companyId/projects/:projectId/docs`
-List all project document files in the `.dev/` folder.
+List all project documents.
 
 Response:
 ```json
 {
   "data": [
-    { "filename": "spec.md", "path": ".dev/spec.md" },
-    { "filename": "prd.md", "path": ".dev/prd.md" }
+    {
+      "id": "uuid",
+      "project_id": "uuid",
+      "doc_type": "tech_spec",
+      "title": "Technical Specification",
+      "slug": "technical-specification",
+      "created_by_agent_title": "Architect",
+      "last_updated_by_agent_title": "Engineer",
+      "created_at": "...",
+      "updated_at": "..."
+    }
   ]
 }
 ```
 
-#### `GET /companies/:companyId/projects/:projectId/docs/:filename`
-Read a project document file.
+#### `GET /companies/:companyId/projects/:projectId/docs/:docId`
+Get full project document content.
 
-Response:
-```json
-{
-  "data": { "filename": "spec.md", "path": ".dev/spec.md", "content": "# Technical Specification\n..." }
-}
-```
+Response: full doc object including `content` field.
 
-#### `PUT /companies/:companyId/projects/:projectId/docs/:filename`
-Write a project document file. Agent writes to `prd.md` create an approval request instead of writing directly.
+#### `POST /companies/:companyId/projects/:projectId/docs`
+Create a project document (board action).
 
 Request:
 ```json
 {
-  "content": "# Technical Specification\n\n## Updated..."
+  "doc_type": "tech_spec",
+  "title": "Technical Specification",
+  "content": "# Technical Specification\n\n## Architecture\n..."
 }
 ```
 
-#### `DELETE /companies/:companyId/projects/:projectId/docs/:filename`
-Delete a project document file.
+`slug` is auto-derived from the title. Returns 409 if a document of that type already exists for the project (except `other` type).
 
-#### `GET /companies/:companyId/projects/:projectId/agents-md`
-Read the project's AGENTS.md file.
-
-#### `PUT /companies/:companyId/projects/:projectId/agents-md`
-Write the project's AGENTS.md file.
+#### `PATCH /companies/:companyId/projects/:projectId/docs/:docId`
+Update a project document (board action). Creates a revision automatically.
 
 Request:
 ```json
 {
-  "content": "# Agent Guidelines\n..."
+  "content": "# Technical Specification\n\n## Updated...",
+  "change_summary": "Updated API section after implementation review"
 }
 ```
+
+#### `DELETE /companies/:companyId/projects/:projectId/docs/:docId`
+Delete a project document.
+
+#### `GET /companies/:companyId/projects/:projectId/docs/:docId/revisions`
+List revision history for a project document.
+
+Response: same shape as KB doc revisions.
 
 ---
 
@@ -1821,7 +1830,7 @@ Response:
       "updated_at": "..."
     },
     "project_docs": [
-      { "filename": "spec.md", "path": ".dev/spec.md" }
+      { "id": "uuid", "doc_type": "tech_spec", "title": "Technical Specification", "project_id": "uuid", "project_name": "Main App", "updated_at": "..." }
     ],
     "peers": [
       { "id": "uuid", "title": "UI Designer", "status": "active" }
@@ -1866,9 +1875,64 @@ Response:
 
 ### Project Documents (agent-side)
 
-Agents access project documents through the same board endpoints (scoped to their company). Project docs are file-based — stored as `.dev/*.md` files in the designated repo worktree. See the board-side Project Documents section for endpoint details.
+#### `GET /project-docs?project_id=uuid`
+Agent lists project documents for a given project. If `project_id` is omitted,
+returns documents for the project of the agent's current issue.
 
-Agent writes to `prd.md` create an approval request instead of writing the file directly.
+Response: array of doc metadata (same shape as board list, without content).
+
+#### `GET /project-docs/:docId`
+Agent reads a full project document.
+
+Response: full doc object including `content`.
+
+#### `POST /project-docs`
+Agent creates a project document.
+
+Request:
+```json
+{
+  "project_id": "uuid",
+  "doc_type": "tech_spec",
+  "title": "Technical Specification",
+  "content": "# Technical Specification\n\n## Architecture\n..."
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "slug": "technical-specification",
+    "created_at": "..."
+  }
+}
+```
+
+Returns 409 if a document of that type already exists for the project (except `other` type).
+
+#### `PATCH /project-docs/:docId`
+Agent updates a project document. No approval required. Creates a revision automatically.
+
+Request:
+```json
+{
+  "content": "# Technical Specification\n\n## Updated...",
+  "change_summary": "Updated API section to reflect implemented endpoint structure"
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "id": "uuid",
+    "revision_number": 3,
+    "updated_at": "..."
+  }
+}
+```
 
 ---
 

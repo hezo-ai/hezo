@@ -14,7 +14,7 @@
 | `companies` | Top-level tenant. Has `email`, `company_type_id`, `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), company-level budget. | Parent of everything. |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
-| `projects` | Group of related work under a company. Has Docker container config, dev ports, designated repo. | belongs to company |
+| `projects` | Group of related work under a company. Has Docker container config, dev ports. | belongs to company |
 | `repos` | Git repo (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. | belongs to project |
 | `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `ACME-42`). Assignee references `members.id`. | belongs to company + project, assigned to member |
 | `issue_dependencies` | Many-to-many blocking relationships between issues. | links issue ↔ issue |
@@ -28,8 +28,7 @@
 | `audit_log` | Append-only. Never updated or deleted. | belongs to company |
 | `kb_docs` | Knowledge base documents. Markdown, company-scoped, slug-addressable. AGENTS.md is a special KB doc written to disk. | belongs to company |
 | `kb_doc_revisions` | Version history for KB documents. | belongs to kb_doc |
-| `live_chats` | Persistent live chat per issue. One ongoing conversation. | belongs to issue |
-| `live_chat_messages` | Individual messages in a live chat. Author, content, metadata. | belongs to live_chat |
+| `live_chats` | Persistent live chat per issue. One ongoing conversation. Transcript as JSONB array. | belongs to issue |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to company |
 | `company_ssh_keys` | Generated SSH key pairs per company. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to company |
 | `execution_locks` | Issue work ownership tracking. One agent works on an issue at a time. | belongs to issue + member_agent |
@@ -42,7 +41,8 @@
 | `plugin_jobs` | Cron job declarations for plugins. | belongs to plugin |
 | `company_preferences` | Company-level preference doc. Agents observe and record board working style preferences. | belongs to company |
 | `company_preference_revisions` | Version history for company preferences. | belongs to company_preference |
-| `instance_user_roles` | Instance-level admin roles for users. First user gets instance_admin. | belongs to user |
+| `project_docs` | Project-level shared documents (prd, tech spec, implementation plan, research, UI decisions, marketing plan). | belongs to project + company |
+| `project_doc_revisions` | Version history for project documents. | belongs to project_doc |
 | `company_issue_counters` | Helper for atomic issue numbering. | belongs to company |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
 | `slack_connections` | Per-company Slack app config. Bot token encrypted in secrets. | belongs to company |
@@ -297,8 +297,8 @@ selected company type:
 Project containers are provisioned when projects are created (not at company creation).
 
 NOT copied: projects, repos, issues, secrets, cost_entries, audit_log, api_keys,
-secret_grants, approvals, connected_platforms, SSH keys. Platform connections
-and SSH keys are generated fresh for each company.
+secret_grants, approvals, connected_platforms, project_docs, SSH keys. Platform
+connections and SSH keys are generated fresh for each company.
 
 ### Company preferences
 
@@ -324,17 +324,24 @@ the agent subprocess.
 
 ### Project documents
 
-Project documents (PRDs, technical specifications, implementation plans, research,
-UI design decisions, marketing plans) are stored as files in the `.dev/` folder
-of the project's designated repo worktree — not in the database. The API reads
-and writes these files directly on the filesystem at
-`~/.hezo/companies/{slug}/projects/{project}/{repo}/.dev/`.
+`project_docs` stores project-level shared documents — PRDs, technical specifications,
+implementation plans, research documents, UI design decisions, and marketing plans.
+These are living documents that agents create and maintain throughout a project's
+lifecycle. Any agent can read and update any project document.
 
-A project must have a `designated_repo_id` set for project docs to work. The API
-resolves the repo's worktree path and operates on `.dev/*.md` files within it.
+A separate table (rather than extending `kb_docs`) because project documents have
+fundamentally different semantics: they have a `doc_type` enum, belong to a
+project lifecycle, and use different access patterns. The partial unique index
+`idx_project_docs_one_per_type` enforces at most one document per type per project
+(except `other`, which allows multiples).
 
-PRD updates (`prd.md`) by agents require board approval — the agent's write
-creates an approval request instead of writing the file directly.
+The `prd` doc_type is the source of truth for product requirements. PRD changes
+require board approval — the Product Lead must get board confirmation before
+modifying the PRD.
+
+Updates do not require approval — these are working documents actively maintained
+during development. All changes create revisions in `project_doc_revisions` for
+full audit trail. The board can review revision history and revert.
 
 The `{{project_docs_context}}` template variable in system prompts auto-injects
 all project documents for the current issue's project.
@@ -364,8 +371,8 @@ this KB doc, the file on disk is re-written.
 
 `live_chats` stores a single persistent conversation per issue. There are no
 discrete "sessions" — each issue has one ongoing live chat from creation.
-Messages are stored in the `live_chat_messages` table, each with an author
-(`author_member_id` + `author_type`), text content, and optional metadata JSONB.
+The `transcript` JSONB column holds an ordered array of messages:
+`[{ "author": "board:alice|agent:architect", "text": "...", "timestamp": "..." }]`.
 
 Live chat is displayed in a dedicated **Live Chat tab** on the issue detail
 view — messages do not appear as comments in the Comments tab.
