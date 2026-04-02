@@ -66,6 +66,6 @@ function KbDocEditPage() {
 	);
 }
 
-export const Route = createFileRoute('/companies/$companyId/kb/$slug/edit')({
+export const Route = createFileRoute('/companies/$companyId/kb/$slug_/edit')({
 	component: KbDocEditPage,
 });

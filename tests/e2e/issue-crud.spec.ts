@@ -1,5 +1,5 @@
-import { expect, type Page, test } from '@playwright/test';
-import { authenticate, TEST_MASTER_KEY } from './helpers';
+import { expect, test } from '@playwright/test';
+import { authenticate, getToken } from './helpers';
 
 test('can create an issue', async ({ page }) => {
 	await page.goto('/');
@@ -39,14 +39,6 @@ test('can create an issue', async ({ page }) => {
 
 	await expect(page.getByText('Test Issue')).toBeVisible({ timeout: 10000 });
 });
-
-async function getToken(page: Page): Promise<string> {
-	const tokenRes = await page.request.post('/api/auth/token', {
-		data: { master_key: TEST_MASTER_KEY },
-	});
-	const json = await tokenRes.json();
-	return json.data?.token ?? json.token;
-}
 
 test('issue detail shows execution lock banner when locked', async ({ page }) => {
 	await page.goto('/');

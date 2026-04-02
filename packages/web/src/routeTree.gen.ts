@@ -27,7 +27,7 @@ import { Route as CompaniesCompanyIdAgentsAgentIdRouteImport } from './routes/co
 import { Route as CompaniesCompanyIdProjectsProjectIdRouteRouteImport } from './routes/companies/$companyId/projects/$projectId/route'
 import { Route as CompaniesCompanyIdProjectsProjectIdIndexRouteImport } from './routes/companies/$companyId/projects/$projectId/index'
 import { Route as CompaniesCompanyIdProjectsProjectIdContainerRouteImport } from './routes/companies/$companyId/projects/$projectId/container'
-import { Route as CompaniesCompanyIdKbSlugEditRouteImport } from './routes/companies/$companyId/kb/$slug.edit'
+import { Route as CompaniesCompanyIdKbSlugEditRouteImport } from './routes/companies/$companyId/kb/$slug_.edit'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -134,9 +134,9 @@ const CompaniesCompanyIdProjectsProjectIdContainerRoute =
   } as any)
 const CompaniesCompanyIdKbSlugEditRoute =
   CompaniesCompanyIdKbSlugEditRouteImport.update({
-    id: '/edit',
-    path: '/edit',
-    getParentRoute: () => CompaniesCompanyIdKbSlugRoute,
+    id: '/kb/$slug_/edit',
+    path: '/kb/$slug/edit',
+    getParentRoute: () => CompaniesCompanyIdRouteRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -149,7 +149,7 @@ export interface FileRoutesByFullPath {
   '/companies/$companyId/agents/$agentId': typeof CompaniesCompanyIdAgentsAgentIdRoute
   '/companies/$companyId/agents/hire': typeof CompaniesCompanyIdAgentsHireRoute
   '/companies/$companyId/issues/$issueId': typeof CompaniesCompanyIdIssuesIssueIdRoute
-  '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRouteWithChildren
+  '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRoute
   '/companies/$companyId/kb/new': typeof CompaniesCompanyIdKbNewRoute
   '/companies/$companyId/agents/': typeof CompaniesCompanyIdAgentsIndexRoute
   '/companies/$companyId/issues/': typeof CompaniesCompanyIdIssuesIndexRoute
@@ -168,7 +168,7 @@ export interface FileRoutesByTo {
   '/companies/$companyId/agents/$agentId': typeof CompaniesCompanyIdAgentsAgentIdRoute
   '/companies/$companyId/agents/hire': typeof CompaniesCompanyIdAgentsHireRoute
   '/companies/$companyId/issues/$issueId': typeof CompaniesCompanyIdIssuesIssueIdRoute
-  '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRouteWithChildren
+  '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRoute
   '/companies/$companyId/kb/new': typeof CompaniesCompanyIdKbNewRoute
   '/companies/$companyId/agents': typeof CompaniesCompanyIdAgentsIndexRoute
   '/companies/$companyId/issues': typeof CompaniesCompanyIdIssuesIndexRoute
@@ -190,14 +190,14 @@ export interface FileRoutesById {
   '/companies/$companyId/agents/$agentId': typeof CompaniesCompanyIdAgentsAgentIdRoute
   '/companies/$companyId/agents/hire': typeof CompaniesCompanyIdAgentsHireRoute
   '/companies/$companyId/issues/$issueId': typeof CompaniesCompanyIdIssuesIssueIdRoute
-  '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRouteWithChildren
+  '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRoute
   '/companies/$companyId/kb/new': typeof CompaniesCompanyIdKbNewRoute
   '/companies/$companyId/agents/': typeof CompaniesCompanyIdAgentsIndexRoute
   '/companies/$companyId/issues/': typeof CompaniesCompanyIdIssuesIndexRoute
   '/companies/$companyId/kb/': typeof CompaniesCompanyIdKbIndexRoute
   '/companies/$companyId/projects/': typeof CompaniesCompanyIdProjectsIndexRoute
   '/companies/$companyId/settings/': typeof CompaniesCompanyIdSettingsIndexRoute
-  '/companies/$companyId/kb/$slug/edit': typeof CompaniesCompanyIdKbSlugEditRoute
+  '/companies/$companyId/kb/$slug_/edit': typeof CompaniesCompanyIdKbSlugEditRoute
   '/companies/$companyId/projects/$projectId/container': typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
   '/companies/$companyId/projects/$projectId/': typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
 }
@@ -260,7 +260,7 @@ export interface FileRouteTypes {
     | '/companies/$companyId/kb/'
     | '/companies/$companyId/projects/'
     | '/companies/$companyId/settings/'
-    | '/companies/$companyId/kb/$slug/edit'
+    | '/companies/$companyId/kb/$slug_/edit'
     | '/companies/$companyId/projects/$projectId/container'
     | '/companies/$companyId/projects/$projectId/'
   fileRoutesById: FileRoutesById
@@ -399,12 +399,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdContainerRouteImport
       parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
     }
-    '/companies/$companyId/kb/$slug/edit': {
-      id: '/companies/$companyId/kb/$slug/edit'
-      path: '/edit'
+    '/companies/$companyId/kb/$slug_/edit': {
+      id: '/companies/$companyId/kb/$slug_/edit'
+      path: '/kb/$slug/edit'
       fullPath: '/companies/$companyId/kb/$slug/edit'
       preLoaderRoute: typeof CompaniesCompanyIdKbSlugEditRouteImport
-      parentRoute: typeof CompaniesCompanyIdKbSlugRoute
+      parentRoute: typeof CompaniesCompanyIdRouteRoute
     }
   }
 }
@@ -427,20 +427,6 @@ const CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren =
     CompaniesCompanyIdProjectsProjectIdRouteRouteChildren,
   )
 
-interface CompaniesCompanyIdKbSlugRouteChildren {
-  CompaniesCompanyIdKbSlugEditRoute: typeof CompaniesCompanyIdKbSlugEditRoute
-}
-
-const CompaniesCompanyIdKbSlugRouteChildren: CompaniesCompanyIdKbSlugRouteChildren =
-  {
-    CompaniesCompanyIdKbSlugEditRoute: CompaniesCompanyIdKbSlugEditRoute,
-  }
-
-const CompaniesCompanyIdKbSlugRouteWithChildren =
-  CompaniesCompanyIdKbSlugRoute._addFileChildren(
-    CompaniesCompanyIdKbSlugRouteChildren,
-  )
-
 interface CompaniesCompanyIdRouteRouteChildren {
   CompaniesCompanyIdOrgChartRoute: typeof CompaniesCompanyIdOrgChartRoute
   CompaniesCompanyIdIndexRoute: typeof CompaniesCompanyIdIndexRoute
@@ -448,13 +434,14 @@ interface CompaniesCompanyIdRouteRouteChildren {
   CompaniesCompanyIdAgentsAgentIdRoute: typeof CompaniesCompanyIdAgentsAgentIdRoute
   CompaniesCompanyIdAgentsHireRoute: typeof CompaniesCompanyIdAgentsHireRoute
   CompaniesCompanyIdIssuesIssueIdRoute: typeof CompaniesCompanyIdIssuesIssueIdRoute
-  CompaniesCompanyIdKbSlugRoute: typeof CompaniesCompanyIdKbSlugRouteWithChildren
+  CompaniesCompanyIdKbSlugRoute: typeof CompaniesCompanyIdKbSlugRoute
   CompaniesCompanyIdKbNewRoute: typeof CompaniesCompanyIdKbNewRoute
   CompaniesCompanyIdAgentsIndexRoute: typeof CompaniesCompanyIdAgentsIndexRoute
   CompaniesCompanyIdIssuesIndexRoute: typeof CompaniesCompanyIdIssuesIndexRoute
   CompaniesCompanyIdKbIndexRoute: typeof CompaniesCompanyIdKbIndexRoute
   CompaniesCompanyIdProjectsIndexRoute: typeof CompaniesCompanyIdProjectsIndexRoute
   CompaniesCompanyIdSettingsIndexRoute: typeof CompaniesCompanyIdSettingsIndexRoute
+  CompaniesCompanyIdKbSlugEditRoute: typeof CompaniesCompanyIdKbSlugEditRoute
 }
 
 const CompaniesCompanyIdRouteRouteChildren: CompaniesCompanyIdRouteRouteChildren =
@@ -466,13 +453,14 @@ const CompaniesCompanyIdRouteRouteChildren: CompaniesCompanyIdRouteRouteChildren
     CompaniesCompanyIdAgentsAgentIdRoute: CompaniesCompanyIdAgentsAgentIdRoute,
     CompaniesCompanyIdAgentsHireRoute: CompaniesCompanyIdAgentsHireRoute,
     CompaniesCompanyIdIssuesIssueIdRoute: CompaniesCompanyIdIssuesIssueIdRoute,
-    CompaniesCompanyIdKbSlugRoute: CompaniesCompanyIdKbSlugRouteWithChildren,
+    CompaniesCompanyIdKbSlugRoute: CompaniesCompanyIdKbSlugRoute,
     CompaniesCompanyIdKbNewRoute: CompaniesCompanyIdKbNewRoute,
     CompaniesCompanyIdAgentsIndexRoute: CompaniesCompanyIdAgentsIndexRoute,
     CompaniesCompanyIdIssuesIndexRoute: CompaniesCompanyIdIssuesIndexRoute,
     CompaniesCompanyIdKbIndexRoute: CompaniesCompanyIdKbIndexRoute,
     CompaniesCompanyIdProjectsIndexRoute: CompaniesCompanyIdProjectsIndexRoute,
     CompaniesCompanyIdSettingsIndexRoute: CompaniesCompanyIdSettingsIndexRoute,
+    CompaniesCompanyIdKbSlugEditRoute: CompaniesCompanyIdKbSlugEditRoute,
   }
 
 const CompaniesCompanyIdRouteRouteWithChildren =
