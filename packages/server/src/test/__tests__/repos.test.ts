@@ -1,6 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import { signOAuthState } from '../../crypto/state';
 import type { Env } from '../../lib/types';
@@ -44,6 +44,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	await safeClose(db);
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
 });
 
 describe('repos CRUD', () => {
@@ -99,20 +103,51 @@ describe('repos CRUD', () => {
 
 	describe('with GitHub connected', () => {
 		beforeAll(async () => {
-			// Simulate a connection by inserting directly
+			// Simulate a connection via OAuth callback with mocked Connect exchange
 			const state = await signOAuthState({ company_id: companyId }, masterKeyManager);
 			const metadata = Buffer.from(
 				JSON.stringify({ username: 'repo-test-bot', email: 'bot@test.com' }),
 			).toString('base64url');
 
+			const originalFetch = globalThis.fetch;
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+				const url =
+					typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+				if (url.includes('/auth/exchange')) {
+					return new Response(
+						JSON.stringify({
+							access_token: 'gho_test_repo_token',
+							scopes: 'repo',
+							metadata,
+							platform: 'github',
+						}),
+						{ status: 200, headers: { 'Content-Type': 'application/json' } },
+					);
+				}
+				return originalFetch(input, init);
+			});
+
 			await app.request(
-				`/oauth/callback?platform=github&access_token=gho_test_repo_token&scopes=repo&metadata=${metadata}&state=${encodeURIComponent(state)}`,
+				`/oauth/callback?platform=github&code=test-code&state=${encodeURIComponent(state)}`,
 			);
+			vi.restoreAllMocks();
 		});
 
 		it('returns REPO_ACCESS_FAILED when GitHub returns 404', async () => {
-			// The token is fake so GitHub API will fail — but since we can't mock globalThis.fetch
-			// in this integration test, we test the flow up to that point
+			// Mock the GitHub API to simulate repo not accessible
+			const originalFetch = globalThis.fetch;
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+				const url =
+					typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+				if (url.includes('api.github.com/repos/')) {
+					return new Response(JSON.stringify({ message: 'Not Found' }), {
+						status: 404,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				}
+				return originalFetch(input, init);
+			});
+
 			const res = await app.request(`/api/companies/${companyId}/projects/${projectId}/repos`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -121,13 +156,10 @@ describe('repos CRUD', () => {
 					url: 'https://github.com/acme/frontend',
 				}),
 			});
-			// With a fake token, GitHub API will return an error
-			expect([201, 422]).toContain(res.status);
-			if (res.status === 422) {
-				const body = await res.json();
-				expect(body.error.code).toBe('REPO_ACCESS_FAILED');
-				expect(body.error.message).toContain('repo-test-bot');
-			}
+			expect(res.status).toBe(422);
+			const body = await res.json();
+			expect(body.error.code).toBe('REPO_ACCESS_FAILED');
+			expect(body.error.message).toContain('repo-test-bot');
 		});
 	});
 
