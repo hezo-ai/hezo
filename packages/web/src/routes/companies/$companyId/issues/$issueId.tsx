@@ -300,7 +300,7 @@ function IssueDetailPage() {
 					>
 						<option value="">Unassigned</option>
 						{agents
-							?.filter((a) => a.status !== 'terminated')
+							?.filter((a) => a.admin_status !== 'terminated')
 							.map((a) => (
 								<option key={a.id} value={a.id}>
 									{a.title}

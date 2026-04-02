@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { ArrowLeft, Loader2, Pause, Play, Skull } from 'lucide-react';
+import { ArrowLeft, Loader2, Power, PowerOff, Skull } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
@@ -8,17 +8,16 @@ import { Textarea } from '../../../../components/ui/textarea';
 import {
 	useAgent,
 	useAgents,
-	usePauseAgent,
-	useResumeAgent,
+	useDisableAgent,
+	useEnableAgent,
 	useTerminateAgent,
 	useUpdateAgent,
 } from '../../../../hooks/use-agents';
 import { useHeartbeatRuns } from '../../../../hooks/use-heartbeat-runs';
 
-const statusColors: Record<string, string> = {
-	active: 'green',
-	idle: 'blue',
-	paused: 'yellow',
+const adminColors: Record<string, string> = {
+	enabled: 'green',
+	disabled: 'yellow',
 	terminated: 'gray',
 };
 
@@ -27,8 +26,8 @@ function AgentDetailPage() {
 	const { data: agent, isLoading } = useAgent(companyId, agentId);
 	const { data: agents } = useAgents(companyId);
 	const updateAgent = useUpdateAgent(companyId, agentId);
-	const pauseAgent = usePauseAgent(companyId);
-	const resumeAgent = useResumeAgent(companyId);
+	const disableAgent = useDisableAgent(companyId);
+	const enableAgent = useEnableAgent(companyId);
 	const terminateAgent = useTerminateAgent(companyId);
 	const { data: heartbeatRuns } = useHeartbeatRuns(companyId, agentId);
 
@@ -52,7 +51,8 @@ function AgentDetailPage() {
 
 	if (isLoading || !agent) return <div className="p-6 text-text-muted">Loading...</div>;
 
-	const otherAgents = agents?.filter((a) => a.id !== agentId && a.status !== 'terminated') ?? [];
+	const otherAgents =
+		agents?.filter((a) => a.id !== agentId && a.admin_status !== 'terminated') ?? [];
 
 	async function handleSave(e: React.FormEvent) {
 		e.preventDefault();
@@ -78,21 +78,23 @@ function AgentDetailPage() {
 
 			<div className="flex items-center gap-3 mb-6">
 				<h1 className="text-lg font-semibold">{agent.title}</h1>
-				<Badge color={statusColors[agent.status] as 'gray'}>{agent.status}</Badge>
+				<Badge color={adminColors[agent.admin_status] as 'gray'}>{agent.admin_status}</Badge>
+				{agent.runtime_status === 'active' && <Badge color="green">Active</Badge>}
+				{agent.runtime_status === 'paused' && <Badge color="red">Paused (budget)</Badge>}
 			</div>
 
 			<div className="flex gap-2 mb-6">
-				{agent.status === 'active' && (
-					<Button variant="secondary" size="sm" onClick={() => pauseAgent.mutate(agentId)}>
-						<Pause className="w-3 h-3" /> Pause
+				{agent.admin_status === 'enabled' && (
+					<Button variant="secondary" size="sm" onClick={() => disableAgent.mutate(agentId)}>
+						<PowerOff className="w-3 h-3" /> Disable
 					</Button>
 				)}
-				{agent.status === 'paused' && (
-					<Button variant="secondary" size="sm" onClick={() => resumeAgent.mutate(agentId)}>
-						<Play className="w-3 h-3" /> Resume
+				{agent.admin_status === 'disabled' && (
+					<Button variant="secondary" size="sm" onClick={() => enableAgent.mutate(agentId)}>
+						<Power className="w-3 h-3" /> Enable
 					</Button>
 				)}
-				{agent.status !== 'terminated' && (
+				{agent.admin_status !== 'terminated' && (
 					<Button
 						variant="destructive"
 						size="sm"

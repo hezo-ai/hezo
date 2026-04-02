@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
 import { Hono } from 'hono';
+import { resolveProjectId } from '../lib/resolve';
 import { err } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess } from '../middleware/auth';
@@ -31,7 +32,8 @@ previewRoutes.get('/companies/:companyId/projects/:projectId/preview/*', async (
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
 	const { companyId } = access;
-	const projectId = c.req.param('projectId');
+	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	if (!dataDir) {
 		return err(c, 'NOT_CONFIGURED', 'Data directory not configured', 500);

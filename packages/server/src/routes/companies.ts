@@ -238,7 +238,8 @@ interface AgentConfig {
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
 	role_description: string;
-	status: string;
+	runtime_status?: string;
+	admin_status?: string;
 	system_prompt?: string;
 }
 
@@ -260,8 +261,8 @@ async function createAgentsFromConfig(
 		slugToMemberId.set(agent.slug, memberId);
 
 		await db.query(
-			`INSERT INTO member_agents (id, title, slug, role_description, system_prompt, runtime_type, heartbeat_interval_min, monthly_budget_cents, status)
-       VALUES ($1, $2, $3, $4, $5, $6::agent_runtime, $7, $8, $9::agent_status)`,
+			`INSERT INTO member_agents (id, title, slug, role_description, system_prompt, runtime_type, heartbeat_interval_min, monthly_budget_cents, runtime_status, admin_status)
+       VALUES ($1, $2, $3, $4, $5, $6::agent_runtime, $7, $8, $9::agent_runtime_status, $10::agent_admin_status)`,
 			[
 				memberId,
 				agent.title,
@@ -271,7 +272,8 @@ async function createAgentsFromConfig(
 				agent.runtime_type ?? 'claude_code',
 				agent.heartbeat_interval_min ?? 60,
 				agent.monthly_budget_cents ?? 3000,
-				agent.status ?? 'active',
+				agent.runtime_status ?? 'idle',
+				agent.admin_status ?? 'enabled',
 			],
 		);
 	}

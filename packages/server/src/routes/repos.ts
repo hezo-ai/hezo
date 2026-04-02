@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { ApprovalType, PlatformType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess } from '../middleware/auth';
@@ -18,7 +19,9 @@ reposRoutes.get('/companies/:companyId/projects/:projectId/repos', async (c) => 
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const projectId = c.req.param('projectId');
+	const { companyId } = access;
+	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const result = await db.query(
 		`SELECT id, project_id, short_name, repo_identifier, host_type, created_at
@@ -36,7 +39,8 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const { companyId } = access;
-	const projectId = c.req.param('projectId');
+	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const body = await c.req.json<{ short_name: string; url: string }>();
 
@@ -147,7 +151,8 @@ reposRoutes.delete('/companies/:companyId/projects/:projectId/repos/:repoId', as
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const projectId = c.req.param('projectId');
+	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 	const repoId = c.req.param('repoId');
 
 	const result = await db.query(

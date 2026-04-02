@@ -15,7 +15,8 @@ export interface Agent {
 	monthly_budget_cents: number;
 	budget_used_cents: number;
 	budget_reset_at: string | null;
-	status: string;
+	runtime_status: string;
+	admin_status: string;
 	last_heartbeat_at: string | null;
 	reports_to: string | null;
 	reports_to_title: string | null;
@@ -23,11 +24,14 @@ export interface Agent {
 	created_at: string;
 }
 
-export function useAgents(companyId: string, status?: string) {
+export function useAgents(companyId: string, adminStatus?: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'agents', { status }],
+		queryKey: ['companies', companyId, 'agents', { admin_status: adminStatus }],
 		queryFn: () =>
-			api.get<Agent[]>(`/api/companies/${companyId}/agents`, status ? { status } : undefined),
+			api.get<Agent[]>(
+				`/api/companies/${companyId}/agents`,
+				adminStatus ? { admin_status: adminStatus } : undefined,
+			),
 		refetchInterval: 5_000,
 	});
 }
@@ -72,19 +76,19 @@ export function useUpdateAgent(companyId: string, agentId: string) {
 	});
 }
 
-export function usePauseAgent(companyId: string) {
+export function useDisableAgent(companyId: string) {
 	return useMutation({
 		mutationFn: (agentId: string) =>
-			api.post(`/api/companies/${companyId}/agents/${agentId}/pause`),
+			api.post(`/api/companies/${companyId}/agents/${agentId}/disable`),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] }),
 	});
 }
 
-export function useResumeAgent(companyId: string) {
+export function useEnableAgent(companyId: string) {
 	return useMutation({
 		mutationFn: (agentId: string) =>
-			api.post(`/api/companies/${companyId}/agents/${agentId}/resume`),
+			api.post(`/api/companies/${companyId}/agents/${agentId}/enable`),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] }),
 	});

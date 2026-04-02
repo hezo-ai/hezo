@@ -1,6 +1,7 @@
 import { ContainerStatus, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
@@ -100,7 +101,8 @@ projectsRoutes.get('/companies/:companyId/projects/:projectId', async (c) => {
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const projectId = c.req.param('projectId');
+	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const result = await db.query(
 		`SELECT p.*,
@@ -128,7 +130,8 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const projectId = c.req.param('projectId');
+	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const existing = await db.query('SELECT id FROM projects WHERE id = $1 AND company_id = $2', [
 		projectId,
@@ -195,7 +198,8 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const projectId = c.req.param('projectId');
+	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const existing = await db.query<{ id: string; slug: string }>(
 		'SELECT id, slug FROM projects WHERE id = $1 AND company_id = $2',
@@ -245,7 +249,8 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/rebuild-container
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const projectId = c.req.param('projectId');
+	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const projectResult = await db.query('SELECT * FROM projects WHERE id = $1 AND company_id = $2', [
 		projectId,

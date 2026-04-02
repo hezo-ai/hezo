@@ -17,10 +17,15 @@ export interface Approval {
 	requested_by_member_id: string | null;
 }
 
-export function useApprovals(companyId: string, status: string = ApprovalStatus.Pending) {
+export function useApprovals(
+	companyId: string,
+	status: string = ApprovalStatus.Pending,
+	enabled = true,
+) {
 	return useQuery({
 		queryKey: ['companies', companyId, 'approvals', { status }],
 		queryFn: () => api.get<Approval[]>(`/api/companies/${companyId}/approvals`, { status }),
+		enabled,
 	});
 }
 

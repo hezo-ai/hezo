@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentStatus } from '@hezo/shared';
+import { AgentAdminStatus, AgentRuntimeStatus } from '@hezo/shared';
 
 function buildAgentConfigs(roleDocs: Record<string, string>) {
 	const role = (slug: string) => roleDocs[`${slug}.md`] ?? '';
@@ -13,7 +13,8 @@ function buildAgentConfigs(roleDocs: Record<string, string>) {
 			monthly_budget_cents: 2000,
 			role_description:
 				'Translates company mission into actionable strategy, delegates work across leadership, and resolves disputes between agents.',
-			status: AgentStatus.Active,
+			runtime_status: AgentRuntimeStatus.Idle,
+			admin_status: AgentAdminStatus.Enabled,
 			system_prompt: role('ceo'),
 		},
 		{
@@ -25,7 +26,8 @@ function buildAgentConfigs(roleDocs: Record<string, string>) {
 			monthly_budget_cents: 4000,
 			role_description:
 				'Owns technical vision, translates product requirements into technical specifications, and makes architecture decisions.',
-			status: AgentStatus.Active,
+			runtime_status: AgentRuntimeStatus.Idle,
+			admin_status: AgentAdminStatus.Enabled,
 			system_prompt: role('architect'),
 		},
 		{
@@ -37,7 +39,8 @@ function buildAgentConfigs(roleDocs: Record<string, string>) {
 			monthly_budget_cents: 3000,
 			role_description:
 				'Owns product requirements, writes PRDs, manages scope, and ensures development aligns with company mission.',
-			status: AgentStatus.Active,
+			runtime_status: AgentRuntimeStatus.Idle,
+			admin_status: AgentAdminStatus.Enabled,
 			system_prompt: role('product-lead'),
 		},
 		{
@@ -49,7 +52,8 @@ function buildAgentConfigs(roleDocs: Record<string, string>) {
 			monthly_budget_cents: 5000,
 			role_description:
 				"Primary implementer who writes code, tests, and documentation based on the Architect's technical specification.",
-			status: AgentStatus.Active,
+			runtime_status: AgentRuntimeStatus.Idle,
+			admin_status: AgentAdminStatus.Enabled,
 			system_prompt: role('engineer'),
 		},
 		{
@@ -61,7 +65,8 @@ function buildAgentConfigs(roleDocs: Record<string, string>) {
 			monthly_budget_cents: 4000,
 			role_description:
 				'Final approval gate for every ticket, responsible for test coverage, security audits, and code quality.',
-			status: AgentStatus.Active,
+			runtime_status: AgentRuntimeStatus.Idle,
+			admin_status: AgentAdminStatus.Enabled,
 			system_prompt: role('qa-engineer'),
 		},
 		{
@@ -73,7 +78,8 @@ function buildAgentConfigs(roleDocs: Record<string, string>) {
 			monthly_budget_cents: 3000,
 			role_description:
 				'Owns visual and interaction layer, defines component architecture, and creates HTML preview mockups.',
-			status: AgentStatus.Active,
+			runtime_status: AgentRuntimeStatus.Idle,
+			admin_status: AgentAdminStatus.Enabled,
 			system_prompt: role('ui-designer'),
 		},
 		{
@@ -85,7 +91,8 @@ function buildAgentConfigs(roleDocs: Record<string, string>) {
 			monthly_budget_cents: 3000,
 			role_description:
 				'Owns infrastructure and deployment pipeline, manages staging and production environments, and configures CI/CD.',
-			status: AgentStatus.Idle,
+			runtime_status: AgentRuntimeStatus.Idle,
+			admin_status: AgentAdminStatus.Enabled,
 			system_prompt: role('devops-engineer'),
 		},
 		{
@@ -97,7 +104,8 @@ function buildAgentConfigs(roleDocs: Record<string, string>) {
 			monthly_budget_cents: 2000,
 			role_description:
 				'Owns marketing strategy and content creation including blog posts, social media, and public-facing documentation.',
-			status: AgentStatus.Active,
+			runtime_status: AgentRuntimeStatus.Idle,
+			admin_status: AgentAdminStatus.Enabled,
 			system_prompt: role('marketing-lead'),
 		},
 		{
@@ -109,7 +117,8 @@ function buildAgentConfigs(roleDocs: Record<string, string>) {
 			monthly_budget_cents: 3000,
 			role_description:
 				'Conducts competitive analysis, technical research, and feasibility studies to inform strategic decisions.',
-			status: AgentStatus.Active,
+			runtime_status: AgentRuntimeStatus.Idle,
+			admin_status: AgentAdminStatus.Enabled,
 			system_prompt: role('researcher'),
 		},
 	];

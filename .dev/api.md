@@ -287,15 +287,15 @@ monthly_budget_cents, reports_to, mcp_servers.
 
 Cannot update: status (use lifecycle endpoints), budget_used_cents (system-managed).
 
-#### `POST /companies/:companyId/agents/:agentId/pause`
-Pause an agent. Stops heartbeats, kills subprocess if running. Does not affect the company container.
+#### `POST /companies/:companyId/agents/:agentId/disable`
+Disable an agent. Stops heartbeats, kills subprocess if running. Does not affect the project container.
 
-#### `POST /companies/:companyId/agents/:agentId/resume`
-Resume a paused agent.
+#### `POST /companies/:companyId/agents/:agentId/enable`
+Enable a disabled agent.
 
 #### `POST /companies/:companyId/agents/:agentId/terminate`
 Terminate an agent. Kills the agent's subprocess. Unassigns all issues.
-Agent record is kept for audit trail (status = `terminated`).
+Agent record is kept for audit trail (admin_status = `terminated`).
 
 #### `POST /companies/:companyId/projects/:projectId/rebuild-container`
 Tear down and rebuild the project's Docker container. Kills all agent subprocesses
@@ -318,23 +318,26 @@ Response:
         {
           "id": "uuid",
           "title": "CEO",
-          "status": "active",
+          "runtime_status": "idle",
+          "admin_status": "enabled",
 
           "children": [
             {
               "id": "uuid",
               "title": "CTO",
-              "status": "idle",
+              "runtime_status": "idle",
+              "admin_status": "enabled",
     
               "children": [
-                { "id": "uuid", "title": "Dev Engineer", "status": "active", "container_status": "running", "children": [] },
-                { "id": "uuid", "title": "UI Designer", "status": "active", "container_status": "running", "children": [] }
+                { "id": "uuid", "title": "Dev Engineer", "runtime_status": "idle", "admin_status": "enabled", "children": [] },
+                { "id": "uuid", "title": "UI Designer", "runtime_status": "idle", "admin_status": "enabled", "children": [] }
               ]
             },
             {
               "id": "uuid",
               "title": "CMO",
-              "status": "paused",
+              "runtime_status": "idle",
+              "admin_status": "disabled",
     
               "children": []
             }
@@ -1592,9 +1595,8 @@ Response:
 }
 ```
 
-Updates `last_heartbeat_at`. If agent status is `paused` or `terminated`,
-response includes `"agent": { "status": "paused" }` and agent should stop
-working.
+Updates `last_heartbeat_at`. If agent admin_status is `disabled` or `terminated`,
+response includes empty `assigned_issues` and agent should stop working.
 
 ---
 
@@ -1685,7 +1687,7 @@ debits the agent's budget atomically. If budget is exceeded, returns:
 {
   "error": {
     "code": "BUDGET_EXCEEDED",
-    "message": "Agent budget limit reached. Agent has been paused."
+    "message": "Agent budget limit reached."
   }
 }
 ```
@@ -2005,7 +2007,7 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `connection.disconnected` | connected_platform | Board disconnects platform |
 | `agent.created` | agent | Board hires or approval resolved |
 | `agent.updated` | agent | Board edits agent config |
-| `agent.paused` | agent | Board pauses or budget exceeded |
+| `agent.disabled` | agent | Board disables agent |
 | `agent.resumed` | agent | Board resumes |
 | `agent.terminated` | agent | Board terminates |
 | `company.container_rebuilt` | company | Board rebuilds company container |

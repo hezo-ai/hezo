@@ -1,7 +1,8 @@
 const statusMap = {
 	active: 'bg-accent-green',
-	idle: 'bg-text-subtle',
-	paused: 'bg-accent-amber',
+	idle: 'bg-text',
+	paused: 'bg-accent-red',
+	disabled: 'bg-text-subtle',
 } as const;
 
 interface StatusDotProps {

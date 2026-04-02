@@ -56,7 +56,6 @@ beforeAll(async () => {
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	// Assign issue to agent
 	await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
 		method: 'PATCH',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
@@ -81,7 +80,8 @@ describe('agent API - heartbeat', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.agent.id).toBe(agentId);
-		expect(body.data.agent.status).toBe('active');
+		expect(body.data.agent.runtime_status).toBe('idle');
+		expect(body.data.agent.admin_status).toBe('enabled');
 		expect(body.data.agent.budget_remaining_cents).toBeGreaterThan(0);
 		expect(body.data.assigned_issues.length).toBe(1);
 		expect(body.data.assigned_issues[0].id).toBe(issueId);
@@ -217,9 +217,8 @@ describe('agent API - heartbeat edge cases', () => {
 		expect(after.rows[0].last_heartbeat_at).not.toEqual(before.rows[0].last_heartbeat_at);
 	});
 
-	it('returns empty issues when agent is paused', async () => {
-		// Pause the agent
-		await app.request(`/api/companies/${companyId}/agents/${agentId}/pause`, {
+	it('returns empty issues when agent is disabled', async () => {
+		await app.request(`/api/companies/${companyId}/agents/${agentId}/disable`, {
 			method: 'POST',
 			headers: authHeader(boardToken),
 		});
@@ -231,11 +230,10 @@ describe('agent API - heartbeat edge cases', () => {
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.agent.status).toBe('paused');
+		expect(body.data.agent.admin_status).toBe('disabled');
 		expect(body.data.assigned_issues).toEqual([]);
 
-		// Resume for subsequent tests
-		await app.request(`/api/companies/${companyId}/agents/${agentId}/resume`, {
+		await app.request(`/api/companies/${companyId}/agents/${agentId}/enable`, {
 			method: 'POST',
 			headers: authHeader(boardToken),
 		});
@@ -243,8 +241,7 @@ describe('agent API - heartbeat edge cases', () => {
 });
 
 describe('agent API - budget enforcement', () => {
-	it('returns 402 when tool call exceeds budget', async () => {
-		// Create a second agent with very low budget for this test
+	it('returns 402 and pauses agent when tool call exceeds budget', async () => {
 		const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
@@ -253,14 +250,12 @@ describe('agent API - budget enforcement', () => {
 		const cheapAgent = (await agentRes.json()).data;
 		const cheapToken = await signAgentJwt(masterKeyManager, cheapAgent.id, companyId);
 
-		// Assign the issue to this agent
 		await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: cheapAgent.id }),
 		});
 
-		// Post a trace comment
 		const commentRes = await app.request(`/agent-api/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(cheapToken), 'Content-Type': 'application/json' },
@@ -268,32 +263,23 @@ describe('agent API - budget enforcement', () => {
 		});
 		const commentId = (await commentRes.json()).data.id;
 
-		// Submit a tool call that exceeds budget
 		const res = await app.request(`/agent-api/issues/${issueId}/comments/${commentId}/tool-calls`, {
 			method: 'POST',
 			headers: { ...authHeader(cheapToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				tool_calls: [
-					{
-						tool_name: 'expensive_op',
-						status: 'success',
-						cost_cents: 9999,
-					},
-				],
+				tool_calls: [{ tool_name: 'expensive_op', status: 'success', cost_cents: 9999 }],
 			}),
 		});
 		expect(res.status).toBe(402);
 		const body = await res.json();
 		expect(body.error.code).toBe('BUDGET_EXCEEDED');
 
-		// Verify agent is paused
-		const agentCheck = await db.query<{ status: string }>(
-			'SELECT status FROM member_agents WHERE id = $1',
+		const agentCheck = await db.query<{ runtime_status: string }>(
+			'SELECT runtime_status FROM member_agents WHERE id = $1',
 			[cheapAgent.id],
 		);
-		expect(agentCheck.rows[0].status).toBe('paused');
+		expect(agentCheck.rows[0].runtime_status).toBe('paused');
 
-		// Restore original assignee
 		await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },

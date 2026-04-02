@@ -1,4 +1,4 @@
-import { AgentStatus, MemberType, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
+import { AgentAdminStatus, MemberType, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -16,13 +16,13 @@ agentsRoutes.get('/companies/:companyId/agents', async (c) => {
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const statusFilter = c.req.query('status');
+	const adminFilter = c.req.query('admin_status');
 
 	let query = `
     SELECT m.id, m.company_id, m.display_name, m.created_at,
            ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
            ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
-           ma.budget_reset_at, ma.status, ma.last_heartbeat_at, ma.updated_at,
+           ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.updated_at,
            ma.reports_to,
            (SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
            (SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${terminalStatusList}))::int AS assigned_issue_count
@@ -31,12 +31,12 @@ agentsRoutes.get('/companies/:companyId/agents', async (c) => {
     WHERE m.company_id = $1`;
 	const params: unknown[] = [companyId];
 
-	if (statusFilter) {
-		const statuses = statusFilter.split(',').map((s) => s.trim());
+	if (adminFilter) {
+		const statuses = adminFilter.split(',').map((s) => s.trim());
 		const placeholders = statuses
-			.map((_, i) => `$${params.length + 1 + i}::agent_status`)
+			.map((_, i) => `$${params.length + 1 + i}::agent_admin_status`)
 			.join(', ');
-		query += ` AND ma.status IN (${placeholders})`;
+		query += ` AND ma.admin_status IN (${placeholders})`;
 		params.push(...statuses);
 	}
 
@@ -114,7 +114,7 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 		`SELECT m.id, m.company_id, m.display_name, m.created_at,
             ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
             ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
-            ma.status, ma.reports_to, ma.mcp_servers, ma.updated_at
+            ma.runtime_status, ma.admin_status, ma.reports_to, ma.mcp_servers, ma.updated_at
      FROM members m
      JOIN member_agents ma ON ma.id = m.id
      WHERE m.id = $1`,
@@ -142,7 +142,7 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId', async (c) => {
 		`SELECT m.id, m.company_id, m.display_name, m.created_at,
             ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
             ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
-            ma.budget_reset_at, ma.status, ma.last_heartbeat_at, ma.reports_to,
+            ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
             ma.mcp_servers, ma.updated_at,
             (SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
             (SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${terminalStatusList}))::int AS assigned_issue_count
@@ -236,12 +236,68 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-agentsRoutes.post('/companies/:companyId/agents/:agentId/pause', async (c) => {
-	return changeAgentStatus(c, AgentStatus.Paused, [AgentStatus.Active]);
+agentsRoutes.post('/companies/:companyId/agents/:agentId/disable', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const agentId = c.req.param('agentId');
+
+	const existing = await db.query<{ admin_status: string }>(
+		'SELECT ma.admin_status FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1 AND m.company_id = $2',
+		[agentId, companyId],
+	);
+	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	if (existing.rows[0].admin_status === AgentAdminStatus.Terminated) {
+		return err(c, 'INVALID_STATE', 'Cannot disable a terminated agent', 409);
+	}
+	if (existing.rows[0].admin_status === AgentAdminStatus.Disabled) {
+		return err(c, 'INVALID_STATE', 'Agent is already disabled', 409);
+	}
+
+	await db.query(`UPDATE member_agents SET admin_status = $1::agent_admin_status WHERE id = $2`, [
+		AgentAdminStatus.Disabled,
+		agentId,
+	]);
+
+	broadcastChange(c, `company:${companyId}`, 'member_agents', 'UPDATE', {
+		id: agentId,
+		admin_status: AgentAdminStatus.Disabled,
+	});
+	return ok(c, { admin_status: AgentAdminStatus.Disabled });
 });
 
-agentsRoutes.post('/companies/:companyId/agents/:agentId/resume', async (c) => {
-	return changeAgentStatus(c, AgentStatus.Idle, [AgentStatus.Paused]);
+agentsRoutes.post('/companies/:companyId/agents/:agentId/enable', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const agentId = c.req.param('agentId');
+
+	const existing = await db.query<{ admin_status: string }>(
+		'SELECT ma.admin_status FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1 AND m.company_id = $2',
+		[agentId, companyId],
+	);
+	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	if (existing.rows[0].admin_status === AgentAdminStatus.Terminated) {
+		return err(c, 'INVALID_STATE', 'Cannot enable a terminated agent', 409);
+	}
+	if (existing.rows[0].admin_status === AgentAdminStatus.Enabled) {
+		return err(c, 'INVALID_STATE', 'Agent is already enabled', 409);
+	}
+
+	await db.query(`UPDATE member_agents SET admin_status = $1::agent_admin_status WHERE id = $2`, [
+		AgentAdminStatus.Enabled,
+		agentId,
+	]);
+
+	broadcastChange(c, `company:${companyId}`, 'member_agents', 'UPDATE', {
+		id: agentId,
+		admin_status: AgentAdminStatus.Enabled,
+	});
+	return ok(c, { admin_status: AgentAdminStatus.Enabled });
 });
 
 agentsRoutes.post('/companies/:companyId/agents/:agentId/terminate', async (c) => {
@@ -252,19 +308,17 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/terminate', async (c) =
 	const { companyId } = access;
 	const agentId = c.req.param('agentId');
 
-	const existing = await db.query<{ status: string }>(
-		'SELECT ma.status FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1 AND m.company_id = $2',
+	const existing = await db.query<{ admin_status: string }>(
+		'SELECT ma.admin_status FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1 AND m.company_id = $2',
 		[agentId, companyId],
 	);
-	if (existing.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Agent not found', 404);
-	}
-	if (existing.rows[0].status === AgentStatus.Terminated) {
+	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	if (existing.rows[0].admin_status === AgentAdminStatus.Terminated) {
 		return err(c, 'INVALID_STATE', 'Agent is already terminated', 409);
 	}
 
-	await db.query(`UPDATE member_agents SET status = $1::agent_status WHERE id = $2`, [
-		AgentStatus.Terminated,
+	await db.query(`UPDATE member_agents SET admin_status = $1::agent_admin_status WHERE id = $2`, [
+		AgentAdminStatus.Terminated,
 		agentId,
 	]);
 
@@ -276,9 +330,9 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/terminate', async (c) =
 
 	broadcastChange(c, `company:${companyId}`, 'member_agents', 'UPDATE', {
 		id: agentId,
-		status: AgentStatus.Terminated,
+		admin_status: AgentAdminStatus.Terminated,
 	});
-	return ok(c, { status: AgentStatus.Terminated });
+	return ok(c, { admin_status: AgentAdminStatus.Terminated });
 });
 
 agentsRoutes.get('/companies/:companyId/org-chart', async (c) => {
@@ -289,7 +343,7 @@ agentsRoutes.get('/companies/:companyId/org-chart', async (c) => {
 	const { companyId } = access;
 
 	const result = await db.query(
-		`SELECT m.id, ma.title, ma.slug, ma.status, ma.reports_to
+		`SELECT m.id, ma.title, ma.slug, ma.runtime_status, ma.admin_status, ma.reports_to
      FROM members m
      JOIN member_agents ma ON ma.id = m.id
      WHERE m.company_id = $1`,
@@ -300,7 +354,8 @@ agentsRoutes.get('/companies/:companyId/org-chart', async (c) => {
 		id: string;
 		title: string;
 		slug: string;
-		status: string;
+		runtime_status: string;
+		admin_status: string;
 		reports_to: string | null;
 	}[];
 	type AgentNode = (typeof agents)[number] & { children: AgentNode[] };
@@ -317,48 +372,6 @@ agentsRoutes.get('/companies/:companyId/org-chart', async (c) => {
 
 	return ok(c, { board: { children: roots } });
 });
-
-async function changeAgentStatus(
-	c: import('hono').Context<Env>,
-	newStatus: string,
-	validFrom: string[],
-) {
-	const access = await requireCompanyAccess(c);
-	if (access instanceof Response) return access;
-
-	const db = c.get('db');
-	const { companyId } = access;
-	const agentId = c.req.param('agentId');
-
-	const existing = await db.query<{ status: string }>(
-		'SELECT ma.status FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1 AND m.company_id = $2',
-		[agentId, companyId],
-	);
-
-	if (existing.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Agent not found', 404);
-	}
-
-	if (!validFrom.includes(existing.rows[0].status)) {
-		return err(
-			c,
-			'INVALID_STATE',
-			`Cannot transition from '${existing.rows[0].status}' to '${newStatus}'`,
-			409,
-		);
-	}
-
-	await db.query(`UPDATE member_agents SET status = $1::agent_status WHERE id = $2`, [
-		newStatus,
-		agentId,
-	]);
-
-	broadcastChange(c, `company:${companyId}`, 'member_agents', 'UPDATE', {
-		id: agentId,
-		status: newStatus,
-	});
-	return ok(c, { status: newStatus });
-}
 
 agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs', async (c) => {
 	const access = await requireCompanyAccess(c);

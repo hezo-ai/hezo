@@ -63,7 +63,8 @@ CREATE INDEX idx_sessions_token ON sessions(token);
 -------------------------------------------------------------------------------
 
 CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini', 'bash', 'http');
-CREATE TYPE agent_status AS ENUM ('active', 'idle', 'paused', 'terminated');
+CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
+CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled', 'terminated');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopped', 'error');
 CREATE TYPE issue_status AS ENUM ('backlog', 'open', 'in_progress', 'review', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');
@@ -211,7 +212,8 @@ CREATE TABLE agents (
     monthly_budget_cents    INTEGER NOT NULL DEFAULT 3000,  -- $30 default
     budget_used_cents       INTEGER NOT NULL DEFAULT 0,
     budget_reset_at         TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
-    status                  agent_status NOT NULL DEFAULT 'idle',
+    runtime_status          agent_runtime_status NOT NULL DEFAULT 'idle',
+    admin_status            agent_admin_status NOT NULL DEFAULT 'enabled',
     -- Agent-level MCP servers (merged with company-level at runtime)
     -- [{ "name": "db", "url": "stdio://...", "description": "..." }]
     mcp_servers             JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -333,7 +335,7 @@ CREATE TABLE issue_comments (
     --   options: { "prompt": "...", "options": [...] }
     --   preview: { "filename": "...", "label": "...", "description": "..." }
     --   trace:   { "summary": "4 tool calls" }  (detail in tool_calls table)
-    --   system:  { "text": "Agent paused — budget limit reached" }
+    --   system:  { "text": "Agent disabled — budget limit reached" }
     content         JSONB NOT NULL,
     -- For options: records which option the user picked
     -- { "chosen_id": "jwt", "chosen_at": "..." }

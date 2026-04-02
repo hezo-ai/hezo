@@ -4,6 +4,7 @@ import { AuthType } from '@hezo/shared';
 import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { sign, verify } from 'hono/jwt';
+import { resolveCompanyId } from '../lib/resolve';
 import type { Env } from '../lib/types';
 
 const PUBLIC_PATHS = ['/health', '/api/status', '/api/auth/token', '/'];
@@ -123,10 +124,16 @@ export async function requireCompanyAccess(
 	c: Context<Env>,
 ): Promise<{ companyId: string } | Response> {
 	const auth = c.get('auth');
-	const companyId = c.req.param('companyId');
+	const raw = c.req.param('companyId');
 
-	if (!companyId) {
+	if (!raw) {
 		return c.json({ error: { code: 'BAD_REQUEST', message: 'Missing companyId' } }, 400);
+	}
+
+	const db = c.get('db');
+	const companyId = await resolveCompanyId(db, raw);
+	if (!companyId) {
+		return c.json({ error: { code: 'NOT_FOUND', message: 'Company not found' } }, 404);
 	}
 
 	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
@@ -136,13 +143,10 @@ export async function requireCompanyAccess(
 		return { companyId };
 	}
 
-	// Superusers can access any company
 	if (auth.isSuperuser) {
 		return { companyId };
 	}
 
-	// Board auth — verify membership per-request
-	const db = c.get('db');
 	const result = await db.query(
 		'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.company_id = $2',
 		[auth.userId, companyId],
