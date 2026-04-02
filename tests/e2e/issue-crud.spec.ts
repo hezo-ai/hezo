@@ -130,14 +130,17 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 	await expect(page.getByText('Rules Test Issue')).toBeVisible({ timeout: 10000 });
 
 	// Edit rules
-	const rulesSection = page.locator('text=Rules').locator('..');
+	const rulesSection = page.getByText('Rules', { exact: true }).locator('..').locator('..');
 	await rulesSection.getByText('Edit').click();
 	await rulesSection.locator('textarea').fill('Consult architect before changes');
 	await rulesSection.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 5000 });
 
 	// Edit progress summary
-	const summarySection = page.locator('text=Progress Summary').locator('..');
+	const summarySection = page
+		.getByText('Progress Summary', { exact: true })
+		.locator('..')
+		.locator('..');
 	await summarySection.getByText('Edit').click();
 	await summarySection.locator('textarea').fill('Implementation started');
 	await summarySection.getByRole('button', { name: 'Save' }).click();

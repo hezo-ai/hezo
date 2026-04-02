@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
-import { useAgents } from '../../../../hooks/use-agents';
 import { useApiKeys, useCreateApiKey, useDeleteApiKey } from '../../../../hooks/use-api-keys';
 import { useAuditLog } from '../../../../hooks/use-audit-log';
 import { useCompany, useUpdateCompany } from '../../../../hooks/use-companies';
@@ -341,8 +340,6 @@ function ApiKeysSection({ companyId }: { companyId: string }) {
 
 function BudgetSection({ companyId }: { companyId: string }) {
 	const { data: costs } = useCosts(companyId, { group_by: 'agent' });
-	const { data: agents } = useAgents(companyId);
-
 	return (
 		<section>
 			<SectionHeader title="Budget" desc="Spending overview across agents." />

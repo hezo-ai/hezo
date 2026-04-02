@@ -22,7 +22,8 @@ companyTypesRoutes.get('/company-types', async (c) => {
 		            'runtime_type_override', ctat.runtime_type_override,
 		            'heartbeat_interval_override', ctat.heartbeat_interval_override,
 		            'monthly_budget_override', ctat.monthly_budget_override,
-		            'sort_order', ctat.sort_order
+		            'sort_order', ctat.sort_order,
+		            'system_prompt', at.system_prompt_template
 		        ) ORDER BY ctat.sort_order) FILTER (WHERE at.id IS NOT NULL),
 		        '[]'
 		    ) AS agent_types
@@ -196,7 +197,8 @@ async function getCompanyTypeWithAgentTypes(db: PGlite, id: string) {
 		            'runtime_type_override', ctat.runtime_type_override,
 		            'heartbeat_interval_override', ctat.heartbeat_interval_override,
 		            'monthly_budget_override', ctat.monthly_budget_override,
-		            'sort_order', ctat.sort_order
+		            'sort_order', ctat.sort_order,
+			            'system_prompt', at.system_prompt_template
 		        ) ORDER BY ctat.sort_order) FILTER (WHERE at.id IS NOT NULL),
 		        '[]'
 		    ) AS agent_types

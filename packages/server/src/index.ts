@@ -146,7 +146,6 @@ export default {
 						containerLogStreamer.subscribe(projectId, row.container_id, wsManager, dockerRef);
 						return;
 					}
-
 				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {
 					wsManager.unsubscribe(ws as unknown as WsSocket, data.room);
 
