@@ -6,7 +6,10 @@ test('can create an issue', async ({ page }) => {
 	await authenticate(page);
 	await page.goto('/companies');
 
-	await page.getByRole('button', { name: 'New Company' }).click();
+	await page
+		.getByRole('button', { name: 'New company' })
+		.filter({ hasText: 'New company' })
+		.click();
 	await page.getByLabel('Name').fill('Issue Test Corp');
 	await page.getByRole('button', { name: 'Create' }).click();
 	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
