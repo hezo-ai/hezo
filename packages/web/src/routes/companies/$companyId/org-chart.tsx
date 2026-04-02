@@ -3,18 +3,17 @@ import { StatusDot } from '../../../components/ui/status-dot';
 import type { OrgNode } from '../../../hooks/use-org-chart';
 import { useOrgChart } from '../../../hooks/use-org-chart';
 
-const statusMap: Record<string, 'active' | 'idle' | 'paused'> = {
-	active: 'active',
-	idle: 'idle',
-	paused: 'paused',
-	terminated: 'idle',
-};
+function orgDotStatus(node: OrgNode): 'active' | 'idle' | 'paused' | 'disabled' {
+	if (node.admin_status === 'disabled' || node.admin_status === 'terminated') return 'disabled';
+	if (node.runtime_status === 'paused') return 'paused';
+	return node.runtime_status === 'active' ? 'active' : 'idle';
+}
 
 function OrgNodeComponent({ node }: { node: OrgNode }) {
 	return (
 		<div className="flex flex-col items-center">
 			<div className="relative inline-flex items-center gap-2 rounded-radius-md border border-border bg-bg px-3.5 py-2 text-[13px] font-medium transition-[border-color] duration-150 hover:border-border-hover">
-				<StatusDot status={statusMap[node.status] ?? 'idle'} />
+				<StatusDot status={orgDotStatus(node)} />
 				{node.title}
 			</div>
 			{node.children.length > 0 && (
@@ -67,10 +66,13 @@ function OrgChartPage() {
 					<StatusDot status="active" /> Active
 				</div>
 				<div className="flex items-center gap-1.5">
+					<StatusDot status="idle" /> Idle
+				</div>
+				<div className="flex items-center gap-1.5">
 					<StatusDot status="paused" /> Paused
 				</div>
 				<div className="flex items-center gap-1.5">
-					<StatusDot status="idle" /> Idle
+					<StatusDot status="disabled" /> Disabled
 				</div>
 			</div>
 		</div>

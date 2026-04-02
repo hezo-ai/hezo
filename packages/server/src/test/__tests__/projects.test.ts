@@ -116,3 +116,51 @@ describe('projects CRUD', () => {
 		expect(res.status).toBe(200);
 	});
 });
+
+describe('slug-based project access', () => {
+	it('gets a project by slug', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/projects`, {
+			headers: authHeader(token),
+		});
+		const project = (await listRes.json()).data.find((p: any) => p.slug === 'backend-api');
+
+		const res = await app.request(`/api/companies/${companyId}/projects/${project.slug}`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.id).toBe(project.id);
+		expect(body.data.slug).toBe('backend-api');
+	});
+
+	it('returns 404 for non-existent project slug', async () => {
+		const res = await app.request(`/api/companies/${companyId}/projects/nonexistent-slug`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(404);
+	});
+
+	it('accesses company by slug and project by slug together', async () => {
+		const companiesRes = await app.request('/api/companies', {
+			headers: authHeader(token),
+		});
+		const company = (await companiesRes.json()).data.find((c: any) => c.slug === 'project-test-co');
+
+		const res = await app.request(`/api/companies/${company.slug}/projects/backend-api`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.name).toBe('Backend API');
+	});
+
+	it('updates a project by slug', async () => {
+		const res = await app.request(`/api/companies/${companyId}/projects/backend-api`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ goal: 'Slug-based update' }),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.goal).toBe('Slug-based update');
+	});
+});

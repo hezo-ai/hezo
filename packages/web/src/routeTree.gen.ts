@@ -19,12 +19,14 @@ import { Route as CompaniesCompanyIdProjectsIndexRouteImport } from './routes/co
 import { Route as CompaniesCompanyIdKbIndexRouteImport } from './routes/companies/$companyId/kb/index'
 import { Route as CompaniesCompanyIdIssuesIndexRouteImport } from './routes/companies/$companyId/issues/index'
 import { Route as CompaniesCompanyIdAgentsIndexRouteImport } from './routes/companies/$companyId/agents/index'
-import { Route as CompaniesCompanyIdProjectsProjectIdRouteImport } from './routes/companies/$companyId/projects/$projectId'
 import { Route as CompaniesCompanyIdKbNewRouteImport } from './routes/companies/$companyId/kb/new'
 import { Route as CompaniesCompanyIdKbSlugRouteImport } from './routes/companies/$companyId/kb/$slug'
 import { Route as CompaniesCompanyIdIssuesIssueIdRouteImport } from './routes/companies/$companyId/issues/$issueId'
 import { Route as CompaniesCompanyIdAgentsHireRouteImport } from './routes/companies/$companyId/agents/hire'
 import { Route as CompaniesCompanyIdAgentsAgentIdRouteImport } from './routes/companies/$companyId/agents/$agentId'
+import { Route as CompaniesCompanyIdProjectsProjectIdRouteRouteImport } from './routes/companies/$companyId/projects/$projectId/route'
+import { Route as CompaniesCompanyIdProjectsProjectIdIndexRouteImport } from './routes/companies/$companyId/projects/$projectId/index'
+import { Route as CompaniesCompanyIdProjectsProjectIdContainerRouteImport } from './routes/companies/$companyId/projects/$projectId/container'
 import { Route as CompaniesCompanyIdKbSlugEditRouteImport } from './routes/companies/$companyId/kb/$slug.edit'
 
 const IndexRoute = IndexRouteImport.update({
@@ -83,12 +85,6 @@ const CompaniesCompanyIdAgentsIndexRoute =
     path: '/agents/',
     getParentRoute: () => CompaniesCompanyIdRouteRoute,
   } as any)
-const CompaniesCompanyIdProjectsProjectIdRoute =
-  CompaniesCompanyIdProjectsProjectIdRouteImport.update({
-    id: '/projects/$projectId',
-    path: '/projects/$projectId',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
-  } as any)
 const CompaniesCompanyIdKbNewRoute = CompaniesCompanyIdKbNewRouteImport.update({
   id: '/kb/new',
   path: '/kb/new',
@@ -118,6 +114,24 @@ const CompaniesCompanyIdAgentsAgentIdRoute =
     path: '/agents/$agentId',
     getParentRoute: () => CompaniesCompanyIdRouteRoute,
   } as any)
+const CompaniesCompanyIdProjectsProjectIdRouteRoute =
+  CompaniesCompanyIdProjectsProjectIdRouteRouteImport.update({
+    id: '/projects/$projectId',
+    path: '/projects/$projectId',
+    getParentRoute: () => CompaniesCompanyIdRouteRoute,
+  } as any)
+const CompaniesCompanyIdProjectsProjectIdIndexRoute =
+  CompaniesCompanyIdProjectsProjectIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => CompaniesCompanyIdProjectsProjectIdRouteRoute,
+  } as any)
+const CompaniesCompanyIdProjectsProjectIdContainerRoute =
+  CompaniesCompanyIdProjectsProjectIdContainerRouteImport.update({
+    id: '/container',
+    path: '/container',
+    getParentRoute: () => CompaniesCompanyIdProjectsProjectIdRouteRoute,
+  } as any)
 const CompaniesCompanyIdKbSlugEditRoute =
   CompaniesCompanyIdKbSlugEditRouteImport.update({
     id: '/edit',
@@ -131,18 +145,20 @@ export interface FileRoutesByFullPath {
   '/companies/': typeof CompaniesIndexRoute
   '/companies/$companyId/org-chart': typeof CompaniesCompanyIdOrgChartRoute
   '/companies/$companyId/': typeof CompaniesCompanyIdIndexRoute
+  '/companies/$companyId/projects/$projectId': typeof CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren
   '/companies/$companyId/agents/$agentId': typeof CompaniesCompanyIdAgentsAgentIdRoute
   '/companies/$companyId/agents/hire': typeof CompaniesCompanyIdAgentsHireRoute
   '/companies/$companyId/issues/$issueId': typeof CompaniesCompanyIdIssuesIssueIdRoute
   '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRouteWithChildren
   '/companies/$companyId/kb/new': typeof CompaniesCompanyIdKbNewRoute
-  '/companies/$companyId/projects/$projectId': typeof CompaniesCompanyIdProjectsProjectIdRoute
   '/companies/$companyId/agents/': typeof CompaniesCompanyIdAgentsIndexRoute
   '/companies/$companyId/issues/': typeof CompaniesCompanyIdIssuesIndexRoute
   '/companies/$companyId/kb/': typeof CompaniesCompanyIdKbIndexRoute
   '/companies/$companyId/projects/': typeof CompaniesCompanyIdProjectsIndexRoute
   '/companies/$companyId/settings/': typeof CompaniesCompanyIdSettingsIndexRoute
   '/companies/$companyId/kb/$slug/edit': typeof CompaniesCompanyIdKbSlugEditRoute
+  '/companies/$companyId/projects/$projectId/container': typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
+  '/companies/$companyId/projects/$projectId/': typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -154,13 +170,14 @@ export interface FileRoutesByTo {
   '/companies/$companyId/issues/$issueId': typeof CompaniesCompanyIdIssuesIssueIdRoute
   '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRouteWithChildren
   '/companies/$companyId/kb/new': typeof CompaniesCompanyIdKbNewRoute
-  '/companies/$companyId/projects/$projectId': typeof CompaniesCompanyIdProjectsProjectIdRoute
   '/companies/$companyId/agents': typeof CompaniesCompanyIdAgentsIndexRoute
   '/companies/$companyId/issues': typeof CompaniesCompanyIdIssuesIndexRoute
   '/companies/$companyId/kb': typeof CompaniesCompanyIdKbIndexRoute
   '/companies/$companyId/projects': typeof CompaniesCompanyIdProjectsIndexRoute
   '/companies/$companyId/settings': typeof CompaniesCompanyIdSettingsIndexRoute
   '/companies/$companyId/kb/$slug/edit': typeof CompaniesCompanyIdKbSlugEditRoute
+  '/companies/$companyId/projects/$projectId/container': typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
+  '/companies/$companyId/projects/$projectId': typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -169,18 +186,20 @@ export interface FileRoutesById {
   '/companies/': typeof CompaniesIndexRoute
   '/companies/$companyId/org-chart': typeof CompaniesCompanyIdOrgChartRoute
   '/companies/$companyId/': typeof CompaniesCompanyIdIndexRoute
+  '/companies/$companyId/projects/$projectId': typeof CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren
   '/companies/$companyId/agents/$agentId': typeof CompaniesCompanyIdAgentsAgentIdRoute
   '/companies/$companyId/agents/hire': typeof CompaniesCompanyIdAgentsHireRoute
   '/companies/$companyId/issues/$issueId': typeof CompaniesCompanyIdIssuesIssueIdRoute
   '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRouteWithChildren
   '/companies/$companyId/kb/new': typeof CompaniesCompanyIdKbNewRoute
-  '/companies/$companyId/projects/$projectId': typeof CompaniesCompanyIdProjectsProjectIdRoute
   '/companies/$companyId/agents/': typeof CompaniesCompanyIdAgentsIndexRoute
   '/companies/$companyId/issues/': typeof CompaniesCompanyIdIssuesIndexRoute
   '/companies/$companyId/kb/': typeof CompaniesCompanyIdKbIndexRoute
   '/companies/$companyId/projects/': typeof CompaniesCompanyIdProjectsIndexRoute
   '/companies/$companyId/settings/': typeof CompaniesCompanyIdSettingsIndexRoute
   '/companies/$companyId/kb/$slug/edit': typeof CompaniesCompanyIdKbSlugEditRoute
+  '/companies/$companyId/projects/$projectId/container': typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
+  '/companies/$companyId/projects/$projectId/': typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -190,18 +209,20 @@ export interface FileRouteTypes {
     | '/companies/'
     | '/companies/$companyId/org-chart'
     | '/companies/$companyId/'
+    | '/companies/$companyId/projects/$projectId'
     | '/companies/$companyId/agents/$agentId'
     | '/companies/$companyId/agents/hire'
     | '/companies/$companyId/issues/$issueId'
     | '/companies/$companyId/kb/$slug'
     | '/companies/$companyId/kb/new'
-    | '/companies/$companyId/projects/$projectId'
     | '/companies/$companyId/agents/'
     | '/companies/$companyId/issues/'
     | '/companies/$companyId/kb/'
     | '/companies/$companyId/projects/'
     | '/companies/$companyId/settings/'
     | '/companies/$companyId/kb/$slug/edit'
+    | '/companies/$companyId/projects/$projectId/container'
+    | '/companies/$companyId/projects/$projectId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -213,13 +234,14 @@ export interface FileRouteTypes {
     | '/companies/$companyId/issues/$issueId'
     | '/companies/$companyId/kb/$slug'
     | '/companies/$companyId/kb/new'
-    | '/companies/$companyId/projects/$projectId'
     | '/companies/$companyId/agents'
     | '/companies/$companyId/issues'
     | '/companies/$companyId/kb'
     | '/companies/$companyId/projects'
     | '/companies/$companyId/settings'
     | '/companies/$companyId/kb/$slug/edit'
+    | '/companies/$companyId/projects/$projectId/container'
+    | '/companies/$companyId/projects/$projectId'
   id:
     | '__root__'
     | '/'
@@ -227,18 +249,20 @@ export interface FileRouteTypes {
     | '/companies/'
     | '/companies/$companyId/org-chart'
     | '/companies/$companyId/'
+    | '/companies/$companyId/projects/$projectId'
     | '/companies/$companyId/agents/$agentId'
     | '/companies/$companyId/agents/hire'
     | '/companies/$companyId/issues/$issueId'
     | '/companies/$companyId/kb/$slug'
     | '/companies/$companyId/kb/new'
-    | '/companies/$companyId/projects/$projectId'
     | '/companies/$companyId/agents/'
     | '/companies/$companyId/issues/'
     | '/companies/$companyId/kb/'
     | '/companies/$companyId/projects/'
     | '/companies/$companyId/settings/'
     | '/companies/$companyId/kb/$slug/edit'
+    | '/companies/$companyId/projects/$projectId/container'
+    | '/companies/$companyId/projects/$projectId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -319,13 +343,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CompaniesCompanyIdAgentsIndexRouteImport
       parentRoute: typeof CompaniesCompanyIdRouteRoute
     }
-    '/companies/$companyId/projects/$projectId': {
-      id: '/companies/$companyId/projects/$projectId'
-      path: '/projects/$projectId'
-      fullPath: '/companies/$companyId/projects/$projectId'
-      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
-    }
     '/companies/$companyId/kb/new': {
       id: '/companies/$companyId/kb/new'
       path: '/kb/new'
@@ -361,6 +378,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CompaniesCompanyIdAgentsAgentIdRouteImport
       parentRoute: typeof CompaniesCompanyIdRouteRoute
     }
+    '/companies/$companyId/projects/$projectId': {
+      id: '/companies/$companyId/projects/$projectId'
+      path: '/projects/$projectId'
+      fullPath: '/companies/$companyId/projects/$projectId'
+      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRouteImport
+      parentRoute: typeof CompaniesCompanyIdRouteRoute
+    }
+    '/companies/$companyId/projects/$projectId/': {
+      id: '/companies/$companyId/projects/$projectId/'
+      path: '/'
+      fullPath: '/companies/$companyId/projects/$projectId/'
+      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdIndexRouteImport
+      parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
+    }
+    '/companies/$companyId/projects/$projectId/container': {
+      id: '/companies/$companyId/projects/$projectId/container'
+      path: '/container'
+      fullPath: '/companies/$companyId/projects/$projectId/container'
+      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdContainerRouteImport
+      parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
+    }
     '/companies/$companyId/kb/$slug/edit': {
       id: '/companies/$companyId/kb/$slug/edit'
       path: '/edit'
@@ -370,6 +408,24 @@ declare module '@tanstack/react-router' {
     }
   }
 }
+
+interface CompaniesCompanyIdProjectsProjectIdRouteRouteChildren {
+  CompaniesCompanyIdProjectsProjectIdContainerRoute: typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
+  CompaniesCompanyIdProjectsProjectIdIndexRoute: typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
+}
+
+const CompaniesCompanyIdProjectsProjectIdRouteRouteChildren: CompaniesCompanyIdProjectsProjectIdRouteRouteChildren =
+  {
+    CompaniesCompanyIdProjectsProjectIdContainerRoute:
+      CompaniesCompanyIdProjectsProjectIdContainerRoute,
+    CompaniesCompanyIdProjectsProjectIdIndexRoute:
+      CompaniesCompanyIdProjectsProjectIdIndexRoute,
+  }
+
+const CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren =
+  CompaniesCompanyIdProjectsProjectIdRouteRoute._addFileChildren(
+    CompaniesCompanyIdProjectsProjectIdRouteRouteChildren,
+  )
 
 interface CompaniesCompanyIdKbSlugRouteChildren {
   CompaniesCompanyIdKbSlugEditRoute: typeof CompaniesCompanyIdKbSlugEditRoute
@@ -388,12 +444,12 @@ const CompaniesCompanyIdKbSlugRouteWithChildren =
 interface CompaniesCompanyIdRouteRouteChildren {
   CompaniesCompanyIdOrgChartRoute: typeof CompaniesCompanyIdOrgChartRoute
   CompaniesCompanyIdIndexRoute: typeof CompaniesCompanyIdIndexRoute
+  CompaniesCompanyIdProjectsProjectIdRouteRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren
   CompaniesCompanyIdAgentsAgentIdRoute: typeof CompaniesCompanyIdAgentsAgentIdRoute
   CompaniesCompanyIdAgentsHireRoute: typeof CompaniesCompanyIdAgentsHireRoute
   CompaniesCompanyIdIssuesIssueIdRoute: typeof CompaniesCompanyIdIssuesIssueIdRoute
   CompaniesCompanyIdKbSlugRoute: typeof CompaniesCompanyIdKbSlugRouteWithChildren
   CompaniesCompanyIdKbNewRoute: typeof CompaniesCompanyIdKbNewRoute
-  CompaniesCompanyIdProjectsProjectIdRoute: typeof CompaniesCompanyIdProjectsProjectIdRoute
   CompaniesCompanyIdAgentsIndexRoute: typeof CompaniesCompanyIdAgentsIndexRoute
   CompaniesCompanyIdIssuesIndexRoute: typeof CompaniesCompanyIdIssuesIndexRoute
   CompaniesCompanyIdKbIndexRoute: typeof CompaniesCompanyIdKbIndexRoute
@@ -405,13 +461,13 @@ const CompaniesCompanyIdRouteRouteChildren: CompaniesCompanyIdRouteRouteChildren
   {
     CompaniesCompanyIdOrgChartRoute: CompaniesCompanyIdOrgChartRoute,
     CompaniesCompanyIdIndexRoute: CompaniesCompanyIdIndexRoute,
+    CompaniesCompanyIdProjectsProjectIdRouteRoute:
+      CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren,
     CompaniesCompanyIdAgentsAgentIdRoute: CompaniesCompanyIdAgentsAgentIdRoute,
     CompaniesCompanyIdAgentsHireRoute: CompaniesCompanyIdAgentsHireRoute,
     CompaniesCompanyIdIssuesIssueIdRoute: CompaniesCompanyIdIssuesIssueIdRoute,
     CompaniesCompanyIdKbSlugRoute: CompaniesCompanyIdKbSlugRouteWithChildren,
     CompaniesCompanyIdKbNewRoute: CompaniesCompanyIdKbNewRoute,
-    CompaniesCompanyIdProjectsProjectIdRoute:
-      CompaniesCompanyIdProjectsProjectIdRoute,
     CompaniesCompanyIdAgentsIndexRoute: CompaniesCompanyIdAgentsIndexRoute,
     CompaniesCompanyIdIssuesIndexRoute: CompaniesCompanyIdIssuesIndexRoute,
     CompaniesCompanyIdKbIndexRoute: CompaniesCompanyIdKbIndexRoute,

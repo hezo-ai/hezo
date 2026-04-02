@@ -31,7 +31,7 @@ export function CreateCompanyDialog({ open, onOpenChange }: CreateCompanyDialogP
 		setName('');
 		setDescription('');
 		setTypeId('');
-		navigate({ to: '/companies/$companyId', params: { companyId: result.id } });
+		navigate({ to: '/companies/$companyId', params: { companyId: result.slug } });
 	}
 
 	return (

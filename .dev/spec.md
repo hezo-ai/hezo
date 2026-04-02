@@ -382,7 +382,8 @@ Saving as a type does **not** include: projects, repos, issues, secrets, connect
 | Heartbeat interval | How often the agent wakes up (default: 60 min) |
 | Monthly budget | Hard spending limit in cents |
 | MCP servers | Agent-level MCP server list (merged with company-level at runtime) |
-| Status | `active`, `idle`, `paused`, `terminated` |
+| Runtime status | `active` (currently executing), `idle` (not running) — set by system |
+| Admin status | `enabled`, `disabled`, `terminated` — set by user |
 
 ### System prompt templating
 
@@ -763,7 +764,7 @@ At runtime, the company's SSH private key is injected into agent subprocesses fo
 |-------|-------------|
 | Project created | Container provisioned from the project's configured base image. All linked repos cloned inside via SSH. |
 | Agent heartbeat (for project issue) | Subprocess spawned inside the project's container with the agent's environment. |
-| Agent paused | Subprocess killed (if running). Container unaffected. |
+| Agent disabled | Subprocess killed (if running). Container unaffected. |
 | Agent terminated | Subprocess killed. Container unaffected. Agent record kept for audit. |
 | Container rebuilt | All agent subprocesses killed, container destroyed, new one provisioned. |
 | Project deleted | Container destroyed. All associated worktrees cleaned up. |
@@ -822,7 +823,7 @@ Agents can pay for third-party APIs autonomously using the Stripe/Tempo Machine 
 2. Wallet credentials are injected as environment variables (same mechanism as secrets)
 3. Agent calls a paid API → gets 402 → `mppx` handles payment flow automatically
 4. Payment amount is reported as a tool call cost and debited against the agent's budget
-5. If budget would be exceeded, payment is blocked and agent is paused
+5. If budget would be exceeded, payment is blocked and a budget-exceeded notification is sent to the board inbox
 
 **MPP Payment Directory** — agents can discover 100+ MPP-compatible services (model providers, search APIs, data services, compute platforms) without manual signup or API keys.
 
@@ -1083,7 +1084,7 @@ Comments in the thread can be:
 | `options` | Agent | Clickable choice cards (see section 10) |
 | `preview` | Agent | Link to rendered HTML file (see section 10) |
 | `trace` | Agent | Collapsible tool-call log |
-| `system` | System | Auto-generated (e.g. "Agent paused — budget limit") |
+| `system` | System | Auto-generated (e.g. "Agent disabled — budget limit") |
 
 ### Delegation
 
@@ -1242,15 +1243,15 @@ Previews are ephemeral. Auto-deleted after 72 hours, or when the issue is closed
 
 ### Company-level budget
 
-Each company has a monthly budget cap (`budget_monthly_cents` and `budget_used_cents`). The company budget is the aggregate cap for all agent spending within the company. When company budget is exhausted, all agents in the company are paused.
+Each company has a monthly budget cap (`budget_monthly_cents` and `budget_used_cents`). The company budget is the aggregate cap for all agent spending within the company. When company budget is exhausted, a budget-exceeded notification is sent to the board inbox.
 
 ### Per-agent budgets
 
 - Each agent has a monthly budget in cents (default: $30 / 3000 cents)
 - Budget enforcement is atomic: `debit_agent_budget()` row-locks the agent before checking + debiting, and also checks the company-level budget
 - At 80% usage → `budget.warning` event emitted, system comment on active issues
-- At 100% usage → agent auto-paused, `budget.exceeded` event, system comment posted
-- Board can override: adjust budget, resume agent at any time
+- At 100% usage → budget exceeded, notification sent to board inbox, system comment posted
+- Board can adjust budget at any time
 - Budget resets monthly (tracked via `budget_reset_at`)
 
 ### Cost tracking
@@ -1332,7 +1333,7 @@ Full action reference:
 | `company.deleted` | company | Board |
 | `agent.created` | agent | Board or approval resolved |
 | `agent.updated` | agent | Board |
-| `agent.paused` | agent | Board or budget exceeded |
+| `agent.disabled` | agent | Board manually disables agent |
 | `agent.resumed` | agent | Board |
 | `agent.terminated` | agent | Board |
 | `company.container_rebuilt` | company | Board |
@@ -1431,7 +1432,7 @@ An issue can only be actively worked on by **one agent at a time**. When an agen
 Work on an issue can span **hours or days** — this is not a short-lived database lock. The agent retains ownership until:
 - The issue is reassigned to a different agent or board member
 - The issue status moves to `done`, `closed`, or `cancelled`
-- The agent is paused or terminated
+- The agent is disabled or terminated
 - The board manually releases the assignment
 
 There is no automatic timeout. If an agent appears stuck, the board can manually reassign the issue.
@@ -2013,7 +2014,8 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 ```
 member_type:          agent, user
 agent_runtime:        claude_code, codex, gemini
-agent_status:         active, idle, paused, terminated
+agent_runtime_status: active, idle
+agent_admin_status:   enabled, disabled, terminated
 member_role:          board, member
 container_status:     creating, running, stopped, error    (tracks project container status)
 issue_status:         backlog, open, in_progress, review, blocked, done, closed, cancelled

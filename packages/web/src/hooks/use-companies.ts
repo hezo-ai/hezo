@@ -22,10 +22,11 @@ export function useCompanies() {
 	});
 }
 
-export function useCompany(id: string) {
+export function useCompany(id: string, enabled = true) {
 	return useQuery({
 		queryKey: ['companies', id],
 		queryFn: () => api.get<Company>(`/api/companies/${id}`),
+		enabled,
 	});
 }
 

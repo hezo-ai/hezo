@@ -164,7 +164,33 @@ async function main() {
 		console.log(`\nE2E: ${e2ePassed ? 'passed' : 'FAILED'}`);
 	}
 
+	await cleanupDockerContainers();
+
 	if (failed || !e2ePassed) process.exit(1);
+}
+
+async function cleanupDockerContainers() {
+	try {
+		const ps = Bun.spawn(['docker', 'ps', '-aq', '--filter', 'name=^hezo-'], {
+			stdout: 'pipe',
+			stderr: 'pipe',
+		});
+		const ids = (await new Response(ps.stdout).text()).trim();
+		await ps.exited;
+
+		if (!ids) return;
+
+		const containerIds = ids.split('\n').filter(Boolean);
+		console.log(`\nCleaning up ${containerIds.length} Docker container(s)...`);
+
+		const rm = Bun.spawn(['docker', 'rm', '-f', ...containerIds], {
+			stdout: 'inherit',
+			stderr: 'inherit',
+		});
+		await rm.exited;
+	} catch {
+		// Docker may not be available — skip cleanup silently
+	}
 }
 
 main();

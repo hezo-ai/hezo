@@ -1,5 +1,6 @@
 import {
-	AgentStatus,
+	AgentAdminStatus,
+	AgentRuntimeStatus,
 	ApprovalType,
 	AuthType,
 	IssuePriority,
@@ -26,12 +27,13 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 	const agent = await db.query<{
 		id: string;
 		title: string;
-		status: string;
+		runtime_status: string;
+		admin_status: string;
 		system_prompt: string;
 		monthly_budget_cents: number;
 		budget_used_cents: number;
 	}>(
-		`SELECT ma.id, ma.title, ma.status, ma.system_prompt,
+		`SELECT ma.id, ma.title, ma.runtime_status, ma.admin_status, ma.system_prompt,
 		        ma.monthly_budget_cents, ma.budget_used_cents
 		 FROM member_agents ma
 		 WHERE ma.id = $1`,
@@ -45,12 +47,17 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 	const agentRow = agent.rows[0];
 	const budgetRemaining = agentRow.monthly_budget_cents - agentRow.budget_used_cents;
 
-	if (agentRow.status === AgentStatus.Paused || agentRow.status === AgentStatus.Terminated) {
+	if (
+		agentRow.admin_status === AgentAdminStatus.Disabled ||
+		agentRow.admin_status === AgentAdminStatus.Terminated ||
+		agentRow.runtime_status === AgentRuntimeStatus.Paused
+	) {
 		return ok(c, {
 			agent: {
 				id: agentRow.id,
 				title: agentRow.title,
-				status: agentRow.status,
+				runtime_status: agentRow.runtime_status,
+				admin_status: agentRow.admin_status,
 				budget_remaining_cents: budgetRemaining,
 			},
 			assigned_issues: [],
@@ -120,7 +127,8 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 			id: agentRow.id,
 			member_id: memberId,
 			title: agentRow.title,
-			status: agentRow.status,
+			runtime_status: agentRow.runtime_status,
+			admin_status: agentRow.admin_status,
 			system_prompt: agentRow.system_prompt,
 			budget_remaining_cents: budgetRemaining,
 		},
@@ -258,10 +266,10 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 			);
 
 			if (!debitResult.rows[0]?.debit_agent_budget) {
-				await db.query(`UPDATE member_agents SET status = $1::agent_status WHERE id = $2`, [
-					AgentStatus.Paused,
-					auth.memberId,
-				]);
+				await db.query(
+					`UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2`,
+					[AgentRuntimeStatus.Paused, auth.memberId],
+				);
 				return c.json(
 					{
 						error: {

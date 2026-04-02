@@ -8,13 +8,19 @@ export const AgentRuntime = {
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
-export const AgentStatus = {
+export const AgentRuntimeStatus = {
 	Active: 'active',
 	Idle: 'idle',
 	Paused: 'paused',
+} as const;
+export type AgentRuntimeStatus = (typeof AgentRuntimeStatus)[keyof typeof AgentRuntimeStatus];
+
+export const AgentAdminStatus = {
+	Enabled: 'enabled',
+	Disabled: 'disabled',
 	Terminated: 'terminated',
 } as const;
-export type AgentStatus = (typeof AgentStatus)[keyof typeof AgentStatus];
+export type AgentAdminStatus = (typeof AgentAdminStatus)[keyof typeof AgentAdminStatus];
 
 export const ContainerStatus = {
 	Creating: 'creating',

@@ -28,7 +28,7 @@ function HireAgentPage() {
 	const [budget, setBudget] = useState('20');
 	const [heartbeat, setHeartbeat] = useState('60');
 
-	const otherAgents = agents?.filter((a) => a.status !== 'terminated') ?? [];
+	const otherAgents = agents?.filter((a) => a.admin_status !== 'terminated') ?? [];
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();

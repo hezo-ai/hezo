@@ -8,12 +8,17 @@ import { EmptyState } from '../../../../components/ui/empty-state';
 import { StatusDot } from '../../../../components/ui/status-dot';
 import { useAgents } from '../../../../hooks/use-agents';
 
-const statusBadge: Record<string, { color: string; dot: 'active' | 'idle' | 'paused' }> = {
-	active: { color: 'success', dot: 'active' },
-	idle: { color: 'neutral', dot: 'idle' },
-	paused: { color: 'warning', dot: 'paused' },
-	terminated: { color: 'neutral', dot: 'idle' },
-};
+function runtimeDot(status: string): 'active' | 'idle' | 'paused' {
+	if (status === 'active') return 'active';
+	if (status === 'paused') return 'paused';
+	return 'idle';
+}
+
+function adminBadge(status: string): { color: string; label: string } {
+	if (status === 'disabled') return { color: 'warning', label: 'Disabled' };
+	if (status === 'terminated') return { color: 'neutral', label: 'Terminated' };
+	return { color: 'success', label: 'Enabled' };
+}
 
 function getInitials(title: string): string {
 	const words = title.split(/\s+/);
@@ -43,7 +48,7 @@ function AgentListPage() {
 			) : (
 				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
 					{agents?.map((agent) => {
-						const cfg = statusBadge[agent.status] ?? statusBadge.terminated;
+						const admin = adminBadge(agent.admin_status);
 						const budgetUsed = agent.budget_used_cents / 100;
 						const budgetTotal = agent.monthly_budget_cents / 100;
 						return (
@@ -71,8 +76,9 @@ function AgentListPage() {
 
 									<div className="text-xs text-text-muted leading-relaxed space-y-0.5">
 										<div className="flex items-center gap-1.5">
-											<StatusDot status={cfg.dot} />
-											<Badge color={cfg.color as 'neutral'}>{agent.status}</Badge>
+											<StatusDot status={runtimeDot(agent.runtime_status)} />
+											<Badge color={admin.color as 'neutral'}>{admin.label}</Badge>
+											{agent.runtime_status === 'active' && <Badge color="success">Active</Badge>}
 										</div>
 										<div>Runtime: {agent.runtime_type}</div>
 										<div>Heartbeat: {agent.heartbeat_interval_min}m</div>

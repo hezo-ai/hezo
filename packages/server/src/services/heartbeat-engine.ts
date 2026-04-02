@@ -1,5 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentStatus, IssuePriority, TERMINAL_ISSUE_STATUSES, WakeupStatus } from '@hezo/shared';
+import {
+	AgentAdminStatus,
+	AgentRuntimeStatus,
+	IssuePriority,
+	TERMINAL_ISSUE_STATUSES,
+	WakeupStatus,
+} from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
 import type { DockerClient } from './docker';
@@ -115,11 +121,12 @@ export class HeartbeatEngine {
 			`SELECT ma.id, m.company_id, ma.heartbeat_interval_min
 			 FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE ma.status IN ($1, $2)
+			 WHERE ma.admin_status = $1
+			   AND ma.runtime_status != $2
 			   AND (ma.last_heartbeat_at IS NULL
 			        OR ma.last_heartbeat_at + (ma.heartbeat_interval_min || ' minutes')::interval < now())
 			 LIMIT 5`,
-			[AgentStatus.Active, AgentStatus.Idle],
+			[AgentAdminStatus.Enabled, AgentRuntimeStatus.Paused],
 		);
 
 		for (const agent of dueAgents.rows) {
@@ -140,14 +147,12 @@ export class HeartbeatEngine {
 			id: string;
 			title: string;
 			system_prompt: string;
-			status: string;
-		}>(`SELECT id, title, system_prompt, status FROM member_agents WHERE id = $1`, [memberId]);
+			admin_status: string;
+		}>(`SELECT id, title, system_prompt, admin_status FROM member_agents WHERE id = $1`, [
+			memberId,
+		]);
 
-		if (
-			agent.rows.length === 0 ||
-			agent.rows[0].status === AgentStatus.Paused ||
-			agent.rows[0].status === AgentStatus.Terminated
-		) {
+		if (agent.rows.length === 0 || agent.rows[0].admin_status !== AgentAdminStatus.Enabled) {
 			if (wakeupId) {
 				await this.db.query(
 					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',

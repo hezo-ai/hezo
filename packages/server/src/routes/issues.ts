@@ -11,6 +11,7 @@ import { Hono } from 'hono';
 import { auditLog } from '../lib/audit';
 import { broadcastChange } from '../lib/broadcast';
 import { buildMeta, parsePagination } from '../lib/pagination';
+import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess } from '../middleware/auth';
@@ -30,11 +31,14 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
 	const params: unknown[] = [companyId];
 	let idx = 2;
 
-	const projectId = c.req.query('project_id');
-	if (projectId) {
-		conditions.push(`i.project_id = $${idx}`);
-		params.push(projectId);
-		idx++;
+	const rawProjectId = c.req.query('project_id');
+	if (rawProjectId) {
+		const projectId = await resolveProjectId(db, companyId, rawProjectId);
+		if (projectId) {
+			conditions.push(`i.project_id = $${idx}`);
+			params.push(projectId);
+			idx++;
+		}
 	}
 
 	const assigneeId = c.req.query('assignee_id');

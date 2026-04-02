@@ -16,7 +16,10 @@ test('can create an issue', async ({ page }) => {
 
 	// Create a project first
 	await page.getByRole('link', { name: 'Projects' }).click();
-	await page.getByRole('button', { name: 'New Project' }).click();
+	await page
+		.getByRole('button', { name: 'New Project' })
+		.filter({ hasText: 'New project' })
+		.click();
 	await page.getByLabel('Name').fill('Test Project');
 	await page.getByRole('button', { name: 'Create' }).click();
 	await expect(page.getByText('Test Project')).toBeVisible({ timeout: 5000 });

@@ -90,7 +90,7 @@ The `content_type` enum discriminates the shape:
 - `options` → `{ "prompt": "...", "options": [{ "id", "label", "description" }] }`
 - `preview` → `{ "filename": "...", "label": "...", "description": "..." }`
 - `trace` → `{ "summary": "4 tool calls" }` (detail lives in `tool_calls` table)
-- `system` → `{ "text": "Agent paused — budget limit reached" }`
+- `system` → `{ "text": "Agent disabled — budget limit reached" }`
 
 Live chat is displayed in a separate tab on the issue detail view,
 not as comments in the thread.

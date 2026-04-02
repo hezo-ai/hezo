@@ -3,6 +3,7 @@ export enum WsMessageType {
 	RowChange = 'row_change',
 	ChatMessage = 'chat_message',
 	AgentLifecycle = 'agent_lifecycle',
+	ContainerLog = 'container_log',
 	Error = 'error',
 }
 
@@ -44,6 +45,13 @@ export interface WsConnectedMessage {
 	type: WsMessageType.Connected;
 }
 
+export interface WsContainerLogMessage {
+	type: WsMessageType.ContainerLog;
+	projectId: string;
+	stream: 'stdout' | 'stderr';
+	text: string;
+}
+
 export interface WsErrorMessage {
 	type: WsMessageType.Error;
 	code: string;
@@ -54,6 +62,7 @@ export type WsServerMessage =
 	| WsRowChangeMessage
 	| WsChatMessage
 	| WsAgentLifecycleMessage
+	| WsContainerLogMessage
 	| WsConnectedMessage
 	| WsErrorMessage;
 

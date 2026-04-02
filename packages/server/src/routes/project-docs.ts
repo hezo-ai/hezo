@@ -9,6 +9,7 @@ import {
 	resolveDevDocsPath,
 	writeDocFile,
 } from '../lib/docs';
+import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess } from '../middleware/auth';
@@ -58,7 +59,9 @@ projectDocsRoutes.get('/companies/:companyId/projects/:projectId/docs', async (c
 
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
-	const info = await getDesignatedRepoInfo(db, access.companyId, c.req.param('projectId'));
+	const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	const info = await getDesignatedRepoInfo(db, access.companyId, projectId);
 
 	if (!info) {
 		return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
@@ -88,7 +91,9 @@ projectDocsRoutes.get('/companies/:companyId/projects/:projectId/docs/:filename'
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
 	const filename = c.req.param('filename');
-	const info = await getDesignatedRepoInfo(db, access.companyId, c.req.param('projectId'));
+	const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	const info = await getDesignatedRepoInfo(db, access.companyId, projectId);
 
 	if (!info) {
 		return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
@@ -117,7 +122,9 @@ projectDocsRoutes.put('/companies/:companyId/projects/:projectId/docs/:filename'
 	const dataDir = c.get('dataDir');
 	const filename = c.req.param('filename');
 	const auth = c.get('auth');
-	const info = await getDesignatedRepoInfo(db, access.companyId, c.req.param('projectId'));
+	const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	const info = await getDesignatedRepoInfo(db, access.companyId, projectId);
 
 	if (!info) {
 		return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
@@ -160,7 +167,9 @@ projectDocsRoutes.delete('/companies/:companyId/projects/:projectId/docs/:filena
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
 	const filename = c.req.param('filename');
-	const info = await getDesignatedRepoInfo(db, access.companyId, c.req.param('projectId'));
+	const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	const info = await getDesignatedRepoInfo(db, access.companyId, projectId);
 
 	if (!info) {
 		return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
@@ -187,7 +196,9 @@ projectDocsRoutes.get('/companies/:companyId/projects/:projectId/agents-md', asy
 
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
-	const info = await getDesignatedRepoInfo(db, access.companyId, c.req.param('projectId'));
+	const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	const info = await getDesignatedRepoInfo(db, access.companyId, projectId);
 
 	if (!info) {
 		return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
@@ -214,7 +225,9 @@ projectDocsRoutes.put('/companies/:companyId/projects/:projectId/agents-md', asy
 
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
-	const info = await getDesignatedRepoInfo(db, access.companyId, c.req.param('projectId'));
+	const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	const info = await getDesignatedRepoInfo(db, access.companyId, projectId);
 
 	if (!info) {
 		return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);

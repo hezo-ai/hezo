@@ -37,7 +37,7 @@ function ProjectListPage() {
 						<Link
 							key={p.id}
 							to="/companies/$companyId/projects/$projectId"
-							params={{ companyId, projectId: p.id }}
+							params={{ companyId, projectId: p.slug }}
 						>
 							<div className="border border-border rounded-radius-lg p-4 bg-bg transition-[border-color] duration-150 hover:border-border-hover cursor-pointer">
 								<div className="flex items-center justify-between mb-1">

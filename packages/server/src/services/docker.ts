@@ -120,6 +120,29 @@ export class DockerClient {
 		return res.json();
 	}
 
+	async containerLogs(
+		containerId: string,
+		opts: { follow?: boolean; tail?: number; stdout?: boolean; stderr?: boolean } = {},
+		signal?: AbortSignal,
+	): Promise<Response> {
+		const params = new URLSearchParams({
+			follow: String(opts.follow ?? true),
+			stdout: String(opts.stdout ?? true),
+			stderr: String(opts.stderr ?? true),
+			tail: String(opts.tail ?? 200),
+		});
+		const url = `http://localhost/${API_VERSION}/containers/${containerId}/logs?${params}`;
+		const res = await fetch(url, {
+			unix: this.socketPath,
+			signal,
+		});
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Docker containerLogs failed (${res.status}): ${text}`);
+		}
+		return res;
+	}
+
 	async execCreate(containerId: string, config: ExecConfig): Promise<string> {
 		const res = await this.request('POST', `/containers/${containerId}/exec`, config);
 		if (!res.ok) {

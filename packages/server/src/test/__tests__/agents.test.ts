@@ -16,7 +16,6 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	// Create a company with agents
 	const typesRes = await app.request('/api/company-types', {
 		headers: authHeader(token),
 	});
@@ -47,15 +46,27 @@ describe('agents CRUD', () => {
 		expect(body.data).toHaveLength(9);
 	});
 
-	it('filters agents by status', async () => {
-		const res = await app.request(`/api/companies/${companyId}/agents?status=idle`, {
+	it('all agents start with idle runtime_status and enabled admin_status', async () => {
+		const res = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		for (const agent of body.data) {
+			expect(agent.runtime_status).toBe('idle');
+			expect(agent.admin_status).toBe('enabled');
+		}
+	});
+
+	it('filters agents by admin_status', async () => {
+		const res = await app.request(`/api/companies/${companyId}/agents?admin_status=enabled`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		// DevOps Engineer starts idle
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
-		expect(body.data.every((a: Record<string, unknown>) => a.status === 'idle')).toBe(true);
+		expect(body.data.every((a: Record<string, unknown>) => a.admin_status === 'enabled')).toBe(
+			true,
+		);
 	});
 
 	it('gets an agent by id with full detail', async () => {
@@ -73,6 +84,8 @@ describe('agents CRUD', () => {
 		expect(body.data.title).toBe('CEO');
 		expect(body.data).toHaveProperty('system_prompt');
 		expect(body.data).toHaveProperty('mcp_servers');
+		expect(body.data).toHaveProperty('runtime_status');
+		expect(body.data).toHaveProperty('admin_status');
 	});
 
 	it('creates (hires) a custom agent', async () => {
@@ -89,6 +102,8 @@ describe('agents CRUD', () => {
 		const body = await res.json();
 		expect(body.data.title).toBe('Data Scientist');
 		expect(body.data.slug).toBe('data-scientist');
+		expect(body.data.runtime_status).toBe('idle');
+		expect(body.data.admin_status).toBe('enabled');
 	});
 
 	it('updates an agent', async () => {
@@ -108,36 +123,64 @@ describe('agents CRUD', () => {
 		expect(body.data.monthly_budget_cents).toBe(8000);
 	});
 
-	it('pauses an active agent', async () => {
+	it('disables an enabled agent', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const researcher = agents.find((a: Record<string, unknown>) => a.slug === 'researcher');
 
-		const res = await app.request(`/api/companies/${companyId}/agents/${researcher.id}/pause`, {
+		const res = await app.request(`/api/companies/${companyId}/agents/${researcher.id}/disable`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.status).toBe('paused');
+		expect(body.data.admin_status).toBe('disabled');
 	});
 
-	it('resumes a paused agent', async () => {
+	it('rejects disabling an already disabled agent', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const researcher = agents.find((a: Record<string, unknown>) => a.slug === 'researcher');
 
-		const res = await app.request(`/api/companies/${companyId}/agents/${researcher.id}/resume`, {
+		const res = await app.request(`/api/companies/${companyId}/agents/${researcher.id}/disable`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(409);
+	});
+
+	it('enables a disabled agent', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const researcher = agents.find((a: Record<string, unknown>) => a.slug === 'researcher');
+
+		const res = await app.request(`/api/companies/${companyId}/agents/${researcher.id}/enable`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.status).toBe('idle');
+		expect(body.data.admin_status).toBe('enabled');
+	});
+
+	it('rejects enabling an already enabled agent', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const researcher = agents.find((a: Record<string, unknown>) => a.slug === 'researcher');
+
+		const res = await app.request(`/api/companies/${companyId}/agents/${researcher.id}/enable`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(409);
 	});
 
 	it('terminates an agent', async () => {
@@ -153,10 +196,38 @@ describe('agents CRUD', () => {
 		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.status).toBe('terminated');
+		expect(body.data.admin_status).toBe('terminated');
 	});
 
-	it('returns org chart', async () => {
+	it('rejects disabling a terminated agent', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const marketingLead = agents.find((a: Record<string, unknown>) => a.slug === 'marketing-lead');
+
+		const res = await app.request(
+			`/api/companies/${companyId}/agents/${marketingLead.id}/disable`,
+			{ method: 'POST', headers: authHeader(token) },
+		);
+		expect(res.status).toBe(409);
+	});
+
+	it('rejects enabling a terminated agent', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const marketingLead = agents.find((a: Record<string, unknown>) => a.slug === 'marketing-lead');
+
+		const res = await app.request(`/api/companies/${companyId}/agents/${marketingLead.id}/enable`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(409);
+	});
+
+	it('returns org chart with runtime_status and admin_status', async () => {
 		const res = await app.request(`/api/companies/${companyId}/org-chart`, {
 			headers: authHeader(token),
 		});
@@ -164,9 +235,10 @@ describe('agents CRUD', () => {
 		const body = await res.json();
 		expect(body.data.board).toBeDefined();
 		expect(body.data.board.children.length).toBeGreaterThan(0);
-		// CEO should be at top level with children
 		const ceo = body.data.board.children.find((c: Record<string, unknown>) => c.title === 'CEO');
 		expect(ceo).toBeDefined();
+		expect(ceo).toHaveProperty('runtime_status');
+		expect(ceo).toHaveProperty('admin_status');
 		expect(ceo.children.length).toBeGreaterThan(0);
 	});
 
@@ -203,7 +275,6 @@ describe('heartbeat runs', () => {
 		const agents = (await listRes.json()).data;
 		const agent = agents[0];
 
-		// Insert a heartbeat run directly
 		await db.query(
 			`INSERT INTO heartbeat_runs (member_id, company_id, status, started_at, finished_at, exit_code, stdout_excerpt)
 			 VALUES ($1, $2, 'succeeded', now() - interval '5 minutes', now(), 0, 'All done')`,

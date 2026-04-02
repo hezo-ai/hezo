@@ -34,10 +34,11 @@ export function useProjects(companyId: string) {
 	});
 }
 
-export function useProject(companyId: string, projectId: string) {
+export function useProject(companyId: string, projectId: string, enabled = true) {
 	return useQuery({
 		queryKey: ['companies', companyId, 'projects', projectId],
 		queryFn: () => api.get<Project>(`/api/companies/${companyId}/projects/${projectId}`),
+		enabled,
 	});
 }
 
@@ -67,16 +68,5 @@ export function useDeleteProject(companyId: string) {
 			api.delete(`/api/companies/${companyId}/projects/${projectId}`),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] }),
-	});
-}
-
-export function useRebuildContainer(companyId: string, projectId: string) {
-	return useMutation({
-		mutationFn: () =>
-			api.post(`/api/companies/${companyId}/projects/${projectId}/rebuild-container`, {}),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] });
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects', projectId] });
-		},
 	});
 }

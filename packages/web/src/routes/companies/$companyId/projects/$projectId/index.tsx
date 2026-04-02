@@ -1,36 +1,26 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import {
-	ArrowLeft,
-	Box,
-	ExternalLink,
-	GitBranch,
-	Loader2,
-	Plus,
-	RefreshCw,
-	Trash2,
-} from 'lucide-react';
+import { ExternalLink, GitBranch, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
-import { Badge } from '../../../../components/ui/badge';
-import { Button } from '../../../../components/ui/button';
-import { Input } from '../../../../components/ui/input';
-import { useIssues } from '../../../../hooks/use-issues';
-import { useProject, useRebuildContainer } from '../../../../hooks/use-projects';
-import { useCreateRepo, useDeleteRepo, useRepos } from '../../../../hooks/use-repos';
+import { Badge } from '../../../../../components/ui/badge';
+import { Button } from '../../../../../components/ui/button';
+import { Input } from '../../../../../components/ui/input';
+import { useIssues } from '../../../../../hooks/use-issues';
+import { useProject } from '../../../../../hooks/use-projects';
+import { useCreateRepo, useDeleteRepo, useRepos } from '../../../../../hooks/use-repos';
 
-function ProjectDetailPage() {
+function ProjectOverviewPage() {
 	const { companyId, projectId } = Route.useParams();
-	const { data: project, isLoading } = useProject(companyId, projectId);
+	const { data: project } = useProject(companyId, projectId);
 	const { data: repos } = useRepos(companyId, projectId);
-	const { data: issues } = useIssues(companyId, { project_id: projectId });
+	const { data: issues } = useIssues(companyId, { project_id: project?.id });
 	const createRepo = useCreateRepo(companyId, projectId);
 	const deleteRepo = useDeleteRepo(companyId, projectId);
-	const rebuildContainer = useRebuildContainer(companyId, projectId);
 
 	const [showRepoForm, setShowRepoForm] = useState(false);
 	const [repoName, setRepoName] = useState('');
 	const [repoUrl, setRepoUrl] = useState('');
 
-	if (isLoading || !project) return <div className="p-6 text-text-muted">Loading...</div>;
+	if (!project) return null;
 
 	async function handleAddRepo(e: React.FormEvent) {
 		e.preventDefault();
@@ -41,39 +31,7 @@ function ProjectDetailPage() {
 	}
 
 	return (
-		<div className="p-6 max-w-3xl">
-			<Link
-				to="/companies/$companyId/projects"
-				params={{ companyId }}
-				className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text mb-4"
-			>
-				<ArrowLeft className="w-3.5 h-3.5" /> Projects
-			</Link>
-
-			<h1 className="text-lg font-semibold mb-1">{project.name}</h1>
-			{project.goal && <p className="text-sm text-text-muted mb-4">{project.goal}</p>}
-
-			{/* Container */}
-			<div className="mb-6 flex items-center gap-3 rounded-lg border border-border-subtle bg-bg px-4 py-3">
-				<Box className="w-4 h-4 text-text-muted" />
-				<span className="text-sm font-medium">Container</span>
-				<ContainerStatusBadge status={project.container_status} />
-				<Button
-					variant="ghost"
-					size="sm"
-					onClick={() => rebuildContainer.mutate()}
-					disabled={rebuildContainer.isPending}
-					className="ml-auto"
-				>
-					{rebuildContainer.isPending ? (
-						<Loader2 className="w-3 h-3 animate-spin" />
-					) : (
-						<RefreshCw className="w-3 h-3" />
-					)}
-					Rebuild
-				</Button>
-			</div>
-
+		<div>
 			{/* Dev Ports */}
 			{project.container_status === 'running' && project.dev_ports?.length > 0 && (
 				<div className="mb-6">
@@ -185,18 +143,6 @@ function ProjectDetailPage() {
 	);
 }
 
-function ContainerStatusBadge({ status }: { status: string | null }) {
-	if (!status) return <Badge color="gray">No container</Badge>;
-	const config: Record<string, { color: string; label: string }> = {
-		creating: { color: 'yellow', label: 'Provisioning' },
-		running: { color: 'green', label: 'Running' },
-		stopped: { color: 'gray', label: 'Stopped' },
-		error: { color: 'red', label: 'Error' },
-	};
-	const { color, label } = config[status] ?? { color: 'gray', label: status };
-	return <Badge color={color as 'gray'}>{label}</Badge>;
-}
-
-export const Route = createFileRoute('/companies/$companyId/projects/$projectId')({
-	component: ProjectDetailPage,
+export const Route = createFileRoute('/companies/$companyId/projects/$projectId/')({
+	component: ProjectOverviewPage,
 });

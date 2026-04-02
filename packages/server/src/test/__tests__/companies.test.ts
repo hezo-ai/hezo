@@ -167,3 +167,43 @@ describe('companies CRUD', () => {
 		expect(body.data.issue_prefix).toBe('ACI');
 	});
 });
+
+describe('slug-based access', () => {
+	it('gets a company by slug', async () => {
+		const listRes = await app.request('/api/companies', {
+			headers: authHeader(token),
+		});
+		const companies = (await listRes.json()).data;
+		const company = companies.find((c: any) => c.slug === 'notegenius-ai');
+
+		const res = await app.request(`/api/companies/${company.slug}`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.id).toBe(company.id);
+		expect(body.data.slug).toBe('notegenius-ai');
+	});
+
+	it('returns 404 for non-existent slug', async () => {
+		const res = await app.request('/api/companies/nonexistent-slug', {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(404);
+	});
+
+	it('accesses company sub-resources via slug', async () => {
+		const listRes = await app.request('/api/companies', {
+			headers: authHeader(token),
+		});
+		const companies = (await listRes.json()).data;
+		const company = companies.find((c: any) => c.slug === 'notegenius-ai');
+
+		const agentsRes = await app.request(`/api/companies/${company.slug}/agents`, {
+			headers: authHeader(token),
+		});
+		expect(agentsRes.status).toBe(200);
+		const agentsBody = await agentsRes.json();
+		expect(agentsBody.data.length).toBe(9);
+	});
+});

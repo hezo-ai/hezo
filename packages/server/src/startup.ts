@@ -53,6 +53,7 @@ export interface StartupResult {
 	heartbeatEngine: HeartbeatEngine;
 	wsManager: WebSocketManager;
 	db: PGlite;
+	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
 }
 
@@ -116,6 +117,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		heartbeatEngine,
 		wsManager,
 		db,
+		docker,
 		masterKeyManager,
 	};
 }

@@ -47,7 +47,7 @@ function CompanyListPage() {
 			) : (
 				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
 					{companies?.map((company) => (
-						<Link key={company.id} to="/companies/$companyId" params={{ companyId: company.id }}>
+						<Link key={company.id} to="/companies/$companyId" params={{ companyId: company.slug }}>
 							<Card className="cursor-pointer">
 								<div className="flex items-start gap-3">
 									<Avatar
