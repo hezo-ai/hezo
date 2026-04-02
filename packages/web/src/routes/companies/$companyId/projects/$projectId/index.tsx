@@ -12,7 +12,7 @@ function ProjectOverviewPage() {
 	const { companyId, projectId } = Route.useParams();
 	const { data: project } = useProject(companyId, projectId);
 	const { data: repos } = useRepos(companyId, projectId);
-	const { data: issues } = useIssues(companyId, { project_id: projectId });
+	const { data: issues } = useIssues(companyId, { project_id: project?.id });
 	const createRepo = useCreateRepo(companyId, projectId);
 	const deleteRepo = useDeleteRepo(companyId, projectId);
 

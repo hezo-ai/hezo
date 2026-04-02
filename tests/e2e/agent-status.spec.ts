@@ -75,7 +75,7 @@ test('project detail shows container section with rebuild button', async ({ page
 	});
 	const project = await projectRes.json();
 
-	await page.goto(`/companies/${company.slug}/projects/${project.data.slug}`);
+	await page.goto(`/companies/${company.slug}/projects/${project.data.slug}/container`);
 
 	await expect(page.getByRole('button', { name: /Rebuild/i })).toBeVisible({ timeout: 5000 });
 });
