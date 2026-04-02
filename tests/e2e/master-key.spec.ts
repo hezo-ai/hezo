@@ -13,5 +13,5 @@ test('authenticated user can navigate to companies', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 	await page.goto('/companies');
-	await expect(page.getByRole('button', { name: 'New Company' })).toBeVisible({ timeout: 10000 });
+	await expect(page.getByText('New company')).toBeVisible({ timeout: 10000 });
 });

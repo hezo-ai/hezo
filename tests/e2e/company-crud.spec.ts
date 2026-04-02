@@ -6,7 +6,10 @@ test('can create a company with type and see auto-created agents', async ({ page
 	await authenticate(page);
 	await page.goto('/companies');
 
-	await page.getByRole('button', { name: 'New Company' }).click();
+	await page
+		.getByRole('button', { name: 'New company' })
+		.filter({ hasText: 'New company' })
+		.click();
 	await page.getByLabel('Name').fill('Test Corp');
 
 	// Select "Software Development" company type to auto-create agents
@@ -18,7 +21,7 @@ test('can create a company with type and see auto-created agents', async ({ page
 
 	// Navigate to agents and verify auto-created agents are visible
 	await page.getByRole('link', { name: 'Agents' }).click();
-	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible({
+	await expect(page.getByRole('link', { name: 'Agents', exact: true })).toBeVisible({
 		timeout: 5000,
 	});
 

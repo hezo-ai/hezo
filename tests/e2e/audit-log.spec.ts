@@ -30,5 +30,5 @@ test('audit log section renders on settings page', async ({ page }) => {
 	await page.goto(`/companies/${company.id}/settings`);
 
 	// Verify the Audit Log section heading is visible
-	await expect(page.getByText('Audit Log')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible({ timeout: 10000 });
 });

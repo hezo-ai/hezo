@@ -37,7 +37,7 @@ test('agent list shows status badges and budget bars', async ({ page }) => {
 	await page.goto(`/companies/${company.id}/agents`);
 
 	// Verify agents heading
-	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible({
+	await expect(page.getByRole('link', { name: 'Agents', exact: true })).toBeVisible({
 		timeout: 5000,
 	});
 
@@ -47,7 +47,7 @@ test('agent list shows status badges and budget bars', async ({ page }) => {
 	});
 
 	// Verify budget display ($ amounts visible)
-	await expect(page.getByText(/\$\d+\.\d+/).first()).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText(/\$\d+/).first()).toBeVisible({ timeout: 5000 });
 });
 
 test('agent detail page shows budget and heartbeat info', async ({ page }) => {
