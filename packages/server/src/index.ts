@@ -118,7 +118,6 @@ export default {
 			try {
 				const data = JSON.parse(typeof msg === 'string' ? msg : msg.toString());
 				if (data.action === 'subscribe' && typeof data.room === 'string') {
-					// Default-deny: only authorize known room patterns
 					const companyMatch = data.room.match(/^company:(.+)$/);
 					if (companyMatch) {
 						const allowed = await canAccessCompany(ws.data.auth, companyMatch[1]);
@@ -148,7 +147,6 @@ export default {
 						return;
 					}
 
-					// Unknown room patterns are silently rejected (default-deny)
 				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {
 					wsManager.unsubscribe(ws as unknown as WsSocket, data.room);
 
