@@ -8,9 +8,11 @@
 | `users` | Global human identity. Display name, avatar. One per human across all companies. | Standalone (identity). |
 | `user_auth_methods` | OAuth login methods (GitHub, GitLab). Links provider identity to user. | belongs to user |
 | `members` | Base table for all company participants (agents and users). Has `member_type` enum discriminator. Shared UUID used by child tables. | belongs to company |
-| `member_agents` | Agent-specific extension. System prompt, runtime type, budget, heartbeat, org chart. | extends member (PK = member.id) |
+| `member_agents` | Agent-specific extension. System prompt, runtime type, budget, heartbeat, org chart. References agent_type_id for provenance. | extends member (PK = member.id), optionally references agent_type |
 | `member_users` | User-in-company extension. Role (board/member), role_title, permissions_text, project_ids. Links to global user. | extends member (PK = member.id), references user |
-| `company_types` | Company blueprints (recipes). Default agent configs, KB docs, preferences, filesystem snapshots as JSONB. | Referenced by companies. |
+| `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget. Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
+| `company_types` | Company blueprints (recipes). Groups of agent types plus default KB docs, preferences, MCP servers. | Referenced by companies. |
+| `company_type_agent_types` | Join table linking company types to agent types. Stores org chart hierarchy (reports_to_slug) and per-company-type config overrides (runtime type, heartbeat, budget). | belongs to company_type + agent_type |
 | `companies` | Top-level tenant. Has `email`, `company_type_id`, `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), company-level budget. | Parent of everything. |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
@@ -284,21 +286,60 @@ This ensures the user never lands on an empty company.
 
 ### Company cloning
 
-`POST /companies` requires a `company_type_id`. The server clones from the
-selected company type:
-- Creates `members` + `member_agents` rows from `company_types.agents_config` (new IDs,
-  `budget_used_cents` reset to 0)
-- Creates `kb_docs` rows from `company_types.kb_docs_config`
-- Creates `company_preferences` row from `company_types.preferences_config`
-- Copies `mcp_servers` array from company type
-- Copies `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
-- Restores filesystem snapshots from `company_types.filesystem_snapshot` (AGENTS.md, etc.)
+`POST /companies` accepts an optional `company_type_id`. The server provisions
+agents from the selected company type via the `company_type_agent_types` join table:
+
+1. Queries `company_type_agent_types JOIN agent_types` for the selected type, ordered by `sort_order`
+2. For each agent type, creates `members` + `member_agents` rows with:
+   - `agent_type_id` set to the originating agent type (for provenance tracking)
+   - System prompt copied from `agent_types.system_prompt_template`
+   - Config overrides applied from the join table (runtime type, heartbeat, budget)
+   - `budget_used_cents` reset to 0
+3. Second pass resolves `reports_to_slug` → `reports_to` UUID for the org chart
+4. Creates `kb_docs` rows from `company_types.kb_docs_config`
+5. Creates `company_preferences` row from `company_types.preferences_config`
+6. Copies `mcp_servers` array from company type
+7. Copies `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
 
 Project containers are provisioned when projects are created (not at company creation).
 
 NOT copied: projects, repos, issues, secrets, cost_entries, audit_log, api_keys,
 secret_grants, approvals, connected_platforms, SSH keys. Platform connections
 and SSH keys are generated fresh for each company.
+
+### Agent types
+
+Agent types are a first-class entity in the `agent_types` table. Each type
+defines a reusable role template with a system prompt template, default config
+(runtime type, heartbeat interval, monthly budget), and metadata.
+
+**Sources:**
+- `builtin` — shipped with Hezo (9 built-in types: CEO, Architect, Product Lead, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher)
+- `custom` — created by users for their specific needs
+- `remote` — loaded from hezo connect marketplace (future)
+
+The `source_url` and `source_version` fields support future remote type loading
+without schema changes.
+
+Agent types are linked to company types through the `company_type_agent_types`
+join table, which stores:
+- `reports_to_slug` — org chart hierarchy specific to this company type composition
+- Override columns — allow a company type to customize an agent type's defaults
+- `sort_order` — ensures parents are created before children during agent provisioning
+
+When agents are created from a company type, `member_agents.agent_type_id`
+records which agent type was used. This is for provenance tracking only — the
+system prompt is copied at creation time, giving each agent instance its own
+mutable copy.
+
+### Agent self-update of system prompts
+
+Agents can read and request updates to their own system prompts via the agent API:
+- `GET /agent-api/self/system-prompt` — returns current prompt, agent_type_id, and the type's original template
+- `PATCH /agent-api/self/system-prompt` — creates a `system_prompt_update` approval with the new prompt
+
+System prompt updates require board approval. When approved, the approval
+resolution handler applies the change by updating `member_agents.system_prompt`.
 
 ### Company preferences
 

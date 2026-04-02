@@ -27,6 +27,7 @@
 	"packages/server/src/test/__tests__/projects.test.ts": 4588,
 	"packages/server/src/test/__tests__/costs.test.ts": 4512,
 	"packages/server/src/test/__tests__/agents.test.ts": 4425,
+	"packages/server/src/test/__tests__/agent-types.test.ts": 1521,
 	"packages/connect/src/test/__tests__/oauth.test.ts": 1414,
 	"packages/connect/src/test/__tests__/health.test.ts": 1418,
 	"packages/connect/src/test/__tests__/state.test.ts": 1289,

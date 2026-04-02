@@ -82,6 +82,7 @@ export const ApprovalType = {
 	PlanReview: 'plan_review',
 	DeployProduction: 'deploy_production',
 	OauthRequest: 'oauth_request',
+	SystemPromptUpdate: 'system_prompt_update',
 } as const;
 export type ApprovalType = (typeof ApprovalType)[keyof typeof ApprovalType];
 
@@ -192,6 +193,13 @@ export const AuditEntityType = {
 	KbDoc: 'kb_doc',
 } as const;
 export type AuditEntityType = (typeof AuditEntityType)[keyof typeof AuditEntityType];
+
+export const AgentTypeSource = {
+	Builtin: 'builtin',
+	Custom: 'custom',
+	Remote: 'remote',
+} as const;
+export type AgentTypeSource = (typeof AgentTypeSource)[keyof typeof AgentTypeSource];
 
 export const AuditAction = {
 	Created: 'created',

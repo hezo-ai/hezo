@@ -219,6 +219,61 @@ Revoke an API key. Immediate. Any request using this key will fail.
 
 ---
 
+### Agent Types
+
+#### `GET /agent-types`
+List all agent types. Optional `?source=builtin,custom` filter.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "name": "CEO",
+      "slug": "ceo",
+      "description": "...",
+      "role_description": "...",
+      "system_prompt_template": "You are the CEO of {{company_name}}...",
+      "runtime_type": "claude_code",
+      "heartbeat_interval_min": 120,
+      "monthly_budget_cents": 2000,
+      "is_builtin": true,
+      "source": "builtin",
+      "source_url": null,
+      "source_version": null
+    }
+  ]
+}
+```
+
+#### `POST /agent-types`
+Create a custom agent type.
+
+Request:
+```json
+{
+  "name": "Data Scientist",
+  "description": "ML and data analysis",
+  "role_description": "Builds models and analyzes data",
+  "system_prompt_template": "You are a data scientist for {{company_name}}.",
+  "runtime_type": "claude_code",
+  "heartbeat_interval_min": 60,
+  "monthly_budget_cents": 5000
+}
+```
+
+#### `GET /agent-types/:id`
+Get a single agent type.
+
+#### `PATCH /agent-types/:id`
+Update an agent type. Built-in types cannot have runtime_type, heartbeat_interval_min, or monthly_budget_cents changed.
+
+#### `DELETE /agent-types/:id`
+Delete a custom agent type. Built-in types cannot be deleted (returns 403).
+
+---
+
 ### Agents
 
 #### `GET /companies/:companyId/agents`
@@ -1736,6 +1791,47 @@ Response:
 
 Note: actual values are injected as env vars in the agent's subprocess, never returned
 via API.
+
+---
+
+### Self System Prompt
+
+#### `GET /self/system-prompt`
+Agent reads its own system prompt and agent type info.
+
+Response:
+```json
+{
+  "data": {
+    "system_prompt": "You are the CEO of {{company_name}}...",
+    "agent_type_id": "uuid | null",
+    "type_template": "original template from agent type | null"
+  }
+}
+```
+
+#### `PATCH /self/system-prompt`
+Agent requests to update its own system prompt. Creates a `system_prompt_update` approval for board review.
+
+Request:
+```json
+{
+  "system_prompt": "Updated prompt text...",
+  "reason": "Board asked me to focus more on testing"
+}
+```
+
+Response (202):
+```json
+{
+  "data": {
+    "approval_id": "uuid",
+    "status": "pending"
+  }
+}
+```
+
+When the board approves, the system prompt is updated automatically.
 
 ---
 

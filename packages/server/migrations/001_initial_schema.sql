@@ -49,7 +49,7 @@ CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace',
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'company');
-CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'strategy', 'kb_update', 'plan_review', 'deploy_production', 'oauth_request');
+CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'strategy', 'kb_update', 'plan_review', 'deploy_production', 'oauth_request', 'system_prompt_update');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
 CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
@@ -62,6 +62,29 @@ CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
 CREATE TYPE membership_role AS ENUM ('board', 'member');
 CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 -- project_doc_type enum removed: project docs now live in the designated repo's .dev/ folder
+CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
+
+-------------------------------------------------------------------------------
+-- AGENT TYPES
+-------------------------------------------------------------------------------
+
+CREATE TABLE agent_types (
+    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                   TEXT NOT NULL,
+    slug                   TEXT NOT NULL UNIQUE,
+    description            TEXT NOT NULL DEFAULT '',
+    role_description       TEXT NOT NULL DEFAULT '',
+    system_prompt_template TEXT NOT NULL DEFAULT '',
+    runtime_type           agent_runtime NOT NULL DEFAULT 'claude_code',
+    heartbeat_interval_min INTEGER NOT NULL DEFAULT 60,
+    monthly_budget_cents   INTEGER NOT NULL DEFAULT 3000,
+    is_builtin             BOOLEAN NOT NULL DEFAULT false,
+    source                 agent_type_source NOT NULL DEFAULT 'custom',
+    source_url             TEXT,
+    source_version         TEXT,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -------------------------------------------------------------------------------
 -- COMPANY TYPES
@@ -72,7 +95,6 @@ CREATE TABLE company_types (
     name                TEXT NOT NULL UNIQUE,
     description         TEXT NOT NULL DEFAULT '',
     is_builtin          BOOLEAN NOT NULL DEFAULT false,
-    agents_config       JSONB NOT NULL DEFAULT '[]'::jsonb,
     kb_docs_config      JSONB NOT NULL DEFAULT '[]'::jsonb,
     preferences_config  JSONB NOT NULL DEFAULT '{}'::jsonb,
     mcp_servers         JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -80,6 +102,26 @@ CREATE TABLE company_types (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-------------------------------------------------------------------------------
+-- COMPANY TYPE ↔ AGENT TYPE (join table)
+-------------------------------------------------------------------------------
+
+CREATE TABLE company_type_agent_types (
+    id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_type_id             UUID NOT NULL REFERENCES company_types(id) ON DELETE CASCADE,
+    agent_type_id               UUID NOT NULL REFERENCES agent_types(id) ON DELETE CASCADE,
+    reports_to_slug             TEXT,
+    runtime_type_override       agent_runtime,
+    heartbeat_interval_override INTEGER,
+    monthly_budget_override     INTEGER,
+    sort_order                  INTEGER NOT NULL DEFAULT 0,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (company_type_id, agent_type_id)
+);
+
+CREATE INDEX idx_ctat_company_type ON company_type_agent_types(company_type_id);
+CREATE INDEX idx_ctat_agent_type ON company_type_agent_types(agent_type_id);
 
 -------------------------------------------------------------------------------
 -- COMPANIES
@@ -122,6 +164,7 @@ CREATE INDEX idx_members_type ON members(company_id, member_type);
 
 CREATE TABLE member_agents (
     id                      UUID PRIMARY KEY REFERENCES members(id) ON DELETE CASCADE,
+    agent_type_id           UUID REFERENCES agent_types(id) ON DELETE SET NULL,
     reports_to              UUID REFERENCES members(id) ON DELETE SET NULL,
     title                   TEXT NOT NULL,
     slug                    TEXT NOT NULL,
@@ -792,6 +835,12 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_agent_types_updated BEFORE UPDATE ON agent_types
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_company_types_updated BEFORE UPDATE ON company_types
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_companies_updated BEFORE UPDATE ON companies
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();

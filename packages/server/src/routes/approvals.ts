@@ -1,9 +1,26 @@
-import { ApprovalStatus } from '@hezo/shared';
+import type { PGlite } from '@electric-sql/pglite';
+import { ApprovalStatus, ApprovalType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess, requireCompanyAccessForResource } from '../middleware/auth';
+
+async function applyApprovalSideEffect(
+	db: PGlite,
+	approval: Record<string, unknown>,
+): Promise<void> {
+	const payload = approval.payload as Record<string, unknown>;
+	switch (approval.type) {
+		case ApprovalType.SystemPromptUpdate: {
+			await db.query('UPDATE member_agents SET system_prompt = $1 WHERE id = $2', [
+				payload.new_system_prompt,
+				payload.member_id,
+			]);
+			break;
+		}
+	}
+}
 
 export const approvalsRoutes = new Hono<Env>();
 
@@ -105,6 +122,11 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 	);
 
 	const row = result.rows[0] as Record<string, unknown>;
+
+	if (body.status === ApprovalStatus.Approved) {
+		await applyApprovalSideEffect(db, row);
+	}
+
 	if (row.company_id) {
 		broadcastChange(c, `company:${row.company_id}`, 'approvals', 'UPDATE', row);
 	}

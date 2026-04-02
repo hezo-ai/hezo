@@ -33,6 +33,7 @@ describe('company types CRUD', () => {
 		);
 		expect(builtin).toBeDefined();
 		expect(builtin.is_builtin).toBe(true);
+		expect(builtin.agent_types).toHaveLength(9);
 	});
 
 	it('creates a custom company type', async () => {
@@ -48,10 +49,10 @@ describe('company types CRUD', () => {
 		const body = await res.json();
 		expect(body.data.name).toBe('Marketing Agency');
 		expect(body.data.is_builtin).toBe(false);
+		expect(body.data.agent_types).toHaveLength(0);
 	});
 
 	it('gets a company type by id', async () => {
-		// First list to get an ID
 		const listRes = await app.request('/api/company-types', {
 			headers: authHeader(token),
 		});
@@ -64,10 +65,10 @@ describe('company types CRUD', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.id).toBe(id);
+		expect(body.data).toHaveProperty('agent_types');
 	});
 
 	it('updates a custom company type', async () => {
-		// Create one
 		const createRes = await app.request('/api/company-types', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -99,7 +100,6 @@ describe('company types CRUD', () => {
 		});
 		expect(res.status).toBe(200);
 
-		// Verify it's gone
 		const getRes = await app.request(`/api/company-types/${created.id}`, {
 			headers: authHeader(token),
 		});
@@ -131,5 +131,33 @@ describe('company types CRUD', () => {
 			body: JSON.stringify({ description: 'No name' }),
 		});
 		expect(res.status).toBe(400);
+	});
+
+	it('updates agent type associations via PATCH', async () => {
+		const agentTypesRes = await app.request('/api/agent-types', {
+			headers: authHeader(token),
+		});
+		const allTypes = (await agentTypesRes.json()).data;
+		const ceoType = allTypes.find((t: any) => t.slug === 'ceo');
+
+		const createRes = await app.request('/api/company-types', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Patchable Type' }),
+		});
+		const created = (await createRes.json()).data;
+		expect(created.agent_types).toHaveLength(0);
+
+		const patchRes = await app.request(`/api/company-types/${created.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				agent_types: [{ agent_type_id: ceoType.id, sort_order: 0 }],
+			}),
+		});
+		expect(patchRes.status).toBe(200);
+		const patched = (await patchRes.json()).data;
+		expect(patched.agent_types).toHaveLength(1);
+		expect(patched.agent_types[0].slug).toBe('ceo');
 	});
 });

@@ -308,8 +308,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 			const r = await db.query(
-				`SELECT m.id, ma.title, ma.slug, ma.status, ma.runtime_type, ma.monthly_budget_cents, ma.budget_used_cents
-			 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.company_id = $1 ORDER BY ma.title`,
+				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug, ma.runtime_type,
+				        ma.monthly_budget_cents, ma.budget_used_cents, ma.runtime_status, ma.admin_status
+				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.company_id = $1 ORDER BY ma.title`,
 				[args.company_id],
 			);
 			return r.rows;
