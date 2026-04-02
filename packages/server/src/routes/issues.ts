@@ -426,13 +426,25 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId/dependencies', async (c)
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
+	const { companyId } = access;
+	const issueId = c.req.param('issueId');
+
+	// Verify issue belongs to company
+	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		companyId,
+	]);
+	if (issueCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	}
+
 	const result = await db.query(
 		`SELECT d.id, d.issue_id, d.blocked_by_issue_id, d.created_at,
             i.identifier AS blocked_by_identifier, i.title AS blocked_by_title, i.status AS blocked_by_status
      FROM issue_dependencies d
      JOIN issues i ON i.id = d.blocked_by_issue_id
      WHERE d.issue_id = $1`,
-		[c.req.param('issueId')],
+		[issueId],
 	);
 	return ok(c, result.rows);
 });
@@ -442,6 +454,7 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
+	const { companyId } = access;
 	const issueId = c.req.param('issueId');
 	const body = await c.req.json<{ blocked_by_issue_id: string }>();
 
@@ -451,6 +464,23 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
 
 	if (body.blocked_by_issue_id === issueId) {
 		return err(c, 'INVALID_REQUEST', 'An issue cannot block itself', 400);
+	}
+
+	// Verify both issues belong to the same company
+	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		companyId,
+	]);
+	if (issueCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	}
+
+	const blockerCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+		body.blocked_by_issue_id,
+		companyId,
+	]);
+	if (blockerCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Blocking issue not found in this company', 404);
 	}
 
 	const result = await db.query(
@@ -473,6 +503,21 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId/dependencies/:depId',
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	await db.query('DELETE FROM issue_dependencies WHERE id = $1', [c.req.param('depId')]);
+	const { companyId } = access;
+	const issueId = c.req.param('issueId');
+	const depId = c.req.param('depId');
+
+	// Verify issue belongs to company and dependency belongs to issue
+	const depCheck = await db.query(
+		`SELECT d.id FROM issue_dependencies d
+     JOIN issues i ON i.id = d.issue_id
+     WHERE d.id = $1 AND d.issue_id = $2 AND i.company_id = $3`,
+		[depId, issueId, companyId],
+	);
+	if (depCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Dependency not found', 404);
+	}
+
+	await db.query('DELETE FROM issue_dependencies WHERE id = $1', [depId]);
 	return c.json({ data: null }, 200);
 });

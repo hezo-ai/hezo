@@ -60,21 +60,20 @@ executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c
 		return err(c, 'INVALID_REQUEST', 'member_id is required', 400);
 	}
 
-	const existing = await db.query(
-		'SELECT id FROM execution_locks WHERE issue_id = $1 AND released_at IS NULL',
-		[issueId],
-	);
-
-	if (existing.rows.length > 0) {
-		return err(c, 'CONFLICT', 'Issue is already locked by another agent', 409);
-	}
-
+	// Atomic lock acquisition: attempt insert, return conflict if already locked
 	const result = await db.query(
 		`INSERT INTO execution_locks (issue_id, member_id)
-		 VALUES ($1, $2)
+		 SELECT $1, $2
+		 WHERE NOT EXISTS (
+		   SELECT 1 FROM execution_locks WHERE issue_id = $1 AND released_at IS NULL
+		 )
 		 RETURNING *`,
 		[issueId, body.member_id],
 	);
+
+	if (result.rows.length === 0) {
+		return err(c, 'CONFLICT', 'Issue is already locked by another agent', 409);
+	}
 
 	broadcastChange(
 		c,

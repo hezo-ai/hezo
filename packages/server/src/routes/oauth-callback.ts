@@ -11,6 +11,7 @@ export const oauthCallbackRoutes = new Hono<Env>();
 oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
+	const connectUrl = c.get('connectUrl');
 
 	const error = c.req.query('error');
 	const platform = c.req.query('platform');
@@ -22,30 +23,72 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 	}
 
 	if (!state || !platform) {
-		return c.text('Missing state or platform parameter', 400);
+		return c.json(
+			{ error: { code: 'BAD_REQUEST', message: 'Missing state or platform parameter' } },
+			400,
+		);
 	}
 
 	const statePayload = await verifyOAuthState(state, masterKeyManager);
 	if (!statePayload) {
-		return c.text('Invalid or tampered state parameter', 400);
+		return c.json(
+			{ error: { code: 'BAD_REQUEST', message: 'Invalid or tampered state parameter' } },
+			400,
+		);
 	}
 
 	const companyId = statePayload.company_id;
-	const accessToken = c.req.query('access_token');
-	const scopes = c.req.query('scopes') || '';
-	const metadataParam = c.req.query('metadata');
 
-	if (!accessToken) {
-		return c.text('Missing access_token parameter', 400);
+	// Exchange the one-time code for the actual token via Connect service
+	const exchangeCodeParam = c.req.query('code');
+	if (!exchangeCodeParam) {
+		return c.json({ error: { code: 'BAD_REQUEST', message: 'Missing code parameter' } }, 400);
 	}
 
+	if (!connectUrl) {
+		return c.json(
+			{ error: { code: 'CONNECT_UNAVAILABLE', message: 'Hezo Connect URL is not configured' } },
+			503,
+		);
+	}
+
+	let accessToken: string;
+	let scopes: string;
 	let metadata: Record<string, unknown> = {};
-	if (metadataParam) {
-		try {
-			metadata = JSON.parse(Buffer.from(metadataParam, 'base64url').toString('utf8'));
-		} catch {
-			// Invalid metadata is non-fatal
+
+	try {
+		const exchangeRes = await fetch(`${connectUrl}/auth/exchange`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ code: exchangeCodeParam }),
+		});
+
+		if (!exchangeRes.ok) {
+			const errBody = await exchangeRes.json().catch(() => null);
+			const msg = (errBody as Record<string, string>)?.message || 'Token exchange failed';
+			return c.redirect(`/error?message=${encodeURIComponent(msg)}`);
 		}
+
+		const exchangeData = (await exchangeRes.json()) as {
+			access_token: string;
+			scopes: string;
+			metadata: string;
+			platform: string;
+		};
+		accessToken = exchangeData.access_token;
+		scopes = exchangeData.scopes || '';
+
+		if (exchangeData.metadata) {
+			try {
+				metadata = JSON.parse(Buffer.from(exchangeData.metadata, 'base64url').toString('utf8'));
+			} catch {
+				// Invalid metadata is non-fatal
+			}
+		}
+	} catch {
+		return c.redirect(
+			`/error?message=${encodeURIComponent('Failed to exchange token with Connect service')}`,
+		);
 	}
 
 	await storeOAuthToken(

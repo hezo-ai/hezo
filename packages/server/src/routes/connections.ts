@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { signOAuthState } from '../crypto/state';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireCompanyAccess } from '../middleware/auth';
 import { removeSSHKeyFromGitHub } from '../services/github';
 import { getCompanySSHKey } from '../services/ssh-keys';
 import { getOAuthToken } from '../services/token-store';
@@ -11,8 +12,11 @@ const SUPPORTED_PLATFORMS = new Set(['github']);
 export const connectionsRoutes = new Hono<Env>();
 
 connectionsRoutes.get('/companies/:companyId/connections', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 
 	const result = await db.query(
 		`SELECT id, platform, status, scopes, metadata, token_expires_at, connected_at
@@ -26,9 +30,12 @@ connectionsRoutes.get('/companies/:companyId/connections', async (c) => {
 });
 
 connectionsRoutes.post('/companies/:companyId/connections/:platform/start', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const masterKeyManager = c.get('masterKeyManager');
 	const connectUrl = c.get('connectUrl');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const platform = c.req.param('platform');
 
 	if (!SUPPORTED_PLATFORMS.has(platform)) {
@@ -51,9 +58,12 @@ connectionsRoutes.post('/companies/:companyId/connections/:platform/start', asyn
 });
 
 connectionsRoutes.delete('/companies/:companyId/connections/:connectionId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const connectionId = c.req.param('connectionId');
 
 	const connection = await db.query<{
@@ -105,8 +115,11 @@ connectionsRoutes.delete('/companies/:companyId/connections/:connectionId', asyn
 });
 
 connectionsRoutes.post('/companies/:companyId/connections/:connectionId/refresh', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
 	const db = c.get('db');
-	const companyId = c.req.param('companyId');
+	const { companyId } = access;
 	const connectionId = c.req.param('connectionId');
 
 	const result = await db.query<{ status: string; token_expires_at: string | null }>(
