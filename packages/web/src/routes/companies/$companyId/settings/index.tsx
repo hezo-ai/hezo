@@ -1,23 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router';
-import {
-	Copy,
-	ExternalLink,
-	FileText,
-	Key,
-	Link2,
-	Loader2,
-	Lock,
-	Plus,
-	ScrollText,
-	Server,
-	Trash2,
-} from 'lucide-react';
+import { Copy, ExternalLink, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
-import { Card } from '../../../../components/ui/card';
 import { Input } from '../../../../components/ui/input';
-import { Textarea } from '../../../../components/ui/textarea';
 import { useAgents } from '../../../../hooks/use-agents';
 import { useApiKeys, useCreateApiKey, useDeleteApiKey } from '../../../../hooks/use-api-keys';
 import { useAuditLog } from '../../../../hooks/use-audit-log';
@@ -31,21 +17,118 @@ import { useCosts } from '../../../../hooks/use-costs';
 import { usePreferences, useUpdatePreferences } from '../../../../hooks/use-preferences';
 import { useCreateSecret, useDeleteSecret, useSecrets } from '../../../../hooks/use-secrets';
 
+const settingsNav = [
+	{ id: 'general', label: 'General' },
+	{ id: 'connections', label: 'Connected platforms' },
+	{ id: 'secrets', label: 'Secrets vault' },
+	{ id: 'api-keys', label: 'API keys' },
+	{ id: 'mcp', label: 'MCP servers' },
+	{ id: 'budget', label: 'Budget' },
+	{ id: 'preferences', label: 'Preferences' },
+	{ id: 'skill-file', label: 'Skill file' },
+	{ id: 'audit-log', label: 'Audit log' },
+];
+
 function SettingsPage() {
 	const { companyId } = Route.useParams();
+	const [activeSection, setActiveSection] = useState('general');
+
+	function scrollTo(id: string) {
+		setActiveSection(id);
+		document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: 'smooth' });
+	}
 
 	return (
-		<div className="p-6 max-w-3xl space-y-8">
-			<h1 className="text-lg font-semibold">Settings</h1>
-			<ConnectionsSection companyId={companyId} />
-			<SecretsSection companyId={companyId} />
-			<ApiKeysSection companyId={companyId} />
-			<BudgetSection companyId={companyId} />
-			<PreferencesSection companyId={companyId} />
-			<McpServersSection companyId={companyId} />
-			<SkillFileSection />
-			<AuditLogSection companyId={companyId} />
+		<div className="grid grid-cols-[160px_1fr] gap-6">
+			<nav className="flex flex-col gap-0.5 sticky top-0">
+				{settingsNav.map((item) => (
+					<button
+						key={item.id}
+						type="button"
+						onClick={() => scrollTo(item.id)}
+						className={`text-left text-[13px] px-3 py-1.5 rounded-radius-md transition-colors cursor-pointer ${
+							activeSection === item.id
+								? 'text-text font-medium bg-bg-subtle'
+								: 'text-text-muted hover:text-text hover:bg-bg-subtle'
+						}`}
+					>
+						{item.label}
+					</button>
+				))}
+			</nav>
+
+			<div className="space-y-8">
+				<div id="settings-general">
+					<GeneralSection companyId={companyId} />
+				</div>
+				<div id="settings-connections">
+					<ConnectionsSection companyId={companyId} />
+				</div>
+				<div id="settings-secrets">
+					<SecretsSection companyId={companyId} />
+				</div>
+				<div id="settings-api-keys">
+					<ApiKeysSection companyId={companyId} />
+				</div>
+				<div id="settings-mcp">
+					<McpServersSection companyId={companyId} />
+				</div>
+				<div id="settings-budget">
+					<BudgetSection companyId={companyId} />
+				</div>
+				<div id="settings-preferences">
+					<PreferencesSection companyId={companyId} />
+				</div>
+				<div id="settings-skill-file">
+					<SkillFileSection />
+				</div>
+				<div id="settings-audit-log">
+					<AuditLogSection companyId={companyId} />
+				</div>
+			</div>
 		</div>
+	);
+}
+
+function SectionHeader({ title, desc }: { title: string; desc?: string }) {
+	return (
+		<div className="mb-4">
+			<h2 className="text-base font-medium">{title}</h2>
+			{desc && <p className="text-[13px] text-text-muted mt-1">{desc}</p>}
+		</div>
+	);
+}
+
+function GeneralSection({ companyId }: { companyId: string }) {
+	const { data: company } = useCompany(companyId);
+	return (
+		<section>
+			<SectionHeader title="General" desc="Basic company information." />
+			<div className="space-y-3 max-w-md">
+				<div>
+					<span className="text-xs font-medium uppercase tracking-wider text-text-muted block mb-1.5">
+						Company name
+					</span>
+					<div className="text-[13px]">{company?.name ?? '—'}</div>
+				</div>
+				{company?.issue_prefix && (
+					<div>
+						<span className="text-xs font-medium uppercase tracking-wider text-text-muted block mb-1.5">
+							Identifier prefix
+						</span>
+						<div className="text-[13px] font-mono">{company.issue_prefix}</div>
+					</div>
+				)}
+				{company?.description && (
+					<div>
+						<span className="text-xs font-medium uppercase tracking-wider text-text-muted block mb-1.5">
+							Description
+						</span>
+						<div className="text-[13px] text-text-muted">{company.description}</div>
+					</div>
+				)}
+			</div>
+		</section>
 	);
 }
 
@@ -63,28 +146,20 @@ function ConnectionsSection({ companyId }: { companyId: string }) {
 
 	return (
 		<section>
-			<h2 className="text-sm font-medium text-text-muted mb-3 flex items-center gap-1.5">
-				<Link2 className="w-4 h-4" /> Connected Platforms
-			</h2>
+			<SectionHeader title="Connected platforms" desc="External services linked to this company." />
 			{github ? (
-				<Card className="p-3 flex items-center justify-between">
+				<div className="border border-border rounded-radius-md p-3 flex items-center justify-between">
 					<div className="flex items-center gap-2">
-						<Badge color="green">GitHub</Badge>
-						<Badge color={github.status === 'active' ? 'green' : 'red'}>{github.status}</Badge>
+						<span className="text-[13px] font-medium">GitHub</span>
+						<Badge color={github.status === 'active' ? 'success' : 'danger'}>{github.status}</Badge>
 					</div>
-					<Button
-						variant="ghost"
-						size="sm"
-						className="text-danger"
-						onClick={() => deleteConn.mutate(github.id)}
-					>
+					<Button variant="danger-text" size="sm" onClick={() => deleteConn.mutate(github.id)}>
 						<Trash2 className="w-3.5 h-3.5" /> Disconnect
 					</Button>
-				</Card>
+				</div>
 			) : (
 				<Button
 					variant="secondary"
-					size="sm"
 					onClick={() => handleConnect('github')}
 					disabled={startConn.isPending}
 				>
@@ -93,7 +168,7 @@ function ConnectionsSection({ companyId }: { companyId: string }) {
 				</Button>
 			)}
 			{startConn.error && (
-				<p className="text-sm text-danger mt-2">
+				<p className="text-[13px] text-accent-red mt-2">
 					{(startConn.error as { message: string }).message}
 				</p>
 			)}
@@ -119,11 +194,9 @@ function SecretsSection({ companyId }: { companyId: string }) {
 
 	return (
 		<section>
-			<div className="flex items-center justify-between mb-3">
-				<h2 className="text-sm font-medium text-text-muted flex items-center gap-1.5">
-					<Lock className="w-4 h-4" /> Secrets Vault
-				</h2>
-				<Button variant="ghost" size="sm" onClick={() => setShowForm(!showForm)}>
+			<div className="flex items-center justify-between mb-4">
+				<SectionHeader title="Secrets vault" desc="Encrypted secrets available to agents." />
+				<Button variant="secondary" size="sm" onClick={() => setShowForm(!showForm)}>
 					<Plus className="w-3 h-3" /> Add
 				</Button>
 			</div>
@@ -150,17 +223,17 @@ function SecretsSection({ companyId }: { companyId: string }) {
 				</form>
 			)}
 			{secrets?.length === 0 ? (
-				<p className="text-sm text-text-subtle">No secrets stored.</p>
+				<p className="text-[13px] text-text-subtle">No secrets stored.</p>
 			) : (
 				<div className="flex flex-col gap-1">
 					{secrets?.map((s) => (
 						<div
 							key={s.id}
-							className="flex items-center justify-between rounded-md border border-border-subtle bg-bg px-3 py-2 text-sm"
+							className="flex items-center justify-between rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
 						>
 							<div className="flex items-center gap-2">
 								<span className="font-medium">{s.name}</span>
-								<Badge color="gray">{s.category}</Badge>
+								<Badge color="neutral">{s.category}</Badge>
 								{s.project_name && (
 									<span className="text-xs text-text-subtle">{s.project_name}</span>
 								)}
@@ -168,7 +241,7 @@ function SecretsSection({ companyId }: { companyId: string }) {
 							<button
 								type="button"
 								onClick={() => deleteSecret.mutate(s.id)}
-								className="text-text-subtle hover:text-danger"
+								className="text-text-subtle hover:text-accent-red"
 							>
 								<Trash2 className="w-3.5 h-3.5" />
 							</button>
@@ -198,35 +271,31 @@ function ApiKeysSection({ companyId }: { companyId: string }) {
 
 	return (
 		<section>
-			<div className="flex items-center justify-between mb-3">
-				<h2 className="text-sm font-medium text-text-muted flex items-center gap-1.5">
-					<Key className="w-4 h-4" /> API Keys
-				</h2>
-				<Button variant="ghost" size="sm" onClick={() => setShowForm(!showForm)}>
+			<div className="flex items-center justify-between mb-4">
+				<SectionHeader title="API keys" />
+				<Button variant="secondary" size="sm" onClick={() => setShowForm(!showForm)}>
 					<Plus className="w-3 h-3" /> Create
 				</Button>
 			</div>
 			{newKey && (
-				<Card className="p-3 mb-3 border-success/50 bg-success/5">
-					<p className="text-xs text-success font-medium mb-1">
+				<div className="border border-accent-green rounded-radius-md bg-accent-green-bg p-3 mb-3">
+					<p className="text-xs text-accent-green-text font-medium mb-1">
 						New API key created — copy it now, it won't be shown again:
 					</p>
 					<div className="flex items-center gap-2">
 						<code className="text-xs font-mono break-all flex-1">{newKey}</code>
 						<Button
-							variant="ghost"
+							variant="secondary"
 							size="sm"
-							onClick={() => {
-								navigator.clipboard.writeText(newKey);
-							}}
+							onClick={() => navigator.clipboard.writeText(newKey)}
 						>
 							<Copy className="w-3 h-3" />
 						</Button>
 					</div>
-					<Button variant="ghost" size="sm" className="mt-2" onClick={() => setNewKey(null)}>
+					<Button variant="secondary" size="sm" className="mt-2" onClick={() => setNewKey(null)}>
 						Dismiss
 					</Button>
-				</Card>
+				</div>
 			)}
 			{showForm && (
 				<form onSubmit={handleCreate} className="flex gap-2 mb-3">
@@ -243,13 +312,13 @@ function ApiKeysSection({ companyId }: { companyId: string }) {
 				</form>
 			)}
 			{apiKeys?.length === 0 ? (
-				<p className="text-sm text-text-subtle">No API keys.</p>
+				<p className="text-[13px] text-text-subtle">No API keys.</p>
 			) : (
 				<div className="flex flex-col gap-1">
 					{apiKeys?.map((k) => (
 						<div
 							key={k.id}
-							className="flex items-center justify-between rounded-md border border-border-subtle bg-bg px-3 py-2 text-sm"
+							className="flex items-center justify-between rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
 						>
 							<div className="flex items-center gap-2">
 								<span className="font-medium">{k.name}</span>
@@ -258,7 +327,7 @@ function ApiKeysSection({ companyId }: { companyId: string }) {
 							<button
 								type="button"
 								onClick={() => deleteKey.mutate(k.id)}
-								className="text-text-subtle hover:text-danger"
+								className="text-text-subtle hover:text-accent-red"
 							>
 								<Trash2 className="w-3.5 h-3.5" />
 							</button>
@@ -273,34 +342,24 @@ function ApiKeysSection({ companyId }: { companyId: string }) {
 function BudgetSection({ companyId }: { companyId: string }) {
 	const { data: costs } = useCosts(companyId, { group_by: 'agent' });
 	const { data: agents } = useAgents(companyId);
-	const highBudgetAgents =
-		agents?.filter(
-			(a) => a.monthly_budget_cents > 0 && a.budget_used_cents / a.monthly_budget_cents > 0.8,
-		) ?? [];
 
 	return (
 		<section>
-			<h2 className="text-sm font-medium text-text-muted mb-3">Budget Overview</h2>
-			{highBudgetAgents.length > 0 && (
-				<div className="mb-3 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
-					{highBudgetAgents.length} agent{highBudgetAgents.length > 1 ? 's' : ''} at 80%+ budget
-					usage: {highBudgetAgents.map((a) => a.title).join(', ')}
-				</div>
-			)}
+			<SectionHeader title="Budget" desc="Spending overview across agents." />
 			{costs?.summary?.length === 0 ? (
-				<p className="text-sm text-text-subtle">No spend recorded.</p>
+				<p className="text-[13px] text-text-subtle">No spend recorded.</p>
 			) : (
 				<div className="flex flex-col gap-1">
 					{costs?.summary?.map((s) => (
 						<div
 							key={s.label}
-							className="flex items-center justify-between rounded-md border border-border-subtle bg-bg px-3 py-2 text-sm"
+							className="flex items-center justify-between rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
 						>
 							<span>{s.label}</span>
 							<span className="font-mono">${(s.total_cents / 100).toFixed(2)}</span>
 						</div>
 					))}
-					<div className="flex items-center justify-between px-3 py-2 text-sm font-medium border-t border-border mt-1 pt-2">
+					<div className="flex items-center justify-between px-3 py-2 text-[13px] font-medium border-t border-border mt-1 pt-2">
 						<span>Total</span>
 						<span className="font-mono">${((costs?.total_cents ?? 0) / 100).toFixed(2)}</span>
 					</div>
@@ -327,23 +386,23 @@ function PreferencesSection({ companyId }: { companyId: string }) {
 
 	return (
 		<section>
-			<div className="flex items-center justify-between mb-3">
-				<h2 className="text-sm font-medium text-text-muted">Company Preferences</h2>
+			<div className="flex items-center justify-between mb-4">
+				<SectionHeader title="Preferences" desc="Custom instructions for all agents." />
 				{!editing && (
-					<Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
+					<Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
 						Edit
 					</Button>
 				)}
 			</div>
 			{editing ? (
 				<div className="flex flex-col gap-2">
-					<Textarea
+					<textarea
 						value={content}
 						onChange={(e) => setContent(e.target.value)}
-						className="min-h-[120px] font-mono text-xs"
+						className="w-full rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-border-hover min-h-[120px] resize-y font-mono leading-relaxed"
 					/>
 					<div className="flex justify-end gap-2">
-						<Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
+						<Button variant="secondary" size="sm" onClick={() => setEditing(false)}>
 							Cancel
 						</Button>
 						<Button size="sm" onClick={handleSave} disabled={updatePrefs.isPending}>
@@ -353,7 +412,7 @@ function PreferencesSection({ companyId }: { companyId: string }) {
 					</div>
 				</div>
 			) : (
-				<p className="text-sm text-text-muted whitespace-pre-wrap">
+				<p className="text-[13px] text-text-muted whitespace-pre-wrap">
 					{prefs?.content || 'No preferences set.'}
 				</p>
 			)}
@@ -393,35 +452,31 @@ function McpServersSection({ companyId }: { companyId: string }) {
 
 	return (
 		<section>
-			<h2 className="text-sm font-medium text-text-muted mb-3 flex items-center gap-1.5">
-				<Server className="w-4 h-4" /> MCP Servers
-			</h2>
+			<SectionHeader
+				title="MCP servers"
+				desc="Model Context Protocol servers available to agents."
+			/>
 			{servers.length === 0 && !showAdd && (
-				<p className="text-sm text-text-muted mb-2">No MCP servers configured.</p>
+				<p className="text-[13px] text-text-muted mb-2">No MCP servers configured.</p>
 			)}
 			<div className="space-y-2 mb-3">
 				{servers.map((s) => (
-					<Card key={`${s.name}-${s.url}`} className="p-3 flex items-center gap-3">
+					<div
+						key={`${s.name}-${s.url}`}
+						className="border border-border rounded-radius-md p-3 flex items-center gap-3 bg-bg-subtle"
+					>
 						<div className="flex-1 min-w-0">
-							<span className="text-sm font-medium text-text">{s.name}</span>
-							<span className="text-xs text-text-muted block truncate">{s.url}</span>
-							{s.api_key && (
-								<span className="text-[10px] text-text-subtle">Key: {'*'.repeat(8)}</span>
-							)}
+							<span className="text-[13px] font-medium">{s.name}</span>
+							<span className="text-xs text-text-muted block font-mono truncate">{s.url}</span>
 						</div>
-						<Button
-							variant="ghost"
-							size="sm"
-							className="text-danger shrink-0"
-							onClick={() => handleDelete(s)}
-						>
+						<Button variant="danger-text" size="sm" onClick={() => handleDelete(s)}>
 							<Trash2 className="w-3 h-3" />
 						</Button>
-					</Card>
+					</div>
 				))}
 			</div>
 			{showAdd ? (
-				<form onSubmit={handleAdd} className="space-y-2 border border-border rounded-lg p-3">
+				<form onSubmit={handleAdd} className="space-y-2 border border-border rounded-radius-md p-3">
 					<Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Server name" />
 					<Input
 						value={url}
@@ -438,13 +493,13 @@ function McpServersSection({ companyId }: { companyId: string }) {
 						<Button type="submit" size="sm" disabled={!name.trim() || !url.trim()}>
 							Add
 						</Button>
-						<Button type="button" variant="ghost" size="sm" onClick={() => setShowAdd(false)}>
+						<Button type="button" variant="secondary" size="sm" onClick={() => setShowAdd(false)}>
 							Cancel
 						</Button>
 					</div>
 				</form>
 			) : (
-				<Button variant="ghost" size="sm" onClick={() => setShowAdd(true)}>
+				<Button variant="secondary" size="sm" onClick={() => setShowAdd(true)}>
 					<Plus className="w-3 h-3" /> Add MCP Server
 				</Button>
 			)}
@@ -467,24 +522,22 @@ function SkillFileSection() {
 
 	return (
 		<section>
-			<h2 className="text-sm font-medium text-text-muted mb-3 flex items-center gap-1.5">
-				<FileText className="w-4 h-4" /> Skill File
-			</h2>
+			<SectionHeader title="Skill file" />
 			<div className="flex gap-2 mb-2">
 				<a
 					href="/skill.md"
 					target="_blank"
 					rel="noopener noreferrer"
-					className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+					className="inline-flex items-center gap-1 text-[13px] text-accent-blue-text hover:underline"
 				>
 					<ExternalLink className="w-3.5 h-3.5" /> Open /skill.md
 				</a>
-				<Button variant="ghost" size="sm" onClick={() => setShowPreview(!showPreview)}>
+				<Button variant="secondary" size="sm" onClick={() => setShowPreview(!showPreview)}>
 					{showPreview ? 'Hide' : 'Preview'}
 				</Button>
 			</div>
 			{showPreview && content && (
-				<pre className="text-xs bg-bg-muted border border-border rounded-lg p-3 overflow-auto max-h-64 text-text-muted whitespace-pre-wrap">
+				<pre className="text-xs bg-bg-subtle border border-border rounded-radius-md p-3 overflow-auto max-h-64 text-text-muted whitespace-pre-wrap">
 					{content}
 				</pre>
 			)}
@@ -497,42 +550,46 @@ function AuditLogSection({ companyId }: { companyId: string }) {
 
 	return (
 		<section>
-			<h2 className="text-sm font-medium text-text-muted mb-3 flex items-center gap-1.5">
-				<ScrollText className="w-4 h-4" /> Audit Log
-			</h2>
+			<SectionHeader title="Audit log" desc="Recent actions across the company." />
 			{!entries?.length ? (
-				<p className="text-sm text-text-muted">No audit entries yet.</p>
+				<p className="text-[13px] text-text-muted">No audit entries yet.</p>
 			) : (
-				<div className="border border-border rounded-lg overflow-hidden">
-					<table className="w-full text-xs">
-						<thead className="bg-bg-subtle">
-							<tr>
-								<th className="text-left px-3 py-2 font-medium text-text-muted">Time</th>
-								<th className="text-left px-3 py-2 font-medium text-text-muted">Actor</th>
-								<th className="text-left px-3 py-2 font-medium text-text-muted">Action</th>
-								<th className="text-left px-3 py-2 font-medium text-text-muted">Entity</th>
+				<table className="w-full border-collapse">
+					<thead>
+						<tr>
+							<th className="text-left text-xs text-text-muted font-normal px-2 py-2 border-b border-border">
+								Time
+							</th>
+							<th className="text-left text-xs text-text-muted font-normal px-2 py-2 border-b border-border">
+								Actor
+							</th>
+							<th className="text-left text-xs text-text-muted font-normal px-2 py-2 border-b border-border">
+								Action
+							</th>
+							<th className="text-left text-xs text-text-muted font-normal px-2 py-2 border-b border-border">
+								Entity
+							</th>
+						</tr>
+					</thead>
+					<tbody>
+						{entries.map((e) => (
+							<tr key={e.id} className="hover:bg-bg-subtle">
+								<td className="px-2 py-1.5 text-xs text-text-subtle border-b border-border">
+									{new Date(e.created_at).toLocaleString()}
+								</td>
+								<td className="px-2 py-1.5 text-xs border-b border-border">
+									{e.actor_name || e.actor_type}
+								</td>
+								<td className="px-2 py-1.5 border-b border-border">
+									<Badge color="neutral">{e.action}</Badge>
+								</td>
+								<td className="px-2 py-1.5 text-xs text-text-muted border-b border-border">
+									{e.entity_type}
+								</td>
 							</tr>
-						</thead>
-						<tbody>
-							{entries.map((e) => (
-								<tr key={e.id} className="border-t border-border">
-									<td className="px-3 py-1.5 text-text-subtle">
-										{new Date(e.created_at).toLocaleString()}
-									</td>
-									<td className="px-3 py-1.5">
-										<span className="text-text">{e.actor_name || e.actor_type}</span>
-									</td>
-									<td className="px-3 py-1.5">
-										<Badge color="gray" className="text-[10px]">
-											{e.action}
-										</Badge>
-									</td>
-									<td className="px-3 py-1.5 text-text-muted">{e.entity_type}</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
+						))}
+					</tbody>
+				</table>
 			)}
 		</section>
 	);

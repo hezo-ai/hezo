@@ -1,0 +1,41 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Hezo — New agent</title><link rel="stylesheet" href="shared.css"><script>document.addEventListener('DOMContentLoaded',()=>{document.getElementById('nav-6').classList.add('current');})</script>
+<style>.var-chip{font-size:11px;padding:3px 8px;border-radius:6px;background:var(--accent-blue-bg);color:var(--accent-blue-text);cursor:pointer;border:none;font-family:var(--font-sans);}.tpl-btn{font-size:11px;padding:3px 8px;border-radius:6px;background:var(--bg-secondary);color:var(--text-secondary);cursor:pointer;border:0.5px solid var(--border);font-family:var(--font-sans);}.mcp-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-secondary);border-radius:var(--radius-md);margin-bottom:6px;font-size:13px;}</style></head><body>
+<nav class="screen-nav"><a href="01-home.html" id="nav-1">1. Home</a><a href="02-issues.html" id="nav-2">2. Issues</a><a href="03-issue-detail.html" id="nav-3">3. Issue detail</a><a href="04-live-chat.html" id="nav-4">4. Live chat</a><a href="05-agents.html" id="nav-5">5. Agents</a><a href="06-new-agent.html" id="nav-6">6. New agent</a><a href="07-board-inbox.html" id="nav-7">7. Board inbox</a><a href="08-org-chart.html" id="nav-8">8. Org chart</a><a href="09-projects.html" id="nav-9">9. Projects</a><a href="10-knowledge-base.html" id="nav-10">10. KB</a><a href="11-settings.html" id="nav-11">11. Settings</a><a href="12-account-settings.html" id="nav-12">12. Account</a></nav>
+<div class="page">
+<div class="breadcrumb"><a href="02-issues.html">NoteGenius AI</a><span class="sep">/</span><a href="05-agents.html">Agents</a><span class="sep">/</span><span class="current">New agent</span></div>
+<h1 style="font-size:20px;font-weight:500;margin-bottom:24px;">Hire new agent</h1>
+<div style="margin-bottom:24px;display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:500px;"><div><div class="field-label">Role title</div><input type="text" placeholder="e.g. Engineer, Data Scientist"></div><div><div class="field-label">Slug</div><input type="text" placeholder="e.g. engineer (for @-mentions)"></div></div>
+<div style="margin-bottom:24px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;max-width:600px;">
+<div><div class="field-label">Runtime</div><select><option>Claude Code</option><option>Codex</option><option>Gemini</option></select></div>
+<div><div class="field-label">Reports to</div><select><option>CEO</option><option>Architect</option><option>Board</option></select></div>
+<div><div class="field-label">Heartbeat</div><select><option>30m</option><option selected>60m</option><option>2h</option><option>4h</option><option>12h</option><option>24h</option></select></div>
+</div>
+<div style="margin-bottom:24px;"><div class="field-label">Monthly budget</div><input type="text" value="$30.00" style="width:140px;"></div>
+<div style="margin-bottom:24px;">
+<div class="field-label">System prompt</div>
+<div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;">
+<button class="tpl-btn">Load template ▾</button>
+<button class="var-chip">{{company_name}}</button><button class="var-chip">{{company_mission}}</button><button class="var-chip">{{reports_to}}</button><button class="var-chip">{{project_context}}</button><button class="var-chip">{{kb_context}}</button><button class="var-chip">{{agent_role}}</button>
+</div>
+<textarea class="mono-editor">You are the {{agent_role}} at {{company_name}}.
+
+Company mission: {{company_mission}}
+
+You report to {{reports_to}}. Follow their direction unless it conflicts with the company mission, in which case escalate to the Board.
+
+{{kb_context}}
+{{project_docs_context}}
+{{company_preferences_context}}</textarea>
+<div class="field-hint">Monospace editor. Insert variables using the chips above. Markdown supported.</div>
+</div>
+<div style="margin-bottom:24px;">
+<div class="field-label">MCP servers (agent-level)</div>
+<div class="field-hint" style="margin-bottom:8px;">Agent-specific MCP servers. Company-level servers are inherited automatically.</div>
+<div class="mcp-item"><div><div style="font-weight:500;">Agent database</div><div class="mono" style="font-size:12px;color:var(--text-secondary);">https://db-mcp.internal:8080</div></div><button class="btn-danger-text">Remove</button></div>
+<button style="font-size:12px;color:var(--accent-blue);cursor:pointer;background:none;border:none;padding:0;font-family:var(--font-sans);">+ Add MCP server</button>
+</div>
+<div style="display:flex;gap:8px;justify-content:flex-end;padding-top:16px;border-top:0.5px solid var(--border);">
+<a href="05-agents.html" class="btn-secondary" style="text-decoration:none;">Cancel</a>
+<button class="btn-primary">Hire agent</button>
+</div>
+</div></body></html>

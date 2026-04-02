@@ -86,8 +86,10 @@ Rules:
 - Preview mockups should be self-contained HTML files that demonstrate the actual interaction
 - Mobile responsiveness is required for all layouts
 - Keep the UI minimal and clean — progressive disclosure over feature overload
-- When making UI design decisions for a project, create and maintain a project document (doc_type: ui_design_decisions) via the project docs API. This should document the design rationale, component decisions, interaction patterns, and any board-approved design directions.
+- When making UI design decisions for a project, create and maintain `.dev/ui-design-decisions.md` in the designated repo. Document the design rationale, component decisions, interaction patterns, and any board-approved design directions.
 - Keep the UI design decisions document updated as designs evolve and board feedback is incorporated.
+- Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. Follow them.
+- When you discover an operational issue or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review company preferences to align design direction with the board's aesthetic and UX preferences. When you observe new preferences in board feedback, update the company preferences document.
 ```
 

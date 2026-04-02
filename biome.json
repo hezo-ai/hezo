@@ -54,6 +54,7 @@
 			"!.hezo",
 			"!.turbo",
 			"!**/migrations-bundle.json",
+			"!**/agents-bundle.json",
 			"!**/routeTree.gen.ts"
 		]
 	}

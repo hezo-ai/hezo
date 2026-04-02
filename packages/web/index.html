@@ -4,6 +4,17 @@
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Hezo</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<script>
+			(function () {
+				var t = localStorage.getItem('theme');
+				var d = window.matchMedia('(prefers-color-scheme: dark)').matches;
+				if (t === 'dark' || (t !== 'light' && d)) {
+					document.documentElement.classList.add('dark');
+				}
+			})();
+		</script>
 	</head>
 	<body>
 		<div id="root"></div>

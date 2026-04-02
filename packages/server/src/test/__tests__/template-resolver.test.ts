@@ -21,7 +21,11 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Template Co', issue_prefix: 'TMP' }),
+		body: JSON.stringify({
+			name: 'Template Co',
+			issue_prefix: 'TMP',
+			description: 'Build amazing things',
+		}),
 	});
 	companyId = (await companyRes.json()).data.id;
 
@@ -50,6 +54,29 @@ describe('template resolver', () => {
 			companyId,
 		});
 		expect(result).toBe('Working for Template Co.');
+	});
+
+	it('resolves {{company_mission}} to company description', async () => {
+		const result = await resolveSystemPrompt(db, 'Mission: {{company_mission}}', {
+			companyId,
+		});
+		expect(result).toBe('Mission: Build amazing things');
+	});
+
+	it('resolves {{company_description}} to company description', async () => {
+		const result = await resolveSystemPrompt(db, 'Desc: {{company_description}}', {
+			companyId,
+		});
+		expect(result).toBe('Desc: Build amazing things');
+	});
+
+	it('resolves company_name, company_mission, and company_description in a single query', async () => {
+		const result = await resolveSystemPrompt(
+			db,
+			'{{company_name}} - {{company_mission}} ({{company_description}})',
+			{ companyId },
+		);
+		expect(result).toBe('Template Co - Build amazing things (Build amazing things)');
 	});
 
 	it('resolves {{kb_context}} with no docs', async () => {
@@ -87,5 +114,165 @@ describe('template resolver', () => {
 		);
 		expect(result).toContain('Company: Template Co');
 		expect(result).toMatch(/Date: \d{4}-\d{2}-\d{2}/);
+	});
+
+	it('resolves {{reports_to}} without agentId to empty string', async () => {
+		const result = await resolveSystemPrompt(db, 'Reports to: {{reports_to}}', {
+			companyId,
+		});
+		expect(result).toBe('Reports to: ');
+	});
+
+	it('resolves {{requester_context}} to empty string', async () => {
+		const result = await resolveSystemPrompt(db, 'Context: {{requester_context}}', {
+			companyId,
+		});
+		expect(result).toBe('Context: ');
+	});
+});
+
+describe('template resolver with agents', () => {
+	let agentCompanyId: string;
+	let engineerAgentId: string;
+	let ceoAgentId: string;
+
+	beforeAll(async () => {
+		// Get the builtin company type
+		const typesRes = await app.request('/api/company-types', {
+			method: 'GET',
+			headers: authHeader(token),
+		});
+		const types = (await typesRes.json()) as any;
+		const softDevType = types.data.find((t: any) => t.name === 'Software Development');
+
+		// Create a company with the software dev team type to auto-create agents
+		const companyRes = await app.request('/api/companies', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Agent Test Co',
+				issue_prefix: 'ATC',
+				description: 'Test company for agent templates',
+				company_type_id: softDevType.id,
+			}),
+		});
+		agentCompanyId = ((await companyRes.json()) as any).data.id;
+
+		// Get agents
+		const agentsRes = await app.request(`/api/companies/${agentCompanyId}/agents`, {
+			method: 'GET',
+			headers: authHeader(token),
+		});
+		const agents = ((await agentsRes.json()) as any).data;
+		const engineer = agents.find((a: any) => a.slug === 'engineer');
+		const ceo = agents.find((a: any) => a.slug === 'ceo');
+		engineerAgentId = engineer.id;
+		ceoAgentId = ceo.id;
+	});
+
+	it('resolves {{reports_to}} with agentId to manager display name', async () => {
+		const result = await resolveSystemPrompt(db, 'Reports to: {{reports_to}}', {
+			companyId: agentCompanyId,
+			agentId: engineerAgentId,
+		});
+		expect(result).toBe('Reports to: Architect');
+	});
+
+	it('resolves {{reports_to}} for CEO (no manager) to empty string', async () => {
+		const result = await resolveSystemPrompt(db, 'Reports to: {{reports_to}}', {
+			companyId: agentCompanyId,
+			agentId: ceoAgentId,
+		});
+		expect(result).toBe('Reports to: ');
+	});
+
+	it('resolves a full system prompt template with all variables', async () => {
+		const template = `You are an Engineer at {{company_name}}.
+
+Company mission: {{company_mission}}
+You report to: Architect ({{reports_to}})
+
+Current date: {{current_date}}
+
+{{kb_context}}
+
+{{company_preferences_context}}
+
+{{project_docs_context}}
+
+{{requester_context}}`;
+
+		const result = await resolveSystemPrompt(db, template, {
+			companyId: agentCompanyId,
+			agentId: engineerAgentId,
+		});
+
+		expect(result).toContain('You are an Engineer at Agent Test Co.');
+		expect(result).toContain('Company mission: Test company for agent templates');
+		expect(result).toContain('You report to: Architect (Architect)');
+		expect(result).toMatch(/Current date: \d{4}-\d{2}-\d{2}/);
+		expect(result).toContain('No knowledge base documents available');
+		expect(result).toContain('No preferences set');
+		expect(result).toContain('.dev/ folder');
+	});
+
+	it('agents created from company type have system prompts', async () => {
+		const agentsRes = await app.request(`/api/companies/${agentCompanyId}/agents`, {
+			method: 'GET',
+			headers: authHeader(token),
+		});
+		const agents = ((await agentsRes.json()) as any).data;
+
+		for (const agent of agents) {
+			expect(agent.system_prompt).toBeTruthy();
+			expect(agent.system_prompt.length).toBeGreaterThan(100);
+			expect(agent.system_prompt).toContain('{{company_name}}');
+			expect(agent.system_prompt).toContain('{{company_mission}}');
+			expect(agent.system_prompt).toContain('{{current_date}}');
+			expect(agent.system_prompt).toContain('{{kb_context}}');
+			expect(agent.system_prompt).toContain('Rules:');
+		}
+	});
+
+	it('each agent has role-specific system prompt content', async () => {
+		const agentsRes = await app.request(`/api/companies/${agentCompanyId}/agents`, {
+			method: 'GET',
+			headers: authHeader(token),
+		});
+		const agents = ((await agentsRes.json()) as any).data;
+
+		const bySlug = new Map<string, any>(agents.map((a: any) => [a.slug, a]));
+
+		expect(bySlug.get('ceo').system_prompt).toContain('You are the CEO of');
+		expect(bySlug.get('architect').system_prompt).toContain('You are the Architect at');
+		expect(bySlug.get('product-lead').system_prompt).toContain('You are the Product Lead at');
+		expect(bySlug.get('engineer').system_prompt).toContain('You are an Engineer at');
+		expect(bySlug.get('qa-engineer').system_prompt).toContain('You are the QA Engineer at');
+		expect(bySlug.get('ui-designer').system_prompt).toContain('You are the UI Designer at');
+		expect(bySlug.get('devops-engineer').system_prompt).toContain('You are the DevOps Engineer at');
+		expect(bySlug.get('marketing-lead').system_prompt).toContain('You are the Marketing Lead at');
+		expect(bySlug.get('researcher').system_prompt).toContain('You are the Researcher at');
+	});
+
+	it('CEO system prompt does not use {{reports_to}}', async () => {
+		const agentsRes = await app.request(`/api/companies/${agentCompanyId}/agents`, {
+			method: 'GET',
+			headers: authHeader(token),
+		});
+		const agents = ((await agentsRes.json()) as any).data;
+		const ceo = agents.find((a: any) => a.slug === 'ceo');
+		expect(ceo.system_prompt).not.toContain('{{reports_to}}');
+	});
+
+	it('non-CEO agents use {{reports_to}} in their system prompts', async () => {
+		const agentsRes = await app.request(`/api/companies/${agentCompanyId}/agents`, {
+			method: 'GET',
+			headers: authHeader(token),
+		});
+		const agents = ((await agentsRes.json()) as any).data;
+		const nonCeo = agents.filter((a: any) => a.slug !== 'ceo' && a.slug !== 'architect');
+		for (const agent of nonCeo) {
+			expect(agent.system_prompt).toContain('{{reports_to}}');
+		}
 	});
 });

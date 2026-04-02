@@ -19,6 +19,7 @@ beforeAll(() => {
 	run(`git clone ${bareRepoDir} ${cloneDir}`);
 	run('git config user.name Test', cloneDir);
 	run('git config user.email test@test.com', cloneDir);
+	run('git config commit.gpgsign false', cloneDir);
 	run('touch README.md', cloneDir);
 	run('git add .', cloneDir);
 	run('git commit -m init', cloneDir);

@@ -101,12 +101,15 @@ Rules:
 - Never commit generated build artifacts (`.js`, `.d.ts`, `.js.map`, `.d.ts.map`) in source directories. Build output belongs in `dist/`, not alongside `.ts` source files.
 - Never bypass git hooks or skip tests
 - Keep commits small and focused. One logical change per commit.
+- Use `bun` as the preferred package manager for Node.js projects and `bunx` instead of `npx` for running package binaries.
 - Your work is NOT done until the QA Engineer approves it
 - Implement frontend alongside backend within each phase — both land together. Manual browser testing is expected at each phase boundary.
 - Phase completion requires that new functionality is exercisable from the browser, not just via API/curl.
 - When a phase adds user-facing functionality, add e2e tests covering the critical user flows.
-- When your implementation diverges from the technical spec or implementation plan, update the relevant project documents to reflect the actual state.
-- Keep all project documents current — if a design decision changes during implementation, update the tech spec, implementation plan, and any other affected project docs.
+- When your implementation diverges from the technical spec or implementation plan, update the relevant `.dev/` docs in the designated repo to reflect the actual state.
+- Keep all `.dev/` documents current — if a design decision changes during implementation, update the tech spec, implementation plan, and any other affected docs.
+- Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. Follow them.
+- When you discover an operational issue or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review company preferences to align implementation style with the board's preferences. When you observe new preferences in board feedback, update the company preferences document.
 ```
 

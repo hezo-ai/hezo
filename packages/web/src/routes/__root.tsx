@@ -3,8 +3,10 @@ import { createRootRoute, Outlet } from '@tanstack/react-router';
 import { Inbox } from 'lucide-react';
 import { useState } from 'react';
 import { BoardInboxDrawer } from '../components/board-inbox-drawer';
+import { CompanyRail } from '../components/company-rail';
 import { MasterKeyGate } from '../components/master-key-gate';
 import { Button } from '../components/ui/button';
+import { ThemeSwitcher } from '../components/ui/theme-switcher';
 import { useAllPendingApprovals } from '../hooks/use-approvals';
 import { useCompanies } from '../hooks/use-companies';
 import { useStatus } from '../hooks/use-status';
@@ -36,9 +38,14 @@ function AppShell() {
 	}
 
 	return (
-		<div className="flex flex-col h-screen">
-			<Header />
-			<Outlet />
+		<div className="flex h-screen">
+			<CompanyRail />
+			<div className="flex flex-col flex-1 overflow-hidden">
+				<Header />
+				<main className="flex-1 overflow-auto">
+					<Outlet />
+				</main>
+			</div>
 		</div>
 	);
 }
@@ -52,18 +59,21 @@ function Header() {
 
 	return (
 		<>
-			<header className="flex items-center justify-between border-b border-border px-4 py-2.5 bg-bg-subtle shrink-0">
-				<a href="/companies" className="text-sm font-semibold text-text tracking-tight">
+			<header className="flex items-center justify-between border-b border-border px-4 py-2 shrink-0">
+				<a href="/companies" className="text-[13px] font-semibold text-text tracking-tight">
 					hezo
 				</a>
-				<Button variant="ghost" size="sm" onClick={() => setInboxOpen(true)} className="relative">
-					<Inbox className="w-4 h-4" />
-					{pendingCount > 0 && (
-						<span className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 rounded-full bg-danger text-white text-[10px] font-bold">
-							{pendingCount}
-						</span>
-					)}
-				</Button>
+				<div className="flex items-center gap-1">
+					<ThemeSwitcher />
+					<Button variant="ghost" size="sm" onClick={() => setInboxOpen(true)} className="relative">
+						<Inbox className="w-4 h-4" />
+						{pendingCount > 0 && (
+							<span className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 rounded-full bg-accent-red text-white text-[10px] font-bold">
+								{pendingCount}
+							</span>
+						)}
+					</Button>
+				</div>
 			</header>
 			<BoardInboxDrawer open={inboxOpen} onOpenChange={setInboxOpen} approvals={approvals ?? []} />
 		</>

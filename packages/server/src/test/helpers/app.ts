@@ -1,5 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { generateMasterKey, MasterKeyManager } from '../../crypto/master-key';
+import { loadAgentRoles } from '../../db/agent-roles';
 import { seedBuiltins } from '../../db/seed';
 import { signBoardJwt } from '../../middleware/auth';
 import { buildApp } from '../../startup';
@@ -19,7 +20,8 @@ export async function createTestApp() {
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyHex = generateMasterKey();
 	await masterKeyManager.initialize(db, masterKeyHex);
-	await seedBuiltins(db);
+	const roleDocs = await loadAgentRoles();
+	await seedBuiltins(db, roleDocs);
 	const app = buildApp(db, masterKeyManager, {
 		dataDir: '',
 		connectUrl: 'http://localhost:4100',

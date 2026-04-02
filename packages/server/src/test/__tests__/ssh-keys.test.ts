@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { generateMasterKey, MasterKeyManager } from '../../crypto/master-key';
+import { loadAgentRoles } from '../../db/agent-roles';
 import { seedBuiltins } from '../../db/seed';
 import {
 	generateCompanySSHKey,
@@ -17,7 +18,7 @@ beforeAll(async () => {
 	db = await createTestDbWithMigrations();
 	masterKeyManager = new MasterKeyManager();
 	await masterKeyManager.initialize(db, generateMasterKey());
-	await seedBuiltins(db);
+	await seedBuiltins(db, await loadAgentRoles());
 
 	// Create a company
 	const typesRes = await db.query<{ id: string }>(

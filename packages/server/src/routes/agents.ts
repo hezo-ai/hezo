@@ -20,7 +20,7 @@ agentsRoutes.get('/companies/:companyId/agents', async (c) => {
 
 	let query = `
     SELECT m.id, m.company_id, m.display_name, m.created_at,
-           ma.title, ma.slug, ma.role_description, ma.runtime_type,
+           ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
            ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
            ma.budget_reset_at, ma.status, ma.last_heartbeat_at, ma.updated_at,
            ma.reports_to,

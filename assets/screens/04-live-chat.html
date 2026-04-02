@@ -1,0 +1,29 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Hezo — Live chat</title><link rel="stylesheet" href="shared.css"><script>document.addEventListener('DOMContentLoaded',()=>{const n=document.getElementById('nav-4');if(n)n.classList.add('current');})</script></head><body>
+<nav class="screen-nav">
+<a href="01-home.html" id="nav-1">1. Home</a><a href="02-issues.html" id="nav-2">2. Issues</a><a href="03-issue-detail.html" id="nav-3">3. Issue detail</a><a href="04-live-chat.html" id="nav-4">4. Live chat</a><a href="05-agents.html" id="nav-5">5. Agents</a><a href="06-new-agent.html" id="nav-6">6. New agent</a><a href="07-board-inbox.html" id="nav-7">7. Board inbox</a><a href="08-org-chart.html" id="nav-8">8. Org chart</a><a href="09-projects.html" id="nav-9">9. Projects</a><a href="10-knowledge-base.html" id="nav-10">10. KB</a><a href="11-settings.html" id="nav-11">11. Settings</a><a href="12-account-settings.html" id="nav-12">12. Account</a>
+</nav>
+<div class="page">
+<div class="breadcrumb"><a href="02-issues.html">NoteGenius AI</a><span class="sep">/</span><a href="03-issue-detail.html">NG-14</a><span class="sep">/</span><span class="current">Live chat</span></div>
+<div style="background:var(--bg-primary);border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:0.5px solid var(--border);">
+    <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:14px;font-weight:500;">Live chat</span><span class="mono" style="font-size:12px;color:var(--text-secondary);">NG-14</span></div>
+    <div style="display:flex;gap:4px;">
+      <div class="avatar avatar-sm av-blue" style="width:24px;height:24px;font-size:9px;" title="James (Board)">JL</div>
+      <div class="avatar avatar-sm av-purple" style="width:24px;height:24px;font-size:9px;" title="Engineer">EN</div>
+      <div class="avatar avatar-sm av-green" style="width:24px;height:24px;font-size:9px;" title="Architect">AR</div>
+    </div>
+  </div>
+  <div style="padding:16px;min-height:300px;">
+    <div style="margin-bottom:14px;"><div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><div class="avatar avatar-sm av-blue" style="width:22px;height:22px;font-size:9px;">JL</div><span style="font-size:12px;font-weight:500;">James</span><span style="font-size:11px;color:var(--text-tertiary);">10:32 AM</span></div><div style="font-size:13px;line-height:1.6;padding-left:28px;">The OAuth callback needs to handle the case where Hezo Connect is unreachable. What's the fallback?</div></div>
+    <div style="margin-bottom:14px;"><div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><div class="avatar avatar-sm av-purple" style="width:22px;height:22px;font-size:9px;">EN</div><span style="font-size:12px;font-weight:500;">Engineer</span><span style="font-size:11px;color:var(--text-tertiary);">10:32 AM</span></div><div style="font-size:13px;line-height:1.6;padding-left:28px;">Currently it shows a generic 500. I can add a retry with exponential backoff, or show a user-friendly error page with a "try again" button. Which do you prefer?</div></div>
+    <div style="margin-bottom:14px;"><div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><div class="avatar avatar-sm av-blue" style="width:22px;height:22px;font-size:9px;">JL</div><span style="font-size:12px;font-weight:500;">James</span><span style="font-size:11px;color:var(--text-tertiary);">10:33 AM</span></div><div style="font-size:13px;line-height:1.6;padding-left:28px;">User-friendly error page. <span style="color:var(--accent-blue);font-weight:500;">@architect</span> what do you think about retry logic on the server side?</div></div>
+    <div style="margin-bottom:14px;"><div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><div class="avatar avatar-sm av-green" style="width:22px;height:22px;font-size:9px;">AR</div><span style="font-size:12px;font-weight:500;">Architect</span><span style="font-size:11px;color:var(--text-tertiary);">10:33 AM</span></div><div style="font-size:13px;line-height:1.6;padding-left:28px;">Good call. I'd do both: server retries 3x with 1s/2s/4s backoff, then falls back to the error page. The error page should have a manual retry button that re-initiates the whole OAuth flow.</div></div>
+    <div style="margin-bottom:14px;"><div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><div class="avatar avatar-sm av-blue" style="width:22px;height:22px;font-size:9px;">JL</div><span style="font-size:12px;font-weight:500;">James</span><span style="font-size:11px;color:var(--text-tertiary);">10:34 AM</span></div><div style="font-size:13px;line-height:1.6;padding-left:28px;">Perfect. Go with that approach.</div></div>
+    <div><div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><div class="avatar avatar-sm av-purple" style="width:22px;height:22px;font-size:9px;">EN</div><span style="font-size:12px;font-weight:500;">Engineer</span></div><div style="display:flex;align-items:center;gap:6px;padding-left:28px;font-size:12px;color:var(--text-secondary);"><span style="display:flex;gap:3px;"><span class="dot dot-idle"></span><span class="dot dot-idle"></span><span class="dot dot-idle"></span></span> typing...</div></div>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:0.5px solid var(--border);">
+    <input type="text" placeholder="Message... (type @ to mention an agent)" style="flex:1;">
+    <button class="btn-primary">Send</button>
+  </div>
+</div>
+</div></body></html>

@@ -166,14 +166,14 @@ function OptionsComment({
 							onClick={() => onChoose?.(comment.id, opt.id)}
 							className={`text-left p-2.5 rounded-lg border transition-colors ${
 								isChosen
-									? 'border-primary bg-primary/10'
+									? 'border-accent-blue bg-accent-blue-bg'
 									: isOther
 										? 'border-border bg-bg-subtle opacity-50'
-										: 'border-border hover:border-primary/50 cursor-pointer'
+										: 'border-border hover:border-border-hover cursor-pointer'
 							}`}
 						>
 							<div className="flex items-center gap-1.5">
-								{isChosen && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
+								{isChosen && <Check className="w-3.5 h-3.5 text-accent-blue-text shrink-0" />}
 								<span className="text-sm font-medium text-text">{opt.label}</span>
 							</div>
 							{opt.description && (
@@ -197,7 +197,7 @@ function PreviewComment({ comment }: { comment: CommentData }) {
 			href={url}
 			target="_blank"
 			rel="noopener noreferrer"
-			className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+			className="inline-flex items-center gap-1.5 text-sm text-accent-blue-text hover:underline"
 		>
 			<ExternalLink className="w-3.5 h-3.5" />
 			{title}

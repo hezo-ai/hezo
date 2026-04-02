@@ -63,10 +63,25 @@ export async function runAgent(
 		};
 	}
 
-	const resolvedPrompt = await resolveSystemPrompt(deps.db, agent.system_prompt, {
+	let resolvedPrompt = await resolveSystemPrompt(deps.db, agent.system_prompt, {
 		companyId: agent.company_id,
 		projectId: project.id,
+		agentId: agent.id,
 	});
+
+	if (resolvedPrompt.includes('{{requester_context}}')) {
+		const creator = await deps.db.query<{ display_name: string; member_type: string }>(
+			`SELECT m.display_name, m.member_type FROM issues i
+			 JOIN members m ON m.id = i.created_by_member_id
+			 WHERE i.id = $1`,
+			[issue.id],
+		);
+		const row = creator.rows[0];
+		const requesterText = row
+			? `This task was created by ${row.display_name} (${row.member_type}).`
+			: '';
+		resolvedPrompt = resolvedPrompt.replace(/\{\{requester_context\}\}/g, requesterText);
+	}
 
 	const agentJwt = await signAgentJwt(deps.masterKeyManager, agent.id, agent.company_id);
 

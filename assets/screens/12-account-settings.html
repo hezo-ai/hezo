@@ -1,0 +1,45 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Hezo — Account settings</title><link rel="stylesheet" href="shared.css"><script>document.addEventListener('DOMContentLoaded',()=>{document.getElementById('nav-12').classList.add('current');})</script>
+<style>.notif-table{width:100%;max-width:500px;border-collapse:collapse;}.notif-table th{text-align:left;font-size:12px;color:var(--text-secondary);font-weight:400;padding:8px;border-bottom:0.5px solid var(--border);}.notif-table td{padding:8px;border-bottom:0.5px solid var(--border);font-size:13px;}.notif-table td:not(:first-child){text-align:center;}.tg-setup{background:var(--bg-secondary);border-radius:var(--radius-md);padding:14px 16px;max-width:500px;}.tg-step{font-size:13px;color:var(--text-secondary);margin-bottom:8px;line-height:1.5;}.tg-step strong{color:var(--text-primary);font-weight:500;}</style></head><body>
+<nav class="screen-nav"><a href="01-home.html" id="nav-1">1. Home</a><a href="02-issues.html" id="nav-2">2. Issues</a><a href="03-issue-detail.html" id="nav-3">3. Issue detail</a><a href="04-live-chat.html" id="nav-4">4. Live chat</a><a href="05-agents.html" id="nav-5">5. Agents</a><a href="06-new-agent.html" id="nav-6">6. New agent</a><a href="07-board-inbox.html" id="nav-7">7. Board inbox</a><a href="08-org-chart.html" id="nav-8">8. Org chart</a><a href="09-projects.html" id="nav-9">9. Projects</a><a href="10-knowledge-base.html" id="nav-10">10. KB</a><a href="11-settings.html" id="nav-11">11. Settings</a><a href="12-account-settings.html" id="nav-12">12. Account</a></nav>
+<div class="page">
+<h1 style="font-size:20px;font-weight:500;margin-bottom:24px;">Account settings</h1>
+
+<div class="section">
+  <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;">
+    <div class="avatar avatar-lg av-blue">JL</div>
+    <div><div style="font-size:16px;font-weight:500;">James Lee</div><div style="font-size:13px;color:var(--text-secondary);">Signed in via GitHub</div></div>
+  </div>
+  <div style="max-width:300px;"><div class="field-label">Display name</div><input type="text" value="James Lee"></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Telegram bot</div>
+  <div class="section-desc">Link your Telegram account to receive notifications and interact with agents.</div>
+  <div class="tg-setup">
+    <div class="tg-step"><strong>1.</strong> Start a chat with <strong>@HezoBot</strong> on Telegram</div>
+    <div class="tg-step"><strong>2.</strong> Send <strong>/start</strong> to get your chat ID</div>
+    <div class="tg-step" style="margin-bottom:12px;"><strong>3.</strong> Paste your chat ID below:</div>
+    <input type="text" placeholder="e.g. 123456789" style="max-width:240px;">
+    <div class="field-hint">The bot will send you a verification message.</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Notification preferences</div>
+  <div class="section-desc">Choose which events trigger notifications and through which channel.</div>
+  <table class="notif-table">
+    <thead><tr><th>Event</th><th>Web inbox</th><th>Telegram</th><th>Slack</th></tr></thead>
+    <tbody>
+      <tr><td>Approvals</td><td><label class="toggle"><input type="checkbox" checked disabled><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox"><span class="slider"></span></label></td></tr>
+      <tr><td>Escalations</td><td><label class="toggle"><input type="checkbox" checked disabled><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox"><span class="slider"></span></label></td></tr>
+      <tr><td>Budget alerts</td><td><label class="toggle"><input type="checkbox" checked disabled><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox"><span class="slider"></span></label></td></tr>
+      <tr><td>Agent errors</td><td><label class="toggle"><input type="checkbox" checked disabled><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox"><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox"><span class="slider"></span></label></td></tr>
+      <tr><td>QA findings</td><td><label class="toggle"><input type="checkbox" checked disabled><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox"><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox"><span class="slider"></span></label></td></tr>
+      <tr><td>Design reviews</td><td><label class="toggle"><input type="checkbox" checked disabled><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox"><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox"><span class="slider"></span></label></td></tr>
+      <tr><td>OAuth requests</td><td><label class="toggle"><input type="checkbox" checked disabled><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox"><span class="slider"></span></label></td><td><label class="toggle"><input type="checkbox"><span class="slider"></span></label></td></tr>
+    </tbody>
+  </table>
+  <div class="field-hint">Web inbox is always on. Telegram and Slack require setup first.</div>
+</div>
+<button class="btn-primary">Save changes</button>
+</div></body></html>

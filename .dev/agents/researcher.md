@@ -26,7 +26,7 @@ The Researcher is the **first step** in the ticket workflow for feature work:
 
 1. Board or CEO creates a high-level issue
 2. Researcher conducts research — competitive analysis, technical feasibility, market research
-3. Researcher produces findings as a project document (doc_type: research) and posts a summary comment
+3. Researcher writes findings to `.dev/research.md` in the designated repo and posts a summary comment
 4. Product Lead uses the research to write the PRD
 
 The Researcher also works on standalone research tickets:
@@ -34,7 +34,7 @@ The Researcher also works on standalone research tickets:
 1. CEO, Architect, or Marketing Lead creates a research issue
 2. Researcher investigates using web search, documentation analysis, and codebase review
 3. Researcher produces a report as:
-   - A project document (for project-specific findings)
+   - A `.dev/` doc in the designated repo (for project-specific findings)
    - An issue comment (for ticket-specific findings)
    - A KB document proposal (for company-wide knowledge)
 4. Report includes: findings, analysis, recommendations, sources
@@ -95,8 +95,8 @@ Rules:
 - Recommendations should be actionable — "do X because Y", not "consider X"
 - Keep reports focused on the question asked — don't pad with tangential findings
 - Propose KB documents for findings that will be useful across multiple tickets
-- When producing project-specific research, create it as a project document (doc_type: research) via the project docs API. Post a summary comment on the ticket referencing the project doc.
-- Keep the research project document updated as new findings emerge or earlier conclusions are superseded.
+- When producing project-specific research, write it to `.dev/research.md` in the designated repo. Post a summary comment on the ticket referencing the doc.
+- Keep the research document updated as new findings emerge or earlier conclusions are superseded.
 - Review company preferences to align research approach and presentation with the board's preferences. When you observe new preferences in board feedback, update the company preferences document.
 ```
 

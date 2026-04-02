@@ -1,38 +1,39 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Plus, UserPlus } from 'lucide-react';
+import { Avatar, avatarColorFromString } from '../../../../components/ui/avatar';
 import { Badge } from '../../../../components/ui/badge';
+import { BudgetBar } from '../../../../components/ui/budget-bar';
 import { Button } from '../../../../components/ui/button';
-import { Card } from '../../../../components/ui/card';
 import { EmptyState } from '../../../../components/ui/empty-state';
+import { StatusDot } from '../../../../components/ui/status-dot';
 import { useAgents } from '../../../../hooks/use-agents';
 
-const statusColors: Record<string, string> = {
-	active: 'green',
-	idle: 'blue',
-	paused: 'yellow',
-	terminated: 'gray',
+const statusBadge: Record<string, { color: string; dot: 'active' | 'idle' | 'paused' }> = {
+	active: { color: 'success', dot: 'active' },
+	idle: { color: 'neutral', dot: 'idle' },
+	paused: { color: 'warning', dot: 'paused' },
+	terminated: { color: 'neutral', dot: 'idle' },
 };
 
-const statusDot: Record<string, string> = {
-	active: 'bg-success',
-	idle: 'bg-info',
-	paused: 'bg-warning',
-	terminated: 'bg-bg-elevated',
-};
+function getInitials(title: string): string {
+	const words = title.split(/\s+/);
+	if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+	return title.slice(0, 2).toUpperCase();
+}
 
 function AgentListPage() {
 	const { companyId } = Route.useParams();
 	const { data: agents, isLoading } = useAgents(companyId);
 
-	if (isLoading) return <div className="p-6 text-text-muted">Loading...</div>;
+	if (isLoading)
+		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;
 
 	return (
-		<div className="p-6">
-			<div className="flex items-center justify-between mb-4">
-				<h1 className="text-lg font-semibold">Agents</h1>
+		<div>
+			<div className="flex items-center justify-end mb-4">
 				<Link to="/companies/$companyId/agents/hire" params={{ companyId }}>
-					<Button size="sm">
-						<UserPlus className="w-4 h-4" /> Hire Agent
+					<Button>
+						<UserPlus className="w-4 h-4" /> Hire agent
 					</Button>
 				</Link>
 			</div>
@@ -40,57 +41,52 @@ function AgentListPage() {
 			{agents?.length === 0 ? (
 				<EmptyState icon={<Plus className="w-10 h-10" />} title="No agents yet" />
 			) : (
-				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
 					{agents?.map((agent) => {
-						const budgetPct =
-							agent.monthly_budget_cents > 0
-								? Math.round((agent.budget_used_cents / agent.monthly_budget_cents) * 100)
-								: 0;
+						const cfg = statusBadge[agent.status] ?? statusBadge.terminated;
+						const budgetUsed = agent.budget_used_cents / 100;
+						const budgetTotal = agent.monthly_budget_cents / 100;
 						return (
 							<Link
 								key={agent.id}
 								to="/companies/$companyId/agents/$agentId"
 								params={{ companyId, agentId: agent.id }}
 							>
-								<Card className="hover:border-primary/50 transition-colors cursor-pointer">
-									<div className="flex items-start justify-between mb-2">
-										<div className="flex items-center gap-2">
-											<span
-												className={`w-2 h-2 rounded-full ${statusDot[agent.status] || 'bg-bg-elevated'} ${agent.status === 'active' ? 'animate-pulse' : ''}`}
-											/>
-											<h3 className="font-medium text-sm">{agent.title}</h3>
+								<div className="border border-border rounded-radius-lg p-4 bg-bg transition-[border-color] duration-150 hover:border-border-hover cursor-pointer">
+									<div className="flex items-center gap-2.5 mb-3">
+										<Avatar
+											initials={getInitials(agent.title)}
+											size="md"
+											color={avatarColorFromString(agent.title)}
+										/>
+										<div className="min-w-0">
+											<div className="text-sm font-medium truncate">{agent.title}</div>
+											{agent.role_description && (
+												<div className="text-xs text-text-muted truncate">
+													{agent.role_description}
+												</div>
+											)}
 										</div>
-										<Badge color={statusColors[agent.status] as 'gray'}>{agent.status}</Badge>
 									</div>
-									{agent.role_description && (
-										<p className="text-xs text-text-muted line-clamp-2 mb-3">
-											{agent.role_description}
-										</p>
-									)}
-									<div className="flex items-center justify-between text-xs text-text-subtle">
-										<span>{agent.runtime_type}</span>
-										<span>{agent.assigned_issue_count} issues</span>
-									</div>
-									{agent.last_heartbeat_at && (
-										<div className="text-[10px] text-text-subtle mt-1">
-											Last heartbeat: {new Date(agent.last_heartbeat_at).toLocaleTimeString()}
+
+									<div className="text-xs text-text-muted leading-relaxed space-y-0.5">
+										<div className="flex items-center gap-1.5">
+											<StatusDot status={cfg.dot} />
+											<Badge color={cfg.color as 'neutral'}>{agent.status}</Badge>
 										</div>
-									)}
-									{agent.monthly_budget_cents > 0 && (
-										<div className="mt-2">
-											<div className="h-1.5 rounded-full bg-bg-muted overflow-hidden">
-												<div
-													className={`h-full rounded-full transition-all ${budgetPct > 80 ? 'bg-danger' : budgetPct > 60 ? 'bg-warning' : 'bg-primary'}`}
-													style={{ width: `${Math.min(budgetPct, 100)}%` }}
-												/>
+										<div>Runtime: {agent.runtime_type}</div>
+										<div>Heartbeat: {agent.heartbeat_interval_min}m</div>
+										{budgetTotal > 0 && (
+											<div>
+												Budget: ${budgetUsed.toFixed(0)} / ${budgetTotal.toFixed(0)}
 											</div>
-											<span className="text-[10px] text-text-subtle">
-												${(agent.budget_used_cents / 100).toFixed(2)} / $
-												{(agent.monthly_budget_cents / 100).toFixed(2)}
-											</span>
-										</div>
+										)}
+									</div>
+
+									{budgetTotal > 0 && (
+										<BudgetBar used={budgetUsed} total={budgetTotal} className="mt-2" />
 									)}
-								</Card>
+								</div>
 							</Link>
 						);
 					})}

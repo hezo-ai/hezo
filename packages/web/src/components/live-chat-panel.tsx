@@ -75,7 +75,7 @@ export function LiveChatPanel({ companyId, issueId, agents = [] }: LiveChatPanel
 						<div
 							className={`max-w-[80%] rounded-lg px-3 py-1.5 text-sm ${
 								msg.author_type === 'board'
-									? 'bg-accent text-white'
+									? 'bg-accent-blue text-white'
 									: msg.author_type === 'system'
 										? 'bg-bg-subtle text-text-muted italic'
 										: 'bg-bg-subtle text-text'
@@ -120,7 +120,7 @@ export function LiveChatPanel({ companyId, issueId, agents = [] }: LiveChatPanel
 						value={input}
 						onChange={(e) => handleInputChange(e.target.value)}
 						placeholder="Message... (@ to mention an agent)"
-						className="flex-1 text-sm bg-bg-subtle border border-border rounded px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent"
+						className="flex-1 text-sm bg-bg-subtle border border-border rounded px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-blue"
 					/>
 					<Button type="submit" size="sm" disabled={!input.trim() || sendMessage.isPending}>
 						<Send className="w-3.5 h-3.5" />

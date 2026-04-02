@@ -85,7 +85,7 @@ function ProjectDetailPage() {
 								href={`http://localhost:${p.host}`}
 								target="_blank"
 								rel="noopener noreferrer"
-								className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg px-3 py-1.5 text-sm hover:border-primary/50 transition-colors"
+								className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg px-3 py-1.5 text-sm hover:border-border-hover transition-colors"
 							>
 								<ExternalLink className="w-3 h-3" />:{p.container} → :{p.host}
 							</a>
@@ -126,7 +126,7 @@ function ProjectDetailPage() {
 					</form>
 				)}
 				{createRepo.error && (
-					<p className="text-sm text-danger mb-2">
+					<p className="text-sm text-accent-red mb-2">
 						{(createRepo.error as { message: string }).message}
 					</p>
 				)}
@@ -147,7 +147,7 @@ function ProjectDetailPage() {
 								<button
 									type="button"
 									onClick={() => deleteRepo.mutate(r.id)}
-									className="text-text-subtle hover:text-danger"
+									className="text-text-subtle hover:text-accent-red"
 								>
 									<Trash2 className="w-3.5 h-3.5" />
 								</button>

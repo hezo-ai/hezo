@@ -15,7 +15,9 @@ Note that dev docs (prd, schema, impl phases, etc) are in `.dev` folder.
 
 ## Agent Role Docs
 
-Agent role definitions in `.dev/agents/` are generic — they define how each role behaves across any project, not just Hezo. When updating agent role docs, write rules and system prompts that apply to any codebase. Hezo-specific tooling, file paths, and conventions belong here in AGENTS.md.
+Agent role definitions in `.dev/agents/` are the single source of truth for agent system prompts. The seed data in `packages/server/src/db/seed.ts` reads these files at startup and stores their contents as each agent's `system_prompt` in the database. Never duplicate role doc content elsewhere — edit the `.dev/agents/*.md` files directly and the seed will pick up the changes on next DB reset.
+
+When updating agent role docs, write rules and system prompts that apply to any codebase. Hezo-specific tooling, file paths, and conventions belong here in AGENTS.md.
 
 ## Documentation
 
@@ -69,6 +71,8 @@ E2E tests verify full-stack user flows through the browser. They are included in
 
 All UI changes must include e2e tests covering the affected user flows. E2E test files use the `.spec.ts` extension and import helpers from `./helpers`. Use the `authenticate(page)` helper to bypass the master key gate in tests that don't specifically test authentication.
 
+Always run tests via `bun run test` (or `--e2e` / `--skip-e2e` variants) from the project root — never call `npx playwright` or `npx vitest` directly, as vitest's global `expect` conflicts with Playwright's `expect` outside the test runner.
+
 ## Type Safety
 
 Avoid `any` in source code. Use specific types, `unknown`, `Record<string, unknown>`, or typed generics instead. If a library lacks type declarations, install them (e.g. `@types/bun` for Bun APIs) rather than falling back to `any` or `declare const` hacks. The only acceptable place for `any` is test files where JSON response shapes are unpredictable.
@@ -81,6 +85,7 @@ Never commit generated build output (`.js`, `.d.ts`, `.js.map`, `.d.ts.map`) tha
 
 - Use `commander` for CLI argument parsing in all TypeScript binaries and scripts — never parse `process.argv` manually.
 - Use shared constants and enums from `@hezo/shared` (`packages/shared/src/types/common.ts`) instead of hardcoded string literals. Never use raw strings for status values, entity types, approval types, or other enumerated values in application code. If a new enum value is needed, add it to the shared package first.
+- Use `bunx` instead of `npx` for running package binaries (e.g. `bunx playwright test`, `bunx vitest run`).
 
 ## Database Transactions
 

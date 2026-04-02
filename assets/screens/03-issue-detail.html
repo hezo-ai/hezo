@@ -1,0 +1,94 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Hezo — Issue detail</title><link rel="stylesheet" href="shared.css"><script>document.addEventListener('DOMContentLoaded',()=>{const n=document.getElementById('nav-3');if(n)n.classList.add('current');})</script></head><body>
+<nav class="screen-nav">
+<a href="01-home.html" id="nav-1">1. Home</a><a href="02-issues.html" id="nav-2">2. Issues</a><a href="03-issue-detail.html" id="nav-3">3. Issue detail</a><a href="04-live-chat.html" id="nav-4">4. Live chat</a><a href="05-agents.html" id="nav-5">5. Agents</a><a href="06-new-agent.html" id="nav-6">6. New agent</a><a href="07-board-inbox.html" id="nav-7">7. Board inbox</a><a href="08-org-chart.html" id="nav-8">8. Org chart</a><a href="09-projects.html" id="nav-9">9. Projects</a><a href="10-knowledge-base.html" id="nav-10">10. KB</a><a href="11-settings.html" id="nav-11">11. Settings</a><a href="12-account-settings.html" id="nav-12">12. Account</a>
+</nav>
+<div class="page">
+<div class="breadcrumb"><a href="02-issues.html">NoteGenius AI</a><span class="sep">/</span><span class="current">NG-14</span></div>
+<div style="display:grid;grid-template-columns:minmax(0,1fr) 190px;gap:20px;">
+<div>
+  <div style="font-size:13px;color:var(--text-secondary);font-family:var(--font-mono);margin-bottom:4px;">NG-14</div>
+  <h1 style="font-size:20px;font-weight:500;margin-bottom:8px;">Implement OAuth login flow with GitHub</h1>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+    <span class="badge badge-warning">In progress</span>
+    <span class="badge badge-danger">Urgent</span>
+    <span class="badge badge-info">API</span>
+    <span class="badge badge-neutral">Engineer</span>
+  </div>
+  <div style="display:flex;gap:6px;margin-bottom:14px;">
+    <button class="btn-sm">Reassign</button><button class="btn-sm">Change status</button><button class="btn-sm">Pause agent</button><button class="btn-sm">Escalate</button>
+  </div>
+  <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:10px 14px;margin-bottom:14px;font-size:13px;color:var(--text-secondary);line-height:1.5;">
+    <strong style="color:var(--text-primary)">Requirements:</strong> GitHub OAuth via Hezo Connect, JWT sessions, error handling.
+    <strong style="color:var(--text-primary)">Done:</strong> OAuth redirect flow, token exchange.
+    <strong style="color:var(--text-primary)">Next:</strong> JWT signing, session middleware.
+    <div style="margin-top:4px;font-size:11px;color:var(--text-tertiary);">Updated by Engineer · 2h ago</div>
+  </div>
+  <div class="tabs">
+    <span class="tab active">Comments</span>
+    <a href="04-live-chat.html" class="tab">Live chat</a>
+  </div>
+
+  <!-- Comment: Board -->
+  <div style="margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><div class="avatar avatar-sm av-blue">JL</div><span style="font-size:13px;font-weight:500;">James (Board)</span><span style="font-size:12px;color:var(--text-secondary);">3h ago</span></div>
+    <div style="font-size:13px;line-height:1.6;padding-left:34px;">We need GitHub OAuth working through Hezo Connect. JWT for sessions, not server sessions. Make sure error states are handled gracefully.</div>
+  </div>
+
+  <!-- Comment: Architect -->
+  <div style="margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><div class="avatar avatar-sm av-purple">AR</div><span style="font-size:13px;font-weight:500;">Architect</span><span style="font-size:12px;color:var(--text-secondary);">2h ago</span></div>
+    <div style="font-size:13px;line-height:1.6;padding-left:34px;">Tech spec added to .dev/spec.md. OAuth flow: redirect → Hezo Connect → GitHub consent → callback with token → encrypt + store. JWT signed with master key.</div>
+    <div style="font-size:12px;color:var(--text-secondary);cursor:pointer;padding-left:34px;margin-top:4px;">▸ 4 tool calls</div>
+  </div>
+
+  <!-- Comment: Engineer with options -->
+  <div style="margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><div class="avatar avatar-sm av-purple">EN</div><span style="font-size:13px;font-weight:500;">Engineer</span><span style="font-size:12px;color:var(--text-secondary);">1h ago</span></div>
+    <div style="font-size:13px;line-height:1.6;padding-left:34px;">OAuth redirect and token exchange are working. Need a decision on token storage before continuing.</div>
+    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:12px 14px;margin-left:34px;margin-top:8px;">
+      <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Where should I store the refresh token?</div>
+      <div style="background:var(--bg-primary);border:0.5px solid var(--accent-blue);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:6px;background:var(--accent-blue-bg);">
+        <div style="font-size:13px;font-weight:500;">Secrets vault (encrypted) ✓</div>
+        <div style="font-size:12px;color:var(--text-secondary);">AES-256-GCM via master key. Consistent with other secrets.</div>
+      </div>
+      <div style="background:var(--bg-primary);border:0.5px solid var(--border);border-radius:var(--radius-md);padding:8px 12px;">
+        <div style="font-size:13px;font-weight:500;">HttpOnly cookie</div>
+        <div style="font-size:12px;color:var(--text-secondary);">Browser-managed. Simpler but less control.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- System comment -->
+  <div style="margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><div class="avatar avatar-sm av-neutral">SY</div><span style="font-size:13px;font-weight:500;">System</span><span style="font-size:12px;color:var(--text-secondary);">1h ago</span></div>
+    <div style="font-size:12px;color:var(--text-secondary);padding-left:34px;">Board chose: Secrets vault (encrypted)</div>
+  </div>
+
+  <!-- Engineer with trace -->
+  <div style="margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><div class="avatar avatar-sm av-purple">EN</div><span style="font-size:13px;font-weight:500;">Engineer</span><span style="font-size:12px;color:var(--text-secondary);">45m ago</span></div>
+    <div style="font-size:13px;line-height:1.6;padding-left:34px;">Got it. Implementing secrets vault storage. Working on JWT signing and session middleware now.</div>
+    <div style="font-size:12px;color:var(--text-secondary);cursor:pointer;padding-left:34px;margin-top:4px;">▸ 12 tool calls</div>
+    <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:8px 12px;margin-left:34px;margin-top:6px;font-size:12px;font-family:var(--font-mono);color:var(--text-secondary);line-height:1.5;">
+      read_file .dev/spec.md → 2.1s<br>edit_file src/auth/oauth.ts → 0.8s<br>edit_file src/auth/jwt.ts → 1.2s<br>run_tests src/auth/ → 4.3s ✓
+    </div>
+  </div>
+</div>
+
+<!-- Sidebar -->
+<div style="font-size:13px;">
+  <div style="margin-bottom:18px;"><div class="field-label" style="margin-bottom:6px">Cost</div><div style="font-size:16px;font-weight:500;">$1.24</div></div>
+  <div style="margin-bottom:18px;"><div class="field-label" style="margin-bottom:6px">Blocked by</div><span class="badge badge-danger mono" style="font-size:11px;">NG-9</span></div>
+  <div style="margin-bottom:18px;">
+    <div class="field-label" style="margin-bottom:6px">Goal chain</div>
+    <ul style="list-style:none;padding:0;">
+      <li style="padding:6px 0 6px 12px;border-left:2px solid var(--text-primary);font-size:12px;color:var(--text-secondary);"><strong style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary);">Mission</strong>AI-powered note-taking for teams</li>
+      <li style="padding:6px 0 6px 12px;border-left:2px solid var(--border);font-size:12px;color:var(--text-secondary);"><strong style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary);">Project</strong>Core API platform</li>
+      <li style="padding:6px 0 6px 12px;border-left:2px solid var(--border);font-size:12px;color:var(--text-secondary);"><strong style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-tertiary);">Task</strong>GitHub OAuth login</li>
+    </ul>
+  </div>
+  <div style="margin-bottom:18px;"><div class="field-label" style="margin-bottom:6px">Agent process</div><div style="font-size:12px;color:var(--accent-green);">Running · 45m</div></div>
+  <div><div class="field-label" style="margin-bottom:6px">Created</div><div style="font-size:12px;">Mar 28, 2026</div></div>
+</div>
+</div>
+</div></body></html>

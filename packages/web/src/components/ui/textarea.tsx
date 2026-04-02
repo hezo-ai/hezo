@@ -9,13 +9,16 @@ export function Textarea({ label, className = '', id, ...props }: TextareaProps)
 	return (
 		<div className="flex flex-col gap-1.5">
 			{label && (
-				<label htmlFor={inputId} className="text-sm text-text-muted">
+				<label
+					htmlFor={inputId}
+					className="text-xs font-medium uppercase tracking-wider text-text-muted"
+				>
 					{label}
 				</label>
 			)}
 			<textarea
 				id={inputId}
-				className={`rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text placeholder:text-text-subtle outline-none focus:border-primary min-h-[80px] resize-y ${className}`}
+				className={`rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] text-text placeholder:text-text-subtle outline-none focus:border-border-hover min-h-[80px] resize-y leading-relaxed ${className}`}
 				{...props}
 			/>
 		</div>
