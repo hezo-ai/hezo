@@ -268,8 +268,10 @@ async function runAvailableMigrations(db: PGlite): Promise<void> {
 
 async function runSeed(db: PGlite): Promise<void> {
 	try {
+		const { loadAgentRoles } = await import('./db/agent-roles.js');
 		const { seedBuiltins } = await import('./db/seed.js');
-		await seedBuiltins(db);
+		const roleDocs = await loadAgentRoles();
+		await seedBuiltins(db, roleDocs);
 	} catch {
 		// Seed module may not be available in minimal builds
 	}

@@ -7,7 +7,8 @@
 		"build": "tsc",
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit",
-		"build:migrations": "bun run scripts/bundle-migrations.ts"
+		"build:migrations": "bun run scripts/bundle-migrations.ts",
+		"build:agents": "bun run scripts/bundle-agents.ts"
 	},
 	"dependencies": {
 		"@electric-sql/pglite": "^0.2",

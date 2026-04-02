@@ -3,6 +3,7 @@ import type { PGlite } from '@electric-sql/pglite';
 interface ResolveContext {
 	companyId: string;
 	projectId?: string;
+	agentId?: string;
 }
 
 export async function resolveSystemPrompt(
@@ -16,19 +17,34 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{current_date\}\}/g, new Date().toISOString().slice(0, 10));
 	}
 
-	if (resolved.includes('{{company_name}}')) {
-		const result = await db.query<{ name: string }>('SELECT name FROM companies WHERE id = $1', [
-			ctx.companyId,
-		]);
-		resolved = resolved.replace(/\{\{company_name\}\}/g, result.rows[0]?.name ?? '');
-	}
+	const needsCompany =
+		resolved.includes('{{company_name}}') ||
+		resolved.includes('{{company_description}}') ||
+		resolved.includes('{{company_mission}}');
 
-	if (resolved.includes('{{company_description}}')) {
-		const result = await db.query<{ description: string }>(
-			'SELECT description FROM companies WHERE id = $1',
+	if (needsCompany) {
+		const result = await db.query<{ name: string; description: string }>(
+			'SELECT name, description FROM companies WHERE id = $1',
 			[ctx.companyId],
 		);
-		resolved = resolved.replace(/\{\{company_description\}\}/g, result.rows[0]?.description ?? '');
+		const row = result.rows[0];
+		resolved = resolved.replace(/\{\{company_name\}\}/g, row?.name ?? '');
+		resolved = resolved.replace(/\{\{company_description\}\}/g, row?.description ?? '');
+		resolved = resolved.replace(/\{\{company_mission\}\}/g, row?.description ?? '');
+	}
+
+	if (resolved.includes('{{reports_to}}')) {
+		let managerName = '';
+		if (ctx.agentId) {
+			const result = await db.query<{ display_name: string }>(
+				`SELECT m.display_name FROM member_agents ma
+				 JOIN members m ON m.id = ma.reports_to
+				 WHERE ma.id = $1`,
+				[ctx.agentId],
+			);
+			managerName = result.rows[0]?.display_name ?? '';
+		}
+		resolved = resolved.replace(/\{\{reports_to\}\}/g, managerName);
 	}
 
 	if (resolved.includes('{{kb_context}}')) {
@@ -55,12 +71,12 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{company_preferences_context\}\}/g, prefsText);
 	}
 
-	// Project docs live in the git repo (.dev/ folder), not in the DB.
-	// The agent accesses them from the filesystem inside the container.
 	resolved = resolved.replace(
 		/\{\{project_docs_context\}\}/g,
 		'Project docs are in the .dev/ folder of the designated repo.',
 	);
+
+	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
 
 	return resolved;
 }

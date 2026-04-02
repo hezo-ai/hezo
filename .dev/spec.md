@@ -2002,7 +2002,7 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `audit_log` | Append-only. Never updated or deleted. |
 | `kb_docs` | Knowledge base documents. AGENTS.md is a special KB doc written to disk. |
 | `live_chats` | Persistent live chat per issue. One ongoing conversation. |
-| `project_docs` | Project-level shared documents (prd, tech spec, implementation plan, research, UI decisions, marketing plan). |
+| ~~`project_docs`~~ | _Removed — project docs live in the designated repo's `.dev/` folder, versioned by git._ |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. |
 | `plugins` | Installed plugins. Config, capabilities, status. Local-only for MVP. |
 | `notification_preferences` | Per-user notification routing. |
@@ -2029,7 +2029,7 @@ audit_actor_type:     board, agent, system
 repo_host_type:       github
 platform_type:        github, gmail, gitlab, stripe, posthog, railway, vercel, digitalocean, x
 connection_status:    active, expired, disconnected
-project_doc_type:     prd, tech_spec, implementation_plan, research, ui_design_decisions, marketing_plan, other
+project_doc_type:     (removed — project docs are files in .dev/)
 auth_provider:        github, gitlab
 ```
 

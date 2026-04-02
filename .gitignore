@@ -8,6 +8,7 @@ dist/
 *.tsbuildinfo
 .turbo/
 migrations-bundle.json
+agents-bundle.json
 packages/server/static/
 *.db
 .hezo/

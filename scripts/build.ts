@@ -33,6 +33,7 @@ await Promise.all([
 	(async () => {
 		await run('packages/server', ['bun', 'run', 'build']);
 		await run('packages/server', ['bun', 'run', 'build:migrations']);
+		await run('packages/server', ['bun', 'run', 'build:agents']);
 	})(),
 	run('packages/connect', ['bun', 'run', 'build']),
 	run('packages/web', ['bun', 'run', 'build']),
