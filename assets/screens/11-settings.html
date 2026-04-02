@@ -1,0 +1,68 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Hezo — Settings</title><link rel="stylesheet" href="shared.css"><script>document.addEventListener('DOMContentLoaded',()=>{document.getElementById('nav-11').classList.add('current');})</script>
+<style>.settings-layout{display:grid;grid-template-columns:160px minmax(0,1fr);gap:24px;}.snav{list-style:none;}.snav li{padding:6px 12px;font-size:13px;color:var(--text-secondary);cursor:pointer;border-radius:var(--radius-md);margin-bottom:2px;}.snav li:hover{color:var(--text-primary);background:var(--bg-secondary);}.snav li.active{color:var(--text-primary);font-weight:500;background:var(--bg-secondary);}.platform-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;}.plat{background:var(--bg-primary);border:0.5px solid var(--border);border-radius:var(--radius-md);padding:10px 12px;text-align:center;cursor:pointer;}.plat:hover{border-color:var(--border-hover);}.budget-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;}.bcard{background:var(--bg-secondary);border-radius:var(--radius-md);padding:12px 16px;}.member-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:0.5px solid var(--border);}</style></head><body>
+<nav class="screen-nav"><a href="01-home.html" id="nav-1">1. Home</a><a href="02-issues.html" id="nav-2">2. Issues</a><a href="03-issue-detail.html" id="nav-3">3. Issue detail</a><a href="04-live-chat.html" id="nav-4">4. Live chat</a><a href="05-agents.html" id="nav-5">5. Agents</a><a href="06-new-agent.html" id="nav-6">6. New agent</a><a href="07-board-inbox.html" id="nav-7">7. Board inbox</a><a href="08-org-chart.html" id="nav-8">8. Org chart</a><a href="09-projects.html" id="nav-9">9. Projects</a><a href="10-knowledge-base.html" id="nav-10">10. KB</a><a href="11-settings.html" id="nav-11">11. Settings</a><a href="12-account-settings.html" id="nav-12">12. Account</a></nav>
+<div class="page">
+<div class="breadcrumb"><span class="current">NoteGenius AI</span></div>
+<div class="page-header"><h1>Settings</h1></div>
+<div class="tabs">
+<a href="02-issues.html" class="tab">Issues<span class="count">14</span></a>
+<a href="05-agents.html" class="tab">Agents<span class="count">9</span></a>
+<a href="09-projects.html" class="tab">Projects<span class="count">3</span></a>
+<a href="08-org-chart.html" class="tab">Org chart</a>
+<a href="10-knowledge-base.html" class="tab">Knowledge base</a>
+<span class="tab active">Settings</span>
+</div>
+<div class="settings-layout">
+<ul class="snav">
+<li class="active">General</li><li>Connected platforms</li><li>Secrets vault</li><li>MCP servers</li><li>MPP config</li><li>Budget</li><li>Preferences</li><li>Members</li><li>Plugins</li><li>Slack</li><li>SSH key</li><li>Audit log</li>
+</ul>
+<div>
+  <div class="section">
+    <div class="section-title">General</div>
+    <div class="section-desc">Company identity and mission statement.</div>
+    <div style="margin-bottom:12px;max-width:400px;"><div class="field-label">Company name</div><input type="text" value="NoteGenius AI"></div>
+    <div style="margin-bottom:12px;max-width:400px;"><div class="field-label">Email</div><input type="text" value="team@notegenius.ai"></div>
+    <div style="margin-bottom:12px;max-width:100px;"><div class="field-label">Identifier prefix</div><input type="text" value="NG"></div>
+    <div><div class="field-label">Mission</div><textarea>Build the best AI-powered note-taking and knowledge management platform for distributed teams. Focus on real-time collaboration, smart search, and seamless integrations.</textarea></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Connected platforms</div>
+    <div class="section-desc">OAuth connections managed via Hezo Connect. Tokens stored encrypted.</div>
+    <div class="platform-grid">
+      <div class="plat"><div style="font-size:13px;font-weight:500;">GitHub</div><div style="font-size:11px;color:var(--accent-green);">Connected</div></div>
+      <div class="plat"><div style="font-size:13px;font-weight:500;">Gmail</div><div style="font-size:11px;color:var(--accent-green);">Connected</div></div>
+      <div class="plat"><div style="font-size:13px;font-weight:500;">Railway</div><div style="font-size:11px;color:var(--text-secondary);">Not connected</div></div>
+      <div class="plat"><div style="font-size:13px;font-weight:500;">Vercel</div><div style="font-size:11px;color:var(--text-secondary);">Not connected</div></div>
+      <div class="plat"><div style="font-size:13px;font-weight:500;">Stripe</div><div style="font-size:11px;color:var(--text-secondary);">Not connected</div></div>
+      <div class="plat"><div style="font-size:13px;font-weight:500;">PostHog</div><div style="font-size:11px;color:var(--text-secondary);">Not connected</div></div>
+      <div class="plat"><div style="font-size:13px;font-weight:500;">GitLab</div><div style="font-size:11px;color:var(--text-secondary);">Not connected</div></div>
+      <div class="plat"><div style="font-size:13px;font-weight:500;">DigitalOcean</div><div style="font-size:11px;color:var(--text-secondary);">Not connected</div></div>
+      <div class="plat"><div style="font-size:13px;font-weight:500;">X</div><div style="font-size:11px;color:var(--text-secondary);">Not connected</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Budget overview</div>
+    <div class="budget-cards">
+      <div class="bcard"><div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">Monthly budget</div><div style="font-size:20px;font-weight:500;">$200</div></div>
+      <div class="bcard"><div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">Used this month</div><div style="font-size:20px;font-weight:500;">$42</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Members</div>
+    <div class="section-desc">Board members and team members with access to this company.</div>
+    <div class="member-row">
+      <div style="display:flex;align-items:center;gap:8px;"><div class="avatar avatar-sm av-blue" style="width:28px;height:28px;font-size:11px;">JL</div><div><div style="font-size:13px;font-weight:500;">James Lee</div><div style="font-size:12px;color:var(--text-secondary);">via GitHub</div></div></div>
+      <span class="badge badge-purple">Board</span>
+    </div>
+    <div class="member-row">
+      <div style="display:flex;align-items:center;gap:8px;"><div class="avatar avatar-sm av-green" style="width:28px;height:28px;font-size:11px;">SK</div><div><div style="font-size:13px;font-weight:500;">Sarah Kim</div><div style="font-size:12px;color:var(--text-secondary);">Frontend Developer · Web app project</div></div></div>
+      <span class="badge badge-neutral">Member</span>
+    </div>
+    <div style="margin-top:10px;"><button class="btn-primary">+ Invite member</button></div>
+  </div>
+</div>
+</div>
+</div></body></html>

@@ -34,7 +34,7 @@ function KbDocViewPage() {
 						variant="ghost"
 						size="sm"
 						onClick={() => setShowHistory(!showHistory)}
-						className={showHistory ? 'text-primary' : ''}
+						className={showHistory ? 'text-accent-blue-text' : ''}
 					>
 						<Clock className="w-3.5 h-3.5" /> History
 					</Button>
@@ -46,7 +46,7 @@ function KbDocViewPage() {
 					<Button
 						variant="ghost"
 						size="sm"
-						className="text-danger"
+						className="text-accent-red"
 						onClick={async () => {
 							if (confirm('Delete this document?')) {
 								await deleteDoc.mutateAsync(slug);
@@ -83,7 +83,7 @@ function KbDocViewPage() {
 				</div>
 			)}
 
-			<div className="prose prose-invert prose-sm max-w-none text-text [&_a]:text-primary [&_h1]:text-text [&_h2]:text-text [&_h3]:text-text [&_strong]:text-text [&_code]:text-primary [&_code]:bg-bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-bg-muted [&_pre]:border [&_pre]:border-border">
+			<div className="prose prose-sm max-w-none text-text [&_a]:text-accent-blue-text [&_h1]:text-text [&_h2]:text-text [&_h3]:text-text [&_strong]:text-text [&_code]:text-accent-blue-text [&_code]:bg-bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-bg-muted [&_pre]:border [&_pre]:border-border">
 				<Markdown remarkPlugins={[remarkGfm]}>{doc.content ?? ''}</Markdown>
 			</div>
 		</div>

@@ -38,7 +38,7 @@ export function CreateCompanyDialog({ open, onOpenChange }: CreateCompanyDialogP
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
-				<Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md rounded-xl border border-border bg-bg-subtle p-6 shadow-2xl">
+				<Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md rounded-xl border border-border bg-bg-elevated p-6 shadow-2xl">
 					<div className="flex items-center justify-between mb-4">
 						<Dialog.Title className="text-lg font-semibold">Create Company</Dialog.Title>
 						<Dialog.Close asChild>
@@ -65,7 +65,7 @@ export function CreateCompanyDialog({ open, onOpenChange }: CreateCompanyDialogP
 								id="company-type"
 								value={typeId}
 								onChange={(e) => setTypeId(e.target.value)}
-								className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-primary"
+								className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
 							>
 								<option value="">None</option>
 								{types?.map((t) => (
@@ -77,7 +77,7 @@ export function CreateCompanyDialog({ open, onOpenChange }: CreateCompanyDialogP
 						</div>
 
 						{createCompany.error && (
-							<p className="text-sm text-danger">
+							<p className="text-sm text-accent-red">
 								{(createCompany.error as { message: string }).message}
 							</p>
 						)}

@@ -127,7 +127,7 @@ function AgentDetailPage() {
 									{(agent.monthly_budget_cents / 100).toFixed(2)}
 								</div>
 								{pct > 80 && (
-									<div className="text-xs text-danger mt-1">Budget nearly exhausted</div>
+									<div className="text-xs text-accent-red mt-1">Budget nearly exhausted</div>
 								)}
 							</>
 						);
@@ -170,7 +170,7 @@ function AgentDetailPage() {
 									<span className="text-text-subtle ml-auto">exit: {run.exit_code}</span>
 								)}
 								{run.error && (
-									<span className="text-danger ml-2 truncate max-w-[200px]">{run.error}</span>
+									<span className="text-accent-red ml-2 truncate max-w-[200px]">{run.error}</span>
 								)}
 							</div>
 						))}
@@ -197,7 +197,7 @@ function AgentDetailPage() {
 					<select
 						value={reportsTo}
 						onChange={(e) => setReportsTo(e.target.value)}
-						className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-primary"
+						className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
 					>
 						<option value="">None (Board)</option>
 						{otherAgents.map((a) => (

@@ -60,13 +60,13 @@ export function MasterKeyGate({ state }: MasterKeyGateProps) {
 		<Dialog.Root open>
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 bg-black/80 backdrop-blur-sm" />
-				<Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md rounded-xl border border-border bg-bg-subtle p-6 shadow-2xl">
+				<Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md rounded-xl border border-border bg-bg-elevated p-6 shadow-2xl">
 					<div className="flex flex-col items-center gap-2 mb-6">
-						<div className="p-3 rounded-full bg-primary/10">
+						<div className="p-3 rounded-full bg-accent-blue-bg">
 							{isUnset ? (
-								<KeyRound className="w-6 h-6 text-primary" />
+								<KeyRound className="w-6 h-6 text-accent-blue-text" />
 							) : (
-								<ShieldCheck className="w-6 h-6 text-primary" />
+								<ShieldCheck className="w-6 h-6 text-accent-blue-text" />
 							)}
 						</div>
 						<Dialog.Title className="text-lg font-semibold text-text">
@@ -109,7 +109,7 @@ export function MasterKeyGate({ state }: MasterKeyGateProps) {
 							/>
 						)}
 
-						{error && <p className="text-sm text-danger">{error}</p>}
+						{error && <p className="text-sm text-accent-red">{error}</p>}
 
 						<Button type="submit" disabled={loading || !key.trim()}>
 							{loading && <Loader2 className="w-4 h-4 animate-spin" />}

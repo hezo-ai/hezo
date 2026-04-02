@@ -1,0 +1,68 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Hezo — Org chart</title><link rel="stylesheet" href="shared.css"><script>document.addEventListener('DOMContentLoaded',()=>{document.getElementById('nav-8').classList.add('current');})</script>
+<style>.org-node{background:var(--bg-primary);border:0.5px solid var(--border);border-radius:var(--radius-md);padding:8px 14px;text-align:center;font-size:13px;font-weight:500;position:relative;cursor:pointer;min-width:110px;}.org-node:hover{border-color:var(--border-hover);}.org-node .status-dot{position:absolute;top:6px;left:6px;width:6px;height:6px;border-radius:50%;}.org-node .role{font-size:11px;font-weight:400;color:var(--text-secondary);}.org-level{display:flex;justify-content:center;gap:16px;margin-bottom:0;position:relative;}.org-connector{display:flex;justify-content:center;padding:12px 0;}.org-line{width:0.5px;height:24px;background:var(--border);}.legend{display:flex;gap:16px;font-size:12px;color:var(--text-secondary);margin-top:24px;justify-content:center;}</style></head><body>
+<nav class="screen-nav"><a href="01-home.html" id="nav-1">1. Home</a><a href="02-issues.html" id="nav-2">2. Issues</a><a href="03-issue-detail.html" id="nav-3">3. Issue detail</a><a href="04-live-chat.html" id="nav-4">4. Live chat</a><a href="05-agents.html" id="nav-5">5. Agents</a><a href="06-new-agent.html" id="nav-6">6. New agent</a><a href="07-board-inbox.html" id="nav-7">7. Board inbox</a><a href="08-org-chart.html" id="nav-8">8. Org chart</a><a href="09-projects.html" id="nav-9">9. Projects</a><a href="10-knowledge-base.html" id="nav-10">10. KB</a><a href="11-settings.html" id="nav-11">11. Settings</a><a href="12-account-settings.html" id="nav-12">12. Account</a></nav>
+<div class="page">
+<div class="breadcrumb"><span class="current">NoteGenius AI</span></div>
+<div class="page-header"><h1>NoteGenius AI</h1><div class="header-actions"><a href="07-board-inbox.html" class="btn-secondary">Board inbox <span class="badge badge-danger">5</span></a></div></div>
+<div class="tabs">
+<a href="02-issues.html" class="tab">Issues<span class="count">14</span></a>
+<a href="05-agents.html" class="tab">Agents<span class="count">9</span></a>
+<a href="09-projects.html" class="tab">Projects<span class="count">3</span></a>
+<span class="tab active">Org chart</span>
+<a href="10-knowledge-base.html" class="tab">Knowledge base</a>
+<a href="11-settings.html" class="tab">Settings</a>
+</div>
+
+<div style="padding:20px 0;overflow-x:auto;">
+  <!-- Board -->
+  <div class="org-level"><div class="org-node" style="background:var(--bg-secondary);"><div class="role">Board of directors</div>You (Board)</div></div>
+  <div class="org-connector"><div class="org-line"></div></div>
+
+  <!-- CEO -->
+  <div class="org-level"><div class="org-node"><div class="status-dot" style="background:var(--accent-green);"></div>CEO</div></div>
+  <div class="org-connector" style="position:relative;height:40px;">
+    <svg width="100%" height="40" style="position:absolute;top:0;left:0;">
+      <line x1="50%" y1="0" x2="16%" y2="40" stroke="var(--border)" stroke-width="0.5"/>
+      <line x1="50%" y1="0" x2="50%" y2="40" stroke="var(--border)" stroke-width="0.5"/>
+      <line x1="50%" y1="0" x2="84%" y2="40" stroke="var(--border)" stroke-width="0.5"/>
+    </svg>
+  </div>
+
+  <!-- L2: PL, Architect, Researcher -->
+  <div class="org-level">
+    <div class="org-node"><div class="status-dot" style="background:var(--accent-green);"></div>Product Lead</div>
+    <div class="org-node"><div class="status-dot" style="background:var(--accent-green);"></div>Architect</div>
+    <div class="org-node"><div class="status-dot" style="background:var(--text-tertiary);"></div>Researcher</div>
+  </div>
+
+  <!-- Connector from Architect to L3 -->
+  <div class="org-connector" style="position:relative;height:40px;">
+    <svg width="100%" height="40" style="position:absolute;top:0;left:0;">
+      <line x1="50%" y1="0" x2="20%" y2="40" stroke="var(--border)" stroke-width="0.5"/>
+      <line x1="50%" y1="0" x2="40%" y2="40" stroke="var(--border)" stroke-width="0.5"/>
+      <line x1="50%" y1="0" x2="60%" y2="40" stroke="var(--border)" stroke-width="0.5"/>
+      <line x1="50%" y1="0" x2="80%" y2="40" stroke="var(--border)" stroke-width="0.5"/>
+    </svg>
+  </div>
+
+  <!-- L3: Engineer, QA, UI Designer, DevOps -->
+  <div class="org-level">
+    <div class="org-node"><div class="status-dot" style="background:var(--accent-green);"></div>Engineer</div>
+    <div class="org-node"><div class="status-dot" style="background:var(--accent-green);"></div>QA Engineer</div>
+    <div class="org-node"><div class="status-dot" style="background:var(--accent-green);"></div>UI Designer</div>
+    <div class="org-node"><div class="status-dot" style="background:var(--text-tertiary);"></div>DevOps</div>
+  </div>
+
+  <!-- Separate: Marketing Lead reports to CEO -->
+  <div style="margin-top:24px;padding-top:16px;border-top:0.5px solid var(--border);">
+    <div style="font-size:12px;color:var(--text-secondary);text-align:center;margin-bottom:8px;">Also reports to CEO:</div>
+    <div class="org-level"><div class="org-node"><div class="status-dot" style="background:var(--accent-amber);"></div>Marketing Lead<div class="role">Paused</div></div></div>
+  </div>
+
+  <div class="legend">
+    <span><span style="color:var(--accent-green);">●</span> Active</span>
+    <span><span style="color:var(--accent-amber);">●</span> Paused</span>
+    <span><span style="color:var(--text-tertiary);">●</span> Idle</span>
+  </div>
+</div>
+</div></body></html>

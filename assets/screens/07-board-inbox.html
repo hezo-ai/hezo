@@ -1,0 +1,48 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Hezo — Board inbox</title><link rel="stylesheet" href="shared.css"><script>document.addEventListener('DOMContentLoaded',()=>{document.getElementById('nav-7').classList.add('current');})</script>
+<style>.inbox-item{padding:14px 16px;border-bottom:0.5px solid var(--border);}.inbox-item:last-child{border-bottom:none;}.inbox-item.unread{background:var(--bg-secondary);}.item-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;}.item-title{font-size:13px;font-weight:500;margin-bottom:4px;}.item-desc{font-size:12px;color:var(--text-secondary);line-height:1.5;margin-bottom:8px;}.item-actions{display:flex;gap:6px;}.scope-pills{display:flex;gap:4px;margin-bottom:8px;}.scope{font-size:11px;padding:2px 8px;border-radius:6px;background:var(--bg-secondary);color:var(--text-secondary);cursor:pointer;border:0.5px solid transparent;}.scope.active{border-color:var(--accent-blue);background:var(--accent-blue-bg);color:var(--accent-blue-text);}.dot-unread{width:6px;height:6px;border-radius:50%;background:var(--accent-blue);margin-right:6px;flex-shrink:0;margin-top:4px;}</style></head><body>
+<nav class="screen-nav"><a href="01-home.html" id="nav-1">1. Home</a><a href="02-issues.html" id="nav-2">2. Issues</a><a href="03-issue-detail.html" id="nav-3">3. Issue detail</a><a href="04-live-chat.html" id="nav-4">4. Live chat</a><a href="05-agents.html" id="nav-5">5. Agents</a><a href="06-new-agent.html" id="nav-6">6. New agent</a><a href="07-board-inbox.html" id="nav-7">7. Board inbox</a><a href="08-org-chart.html" id="nav-8">8. Org chart</a><a href="09-projects.html" id="nav-9">9. Projects</a><a href="10-knowledge-base.html" id="nav-10">10. KB</a><a href="11-settings.html" id="nav-11">11. Settings</a><a href="12-account-settings.html" id="nav-12">12. Account</a></nav>
+<div class="page">
+<div class="breadcrumb"><a href="02-issues.html">NoteGenius AI</a><span class="sep">/</span><span class="current">Board inbox</span></div>
+<div style="background:var(--bg-primary);border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;">
+<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:0.5px solid var(--border);"><span style="font-size:16px;font-weight:500;">Board inbox</span><span style="font-size:12px;color:var(--text-secondary);">5 unread</span></div>
+<div style="display:flex;gap:6px;padding:12px 16px;border-bottom:0.5px solid var(--border);flex-wrap:wrap;">
+<span class="filter-pill active">All</span><span class="filter-pill">Approvals</span><span class="filter-pill">Design reviews</span><span class="filter-pill">Budget</span><span class="filter-pill">Errors</span><span class="filter-pill">OAuth</span><span class="filter-pill">Escalations</span>
+</div>
+
+<div class="inbox-item unread">
+<div class="item-top"><div style="display:flex;align-items:flex-start;"><div class="dot-unread"></div><span class="badge badge-purple">Secret access</span></div><span style="font-size:11px;color:var(--text-tertiary);">12m ago</span></div>
+<div class="item-title">Engineer requests access to GITHUB_ACCESS_TOKEN</div>
+<div class="item-desc">Needed for OAuth callback implementation on NG-14. Agent says: "Required to exchange auth code for access token via GitHub API."</div>
+<div class="scope-pills"><span class="scope active">Single use</span><span class="scope">Project</span><span class="scope">Company</span></div>
+<div class="item-actions"><button class="btn-approve">Approve</button><button class="btn-sm">Deny</button></div>
+</div>
+
+<div class="inbox-item unread">
+<div class="item-top"><div style="display:flex;align-items:flex-start;"><div class="dot-unread"></div><span class="badge badge-info">Design review</span></div><span style="font-size:11px;color:var(--text-tertiary);">45m ago</span></div>
+<div class="item-title">UI Designer submitted login page mockup</div>
+<div class="item-desc">HTML preview for the OAuth login/signup flow. NG-13.</div>
+<div class="item-actions"><button class="btn-sm">View preview</button><button class="btn-approve">Approve</button><button class="btn-sm">Request changes</button></div>
+</div>
+
+<div class="inbox-item unread">
+<div class="item-top"><div style="display:flex;align-items:flex-start;"><div class="dot-unread"></div><span class="badge badge-warning">Budget alert</span></div><span style="font-size:11px;color:var(--text-tertiary);">1h ago</span></div>
+<div class="item-title">Marketing Lead at 95% budget ($19 / $20)</div>
+<div class="item-desc">Agent has been auto-paused. Increase budget to resume.</div>
+<div class="item-actions"><button class="btn-sm">Adjust budget</button><button class="btn-sm">Acknowledge</button></div>
+</div>
+
+<div class="inbox-item">
+<div class="item-top"><span class="badge badge-success">OAuth request</span><span style="font-size:11px;color:var(--text-tertiary);">2h ago</span></div>
+<div class="item-title">DevOps needs Railway access for staging deploy</div>
+<div class="item-desc">Connect Railway via Hezo Connect to enable auto-deploy to staging. Link valid for 24h.</div>
+<div class="item-actions"><button class="btn-primary" style="font-size:12px;padding:5px 14px;">Authorize Railway</button><button class="btn-sm">Dismiss</button></div>
+</div>
+
+<div class="inbox-item">
+<div class="item-top"><span class="badge badge-pink">Escalation</span><span style="font-size:11px;color:var(--text-tertiary);">3h ago</span></div>
+<div class="item-title">CEO escalated: Engineer vs Architect disagree on auth middleware</div>
+<div class="item-desc">Engineer wants express-session, Architect insists on stateless JWT. CEO unable to resolve.</div>
+<div class="item-actions"><a href="03-issue-detail.html" class="btn-sm" style="text-decoration:none;">View issue</a></div>
+</div>
+</div>
+</div></body></html>

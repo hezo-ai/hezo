@@ -1,0 +1,45 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Hezo — Projects</title><link rel="stylesheet" href="shared.css"><script>document.addEventListener('DOMContentLoaded',()=>{document.getElementById('nav-9').classList.add('current');})</script>
+<style>.pcard{background:var(--bg-primary);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:16px 20px;margin-bottom:10px;cursor:pointer;transition:border-color .15s;}.pcard:hover{border-color:var(--border-hover);}.repo-chip{font-size:11px;padding:3px 8px;border-radius:6px;background:var(--bg-secondary);color:var(--text-secondary);font-family:var(--font-mono);display:inline-flex;align-items:center;gap:4px;}</style></head><body>
+<nav class="screen-nav"><a href="01-home.html" id="nav-1">1. Home</a><a href="02-issues.html" id="nav-2">2. Issues</a><a href="03-issue-detail.html" id="nav-3">3. Issue detail</a><a href="04-live-chat.html" id="nav-4">4. Live chat</a><a href="05-agents.html" id="nav-5">5. Agents</a><a href="06-new-agent.html" id="nav-6">6. New agent</a><a href="07-board-inbox.html" id="nav-7">7. Board inbox</a><a href="08-org-chart.html" id="nav-8">8. Org chart</a><a href="09-projects.html" id="nav-9">9. Projects</a><a href="10-knowledge-base.html" id="nav-10">10. KB</a><a href="11-settings.html" id="nav-11">11. Settings</a><a href="12-account-settings.html" id="nav-12">12. Account</a></nav>
+<div class="page">
+<div class="breadcrumb"><span class="current">NoteGenius AI</span></div>
+<div class="page-header"><h1>NoteGenius AI</h1><div class="header-actions"><a href="07-board-inbox.html" class="btn-secondary">Board inbox <span class="badge badge-danger">5</span></a><button class="btn-primary">+ New project</button></div></div>
+<div class="tabs">
+<a href="02-issues.html" class="tab">Issues<span class="count">14</span></a>
+<a href="05-agents.html" class="tab">Agents<span class="count">9</span></a>
+<span class="tab active">Projects<span class="count">3</span></span>
+<a href="08-org-chart.html" class="tab">Org chart</a>
+<a href="10-knowledge-base.html" class="tab">Knowledge base</a>
+<a href="11-settings.html" class="tab">Settings</a>
+</div>
+
+<div class="pcard">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:15px;font-weight:500;">Core API</span><span class="badge badge-info">Designated</span></div>
+    <span class="badge badge-success">Container running</span>
+  </div>
+  <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">Build the backend platform: auth, data layer, real-time sync, agent orchestration, and REST + MCP API.</div>
+  <div style="display:flex;gap:16px;font-size:12px;color:var(--text-secondary);margin-bottom:10px;"><div><strong style="color:var(--text-primary)">8</strong> issues</div><div><strong style="color:var(--text-primary)">2</strong> repos</div><div><strong style="color:var(--text-primary)">5</strong> docs in .dev/</div></div>
+  <div style="display:flex;gap:6px;"><span class="repo-chip">⌥ api</span><span class="repo-chip">⌥ shared-types</span></div>
+</div>
+
+<div class="pcard">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <span style="font-size:15px;font-weight:500;">Web App</span>
+    <span class="badge badge-success">Container running</span>
+  </div>
+  <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">React frontend with real-time sync via TanStack DB. Dashboard, issue tracker, agent management UI.</div>
+  <div style="display:flex;gap:16px;font-size:12px;color:var(--text-secondary);margin-bottom:10px;"><div><strong style="color:var(--text-primary)">4</strong> issues</div><div><strong style="color:var(--text-primary)">1</strong> repo</div><div><strong style="color:var(--text-primary)">3</strong> docs in .dev/</div></div>
+  <div style="display:flex;gap:6px;"><span class="repo-chip">⌥ frontend</span></div>
+</div>
+
+<div class="pcard">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <span style="font-size:15px;font-weight:500;">Infrastructure</span>
+    <span class="badge badge-neutral">Container stopped</span>
+  </div>
+  <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">CI/CD pipelines, staging/production deploy config, monitoring, and database migration tooling.</div>
+  <div style="display:flex;gap:16px;font-size:12px;color:var(--text-secondary);margin-bottom:10px;"><div><strong style="color:var(--text-primary)">2</strong> issues</div><div><strong style="color:var(--text-primary)">1</strong> repo</div><div><strong style="color:var(--text-primary)">1</strong> doc in .dev/</div></div>
+  <div style="display:flex;gap:6px;"><span class="repo-chip">⌥ infra</span></div>
+</div>
+</div></body></html>

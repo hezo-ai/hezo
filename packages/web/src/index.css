@@ -1,24 +1,81 @@
 @import 'tailwindcss';
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
-	--color-bg: #09090b;
-	--color-bg-subtle: #18181b;
-	--color-bg-muted: #27272a;
-	--color-bg-elevated: #3f3f46;
-	--color-border: #3f3f46;
-	--color-border-subtle: #27272a;
-	--color-text: #fafafa;
-	--color-text-muted: #a1a1aa;
-	--color-text-subtle: #71717a;
-	--color-primary: #6366f1;
-	--color-primary-hover: #818cf8;
-	--color-success: #22c55e;
-	--color-warning: #f59e0b;
-	--color-danger: #ef4444;
-	--color-info: #3b82f6;
+	--color-bg: #ffffff;
+	--color-bg-subtle: #f5f5f3;
+	--color-bg-muted: #ebebea;
+	--color-bg-elevated: #ffffff;
+	--color-border: #e5e5e3;
+	--color-border-hover: #d0d0ce;
+	--color-text: #1a1a1a;
+	--color-text-muted: #6b6b6b;
+	--color-text-subtle: #9a9a9a;
 
-	--font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-	--font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+	--color-primary: #1a1a1a;
+	--color-primary-hover: #333333;
+
+	--color-accent-blue: #185FA5;
+	--color-accent-blue-bg: #E6F1FB;
+	--color-accent-blue-text: #0C447C;
+	--color-accent-green: #0F6E56;
+	--color-accent-green-bg: #E1F5EE;
+	--color-accent-green-text: #085041;
+	--color-accent-amber: #854F0B;
+	--color-accent-amber-bg: #FAEEDA;
+	--color-accent-amber-text: #633806;
+	--color-accent-red: #A32D2D;
+	--color-accent-red-bg: #FCEBEB;
+	--color-accent-red-text: #791F1F;
+	--color-accent-purple: #534AB7;
+	--color-accent-purple-bg: #EEEDFE;
+	--color-accent-purple-text: #3C3489;
+	--color-accent-pink-bg: #FBEAF0;
+	--color-accent-pink-text: #993556;
+
+	--color-success: #0F6E56;
+	--color-warning: #854F0B;
+	--color-danger: #A32D2D;
+	--color-info: #185FA5;
+
+	--font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+	--font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+	--radius-md: 8px;
+	--radius-lg: 12px;
+}
+
+html.dark {
+	--color-bg: #1a1a1a;
+	--color-bg-subtle: #2c2c2a;
+	--color-bg-muted: #3d3d3a;
+	--color-bg-elevated: #2c2c2a;
+	--color-border: #3d3d3a;
+	--color-border-hover: #5f5e5a;
+	--color-text: #e8e8e4;
+	--color-text-muted: #9a9a96;
+	--color-text-subtle: #6b6b67;
+
+	--color-primary: #e8e8e4;
+	--color-primary-hover: #d0d0cc;
+
+	--color-accent-blue-bg: #042C53;
+	--color-accent-blue-text: #85B7EB;
+	--color-accent-green-bg: #04342C;
+	--color-accent-green-text: #5DCAA5;
+	--color-accent-amber-bg: #412402;
+	--color-accent-amber-text: #FAC775;
+	--color-accent-red-bg: #501313;
+	--color-accent-red-text: #F09595;
+	--color-accent-purple-bg: #26215C;
+	--color-accent-purple-text: #AFA9EC;
+	--color-accent-pink-bg: #4B1528;
+	--color-accent-pink-text: #ED93B1;
+
+	--color-success: #5DCAA5;
+	--color-warning: #FAC775;
+	--color-danger: #F09595;
+	--color-info: #85B7EB;
 }
 
 @theme {
@@ -27,7 +84,7 @@
 	--color-bg-muted: var(--color-bg-muted);
 	--color-bg-elevated: var(--color-bg-elevated);
 	--color-border: var(--color-border);
-	--color-border-subtle: var(--color-border-subtle);
+	--color-border-hover: var(--color-border-hover);
 	--color-text: var(--color-text);
 	--color-text-muted: var(--color-text-muted);
 	--color-text-subtle: var(--color-text-subtle);
@@ -37,6 +94,31 @@
 	--color-warning: var(--color-warning);
 	--color-danger: var(--color-danger);
 	--color-info: var(--color-info);
+	--color-accent-blue: var(--color-accent-blue);
+	--color-accent-blue-bg: var(--color-accent-blue-bg);
+	--color-accent-blue-text: var(--color-accent-blue-text);
+	--color-accent-green: var(--color-accent-green);
+	--color-accent-green-bg: var(--color-accent-green-bg);
+	--color-accent-green-text: var(--color-accent-green-text);
+	--color-accent-amber: var(--color-accent-amber);
+	--color-accent-amber-bg: var(--color-accent-amber-bg);
+	--color-accent-amber-text: var(--color-accent-amber-text);
+	--color-accent-red: var(--color-accent-red);
+	--color-accent-red-bg: var(--color-accent-red-bg);
+	--color-accent-red-text: var(--color-accent-red-text);
+	--color-accent-purple: var(--color-accent-purple);
+	--color-accent-purple-bg: var(--color-accent-purple-bg);
+	--color-accent-purple-text: var(--color-accent-purple-text);
+	--color-accent-pink-bg: var(--color-accent-pink-bg);
+	--color-accent-pink-text: var(--color-accent-pink-text);
+	--radius-md: var(--radius-md);
+	--radius-lg: var(--radius-lg);
+}
+
+*,
+*::before,
+*::after {
+	border-color: var(--color-border);
 }
 
 body {
@@ -44,12 +126,8 @@ body {
 	background: var(--color-bg);
 	color: var(--color-text);
 	font-family: var(--font-sans);
+	font-size: 14px;
+	line-height: 1.5;
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
-}
-
-*,
-*::before,
-*::after {
-	border-color: var(--color-border);
 }

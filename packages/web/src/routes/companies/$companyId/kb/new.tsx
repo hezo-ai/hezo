@@ -40,7 +40,9 @@ function NewKbDocPage() {
 					className="min-h-[300px] font-mono text-xs"
 				/>
 				{createDoc.error && (
-					<p className="text-sm text-danger">{(createDoc.error as { message: string }).message}</p>
+					<p className="text-sm text-accent-red">
+						{(createDoc.error as { message: string }).message}
+					</p>
 				)}
 				<div className="flex justify-end gap-2">
 					<Link to="/companies/$companyId/kb" params={{ companyId }}>

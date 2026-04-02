@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router';
-import { Sidebar } from '../../../components/sidebar';
+import { CompanyTabs } from '../../../components/company-tabs';
+import { Breadcrumb } from '../../../components/ui/breadcrumb';
 import { useCompany } from '../../../hooks/use-companies';
 import { useWebSocket } from '../../../hooks/use-websocket';
 
@@ -9,19 +10,21 @@ function CompanyLayout() {
 	useWebSocket(companyId);
 
 	return (
-		<div className="flex flex-1 overflow-hidden">
-			<aside className="w-52 border-r border-border bg-bg-subtle shrink-0 overflow-y-auto">
-				{company && (
-					<div className="px-4 pt-3 pb-1">
-						<h2 className="text-sm font-semibold text-text truncate">{company.name}</h2>
-						<p className="text-xs text-text-subtle truncate">{company.issue_prefix}</p>
-					</div>
-				)}
-				<Sidebar companyId={companyId} />
-			</aside>
-			<main className="flex-1 overflow-auto">
-				<Outlet />
-			</main>
+		<div className="max-w-[900px] mx-auto w-full px-8 py-6">
+			<Breadcrumb
+				items={[
+					{
+						label: company?.name ?? '...',
+						to: '/companies/$companyId/issues',
+						params: { companyId },
+					},
+				]}
+			/>
+			<div className="flex items-center justify-between mb-5">
+				<h1 className="text-[22px] font-medium">{company?.name ?? '...'}</h1>
+			</div>
+			<CompanyTabs companyId={companyId} />
+			<Outlet />
 		</div>
 	);
 }

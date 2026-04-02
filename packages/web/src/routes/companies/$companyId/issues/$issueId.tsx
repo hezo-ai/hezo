@@ -1,11 +1,11 @@
-import { createFileRoute, Link } from '@tanstack/react-router';
-import { ArrowLeft, Loader2, MessageCircle, MessageSquare, Plus, Trash2 } from 'lucide-react';
+import { createFileRoute } from '@tanstack/react-router';
+import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { type CommentData, CommentRenderer } from '../../../../components/comment-renderers';
 import { LiveChatPanel } from '../../../../components/live-chat-panel';
+import { Avatar, avatarColorFromString } from '../../../../components/ui/avatar';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
-import { Card } from '../../../../components/ui/card';
 import { Textarea } from '../../../../components/ui/textarea';
 import { useAgents } from '../../../../hooks/use-agents';
 import { useChooseOption, useComments, useCreateComment } from '../../../../hooks/use-comments';
@@ -21,15 +21,23 @@ import {
 
 const statusFlow = ['backlog', 'open', 'in_progress', 'review', 'done', 'closed'] as const;
 const statusColors: Record<string, string> = {
-	backlog: 'gray',
-	open: 'blue',
-	in_progress: 'purple',
-	review: 'yellow',
-	blocked: 'red',
-	done: 'green',
-	closed: 'gray',
-	cancelled: 'gray',
+	backlog: 'neutral',
+	open: 'info',
+	in_progress: 'warning',
+	review: 'purple',
+	blocked: 'danger',
+	done: 'success',
+	closed: 'neutral',
+	cancelled: 'neutral',
 };
+
+const priorityColors: Record<string, string> = {
+	urgent: 'danger',
+	high: 'warning',
+	medium: 'info',
+	low: 'neutral',
+};
+
 function IssueDetailPage() {
 	const { companyId, issueId } = Route.useParams();
 	const { data: issue, isLoading } = useIssue(companyId, issueId);
@@ -48,7 +56,8 @@ function IssueDetailPage() {
 	const [showSubForm, setShowSubForm] = useState(false);
 	const [activeTab, setActiveTab] = useState<'comments' | 'chat'>('comments');
 
-	if (isLoading || !issue) return <div className="p-6 text-text-muted">Loading...</div>;
+	if (isLoading || !issue)
+		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;
 
 	async function handleComment(e: React.FormEvent) {
 		e.preventDefault();
@@ -66,111 +75,131 @@ function IssueDetailPage() {
 	}
 
 	return (
-		<div className="p-6 max-w-4xl">
-			<Link
-				to="/companies/$companyId/issues"
-				params={{ companyId }}
-				className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text mb-4"
-			>
-				<ArrowLeft className="w-3.5 h-3.5" /> Issues
-			</Link>
+		<div className="grid grid-cols-[1fr_190px] gap-5">
+			{/* Main content */}
+			<div className="min-w-0">
+				<div className="mb-1 text-[13px] font-mono text-text-muted">{issue.identifier}</div>
+				<h1 className="text-xl font-medium mb-3">{issue.title}</h1>
 
-			<div className="flex gap-6">
-				{/* Main content */}
-				<div className="flex-1 min-w-0">
-					<div className="flex items-start gap-3 mb-4">
-						<span className="font-mono text-sm text-text-muted shrink-0">{issue.identifier}</span>
-						<h1 className="text-lg font-semibold">{issue.title}</h1>
+				<div className="flex flex-wrap gap-1.5 mb-4">
+					<Badge color={statusColors[issue.status] as 'neutral'}>
+						{issue.status.replace('_', ' ')}
+					</Badge>
+					<Badge color={priorityColors[issue.priority] as 'neutral'}>{issue.priority}</Badge>
+					{issue.project_name && <Badge color="info">{issue.project_name}</Badge>}
+					{issue.assignee_name && <Badge color="purple">{issue.assignee_name}</Badge>}
+				</div>
+
+				<div className="flex flex-wrap gap-1.5 mb-5">
+					{statusFlow.map((s) => (
+						<button
+							type="button"
+							key={s}
+							onClick={() => updateIssue.mutate({ status: s })}
+							className={`px-2.5 py-1 rounded-radius-md text-xs cursor-pointer transition-colors ${
+								issue.status === s
+									? 'bg-primary text-bg font-medium'
+									: 'bg-bg-subtle text-text-muted hover:text-text hover:bg-bg-muted'
+							}`}
+						>
+							{s.replace('_', ' ')}
+						</button>
+					))}
+				</div>
+
+				{lock && (
+					<div className="flex items-center gap-2 mb-4 rounded-radius-md bg-accent-blue-bg px-3 py-2 text-xs">
+						<span className="w-2 h-2 rounded-full bg-accent-blue animate-pulse" />
+						<span className="text-accent-blue-text font-medium">{lock.member_name}</span>
+						<span className="text-text-muted">is working on this issue</span>
+					</div>
+				)}
+
+				{issue.progress_summary && (
+					<div className="bg-bg-subtle rounded-radius-md p-3 mb-5 text-[13px] text-text-muted leading-relaxed">
+						{issue.progress_summary}
+					</div>
+				)}
+
+				{issue.description && (
+					<p className="text-[13px] text-text-muted mb-5 whitespace-pre-wrap leading-relaxed">
+						{issue.description}
+					</p>
+				)}
+
+				{/* Blocked by */}
+				{(deps?.length || 0) > 0 && (
+					<div className="mb-5">
+						<h3 className="text-xs font-medium uppercase tracking-wider text-text-muted mb-2">
+							Blocked By
+						</h3>
+						<div className="flex flex-col gap-1">
+							{deps?.map((d) => (
+								<div key={d.id} className="flex items-center gap-2 text-[13px]">
+									<Badge color={statusColors[d.blocked_by_status] as 'neutral'}>
+										{d.blocked_by_status}
+									</Badge>
+									<span className="font-mono text-xs text-text-muted">
+										{d.blocked_by_identifier}
+									</span>
+									<span>{d.blocked_by_title}</span>
+									<button
+										type="button"
+										onClick={() => removeDep.mutate(d.id)}
+										className="text-text-subtle hover:text-accent-red ml-auto"
+									>
+										<Trash2 className="w-3 h-3" />
+									</button>
+								</div>
+							))}
+						</div>
+					</div>
+				)}
+
+				{/* Comments / Chat tabs */}
+				<div className="border-t border-border pt-4">
+					<div className="flex border-b border-border mb-4">
+						<button
+							type="button"
+							onClick={() => setActiveTab('comments')}
+							className={`px-4 py-2 text-[13px] border-b-2 transition-colors ${
+								activeTab === 'comments'
+									? 'text-text font-medium border-text'
+									: 'text-text-muted border-transparent hover:text-text'
+							}`}
+						>
+							Comments
+							<span className="ml-1.5 bg-bg-subtle px-[7px] py-px rounded-full text-[11px] font-normal">
+								{comments?.length ?? 0}
+							</span>
+						</button>
+						<button
+							type="button"
+							onClick={() => setActiveTab('chat')}
+							className={`px-4 py-2 text-[13px] border-b-2 transition-colors ${
+								activeTab === 'chat'
+									? 'text-text font-medium border-text'
+									: 'text-text-muted border-transparent hover:text-text'
+							}`}
+						>
+							Live chat
+						</button>
 					</div>
 
-					{lock && (
-						<div className="flex items-center gap-2 mb-4 rounded-md border border-info/30 bg-info/5 px-3 py-2 text-xs">
-							<span className="w-2 h-2 rounded-full bg-info animate-pulse" />
-							<span className="text-info font-medium">{lock.member_name}</span>
-							<span className="text-text-muted">is working on this issue</span>
-							<span className="text-text-subtle ml-auto">
-								since {new Date(lock.locked_at).toLocaleTimeString()}
-							</span>
-						</div>
-					)}
-
-					{issue.description && (
-						<p className="text-sm text-text-muted mb-6 whitespace-pre-wrap">{issue.description}</p>
-					)}
-
-					{/* Sub-issues */}
-					{(deps?.length || 0) > 0 && (
-						<div className="mb-6">
-							<h3 className="text-sm font-medium text-text-muted mb-2">Blocked By</h3>
-							<div className="flex flex-col gap-1">
-								{deps?.map((d) => (
-									<div key={d.id} className="flex items-center gap-2 text-sm">
-										<Badge
-											color={statusColors[d.blocked_by_status] as 'gray'}
-											className="text-[10px]"
-										>
-											{d.blocked_by_status}
-										</Badge>
-										<span className="font-mono text-xs text-text-muted">
-											{d.blocked_by_identifier}
-										</span>
-										<span className="text-text">{d.blocked_by_title}</span>
-										<button
-											type="button"
-											onClick={() => removeDep.mutate(d.id)}
-											className="text-text-subtle hover:text-danger ml-auto"
-										>
-											<Trash2 className="w-3 h-3" />
-										</button>
-									</div>
-								))}
-							</div>
-						</div>
-					)}
-
-					{/* Comments / Chat tabs */}
-					<div className="border-t border-border pt-4">
-						<div className="flex gap-4 mb-3">
-							<button
-								type="button"
-								onClick={() => setActiveTab('comments')}
-								className={`text-sm font-medium flex items-center gap-1.5 pb-1 border-b-2 transition-colors ${
-									activeTab === 'comments'
-										? 'border-primary text-text'
-										: 'border-transparent text-text-muted hover:text-text'
-								}`}
-							>
-								<MessageSquare className="w-4 h-4" />
-								Comments ({comments?.length ?? 0})
-							</button>
-							<button
-								type="button"
-								onClick={() => setActiveTab('chat')}
-								className={`text-sm font-medium flex items-center gap-1.5 pb-1 border-b-2 transition-colors ${
-									activeTab === 'chat'
-										? 'border-primary text-text'
-										: 'border-transparent text-text-muted hover:text-text'
-								}`}
-							>
-								<MessageCircle className="w-4 h-4" />
-								Live Chat
-							</button>
-						</div>
-
-						{activeTab === 'comments' ? (
-							<>
-								<div className="flex flex-col gap-3 mb-4">
-									{comments?.map((c) => (
-										<Card key={c.id} className="p-3">
-											<div className="flex items-center gap-2 mb-1.5">
-												<span className="text-xs font-medium text-text">{c.author_name}</span>
-												<Badge
-													color={c.author_type === 'board' ? 'purple' : 'blue'}
-													className="text-[10px]"
-												>
-													{c.author_type}
-												</Badge>
-												<span className="text-xs text-text-subtle ml-auto">
+					{activeTab === 'comments' ? (
+						<>
+							<div className="flex flex-col gap-4 mb-4">
+								{comments?.map((c) => (
+									<div key={c.id} className="flex gap-2.5">
+										<Avatar
+											initials={c.author_name?.slice(0, 2) ?? '??'}
+											size="sm"
+											color={avatarColorFromString(c.author_name ?? 'unknown')}
+										/>
+										<div className="flex-1 min-w-0">
+											<div className="flex items-center gap-2 mb-1">
+												<span className="text-xs font-medium">{c.author_name}</span>
+												<span className="text-[11px] text-text-subtle">
 													{new Date(c.created_at).toLocaleString()}
 												</span>
 											</div>
@@ -180,143 +209,133 @@ function IssueDetailPage() {
 													chooseOption.mutate({ commentId, chosen_id: chosenId })
 												}
 											/>
-										</Card>
-									))}
-								</div>
-
-								<form onSubmit={handleComment} className="flex flex-col gap-2">
-									<Textarea
-										value={commentText}
-										onChange={(e) => setCommentText(e.target.value)}
-										placeholder="Add a comment..."
-										className="min-h-[60px]"
-									/>
-									<div className="flex justify-end">
-										<Button
-											type="submit"
-											size="sm"
-											disabled={!commentText.trim() || createComment.isPending}
-										>
-											{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-											Comment
-										</Button>
+										</div>
 									</div>
-								</form>
-							</>
-						) : (
-							<div className="h-80 border border-border rounded-lg overflow-hidden">
-								<LiveChatPanel
-									companyId={companyId}
-									issueId={issueId}
-									agents={agents?.map((a) => ({ slug: a.slug, title: a.title })) ?? []}
-								/>
-							</div>
-						)}
-					</div>
-
-					{/* Sub-issues */}
-					<div className="border-t border-border pt-4 mt-4">
-						<div className="flex items-center justify-between mb-2">
-							<h3 className="text-sm font-medium text-text-muted">Sub-issues</h3>
-							<Button variant="ghost" size="sm" onClick={() => setShowSubForm(!showSubForm)}>
-								<Plus className="w-3 h-3" /> Add
-							</Button>
-						</div>
-						{showSubForm && (
-							<form onSubmit={handleSubIssue} className="flex gap-2 mb-3">
-								<input
-									value={subIssueTitle}
-									onChange={(e) => setSubIssueTitle(e.target.value)}
-									placeholder="Sub-issue title"
-									className="flex-1 rounded-md border border-border bg-bg-subtle px-3 py-1.5 text-sm text-text outline-none focus:border-primary"
-								/>
-								<Button type="submit" size="sm" disabled={!subIssueTitle.trim()}>
-									Create
-								</Button>
-							</form>
-						)}
-					</div>
-				</div>
-
-				{/* Sidebar */}
-				<div className="w-56 shrink-0 flex flex-col gap-4">
-					<div>
-						<span className="text-xs text-text-subtle block mb-1">Status</span>
-						<div className="flex flex-wrap gap-1">
-							{statusFlow.map((s) => (
-								<button
-									type="button"
-									key={s}
-									onClick={() => updateIssue.mutate({ status: s })}
-									className={`px-2 py-0.5 rounded text-xs transition-colors cursor-pointer ${
-										issue.status === s
-											? 'bg-primary text-white'
-											: 'bg-bg-muted text-text-muted hover:text-text'
-									}`}
-								>
-									{s.replace('_', ' ')}
-								</button>
-							))}
-						</div>
-					</div>
-
-					<label>
-						<span className="text-xs text-text-subtle block mb-1">Priority</span>
-						<select
-							value={issue.priority}
-							onChange={(e) => updateIssue.mutate({ priority: e.target.value })}
-							className="w-full rounded-md border border-border bg-bg-subtle px-2.5 py-1.5 text-xs text-text outline-none"
-						>
-							{['low', 'medium', 'high', 'urgent'].map((p) => (
-								<option key={p} value={p}>
-									{p}
-								</option>
-							))}
-						</select>
-					</label>
-
-					<label>
-						<span className="text-xs text-text-subtle block mb-1">Assignee</span>
-						<select
-							value={issue.assignee_id ?? ''}
-							onChange={(e) => updateIssue.mutate({ assignee_id: e.target.value || null })}
-							className="w-full rounded-md border border-border bg-bg-subtle px-2.5 py-1.5 text-xs text-text outline-none"
-						>
-							<option value="">Unassigned</option>
-							{agents
-								?.filter((a) => a.status !== 'terminated')
-								.map((a) => (
-									<option key={a.id} value={a.id}>
-										{a.title}
-									</option>
 								))}
-						</select>
-					</label>
+							</div>
 
-					<div>
-						<span className="text-xs text-text-subtle block mb-1">Project</span>
-						<span className="text-sm text-text">{issue.project_name || '—'}</span>
-					</div>
-
-					{issue.progress_summary && (
-						<div>
-							<span className="text-xs text-text-subtle block mb-1">Progress</span>
-							<p className="text-xs text-text-muted">{issue.progress_summary}</p>
+							<form onSubmit={handleComment} className="flex flex-col gap-2">
+								<Textarea
+									value={commentText}
+									onChange={(e) => setCommentText(e.target.value)}
+									placeholder="Add a comment..."
+									className="min-h-[60px]"
+								/>
+								<div className="flex justify-end">
+									<Button
+										type="submit"
+										size="sm"
+										disabled={!commentText.trim() || createComment.isPending}
+									>
+										{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+										Comment
+									</Button>
+								</div>
+							</form>
+						</>
+					) : (
+						<div className="h-80 border border-border rounded-radius-lg overflow-hidden">
+							<LiveChatPanel
+								companyId={companyId}
+								issueId={issueId}
+								agents={agents?.map((a) => ({ slug: a.slug, title: a.title })) ?? []}
+							/>
 						</div>
 					)}
+				</div>
 
-					<div className="mt-auto pt-4 border-t border-border-subtle">
-						<Button
-							variant="ghost"
-							size="sm"
-							className="text-danger w-full"
-							onClick={() => {
-								if (confirm('Delete this issue?')) deleteIssue.mutate(issueId);
-							}}
-						>
-							<Trash2 className="w-3 h-3" /> Delete Issue
+				{/* Sub-issues */}
+				<div className="border-t border-border pt-4 mt-4">
+					<div className="flex items-center justify-between mb-2">
+						<h3 className="text-xs font-medium uppercase tracking-wider text-text-muted">
+							Sub-issues
+						</h3>
+						<Button variant="secondary" size="sm" onClick={() => setShowSubForm(!showSubForm)}>
+							<Plus className="w-3 h-3" /> Add
 						</Button>
 					</div>
+					{showSubForm && (
+						<form onSubmit={handleSubIssue} className="flex gap-2 mb-3">
+							<input
+								value={subIssueTitle}
+								onChange={(e) => setSubIssueTitle(e.target.value)}
+								placeholder="Sub-issue title"
+								className="flex-1 rounded-radius-md border border-border bg-bg px-3 py-1.5 text-[13px] text-text outline-none focus:border-border-hover"
+							/>
+							<Button type="submit" size="sm" disabled={!subIssueTitle.trim()}>
+								Create
+							</Button>
+						</form>
+					)}
+				</div>
+			</div>
+
+			{/* Sidebar */}
+			<div className="flex flex-col gap-4 text-xs">
+				<div>
+					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
+						Priority
+					</span>
+					<select
+						value={issue.priority}
+						onChange={(e) => updateIssue.mutate({ priority: e.target.value })}
+						className="w-full rounded-radius-md border border-border bg-bg px-2.5 py-1.5 text-xs text-text outline-none"
+					>
+						{['low', 'medium', 'high', 'urgent'].map((p) => (
+							<option key={p} value={p}>
+								{p}
+							</option>
+						))}
+					</select>
+				</div>
+
+				<div>
+					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
+						Assignee
+					</span>
+					<select
+						value={issue.assignee_id ?? ''}
+						onChange={(e) => updateIssue.mutate({ assignee_id: e.target.value || null })}
+						className="w-full rounded-radius-md border border-border bg-bg px-2.5 py-1.5 text-xs text-text outline-none"
+					>
+						<option value="">Unassigned</option>
+						{agents
+							?.filter((a) => a.status !== 'terminated')
+							.map((a) => (
+								<option key={a.id} value={a.id}>
+									{a.title}
+								</option>
+							))}
+					</select>
+				</div>
+
+				<div>
+					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
+						Project
+					</span>
+					<span className="text-[13px] text-text">{issue.project_name || '—'}</span>
+				</div>
+
+				<div>
+					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
+						Created
+					</span>
+					<span className="text-[13px] text-text">
+						{new Date(issue.created_at).toLocaleDateString()}
+					</span>
+				</div>
+
+				<div className="mt-auto pt-4 border-t border-border">
+					<Button
+						variant="danger-text"
+						size="sm"
+						className="w-full"
+						onClick={() => {
+							if (confirm('Delete this issue?')) deleteIssue.mutate(issueId);
+						}}
+					>
+						<Trash2 className="w-3 h-3" /> Delete Issue
+					</Button>
 				</div>
 			</div>
 		</div>

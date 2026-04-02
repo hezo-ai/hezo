@@ -29,7 +29,7 @@ export function BoardInboxDrawer({ open, onOpenChange, approvals }: BoardInboxDr
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 bg-black/40" />
-				<Dialog.Content className="fixed top-0 right-0 h-full w-full max-w-md border-l border-border bg-bg-subtle shadow-2xl overflow-y-auto">
+				<Dialog.Content className="fixed top-0 right-0 h-full w-full max-w-md border-l border-border bg-bg-elevated shadow-2xl overflow-y-auto">
 					<div className="flex items-center justify-between p-4 border-b border-border">
 						<Dialog.Title className="text-sm font-semibold">Board Inbox</Dialog.Title>
 						<Dialog.Close asChild>
@@ -77,7 +77,7 @@ export function BoardInboxDrawer({ open, onOpenChange, approvals }: BoardInboxDr
 										<Button
 											size="sm"
 											variant="ghost"
-											className="text-danger"
+											className="text-accent-red"
 											disabled={resolveApproval.isPending}
 											onClick={() =>
 												resolveApproval.mutate({ approvalId: a.id, status: ApprovalStatus.Denied })
