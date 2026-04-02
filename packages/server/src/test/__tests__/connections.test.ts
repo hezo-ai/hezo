@@ -1,6 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import { signOAuthState } from '../../crypto/state';
 import type { Env } from '../../lib/types';
@@ -37,6 +37,10 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
+afterEach(() => {
+	vi.restoreAllMocks();
+});
+
 describe('connections CRUD', () => {
 	it('lists connections (empty initially)', async () => {
 		const res = await app.request(`/api/companies/${companyId}/connections`, {
@@ -70,7 +74,7 @@ describe('connections CRUD', () => {
 	});
 
 	describe('OAuth callback', () => {
-		it('stores token and creates connection on valid callback', async () => {
+		it('exchanges code via Connect and creates connection on valid callback', async () => {
 			const state = await signOAuthState({ company_id: companyId }, masterKeyManager);
 			const metadata = Buffer.from(
 				JSON.stringify({
@@ -80,8 +84,27 @@ describe('connections CRUD', () => {
 				}),
 			).toString('base64url');
 
+			// Mock the Connect exchange endpoint
+			const originalFetch = globalThis.fetch;
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+				const url =
+					typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+				if (url.includes('/auth/exchange')) {
+					return new Response(
+						JSON.stringify({
+							access_token: 'gho_test_token',
+							scopes: 'repo,workflow',
+							metadata,
+							platform: 'github',
+						}),
+						{ status: 200, headers: { 'Content-Type': 'application/json' } },
+					);
+				}
+				return originalFetch(input, init);
+			});
+
 			const res = await app.request(
-				`/oauth/callback?platform=github&access_token=gho_test_token&scopes=repo,workflow&metadata=${metadata}&state=${encodeURIComponent(state)}`,
+				`/oauth/callback?platform=github&code=test-exchange-code&state=${encodeURIComponent(state)}`,
 			);
 
 			expect(res.status).toBe(302);
@@ -103,13 +126,13 @@ describe('connections CRUD', () => {
 
 		it('returns 400 for invalid state', async () => {
 			const res = await app.request(
-				'/oauth/callback?platform=github&access_token=token&state=invalid.state',
+				'/oauth/callback?platform=github&code=token&state=invalid.state',
 			);
 			expect(res.status).toBe(400);
 		});
 
 		it('returns 400 for missing state', async () => {
-			const res = await app.request('/oauth/callback?platform=github&access_token=token');
+			const res = await app.request('/oauth/callback?platform=github&code=token');
 			expect(res.status).toBe(400);
 		});
 
@@ -119,7 +142,7 @@ describe('connections CRUD', () => {
 			expect(res.headers.get('Location')).toContain('error');
 		});
 
-		it('returns 400 for missing access_token', async () => {
+		it('returns 400 for missing code', async () => {
 			const state = await signOAuthState({ company_id: companyId }, masterKeyManager);
 			const res = await app.request(
 				`/oauth/callback?platform=github&state=${encodeURIComponent(state)}`,

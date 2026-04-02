@@ -7,6 +7,7 @@ import {
 	signState,
 	verifyState,
 } from '../crypto/state.js';
+import type { TokenCodeStore } from '../crypto/token-store.js';
 import { exchangeCode, type FetchFn, fetchUserInfo } from '../providers/github.js';
 
 const SUPPORTED_PLATFORMS = new Set(['github']);
@@ -28,6 +29,7 @@ function errorRedirect(
 export function oauthRoutes(
 	config: ConnectConfig,
 	nonceStore: NonceStore,
+	tokenCodeStore: TokenCodeStore,
 	fetchFn: FetchFn = globalThis.fetch,
 ): Hono {
 	const routes = new Hono();
@@ -153,11 +155,17 @@ export function oauthRoutes(
 				}),
 			).toString('base64url');
 
+			// Store token server-side and redirect with a short-lived one-time code
+			const tokenCode = tokenCodeStore.store({
+				accessToken: tokenResponse.access_token,
+				scopes: tokenResponse.scope,
+				metadata,
+				platform,
+			});
+
 			const redirectUrl = new URL(callbackUrl);
 			redirectUrl.searchParams.set('platform', platform);
-			redirectUrl.searchParams.set('access_token', tokenResponse.access_token);
-			redirectUrl.searchParams.set('scopes', tokenResponse.scope);
-			redirectUrl.searchParams.set('metadata', metadata);
+			redirectUrl.searchParams.set('code', tokenCode);
 			if (payload.original_state) {
 				redirectUrl.searchParams.set('state', payload.original_state);
 			}
@@ -167,6 +175,26 @@ export function oauthRoutes(
 			const message = err instanceof Error ? err.message : 'Token exchange failed';
 			return c.redirect(errorRedirect(callbackUrl, platform, 'token_exchange_failed', message));
 		}
+	});
+
+	// Token exchange endpoint: server exchanges a one-time code for the actual token
+	routes.post('/auth/exchange', async (c) => {
+		const body = await c.req.json<{ code: string }>();
+		if (!body.code) {
+			return c.json({ error: 'missing_code', message: 'code is required' }, 400);
+		}
+
+		const token = tokenCodeStore.consume(body.code);
+		if (!token) {
+			return c.json({ error: 'invalid_code', message: 'Code is invalid or expired' }, 400);
+		}
+
+		return c.json({
+			access_token: token.accessToken,
+			scopes: token.scopes,
+			metadata: token.metadata,
+			platform: token.platform,
+		});
 	});
 
 	return routes;

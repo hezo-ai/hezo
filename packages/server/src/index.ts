@@ -1,11 +1,9 @@
-import { createHash } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
 import { AuthType } from '@hezo/shared';
-import { verify } from 'hono/jwt';
 import { app } from './app';
 import { parseArgs } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
-import { safeCompareHex } from './middleware/auth';
+import { verifyToken } from './middleware/auth';
 import { ContainerLogStreamer } from './services/container-logs';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { startup } from './startup';
@@ -26,46 +24,8 @@ let dockerRef: import('./services/docker').DockerClient | null = null;
 const containerLogStreamer = new ContainerLogStreamer();
 
 async function validateToken(token: string): Promise<WsData['auth'] | null> {
-	if (!mkmRef || !dbRef || mkmRef.getState() !== 'unlocked') return null;
-
-	if (token.startsWith('hezo_')) {
-		const prefix = token.slice(5, 13);
-		const result = await dbRef.query<{ id: string; company_id: string; key_hash: string }>(
-			'SELECT id, company_id, key_hash FROM api_keys WHERE prefix = $1',
-			[prefix],
-		);
-		if (result.rows.length === 0) return null;
-		const tokenHash = createHash('sha256').update(token).digest('hex');
-		if (!safeCompareHex(tokenHash, result.rows[0].key_hash)) return null;
-		return { type: AuthType.ApiKey, companyId: result.rows[0].company_id };
-	}
-
-	try {
-		const jwtKey = await mkmRef.getJwtKey();
-		const secret = jwtKey.toString('base64');
-		const payload = await verify(token, secret, 'HS256');
-		if (payload.member_id && payload.company_id) {
-			return {
-				type: AuthType.Agent,
-				memberId: payload.member_id as string,
-				companyId: payload.company_id as string,
-			};
-		}
-		if (payload.user_id) {
-			let isSuperuser = false;
-			if (dbRef) {
-				const userResult = await dbRef.query<{ is_superuser: boolean }>(
-					'SELECT is_superuser FROM users WHERE id = $1',
-					[payload.user_id],
-				);
-				isSuperuser = userResult.rows[0]?.is_superuser ?? false;
-			}
-			return { type: AuthType.Board, userId: payload.user_id as string, isSuperuser };
-		}
-		return null;
-	} catch {
-		return null;
-	}
+	if (!mkmRef || !dbRef) return null;
+	return verifyToken(token, dbRef, mkmRef);
 }
 
 async function canAccessCompany(auth: WsData['auth'], companyId: string): Promise<boolean> {
@@ -158,10 +118,13 @@ export default {
 			try {
 				const data = JSON.parse(typeof msg === 'string' ? msg : msg.toString());
 				if (data.action === 'subscribe' && typeof data.room === 'string') {
+					// Default-deny: only authorize known room patterns
 					const companyMatch = data.room.match(/^company:(.+)$/);
 					if (companyMatch) {
 						const allowed = await canAccessCompany(ws.data.auth, companyMatch[1]);
 						if (!allowed) return;
+						wsManager.subscribe(ws as unknown as WsSocket, data.room);
+						return;
 					}
 
 					const logsMatch = data.room.match(/^container-logs:(.+)$/);
@@ -185,7 +148,7 @@ export default {
 						return;
 					}
 
-					wsManager.subscribe(ws as unknown as WsSocket, data.room);
+					// Unknown room patterns are silently rejected (default-deny)
 				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {
 					wsManager.unsubscribe(ws as unknown as WsSocket, data.room);
 

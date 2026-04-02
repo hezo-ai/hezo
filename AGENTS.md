@@ -106,6 +106,10 @@ Every API route must enforce authorization — never trust URL parameters alone.
 - **MCP tool handlers must enforce the same authorization as their REST equivalents.** Pass caller identity into tool handlers and validate company access.
 - **Use `timingSafeEqual` for all secret/hash comparisons.** Never use `===` to compare hashes, tokens, or signatures.
 
+## Known Limitations (Pre-v1)
+
+- **No rate limiting.** The server does not enforce rate limits on any endpoint. This is a known gap that will be addressed before v1.0.0. The auth token endpoint (`POST /api/auth/token`) and MCP endpoint (`POST /mcp`) are the highest-priority targets for rate limiting. Do not add rate limiting piecemeal — it should be implemented as a unified middleware with configurable per-endpoint policies.
+
 ## Implementation Phases
 
 When completing an implementation phase, update `.dev/implementation-phases.md` to mark the phase as done with a completion date. Keep the phase content intact — just add a status line at the top of the phase section.

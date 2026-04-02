@@ -186,21 +186,42 @@ describe('full OAuth flow with mocked GitHub API', () => {
 		);
 		expect(callbackRes.status).toBe(302);
 
-		// Step 3: Verify the final redirect
+		// Step 3: Verify the final redirect contains a code (not raw access_token)
 		const finalUrl = new URL(callbackRes.headers.get('Location') as string);
 		expect(finalUrl.origin + finalUrl.pathname).toBe('http://localhost:3100/oauth/callback');
 		expect(finalUrl.searchParams.get('platform')).toBe('github');
-		expect(finalUrl.searchParams.get('access_token')).toBe('gho_mock_token');
-		expect(finalUrl.searchParams.get('scopes')).toBe('repo,workflow,read:org');
 		expect(finalUrl.searchParams.get('state')).toBe('user-data');
 
+		// Token should NOT be in the URL — only a one-time exchange code
+		expect(finalUrl.searchParams.has('access_token')).toBe(false);
+		const tokenCode = finalUrl.searchParams.get('code');
+		expect(tokenCode).toBeTruthy();
+
+		// Step 4: Exchange the code for the actual token
+		const exchangeRes = await app.request('http://localhost:4100/auth/exchange', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ code: tokenCode }),
+		});
+		expect(exchangeRes.status).toBe(200);
+		const exchangeBody = (await exchangeRes.json()) as Record<string, string>;
+		expect(exchangeBody.access_token).toBe('gho_mock_token');
+		expect(exchangeBody.scopes).toBe('repo,workflow,read:org');
+		expect(exchangeBody.platform).toBe('github');
+
 		// Verify metadata contains user info
-		const metadata = JSON.parse(
-			Buffer.from(finalUrl.searchParams.get('metadata') as string, 'base64url').toString('utf8'),
-		);
+		const metadata = JSON.parse(Buffer.from(exchangeBody.metadata, 'base64url').toString('utf8'));
 		expect(metadata.username).toBe('testuser');
 		expect(metadata.avatar_url).toBe('https://avatars.githubusercontent.com/u/1');
 		expect(metadata.email).toBe('test@example.com');
+
+		// Code cannot be reused
+		const replayRes = await app.request('http://localhost:4100/auth/exchange', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ code: tokenCode }),
+		});
+		expect(replayRes.status).toBe(400);
 	});
 
 	it('redirects with error when token exchange fails', async () => {
@@ -251,7 +272,7 @@ describe('full OAuth flow with mocked GitHub API', () => {
 		);
 		expect(first.status).toBe(302);
 		const firstUrl = new URL(first.headers.get('Location') as string);
-		expect(firstUrl.searchParams.get('access_token')).toBe('gho_token');
+		expect(firstUrl.searchParams.get('code')).toBeTruthy();
 
 		// Second callback with same state fails (nonce consumed)
 		const second = await app.request(

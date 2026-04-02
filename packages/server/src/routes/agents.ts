@@ -8,7 +8,13 @@ import { requireCompanyAccess } from '../middleware/auth';
 
 export const agentsRoutes = new Hono<Env>();
 
-const terminalStatusList = TERMINAL_ISSUE_STATUSES.map((s) => `'${s}'`).join(', ');
+/** Generate parameterized placeholders for terminal issue statuses, starting at the given index. */
+function terminalStatusParams(startIdx: number): { placeholders: string; values: string[] } {
+	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${startIdx + i}::issue_status`).join(
+		', ',
+	);
+	return { placeholders, values: [...TERMINAL_ISSUE_STATUSES] };
+}
 
 agentsRoutes.get('/companies/:companyId/agents', async (c) => {
 	const access = await requireCompanyAccess(c);
@@ -18,6 +24,7 @@ agentsRoutes.get('/companies/:companyId/agents', async (c) => {
 	const { companyId } = access;
 	const adminFilter = c.req.query('admin_status');
 
+	const ts = terminalStatusParams(2);
 	let query = `
     SELECT m.id, m.company_id, m.display_name, m.created_at,
            ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
@@ -25,11 +32,11 @@ agentsRoutes.get('/companies/:companyId/agents', async (c) => {
            ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.updated_at,
            ma.reports_to,
            (SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
-           (SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${terminalStatusList}))::int AS assigned_issue_count
+           (SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts.placeholders}))::int AS assigned_issue_count
     FROM members m
     JOIN member_agents ma ON ma.id = m.id
     WHERE m.company_id = $1`;
-	const params: unknown[] = [companyId];
+	const params: unknown[] = [companyId, ...ts.values];
 
 	if (adminFilter) {
 		const statuses = adminFilter.split(',').map((s) => s.trim());
@@ -85,50 +92,58 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 		return err(c, 'CONFLICT', `Agent with slug '${slug}' already exists in this company`, 409);
 	}
 
-	const memberResult = await db.query<{ id: string }>(
-		`INSERT INTO members (company_id, member_type, display_name)
-     VALUES ($1, $2, $3)
-     RETURNING id`,
-		[companyId, MemberType.Agent, body.title.trim()],
-	);
-	const memberId = memberResult.rows[0].id;
+	await db.query('BEGIN');
+	try {
+		const memberResult = await db.query<{ id: string }>(
+			`INSERT INTO members (company_id, member_type, display_name)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+			[companyId, MemberType.Agent, body.title.trim()],
+		);
+		const memberId = memberResult.rows[0].id;
 
-	await db.query(
-		`INSERT INTO member_agents (id, title, slug, role_description, system_prompt, reports_to, runtime_type, heartbeat_interval_min, monthly_budget_cents, mcp_servers)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::agent_runtime, $8, $9, $10::jsonb)`,
-		[
-			memberId,
-			body.title.trim(),
-			slug,
-			body.role_description ?? '',
-			body.system_prompt ?? '',
-			body.reports_to ?? null,
-			body.runtime_type ?? 'claude_code',
-			body.heartbeat_interval_min ?? 60,
-			body.monthly_budget_cents ?? 3000,
-			JSON.stringify(body.mcp_servers ?? []),
-		],
-	);
+		await db.query(
+			`INSERT INTO member_agents (id, title, slug, role_description, system_prompt, reports_to, runtime_type, heartbeat_interval_min, monthly_budget_cents, mcp_servers)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::agent_runtime, $8, $9, $10::jsonb)`,
+			[
+				memberId,
+				body.title.trim(),
+				slug,
+				body.role_description ?? '',
+				body.system_prompt ?? '',
+				body.reports_to ?? null,
+				body.runtime_type ?? 'claude_code',
+				body.heartbeat_interval_min ?? 60,
+				body.monthly_budget_cents ?? 3000,
+				JSON.stringify(body.mcp_servers ?? []),
+			],
+		);
 
-	const result = await db.query(
-		`SELECT m.id, m.company_id, m.display_name, m.created_at,
-            ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
-            ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
-            ma.runtime_status, ma.admin_status, ma.reports_to, ma.mcp_servers, ma.updated_at
-     FROM members m
-     JOIN member_agents ma ON ma.id = m.id
-     WHERE m.id = $1`,
-		[memberId],
-	);
+		await db.query('COMMIT');
 
-	broadcastChange(
-		c,
-		`company:${companyId}`,
-		'member_agents',
-		'INSERT',
-		result.rows[0] as Record<string, unknown>,
-	);
-	return ok(c, result.rows[0], 201);
+		const result = await db.query(
+			`SELECT m.id, m.company_id, m.display_name, m.created_at,
+              ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
+              ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
+              ma.runtime_status, ma.admin_status, ma.reports_to, ma.mcp_servers, ma.updated_at
+       FROM members m
+       JOIN member_agents ma ON ma.id = m.id
+       WHERE m.id = $1`,
+			[memberId],
+		);
+
+		broadcastChange(
+			c,
+			`company:${companyId}`,
+			'member_agents',
+			'INSERT',
+			result.rows[0] as Record<string, unknown>,
+		);
+		return ok(c, result.rows[0], 201);
+	} catch (e) {
+		await db.query('ROLLBACK');
+		throw e;
+	}
 });
 
 agentsRoutes.get('/companies/:companyId/agents/:agentId', async (c) => {
@@ -138,6 +153,7 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId', async (c) => {
 	const db = c.get('db');
 	const { companyId } = access;
 
+	const ts2 = terminalStatusParams(3);
 	const result = await db.query(
 		`SELECT m.id, m.company_id, m.display_name, m.created_at,
             ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
@@ -145,11 +161,11 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId', async (c) => {
             ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
             ma.mcp_servers, ma.updated_at,
             (SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
-            (SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${terminalStatusList}))::int AS assigned_issue_count
+            (SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts2.placeholders}))::int AS assigned_issue_count
      FROM members m
      JOIN member_agents ma ON ma.id = m.id
      WHERE m.id = $1 AND m.company_id = $2`,
-		[c.req.param('agentId'), companyId],
+		[c.req.param('agentId'), companyId, ...ts2.values],
 	);
 
 	if (result.rows.length === 0) {

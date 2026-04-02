@@ -1,7 +1,14 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { ApprovalStatus, CommentContentType, IssuePriority, IssueStatus } from '@hezo/shared';
+import {
+	ApprovalStatus,
+	AuthType,
+	CommentContentType,
+	IssuePriority,
+	IssueStatus,
+} from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import type { AuthInfo } from '../lib/types';
 
 export interface ToolDef {
 	name: string;
@@ -16,7 +23,7 @@ function tool(
 	name: string,
 	description: string,
 	schema: Record<string, z.ZodType>,
-	handler: (args: Record<string, unknown>, db: PGlite) => Promise<unknown>,
+	handler: (args: Record<string, unknown>, db: PGlite, auth: AuthInfo) => Promise<unknown>,
 	db: PGlite,
 ) {
 	registeredTools.push({
@@ -25,9 +32,48 @@ function tool(
 		schema: Object.fromEntries(Object.entries(schema).map(([k, v]) => [k, v.description ?? k])),
 	});
 	server.tool(name, description, schema, async (args: Record<string, unknown>) => {
-		const result = await handler(args, db);
+		const auth = args.__auth as AuthInfo | undefined;
+		if (!auth) {
+			return {
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ error: 'Unauthorized: missing auth context' }),
+					},
+				],
+			};
+		}
+		// Remove internal auth from args before passing to handler
+		const cleanArgs = { ...args };
+		delete cleanArgs.__auth;
+		const result = await handler(cleanArgs, db, auth);
 		return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
 	});
+}
+
+/**
+ * Verify the caller has access to the given company_id.
+ * Returns an error string if access denied, null if allowed.
+ */
+async function verifyCompanyAccess(
+	db: PGlite,
+	auth: AuthInfo,
+	companyId: string,
+): Promise<string | null> {
+	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
+		if (auth.companyId !== companyId) return 'Access denied: company mismatch';
+		return null;
+	}
+	if (auth.type === AuthType.Board) {
+		if (auth.isSuperuser) return null;
+		const result = await db.query(
+			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.company_id = $2',
+			[auth.userId, companyId],
+		);
+		if (result.rows.length === 0) return 'Access denied: not a member of this company';
+		return null;
+	}
+	return 'Access denied';
 }
 
 export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
@@ -37,11 +83,29 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 	tool(
 		server,
 		'list_companies',
-		'List all companies',
+		'List companies accessible to the caller',
 		{},
-		async (_args, db) => {
-			const r = await db.query('SELECT * FROM companies ORDER BY name');
-			return r.rows;
+		async (_args, db, auth) => {
+			if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
+				const r = await db.query('SELECT * FROM companies WHERE id = $1', [auth.companyId]);
+				return r.rows;
+			}
+			if (auth.type === AuthType.Board) {
+				if (auth.isSuperuser) {
+					const r = await db.query('SELECT * FROM companies ORDER BY name');
+					return r.rows;
+				}
+				const r = await db.query(
+					`SELECT c.* FROM companies c
+					 JOIN members m ON m.company_id = c.id
+					 JOIN member_users mu ON mu.id = m.id
+					 WHERE mu.user_id = $1
+					 ORDER BY c.name`,
+					[auth.userId],
+				);
+				return r.rows;
+			}
+			return [];
 		},
 		db,
 	);
@@ -53,7 +117,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 		{
 			company_id: z.string().describe('Company ID'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
 			const r = await db.query('SELECT * FROM companies WHERE id = $1', [args.company_id]);
 			return r.rows[0] ?? null;
 		},
@@ -63,13 +129,16 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 	tool(
 		server,
 		'create_company',
-		'Create a new company',
+		'Create a new company (superuser only)',
 		{
 			name: z.string().describe('Company name'),
 			issue_prefix: z.string().describe('Issue prefix (e.g. ACME)'),
 			description: z.string().optional().describe('Company description'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Board || !auth.isSuperuser) {
+				return { error: 'Access denied: superuser required' };
+			}
 			const slug = (args.name as string)
 				.toLowerCase()
 				.replace(/[^a-z0-9]+/g, '-')
@@ -93,7 +162,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			project_id: z.string().optional().describe('Filter by project ID'),
 			status: z.string().optional().describe('Filter by status (comma-separated)'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
 			const conditions = ['i.company_id = $1'];
 			const params: unknown[] = [args.company_id];
 			let idx = 2;
@@ -125,7 +196,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
 			const r = await db.query('SELECT * FROM issues WHERE id = $1 AND company_id = $2', [
 				args.issue_id,
 				args.company_id,
@@ -147,7 +220,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			priority: z.string().optional().describe('Priority: low, medium, high, urgent'),
 			assignee_id: z.string().optional().describe('Assignee member ID'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
 			const companyResult = await db.query<{ issue_prefix: string }>(
 				'SELECT issue_prefix FROM companies WHERE id = $1',
 				[args.company_id],
@@ -192,7 +267,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z.string().optional().describe('New assignee ID (null to unassign)'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
 			const sets: string[] = [];
 			const params: unknown[] = [];
 			let idx = 1;
@@ -227,7 +304,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 		{
 			company_id: z.string().describe('Company ID'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
 			const r = await db.query(
 				`SELECT m.id, ma.title, ma.slug, ma.status, ma.runtime_type, ma.monthly_budget_cents, ma.budget_used_cents
 			 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.company_id = $1 ORDER BY ma.title`,
@@ -246,7 +325,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 		{
 			company_id: z.string().describe('Company ID'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
 			const r = await db.query('SELECT * FROM projects WHERE company_id = $1 ORDER BY name', [
 				args.company_id,
 			]);
@@ -264,7 +345,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			name: z.string().describe('Project name'),
 			goal: z.string().optional().describe('Project goal'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
 			const slug = (args.name as string)
 				.toLowerCase()
 				.replace(/[^a-z0-9]+/g, '-')
@@ -287,7 +370,15 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			// Verify issue belongs to company
+			const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+				args.issue_id,
+				args.company_id,
+			]);
+			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
 			const r = await db.query(
 				`SELECT ic.*, COALESCE(ma.title, m.display_name) AS author_name
 			 FROM issue_comments ic LEFT JOIN members m ON m.id = ic.author_member_id LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
@@ -304,10 +395,19 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 		'create_comment',
 		'Add a comment to an issue',
 		{
+			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
 			content: z.string().describe('Comment text'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			// Verify issue belongs to company
+			const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+				args.issue_id,
+				args.company_id,
+			]);
+			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
 			const r = await db.query(
 				`INSERT INTO issue_comments (issue_id, content_type, content) VALUES ($1, $2::comment_content_type, $3::jsonb) RETURNING *`,
 				[args.issue_id, CommentContentType.Text, JSON.stringify({ text: args.content })],
@@ -325,7 +425,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 		{
 			company_id: z.string().describe('Company ID'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
 			const r = await db.query(
 				`SELECT * FROM approvals WHERE company_id = $1 AND status = $2::approval_status ORDER BY created_at DESC`,
 				[args.company_id, ApprovalStatus.Pending],
@@ -346,7 +448,15 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 				.describe('Resolution status'),
 			resolution_note: z.string().optional().describe('Note'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			// Look up the approval's company and verify access
+			const existing = await db.query<{ company_id: string }>(
+				'SELECT company_id FROM approvals WHERE id = $1',
+				[args.approval_id],
+			);
+			if (existing.rows.length === 0) return { error: 'Approval not found' };
+			const denied = await verifyCompanyAccess(db, auth, existing.rows[0].company_id);
+			if (denied) return { error: denied };
 			const r = await db.query(
 				`UPDATE approvals SET status = $1::approval_status, resolution_note = $2, resolved_at = now() WHERE id = $3 RETURNING *`,
 				[args.status, args.resolution_note ?? null, args.approval_id],
@@ -364,7 +474,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 		{
 			company_id: z.string().describe('Company ID'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
 			const r = await db.query(
 				'SELECT id, title, slug, updated_at FROM kb_docs WHERE company_id = $1 ORDER BY title',
 				[args.company_id],
@@ -382,7 +494,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			company_id: z.string().describe('Company ID'),
 			slug: z.string().describe('Document slug'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
 			const r = await db.query('SELECT * FROM kb_docs WHERE company_id = $1 AND slug = $2', [
 				args.company_id,
 				args.slug,
@@ -401,7 +515,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			company_id: z.string().describe('Company ID'),
 			group_by: z.enum(['agent', 'project', 'day']).optional().describe('Group costs by'),
 		},
-		async (args, db) => {
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
 			if (args.group_by === 'agent') {
 				const r = await db.query(
 					`SELECT ce.member_id, COALESCE(ma.title, m.display_name) AS agent_title, sum(ce.amount_cents)::int AS total_cents

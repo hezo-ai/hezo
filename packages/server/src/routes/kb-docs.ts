@@ -139,20 +139,6 @@ kbDocsRoutes.patch('/companies/:companyId/kb-docs/:slug', async (c) => {
 		return c.json({ data: { pending_approval: true, slug } }, 202);
 	}
 
-	if (body.content !== undefined) {
-		const revResult = await db.query<{ max_rev: number }>(
-			'SELECT COALESCE(MAX(revision_number), 0)::int AS max_rev FROM kb_doc_revisions WHERE doc_id = $1',
-			[doc.id],
-		);
-		const nextRev = revResult.rows[0].max_rev + 1;
-
-		await db.query(
-			`INSERT INTO kb_doc_revisions (doc_id, revision_number, content, change_summary, author_member_id)
-			 VALUES ($1, $2, $3, $4, $5)`,
-			[doc.id, nextRev, doc.content, body.change_summary ?? '', authorMemberId],
-		);
-	}
-
 	const sets: string[] = [];
 	const params: unknown[] = [];
 	let idx = 1;
@@ -176,20 +162,42 @@ kbDocsRoutes.patch('/companies/:companyId/kb-docs/:slug', async (c) => {
 		return ok(c, doc);
 	}
 
-	params.push(doc.id);
-	const result = await db.query(
-		`UPDATE kb_docs SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
-		params,
-	);
+	await db.query('BEGIN');
+	try {
+		if (body.content !== undefined) {
+			const revResult = await db.query<{ max_rev: number }>(
+				'SELECT COALESCE(MAX(revision_number), 0)::int AS max_rev FROM kb_doc_revisions WHERE doc_id = $1',
+				[doc.id],
+			);
+			const nextRev = revResult.rows[0].max_rev + 1;
 
-	broadcastChange(
-		c,
-		`company:${companyId}`,
-		'kb_docs',
-		'UPDATE',
-		result.rows[0] as Record<string, unknown>,
-	);
-	return ok(c, result.rows[0]);
+			await db.query(
+				`INSERT INTO kb_doc_revisions (doc_id, revision_number, content, change_summary, author_member_id)
+				 VALUES ($1, $2, $3, $4, $5)`,
+				[doc.id, nextRev, doc.content, body.change_summary ?? '', authorMemberId],
+			);
+		}
+
+		params.push(doc.id);
+		const result = await db.query(
+			`UPDATE kb_docs SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
+			params,
+		);
+
+		await db.query('COMMIT');
+
+		broadcastChange(
+			c,
+			`company:${companyId}`,
+			'kb_docs',
+			'UPDATE',
+			result.rows[0] as Record<string, unknown>,
+		);
+		return ok(c, result.rows[0]);
+	} catch (e) {
+		await db.query('ROLLBACK');
+		throw e;
+	}
 });
 
 kbDocsRoutes.delete('/companies/:companyId/kb-docs/:slug', async (c) => {

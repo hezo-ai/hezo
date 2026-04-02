@@ -8,7 +8,13 @@ import { requireCompanyAccess, requireSuperuser } from '../middleware/auth';
 
 export const companiesRoutes = new Hono<Env>();
 
-const terminalStatusList = TERMINAL_ISSUE_STATUSES.map((s) => `'${s}'`).join(', ');
+/** Generate parameterized placeholders for terminal issue statuses, starting at the given index. */
+function terminalStatusParams(startIdx: number): { placeholders: string; values: string[] } {
+	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${startIdx + i}::issue_status`).join(
+		', ',
+	);
+	return { placeholders, values: [...TERMINAL_ISSUE_STATUSES] };
+}
 
 companiesRoutes.get('/companies', async (c) => {
 	const db = c.get('db');
@@ -19,21 +25,24 @@ companiesRoutes.get('/companies', async (c) => {
 
 	let query: string;
 	const params: unknown[] = [MemberType.Agent];
+	const ts = terminalStatusParams(2);
+	params.push(...ts.values);
+	const nextIdx = 2 + ts.values.length;
 
 	if (!isBoard || isSuperuser) {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.company_id = c.id AND m.member_type = $1)::int AS agent_count,
-       (SELECT count(*) FROM issues i WHERE i.company_id = c.id AND i.status NOT IN (${terminalStatusList}))::int AS open_issue_count
+       (SELECT count(*) FROM issues i WHERE i.company_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_issue_count
      FROM companies c
      ORDER BY c.created_at DESC`;
 	} else {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.company_id = c.id AND m.member_type = $1)::int AS agent_count,
-       (SELECT count(*) FROM issues i WHERE i.company_id = c.id AND i.status NOT IN (${terminalStatusList}))::int AS open_issue_count
+       (SELECT count(*) FROM issues i WHERE i.company_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_issue_count
      FROM companies c
      JOIN members m2 ON m2.company_id = c.id
      JOIN member_users mu ON mu.id = m2.id
-     WHERE mu.user_id = $2
+     WHERE mu.user_id = $${nextIdx}
      ORDER BY c.created_at DESC`;
 		params.push(auth.userId);
 	}
@@ -139,12 +148,13 @@ companiesRoutes.get('/companies/:companyId', async (c) => {
 	const db = c.get('db');
 	const { companyId } = access;
 
+	const ts2 = terminalStatusParams(3);
 	const result = await db.query(
 		`SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.company_id = c.id AND m.member_type = $2)::int AS agent_count,
-       (SELECT count(*) FROM issues i WHERE i.company_id = c.id AND i.status NOT IN (${terminalStatusList}))::int AS open_issue_count
+       (SELECT count(*) FROM issues i WHERE i.company_id = c.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_issue_count
      FROM companies c WHERE c.id = $1`,
-		[companyId, MemberType.Agent],
+		[companyId, MemberType.Agent, ...ts2.values],
 	);
 
 	if (result.rows.length === 0) {

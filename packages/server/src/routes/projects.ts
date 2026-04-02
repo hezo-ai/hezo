@@ -15,7 +15,13 @@ import {
 
 export const projectsRoutes = new Hono<Env>();
 
-const terminalStatusList = TERMINAL_ISSUE_STATUSES.map((s) => `'${s}'`).join(', ');
+/** Generate parameterized placeholders for terminal issue statuses, starting at the given index. */
+function terminalStatusParams(startIdx: number): { placeholders: string; values: string[] } {
+	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${startIdx + i}::issue_status`).join(
+		', ',
+	);
+	return { placeholders, values: [...TERMINAL_ISSUE_STATUSES] };
+}
 
 projectsRoutes.get('/companies/:companyId/projects', async (c) => {
 	const access = await requireCompanyAccess(c);
@@ -24,14 +30,15 @@ projectsRoutes.get('/companies/:companyId/projects', async (c) => {
 	const db = c.get('db');
 	const { companyId } = access;
 
+	const ts = terminalStatusParams(2);
 	const result = await db.query(
 		`SELECT p.*,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
-       (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN (${terminalStatusList}))::int AS open_issue_count
+       (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN (${ts.placeholders}))::int AS open_issue_count
      FROM projects p
      WHERE p.company_id = $1
      ORDER BY p.created_at DESC`,
-		[companyId],
+		[companyId, ...ts.values],
 	);
 	return ok(c, result.rows);
 });
@@ -104,13 +111,14 @@ projectsRoutes.get('/companies/:companyId/projects/:projectId', async (c) => {
 	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
+	const ts2 = terminalStatusParams(3);
 	const result = await db.query(
 		`SELECT p.*,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
-       (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN (${terminalStatusList}))::int AS open_issue_count
+       (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_issue_count
      FROM projects p
      WHERE p.id = $1 AND p.company_id = $2`,
-		[projectId, companyId],
+		[projectId, companyId, ...ts2.values],
 	);
 
 	if (result.rows.length === 0) {
@@ -209,9 +217,10 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 		return err(c, 'NOT_FOUND', 'Project not found', 404);
 	}
 
+	const ts3 = terminalStatusParams(2);
 	const openIssues = await db.query<{ count: number }>(
-		`SELECT count(*)::int AS count FROM issues WHERE project_id = $1 AND status NOT IN (${terminalStatusList})`,
-		[projectId],
+		`SELECT count(*)::int AS count FROM issues WHERE project_id = $1 AND status NOT IN (${ts3.placeholders})`,
+		[projectId, ...ts3.values],
 	);
 	if (openIssues.rows[0].count > 0) {
 		return err(c, 'CONFLICT', 'Cannot delete project with open issues', 409);

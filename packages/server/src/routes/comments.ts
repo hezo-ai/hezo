@@ -138,16 +138,27 @@ commentsRoutes.post(
 
 		const db = c.get('db');
 		const { companyId } = access;
+		const issueId = c.req.param('issueId');
 		const commentId = c.req.param('commentId');
+
+		// Verify issue belongs to company
+		const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+			issueId,
+			companyId,
+		]);
+		if (issueCheck.rows.length === 0) {
+			return err(c, 'NOT_FOUND', 'Issue not found', 404);
+		}
 
 		const body = await c.req.json<{ chosen_id: string }>();
 		if (!body.chosen_id) {
 			return err(c, 'INVALID_REQUEST', 'chosen_id is required', 400);
 		}
 
+		// Verify comment belongs to the issue
 		const existing = await db.query<{ content_type: string; issue_id: string }>(
-			'SELECT content_type, issue_id FROM issue_comments WHERE id = $1',
-			[commentId],
+			'SELECT content_type, issue_id FROM issue_comments WHERE id = $1 AND issue_id = $2',
+			[commentId, issueId],
 		);
 		if (existing.rows.length === 0) {
 			return err(c, 'NOT_FOUND', 'Comment not found', 404);
@@ -156,20 +167,28 @@ commentsRoutes.post(
 			return err(c, 'INVALID_REQUEST', 'Can only choose on options-type comments', 400);
 		}
 
-		const result = await db.query(
-			'UPDATE issue_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *',
-			[JSON.stringify({ chosen_id: body.chosen_id }), commentId],
-		);
+		await db.query('BEGIN');
+		let result: Awaited<ReturnType<typeof db.query>>;
+		try {
+			result = await db.query(
+				'UPDATE issue_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *',
+				[JSON.stringify({ chosen_id: body.chosen_id }), commentId],
+			);
 
-		await db.query(
-			`INSERT INTO issue_comments (issue_id, content_type, content)
-       VALUES ($1, $2::comment_content_type, $3::jsonb)`,
-			[
-				existing.rows[0].issue_id,
-				CommentContentType.System,
-				JSON.stringify({ text: `Board selected option: ${body.chosen_id}` }),
-			],
-		);
+			await db.query(
+				`INSERT INTO issue_comments (issue_id, content_type, content)
+         VALUES ($1, $2::comment_content_type, $3::jsonb)`,
+				[
+					existing.rows[0].issue_id,
+					CommentContentType.System,
+					JSON.stringify({ text: `Board selected option: ${body.chosen_id}` }),
+				],
+			);
+			await db.query('COMMIT');
+		} catch (e) {
+			await db.query('ROLLBACK');
+			throw e;
+		}
 
 		const issue = await db.query<{ assignee_id: string | null }>(
 			'SELECT assignee_id FROM issues WHERE id = $1',
