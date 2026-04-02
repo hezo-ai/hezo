@@ -17,6 +17,7 @@ export interface Issue {
 	parent_issue_id: string | null;
 	labels: string[];
 	progress_summary: string | null;
+	rules: string | null;
 	project_name: string | null;
 	comment_count: number;
 	cost_cents: number;
@@ -87,6 +88,8 @@ export function useUpdateIssue(companyId: string, issueId: string) {
 			priority?: string;
 			assignee_id?: string | null;
 			labels?: string[];
+			progress_summary?: string | null;
+			rules?: string | null;
 		}) => api.patch<Issue>(`/api/companies/${companyId}/issues/${issueId}`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'issues'] });

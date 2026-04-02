@@ -252,6 +252,59 @@ describe('issues CRUD', () => {
 		expect(issues[0]).not.toHaveProperty('progress_summary');
 	});
 
+	it('updates and retrieves rules', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		const issue = (await listRes.json()).data[0];
+
+		const rules = 'Consult the architect before making changes.\nPrioritize performance.';
+		const patchRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ rules }),
+		});
+		expect(patchRes.status).toBe(200);
+		const patched = (await patchRes.json()).data;
+		expect(patched.rules).toBe(rules);
+
+		const detailRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			headers: authHeader(token),
+		});
+		expect(detailRes.status).toBe(200);
+		expect((await detailRes.json()).data.rules).toBe(rules);
+	});
+
+	it('clears rules with null', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		const issue = (await listRes.json()).data[0];
+
+		await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ rules: 'Some rules' }),
+		});
+
+		const clearRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ rules: null }),
+		});
+		expect(clearRes.status).toBe(200);
+		expect((await clearRes.json()).data.rules).toBeNull();
+	});
+
+	it('does not include rules in list view', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		expect(listRes.status).toBe(200);
+		const issues = (await listRes.json()).data;
+		expect(issues[0]).not.toHaveProperty('rules');
+	});
+
 	it('prevents deleting an in-progress issue', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
 			headers: authHeader(token),

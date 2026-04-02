@@ -97,3 +97,54 @@ test('issue detail shows execution lock banner when locked', async ({ page }) =>
 	// Verify the lock banner is visible showing who is working
 	await expect(page.getByText('is working on this issue')).toBeVisible({ timeout: 10000 });
 });
+
+test('can edit issue rules and progress summary', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const token = await getToken(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const companyRes = await page.request.post('/api/companies', {
+		headers,
+		data: {
+			name: `Rules Test ${Date.now()}`,
+			issue_prefix: `RT${Date.now().toString().slice(-4)}`,
+		},
+	});
+	const company = (await companyRes.json()).data;
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Rules Project' },
+	});
+	const project = (await projectRes.json()).data;
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: { project_id: project.id, title: 'Rules Test Issue' },
+	});
+	const issue = (await issueRes.json()).data;
+
+	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await expect(page.getByText('Rules Test Issue')).toBeVisible({ timeout: 10000 });
+
+	// Edit rules
+	const rulesSection = page.locator('text=Rules').locator('..');
+	await rulesSection.getByText('Edit').click();
+	await rulesSection.locator('textarea').fill('Consult architect before changes');
+	await rulesSection.getByRole('button', { name: 'Save' }).click();
+	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 5000 });
+
+	// Edit progress summary
+	const summarySection = page.locator('text=Progress Summary').locator('..');
+	await summarySection.getByText('Edit').click();
+	await summarySection.locator('textarea').fill('Implementation started');
+	await summarySection.getByRole('button', { name: 'Save' }).click();
+	await expect(page.getByText('Implementation started')).toBeVisible({ timeout: 5000 });
+
+	// Verify persistence after reload
+	await page.reload();
+	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByText('Implementation started')).toBeVisible({ timeout: 10000 });
+});

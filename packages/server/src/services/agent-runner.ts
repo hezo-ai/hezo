@@ -20,6 +20,7 @@ interface IssueInfo {
 	status: string;
 	priority: string;
 	project_id: string;
+	rules: string | null;
 }
 
 interface ProjectInfo {
@@ -153,7 +154,7 @@ export async function runAgent(
 }
 
 function buildTaskPrompt(systemPrompt: string, issue: IssueInfo): string {
-	return [
+	const parts = [
 		systemPrompt,
 		'',
 		'---',
@@ -162,10 +163,19 @@ function buildTaskPrompt(systemPrompt: string, issue: IssueInfo): string {
 		`**Priority:** ${issue.priority}`,
 		`**Status:** ${issue.status}`,
 		'',
-		issue.description || 'No description provided.',
-		'',
-		'Work on this task. Post comments via the Agent API to report progress.',
-	].join('\n');
+	];
+
+	if (issue.rules) {
+		parts.push('### Rules for this issue');
+		parts.push(issue.rules);
+		parts.push('');
+	}
+
+	parts.push(issue.description || 'No description provided.');
+	parts.push('');
+	parts.push('Work on this task. Post comments via the Agent API to report progress.');
+
+	return parts.join('\n');
 }
 
 async function createHeartbeatRun(

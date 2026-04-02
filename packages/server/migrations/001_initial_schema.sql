@@ -346,6 +346,7 @@ CREATE TABLE issues (
     progress_summary             TEXT,
     progress_summary_updated_at  TIMESTAMPTZ,
     progress_summary_updated_by  UUID REFERENCES members(id) ON DELETE SET NULL,
+    rules                TEXT,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 

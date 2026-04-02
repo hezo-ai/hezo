@@ -621,7 +621,7 @@ Response: full issue object + computed fields:
 ```
 
 #### `PATCH /companies/:companyId/issues/:issueId`
-Update issue fields: title, description, status, priority, assignee_id, labels.
+Update issue fields: title, description, status, priority, assignee_id, labels, rules, progress_summary.
 
 Changing `assignee_id` triggers an event on the newly assigned agent, or a notification to the newly assigned board member.
 Changing `status` to `done` or `closed` triggers preview cleanup.

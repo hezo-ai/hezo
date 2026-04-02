@@ -237,6 +237,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		assignee_id?: string | null;
 		labels?: string[];
 		progress_summary?: string | null;
+		rules?: string | null;
 	}>();
 
 	const sets: string[] = [];
@@ -282,6 +283,11 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		const updatedBy = auth.type === AuthType.Agent ? auth.memberId : null;
 		sets.push(`progress_summary_updated_by = $${idx}`);
 		params.push(updatedBy);
+		idx++;
+	}
+	if (body.rules !== undefined) {
+		sets.push(`rules = $${idx}`);
+		params.push(body.rules);
 		idx++;
 	}
 
