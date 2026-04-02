@@ -111,17 +111,7 @@ companiesRoutes.post('/companies', async (c) => {
 		}
 
 		if (body.company_type_id) {
-			const typeResult = await db.query<{ agents_config: AgentConfig[] | null }>(
-				'SELECT agents_config FROM company_types WHERE id = $1',
-				[body.company_type_id],
-			);
-
-			if (typeResult.rows.length > 0) {
-				const agentsConfig = typeResult.rows[0].agents_config;
-				if (Array.isArray(agentsConfig) && agentsConfig.length > 0) {
-					await createAgentsFromConfig(db, company.id, agentsConfig);
-				}
-			}
+			await createAgentsFromCompanyType(db, company.id, body.company_type_id);
 		}
 
 		await db.query('COMMIT');
@@ -240,59 +230,77 @@ companiesRoutes.delete('/companies/:companyId', async (c) => {
 	return c.json({ data: null }, 200);
 });
 
-interface AgentConfig {
-	title: string;
-	slug: string;
-	reports_to_slug: string | null;
-	runtime_type: string;
-	heartbeat_interval_min: number;
-	monthly_budget_cents: number;
-	role_description: string;
-	runtime_status?: string;
-	admin_status?: string;
-	system_prompt?: string;
-}
-
-async function createAgentsFromConfig(
+async function createAgentsFromCompanyType(
 	db: PGlite,
 	companyId: string,
-	agentsConfig: AgentConfig[],
+	companyTypeId: string,
 ): Promise<void> {
+	const joinRows = await db.query<{
+		id: string;
+		name: string;
+		slug: string;
+		role_description: string;
+		system_prompt_template: string;
+		runtime_type: string;
+		heartbeat_interval_min: number;
+		monthly_budget_cents: number;
+		reports_to_slug: string | null;
+		runtime_type_override: string | null;
+		heartbeat_interval_override: number | null;
+		monthly_budget_override: number | null;
+	}>(
+		`SELECT at.id, at.name, at.slug, at.role_description, at.system_prompt_template,
+		        at.runtime_type, at.heartbeat_interval_min, at.monthly_budget_cents,
+		        ctat.reports_to_slug,
+		        ctat.runtime_type_override, ctat.heartbeat_interval_override, ctat.monthly_budget_override
+		 FROM company_type_agent_types ctat
+		 JOIN agent_types at ON at.id = ctat.agent_type_id
+		 WHERE ctat.company_type_id = $1
+		 ORDER BY ctat.sort_order ASC`,
+		[companyTypeId],
+	);
+
+	if (joinRows.rows.length === 0) return;
+
 	const slugToMemberId = new Map<string, string>();
 
-	for (const agent of agentsConfig) {
+	for (const row of joinRows.rows) {
+		const runtimeType = row.runtime_type_override ?? row.runtime_type;
+		const heartbeat = row.heartbeat_interval_override ?? row.heartbeat_interval_min;
+		const budget = row.monthly_budget_override ?? row.monthly_budget_cents;
+
 		const memberResult = await db.query<{ id: string }>(
 			`INSERT INTO members (company_id, member_type, display_name)
-       VALUES ($1, $2, $3)
-       RETURNING id`,
-			[companyId, MemberType.Agent, agent.title],
+			 VALUES ($1, $2, $3)
+			 RETURNING id`,
+			[companyId, MemberType.Agent, row.name],
 		);
 		const memberId = memberResult.rows[0].id;
-		slugToMemberId.set(agent.slug, memberId);
+		slugToMemberId.set(row.slug, memberId);
 
 		await db.query(
-			`INSERT INTO member_agents (id, title, slug, role_description, system_prompt, runtime_type, heartbeat_interval_min, monthly_budget_cents, runtime_status, admin_status)
-       VALUES ($1, $2, $3, $4, $5, $6::agent_runtime, $7, $8, $9::agent_runtime_status, $10::agent_admin_status)`,
+			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, system_prompt,
+			                            runtime_type, heartbeat_interval_min, monthly_budget_cents)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_runtime, $8, $9)`,
 			[
 				memberId,
-				agent.title,
-				agent.slug,
-				agent.role_description ?? '',
-				agent.system_prompt ?? '',
-				agent.runtime_type ?? 'claude_code',
-				agent.heartbeat_interval_min ?? 60,
-				agent.monthly_budget_cents ?? 3000,
-				agent.runtime_status ?? 'idle',
-				agent.admin_status ?? 'enabled',
+				row.id,
+				row.name,
+				row.slug,
+				row.role_description,
+				row.system_prompt_template,
+				runtimeType,
+				heartbeat,
+				budget,
 			],
 		);
 	}
 
-	for (const agent of agentsConfig) {
-		if (agent.reports_to_slug && agent.reports_to_slug !== 'board') {
-			const reportsToId = slugToMemberId.get(agent.reports_to_slug);
-			if (reportsToId) {
-				const memberId = slugToMemberId.get(agent.slug);
+	for (const row of joinRows.rows) {
+		if (row.reports_to_slug && row.reports_to_slug !== 'board') {
+			const reportsToId = slugToMemberId.get(row.reports_to_slug);
+			const memberId = slugToMemberId.get(row.slug);
+			if (reportsToId && memberId) {
 				await db.query('UPDATE member_agents SET reports_to = $1 WHERE id = $2', [
 					reportsToId,
 					memberId,
@@ -302,4 +310,4 @@ async function createAgentsFromConfig(
 	}
 }
 
-export { createAgentsFromConfig };
+export { createAgentsFromCompanyType };

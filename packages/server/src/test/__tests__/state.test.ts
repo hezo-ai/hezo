@@ -87,7 +87,7 @@ describe('signOAuthState + verifyOAuthState', () => {
 		await mkm.initialize(db, generateMasterKey());
 
 		const signed = await signOAuthState({ company_id: 'abc-123' }, mkm);
-		const tampered = signed.slice(0, -4) + 'xxxx';
+		const tampered = `${signed.slice(0, -4)}xxxx`;
 		const result = await verifyOAuthState(tampered, mkm);
 		expect(result).toBeNull();
 		await db.close();

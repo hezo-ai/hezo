@@ -170,8 +170,9 @@ export class HeartbeatEngine {
 			status: string;
 			priority: string;
 			project_id: string;
+			rules: string | null;
 		}>(
-			`SELECT id, identifier, title, description, status, priority, project_id
+			`SELECT id, identifier, title, description, status, priority, project_id, rules
 			 FROM issues
 			 WHERE assignee_id = $1 AND company_id = $2
 			   AND status NOT IN ($3, $4, $5)

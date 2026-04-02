@@ -278,23 +278,36 @@ This means an OpenClaw instance or any AI agent with an API key can fully orches
 
 ### Company types
 
-A **company type** (also called a template or recipe) defines the blueprint for a new company. Every company is created from a company type. A company type specifies:
+A **company type** (also called a template or recipe) defines the blueprint for a new company. A company type is a grouping of **agent types** plus default KB docs, preferences, and MCP servers.
 
+**Agent types** are first-class entities stored in the `agent_types` table. Each agent type defines:
+- **Name and slug** — e.g., "CEO" / `ceo`
+- **Role description** — what this agent type does
+- **System prompt template** — with `{{placeholder}}` variables resolved at runtime
+- **Default config** — runtime type, heartbeat interval, monthly budget
+- **Source** — `builtin` (shipped with Hezo), `custom` (user-created), or `remote` (loaded from hezo connect marketplace)
+
+A **company type** specifies:
 - **Name** — e.g., "Software Development", "Research Lab", "Marketing Agency"
 - **Description** — what this type of company does
-- **Default agents** — roles, titles, system prompts, org chart hierarchy, runtime types, heartbeat intervals, budget allocations
+- **Agent types** — which agent types to include, their org chart hierarchy (reports_to), and optional config overrides (via the `company_type_agent_types` join table)
 - **Default KB documents** — starter knowledge base content (coding standards, guidelines, etc.)
 - **Default preferences** — initial company preferences
 - **Default MCP servers** — company-level MCP server configuration
 
-The current 9-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher) is the built-in **"Software Development"** company type. It ships with Hezo and cannot be deleted (but can be customized per-company after creation).
+The current 9-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher) is the built-in **"Software Development"** company type. It ships with Hezo and cannot be deleted (but can be customized per-company after creation). Users are not limited to the agent types that come with their company type — they can add other agent types later.
+
+**Creating agent types:**
+- 9 built-in agent types ship with Hezo
+- Users can create custom agent types via the API
+- Future: agent types can be loaded from hezo connect (remote marketplace)
 
 **Creating company types:**
-- Users can create new company types from scratch (define agents, KB docs, and preferences manually)
+- Users can create new company types from scratch (select agent types, define KB docs and preferences)
 - Users can save an existing company as a new company type (snapshots current agents, KB, and preferences)
 - Company types are stored locally in the Hezo instance
 
-**Future:** Company types will be distributable as recipes from the Hezo project website, enabling the community to share blueprints for different kinds of AI companies.
+**Future:** Agent types and company types will be distributable as recipes from the Hezo Connect platform, enabling the community to create and sell blueprints for different kinds of AI companies.
 
 ### Company onboarding flow
 
@@ -347,11 +360,11 @@ Each connected platform auto-registers as a **company-level MCP server** so agen
 
 ### Company cloning and company types
 
-Every company is created from a **company type** (see "Company types" above). The company type determines the starting agents, knowledge base, and preferences. After creation, the company is fully independent of its source type — changes to the company do not affect the type, and vice versa.
+Every company is created from a **company type** (see "Company types" above). The company type determines the starting agent types, knowledge base, and preferences. Agents are provisioned by querying the `company_type_agent_types` join table and creating instances from each referenced agent type. Each created agent stores an `agent_type_id` for provenance tracking. After creation, the company is fully independent of its source type — changes to the company do not affect the type, and vice versa.
 
 Users can also **save an existing company as a new company type**. This snapshots:
 
-- **Agent configurations** — titles, role descriptions, system prompts, org chart hierarchy, runtime types, heartbeat intervals, budget allocations
+- **Agent type references** — which agent types to include, their org chart hierarchy, and any config overrides
 - **Knowledge base** — all documents (coding standards, guidelines, etc.)
 - **Company preferences** — board working style preferences
 - **MCP server config** — company-level MCP servers
@@ -406,9 +419,11 @@ On agent creation, the UI provides a monospace editor with a toolbar for inserti
 
 ### Built-in role templates
 
-Hezo ships with 9 built-in role templates that form the default team for the "Software Development" company type. Full specifications for each role are in `agents/{slug}.md`. Role-specific instructions are embedded directly in the system prompt template — no separate skill files. Users can customize every field. All roles are starting points, not fixed — agents can be added, removed, or reconfigured.
+Hezo ships with 9 built-in agent types that form the default team for the "Software Development" company type. Full specifications for each role are in `agents/{slug}.md`. Role-specific instructions are embedded directly in the system prompt template — no separate skill files. Users can customize every field. All agent types are starting points, not fixed — agents can be added, removed, or reconfigured per-company.
 
-Users can also create **entirely new custom roles** with arbitrary titles, descriptions, system prompts, runtime types, and reporting lines. For example, a company could add a "Data Scientist", a second "Frontend Engineer", a "Security Auditor", or a "Legal Researcher" — any role the company needs. Custom roles are first-class citizens — they appear in the org chart, receive issues, participate in delegation, and have their own budgets just like built-in roles.
+Users can also create **entirely new custom agent types** with arbitrary titles, descriptions, system prompts, runtime types, and reporting lines. For example, a user could create a "Data Scientist", "Security Auditor", or "Legal Researcher" agent type — any role needed. Custom agent types are first-class citizens — agents created from them appear in the org chart, receive issues, participate in delegation, and have their own budgets just like built-in types.
+
+Agents can request updates to their own system prompts via `PATCH /agent-api/self/system-prompt`, subject to board approval. This allows agents to evolve their behavior when directed by a human member.
 
 ### Ticket workflow
 
@@ -1985,7 +2000,9 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `members` | Base table for all company participants. Has `member_type` enum ('agent'/'user'). |
 | `member_agents` | Agent-specific extension (system_prompt, runtime, budget, heartbeat, org chart). |
 | `member_users` | User-in-company extension (role, role_title, permissions_text, project_ids). |
-| `company_types` | Company blueprints (recipes). Default agents, KB docs, preferences, filesystem snapshots. |
+| `agent_types` | First-class agent type catalog with role templates, system prompts, and default configs. Sources: builtin, custom, remote. |
+| `company_types` | Company blueprints (recipes). Groups of agent types plus default KB docs, preferences. |
+| `company_type_agent_types` | Join table linking company types to agent types with org chart and config overrides. |
 | `companies` | Top-level tenant. Has `email`, `company_type_id`, `mcp_servers` (JSONB), `mpp_config` (JSONB), budget. |
 | `invites` | Pending invitations to join a company (7-day expiry) |
 | `api_keys` | Company-scoped API keys for external orchestrators. Stored hashed. |
@@ -2089,7 +2106,7 @@ Three token types:
 | Feature | Notes |
 |---------|-------|
 | 1Password integration | Replace local encrypted secrets with 1Password Connect Server |
-| Company type distribution | Community marketplace for sharing company types as downloadable recipes |
+| Agent type & company type marketplace | Community marketplace on hezo connect for creating, sharing, and selling agent types and company types |
 | Config versioning with rollback | Revisioned config changes, safe rollback |
 | Visual drag-to-reorganize org chart | Interactive reordering of reporting lines |
 | Mobile-optimized UX | Responsive but not phone-first in MVP |

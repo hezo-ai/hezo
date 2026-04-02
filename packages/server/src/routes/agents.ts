@@ -27,7 +27,7 @@ agentsRoutes.get('/companies/:companyId/agents', async (c) => {
 	const ts = terminalStatusParams(2);
 	let query = `
     SELECT m.id, m.company_id, m.display_name, m.created_at,
-           ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
+           ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
            ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
            ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.updated_at,
            ma.reports_to,
@@ -123,7 +123,7 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 
 		const result = await db.query(
 			`SELECT m.id, m.company_id, m.display_name, m.created_at,
-              ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
+              ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
               ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
               ma.runtime_status, ma.admin_status, ma.reports_to, ma.mcp_servers, ma.updated_at
        FROM members m
@@ -156,7 +156,7 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId', async (c) => {
 	const ts2 = terminalStatusParams(3);
 	const result = await db.query(
 		`SELECT m.id, m.company_id, m.display_name, m.created_at,
-            ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
+            ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
             ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
             ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
             ma.mcp_servers, ma.updated_at,

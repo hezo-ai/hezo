@@ -128,7 +128,7 @@ test('company type seed data includes system prompts for all 9 agents', async ({
 	const softDev = types.find((t: any) => t.name === 'Software Development');
 	expect(softDev).toBeTruthy();
 
-	const agentsConfig = softDev.agents_config;
+	const agentsConfig = softDev.agent_types;
 	expect(agentsConfig).toHaveLength(9);
 
 	const expectedSlugs = [
