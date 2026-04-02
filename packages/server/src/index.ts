@@ -6,6 +6,7 @@ import { app } from './app';
 import { parseArgs } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { safeCompareHex } from './middleware/auth';
+import { ContainerLogStreamer } from './services/container-logs';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { startup } from './startup';
 
@@ -21,6 +22,8 @@ let serveFetch: (
 let wsManager: WebSocketManager | null = null;
 let dbRef: PGlite | null = null;
 let mkmRef: MasterKeyManager | null = null;
+let dockerRef: import('./services/docker').DockerClient | null = null;
+const containerLogStreamer = new ContainerLogStreamer();
 
 async function validateToken(token: string): Promise<WsData['auth'] | null> {
 	if (!mkmRef || !dbRef || mkmRef.getState() !== 'unlocked') return null;
@@ -87,6 +90,7 @@ startup(config)
 		wsManager = result.wsManager;
 		dbRef = result.db;
 		mkmRef = result.masterKeyManager;
+		dockerRef = result.docker;
 		const url = `http://localhost:${result.port}`;
 		console.log(`Hezo server running at ${url} [${result.masterKeyState}]`);
 		if (!config.noOpen) {
@@ -136,22 +140,59 @@ export default {
 			ws.data.rooms = new Set<string>();
 		},
 		close(ws: Bun.ServerWebSocket<WsConnectionData>) {
-			wsManager?.unsubscribeAll(ws as unknown as WsSocket);
+			if (wsManager) {
+				for (const room of ws.data.rooms) {
+					const logsMatch = room.match(/^container-logs:(.+)$/);
+					if (logsMatch) {
+						wsManager.unsubscribe(ws as unknown as WsSocket, room);
+						if (wsManager.getRoomSize(room) === 0) {
+							containerLogStreamer.unsubscribe(logsMatch[1]);
+						}
+					}
+				}
+				wsManager.unsubscribeAll(ws as unknown as WsSocket);
+			}
 		},
 		async message(ws: Bun.ServerWebSocket<WsConnectionData>, msg: string | Buffer) {
 			if (!wsManager) return;
 			try {
 				const data = JSON.parse(typeof msg === 'string' ? msg : msg.toString());
 				if (data.action === 'subscribe' && typeof data.room === 'string') {
-					// Authorize room subscriptions
-					const match = data.room.match(/^company:(.+)$/);
-					if (match) {
-						const allowed = await canAccessCompany(ws.data.auth, match[1]);
+					const companyMatch = data.room.match(/^company:(.+)$/);
+					if (companyMatch) {
+						const allowed = await canAccessCompany(ws.data.auth, companyMatch[1]);
 						if (!allowed) return;
 					}
+
+					const logsMatch = data.room.match(/^container-logs:(.+)$/);
+					if (logsMatch && dbRef && dockerRef) {
+						const projectId = logsMatch[1];
+						const project = await dbRef.query<{
+							container_id: string | null;
+							company_id: string;
+							container_status: string | null;
+						}>('SELECT container_id, company_id, container_status FROM projects WHERE id = $1', [
+							projectId,
+						]);
+						if (project.rows.length === 0) return;
+						const row = project.rows[0];
+						const allowed = await canAccessCompany(ws.data.auth, row.company_id);
+						if (!allowed) return;
+						if (!row.container_id || row.container_status !== 'running') return;
+
+						wsManager.subscribe(ws as unknown as WsSocket, data.room);
+						containerLogStreamer.subscribe(projectId, row.container_id, wsManager, dockerRef);
+						return;
+					}
+
 					wsManager.subscribe(ws as unknown as WsSocket, data.room);
 				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {
 					wsManager.unsubscribe(ws as unknown as WsSocket, data.room);
+
+					const logsMatch = data.room.match(/^container-logs:(.+)$/);
+					if (logsMatch && wsManager.getRoomSize(data.room) === 0) {
+						containerLogStreamer.unsubscribe(logsMatch[1]);
+					}
 				}
 			} catch {
 				// ignore malformed messages

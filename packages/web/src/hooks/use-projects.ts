@@ -70,14 +70,3 @@ export function useDeleteProject(companyId: string) {
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] }),
 	});
 }
-
-export function useRebuildContainer(companyId: string, projectId: string) {
-	return useMutation({
-		mutationFn: () =>
-			api.post(`/api/companies/${companyId}/projects/${projectId}/rebuild-container`, {}),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] });
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects', projectId] });
-		},
-	});
-}

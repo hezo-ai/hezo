@@ -243,7 +243,73 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 	return c.json({ data: null }, 200);
 });
 
-projectsRoutes.post('/companies/:companyId/projects/:projectId/rebuild-container', async (c) => {
+projectsRoutes.post('/companies/:companyId/projects/:projectId/container/start', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+
+	const result = await db.query<{ container_id: string | null }>(
+		'SELECT container_id FROM projects WHERE id = $1 AND company_id = $2',
+		[projectId, companyId],
+	);
+	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	if (!result.rows[0].container_id) return err(c, 'NO_CONTAINER', 'No container provisioned', 400);
+
+	const docker = c.get('docker');
+	try {
+		await docker.startContainer(result.rows[0].container_id);
+		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
+			ContainerStatus.Running,
+			projectId,
+		]);
+		broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+			id: projectId,
+			container_status: ContainerStatus.Running,
+		});
+		return ok(c, { container_status: ContainerStatus.Running });
+	} catch (error) {
+		return err(c, 'DOCKER_ERROR', `Failed to start container: ${(error as Error).message}`, 500);
+	}
+});
+
+projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+
+	const result = await db.query<{ container_id: string | null }>(
+		'SELECT container_id FROM projects WHERE id = $1 AND company_id = $2',
+		[projectId, companyId],
+	);
+	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	if (!result.rows[0].container_id) return err(c, 'NO_CONTAINER', 'No container provisioned', 400);
+
+	const docker = c.get('docker');
+	try {
+		await docker.stopContainer(result.rows[0].container_id);
+		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
+			ContainerStatus.Stopped,
+			projectId,
+		]);
+		broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+			id: projectId,
+			container_status: ContainerStatus.Stopped,
+		});
+		return ok(c, { container_status: ContainerStatus.Stopped });
+	} catch (error) {
+		return err(c, 'DOCKER_ERROR', `Failed to stop container: ${(error as Error).message}`, 500);
+	}
+});
+
+projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild', async (c) => {
 	const access = await requireCompanyAccess(c);
 	if (access instanceof Response) return access;
 
