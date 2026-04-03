@@ -37,7 +37,7 @@ export async function createCompanyWithAgents(page: Page) {
 		data: {
 			name: `Test Co ${Date.now()}`,
 			issue_prefix: `TC${Date.now().toString().slice(-4)}`,
-			company_type_id: typeId,
+			team_type_ids: [typeId],
 		},
 	});
 	const company = ((await companyRes.json()) as any).data;

@@ -203,7 +203,7 @@ describe('company creation with agent types', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Agent Type Test Co',
-				company_type_id: builtinType.id,
+				team_type_ids: [builtinType.id],
 			}),
 		});
 		const companyId = (await companyRes.json()).data.id;

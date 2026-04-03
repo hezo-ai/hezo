@@ -10,8 +10,9 @@
 | `members` | Base table for all company participants (agents and users). Has `member_type` enum discriminator. Shared UUID used by child tables. | belongs to company |
 | `member_agents` | Agent-specific extension. System prompt, runtime type, budget, heartbeat, org chart. | extends member (PK = member.id) |
 | `member_users` | User-in-company extension. Role (board/member), role_title, permissions_text, project_ids. Links to global user. | extends member (PK = member.id), references user |
-| `company_types` | Company blueprints (recipes). Default agent configs, KB docs, preferences, filesystem snapshots as JSONB. | Referenced by companies. |
-| `companies` | Top-level tenant. Has `email`, `company_type_id`, `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), company-level budget. | Parent of everything. |
+| `company_types` | Team type blueprints (recipes). Default agent configs, KB docs, preferences, filesystem snapshots as JSONB. | Referenced by company_team_types. |
+| `company_team_types` | Many-to-many join table linking companies to the team types they were created from. | belongs to company + company_type |
+| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), company-level budget. | Parent of everything. |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
 | `projects` | Group of related work under a company. Has Docker container config, dev ports. | belongs to company |
@@ -282,17 +283,17 @@ Container provisioning happens when the first project is created, not at company
 
 This ensures the user never lands on an empty company.
 
-### Company cloning
+### Team type provisioning
 
-`POST /companies` requires a `company_type_id`. The server clones from the
-selected company type:
-- Creates `members` + `member_agents` rows from `company_types.agents_config` (new IDs,
+`POST /companies` accepts an optional `team_type_ids` array. The server provisions
+agents from all selected team types with automatic deduplication (first occurrence wins):
+- Creates `members` + `member_agents` rows for each unique agent type (new IDs,
   `budget_used_cents` reset to 0)
 - Creates `kb_docs` rows from `company_types.kb_docs_config`
 - Creates `company_preferences` row from `company_types.preferences_config`
 - Copies `mcp_servers` array from company type
 - Copies `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
-- Restores filesystem snapshots from `company_types.filesystem_snapshot` (AGENTS.md, etc.)
+- Inserts rows into `company_team_types` to record the associations
 
 Project containers are provisioned when projects are created (not at company creation).
 

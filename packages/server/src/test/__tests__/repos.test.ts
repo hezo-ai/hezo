@@ -29,7 +29,7 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Repo Test Co', company_type_id: builtinTypeId }),
+		body: JSON.stringify({ name: 'Repo Test Co', team_type_ids: [builtinTypeId] }),
 	});
 	companyId = (await companyRes.json()).data.id;
 

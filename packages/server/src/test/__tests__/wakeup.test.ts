@@ -27,7 +27,7 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'Wakeup Co',
 			issue_prefix: 'WUC',
-			company_type_id: companyTypeId,
+			team_type_ids: [companyTypeId],
 		}),
 	});
 	companyId = (await companyRes.json()).data.id;

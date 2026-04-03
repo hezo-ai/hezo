@@ -58,7 +58,7 @@ companiesRoutes.post('/companies', async (c) => {
 	const body = await c.req.json<{
 		name: string;
 		description?: string;
-		company_type_id?: string;
+		team_type_ids?: string[];
 		issue_prefix?: string;
 	}>();
 
@@ -85,10 +85,10 @@ companiesRoutes.post('/companies', async (c) => {
 	await db.query('BEGIN');
 	try {
 		const companyResult = await db.query(
-			`INSERT INTO companies (name, slug, description, company_type_id, issue_prefix)
-       VALUES ($1, $2, $3, $4, $5)
+			`INSERT INTO companies (name, slug, description, issue_prefix)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
-			[body.name.trim(), slug, body.description ?? '', body.company_type_id ?? null, issuePrefix],
+			[body.name.trim(), slug, body.description ?? '', issuePrefix],
 		);
 		const company = companyResult.rows[0] as { id: string; [key: string]: unknown };
 
@@ -110,8 +110,14 @@ companiesRoutes.post('/companies', async (c) => {
 			]);
 		}
 
-		if (body.company_type_id) {
-			await createAgentsFromCompanyType(db, company.id, body.company_type_id);
+		if (body.team_type_ids?.length) {
+			for (const typeId of body.team_type_ids) {
+				await db.query(
+					'INSERT INTO company_team_types (company_id, company_type_id) VALUES ($1, $2)',
+					[company.id, typeId],
+				);
+			}
+			await createAgentsFromTeamTypes(db, company.id, body.team_type_ids);
 		}
 
 		await db.query('COMMIT');
@@ -230,41 +236,56 @@ companiesRoutes.delete('/companies/:companyId', async (c) => {
 	return c.json({ data: null }, 200);
 });
 
-async function createAgentsFromCompanyType(
+interface AgentTypeRow {
+	id: string;
+	name: string;
+	slug: string;
+	role_description: string;
+	system_prompt_template: string;
+	runtime_type: string;
+	heartbeat_interval_min: number;
+	monthly_budget_cents: number;
+	reports_to_slug: string | null;
+	runtime_type_override: string | null;
+	heartbeat_interval_override: number | null;
+	monthly_budget_override: number | null;
+}
+
+async function createAgentsFromTeamTypes(
 	db: PGlite,
 	companyId: string,
-	companyTypeId: string,
+	teamTypeIds: string[],
 ): Promise<void> {
-	const joinRows = await db.query<{
-		id: string;
-		name: string;
-		slug: string;
-		role_description: string;
-		system_prompt_template: string;
-		runtime_type: string;
-		heartbeat_interval_min: number;
-		monthly_budget_cents: number;
-		reports_to_slug: string | null;
-		runtime_type_override: string | null;
-		heartbeat_interval_override: number | null;
-		monthly_budget_override: number | null;
-	}>(
-		`SELECT at.id, at.name, at.slug, at.role_description, at.system_prompt_template,
-		        at.runtime_type, at.heartbeat_interval_min, at.monthly_budget_cents,
-		        ctat.reports_to_slug,
-		        ctat.runtime_type_override, ctat.heartbeat_interval_override, ctat.monthly_budget_override
-		 FROM company_type_agent_types ctat
-		 JOIN agent_types at ON at.id = ctat.agent_type_id
-		 WHERE ctat.company_type_id = $1
-		 ORDER BY ctat.sort_order ASC`,
-		[companyTypeId],
-	);
+	const allRows: AgentTypeRow[] = [];
+	for (const typeId of teamTypeIds) {
+		const joinRows = await db.query<AgentTypeRow>(
+			`SELECT at.id, at.name, at.slug, at.role_description, at.system_prompt_template,
+			        at.runtime_type, at.heartbeat_interval_min, at.monthly_budget_cents,
+			        ctat.reports_to_slug,
+			        ctat.runtime_type_override, ctat.heartbeat_interval_override, ctat.monthly_budget_override
+			 FROM company_type_agent_types ctat
+			 JOIN agent_types at ON at.id = ctat.agent_type_id
+			 WHERE ctat.company_type_id = $1
+			 ORDER BY ctat.sort_order ASC`,
+			[typeId],
+		);
+		allRows.push(...joinRows.rows);
+	}
 
-	if (joinRows.rows.length === 0) return;
+	const seen = new Set<string>();
+	const dedupedRows: AgentTypeRow[] = [];
+	for (const row of allRows) {
+		if (!seen.has(row.id)) {
+			seen.add(row.id);
+			dedupedRows.push(row);
+		}
+	}
+
+	if (dedupedRows.length === 0) return;
 
 	const slugToMemberId = new Map<string, string>();
 
-	for (const row of joinRows.rows) {
+	for (const row of dedupedRows) {
 		const runtimeType = row.runtime_type_override ?? row.runtime_type;
 		const heartbeat = row.heartbeat_interval_override ?? row.heartbeat_interval_min;
 		const budget = row.monthly_budget_override ?? row.monthly_budget_cents;
@@ -296,7 +317,7 @@ async function createAgentsFromCompanyType(
 		);
 	}
 
-	for (const row of joinRows.rows) {
+	for (const row of dedupedRows) {
 		if (row.reports_to_slug && row.reports_to_slug !== 'board') {
 			const reportsToId = slugToMemberId.get(row.reports_to_slug);
 			const memberId = slugToMemberId.get(row.slug);
@@ -310,4 +331,4 @@ async function createAgentsFromCompanyType(
 	}
 }
 
-export { createAgentsFromCompanyType };
+export { createAgentsFromTeamTypes };

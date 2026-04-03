@@ -132,7 +132,6 @@ CREATE TABLE companies (
     name                 TEXT NOT NULL,
     slug                 TEXT NOT NULL UNIQUE,
     description          TEXT NOT NULL DEFAULT '',
-    company_type_id      UUID REFERENCES company_types(id) ON DELETE SET NULL,
     issue_prefix         TEXT NOT NULL UNIQUE,
     budget_monthly_cents INTEGER NOT NULL DEFAULT 50000,
     budget_used_cents    INTEGER NOT NULL DEFAULT 0,
@@ -141,6 +140,16 @@ CREATE TABLE companies (
     mpp_config           JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-------------------------------------------------------------------------------
+-- COMPANY ↔ TEAM TYPES (many-to-many)
+-------------------------------------------------------------------------------
+
+CREATE TABLE company_team_types (
+    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    company_type_id UUID NOT NULL REFERENCES company_types(id) ON DELETE CASCADE,
+    PRIMARY KEY (company_id, company_type_id)
 );
 
 -------------------------------------------------------------------------------

@@ -32,7 +32,7 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'Agent API Co',
 			issue_prefix: 'AAC',
-			company_type_id: companyTypeId,
+			team_type_ids: [companyTypeId],
 		}),
 	});
 	companyId = (await companyRes.json()).data.id;

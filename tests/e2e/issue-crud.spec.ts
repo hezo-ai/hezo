@@ -56,7 +56,7 @@ test('issue detail shows execution lock banner when locked', async ({ page }) =>
 		data: {
 			name: `Lock Test ${Date.now()}`,
 			issue_prefix: `LK${Date.now().toString().slice(-4)}`,
-			company_type_id: typeId,
+			team_type_ids: [typeId],
 		},
 	});
 	const company = (await companyRes.json()).data;

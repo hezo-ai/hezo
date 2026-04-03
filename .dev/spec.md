@@ -287,15 +287,17 @@ A **company type** (also called a template or recipe) defines the blueprint for 
 - **Default config** — runtime type, heartbeat interval, monthly budget
 - **Source** — `builtin` (shipped with Hezo), `custom` (user-created), or `remote` (loaded from hezo connect marketplace)
 
-A **company type** specifies:
+A **team type** (stored as `company_types`) specifies:
 - **Name** — e.g., "Software Development", "Research Lab", "Marketing Agency"
-- **Description** — what this type of company does
+- **Description** — what this type of team does
 - **Agent types** — which agent types to include, their org chart hierarchy (reports_to), and optional config overrides (via the `company_type_agent_types` join table)
 - **Default KB documents** — starter knowledge base content (coding standards, guidelines, etc.)
 - **Default preferences** — initial company preferences
 - **Default MCP servers** — company-level MCP server configuration
 
-The current 9-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher) is the built-in **"Software Development"** company type. It ships with Hezo and cannot be deleted (but can be customized per-company after creation). Users are not limited to the agent types that come with their company type — they can add other agent types later.
+Companies can be created with **multiple team types** selected. When multiple types share the same agent type, the first type (by selection order) wins — its config overrides are used and duplicates are skipped. The associations are stored in the `company_team_types` join table.
+
+The current 9-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher) is the built-in **"Software Development"** team type. It ships with Hezo and is pre-selected by default in the UI. Users are not limited to the agent types that come with their team types — they can add other agent types later.
 
 **Creating agent types:**
 - 9 built-in agent types ship with Hezo
@@ -358,9 +360,9 @@ Instead of manually managing API keys and OAuth tokens, Hezo uses a centralized 
 
 Each connected platform auto-registers as a **company-level MCP server** so agents can discover and use the tools immediately. Tokens are stored encrypted in the local secrets vault. Refresh is handled automatically by the Hezo app.
 
-### Company cloning and company types
+### Company creation and team types
 
-Every company is created from a **company type** (see "Company types" above). The company type determines the starting agent types, knowledge base, and preferences. Agents are provisioned by querying the `company_type_agent_types` join table and creating instances from each referenced agent type. Each created agent stores an `agent_type_id` for provenance tracking. After creation, the company is fully independent of its source type — changes to the company do not affect the type, and vice versa.
+Companies can be created from one or more **team types** (see "Team types" above). The selected team types determine the starting agent roster, knowledge base, and preferences. When multiple team types are selected, agents are deduplicated by `agent_type_id` — the first occurrence (by selection order) wins. Agents are provisioned by querying the `company_type_agent_types` join table for each selected type and creating instances from each unique referenced agent type. Each created agent stores an `agent_type_id` for provenance tracking. After creation, the company is fully independent of its source types — changes to the company do not affect the types, and vice versa.
 
 Users can also **save an existing company as a new company type**. This snapshots:
 
@@ -2001,9 +2003,10 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `member_agents` | Agent-specific extension (system_prompt, runtime, budget, heartbeat, org chart). |
 | `member_users` | User-in-company extension (role, role_title, permissions_text, project_ids). |
 | `agent_types` | First-class agent type catalog with role templates, system prompts, and default configs. Sources: builtin, custom, remote. |
-| `company_types` | Company blueprints (recipes). Groups of agent types plus default KB docs, preferences. |
-| `company_type_agent_types` | Join table linking company types to agent types with org chart and config overrides. |
-| `companies` | Top-level tenant. Has `email`, `company_type_id`, `mcp_servers` (JSONB), `mpp_config` (JSONB), budget. |
+| `company_types` | Team type blueprints (recipes). Groups of agent types plus default KB docs, preferences. |
+| `company_type_agent_types` | Join table linking team types to agent types with org chart and config overrides. |
+| `company_team_types` | Many-to-many join table linking companies to the team types they were created from. |
+| `companies` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), budget. |
 | `invites` | Pending invitations to join a company (7-day expiry) |
 | `api_keys` | Company-scoped API keys for external orchestrators. Stored hashed. |
 | `company_ssh_keys` | Generated SSH key pairs per company. Registered on GitHub via OAuth API. |

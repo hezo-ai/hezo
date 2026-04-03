@@ -1,7 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from '@tanstack/react-router';
 import { Loader2, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useCreateCompany } from '../hooks/use-companies';
 import { useCompanyTypes } from '../hooks/use-company-types';
 import { Button } from './ui/button';
@@ -15,22 +15,32 @@ interface CreateCompanyDialogProps {
 export function CreateCompanyDialog({ open, onOpenChange }: CreateCompanyDialogProps) {
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
-	const [typeId, setTypeId] = useState('');
+	const [selectedTypeIds, setSelectedTypeIds] = useState<Set<string>>(new Set());
+	const hasSetDefault = useRef(false);
 	const { data: types } = useCompanyTypes();
 	const createCompany = useCreateCompany();
 	const navigate = useNavigate();
+
+	useEffect(() => {
+		if (types?.length && !hasSetDefault.current) {
+			const softDev = types.find((t) => t.name === 'Software Development');
+			if (softDev) setSelectedTypeIds(new Set([softDev.id]));
+			hasSetDefault.current = true;
+		}
+	}, [types]);
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		const result = await createCompany.mutateAsync({
 			name,
 			description: description || undefined,
-			company_type_id: typeId || undefined,
+			team_type_ids: selectedTypeIds.size > 0 ? [...selectedTypeIds] : undefined,
 		});
 		onOpenChange(false);
 		setName('');
 		setDescription('');
-		setTypeId('');
+		const defaultId = types?.find((t) => t.name === 'Software Development')?.id;
+		setSelectedTypeIds(new Set(defaultId ? [defaultId] : []));
 		navigate({ to: '/companies/$companyId', params: { companyId: result.slug } });
 	}
 
@@ -57,24 +67,30 @@ export function CreateCompanyDialog({ open, onOpenChange }: CreateCompanyDialogP
 							placeholder="Optional"
 						/>
 
-						<div className="flex flex-col gap-1.5">
-							<label htmlFor="company-type" className="text-sm text-text-muted">
-								Company Type
-							</label>
-							<select
-								id="company-type"
-								value={typeId}
-								onChange={(e) => setTypeId(e.target.value)}
-								className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
-							>
-								<option value="">None</option>
+						<fieldset className="flex flex-col gap-1.5">
+							<legend className="text-sm text-text-muted">Team Types</legend>
+							<div className="flex flex-col gap-2">
 								{types?.map((t) => (
-									<option key={t.id} value={t.id}>
+									<label key={t.id} className="flex items-center gap-2 text-sm cursor-pointer">
+										<input
+											type="checkbox"
+											checked={selectedTypeIds.has(t.id)}
+											onChange={(e) => {
+												const next = new Set(selectedTypeIds);
+												if (e.target.checked) {
+													next.add(t.id);
+												} else {
+													next.delete(t.id);
+												}
+												setSelectedTypeIds(next);
+											}}
+											className="rounded border-border"
+										/>
 										{t.name}
-									</option>
+									</label>
 								))}
-							</select>
-						</div>
+							</div>
+						</fieldset>
 
 						{createCompany.error && (
 							<p className="text-sm text-accent-red">

@@ -153,7 +153,7 @@ describe('template resolver with agents', () => {
 				name: 'Agent Test Co',
 				issue_prefix: 'ATC',
 				description: 'Test company for agent templates',
-				company_type_id: softDevType.id,
+				team_type_ids: [softDevType.id],
 			}),
 		});
 		agentCompanyId = ((await companyRes.json()) as any).data.id;
