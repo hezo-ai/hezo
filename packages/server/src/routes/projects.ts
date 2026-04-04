@@ -209,12 +209,15 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const existing = await db.query<{ id: string; slug: string }>(
-		'SELECT id, slug FROM projects WHERE id = $1 AND company_id = $2',
+	const existing = await db.query<{ id: string; slug: string; is_internal: boolean }>(
+		'SELECT id, slug, is_internal FROM projects WHERE id = $1 AND company_id = $2',
 		[projectId, companyId],
 	);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Project not found', 404);
+	}
+	if (existing.rows[0].is_internal) {
+		return err(c, 'FORBIDDEN', 'Cannot delete an internal project', 403);
 	}
 
 	const ts3 = terminalStatusParams(2);

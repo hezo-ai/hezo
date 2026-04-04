@@ -261,6 +261,7 @@ CREATE TABLE projects (
     name                TEXT NOT NULL,
     slug                TEXT NOT NULL,
     goal                TEXT NOT NULL DEFAULT '',
+    is_internal         BOOLEAN NOT NULL DEFAULT false,
     docker_base_image   TEXT NOT NULL DEFAULT 'node:24-slim',
     container_id        TEXT,
     container_status    container_status,

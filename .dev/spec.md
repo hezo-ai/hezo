@@ -1951,40 +1951,68 @@ All of this happens within one ticket. The Comments tab shows the conversation f
 
 ### Navigation structure
 
+The UI uses a three-column layout: a narrow company icon rail on the far left, a side menu for the selected company, and the main content area.
+
+**Company Rail** (60px icon sidebar, always visible):
+- Home icon at top → company list page
+- Company avatars (click to select)
+- "+" button to create new company (from company template)
+- Bottom section: theme switcher, inbox badge
+
+**Side Menu** (200px, visible when a company is selected):
+- Inbox (pending approvals — full page)
+- Issues (company-level)
+- Projects
+- Agents
+- Org chart
+- Knowledge base
+- Settings
+
+**Project view** uses tabs (Issues, Agents, Container, Settings) instead of a sidebar. Selecting a project adds its slug to the URL.
+
 ```
-Home (company list — new from company type)
-  └── Company workspace
-        ├── Issues (default tab)
+Company Rail → Company List (home)
+                └── Create Company (select company template)
+
+Company Rail → Company workspace (side menu)
+        ├── Inbox (pending approvals)
+        ├── Issues
         │     └── Issue detail
         │           ├── Comments tab (default)
         │           └── Live Chat tab
-        │                 └── Live chat panel
+        ├── Projects
+        │     └── Project detail (tabs)
+        │           ├── Issues tab (filtered)
+        │           ├── Agents tab
+        │           ├── Container tab
+        │           └── Settings tab
         ├── Agents
         │     └── Agent detail / edit
-        │     └── New agent (hire)
-        ├── Projects
-        │     └── Project detail
-        │           ├── Repos
-        │           ├── Issues (filtered)
-        │           └── Documents (tech spec, implementation plan, research, UI decisions, marketing plan)
-        │                 └── Document view / edit / version history
+        │     └── Hire agent (creates onboarding issue for CEO)
         ├── Org chart
         ├── Knowledge base
         │     └── Document view / edit / version history
         └── Settings
-              ├── Mission
+              ├── General
               ├── Connected platforms (OAuth)
               ├── Secrets vault
+              ├── API keys
               ├── MCP servers
-              ├── MPP config
               ├── Budget overview
-              ├── Company preferences (view / edit / version history)
-              ├── Plugins
+              ├── Company preferences
+              ├── Skill file
               └── Audit log
-
-Board inbox (drawer, accessible from anywhere)
-Account settings (accessible from user menu)
 ```
+
+### Company creation and templates
+
+When creating a company, the user selects one or more company templates (default: "Software Development"). A template includes a team of agents with defined roles and reporting hierarchy, plus optional KB docs and preferences.
+
+Every company gets an auto-created **Operations** project (`is_internal = true`) for administrative issues like agent onboarding. Internal projects are visible but not deletable.
+
+### Agent onboarding
+
+Hiring a new agent creates the agent in disabled state and opens an onboarding issue in the Operations project, assigned to the CEO agent. The CEO reviews the new hire against the existing team, discusses reporting structure and responsibilities with the board member via issue comments, and enables the agent once onboarding is complete. If no CEO agent exists, the agent is created directly in enabled state.
 
 ---
 

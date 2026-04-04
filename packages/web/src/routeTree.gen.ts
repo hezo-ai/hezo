@@ -18,6 +18,7 @@ import { Route as CompaniesCompanyIdSettingsIndexRouteImport } from './routes/co
 import { Route as CompaniesCompanyIdProjectsIndexRouteImport } from './routes/companies/$companyId/projects/index'
 import { Route as CompaniesCompanyIdKbIndexRouteImport } from './routes/companies/$companyId/kb/index'
 import { Route as CompaniesCompanyIdIssuesIndexRouteImport } from './routes/companies/$companyId/issues/index'
+import { Route as CompaniesCompanyIdInboxIndexRouteImport } from './routes/companies/$companyId/inbox/index'
 import { Route as CompaniesCompanyIdAgentsIndexRouteImport } from './routes/companies/$companyId/agents/index'
 import { Route as CompaniesCompanyIdKbNewRouteImport } from './routes/companies/$companyId/kb/new'
 import { Route as CompaniesCompanyIdKbSlugRouteImport } from './routes/companies/$companyId/kb/$slug'
@@ -28,6 +29,10 @@ import { Route as CompaniesCompanyIdProjectsProjectIdRouteRouteImport } from './
 import { Route as CompaniesCompanyIdProjectsProjectIdIndexRouteImport } from './routes/companies/$companyId/projects/$projectId/index'
 import { Route as CompaniesCompanyIdProjectsProjectIdContainerRouteImport } from './routes/companies/$companyId/projects/$projectId/container'
 import { Route as CompaniesCompanyIdKbSlugEditRouteImport } from './routes/companies/$companyId/kb/$slug_.edit'
+import { Route as CompaniesCompanyIdProjectsProjectIdSettingsIndexRouteImport } from './routes/companies/$companyId/projects/$projectId/settings/index'
+import { Route as CompaniesCompanyIdProjectsProjectIdIssuesIndexRouteImport } from './routes/companies/$companyId/projects/$projectId/issues/index'
+import { Route as CompaniesCompanyIdProjectsProjectIdAgentsIndexRouteImport } from './routes/companies/$companyId/projects/$projectId/agents/index'
+import { Route as CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRouteImport } from './routes/companies/$companyId/projects/$projectId/issues/$issueId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -77,6 +82,12 @@ const CompaniesCompanyIdIssuesIndexRoute =
   CompaniesCompanyIdIssuesIndexRouteImport.update({
     id: '/issues/',
     path: '/issues/',
+    getParentRoute: () => CompaniesCompanyIdRouteRoute,
+  } as any)
+const CompaniesCompanyIdInboxIndexRoute =
+  CompaniesCompanyIdInboxIndexRouteImport.update({
+    id: '/inbox/',
+    path: '/inbox/',
     getParentRoute: () => CompaniesCompanyIdRouteRoute,
   } as any)
 const CompaniesCompanyIdAgentsIndexRoute =
@@ -138,6 +149,30 @@ const CompaniesCompanyIdKbSlugEditRoute =
     path: '/kb/$slug/edit',
     getParentRoute: () => CompaniesCompanyIdRouteRoute,
   } as any)
+const CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute =
+  CompaniesCompanyIdProjectsProjectIdSettingsIndexRouteImport.update({
+    id: '/settings/',
+    path: '/settings/',
+    getParentRoute: () => CompaniesCompanyIdProjectsProjectIdRouteRoute,
+  } as any)
+const CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute =
+  CompaniesCompanyIdProjectsProjectIdIssuesIndexRouteImport.update({
+    id: '/issues/',
+    path: '/issues/',
+    getParentRoute: () => CompaniesCompanyIdProjectsProjectIdRouteRoute,
+  } as any)
+const CompaniesCompanyIdProjectsProjectIdAgentsIndexRoute =
+  CompaniesCompanyIdProjectsProjectIdAgentsIndexRouteImport.update({
+    id: '/agents/',
+    path: '/agents/',
+    getParentRoute: () => CompaniesCompanyIdProjectsProjectIdRouteRoute,
+  } as any)
+const CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute =
+  CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRouteImport.update({
+    id: '/issues/$issueId',
+    path: '/issues/$issueId',
+    getParentRoute: () => CompaniesCompanyIdProjectsProjectIdRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -152,6 +187,7 @@ export interface FileRoutesByFullPath {
   '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRoute
   '/companies/$companyId/kb/new': typeof CompaniesCompanyIdKbNewRoute
   '/companies/$companyId/agents/': typeof CompaniesCompanyIdAgentsIndexRoute
+  '/companies/$companyId/inbox/': typeof CompaniesCompanyIdInboxIndexRoute
   '/companies/$companyId/issues/': typeof CompaniesCompanyIdIssuesIndexRoute
   '/companies/$companyId/kb/': typeof CompaniesCompanyIdKbIndexRoute
   '/companies/$companyId/projects/': typeof CompaniesCompanyIdProjectsIndexRoute
@@ -159,6 +195,10 @@ export interface FileRoutesByFullPath {
   '/companies/$companyId/kb/$slug/edit': typeof CompaniesCompanyIdKbSlugEditRoute
   '/companies/$companyId/projects/$projectId/container': typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
   '/companies/$companyId/projects/$projectId/': typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
+  '/companies/$companyId/projects/$projectId/issues/$issueId': typeof CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute
+  '/companies/$companyId/projects/$projectId/agents/': typeof CompaniesCompanyIdProjectsProjectIdAgentsIndexRoute
+  '/companies/$companyId/projects/$projectId/issues/': typeof CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute
+  '/companies/$companyId/projects/$projectId/settings/': typeof CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -171,6 +211,7 @@ export interface FileRoutesByTo {
   '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRoute
   '/companies/$companyId/kb/new': typeof CompaniesCompanyIdKbNewRoute
   '/companies/$companyId/agents': typeof CompaniesCompanyIdAgentsIndexRoute
+  '/companies/$companyId/inbox': typeof CompaniesCompanyIdInboxIndexRoute
   '/companies/$companyId/issues': typeof CompaniesCompanyIdIssuesIndexRoute
   '/companies/$companyId/kb': typeof CompaniesCompanyIdKbIndexRoute
   '/companies/$companyId/projects': typeof CompaniesCompanyIdProjectsIndexRoute
@@ -178,6 +219,10 @@ export interface FileRoutesByTo {
   '/companies/$companyId/kb/$slug/edit': typeof CompaniesCompanyIdKbSlugEditRoute
   '/companies/$companyId/projects/$projectId/container': typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
   '/companies/$companyId/projects/$projectId': typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
+  '/companies/$companyId/projects/$projectId/issues/$issueId': typeof CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute
+  '/companies/$companyId/projects/$projectId/agents': typeof CompaniesCompanyIdProjectsProjectIdAgentsIndexRoute
+  '/companies/$companyId/projects/$projectId/issues': typeof CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute
+  '/companies/$companyId/projects/$projectId/settings': typeof CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -193,6 +238,7 @@ export interface FileRoutesById {
   '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRoute
   '/companies/$companyId/kb/new': typeof CompaniesCompanyIdKbNewRoute
   '/companies/$companyId/agents/': typeof CompaniesCompanyIdAgentsIndexRoute
+  '/companies/$companyId/inbox/': typeof CompaniesCompanyIdInboxIndexRoute
   '/companies/$companyId/issues/': typeof CompaniesCompanyIdIssuesIndexRoute
   '/companies/$companyId/kb/': typeof CompaniesCompanyIdKbIndexRoute
   '/companies/$companyId/projects/': typeof CompaniesCompanyIdProjectsIndexRoute
@@ -200,6 +246,10 @@ export interface FileRoutesById {
   '/companies/$companyId/kb/$slug_/edit': typeof CompaniesCompanyIdKbSlugEditRoute
   '/companies/$companyId/projects/$projectId/container': typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
   '/companies/$companyId/projects/$projectId/': typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
+  '/companies/$companyId/projects/$projectId/issues/$issueId': typeof CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute
+  '/companies/$companyId/projects/$projectId/agents/': typeof CompaniesCompanyIdProjectsProjectIdAgentsIndexRoute
+  '/companies/$companyId/projects/$projectId/issues/': typeof CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute
+  '/companies/$companyId/projects/$projectId/settings/': typeof CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -216,6 +266,7 @@ export interface FileRouteTypes {
     | '/companies/$companyId/kb/$slug'
     | '/companies/$companyId/kb/new'
     | '/companies/$companyId/agents/'
+    | '/companies/$companyId/inbox/'
     | '/companies/$companyId/issues/'
     | '/companies/$companyId/kb/'
     | '/companies/$companyId/projects/'
@@ -223,6 +274,10 @@ export interface FileRouteTypes {
     | '/companies/$companyId/kb/$slug/edit'
     | '/companies/$companyId/projects/$projectId/container'
     | '/companies/$companyId/projects/$projectId/'
+    | '/companies/$companyId/projects/$projectId/issues/$issueId'
+    | '/companies/$companyId/projects/$projectId/agents/'
+    | '/companies/$companyId/projects/$projectId/issues/'
+    | '/companies/$companyId/projects/$projectId/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -235,6 +290,7 @@ export interface FileRouteTypes {
     | '/companies/$companyId/kb/$slug'
     | '/companies/$companyId/kb/new'
     | '/companies/$companyId/agents'
+    | '/companies/$companyId/inbox'
     | '/companies/$companyId/issues'
     | '/companies/$companyId/kb'
     | '/companies/$companyId/projects'
@@ -242,6 +298,10 @@ export interface FileRouteTypes {
     | '/companies/$companyId/kb/$slug/edit'
     | '/companies/$companyId/projects/$projectId/container'
     | '/companies/$companyId/projects/$projectId'
+    | '/companies/$companyId/projects/$projectId/issues/$issueId'
+    | '/companies/$companyId/projects/$projectId/agents'
+    | '/companies/$companyId/projects/$projectId/issues'
+    | '/companies/$companyId/projects/$projectId/settings'
   id:
     | '__root__'
     | '/'
@@ -256,6 +316,7 @@ export interface FileRouteTypes {
     | '/companies/$companyId/kb/$slug'
     | '/companies/$companyId/kb/new'
     | '/companies/$companyId/agents/'
+    | '/companies/$companyId/inbox/'
     | '/companies/$companyId/issues/'
     | '/companies/$companyId/kb/'
     | '/companies/$companyId/projects/'
@@ -263,6 +324,10 @@ export interface FileRouteTypes {
     | '/companies/$companyId/kb/$slug_/edit'
     | '/companies/$companyId/projects/$projectId/container'
     | '/companies/$companyId/projects/$projectId/'
+    | '/companies/$companyId/projects/$projectId/issues/$issueId'
+    | '/companies/$companyId/projects/$projectId/agents/'
+    | '/companies/$companyId/projects/$projectId/issues/'
+    | '/companies/$companyId/projects/$projectId/settings/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -336,6 +401,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CompaniesCompanyIdIssuesIndexRouteImport
       parentRoute: typeof CompaniesCompanyIdRouteRoute
     }
+    '/companies/$companyId/inbox/': {
+      id: '/companies/$companyId/inbox/'
+      path: '/inbox'
+      fullPath: '/companies/$companyId/inbox/'
+      preLoaderRoute: typeof CompaniesCompanyIdInboxIndexRouteImport
+      parentRoute: typeof CompaniesCompanyIdRouteRoute
+    }
     '/companies/$companyId/agents/': {
       id: '/companies/$companyId/agents/'
       path: '/agents'
@@ -406,12 +478,44 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CompaniesCompanyIdKbSlugEditRouteImport
       parentRoute: typeof CompaniesCompanyIdRouteRoute
     }
+    '/companies/$companyId/projects/$projectId/settings/': {
+      id: '/companies/$companyId/projects/$projectId/settings/'
+      path: '/settings'
+      fullPath: '/companies/$companyId/projects/$projectId/settings/'
+      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdSettingsIndexRouteImport
+      parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
+    }
+    '/companies/$companyId/projects/$projectId/issues/': {
+      id: '/companies/$companyId/projects/$projectId/issues/'
+      path: '/issues'
+      fullPath: '/companies/$companyId/projects/$projectId/issues/'
+      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdIssuesIndexRouteImport
+      parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
+    }
+    '/companies/$companyId/projects/$projectId/agents/': {
+      id: '/companies/$companyId/projects/$projectId/agents/'
+      path: '/agents'
+      fullPath: '/companies/$companyId/projects/$projectId/agents/'
+      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdAgentsIndexRouteImport
+      parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
+    }
+    '/companies/$companyId/projects/$projectId/issues/$issueId': {
+      id: '/companies/$companyId/projects/$projectId/issues/$issueId'
+      path: '/issues/$issueId'
+      fullPath: '/companies/$companyId/projects/$projectId/issues/$issueId'
+      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRouteImport
+      parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
+    }
   }
 }
 
 interface CompaniesCompanyIdProjectsProjectIdRouteRouteChildren {
   CompaniesCompanyIdProjectsProjectIdContainerRoute: typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
   CompaniesCompanyIdProjectsProjectIdIndexRoute: typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
+  CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute: typeof CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute
+  CompaniesCompanyIdProjectsProjectIdAgentsIndexRoute: typeof CompaniesCompanyIdProjectsProjectIdAgentsIndexRoute
+  CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute: typeof CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute
+  CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute: typeof CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute
 }
 
 const CompaniesCompanyIdProjectsProjectIdRouteRouteChildren: CompaniesCompanyIdProjectsProjectIdRouteRouteChildren =
@@ -420,6 +524,14 @@ const CompaniesCompanyIdProjectsProjectIdRouteRouteChildren: CompaniesCompanyIdP
       CompaniesCompanyIdProjectsProjectIdContainerRoute,
     CompaniesCompanyIdProjectsProjectIdIndexRoute:
       CompaniesCompanyIdProjectsProjectIdIndexRoute,
+    CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute:
+      CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute,
+    CompaniesCompanyIdProjectsProjectIdAgentsIndexRoute:
+      CompaniesCompanyIdProjectsProjectIdAgentsIndexRoute,
+    CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute:
+      CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute,
+    CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute:
+      CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute,
   }
 
 const CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren =
@@ -437,6 +549,7 @@ interface CompaniesCompanyIdRouteRouteChildren {
   CompaniesCompanyIdKbSlugRoute: typeof CompaniesCompanyIdKbSlugRoute
   CompaniesCompanyIdKbNewRoute: typeof CompaniesCompanyIdKbNewRoute
   CompaniesCompanyIdAgentsIndexRoute: typeof CompaniesCompanyIdAgentsIndexRoute
+  CompaniesCompanyIdInboxIndexRoute: typeof CompaniesCompanyIdInboxIndexRoute
   CompaniesCompanyIdIssuesIndexRoute: typeof CompaniesCompanyIdIssuesIndexRoute
   CompaniesCompanyIdKbIndexRoute: typeof CompaniesCompanyIdKbIndexRoute
   CompaniesCompanyIdProjectsIndexRoute: typeof CompaniesCompanyIdProjectsIndexRoute
@@ -456,6 +569,7 @@ const CompaniesCompanyIdRouteRouteChildren: CompaniesCompanyIdRouteRouteChildren
     CompaniesCompanyIdKbSlugRoute: CompaniesCompanyIdKbSlugRoute,
     CompaniesCompanyIdKbNewRoute: CompaniesCompanyIdKbNewRoute,
     CompaniesCompanyIdAgentsIndexRoute: CompaniesCompanyIdAgentsIndexRoute,
+    CompaniesCompanyIdInboxIndexRoute: CompaniesCompanyIdInboxIndexRoute,
     CompaniesCompanyIdIssuesIndexRoute: CompaniesCompanyIdIssuesIndexRoute,
     CompaniesCompanyIdKbIndexRoute: CompaniesCompanyIdKbIndexRoute,
     CompaniesCompanyIdProjectsIndexRoute: CompaniesCompanyIdProjectsIndexRoute,

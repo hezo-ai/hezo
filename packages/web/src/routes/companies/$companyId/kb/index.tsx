@@ -22,7 +22,7 @@ function KbListPage() {
 				</Link>
 			</div>
 
-			{docs?.length === 0 ? (
+			{!docs?.length ? (
 				<EmptyState
 					icon={<BookOpen className="w-10 h-10" />}
 					title="No documents yet"

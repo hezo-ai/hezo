@@ -17,7 +17,7 @@
 | `company_team_types` | Many-to-many join table linking companies to the team types they were created from. | belongs to company + company_type |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
-| `projects` | Group of related work under a company. Has Docker container config, dev ports, designated repo. | belongs to company |
+| `projects` | Group of related work under a company. Has Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Operations) that cannot be deleted. | belongs to company |
 | `repos` | Git repo (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. | belongs to project |
 | `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `ACME-42`). Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to company + project, assigned to member |
 | `issue_dependencies` | Many-to-many blocking relationships between issues. | links issue ↔ issue |

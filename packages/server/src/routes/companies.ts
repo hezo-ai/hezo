@@ -110,6 +110,12 @@ companiesRoutes.post('/companies', async (c) => {
 			]);
 		}
 
+		await db.query(
+			`INSERT INTO projects (company_id, name, slug, goal, is_internal)
+			 VALUES ($1, 'Operations', 'operations', 'Internal company operations and administrative tasks', true)`,
+			[company.id],
+		);
+
 		if (body.team_type_ids?.length) {
 			for (const typeId of body.team_type_ids) {
 				await db.query(

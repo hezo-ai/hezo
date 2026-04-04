@@ -333,6 +333,36 @@ MCP servers at runtime (agent-level takes precedence on name conflicts).
 
 Response: full agent object.
 
+#### `POST /companies/:companyId/agents/onboard`
+Create an agent through the onboarding flow. The agent starts in `disabled` state.
+An onboarding issue is created in the Operations project, assigned to the CEO agent.
+The CEO reviews the new hire against the existing team and negotiates reporting
+structure and responsibilities with the board via issue comments.
+
+If no CEO agent exists, falls back to creating the agent directly in `enabled` state.
+
+Request:
+```json
+{
+  "title": "Data Scientist",
+  "role_description": "Analyzes data and builds ML models",
+  "system_prompt": "You are the Data Scientist at {{company_name}}...",
+  "runtime_type": "claude_code",
+  "heartbeat_interval_min": 60,
+  "monthly_budget_cents": 3000
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "agent": { ... },
+    "issue": { "id": "uuid", "identifier": "ACME-12", ... }
+  }
+}
+```
+
 #### `GET /companies/:companyId/agents/:agentId`
 Get agent detail including system prompt.
 

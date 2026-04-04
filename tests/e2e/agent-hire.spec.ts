@@ -11,8 +11,9 @@ test('can hire an agent with minimal fields', async ({ page }) => {
 	await page.getByLabel('Role title').fill('Data Scientist');
 	await page.getByRole('button', { name: 'Hire agent' }).click();
 
-	await expect(page).toHaveURL(/\/agents\//, { timeout: 10000 });
-	await expect(page.getByText('Data Scientist')).toBeVisible({ timeout: 5000 });
+	// Onboarding flow redirects to the issue page (CEO reviews the hire)
+	await expect(page).toHaveURL(/\/issues\//, { timeout: 10000 });
+	await expect(page.getByText('Onboard new agent: Data Scientist')).toBeVisible({ timeout: 5000 });
 });
 
 test('template variable chips insert into system prompt', async ({ page }) => {
@@ -42,18 +43,10 @@ test('can hire agent with full fields', async ({ page }) => {
 	await page.goto(`/companies/${company.slug}/agents/hire`);
 
 	await page.getByLabel('Role title').fill('Security Auditor');
-	await page.getByLabel('Slug').fill('security-auditor');
+	await page.getByLabel('Role description').fill('Audits code for security vulnerabilities');
 
 	// Select runtime
 	await page.locator('select').filter({ hasText: 'Claude Code' }).selectOption('codex');
-
-	// Select a reports-to agent
-	const reportsToSelect = page.locator('select').filter({ hasText: 'None (Board)' });
-	const options = await reportsToSelect.locator('option').allTextContents();
-	const agentOption = options.find((o) => o !== 'None (Board)');
-	if (agentOption) {
-		await reportsToSelect.selectOption({ label: agentOption });
-	}
 
 	// Set heartbeat
 	await page.locator('select').filter({ hasText: '60m' }).selectOption('120');
@@ -66,7 +59,9 @@ test('can hire agent with full fields', async ({ page }) => {
 
 	await page.getByRole('button', { name: 'Hire agent' }).click();
 
-	await expect(page).toHaveURL(/\/agents\//, { timeout: 10000 });
-	await expect(page.getByText('Security Auditor')).toBeVisible({ timeout: 5000 });
-	await expect(page.getByText('Budget Usage')).toBeVisible({ timeout: 5000 });
+	// Onboarding flow redirects to the issue page
+	await expect(page).toHaveURL(/\/issues\//, { timeout: 10000 });
+	await expect(page.getByText('Onboard new agent: Security Auditor')).toBeVisible({
+		timeout: 5000,
+	});
 });
