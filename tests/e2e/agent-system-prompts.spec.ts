@@ -92,7 +92,7 @@ test('company type seed data includes system prompts for all 9 agents', async ({
 		headers: { Authorization: `Bearer ${token}` },
 	});
 	const types = ((await typesRes.json()) as any).data;
-	const softDev = types.find((t: any) => t.name === 'Software Development');
+	const softDev = types.find((t: any) => t.name === 'Startup');
 	expect(softDev).toBeTruthy();
 
 	const agentsConfig = softDev.agent_types;

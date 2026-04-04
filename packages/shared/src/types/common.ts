@@ -201,6 +201,13 @@ export const AgentTypeSource = {
 } as const;
 export type AgentTypeSource = (typeof AgentTypeSource)[keyof typeof AgentTypeSource];
 
+export const CompanyTypeSource = {
+	Builtin: 'builtin',
+	Custom: 'custom',
+	Marketplace: 'marketplace',
+} as const;
+export type CompanyTypeSource = (typeof CompanyTypeSource)[keyof typeof CompanyTypeSource];
+
 export const AuditAction = {
 	Created: 'created',
 	Updated: 'updated',

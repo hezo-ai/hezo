@@ -143,7 +143,7 @@ describe('template resolver with agents', () => {
 			headers: authHeader(token),
 		});
 		const types = (await typesRes.json()) as any;
-		const softDevType = types.data.find((t: any) => t.name === 'Software Development');
+		const softDevType = types.data.find((t: any) => t.name === 'Startup');
 
 		// Create a company with the software dev team type to auto-create agents
 		const companyRes = await app.request('/api/companies', {
@@ -153,7 +153,7 @@ describe('template resolver with agents', () => {
 				name: 'Agent Test Co',
 				issue_prefix: 'ATC',
 				description: 'Test company for agent templates',
-				team_type_ids: [softDevType.id],
+				template_id: softDevType.id,
 			}),
 		});
 		agentCompanyId = ((await companyRes.json()) as any).data.id;
@@ -211,7 +211,7 @@ Current date: {{current_date}}
 		expect(result).toContain('Company mission: Test company for agent templates');
 		expect(result).toContain('You report to: Architect (Architect)');
 		expect(result).toMatch(/Current date: \d{4}-\d{2}-\d{2}/);
-		expect(result).toContain('No knowledge base documents available');
+		expect(result).toContain('Company Overview');
 		expect(result).toContain('No preferences set');
 		expect(result).toContain('.dev/ folder');
 	});

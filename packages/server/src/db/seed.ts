@@ -146,14 +146,133 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 		);
 	}
 
-	const ctResult = await db.query<{ id: string }>(
-		`INSERT INTO company_types (name, description, is_builtin)
-		 VALUES ($1, $2, true)
-		 ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
+	const kbDocsConfig = [
+		{
+			title: 'Company Overview',
+			slug: 'company-overview',
+			content: `# Company Overview
+
+<!-- TODO: customize this document for your company -->
+
+## Mission
+
+Describe your company's mission and what problem you're solving.
+
+## Product
+
+Describe your product, its target users, and key value propositions.
+
+## Decision Making
+
+- Strategic decisions escalate to the board
+- Technical architecture decisions go through the Architect
+- Product scope decisions go through the Product Lead
+- Day-to-day implementation decisions are made by the assigned agent
+`,
+		},
+		{
+			title: 'Development Workflow',
+			slug: 'development-workflow',
+			content: `# Development Workflow
+
+## Issue Lifecycle
+
+Issues progress through these statuses:
+1. **Backlog** — captured but not yet prioritized
+2. **Open** — prioritized and ready for work
+3. **In Progress** — actively being worked on
+4. **Review** — implementation complete, awaiting QA review
+5. **Done** — reviewed and approved
+
+## Branching Strategy
+
+<!-- TODO: customize for your repository -->
+
+- Main branch: \`main\`
+- Feature branches: \`feat/<issue-id>-short-description\`
+- Bug fix branches: \`fix/<issue-id>-short-description\`
+
+## Pull Requests
+
+- Every change requires a PR with a clear description
+- PRs must pass CI checks before merge
+- QA Engineer performs final review before approval
+`,
+		},
+		{
+			title: 'Architecture Guidelines',
+			slug: 'architecture-guidelines',
+			content: `# Architecture Guidelines
+
+<!-- TODO: customize for your tech stack -->
+
+## Tech Stack
+
+Describe your primary languages, frameworks, and infrastructure.
+
+## Project Structure
+
+Describe your repository layout and key directories.
+
+## Coding Conventions
+
+- Follow the language's standard style guide
+- Write self-documenting code with minimal comments
+- Prefer composition over inheritance
+- Keep functions focused and small
+
+## Architecture Decision Records
+
+Significant technical decisions should be documented with:
+- **Context** — what prompted the decision
+- **Decision** — what was chosen
+- **Consequences** — trade-offs and implications
+`,
+		},
+		{
+			title: 'Code Review Standards',
+			slug: 'code-review-standards',
+			content: `# Code Review Standards
+
+## What Reviewers Check
+
+- **Correctness** — does it solve the stated problem?
+- **Security** — no injection vulnerabilities, proper input validation
+- **Performance** — no obvious bottlenecks or N+1 queries
+- **Readability** — clear naming, logical structure, minimal complexity
+- **Test coverage** — new behavior has corresponding tests
+
+## Quality Gates
+
+- All CI checks must pass
+- No unresolved review comments
+- Test coverage for new functionality
+- No known security vulnerabilities introduced
+
+## Testing Expectations
+
+- Unit tests for business logic
+- Integration tests for API endpoints and database queries
+- E2E tests for critical user flows
+`,
+		},
+	];
+
+	const startupResult = await db.query<{ id: string }>(
+		`INSERT INTO company_types (name, description, is_builtin, source, kb_docs_config)
+		 VALUES ($1, $2, true, 'builtin'::company_type_source, $3::jsonb)
+		 ON CONFLICT (name) DO UPDATE SET
+		     description = EXCLUDED.description,
+		     kb_docs_config = EXCLUDED.kb_docs_config,
+		     source = EXCLUDED.source
 		 RETURNING id`,
-		['Software Development', 'Full-stack software development team with 9 specialized agents'],
+		[
+			'Startup',
+			'Full-stack software development team with 9 specialized agents and starter knowledge base',
+			JSON.stringify(kbDocsConfig),
+		],
 	);
-	const companyTypeId = ctResult.rows[0].id;
+	const startupTypeId = startupResult.rows[0].id;
 
 	for (const def of defs) {
 		await db.query(
@@ -162,7 +281,16 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 			 ON CONFLICT (company_type_id, agent_type_id) DO UPDATE SET
 			     reports_to_slug = EXCLUDED.reports_to_slug,
 			     sort_order = EXCLUDED.sort_order`,
-			[companyTypeId, def.slug, def.reports_to_slug, def.sort_order],
+			[startupTypeId, def.slug, def.reports_to_slug, def.sort_order],
 		);
 	}
+
+	await db.query(
+		`INSERT INTO company_types (name, description, is_builtin, source)
+		 VALUES ($1, $2, true, 'builtin'::company_type_source)
+		 ON CONFLICT (name) DO UPDATE SET
+		     description = EXCLUDED.description,
+		     source = EXCLUDED.source`,
+		['Blank', 'Start from scratch with no agents or documents'],
+	);
 }

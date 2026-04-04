@@ -276,8 +276,14 @@ async function runSeed(db: PGlite): Promise<void> {
 		const { seedBuiltins } = await import('./db/seed.js');
 		const roleDocs = await loadAgentRoles();
 		await seedBuiltins(db, roleDocs);
-	} catch {
-		// Seed module may not be available in minimal builds
+	} catch (err) {
+		if (
+			err instanceof Error &&
+			(err.message.includes('Cannot find module') || err.message.includes('Cannot find package'))
+		) {
+			return;
+		}
+		console.error('Seed failed:', err);
 	}
 }
 

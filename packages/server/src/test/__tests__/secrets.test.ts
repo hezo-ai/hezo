@@ -21,14 +21,14 @@ beforeAll(async () => {
 	const typesRes = await app.request('/api/company-types', {
 		headers: authHeader(token),
 	});
-	const typeId = (await typesRes.json()).data.find((t: any) => t.is_builtin).id;
+	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Secret Co',
-			team_type_ids: [typeId],
+			template_id: typeId,
 			issue_prefix: 'SC',
 		}),
 	});

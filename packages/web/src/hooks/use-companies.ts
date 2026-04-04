@@ -35,7 +35,7 @@ export function useCreateCompany() {
 		mutationFn: (data: {
 			name: string;
 			description?: string;
-			team_type_ids?: string[];
+			template_id?: string;
 			issue_prefix?: string;
 		}) => api.post<Company>('/api/companies', data),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['companies'] }),

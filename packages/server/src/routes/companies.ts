@@ -58,7 +58,7 @@ companiesRoutes.post('/companies', async (c) => {
 	const body = await c.req.json<{
 		name: string;
 		description?: string;
-		team_type_ids?: string[];
+		template_id?: string;
 		issue_prefix?: string;
 	}>();
 
@@ -116,14 +116,13 @@ companiesRoutes.post('/companies', async (c) => {
 			[company.id],
 		);
 
-		if (body.team_type_ids?.length) {
-			for (const typeId of body.team_type_ids) {
-				await db.query(
-					'INSERT INTO company_team_types (company_id, company_type_id) VALUES ($1, $2)',
-					[company.id, typeId],
-				);
-			}
-			await createAgentsFromTeamTypes(db, company.id, body.team_type_ids);
+		if (body.template_id) {
+			await db.query(
+				'INSERT INTO company_team_types (company_id, company_type_id) VALUES ($1, $2)',
+				[company.id, body.template_id],
+			);
+			await createAgentsFromTeamTypes(db, company.id, [body.template_id]);
+			await createKbDocsFromTemplate(db, company.id, body.template_id);
 		}
 
 		await db.query('COMMIT');
@@ -334,6 +333,26 @@ async function createAgentsFromTeamTypes(
 				]);
 			}
 		}
+	}
+}
+
+async function createKbDocsFromTemplate(
+	db: PGlite,
+	companyId: string,
+	templateId: string,
+): Promise<void> {
+	const result = await db.query<{
+		kb_docs_config: Array<{ title: string; slug: string; content: string }>;
+	}>('SELECT kb_docs_config FROM company_types WHERE id = $1', [templateId]);
+
+	const docs = result.rows[0]?.kb_docs_config ?? [];
+	for (const doc of docs) {
+		await db.query(
+			`INSERT INTO kb_docs (company_id, title, slug, content)
+			 VALUES ($1, $2, $3, $4)
+			 ON CONFLICT (company_id, slug) DO NOTHING`,
+			[companyId, doc.title, doc.slug, doc.content],
+		);
 	}
 }
 

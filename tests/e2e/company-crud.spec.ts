@@ -1,23 +1,20 @@
 import { expect, test } from '@playwright/test';
 import { authenticate } from './helpers';
 
-test('can create a company with default team type and see auto-created agents', async ({
-	page,
-}) => {
+test('can create a company with Startup template and see auto-created agents', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
-	await page.goto('/companies');
+	await page.goto('/companies/new');
 
-	await page
-		.getByRole('button', { name: 'New company' })
-		.filter({ hasText: 'New company' })
-		.click();
+	// Startup template should be selected by default
+	const startupCard = page.getByText('Startup').first();
+	await expect(startupCard).toBeVisible({ timeout: 5000 });
+
+	// Continue to details step
+	await page.getByRole('button', { name: 'Continue' }).click();
+
+	// Fill in company name and create
 	await page.getByLabel('Name').fill('Test Corp');
-
-	// "Software Development" should be checked by default
-	const softDevCheckbox = page.getByLabel('Software Development');
-	await expect(softDevCheckbox).toBeChecked();
-
 	await page.getByRole('button', { name: 'Create' }).click();
 
 	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
@@ -28,21 +25,17 @@ test('can create a company with default team type and see auto-created agents', 
 		timeout: 5000,
 	});
 
-	// Verify agents were auto-created from the team type
 	await expect(page.getByText('CEO')).toBeVisible({ timeout: 5000 });
 	await expect(page.getByText('Product Lead')).toBeVisible({ timeout: 5000 });
 	await expect(page.getByText('QA Engineer')).toBeVisible({ timeout: 5000 });
 });
 
-test('create company dialog shows Team Types label', async ({ page }) => {
+test('new company page shows template selection', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
-	await page.goto('/companies');
+	await page.goto('/companies/new');
 
-	await page
-		.getByRole('button', { name: 'New company' })
-		.filter({ hasText: 'New company' })
-		.click();
-
-	await expect(page.getByText('Team Types')).toBeVisible();
+	await expect(page.getByText('Choose a template')).toBeVisible();
+	await expect(page.getByText('Startup')).toBeVisible();
+	await expect(page.getByText('Blank')).toBeVisible();
 });

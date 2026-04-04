@@ -68,6 +68,22 @@ export function useKbDocRevisions(companyId: string, slug: string) {
 	});
 }
 
+export function useRestoreKbDocRevision(companyId: string, slug: string) {
+	return useMutation({
+		mutationFn: (revisionNumber: number) =>
+			api.post<KbDoc>(`/api/companies/${companyId}/kb-docs/${slug}/restore`, {
+				revision_number: revisionNumber,
+			}),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'kb-docs'] });
+			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'kb-docs', slug] });
+			queryClient.invalidateQueries({
+				queryKey: ['companies', companyId, 'kb-docs', slug, 'revisions'],
+			});
+		},
+	});
+}
+
 export function useDeleteKbDoc(companyId: string) {
 	return useMutation({
 		mutationFn: (slug: string) => api.delete(`/api/companies/${companyId}/kb-docs/${slug}`),

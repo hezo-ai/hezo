@@ -1,9 +1,7 @@
-import { Link, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { Home, Inbox, Plus } from 'lucide-react';
-import { useState } from 'react';
 import { useApprovals } from '../hooks/use-approvals';
 import { useCompanies } from '../hooks/use-companies';
-import { CreateCompanyDialog } from './create-company-dialog';
 import { Avatar, avatarColorFromString } from './ui/avatar';
 import { ThemeSwitcher } from './ui/theme-switcher';
 
@@ -17,7 +15,7 @@ export function CompanyRail() {
 	const { data: companies } = useCompanies();
 	const params = useParams({ strict: false });
 	const activeCompanyId = (params as Record<string, string>).companyId;
-	const [createOpen, setCreateOpen] = useState(false);
+	const navigate = useNavigate();
 	const approvalsQuery = useApprovals(activeCompanyId ?? '', undefined, !!activeCompanyId);
 	const pendingCount = approvalsQuery.data?.length ?? 0;
 
@@ -58,7 +56,7 @@ export function CompanyRail() {
 
 			<button
 				type="button"
-				onClick={() => setCreateOpen(true)}
+				onClick={() => navigate({ to: '/companies/new' })}
 				className="mt-1 w-[36px] h-[36px] rounded-full border border-dashed border-border-hover flex items-center justify-center text-text-subtle hover:text-text hover:border-text-muted transition-colors cursor-pointer"
 				title="New company"
 			>
@@ -83,8 +81,6 @@ export function CompanyRail() {
 					</Link>
 				)}
 			</div>
-
-			<CreateCompanyDialog open={createOpen} onOpenChange={setCreateOpen} />
 		</aside>
 	);
 }

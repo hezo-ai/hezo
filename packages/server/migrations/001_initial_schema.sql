@@ -63,6 +63,7 @@ CREATE TYPE membership_role AS ENUM ('board', 'member');
 CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 -- project_doc_type enum removed: project docs now live in the designated repo's .dev/ folder
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
+CREATE TYPE company_type_source AS ENUM ('builtin', 'custom', 'marketplace');
 
 -------------------------------------------------------------------------------
 -- AGENT TYPES
@@ -95,6 +96,10 @@ CREATE TABLE company_types (
     name                TEXT NOT NULL UNIQUE,
     description         TEXT NOT NULL DEFAULT '',
     is_builtin          BOOLEAN NOT NULL DEFAULT false,
+    source              company_type_source NOT NULL DEFAULT 'custom',
+    source_url          TEXT,
+    source_version      TEXT,
+    metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
     kb_docs_config      JSONB NOT NULL DEFAULT '[]'::jsonb,
     preferences_config  JSONB NOT NULL DEFAULT '{}'::jsonb,
     mcp_servers         JSONB NOT NULL DEFAULT '[]'::jsonb,

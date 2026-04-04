@@ -1,10 +1,9 @@
 import { createFileRoute, Link, Outlet, useMatchRoute } from '@tanstack/react-router';
-import { ArrowLeft } from 'lucide-react';
+import { Breadcrumb } from '../../../../../components/ui/breadcrumb';
 import { useProject } from '../../../../../hooks/use-projects';
 
 const tabs = [
 	{ label: 'Issues', to: '/companies/$companyId/projects/$projectId/issues' as const },
-	{ label: 'Agents', to: '/companies/$companyId/projects/$projectId/agents' as const },
 	{ label: 'Container', to: '/companies/$companyId/projects/$projectId/container' as const },
 	{ label: 'Settings', to: '/companies/$companyId/projects/$projectId/settings' as const },
 ];
@@ -19,13 +18,12 @@ function ProjectLayout() {
 
 	return (
 		<div>
-			<Link
-				to="/companies/$companyId/projects"
-				params={{ companyId }}
-				className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text mb-4"
-			>
-				<ArrowLeft className="w-3.5 h-3.5" /> Projects
-			</Link>
+			<Breadcrumb
+				items={[
+					{ label: 'Projects', to: '/companies/$companyId/projects', params: { companyId } },
+					{ label: project.name },
+				]}
+			/>
 
 			<h1 className="text-lg font-semibold mb-1">{project.name}</h1>
 			{project.goal && <p className="text-sm text-text-muted mb-4">{project.goal}</p>}

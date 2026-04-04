@@ -19,7 +19,7 @@ beforeAll(async () => {
 	token = ctx.token;
 
 	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
-	const companyTypeId = (await typesRes.json()).data[0].id;
+	const companyTypeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
@@ -27,7 +27,7 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'Wakeup Co',
 			issue_prefix: 'WUC',
-			team_type_ids: [companyTypeId],
+			template_id: companyTypeId,
 		}),
 	});
 	companyId = (await companyRes.json()).data.id;
