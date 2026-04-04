@@ -1,9 +1,9 @@
-import { Link, useParams } from '@tanstack/react-router';
-import { Plus } from 'lucide-react';
-import { useState } from 'react';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
+import { Home, Inbox, Plus } from 'lucide-react';
+import { useApprovals } from '../hooks/use-approvals';
 import { useCompanies } from '../hooks/use-companies';
-import { CreateCompanyDialog } from './create-company-dialog';
 import { Avatar, avatarColorFromString } from './ui/avatar';
+import { ThemeSwitcher } from './ui/theme-switcher';
 
 function getInitials(name: string): string {
 	const words = name.split(/\s+/);
@@ -15,17 +15,29 @@ export function CompanyRail() {
 	const { data: companies } = useCompanies();
 	const params = useParams({ strict: false });
 	const activeCompanyId = (params as Record<string, string>).companyId;
-	const [createOpen, setCreateOpen] = useState(false);
+	const navigate = useNavigate();
+	const approvalsQuery = useApprovals(activeCompanyId ?? '', undefined, !!activeCompanyId);
+	const pendingCount = approvalsQuery.data?.length ?? 0;
 
 	return (
 		<aside className="w-[60px] shrink-0 border-r border-border bg-bg-subtle flex flex-col items-center py-3 gap-2 overflow-y-auto">
+			<Link
+				to="/companies"
+				className="w-[36px] h-[36px] rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-bg-muted transition-colors"
+				title="Home"
+			>
+				<Home className="w-4 h-4" />
+			</Link>
+
+			<div className="w-8 border-t border-border my-1" />
+
 			{companies?.map((company) => {
-				const isActive = company.id === activeCompanyId;
+				const isActive = company.slug === activeCompanyId;
 				return (
 					<Link
 						key={company.id}
-						to="/companies/$companyId/issues"
-						params={{ companyId: company.id }}
+						to="/companies/$companyId"
+						params={{ companyId: company.slug }}
 						className={`relative group ${isActive ? '' : 'opacity-60 hover:opacity-100'} transition-opacity`}
 						title={company.name}
 					>
@@ -41,15 +53,34 @@ export function CompanyRail() {
 					</Link>
 				);
 			})}
+
 			<button
 				type="button"
-				onClick={() => setCreateOpen(true)}
+				onClick={() => navigate({ to: '/companies/new' })}
 				className="mt-1 w-[36px] h-[36px] rounded-full border border-dashed border-border-hover flex items-center justify-center text-text-subtle hover:text-text hover:border-text-muted transition-colors cursor-pointer"
 				title="New company"
 			>
 				<Plus className="w-4 h-4" />
 			</button>
-			<CreateCompanyDialog open={createOpen} onOpenChange={setCreateOpen} />
+
+			<div className="mt-auto flex flex-col items-center gap-1 pt-2">
+				<ThemeSwitcher />
+				{activeCompanyId && (
+					<Link
+						to="/companies/$companyId/inbox"
+						params={{ companyId: activeCompanyId }}
+						className="relative inline-flex items-center justify-center w-8 h-8 rounded-radius-md text-text-muted hover:text-text hover:bg-bg-muted transition-colors"
+						title="Inbox"
+					>
+						<Inbox className="w-4 h-4" />
+						{pendingCount > 0 && (
+							<span className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 rounded-full bg-accent-red text-white text-[10px] font-bold">
+								{pendingCount}
+							</span>
+						)}
+					</Link>
+				)}
+			</div>
 		</aside>
 	);
 }

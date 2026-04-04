@@ -98,6 +98,50 @@ describe('KB docs CRUD', () => {
 		expect(revBody.data[0].change_summary).toBe('Added functional patterns preference');
 	});
 
+	it('restores a KB doc to a previous revision', async () => {
+		// Update again to create a second revision
+		await app.request(`/api/companies/${companyId}/kb-docs/coding-standards`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content: '# Coding Standards v3',
+				change_summary: 'Version 3',
+			}),
+		});
+
+		// Restore to revision 1 (original content before first update)
+		const restoreRes = await app.request(
+			`/api/companies/${companyId}/kb-docs/coding-standards/restore`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ revision_number: 1 }),
+			},
+		);
+		expect(restoreRes.status).toBe(200);
+		const restored = await restoreRes.json();
+		expect(restored.data.content).toBe('# Coding Standards\n\nUse TypeScript.');
+
+		// Verify a new revision was created for the pre-restore content
+		const revRes = await app.request(
+			`/api/companies/${companyId}/kb-docs/coding-standards/revisions`,
+			{ headers: authHeader(token) },
+		);
+		const revBody = await revRes.json();
+		expect(revBody.data.length).toBe(3);
+		expect(revBody.data[0].change_summary).toBe('Restored to revision 1');
+		expect(revBody.data[0].content).toBe('# Coding Standards v3');
+	});
+
+	it('returns 404 when restoring non-existent revision', async () => {
+		const res = await app.request(`/api/companies/${companyId}/kb-docs/coding-standards/restore`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ revision_number: 999 }),
+		});
+		expect(res.status).toBe(404);
+	});
+
 	it('deletes a KB doc', async () => {
 		// Create one to delete
 		await app.request(`/api/companies/${companyId}/kb-docs`, {

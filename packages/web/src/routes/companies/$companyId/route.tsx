@@ -1,5 +1,4 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router';
-import { CompanyTabs } from '../../../components/company-tabs';
 import { useCompany } from '../../../hooks/use-companies';
 import { useWebSocket } from '../../../hooks/use-websocket';
 
@@ -9,8 +8,7 @@ function CompanyLayout() {
 	useWebSocket(company?.id ?? companyId);
 
 	return (
-		<div className="max-w-[900px] mx-auto w-full px-8 py-6">
-			<CompanyTabs companyId={companyId} />
+		<div className="max-w-[1000px] mx-auto w-full px-8 py-6">
 			<Outlet />
 		</div>
 	);

@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { existsSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { Command } from 'commander';
 
@@ -11,14 +13,36 @@ const program = new Command()
 	.option('--no-open', 'Do not auto-open the browser')
 	.option('--port <port>', 'Server port')
 	.option('--master-key <key>', 'Master key for unlocking')
+	.option('--data-dir <path>', 'Data directory')
 	.parse();
 
 const opts = program.opts();
+
+if (opts.reset) {
+	const dataDir = opts.dataDir ? resolve(opts.dataDir) : resolve(homedir(), '.hezo');
+	const pgDataPath = resolve(dataDir, 'pgdata');
+	if (existsSync(pgDataPath)) {
+		rmSync(pgDataPath, { recursive: true, force: true });
+		console.log(`Reset: removed ${pgDataPath}`);
+	}
+}
+
 const serverArgs: string[] = [];
-if (opts.reset) serverArgs.push('--reset');
 if (opts.open === false) serverArgs.push('--no-open');
 if (opts.port) serverArgs.push('--port', opts.port);
 if (opts.masterKey) serverArgs.push('--master-key', opts.masterKey);
+if (opts.dataDir) serverArgs.push('--data-dir', opts.dataDir);
+
+// Bundle migrations before starting the server
+const bundle = Bun.spawnSync(['bun', 'run', 'scripts/bundle-migrations.ts'], {
+	cwd: resolve(ROOT, 'packages/server'),
+	stdout: 'inherit',
+	stderr: 'inherit',
+});
+if (bundle.exitCode !== 0) {
+	console.error('Failed to bundle migrations');
+	process.exit(1);
+}
 
 const procs = [
 	Bun.spawn(['bun', 'run', '--watch', 'src/index.ts'], {

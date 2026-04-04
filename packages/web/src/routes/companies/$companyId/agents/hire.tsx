@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
-import { useAgents, useCreateAgent } from '../../../../hooks/use-agents';
+import { useOnboardAgent } from '../../../../hooks/use-agents';
 
 const templateVars = [
 	'{{company_name}}',
@@ -16,35 +16,37 @@ const templateVars = [
 
 function HireAgentPage() {
 	const { companyId } = Route.useParams();
-	const { data: agents } = useAgents(companyId);
-	const createAgent = useCreateAgent(companyId);
+	const onboardAgent = useOnboardAgent(companyId);
 	const navigate = useNavigate();
 
 	const [title, setTitle] = useState('');
 	const [roleDesc, setRoleDesc] = useState('');
 	const [systemPrompt, setSystemPrompt] = useState('');
-	const [reportsTo, setReportsTo] = useState('');
 	const [runtime, setRuntime] = useState('claude_code');
 	const [budget, setBudget] = useState('20');
 	const [heartbeat, setHeartbeat] = useState('60');
 
-	const otherAgents = agents?.filter((a) => a.admin_status !== 'terminated') ?? [];
-
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
-		const result = await createAgent.mutateAsync({
+		const result = await onboardAgent.mutateAsync({
 			title,
 			role_description: roleDesc || undefined,
 			system_prompt: systemPrompt || undefined,
-			reports_to: reportsTo || undefined,
 			runtime_type: runtime,
 			monthly_budget_cents: Math.round(Number.parseFloat(budget) * 100),
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
 		});
-		navigate({
-			to: '/companies/$companyId/agents/$agentId',
-			params: { companyId, agentId: result.id },
-		});
+		if (result.issue) {
+			navigate({
+				to: '/companies/$companyId/issues/$issueId',
+				params: { companyId, issueId: result.issue.id },
+			});
+		} else {
+			navigate({
+				to: '/companies/$companyId/agents/$agentId',
+				params: { companyId, agentId: result.agent.id },
+			});
+		}
 	}
 
 	function insertVar(v: string) {
@@ -63,14 +65,14 @@ function HireAgentPage() {
 						placeholder="e.g. Engineer, Data Scientist"
 					/>
 					<Input
-						label="Slug"
+						label="Role description"
 						value={roleDesc}
 						onChange={(e) => setRoleDesc(e.target.value)}
-						placeholder="e.g. engineer"
+						placeholder="Brief description of responsibilities"
 					/>
 				</div>
 
-				<div className="grid grid-cols-3 gap-4 max-w-[600px]">
+				<div className="grid grid-cols-2 gap-4 max-w-[400px]">
 					<div className="flex flex-col gap-1.5">
 						<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
 							Runtime
@@ -83,23 +85,6 @@ function HireAgentPage() {
 							<option value="claude_code">Claude Code</option>
 							<option value="codex">Codex</option>
 							<option value="gemini">Gemini</option>
-						</select>
-					</div>
-					<div className="flex flex-col gap-1.5">
-						<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
-							Reports to
-						</span>
-						<select
-							value={reportsTo}
-							onChange={(e) => setReportsTo(e.target.value)}
-							className="rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-border-hover"
-						>
-							<option value="">None (Board)</option>
-							{otherAgents.map((a) => (
-								<option key={a.id} value={a.id}>
-									{a.title}
-								</option>
-							))}
 						</select>
 					</div>
 					<div className="flex flex-col gap-1.5">
@@ -158,9 +143,9 @@ function HireAgentPage() {
 					</p>
 				</div>
 
-				{createAgent.error && (
+				{onboardAgent.error && (
 					<p className="text-[13px] text-accent-red">
-						{(createAgent.error as { message: string }).message}
+						{(onboardAgent.error as { message: string }).message}
 					</p>
 				)}
 
@@ -170,8 +155,8 @@ function HireAgentPage() {
 							Cancel
 						</Button>
 					</Link>
-					<Button type="submit" disabled={!title.trim() || createAgent.isPending}>
-						{createAgent.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+					<Button type="submit" disabled={!title.trim() || onboardAgent.isPending}>
+						{onboardAgent.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 						Hire agent
 					</Button>
 				</div>

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { authenticate, createCompanyWithAgents } from './helpers';
 
-test('agent list shows status badges and budget bars', async ({ page }) => {
+test('agent list shows runtime badges not admin badges', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
@@ -12,7 +12,8 @@ test('agent list shows status badges and budget bars', async ({ page }) => {
 		timeout: 5000,
 	});
 
-	await expect(page.getByText('Enabled').first()).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Idle').first()).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Enabled')).not.toBeVisible();
 	await expect(page.getByText(/\$\d+/).first()).toBeVisible({ timeout: 5000 });
 });
 
@@ -90,11 +91,34 @@ test('agent disable and enable lifecycle', async ({ page }) => {
 	await expect(disableBtn).toBeVisible({ timeout: 5000 });
 	await disableBtn.click();
 
-	await expect(page.getByText('disabled')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 5000 });
 
 	const enableBtn = page.getByRole('button', { name: /Enable/i });
 	await expect(enableBtn).toBeVisible({ timeout: 5000 });
 	await enableBtn.click();
 
-	await expect(page.getByText('enabled')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('(disabled)')).not.toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Idle')).toBeVisible({ timeout: 5000 });
+});
+
+test('disabled agent card is greyed out with name suffix on list page', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const agents = await agentsRes.json();
+	const enabledAgent = (agents as any).data.find((a: any) => a.admin_status === 'enabled');
+
+	await page.request.post(`/api/companies/${company.id}/agents/${enabledAgent.id}/disable`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+
+	await page.goto(`/companies/${company.slug}/agents`);
+
+	const disabledCard = page.locator('.opacity-50');
+	await expect(disabledCard).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 5000 });
 });

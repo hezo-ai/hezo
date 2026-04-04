@@ -158,7 +158,7 @@ describe('company types with agent types', () => {
 			headers: authHeader(token),
 		});
 		const body = await res.json();
-		const builtin = body.data.find((t: any) => t.is_builtin);
+		const builtin = body.data.find((t: any) => t.name === 'Startup');
 		expect(builtin.agent_types).toHaveLength(9);
 		expect(builtin.agent_types[0]).toHaveProperty('agent_type_id');
 		expect(builtin.agent_types[0]).toHaveProperty('name');
@@ -196,14 +196,14 @@ describe('company creation with agent types', () => {
 		const typesRes = await app.request('/api/company-types', {
 			headers: authHeader(token),
 		});
-		const builtinType = (await typesRes.json()).data.find((t: any) => t.is_builtin);
+		const builtinType = (await typesRes.json()).data.find((t: any) => t.name === 'Startup');
 
 		const companyRes = await app.request('/api/companies', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Agent Type Test Co',
-				company_type_id: builtinType.id,
+				template_id: builtinType.id,
 			}),
 		});
 		const companyId = (await companyRes.json()).data.id;

@@ -4,12 +4,11 @@ import { authenticate, getToken } from './helpers';
 test('can create an issue', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
-	await page.goto('/companies');
+	await page.goto('/companies/new');
 
-	await page
-		.getByRole('button', { name: 'New company' })
-		.filter({ hasText: 'New company' })
-		.click();
+	await expect(page.getByText('Choose a template')).toBeVisible({ timeout: 5000 });
+	await page.getByRole('button', { name: 'Continue' }).click();
+
 	await page.getByLabel('Name').fill('Issue Test Corp');
 	await page.getByRole('button', { name: 'Create' }).click();
 	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
@@ -49,14 +48,15 @@ test('issue detail shows execution lock banner when locked', async ({ page }) =>
 
 	// Create company with agents (need agent for lock)
 	const typesRes = await page.request.get('/api/company-types', { headers });
-	const typeId = (await typesRes.json()).data[0]?.id;
+	const types = (await typesRes.json()).data as { id: string; name: string }[];
+	const typeId = types.find((t) => t.name === 'Startup')?.id;
 
 	const companyRes = await page.request.post('/api/companies', {
 		headers,
 		data: {
 			name: `Lock Test ${Date.now()}`,
 			issue_prefix: `LK${Date.now().toString().slice(-4)}`,
-			company_type_id: typeId,
+			template_id: typeId,
 		},
 	});
 	const company = (await companyRes.json()).data;

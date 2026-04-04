@@ -28,9 +28,7 @@ describe('company types CRUD', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
-		const builtin = body.data.find(
-			(t: Record<string, unknown>) => t.name === 'Software Development',
-		);
+		const builtin = body.data.find((t: Record<string, unknown>) => t.name === 'Startup');
 		expect(builtin).toBeDefined();
 		expect(builtin.is_builtin).toBe(true);
 		expect(builtin.agent_types).toHaveLength(9);

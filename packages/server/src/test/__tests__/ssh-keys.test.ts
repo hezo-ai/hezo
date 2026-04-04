@@ -21,15 +21,9 @@ beforeAll(async () => {
 	await seedBuiltins(db, await loadAgentRoles());
 
 	// Create a company
-	const typesRes = await db.query<{ id: string }>(
-		'SELECT id FROM company_types WHERE is_builtin = true LIMIT 1',
-	);
-	const typeId = typesRes.rows[0].id;
-
 	const companyRes = await db.query<{ id: string }>(
-		`INSERT INTO companies (name, slug, issue_prefix, company_type_id)
-		 VALUES ('SSH Test Co', 'ssh-test-co', 'ST', $1) RETURNING id`,
-		[typeId],
+		`INSERT INTO companies (name, slug, issue_prefix)
+		 VALUES ('SSH Test Co', 'ssh-test-co', 'ST') RETURNING id`,
 	);
 	companyId = companyRes.rows[0].id;
 });
@@ -86,8 +80,8 @@ describe('SSH key management', () => {
 
 	it('returns null for company without SSH key', async () => {
 		const otherCompanyRes = await db.query<{ id: string }>(
-			`INSERT INTO companies (name, slug, issue_prefix, company_type_id)
-			 VALUES ('No Key Co', 'no-key-co', 'NK', (SELECT id FROM company_types LIMIT 1)) RETURNING id`,
+			`INSERT INTO companies (name, slug, issue_prefix)
+			 VALUES ('No Key Co', 'no-key-co', 'NK') RETURNING id`,
 		);
 		const result = await getCompanySSHKey(db, otherCompanyRes.rows[0].id, masterKeyManager);
 		expect(result).toBeNull();

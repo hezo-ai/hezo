@@ -95,20 +95,20 @@ Response:
 ```
 
 #### `POST /companies`
-Create a company. Optionally clone from a company type.
+Create a company. Optionally seed from one or more team types.
 
 Request:
 ```json
 {
   "name": "NoteGenius AI",
   "mission": "Build the #1 AI note-taking app",
-  "company_type_id": "uuid | null"
+  "team_type_ids": ["uuid", "uuid"]
 }
 ```
 
-`company_type_id` is optional. When set, the new company is seeded from the matching company type with:
-- All knowledge base documents
-- All agent configurations (titles, prompts, org chart, runtimes, budgets)
+`team_type_ids` is optional. When set, agents are provisioned from all selected team types with automatic deduplication — if the same agent type appears in multiple team types, the first occurrence (by array order) wins. Each team type contributes:
+- Agent configurations (titles, prompts, org chart, runtimes, budgets)
+- Knowledge base documents
 - Company-level MCP server config
 - MPP config structure (wallet keys must be set up fresh)
 

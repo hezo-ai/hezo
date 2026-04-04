@@ -11,12 +11,13 @@
 | `member_agents` | Agent-specific extension. System prompt, runtime type, budget, heartbeat, org chart. References agent_type_id for provenance. | extends member (PK = member.id), optionally references agent_type |
 | `member_users` | User-in-company extension. Role (board/member), role_title, permissions_text, project_ids. Links to global user. | extends member (PK = member.id), references user |
 | `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget. Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
-| `company_types` | Company blueprints (recipes). Groups of agent types plus default KB docs, preferences, MCP servers. | Referenced by companies. |
+| `company_types` | Company blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers. | Referenced by company_team_types. |
 | `company_type_agent_types` | Join table linking company types to agent types. Stores org chart hierarchy (reports_to_slug) and per-company-type config overrides (runtime type, heartbeat, budget). | belongs to company_type + agent_type |
-| `companies` | Top-level tenant. Has `email`, `company_type_id`, `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), company-level budget. | Parent of everything. |
+| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), company-level budget. | Parent of everything. |
+| `company_team_types` | Many-to-many join table linking companies to the team types they were created from. | belongs to company + company_type |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
-| `projects` | Group of related work under a company. Has Docker container config, dev ports, designated repo. | belongs to company |
+| `projects` | Group of related work under a company. Has Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Operations) that cannot be deleted. | belongs to company |
 | `repos` | Git repo (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. | belongs to project |
 | `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `ACME-42`). Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to company + project, assigned to member |
 | `issue_dependencies` | Many-to-many blocking relationships between issues. | links issue ↔ issue |
@@ -284,22 +285,25 @@ Container provisioning happens when the first project is created, not at company
 
 This ensures the user never lands on an empty company.
 
-### Company cloning
+### Team type provisioning
 
-`POST /companies` accepts an optional `company_type_id`. The server provisions
-agents from the selected company type via the `company_type_agent_types` join table:
+`POST /companies` accepts an optional `team_type_ids` array. The server provisions
+agents from all selected team types via the `company_type_agent_types` join table,
+with automatic deduplication of overlapping agent roles:
 
-1. Queries `company_type_agent_types JOIN agent_types` for the selected type, ordered by `sort_order`
-2. For each agent type, creates `members` + `member_agents` rows with:
+1. For each team type (in array order), queries `company_type_agent_types JOIN agent_types`, ordered by `sort_order`
+2. Deduplicates by `agent_type_id` — first occurrence wins (keeps that type's config overrides)
+3. For each unique agent type, creates `members` + `member_agents` rows with:
    - `agent_type_id` set to the originating agent type (for provenance tracking)
    - System prompt copied from `agent_types.system_prompt_template`
    - Config overrides applied from the join table (runtime type, heartbeat, budget)
    - `budget_used_cents` reset to 0
-3. Second pass resolves `reports_to_slug` → `reports_to` UUID for the org chart
-4. Creates `kb_docs` rows from `company_types.kb_docs_config`
-5. Creates `company_preferences` row from `company_types.preferences_config`
-6. Copies `mcp_servers` array from company type
-7. Copies `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
+4. Second pass resolves `reports_to_slug` → `reports_to` UUID for the org chart
+5. Creates `kb_docs` rows from `company_types.kb_docs_config`
+6. Creates `company_preferences` row from `company_types.preferences_config`
+7. Copies `mcp_servers` array from company type
+8. Copies `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
+9. Inserts rows into `company_team_types` to record the association
 
 Project containers are provisioned when projects are created (not at company creation).
 

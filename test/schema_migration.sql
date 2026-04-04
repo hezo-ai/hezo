@@ -113,8 +113,6 @@ CREATE TABLE companies (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name                TEXT NOT NULL,
     mission             TEXT NOT NULL DEFAULT '',
-    -- The company type this company was created from
-    company_type_id     UUID REFERENCES company_types(id) ON DELETE SET NULL,
     -- Auto-derived from name, globally unique (e.g. "ACME", "NOTE")
     issue_prefix        TEXT NOT NULL UNIQUE,
     -- Company email for outbound communication (invites, notifications)
@@ -129,6 +127,16 @@ CREATE TABLE companies (
     mpp_config          JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-------------------------------------------------------------------------------
+-- COMPANY ↔ TEAM TYPES (many-to-many)
+-------------------------------------------------------------------------------
+
+CREATE TABLE company_team_types (
+    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    company_type_id UUID NOT NULL REFERENCES company_types(id) ON DELETE CASCADE,
+    PRIMARY KEY (company_id, company_type_id)
 );
 
 -------------------------------------------------------------------------------

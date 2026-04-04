@@ -24,7 +24,7 @@ beforeAll(async () => {
 	boardToken = ctx.token;
 
 	const typesRes = await app.request('/api/company-types', { headers: authHeader(boardToken) });
-	const companyTypeId = (await typesRes.json()).data[0].id;
+	const companyTypeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
@@ -32,7 +32,7 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'Agent API Co',
 			issue_prefix: 'AAC',
-			company_type_id: companyTypeId,
+			template_id: companyTypeId,
 		}),
 	});
 	companyId = (await companyRes.json()).data.id;

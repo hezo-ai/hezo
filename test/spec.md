@@ -287,18 +287,20 @@ A **company type** (also called a template or recipe) defines the blueprint for 
 - **Default preferences** — initial company preferences
 - **Default MCP servers** — company-level MCP server configuration
 
-The current 9-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher) is the built-in **"Software Development"** company type. It ships with Hezo and cannot be deleted (but can be customized per-company after creation).
+Companies can be created with **multiple team types** selected. When multiple types share the same agent type, the first type (by selection order) wins — its config overrides are used and duplicates are skipped. The associations are stored in the `company_team_types` join table.
 
-**Creating company types:**
-- Users can create new company types from scratch (define agents, KB docs, and preferences manually)
-- Users can save an existing company as a new company type (snapshots current agents, KB, and preferences)
-- Company types are stored locally in the Hezo instance
+The current 9-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher) is the built-in **"Software Development"** team type. It ships with Hezo and is pre-selected by default in the UI.
 
-**Future:** Company types will be distributable as recipes from the Hezo project website, enabling the community to share blueprints for different kinds of AI companies.
+**Creating team types:**
+- Users can create new team types from scratch (define agents, KB docs, and preferences manually)
+- Users can save an existing company as a new team type (snapshots current agents, KB, and preferences)
+- Team types are stored locally in the Hezo instance
+
+**Future:** Team types will be distributable as recipes from the Hezo project website, enabling the community to share blueprints for different kinds of AI companies.
 
 ### Company onboarding flow
 
-When a new company is created, the user selects a **company type** (see above). The system then clones from that type and automatically:
+When a new company is created, the user selects one or more **team types** (see above). The system provisions agents from the selected types (with deduplication) and automatically:
 
 1. **Creates the full 9-agent team** defined by the selected company type. For the built-in "Software Development" type, this includes (see `agents/` for full specs):
    - CEO (reports to board)
@@ -1984,8 +1986,9 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `members` | Base table for all company participants. Has `member_type` enum ('agent'/'user'). |
 | `member_agents` | Agent-specific extension (system_prompt, runtime, budget, heartbeat, org chart). |
 | `member_users` | User-in-company extension (role, role_title, permissions_text, project_ids). |
-| `company_types` | Company blueprints (recipes). Default agents, KB docs, preferences, filesystem snapshots. |
-| `companies` | Top-level tenant. Has `email`, `company_type_id`, `mcp_servers` (JSONB), `mpp_config` (JSONB), budget. |
+| `company_types` | Team type blueprints (recipes). Default agents, KB docs, preferences, filesystem snapshots. |
+| `company_team_types` | Many-to-many join table linking companies to the team types they were created from. |
+| `companies` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), budget. |
 | `invites` | Pending invitations to join a company (7-day expiry) |
 | `api_keys` | Company-scoped API keys for external orchestrators. Stored hashed. |
 | `company_ssh_keys` | Generated SSH key pairs per company. Registered on GitHub via OAuth API. |

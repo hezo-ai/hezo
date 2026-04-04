@@ -13,12 +13,18 @@ interface CreateIssueDialogProps {
 	companyId: string;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	defaultProjectId?: string;
 }
 
-export function CreateIssueDialog({ companyId, open, onOpenChange }: CreateIssueDialogProps) {
+export function CreateIssueDialog({
+	companyId,
+	open,
+	onOpenChange,
+	defaultProjectId,
+}: CreateIssueDialogProps) {
 	const [title, setTitle] = useState('');
 	const [description, setDescription] = useState('');
-	const [projectId, setProjectId] = useState('');
+	const [projectId, setProjectId] = useState(defaultProjectId ?? '');
 	const [assigneeId, setAssigneeId] = useState('');
 	const [priority, setPriority] = useState('medium');
 	const { data: projects } = useProjects(companyId);

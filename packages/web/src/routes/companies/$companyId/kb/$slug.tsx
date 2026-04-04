@@ -1,17 +1,23 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { ArrowLeft, Clock, Edit, Trash2 } from 'lucide-react';
+import { ArrowLeft, Clock, Edit, RotateCcw, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '../../../../components/ui/button';
 import { Card } from '../../../../components/ui/card';
-import { useDeleteKbDoc, useKbDoc, useKbDocRevisions } from '../../../../hooks/use-kb-docs';
+import {
+	useDeleteKbDoc,
+	useKbDoc,
+	useKbDocRevisions,
+	useRestoreKbDocRevision,
+} from '../../../../hooks/use-kb-docs';
 
 function KbDocViewPage() {
 	const { companyId, slug } = Route.useParams();
 	const { data: doc, isLoading } = useKbDoc(companyId, slug);
 	const { data: revisions } = useKbDocRevisions(companyId, slug);
 	const deleteDoc = useDeleteKbDoc(companyId);
+	const restoreRevision = useRestoreKbDocRevision(companyId, slug);
 	const navigate = useNavigate();
 	const [showHistory, setShowHistory] = useState(false);
 
@@ -73,6 +79,18 @@ function KbDocViewPage() {
 									<span className="text-xs text-text-subtle ml-auto">
 										{new Date(rev.created_at).toLocaleString()}
 									</span>
+									<Button
+										variant="ghost"
+										size="sm"
+										className="ml-1 text-xs"
+										onClick={async () => {
+											if (confirm(`Restore to revision ${rev.revision_number}?`)) {
+												await restoreRevision.mutateAsync(rev.revision_number);
+											}
+										}}
+									>
+										<RotateCcw className="w-3 h-3" /> Restore
+									</Button>
 								</div>
 								{rev.change_summary && (
 									<p className="text-xs text-text-muted">{rev.change_summary}</p>

@@ -63,6 +63,7 @@ CREATE TYPE membership_role AS ENUM ('board', 'member');
 CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 -- project_doc_type enum removed: project docs now live in the designated repo's .dev/ folder
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
+CREATE TYPE company_type_source AS ENUM ('builtin', 'custom', 'marketplace');
 
 -------------------------------------------------------------------------------
 -- AGENT TYPES
@@ -95,6 +96,10 @@ CREATE TABLE company_types (
     name                TEXT NOT NULL UNIQUE,
     description         TEXT NOT NULL DEFAULT '',
     is_builtin          BOOLEAN NOT NULL DEFAULT false,
+    source              company_type_source NOT NULL DEFAULT 'custom',
+    source_url          TEXT,
+    source_version      TEXT,
+    metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
     kb_docs_config      JSONB NOT NULL DEFAULT '[]'::jsonb,
     preferences_config  JSONB NOT NULL DEFAULT '{}'::jsonb,
     mcp_servers         JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -132,7 +137,6 @@ CREATE TABLE companies (
     name                 TEXT NOT NULL,
     slug                 TEXT NOT NULL UNIQUE,
     description          TEXT NOT NULL DEFAULT '',
-    company_type_id      UUID REFERENCES company_types(id) ON DELETE SET NULL,
     issue_prefix         TEXT NOT NULL UNIQUE,
     budget_monthly_cents INTEGER NOT NULL DEFAULT 50000,
     budget_used_cents    INTEGER NOT NULL DEFAULT 0,
@@ -141,6 +145,16 @@ CREATE TABLE companies (
     mpp_config           JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-------------------------------------------------------------------------------
+-- COMPANY ↔ TEAM TYPES (many-to-many)
+-------------------------------------------------------------------------------
+
+CREATE TABLE company_team_types (
+    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    company_type_id UUID NOT NULL REFERENCES company_types(id) ON DELETE CASCADE,
+    PRIMARY KEY (company_id, company_type_id)
 );
 
 -------------------------------------------------------------------------------
@@ -252,6 +266,7 @@ CREATE TABLE projects (
     name                TEXT NOT NULL,
     slug                TEXT NOT NULL,
     goal                TEXT NOT NULL DEFAULT '',
+    is_internal         BOOLEAN NOT NULL DEFAULT false,
     docker_base_image   TEXT NOT NULL DEFAULT 'node:24-slim',
     container_id        TEXT,
     container_status    container_status,

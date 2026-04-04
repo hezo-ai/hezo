@@ -225,6 +225,76 @@ kbDocsRoutes.delete('/companies/:companyId/kb-docs/:slug', async (c) => {
 	return c.json({ data: null }, 200);
 });
 
+kbDocsRoutes.post('/companies/:companyId/kb-docs/:slug/restore', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const slug = c.req.param('slug');
+	const auth = c.get('auth');
+
+	if (auth.type === AuthType.Agent) {
+		return err(c, 'FORBIDDEN', 'Only board members can restore revisions', 403);
+	}
+
+	const body = await c.req.json<{ revision_number: number }>();
+	if (typeof body.revision_number !== 'number') {
+		return err(c, 'INVALID_REQUEST', 'revision_number is required', 400);
+	}
+
+	const existing = await db.query<{ id: string; content: string }>(
+		'SELECT id, content FROM kb_docs WHERE company_id = $1 AND slug = $2',
+		[companyId, slug],
+	);
+	if (existing.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'KB document not found', 404);
+	}
+	const doc = existing.rows[0];
+
+	const rev = await db.query<{ content: string }>(
+		'SELECT content FROM kb_doc_revisions WHERE doc_id = $1 AND revision_number = $2',
+		[doc.id, body.revision_number],
+	);
+	if (rev.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Revision not found', 404);
+	}
+
+	await db.query('BEGIN');
+	try {
+		const revResult = await db.query<{ max_rev: number }>(
+			'SELECT COALESCE(MAX(revision_number), 0)::int AS max_rev FROM kb_doc_revisions WHERE doc_id = $1',
+			[doc.id],
+		);
+		const nextRev = revResult.rows[0].max_rev + 1;
+
+		await db.query(
+			`INSERT INTO kb_doc_revisions (doc_id, revision_number, content, change_summary, author_member_id)
+			 VALUES ($1, $2, $3, $4, $5)`,
+			[doc.id, nextRev, doc.content, `Restored to revision ${body.revision_number}`, null],
+		);
+
+		const result = await db.query(
+			'UPDATE kb_docs SET content = $1, last_updated_by_member_id = $2 WHERE id = $3 RETURNING *',
+			[rev.rows[0].content, null, doc.id],
+		);
+
+		await db.query('COMMIT');
+
+		broadcastChange(
+			c,
+			`company:${companyId}`,
+			'kb_docs',
+			'UPDATE',
+			result.rows[0] as Record<string, unknown>,
+		);
+		return ok(c, result.rows[0]);
+	} catch (e) {
+		await db.query('ROLLBACK');
+		throw e;
+	}
+});
+
 kbDocsRoutes.get('/companies/:companyId/kb-docs/:slug/revisions', async (c) => {
 	const access = await requireCompanyAccess(c);
 	if (access instanceof Response) return access;

@@ -23,12 +23,12 @@ beforeAll(async () => {
 	// Create a company for testing
 	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
 	const types = (await typesRes.json()).data;
-	const builtinTypeId = types.find((t: Record<string, unknown>) => t.is_builtin).id;
+	const builtinTypeId = types.find((t: Record<string, unknown>) => t.name === 'Startup').id;
 
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Connection Test Co', company_type_id: builtinTypeId }),
+		body: JSON.stringify({ name: 'Connection Test Co', template_id: builtinTypeId }),
 	});
 	companyId = (await companyRes.json()).data.id;
 });

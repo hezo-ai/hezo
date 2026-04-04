@@ -8,7 +8,7 @@ export interface Company {
 	slug: string;
 	description: string | null;
 	issue_prefix: string;
-	company_type_id: string | null;
+	team_type_ids: string[];
 	mcp_servers: unknown[];
 	agent_count: number;
 	open_issue_count: number;
@@ -35,7 +35,7 @@ export function useCreateCompany() {
 		mutationFn: (data: {
 			name: string;
 			description?: string;
-			company_type_id?: string;
+			template_id?: string;
 			issue_prefix?: string;
 		}) => api.post<Company>('/api/companies', data),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['companies'] }),

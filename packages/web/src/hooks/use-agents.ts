@@ -94,6 +94,27 @@ export function useEnableAgent(companyId: string) {
 	});
 }
 
+export function useOnboardAgent(companyId: string) {
+	return useMutation({
+		mutationFn: (data: {
+			title: string;
+			role_description?: string;
+			system_prompt?: string;
+			runtime_type?: string;
+			monthly_budget_cents?: number;
+			heartbeat_interval_min?: number;
+		}) =>
+			api.post<{ agent: Agent; issue: { id: string; identifier: string } | null }>(
+				`/api/companies/${companyId}/agents/onboard`,
+				data,
+			),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] });
+			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'issues'] });
+		},
+	});
+}
+
 export function useTerminateAgent(companyId: string) {
 	return useMutation({
 		mutationFn: (agentId: string) =>

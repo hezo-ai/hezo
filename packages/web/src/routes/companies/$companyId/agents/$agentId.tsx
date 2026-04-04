@@ -1,3 +1,4 @@
+import { AgentAdminStatus, AgentRuntimeStatus } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { ArrowLeft, Loader2, Power, PowerOff, Skull } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -15,10 +16,10 @@ import {
 } from '../../../../hooks/use-agents';
 import { useHeartbeatRuns } from '../../../../hooks/use-heartbeat-runs';
 
-const adminColors: Record<string, string> = {
-	enabled: 'green',
-	disabled: 'yellow',
-	terminated: 'gray',
+const RUNTIME_BADGE: Record<string, { color: string; label: string }> = {
+	[AgentRuntimeStatus.Active]: { color: 'green', label: 'Running' },
+	[AgentRuntimeStatus.Paused]: { color: 'yellow', label: 'Paused' },
+	[AgentRuntimeStatus.Idle]: { color: 'neutral', label: 'Idle' },
 };
 
 function AgentDetailPage() {
@@ -52,7 +53,7 @@ function AgentDetailPage() {
 	if (isLoading || !agent) return <div className="p-6 text-text-muted">Loading...</div>;
 
 	const otherAgents =
-		agents?.filter((a) => a.id !== agentId && a.admin_status !== 'terminated') ?? [];
+		agents?.filter((a) => a.id !== agentId && a.admin_status !== AgentAdminStatus.Terminated) ?? [];
 
 	async function handleSave(e: React.FormEvent) {
 		e.preventDefault();
@@ -77,24 +78,38 @@ function AgentDetailPage() {
 			</Link>
 
 			<div className="flex items-center gap-3 mb-6">
-				<h1 className="text-lg font-semibold">{agent.title}</h1>
-				<Badge color={adminColors[agent.admin_status] as 'gray'}>{agent.admin_status}</Badge>
-				{agent.runtime_status === 'active' && <Badge color="green">Active</Badge>}
-				{agent.runtime_status === 'paused' && <Badge color="red">Paused (budget)</Badge>}
+				<h1
+					className={`text-lg font-semibold${agent.admin_status === AgentAdminStatus.Disabled ? ' text-text-muted' : ''}`}
+				>
+					{agent.title}
+					{agent.admin_status === AgentAdminStatus.Disabled ? ' (disabled)' : ''}
+				</h1>
+				{agent.admin_status === AgentAdminStatus.Terminated ? (
+					<Badge color="gray">Terminated</Badge>
+				) : (
+					<Badge
+						color={
+							(RUNTIME_BADGE[agent.runtime_status] ?? RUNTIME_BADGE[AgentRuntimeStatus.Idle])
+								.color as 'gray'
+						}
+					>
+						{(RUNTIME_BADGE[agent.runtime_status] ?? RUNTIME_BADGE[AgentRuntimeStatus.Idle]).label}
+					</Badge>
+				)}
 			</div>
 
 			<div className="flex gap-2 mb-6">
-				{agent.admin_status === 'enabled' && (
+				{agent.admin_status === AgentAdminStatus.Enabled && (
 					<Button variant="secondary" size="sm" onClick={() => disableAgent.mutate(agentId)}>
 						<PowerOff className="w-3 h-3" /> Disable
 					</Button>
 				)}
-				{agent.admin_status === 'disabled' && (
+				{agent.admin_status === AgentAdminStatus.Disabled && (
 					<Button variant="secondary" size="sm" onClick={() => enableAgent.mutate(agentId)}>
 						<Power className="w-3 h-3" /> Enable
 					</Button>
 				)}
-				{agent.admin_status !== 'terminated' && (
+				{agent.admin_status !== AgentAdminStatus.Terminated && (
 					<Button
 						variant="destructive"
 						size="sm"

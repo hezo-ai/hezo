@@ -350,6 +350,32 @@ UI:
 
 ---
 
+## Phase 6.6: UI Redesign + Agent Onboarding
+
+**Status:** Done (2026-04)
+
+**Goal:** Simplify the UI with a company-first navigation model and add agent onboarding via CEO-managed issues.
+
+**What's included:**
+
+Backend:
+- `is_internal` boolean on `projects` table — marks auto-created projects
+- Auto-create "Operations" project (`is_internal = true`) on company creation
+- Prevent deletion of internal projects
+- `POST /companies/:companyId/agents/onboard` endpoint — creates agent in disabled state, opens onboarding issue assigned to CEO
+
+Frontend:
+- Company icon rail (left sidebar) with home, company avatars, theme switcher, inbox badge
+- Unified side menu: Inbox, Issues, Projects, Agents, Org Chart, Knowledge Base, Settings
+- Removed top header with breadcrumbs
+- Tab-based project view (Issues, Agents, Container, Settings) replacing project sidebar
+- Full-page Inbox route for pending approvals
+- Agent hire page calls onboard endpoint, redirects to onboarding issue
+
+**Depends on:** Phase 6.5
+
+---
+
 ## Phase 7: Multi-User Roles + Invites
 
 **Goal:** Member roles with scoped permissions, company email invites, file attachments. Extends Phase 6.5 auth from board-only to multi-role.

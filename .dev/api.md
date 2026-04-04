@@ -95,29 +95,31 @@ Response:
 ```
 
 #### `POST /companies`
-Create a company. Optionally clone from a company type.
+Create a company. Optionally seed from one or more team types.
 
 Request:
 ```json
 {
   "name": "NoteGenius AI",
   "mission": "Build the #1 AI note-taking app",
-  "company_type_id": "uuid | null"
+  "team_type_ids": ["uuid", "uuid"]
 }
 ```
 
-`company_type_id` is optional. When set, the new company is seeded from the matching company type with:
-- All knowledge base documents
-- All agent configurations (titles, prompts, org chart, runtimes, budgets)
+`team_type_ids` is optional. When set, agents are provisioned from all selected team types with automatic deduplication — if the same agent type appears in multiple team types, the first occurrence (by array order) wins and subsequent duplicates are skipped. The company-to-team-type associations are stored in the `company_team_types` join table.
+
+Each team type contributes:
+- Agent configurations (titles, prompts, org chart, runtimes, budgets)
+- Knowledge base documents
 - Company-level MCP server config
 - MPP config structure (wallet keys must be set up fresh)
 
-Cloning does NOT copy: projects, repos, issues, secrets, costs, audit log, API keys.
+Not copied: projects, repos, issues, secrets, costs, audit log, API keys.
 
 Response: full company object. On creation, the server automatically:
 
 1. Creates `~/.hezo/companies/{slug}/` folder structure with auto-generated AGENTS.md.
-2. Creates a **full agent team** from built-in templates: CEO, Architect, Product Lead, Engineer, QA Engineer, UI Designer, Researcher, DevOps Engineer (starts idle), Marketing Lead (or cloned agents if cloning from a company type).
+2. Creates agent team from selected team types (deduplicated). The UI defaults to "Software Development" pre-selected.
 3. Creates a **"Setup" project** with an onboarding issue assigned to the CEO:
    *"Set up repository access — configure deploy keys for connected GitHub account."*
 4. Generates an SSH key pair for the company and registers it on the connected GitHub account.
@@ -330,6 +332,36 @@ Request:
 MCP servers at runtime (agent-level takes precedence on name conflicts).
 
 Response: full agent object.
+
+#### `POST /companies/:companyId/agents/onboard`
+Create an agent through the onboarding flow. The agent starts in `disabled` state.
+An onboarding issue is created in the Operations project, assigned to the CEO agent.
+The CEO reviews the new hire against the existing team and negotiates reporting
+structure and responsibilities with the board via issue comments.
+
+If no CEO agent exists, falls back to creating the agent directly in `enabled` state.
+
+Request:
+```json
+{
+  "title": "Data Scientist",
+  "role_description": "Analyzes data and builds ML models",
+  "system_prompt": "You are the Data Scientist at {{company_name}}...",
+  "runtime_type": "claude_code",
+  "heartbeat_interval_min": 60,
+  "monthly_budget_cents": 3000
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "agent": { ... },
+    "issue": { "id": "uuid", "identifier": "ACME-12", ... }
+  }
+}
+```
 
 #### `GET /companies/:companyId/agents/:agentId`
 Get agent detail including system prompt.
