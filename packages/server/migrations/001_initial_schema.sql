@@ -143,6 +143,7 @@ CREATE TABLE companies (
     budget_reset_at      TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
     mcp_servers          JSONB NOT NULL DEFAULT '[]'::jsonb,
     mpp_config           JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
+    coach_auto_apply     BOOLEAN NOT NULL DEFAULT false,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -671,6 +672,27 @@ CREATE TABLE kb_doc_revisions (
 );
 
 CREATE INDEX idx_kb_revisions_doc ON kb_doc_revisions(doc_id);
+
+-------------------------------------------------------------------------------
+-- SYSTEM PROMPT REVISIONS
+-------------------------------------------------------------------------------
+
+CREATE TABLE system_prompt_revisions (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    member_agent_id   UUID NOT NULL REFERENCES member_agents(id) ON DELETE CASCADE,
+    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    revision_number   INTEGER NOT NULL,
+    old_prompt        TEXT NOT NULL,
+    new_prompt        TEXT NOT NULL,
+    change_summary    TEXT NOT NULL DEFAULT '',
+    author_member_id  UUID REFERENCES members(id) ON DELETE SET NULL,
+    approval_id       UUID REFERENCES approvals(id) ON DELETE SET NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (member_agent_id, revision_number)
+);
+
+CREATE INDEX idx_system_prompt_revisions_agent ON system_prompt_revisions(member_agent_id);
 
 -------------------------------------------------------------------------------
 -- AGENT WAKEUP REQUESTS

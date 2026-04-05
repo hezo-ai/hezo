@@ -411,6 +411,16 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		return ok(c, result.rows[0]);
 	}
 
+	// Capture old prompt before update for revision tracking
+	let oldSystemPrompt: string | null = null;
+	if (body.system_prompt !== undefined) {
+		const oldResult = await db.query<{ system_prompt: string }>(
+			'SELECT system_prompt FROM member_agents WHERE id = $1',
+			[agentId],
+		);
+		oldSystemPrompt = oldResult.rows[0]?.system_prompt ?? '';
+	}
+
 	if (body.title?.trim()) {
 		await db.query('UPDATE members SET display_name = $1 WHERE id = $2', [
 			body.title.trim(),
@@ -423,6 +433,26 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		`UPDATE member_agents SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
 		params,
 	);
+
+	// Record system prompt revision if prompt was changed
+	if (body.system_prompt !== undefined && oldSystemPrompt !== null) {
+		const revNum = await db.query<{ n: number }>(
+			'SELECT COALESCE(MAX(revision_number), 0) + 1 AS n FROM system_prompt_revisions WHERE member_agent_id = $1',
+			[agentId],
+		);
+		await db.query(
+			`INSERT INTO system_prompt_revisions (member_agent_id, company_id, revision_number, old_prompt, new_prompt, change_summary)
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			[
+				agentId,
+				companyId,
+				revNum.rows[0].n,
+				oldSystemPrompt,
+				body.system_prompt,
+				'Manual edit by board member',
+			],
+		);
+	}
 
 	broadcastChange(
 		c,

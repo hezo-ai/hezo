@@ -270,7 +270,9 @@ Current date: {{current_date}}
 			headers: authHeader(token),
 		});
 		const agents = ((await agentsRes.json()) as any).data;
-		const nonCeo = agents.filter((a: any) => a.slug !== 'ceo' && a.slug !== 'architect');
+		const nonCeo = agents.filter(
+			(a: any) => a.slug !== 'ceo' && a.slug !== 'architect' && a.slug !== 'coach',
+		);
 		for (const agent of nonCeo) {
 			expect(agent.system_prompt).toContain('{{reports_to}}');
 		}

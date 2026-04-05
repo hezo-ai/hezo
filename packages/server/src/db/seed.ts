@@ -112,6 +112,17 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			role_description:
 				'Conducts competitive analysis, technical research, and feasibility studies to inform strategic decisions.',
 		},
+		{
+			name: 'Coach',
+			slug: 'coach',
+			reports_to_slug: null,
+			sort_order: 9,
+			runtime_type: 'claude_code',
+			heartbeat_interval_min: 120,
+			monthly_budget_cents: 3000,
+			role_description:
+				'Reviews completed tickets to extract lessons and improve agent system prompts over time.',
+		},
 	];
 }
 

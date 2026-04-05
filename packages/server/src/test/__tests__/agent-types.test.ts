@@ -27,7 +27,7 @@ describe('agent types CRUD', () => {
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data).toHaveLength(9);
+		expect(body.data).toHaveLength(10);
 		expect(body.data.every((t: any) => t.is_builtin === true)).toBe(true);
 		expect(body.data.every((t: any) => t.source === 'builtin')).toBe(true);
 	});
@@ -38,7 +38,7 @@ describe('agent types CRUD', () => {
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.length).toBe(9);
+		expect(body.data.length).toBe(10);
 
 		const customRes = await app.request('/api/agent-types?source=custom', {
 			headers: authHeader(token),
@@ -159,7 +159,7 @@ describe('company types with agent types', () => {
 		});
 		const body = await res.json();
 		const builtin = body.data.find((t: any) => t.name === 'Startup');
-		expect(builtin.agent_types).toHaveLength(9);
+		expect(builtin.agent_types).toHaveLength(10);
 		expect(builtin.agent_types[0]).toHaveProperty('agent_type_id');
 		expect(builtin.agent_types[0]).toHaveProperty('name');
 		expect(builtin.agent_types[0]).toHaveProperty('slug');
@@ -212,7 +212,7 @@ describe('company creation with agent types', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		expect(agents).toHaveLength(9);
+		expect(agents).toHaveLength(10);
 		expect(agents.every((a: any) => a.agent_type_id != null)).toBe(true);
 	});
 });

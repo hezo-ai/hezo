@@ -182,6 +182,7 @@ companiesRoutes.patch('/companies/:companyId', async (c) => {
 		description?: string;
 		mcp_servers?: unknown[];
 		mpp_config?: Record<string, unknown>;
+		coach_auto_apply?: boolean;
 	}>();
 
 	const sets: string[] = [];
@@ -210,6 +211,7 @@ companiesRoutes.patch('/companies/:companyId', async (c) => {
 	addField('description', body.description);
 	addField('mcp_servers', body.mcp_servers, true);
 	addField('mpp_config', body.mpp_config, true);
+	addField('coach_auto_apply', body.coach_auto_apply);
 
 	if (sets.length === 0) {
 		const result = await db.query('SELECT * FROM companies WHERE id = $1', [companyId]);

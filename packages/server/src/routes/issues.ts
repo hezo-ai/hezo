@@ -1,4 +1,5 @@
 import {
+	AgentAdminStatus,
 	AuditAction,
 	AuditActorType,
 	AuditEntityType,
@@ -309,6 +310,23 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 			createWakeup(db, body.assignee_id, companyId, WakeupSource.Assignment, {
 				issue_id: issueId,
 			}).catch((e) => console.error('Failed to create wakeup:', e));
+		}
+	}
+
+	if (body.status === IssueStatus.Done) {
+		const coach = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1 AND ma.slug = 'coach'
+			   AND ma.admin_status = $2::agent_admin_status
+			 LIMIT 1`,
+			[companyId, AgentAdminStatus.Enabled],
+		);
+		if (coach.rows.length > 0) {
+			createWakeup(db, coach.rows[0].id, companyId, WakeupSource.Automation, {
+				issue_id: issueId,
+				trigger: 'issue_done',
+			}).catch((e) => console.error('Failed to wake Coach:', e));
 		}
 	}
 
