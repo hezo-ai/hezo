@@ -208,6 +208,25 @@ export const CompanyTypeSource = {
 } as const;
 export type CompanyTypeSource = (typeof CompanyTypeSource)[keyof typeof CompanyTypeSource];
 
+export interface SkillManifestEntry {
+	name: string;
+	slug: string;
+	description: string;
+	source_url: string;
+	content_hash: string;
+	last_synced_at: string;
+}
+
+export interface SkillManifest {
+	skills: SkillManifestEntry[];
+}
+
+export interface SkillTemplateConfig {
+	name: string;
+	source_url: string;
+	description?: string;
+}
+
 export const AuditAction = {
 	Created: 'created',
 	Updated: 'updated',

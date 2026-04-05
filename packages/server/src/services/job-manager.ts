@@ -27,6 +27,7 @@ export interface JobManagerDeps {
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
 	serverPort: number;
+	dataDir: string;
 	wsManager: WebSocketManager;
 }
 
@@ -319,7 +320,13 @@ export class JobManager {
 			[issue.id, memberId],
 		);
 
-		const deps: RunnerDeps = { db, docker, masterKeyManager, serverPort };
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort,
+			dataDir: this.deps.dataDir,
+		};
 		const timeoutMs = agent.rows[0].heartbeat_interval_min * 60 * 1000;
 
 		this.launchTask(

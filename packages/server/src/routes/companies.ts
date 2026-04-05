@@ -5,6 +5,7 @@ import { err, ok } from '../lib/response';
 import { toIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess, requireSuperuser } from '../middleware/auth';
+import { downloadAndSaveSkill, SkillDownloadError } from '../services/skill-downloader';
 
 export const companiesRoutes = new Hono<Env>();
 
@@ -126,6 +127,11 @@ companiesRoutes.post('/companies', async (c) => {
 		}
 
 		await db.query('COMMIT');
+
+		if (body.template_id) {
+			const dataDir = c.get('dataDir');
+			await createSkillsFromTemplate(db, company.id, body.template_id, dataDir);
+		}
 
 		const result = await db.query(
 			`SELECT c.*,
@@ -355,6 +361,45 @@ async function createKbDocsFromTemplate(
 			 ON CONFLICT (company_id, slug) DO NOTHING`,
 			[companyId, doc.title, doc.slug, doc.content],
 		);
+	}
+}
+
+async function createSkillsFromTemplate(
+	db: PGlite,
+	companyId: string,
+	templateId: string,
+	dataDir: string,
+): Promise<void> {
+	const result = await db.query<{
+		skills_config: Array<{ name: string; source_url: string; description?: string }>;
+	}>('SELECT skills_config FROM company_types WHERE id = $1', [templateId]);
+
+	const skills = result.rows[0]?.skills_config ?? [];
+	if (skills.length === 0) return;
+
+	const company = await db.query<{ slug: string }>('SELECT slug FROM companies WHERE id = $1', [
+		companyId,
+	]);
+	const companySlug = company.rows[0]?.slug;
+	if (!companySlug) return;
+
+	for (const skill of skills) {
+		const slug = toSlug(skill.name);
+		if (!slug) continue;
+		try {
+			await downloadAndSaveSkill(dataDir, companySlug, {
+				name: skill.name,
+				slug,
+				description: skill.description ?? '',
+				source_url: skill.source_url,
+			});
+		} catch (e) {
+			if (e instanceof SkillDownloadError) {
+				console.warn(`Failed to download template skill "${skill.name}": ${e.message}`);
+				continue;
+			}
+			throw e;
+		}
 	}
 }
 

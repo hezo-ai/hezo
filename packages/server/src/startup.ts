@@ -33,6 +33,7 @@ import { projectDocsRoutes } from './routes/project-docs';
 import { projectsRoutes } from './routes/projects';
 import { reposRoutes } from './routes/repos';
 import { secretsRoutes } from './routes/secrets';
+import { skillsRoutes } from './routes/skills';
 import { DockerClient } from './services/docker';
 import { JobManager } from './services/job-manager';
 import { WebSocketManager } from './services/ws';
@@ -93,6 +94,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker,
 		masterKeyManager,
 		serverPort: config.port,
+		dataDir: config.dataDir,
 		wsManager,
 	});
 	const app = buildApp(
@@ -192,6 +194,7 @@ export function buildApp(
 	app.route('/api', costsRoutes);
 	app.route('/api', apiKeysRoutes);
 	app.route('/api', kbDocsRoutes);
+	app.route('/api', skillsRoutes);
 	app.route('/api', preferencesRoutes);
 	app.route('/api', projectDocsRoutes);
 	app.route('/api', connectionsRoutes);

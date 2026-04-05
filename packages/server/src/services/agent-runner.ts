@@ -44,6 +44,7 @@ export interface RunnerDeps {
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
 	serverPort: number;
+	dataDir: string;
 }
 
 export async function runAgent(
@@ -70,6 +71,7 @@ export async function runAgent(
 		companyId: agent.company_id,
 		projectId: project.id,
 		agentId: agent.id,
+		dataDir: deps.dataDir,
 	});
 
 	if (resolvedPrompt.includes('{{requester_context}}')) {

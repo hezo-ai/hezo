@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import { ContainerStatus } from '@hezo/shared';
+import { resolveSkillsPath } from '../lib/docs';
 import type { DockerClient } from './docker';
 import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
 import type { WebSocketManager } from './ws';
@@ -43,6 +44,11 @@ export async function provisionContainer(
 			`${worktreesPath}:/worktrees:rw`,
 			`${previewsPath}:/workspace/.previews:rw`,
 		];
+
+		const skillsPath = resolveSkillsPath(dataDir, companySlug);
+		if (existsSync(skillsPath)) {
+			binds.push(`${skillsPath}:/hezo/skills:ro`);
+		}
 
 		const gitconfigPath = join(homedir(), '.gitconfig');
 		if (existsSync(gitconfigPath)) {

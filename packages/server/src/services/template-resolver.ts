@@ -1,9 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { readAllSkillContents, resolveSkillsPath } from '../lib/docs';
 
 interface ResolveContext {
 	companyId: string;
 	projectId?: string;
 	agentId?: string;
+	dataDir?: string;
 }
 
 export async function resolveSystemPrompt(
@@ -57,6 +59,24 @@ export async function resolveSystemPrompt(
 				? docs.rows.map((d) => `## ${d.title}\n${d.content}`).join('\n\n---\n\n')
 				: 'No knowledge base documents available.';
 		resolved = resolved.replace(/\{\{kb_context\}\}/g, kbText);
+	}
+
+	if (resolved.includes('{{skills_context}}')) {
+		let skillsText = 'No skills configured.';
+		if (ctx.dataDir) {
+			const slugResult = await db.query<{ slug: string }>(
+				'SELECT slug FROM companies WHERE id = $1',
+				[ctx.companyId],
+			);
+			const companySlug = slugResult.rows[0]?.slug;
+			if (companySlug) {
+				const skills = readAllSkillContents(resolveSkillsPath(ctx.dataDir, companySlug));
+				if (skills.length > 0) {
+					skillsText = skills.map((s) => `## Skill: ${s.name}\n${s.content}`).join('\n\n---\n\n');
+				}
+			}
+		}
+		resolved = resolved.replace(/\{\{skills_context\}\}/g, skillsText);
 	}
 
 	if (resolved.includes('{{company_preferences_context}}')) {
