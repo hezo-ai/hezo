@@ -42,13 +42,19 @@ export class DockerClient {
 		this.socketPath = socketPath;
 	}
 
-	private async request(method: string, path: string, body?: unknown): Promise<Response> {
+	private async request(
+		method: string,
+		path: string,
+		body?: unknown,
+		signal?: AbortSignal,
+	): Promise<Response> {
 		const url = `http://localhost/${API_VERSION}${path}`;
 		const res = await fetch(url, {
 			method,
 			headers: body ? { 'Content-Type': 'application/json' } : undefined,
 			body: body ? JSON.stringify(body) : undefined,
 			unix: this.socketPath,
+			signal,
 		});
 		return res;
 	}
@@ -153,11 +159,16 @@ export class DockerClient {
 		return data.Id;
 	}
 
-	async execStart(execId: string): Promise<{ stdout: string; stderr: string }> {
-		const res = await this.request('POST', `/exec/${execId}/start`, {
-			Detach: false,
-			Tty: false,
-		});
+	async execStart(
+		execId: string,
+		signal?: AbortSignal,
+	): Promise<{ stdout: string; stderr: string }> {
+		const res = await this.request(
+			'POST',
+			`/exec/${execId}/start`,
+			{ Detach: false, Tty: false },
+			signal,
+		);
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker execStart failed (${res.status}): ${text}`);

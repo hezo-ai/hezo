@@ -30,6 +30,7 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 			items: [
 				{ to: '/companies/$companyId/kb', params, label: 'Knowledge base' },
 				{ to: '/companies/$companyId/settings', params, label: 'Settings' },
+				{ to: '/companies/$companyId/audit-log', params, label: 'Audit log' },
 			],
 		},
 	];

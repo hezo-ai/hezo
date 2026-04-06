@@ -51,6 +51,7 @@ export async function runAgent(
 	agent: AgentInfo,
 	issue: IssueInfo,
 	project: ProjectInfo,
+	signal?: AbortSignal,
 ): Promise<RunResult> {
 	const startTime = Date.now();
 
@@ -110,7 +111,7 @@ export async function runAgent(
 			AttachStderr: true,
 		});
 
-		const { stdout, stderr } = await deps.docker.execStart(execId);
+		const { stdout, stderr } = await deps.docker.execStart(execId, signal);
 		const execInfo = await deps.docker.execInspect(execId);
 		const durationMs = Date.now() - startTime;
 

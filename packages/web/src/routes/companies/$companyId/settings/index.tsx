@@ -5,7 +5,6 @@ import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { useApiKeys, useCreateApiKey, useDeleteApiKey } from '../../../../hooks/use-api-keys';
-import { useAuditLog } from '../../../../hooks/use-audit-log';
 import { useCompany, useUpdateCompany } from '../../../../hooks/use-companies';
 import {
 	useConnections,
@@ -25,7 +24,6 @@ const settingsNav = [
 	{ id: 'budget', label: 'Budget' },
 	{ id: 'preferences', label: 'Preferences' },
 	{ id: 'skill-file', label: 'Skill file' },
-	{ id: 'audit-log', label: 'Audit log' },
 ];
 
 function SettingsPage() {
@@ -80,9 +78,6 @@ function SettingsPage() {
 				</div>
 				<div id="settings-skill-file">
 					<SkillFileSection />
-				</div>
-				<div id="settings-audit-log">
-					<AuditLogSection companyId={companyId} />
 				</div>
 			</div>
 		</div>
@@ -537,56 +532,6 @@ function SkillFileSection() {
 				<pre className="text-xs bg-bg-subtle border border-border rounded-radius-md p-3 overflow-auto max-h-64 text-text-muted whitespace-pre-wrap">
 					{content}
 				</pre>
-			)}
-		</section>
-	);
-}
-
-function AuditLogSection({ companyId }: { companyId: string }) {
-	const { data: entries } = useAuditLog(companyId);
-
-	return (
-		<section>
-			<SectionHeader title="Audit log" desc="Recent actions across the company." />
-			{!entries?.length ? (
-				<p className="text-[13px] text-text-muted">No audit entries yet.</p>
-			) : (
-				<table className="w-full border-collapse">
-					<thead>
-						<tr>
-							<th className="text-left text-xs text-text-muted font-normal px-2 py-2 border-b border-border">
-								Time
-							</th>
-							<th className="text-left text-xs text-text-muted font-normal px-2 py-2 border-b border-border">
-								Actor
-							</th>
-							<th className="text-left text-xs text-text-muted font-normal px-2 py-2 border-b border-border">
-								Action
-							</th>
-							<th className="text-left text-xs text-text-muted font-normal px-2 py-2 border-b border-border">
-								Entity
-							</th>
-						</tr>
-					</thead>
-					<tbody>
-						{entries.map((e) => (
-							<tr key={e.id} className="hover:bg-bg-subtle">
-								<td className="px-2 py-1.5 text-xs text-text-subtle border-b border-border">
-									{new Date(e.created_at).toLocaleString()}
-								</td>
-								<td className="px-2 py-1.5 text-xs border-b border-border">
-									{e.actor_name || e.actor_type}
-								</td>
-								<td className="px-2 py-1.5 border-b border-border">
-									<Badge color="neutral">{e.action}</Badge>
-								</td>
-								<td className="px-2 py-1.5 text-xs text-text-muted border-b border-border">
-									{e.entity_type}
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
 			)}
 		</section>
 	);

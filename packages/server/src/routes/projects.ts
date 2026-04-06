@@ -321,6 +321,8 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 	}
 });
 
+const REBUILD_TIMEOUT_MS = 5 * 60 * 1000;
+
 projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild', async (c) => {
 	const access = await requireCompanyAccess(c);
 	if (access instanceof Response) return access;
@@ -347,19 +349,38 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 		return err(c, 'NOT_FOUND', 'Company not found', 404);
 	}
 
+	const jobManager = c.get('jobManager');
+	const taskKey = `rebuild:${projectId}`;
+
+	if (jobManager.isTaskRunning(taskKey)) {
+		return err(c, 'ALREADY_RUNNING', 'Container rebuild already in progress', 409);
+	}
+
 	const docker = c.get('docker');
 	const dataDir = c.get('dataDir');
 
-	try {
-		const containerId = await rebuildContainer(
-			db,
-			docker,
-			projectResult.rows[0] as ProjectRow,
-			companySlug,
-			dataDir,
-		);
-		return ok(c, { container_id: containerId, container_status: ContainerStatus.Running });
-	} catch (error) {
-		return err(c, 'DOCKER_ERROR', `Failed to rebuild container: ${(error as Error).message}`, 500);
-	}
+	jobManager.launchTask(
+		taskKey,
+		async () => {
+			try {
+				await rebuildContainer(
+					db,
+					docker,
+					projectResult.rows[0] as ProjectRow,
+					companySlug,
+					dataDir,
+				);
+			} catch (error) {
+				console.error(`Container rebuild failed for project ${projectId}:`, error);
+			}
+		},
+		REBUILD_TIMEOUT_MS,
+	);
+
+	broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+		id: projectId,
+		container_status: ContainerStatus.Creating,
+	});
+
+	return ok(c, { container_status: ContainerStatus.Creating });
 });

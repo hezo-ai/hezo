@@ -34,7 +34,7 @@ import { projectsRoutes } from './routes/projects';
 import { reposRoutes } from './routes/repos';
 import { secretsRoutes } from './routes/secrets';
 import { DockerClient } from './services/docker';
-import { HeartbeatEngine } from './services/heartbeat-engine';
+import { JobManager } from './services/job-manager';
 import { WebSocketManager } from './services/ws';
 
 export type { HezoConfig };
@@ -51,7 +51,7 @@ export interface StartupResult {
 	app: Hono<Env>;
 	port: number;
 	masterKeyState: MasterKeyState;
-	heartbeatEngine: HeartbeatEngine;
+	jobManager: JobManager;
 	wsManager: WebSocketManager;
 	db: PGlite;
 	docker: DockerClient;
@@ -88,6 +88,13 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	const docker = new DockerClient();
 	const wsManager = new WebSocketManager();
+	const jobManager = new JobManager({
+		db,
+		docker,
+		masterKeyManager,
+		serverPort: config.port,
+		wsManager,
+	});
 	const app = buildApp(
 		db,
 		masterKeyManager,
@@ -98,24 +105,18 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		},
 		docker,
 		wsManager,
+		jobManager,
 	);
 
-	const heartbeatEngine = new HeartbeatEngine({
-		db,
-		docker,
-		masterKeyManager,
-		serverPort: config.port,
-	});
-
 	if (masterKeyState === 'unlocked') {
-		heartbeatEngine.start();
+		jobManager.start();
 	}
 
 	return {
 		app,
 		port: config.port,
 		masterKeyState,
-		heartbeatEngine,
+		jobManager,
 		wsManager,
 		db,
 		docker,
@@ -129,6 +130,7 @@ export function buildApp(
 	config: AppConfig = { dataDir: '', connectUrl: '', connectPublicKey: '' },
 	docker: DockerClient = new DockerClient(),
 	wsManager: WebSocketManager = new WebSocketManager(),
+	jobManager?: JobManager,
 ): Hono<Env> {
 	const app = new Hono<Env>();
 
@@ -137,6 +139,7 @@ export function buildApp(
 		c.set('masterKeyManager', masterKeyManager);
 		c.set('docker', docker);
 		c.set('wsManager', wsManager);
+		if (jobManager) c.set('jobManager', jobManager);
 		c.set('dataDir', config.dataDir);
 		c.set('connectUrl', config.connectUrl);
 		c.set('connectPublicKey', config.connectPublicKey);

@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { AuthType } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { DockerClient } from '../services/docker';
+import type { JobManager } from '../services/job-manager';
 import type { WebSocketManager } from '../services/ws';
 
 export type AuthInfo =
@@ -15,6 +16,7 @@ export type Env = {
 		masterKeyManager: MasterKeyManager;
 		docker: DockerClient;
 		wsManager: WebSocketManager;
+		jobManager: JobManager;
 		auth: AuthInfo;
 		dataDir: string;
 		connectUrl: string;

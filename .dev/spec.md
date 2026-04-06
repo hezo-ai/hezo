@@ -786,6 +786,7 @@ At runtime, the company's SSH private key is injected into agent subprocesses fo
 | Container rebuilt | All agent subprocesses killed, container destroyed, new one provisioned. |
 | Project deleted | Container destroyed. All associated worktrees cleaned up. |
 | Company deleted | All project containers destroyed. |
+| Server startup / every 5s | Container status sync — DB state reconciled with Docker. Stale "running" status corrected to "stopped" or "error". Changes broadcast via WebSocket. |
 | Issue assigned | Worktree created for the repo + branch. Available inside container via `/worktrees/`. |
 | Issue closed | Worktree cleaned up (merged branch deleted, worktree pruned). |
 
@@ -1410,13 +1411,25 @@ Full action reference:
 
 ## 13. Heartbeats and scheduling
 
+### Job manager
+
+All background scheduling is handled by the **JobManager** class, which wraps `cron-async` to run multiple independent jobs in parallel. Each job has its own cron schedule and concurrency guard — a slow or failing job never blocks other jobs.
+
+Built-in jobs:
+- **Wakeup processing** — every 5 seconds, processes queued agent wakeup requests with coalescing
+- **Scheduled heartbeats** — every 5 seconds, checks for agents due for their periodic heartbeat
+- **Orphan detection** — every 30 seconds, detects crashed agent subprocesses and retries or escalates
+- **Container status sync** — every 5 seconds, reconciles DB container status with actual Docker state, broadcasts changes via WebSocket
+
+Long-running tasks (e.g. agent execution) are launched via `JobManager.launchTask(key, fn)` with an `AbortController`. Each task is tracked by key (e.g. `agent:{memberId}`) and can be cancelled via `JobManager.cancelTask(key)`, which aborts the signal and terminates the Docker exec.
+
 ### Default
 
 Every agent has a heartbeat interval. Default is **60 minutes**. Configurable per agent (30m, 1h, 2h, 4h, 12h, 24h).
 
 ### How heartbeats work
 
-1. On schedule, the system wakes the agent (ensures the project container is running, spawns agent subprocess)
+1. On schedule, the job manager wakes the agent (ensures the project container is running, spawns agent subprocess)
 2. Agent calls `POST /agent-api/heartbeat` to report in and receive pending work
 3. Server returns: assigned issues, unread comments, notifications, budget remaining
 4. Agent works on its highest-priority issue

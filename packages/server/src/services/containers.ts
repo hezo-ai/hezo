@@ -5,6 +5,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { ContainerStatus } from '@hezo/shared';
 import type { DockerClient } from './docker';
 import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
+import type { WebSocketManager } from './ws';
 
 export interface ProjectRow {
 	id: string;
@@ -189,6 +190,41 @@ export async function syncContainerStatus(
 			[ContainerStatus.Error, projectId],
 		);
 		return ContainerStatus.Error;
+	}
+}
+
+export async function syncAllContainerStatuses(
+	db: PGlite,
+	docker: DockerClient,
+	wsManager?: WebSocketManager,
+): Promise<void> {
+	const projects = await db.query<{
+		id: string;
+		company_id: string;
+		container_id: string;
+		container_status: string;
+	}>(
+		'SELECT id, company_id, container_id, container_status FROM projects WHERE container_id IS NOT NULL',
+	);
+
+	for (const project of projects.rows) {
+		const oldStatus = project.container_status;
+		const newStatus = await syncContainerStatus(db, docker, project.id, project.container_id);
+
+		if (newStatus !== oldStatus && wsManager) {
+			const updated = await db.query<Record<string, unknown>>(
+				'SELECT * FROM projects WHERE id = $1',
+				[project.id],
+			);
+			if (updated.rows[0]) {
+				wsManager.broadcast(`company:${project.company_id}`, {
+					type: 'row_change',
+					table: 'projects',
+					action: 'UPDATE',
+					row: updated.rows[0],
+				});
+			}
+		}
 	}
 }
 

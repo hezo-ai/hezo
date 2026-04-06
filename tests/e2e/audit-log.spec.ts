@@ -9,14 +9,8 @@ async function getToken(page: Page): Promise<string> {
 	return json.data?.token ?? json.token;
 }
 
-test('audit log section renders on settings page', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const token = await getToken(page);
+async function createCompany(page: Page, token: string) {
 	const headers = { Authorization: `Bearer ${token}` };
-
-	// Create a company
 	const companyRes = await page.request.post('/api/companies', {
 		headers,
 		data: {
@@ -24,11 +18,37 @@ test('audit log section renders on settings page', async ({ page }) => {
 			issue_prefix: `AU${Date.now().toString().slice(-4)}`,
 		},
 	});
-	const company = (await companyRes.json()).data;
+	return (await companyRes.json()).data;
+}
 
-	// Navigate to settings page
-	await page.goto(`/companies/${company.id}/settings`);
+test('audit log page renders at dedicated route', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+	const token = await getToken(page);
+	const company = await createCompany(page, token);
 
-	// Verify the Audit Log section heading is visible
+	await page.goto(`/companies/${company.id}/audit-log`);
 	await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible({ timeout: 10000 });
+});
+
+test('sidebar contains audit log link', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+	const token = await getToken(page);
+	const company = await createCompany(page, token);
+
+	await page.goto(`/companies/${company.id}/issues`);
+	const auditLink = page.getByRole('link', { name: 'Audit log' });
+	await expect(auditLink).toBeVisible({ timeout: 10000 });
+});
+
+test('settings page does not contain audit log section', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+	const token = await getToken(page);
+	const company = await createCompany(page, token);
+
+	await page.goto(`/companies/${company.id}/settings`);
+	await expect(page.getByRole('heading', { name: 'General' })).toBeVisible({ timeout: 10000 });
+	await expect(page.getByRole('heading', { name: 'Audit log' })).not.toBeVisible();
 });

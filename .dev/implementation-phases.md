@@ -376,6 +376,36 @@ Frontend:
 
 ---
 
+## Phase 6.7: Job Manager + Audit Log Navigation
+
+**Status:** Done (2026-04)
+
+**Goal:** Replace HeartbeatEngine with a general-purpose job manager using cron-async. Add container status sync. Move audit log to dedicated route.
+
+**What's included:**
+
+Backend:
+- JobManager class wrapping `cron-async` for independent parallel job scheduling
+- Per-job concurrency guards — slow jobs don't block other jobs
+- Cancellable long-running tasks via AbortController (e.g. stop a running agent mid-execution)
+- Container status sync every 5 seconds — reconciles DB state with actual Docker container state
+- Broadcasts container status changes via WebSocket for real-time UI updates
+- AbortSignal threading through Docker exec for agent task cancellation
+
+Frontend:
+- Audit log moved from Settings page to dedicated route at `/companies/:companyId/audit-log`
+- Audit log added as sidebar nav item in the Resources section
+
+**How to test:**
+- Restart server when containers are gone — status updates within 5 seconds
+- Audit log accessible from sidebar link, no longer embedded in settings page
+- Multiple agents run in parallel across different projects, each cancellable independently
+- `bun run test` passes (unit, integration, and e2e)
+
+**Depends on:** Phase 6.6
+
+---
+
 ## Phase 7: Multi-User Roles + Invites
 
 **Goal:** Member roles with scoped permissions, company email invites, file attachments. Extends Phase 6.5 auth from board-only to multi-role.
@@ -532,6 +562,7 @@ UI:
 | 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack DB migration, live chat, real-time updates |
 | 6 | MCP + Skill File + Binary Build | MCP endpoint, skill file + `bun build --compile` single binary, Playwright E2E |
 | 6.5 | Auth + Session Compaction | Custom OAuth auth (board members only), session compaction + login page, account settings |
+| 6.7 | Job Manager + Audit Log Navigation | cron-async job manager, container sync, audit log route |
 | 7 | Multi-User Roles + Invites | Member roles, scoped permissions, email invites + member management UI |
 | 8 | Adapters + Plugins + UI | Gemini/Codex adapters, plugin system + plugin management UI, runtime selector |
 | 9 | Full Platform Integrations + UI | All OAuth platforms, centrally hosted Connect + extended connection UI |

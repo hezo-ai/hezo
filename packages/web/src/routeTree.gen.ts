@@ -15,6 +15,7 @@ import { Route as CompaniesNewRouteImport } from './routes/companies/new'
 import { Route as CompaniesCompanyIdRouteRouteImport } from './routes/companies/$companyId/route'
 import { Route as CompaniesCompanyIdIndexRouteImport } from './routes/companies/$companyId/index'
 import { Route as CompaniesCompanyIdOrgChartRouteImport } from './routes/companies/$companyId/org-chart'
+import { Route as CompaniesCompanyIdAuditLogRouteImport } from './routes/companies/$companyId/audit-log'
 import { Route as CompaniesCompanyIdSettingsIndexRouteImport } from './routes/companies/$companyId/settings/index'
 import { Route as CompaniesCompanyIdProjectsIndexRouteImport } from './routes/companies/$companyId/projects/index'
 import { Route as CompaniesCompanyIdKbIndexRouteImport } from './routes/companies/$companyId/kb/index'
@@ -63,6 +64,12 @@ const CompaniesCompanyIdOrgChartRoute =
   CompaniesCompanyIdOrgChartRouteImport.update({
     id: '/org-chart',
     path: '/org-chart',
+    getParentRoute: () => CompaniesCompanyIdRouteRoute,
+  } as any)
+const CompaniesCompanyIdAuditLogRoute =
+  CompaniesCompanyIdAuditLogRouteImport.update({
+    id: '/audit-log',
+    path: '/audit-log',
     getParentRoute: () => CompaniesCompanyIdRouteRoute,
   } as any)
 const CompaniesCompanyIdSettingsIndexRoute =
@@ -178,6 +185,7 @@ export interface FileRoutesByFullPath {
   '/companies/$companyId': typeof CompaniesCompanyIdRouteRouteWithChildren
   '/companies/new': typeof CompaniesNewRoute
   '/companies/': typeof CompaniesIndexRoute
+  '/companies/$companyId/audit-log': typeof CompaniesCompanyIdAuditLogRoute
   '/companies/$companyId/org-chart': typeof CompaniesCompanyIdOrgChartRoute
   '/companies/$companyId/': typeof CompaniesCompanyIdIndexRoute
   '/companies/$companyId/projects/$projectId': typeof CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren
@@ -203,6 +211,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/companies/new': typeof CompaniesNewRoute
   '/companies': typeof CompaniesIndexRoute
+  '/companies/$companyId/audit-log': typeof CompaniesCompanyIdAuditLogRoute
   '/companies/$companyId/org-chart': typeof CompaniesCompanyIdOrgChartRoute
   '/companies/$companyId': typeof CompaniesCompanyIdIndexRoute
   '/companies/$companyId/agents/$agentId': typeof CompaniesCompanyIdAgentsAgentIdRoute
@@ -229,6 +238,7 @@ export interface FileRoutesById {
   '/companies/$companyId': typeof CompaniesCompanyIdRouteRouteWithChildren
   '/companies/new': typeof CompaniesNewRoute
   '/companies/': typeof CompaniesIndexRoute
+  '/companies/$companyId/audit-log': typeof CompaniesCompanyIdAuditLogRoute
   '/companies/$companyId/org-chart': typeof CompaniesCompanyIdOrgChartRoute
   '/companies/$companyId/': typeof CompaniesCompanyIdIndexRoute
   '/companies/$companyId/projects/$projectId': typeof CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren
@@ -257,6 +267,7 @@ export interface FileRouteTypes {
     | '/companies/$companyId'
     | '/companies/new'
     | '/companies/'
+    | '/companies/$companyId/audit-log'
     | '/companies/$companyId/org-chart'
     | '/companies/$companyId/'
     | '/companies/$companyId/projects/$projectId'
@@ -282,6 +293,7 @@ export interface FileRouteTypes {
     | '/'
     | '/companies/new'
     | '/companies'
+    | '/companies/$companyId/audit-log'
     | '/companies/$companyId/org-chart'
     | '/companies/$companyId'
     | '/companies/$companyId/agents/$agentId'
@@ -307,6 +319,7 @@ export interface FileRouteTypes {
     | '/companies/$companyId'
     | '/companies/new'
     | '/companies/'
+    | '/companies/$companyId/audit-log'
     | '/companies/$companyId/org-chart'
     | '/companies/$companyId/'
     | '/companies/$companyId/projects/$projectId'
@@ -378,6 +391,13 @@ declare module '@tanstack/react-router' {
       path: '/org-chart'
       fullPath: '/companies/$companyId/org-chart'
       preLoaderRoute: typeof CompaniesCompanyIdOrgChartRouteImport
+      parentRoute: typeof CompaniesCompanyIdRouteRoute
+    }
+    '/companies/$companyId/audit-log': {
+      id: '/companies/$companyId/audit-log'
+      path: '/audit-log'
+      fullPath: '/companies/$companyId/audit-log'
+      preLoaderRoute: typeof CompaniesCompanyIdAuditLogRouteImport
       parentRoute: typeof CompaniesCompanyIdRouteRoute
     }
     '/companies/$companyId/settings/': {
@@ -537,6 +557,7 @@ const CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren =
   )
 
 interface CompaniesCompanyIdRouteRouteChildren {
+  CompaniesCompanyIdAuditLogRoute: typeof CompaniesCompanyIdAuditLogRoute
   CompaniesCompanyIdOrgChartRoute: typeof CompaniesCompanyIdOrgChartRoute
   CompaniesCompanyIdIndexRoute: typeof CompaniesCompanyIdIndexRoute
   CompaniesCompanyIdProjectsProjectIdRouteRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren
@@ -556,6 +577,7 @@ interface CompaniesCompanyIdRouteRouteChildren {
 
 const CompaniesCompanyIdRouteRouteChildren: CompaniesCompanyIdRouteRouteChildren =
   {
+    CompaniesCompanyIdAuditLogRoute: CompaniesCompanyIdAuditLogRoute,
     CompaniesCompanyIdOrgChartRoute: CompaniesCompanyIdOrgChartRoute,
     CompaniesCompanyIdIndexRoute: CompaniesCompanyIdIndexRoute,
     CompaniesCompanyIdProjectsProjectIdRouteRoute:
