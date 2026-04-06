@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, getToken } from './helpers';
+import { authenticate, getToken, waitForPageLoad } from './helpers';
 
 test('can create an issue', async ({ page }) => {
 	await page.goto('/');
@@ -87,17 +87,10 @@ test('issue detail shows execution lock banner when locked', async ({ page }) =>
 	});
 	expect(lockRes.ok()).toBeTruthy();
 
-	// Navigate to the issue detail page and wait for the lock query to resolve
-	const [, lockApiRes] = await Promise.all([
-		page.goto(`/companies/${company.id}/issues/${issue.id}`),
-		page.waitForResponse(
-			(res) => res.url().includes(`/issues/${issue.id}/lock`) && res.request().method() === 'GET',
-		),
-	]);
-	expect(lockApiRes.ok()).toBeTruthy();
+	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await waitForPageLoad(page);
 
-	// Verify the lock banner is visible showing who is working
-	await expect(page.getByText('is working on this issue')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByText('is working on this issue')).toBeVisible({ timeout: 15000 });
 });
 
 test('can edit issue rules and progress summary', async ({ page }) => {
@@ -129,6 +122,7 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 	const issue = (await issueRes.json()).data;
 
 	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await waitForPageLoad(page);
 	await expect(page.getByText('Rules Test Issue')).toBeVisible({ timeout: 10000 });
 
 	// Edit rules

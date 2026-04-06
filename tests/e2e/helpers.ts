@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 const TEST_MASTER_KEY = 'e2e-test-master-key-0123456789abcdef0123456789abcdef';
 
@@ -42,6 +42,10 @@ export async function createCompanyWithAgents(page: Page) {
 	});
 	const company = ((await companyRes.json()) as any).data;
 	return { company, token };
+}
+
+export async function waitForPageLoad(page: Page, timeout = 15000) {
+	await expect(page.getByText('Loading...')).toBeHidden({ timeout });
 }
 
 export { TEST_MASTER_KEY };

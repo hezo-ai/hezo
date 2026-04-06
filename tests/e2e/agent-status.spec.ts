@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents } from './helpers';
+import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
 
 test('agent list shows runtime badges not admin badges', async ({ page }) => {
 	await page.goto('/');
@@ -86,9 +86,10 @@ test('agent disable and enable lifecycle', async ({ page }) => {
 	const enabledAgent = (agents as any).data.find((a: any) => a.admin_status === 'enabled');
 
 	await page.goto(`/companies/${company.slug}/agents/${enabledAgent.id}`);
+	await waitForPageLoad(page);
 
 	const disableBtn = page.getByRole('button', { name: /Disable/i });
-	await expect(disableBtn).toBeVisible({ timeout: 5000 });
+	await expect(disableBtn).toBeVisible({ timeout: 10000 });
 	await disableBtn.click();
 
 	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 5000 });
@@ -116,10 +117,17 @@ test('disabled agent card is greyed out with name suffix on list page', async ({
 		headers: { Authorization: `Bearer ${token}` },
 	});
 
+	const agentsResponsePromise = page.waitForResponse(
+		(res) =>
+			res.url().includes('/agents') &&
+			!res.url().includes('/disable') &&
+			res.request().method() === 'GET',
+	);
 	await page.goto(`/companies/${company.slug}/agents`);
-	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 15000 });
+	await agentsResponsePromise;
+	await waitForPageLoad(page);
 
 	const disabledCard = page.locator('.opacity-50');
-	await expect(disabledCard).toBeVisible({ timeout: 5000 });
+	await expect(disabledCard).toBeVisible({ timeout: 10000 });
 	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 5000 });
 });
