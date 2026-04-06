@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { Copy, ExternalLink, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Copy, ExternalLink, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
@@ -14,6 +14,12 @@ import {
 import { useCosts } from '../../../../hooks/use-costs';
 import { usePreferences, useUpdatePreferences } from '../../../../hooks/use-preferences';
 import { useCreateSecret, useDeleteSecret, useSecrets } from '../../../../hooks/use-secrets';
+import {
+	useCreateSkill,
+	useDeleteSkill,
+	useSkills,
+	useSyncSkill,
+} from '../../../../hooks/use-skills';
 
 const settingsNav = [
 	{ id: 'general', label: 'General' },
@@ -23,6 +29,7 @@ const settingsNav = [
 	{ id: 'mcp', label: 'MCP servers' },
 	{ id: 'budget', label: 'Budget' },
 	{ id: 'preferences', label: 'Preferences' },
+	{ id: 'skills', label: 'Skills' },
 	{ id: 'skill-file', label: 'Skill file' },
 ];
 
@@ -75,6 +82,9 @@ function SettingsPage() {
 				</div>
 				<div id="settings-preferences">
 					<PreferencesSection companyId={companyId} />
+				</div>
+				<div id="settings-skills">
+					<SkillsSection companyId={companyId} />
 				</div>
 				<div id="settings-skill-file">
 					<SkillFileSection />
@@ -494,6 +504,119 @@ function McpServersSection({ companyId }: { companyId: string }) {
 				<Button variant="secondary" size="sm" onClick={() => setShowAdd(true)}>
 					<Plus className="w-3 h-3" /> Add MCP Server
 				</Button>
+			)}
+		</section>
+	);
+}
+
+function SkillsSection({ companyId }: { companyId: string }) {
+	const { data: skills } = useSkills(companyId);
+	const createSkill = useCreateSkill(companyId);
+	const syncSkill = useSyncSkill(companyId);
+	const deleteSkill = useDeleteSkill(companyId);
+	const [showForm, setShowForm] = useState(false);
+	const [name, setName] = useState('');
+	const [sourceUrl, setSourceUrl] = useState('');
+	const [description, setDescription] = useState('');
+
+	async function handleCreate(e: React.FormEvent) {
+		e.preventDefault();
+		await createSkill.mutateAsync({
+			name: name.trim(),
+			source_url: sourceUrl.trim(),
+			description: description.trim() || undefined,
+		});
+		setName('');
+		setSourceUrl('');
+		setDescription('');
+		setShowForm(false);
+	}
+
+	return (
+		<section>
+			<div className="flex items-center justify-between mb-4">
+				<SectionHeader
+					title="Skills"
+					desc="Markdown instruction files downloaded from GitHub or URL and injected into every agent's prompt."
+				/>
+				<Button variant="secondary" size="sm" onClick={() => setShowForm(!showForm)}>
+					<Plus className="w-3 h-3" /> Add
+				</Button>
+			</div>
+			{showForm && (
+				<form onSubmit={handleCreate} className="flex flex-col gap-2 mb-3 max-w-lg">
+					<Input
+						placeholder="Name (e.g. Git Best Practices)"
+						value={name}
+						onChange={(e) => setName(e.target.value)}
+						required
+					/>
+					<Input
+						placeholder="Source URL (GitHub blob or raw URL)"
+						value={sourceUrl}
+						onChange={(e) => setSourceUrl(e.target.value)}
+						required
+					/>
+					<Input
+						placeholder="Description (optional)"
+						value={description}
+						onChange={(e) => setDescription(e.target.value)}
+					/>
+					<div className="flex gap-2">
+						<Button type="submit" size="sm" disabled={createSkill.isPending}>
+							{createSkill.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+							Download
+						</Button>
+						<Button type="button" variant="secondary" size="sm" onClick={() => setShowForm(false)}>
+							Cancel
+						</Button>
+					</div>
+					{createSkill.error && (
+						<p className="text-[13px] text-accent-red">
+							{(createSkill.error as { message: string }).message}
+						</p>
+					)}
+				</form>
+			)}
+			{skills?.length === 0 ? (
+				<p className="text-[13px] text-text-subtle">No skills configured.</p>
+			) : (
+				<div className="flex flex-col gap-1">
+					{skills?.map((s) => (
+						<div
+							key={s.slug}
+							className="flex items-center justify-between rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
+						>
+							<div className="flex flex-col gap-0.5 min-w-0 flex-1">
+								<div className="flex items-center gap-2">
+									<span className="font-medium">{s.name}</span>
+									<span className="text-xs text-text-subtle font-mono">{s.slug}</span>
+								</div>
+								{s.description && <span className="text-xs text-text-subtle">{s.description}</span>}
+								<span className="text-xs text-text-subtle truncate">{s.source_url}</span>
+							</div>
+							<div className="flex items-center gap-1">
+								<button
+									type="button"
+									onClick={() => syncSkill.mutate(s.slug)}
+									disabled={syncSkill.isPending}
+									className="text-text-subtle hover:text-text p-1"
+									title="Re-download"
+								>
+									<RefreshCw className="w-3.5 h-3.5" />
+								</button>
+								<button
+									type="button"
+									onClick={() => deleteSkill.mutate(s.slug)}
+									className="text-text-subtle hover:text-accent-red p-1"
+									title="Delete"
+								>
+									<Trash2 className="w-3.5 h-3.5" />
+								</button>
+							</div>
+						</div>
+					))}
+				</div>
 			)}
 		</section>
 	);

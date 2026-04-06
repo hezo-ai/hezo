@@ -101,6 +101,7 @@ CREATE TABLE company_types (
     source_version      TEXT,
     metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
     kb_docs_config      JSONB NOT NULL DEFAULT '[]'::jsonb,
+    skills_config       JSONB NOT NULL DEFAULT '[]'::jsonb,
     preferences_config  JSONB NOT NULL DEFAULT '{}'::jsonb,
     mcp_servers         JSONB NOT NULL DEFAULT '[]'::jsonb,
     mpp_config          JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,

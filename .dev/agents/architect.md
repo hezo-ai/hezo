@@ -100,6 +100,8 @@ Current date: {{current_date}}
 
 {{kb_context}}
 
+{{skills_context}}
+
 {{company_preferences_context}}
 
 {{project_docs_context}}

@@ -7,6 +7,7 @@ function createMockDeps(): JobManagerDeps {
 		docker: {} as any,
 		masterKeyManager: {} as any,
 		serverPort: 3100,
+		dataDir: '',
 		wsManager: { broadcast: vi.fn() } as any,
 	};
 }

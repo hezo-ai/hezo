@@ -280,18 +280,22 @@ Significant technical decisions should be documented with:
 		},
 	];
 
+	const skillsConfig: Array<{ name: string; source_url: string; description?: string }> = [];
+
 	const startupResult = await db.query<{ id: string }>(
-		`INSERT INTO company_types (name, description, is_builtin, source, kb_docs_config)
-		 VALUES ($1, $2, true, 'builtin'::company_type_source, $3::jsonb)
+		`INSERT INTO company_types (name, description, is_builtin, source, kb_docs_config, skills_config)
+		 VALUES ($1, $2, true, 'builtin'::company_type_source, $3::jsonb, $4::jsonb)
 		 ON CONFLICT (name) DO UPDATE SET
 		     description = EXCLUDED.description,
 		     kb_docs_config = EXCLUDED.kb_docs_config,
+		     skills_config = EXCLUDED.skills_config,
 		     source = EXCLUDED.source
 		 RETURNING id`,
 		[
 			'Startup',
 			'Full-stack software development team with 10 specialized agents and starter knowledge base',
 			JSON.stringify(kbDocsConfig),
+			JSON.stringify(skillsConfig),
 		],
 	);
 	const startupTypeId = startupResult.rows[0].id;
