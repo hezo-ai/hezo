@@ -87,6 +87,16 @@ Never commit generated build output (`.js`, `.d.ts`, `.js.map`, `.d.ts.map`) tha
 - Use shared constants and enums from `@hezo/shared` (`packages/shared/src/types/common.ts`) instead of hardcoded string literals. Never use raw strings for status values, entity types, approval types, or other enumerated values in application code. If a new enum value is needed, add it to the shared package first.
 - Use `bunx` instead of `npx` for running package binaries (e.g. `bunx playwright test`, `bunx vitest run`).
 
+## UX
+
+All UI must be mobile-first. Design for three breakpoints:
+
+- **Mobile** (<768px): Single-column layouts, hamburger drawer for navigation, stacked form fields, near full-screen dialogs, 16px content padding.
+- **Tablet** (768px–1023px): Company rail visible (60px), text sidebar hidden, 2-column form grids at `sm:`, centered modals, 24px content padding.
+- **Desktop** (1024px+): Full rail + sidebar (260px), all table columns visible, 2–3 column grids, centered modals, 32px content padding.
+
+Base Tailwind styles target mobile. Use `sm:`, `md:`, `lg:` prefixes to progressively enhance for larger screens. Every UI change must work at all three breakpoints.
+
 ## Database Transactions
 
 Use transactions (`BEGIN`/`COMMIT`) for any operation that performs multiple writes that must succeed or fail together. Prefer transactions over `SELECT ... FOR UPDATE` — wrap the entire read-modify-write sequence in a transaction instead of locking individual rows. This applies to multi-step creation flows (e.g. creating a parent record then child records), bulk updates, and any sequence where partial completion would leave the database in an inconsistent state.

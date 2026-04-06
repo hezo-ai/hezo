@@ -1,38 +1,53 @@
-import { AgentAdminStatus, AgentRuntimeStatus } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Plus, UserPlus } from 'lucide-react';
-import { Avatar, avatarColorFromString } from '../../../../components/ui/avatar';
-import { Badge } from '../../../../components/ui/badge';
-import { BudgetBar } from '../../../../components/ui/budget-bar';
 import { Button } from '../../../../components/ui/button';
 import { EmptyState } from '../../../../components/ui/empty-state';
 import { StatusDot } from '../../../../components/ui/status-dot';
-import { useAgents } from '../../../../hooks/use-agents';
+import type { OrgNode } from '../../../../hooks/use-org-chart';
+import { useOrgChart } from '../../../../hooks/use-org-chart';
 
-function runtimeDot(status: string): 'active' | 'idle' | 'paused' {
-	if (status === AgentRuntimeStatus.Active) return 'active';
-	if (status === AgentRuntimeStatus.Paused) return 'paused';
-	return 'idle';
+function orgDotStatus(node: OrgNode): 'active' | 'idle' | 'paused' | 'disabled' {
+	if (node.admin_status === 'disabled' || node.admin_status === 'terminated') return 'disabled';
+	if (node.runtime_status === 'paused') return 'paused';
+	return node.runtime_status === 'active' ? 'active' : 'idle';
 }
 
-function runtimeBadge(status: string): { color: string; label: string } {
-	if (status === AgentRuntimeStatus.Active) return { color: 'success', label: 'Running' };
-	if (status === AgentRuntimeStatus.Paused) return { color: 'warning', label: 'Paused' };
-	return { color: 'neutral', label: 'Idle' };
+function OrgNodeComponent({ node, companyId }: { node: OrgNode; companyId: string }) {
+	return (
+		<div className="flex flex-col items-center">
+			<Link
+				to="/companies/$companyId/agents/$agentId"
+				params={{ companyId, agentId: node.id }}
+				className="relative inline-flex items-center gap-2 rounded-radius-md border border-border bg-bg px-3.5 py-2 text-[13px] font-medium transition-[border-color] duration-150 hover:border-border-hover"
+			>
+				<StatusDot status={orgDotStatus(node)} />
+				{node.title}
+			</Link>
+			{node.children.length > 0 && (
+				<>
+					<div className="w-px h-4 bg-border" />
+					<div className="flex gap-6">
+						{node.children.map((child) => (
+							<div key={child.id} className="flex flex-col items-center">
+								<div className="w-px h-4 bg-border" />
+								<OrgNodeComponent node={child} companyId={companyId} />
+							</div>
+						))}
+					</div>
+				</>
+			)}
+		</div>
+	);
 }
 
-function getInitials(title: string): string {
-	const words = title.split(/\s+/);
-	if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
-	return title.slice(0, 2).toUpperCase();
-}
-
-function AgentListPage() {
+function TeamPage() {
 	const { companyId } = Route.useParams();
-	const { data: agents, isLoading } = useAgents(companyId);
+	const { data: orgChart, isLoading } = useOrgChart(companyId);
 
 	if (isLoading)
 		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;
+
+	const hasMembers = orgChart?.board.children && orgChart.board.children.length > 0;
 
 	return (
 		<div>
@@ -44,75 +59,45 @@ function AgentListPage() {
 				</Link>
 			</div>
 
-			{agents?.length === 0 ? (
-				<EmptyState icon={<Plus className="w-10 h-10" />} title="No agents yet" />
+			{!hasMembers ? (
+				<EmptyState icon={<Plus className="w-10 h-10" />} title="No team members yet" />
 			) : (
-				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-					{agents?.map((agent) => {
-						const isDisabled = agent.admin_status === AgentAdminStatus.Disabled;
-						const isTerminated = agent.admin_status === AgentAdminStatus.Terminated;
-						const runtime = runtimeBadge(agent.runtime_status);
-						const budgetUsed = agent.budget_used_cents / 100;
-						const budgetTotal = agent.monthly_budget_cents / 100;
-						return (
-							<Link
-								key={agent.id}
-								to="/companies/$companyId/agents/$agentId"
-								params={{ companyId, agentId: agent.id }}
-							>
-								<div
-									className={`border border-border rounded-radius-lg p-4 bg-bg transition-[border-color] duration-150 hover:border-border-hover cursor-pointer${isDisabled ? ' opacity-50' : ''}`}
-								>
-									<div className="flex items-center gap-2.5 mb-3">
-										<Avatar
-											initials={getInitials(agent.title)}
-											size="md"
-											color={avatarColorFromString(agent.title)}
-										/>
-										<div className="min-w-0">
-											<div className="text-sm font-medium truncate">
-												{agent.title}
-												{isDisabled ? ' (disabled)' : ''}
-											</div>
-											{agent.role_description && (
-												<div className="text-xs text-text-muted truncate">
-													{agent.role_description}
-												</div>
-											)}
-										</div>
-									</div>
-
-									<div className="text-xs text-text-muted leading-relaxed space-y-0.5">
-										<div className="flex items-center gap-1.5">
-											<StatusDot status={runtimeDot(agent.runtime_status)} />
-											{isTerminated ? (
-												<Badge color="neutral">Terminated</Badge>
-											) : (
-												<Badge color={runtime.color as 'neutral'}>{runtime.label}</Badge>
-											)}
-										</div>
-										<div>Runtime: {agent.runtime_type}</div>
-										<div>Heartbeat: {agent.heartbeat_interval_min}m</div>
-										{budgetTotal > 0 && (
-											<div>
-												Budget: ${budgetUsed.toFixed(0)} / ${budgetTotal.toFixed(0)}
-											</div>
-										)}
-									</div>
-
-									{budgetTotal > 0 && (
-										<BudgetBar used={budgetUsed} total={budgetTotal} className="mt-2" />
-									)}
+				<>
+					<div className="flex flex-col items-center overflow-auto pt-4">
+						<div className="inline-flex items-center gap-2 rounded-radius-md border-2 border-primary bg-accent-blue-bg px-4 py-2 text-[13px] font-medium text-accent-blue-text mb-2">
+							You (Board)
+						</div>
+						<div className="w-px h-4 bg-border" />
+						<div className="flex gap-8">
+							{orgChart.board.children.map((node) => (
+								<div key={node.id} className="flex flex-col items-center">
+									<div className="w-px h-4 bg-border" />
+									<OrgNodeComponent node={node} companyId={companyId} />
 								</div>
-							</Link>
-						);
-					})}
-				</div>
+							))}
+						</div>
+					</div>
+
+					<div className="flex items-center gap-4 mt-8 pt-4 border-t border-border text-xs text-text-muted">
+						<div className="flex items-center gap-1.5">
+							<StatusDot status="active" /> Active
+						</div>
+						<div className="flex items-center gap-1.5">
+							<StatusDot status="idle" /> Idle
+						</div>
+						<div className="flex items-center gap-1.5">
+							<StatusDot status="paused" /> Paused
+						</div>
+						<div className="flex items-center gap-1.5">
+							<StatusDot status="disabled" /> Disabled
+						</div>
+					</div>
+				</>
 			)}
 		</div>
 	);
 }
 
 export const Route = createFileRoute('/companies/$companyId/agents/')({
-	component: AgentListPage,
+	component: TeamPage,
 });

@@ -20,10 +20,7 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 		},
 		{
 			title: 'Team',
-			items: [
-				{ to: '/companies/$companyId/agents', params, label: 'Agents' },
-				{ to: '/companies/$companyId/org-chart', params, label: 'Org chart' },
-			],
+			items: [{ to: '/companies/$companyId/agents', params, label: 'Team' }],
 		},
 		{
 			title: 'Resources',
