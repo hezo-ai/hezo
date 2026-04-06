@@ -1,20 +1,20 @@
 import { expect, test } from '@playwright/test';
 import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
 
-test('agent list shows runtime badges not admin badges', async ({ page }) => {
+test('team page shows org chart with status legend', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
 	const { company } = await createCompanyWithAgents(page);
 	await page.goto(`/companies/${company.slug}/agents`);
 
-	await expect(page.getByRole('link', { name: 'Agents', exact: true })).toBeVisible({
+	await expect(page.getByRole('link', { name: 'Team', exact: true })).toBeVisible({
 		timeout: 5000,
 	});
 
+	await expect(page.getByText('You (Board)')).toBeVisible({ timeout: 5000 });
 	await expect(page.getByText('Idle').first()).toBeVisible({ timeout: 5000 });
-	await expect(page.getByText('Enabled')).not.toBeVisible();
-	await expect(page.getByText(/\$\d+/).first()).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Active').first()).toBeVisible({ timeout: 5000 });
 });
 
 test('agent detail page shows budget and heartbeat info', async ({ page }) => {
@@ -102,7 +102,7 @@ test('agent disable and enable lifecycle', async ({ page }) => {
 	await expect(page.getByText('Idle')).toBeVisible({ timeout: 5000 });
 });
 
-test('disabled agent card is greyed out with name suffix on list page', async ({ page }) => {
+test('disabled agent shows on team org chart and detail page', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
@@ -117,17 +117,9 @@ test('disabled agent card is greyed out with name suffix on list page', async ({
 		headers: { Authorization: `Bearer ${token}` },
 	});
 
-	const agentsResponsePromise = page.waitForResponse(
-		(res) =>
-			res.url().includes('/agents') &&
-			!res.url().includes('/disable') &&
-			res.request().method() === 'GET',
-	);
 	await page.goto(`/companies/${company.slug}/agents`);
-	await agentsResponsePromise;
-	await waitForPageLoad(page);
+	await expect(page.getByText('You (Board)')).toBeVisible({ timeout: 5000 });
 
-	const disabledCard = page.locator('.opacity-50');
-	await expect(disabledCard).toBeVisible({ timeout: 10000 });
+	await page.goto(`/companies/${company.slug}/agents/${enabledAgent.id}`);
 	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 5000 });
 });

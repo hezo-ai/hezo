@@ -74,7 +74,7 @@ function AgentDetailPage() {
 				params={{ companyId }}
 				className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text mb-4"
 			>
-				<ArrowLeft className="w-3.5 h-3.5" /> Agents
+				<ArrowLeft className="w-3.5 h-3.5" /> Team
 			</Link>
 
 			<div className="flex items-center gap-3 mb-6">
