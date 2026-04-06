@@ -22,9 +22,10 @@ test('kb list shows empty state and new document button', async ({ page }) => {
 
 	const { company } = await createCompany(page);
 	await page.goto(`/companies/${company.slug}/kb`);
+	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 15000 });
 
-	await expect(page.getByText('No documents yet')).toBeVisible({ timeout: 15000 });
-	await expect(page.getByRole('link', { name: 'New document' })).toBeVisible({ timeout: 15000 });
+	await expect(page.getByText('No documents yet')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByRole('link', { name: 'New document' })).toBeVisible({ timeout: 5000 });
 });
 
 test('can create and view a kb document', async ({ page }) => {
@@ -88,6 +89,7 @@ test('can delete a kb document', async ({ page }) => {
 
 	page.on('dialog', (dialog) => dialog.accept());
 	await page.locator('button.text-accent-red').click();
+	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 10000 });
 
 	await expect(page.getByText('No documents yet')).toBeVisible({ timeout: 5000 });
 });

@@ -117,6 +117,7 @@ test('disabled agent card is greyed out with name suffix on list page', async ({
 	});
 
 	await page.goto(`/companies/${company.slug}/agents`);
+	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 15000 });
 
 	const disabledCard = page.locator('.opacity-50');
 	await expect(disabledCard).toBeVisible({ timeout: 5000 });
