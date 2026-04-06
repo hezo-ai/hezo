@@ -12,7 +12,7 @@ test('agents created from company type have system prompts via API', async ({ pa
 	});
 	const agents = ((await agentsRes.json()) as any).data;
 
-	expect(agents.length).toBe(9);
+	expect(agents.length).toBe(11);
 
 	for (const agent of agents) {
 		expect(agent.system_prompt).toBeTruthy();
@@ -82,7 +82,7 @@ test('system prompt can be edited and saved', async ({ page }) => {
 	expect(savedValue).toContain('You are the Researcher at');
 });
 
-test('company type seed data includes system prompts for all 9 agents', async ({ page }) => {
+test('company type seed data includes system prompts for all 11 agents', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
@@ -96,7 +96,7 @@ test('company type seed data includes system prompts for all 9 agents', async ({
 	expect(softDev).toBeTruthy();
 
 	const agentsConfig = softDev.agent_types;
-	expect(agentsConfig).toHaveLength(9);
+	expect(agentsConfig).toHaveLength(11);
 
 	const expectedSlugs = [
 		'ceo',
@@ -108,6 +108,8 @@ test('company type seed data includes system prompts for all 9 agents', async ({
 		'devops-engineer',
 		'marketing-lead',
 		'researcher',
+		'security-engineer',
+		'coach',
 	];
 	for (const slug of expectedSlugs) {
 		const agent = agentsConfig.find((a: any) => a.slug === slug);
