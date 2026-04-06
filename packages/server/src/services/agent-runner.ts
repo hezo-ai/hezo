@@ -51,6 +51,7 @@ export async function runAgent(
 	agent: AgentInfo,
 	issue: IssueInfo,
 	project: ProjectInfo,
+	wakeupPayload?: Record<string, unknown>,
 	signal?: AbortSignal,
 ): Promise<RunResult> {
 	const startTime = Date.now();
@@ -87,7 +88,10 @@ export async function runAgent(
 
 	const agentJwt = await signAgentJwt(deps.masterKeyManager, agent.id, agent.company_id);
 
-	const taskPrompt = buildTaskPrompt(resolvedPrompt, issue);
+	const isCoachReview = wakeupPayload?.trigger === 'issue_done';
+	const taskPrompt = isCoachReview
+		? await buildCoachReviewPrompt(deps.db, resolvedPrompt, issue, agent.company_id)
+		: buildTaskPrompt(resolvedPrompt, issue);
 
 	const env: string[] = [
 		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
@@ -175,6 +179,89 @@ function buildTaskPrompt(systemPrompt: string, issue: IssueInfo): string {
 	parts.push(issue.description || 'No description provided.');
 	parts.push('');
 	parts.push('Work on this task. Post comments via the Agent API to report progress.');
+
+	return parts.join('\n');
+}
+
+async function buildCoachReviewPrompt(
+	db: PGlite,
+	systemPrompt: string,
+	issue: IssueInfo,
+	companyId: string,
+): Promise<string> {
+	// Fetch full comment history for the completed issue
+	const comments = await db.query<{
+		content_type: string;
+		content: Record<string, unknown>;
+		author_name: string;
+		created_at: string;
+	}>(
+		`SELECT ic.content_type, ic.content,
+		        COALESCE(ma.title, m.display_name, 'Unknown') AS author_name,
+		        ic.created_at::text
+		 FROM issue_comments ic
+		 LEFT JOIN members m ON m.id = ic.author_member_id
+		 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
+		 WHERE ic.issue_id = $1
+		 ORDER BY ic.created_at ASC`,
+		[issue.id],
+	);
+
+	// Fetch agents involved in this issue (assignee + commenters)
+	const involvedAgents = await db.query<{
+		id: string;
+		title: string;
+		slug: string;
+	}>(
+		`SELECT DISTINCT ma.id, ma.title, ma.slug
+		 FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.company_id = $1
+		   AND (ma.id = (SELECT assignee_id FROM issues WHERE id = $2)
+		        OR ma.id IN (SELECT DISTINCT author_member_id FROM issue_comments WHERE issue_id = $2 AND author_member_id IS NOT NULL))`,
+		[companyId, issue.id],
+	);
+
+	const commentLog = comments.rows
+		.map((c) => {
+			const text =
+				c.content_type === 'text'
+					? (c.content as Record<string, unknown>).text
+					: JSON.stringify(c.content);
+			return `[${c.created_at}] ${c.author_name} (${c.content_type}): ${text}`;
+		})
+		.join('\n');
+
+	const agentList = involvedAgents.rows
+		.map((a) => `- ${a.title} (slug: ${a.slug}, id: ${a.id})`)
+		.join('\n');
+
+	const parts = [
+		systemPrompt,
+		'',
+		'---',
+		'',
+		`## Review Completed Ticket: ${issue.identifier} — ${issue.title}`,
+		`**Final Status:** ${issue.status}`,
+		`**Priority:** ${issue.priority}`,
+		'',
+		'### Description',
+		issue.description || 'No description provided.',
+		'',
+		'### Agents Involved',
+		agentList || 'No agents identified.',
+		'',
+		'### Comment History',
+		commentLog || 'No comments on this issue.',
+		'',
+		'### Your Task',
+		'Review this completed ticket. Analyze the comment history for patterns where agents struggled,',
+		'received feedback, had work rejected, or needed multiple attempts. For each improvement opportunity,',
+		"use the `get_agent_system_prompt` tool to read the affected agent's current prompt, then use",
+		'`propose_system_prompt_update` to propose a specific rule to add to their `## Learned Rules` section.',
+		'',
+		'If the ticket completed smoothly without significant rework or feedback, no changes are needed.',
+	];
 
 	return parts.join('\n');
 }

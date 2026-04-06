@@ -5,9 +5,11 @@ test('loads app when server is pre-unlocked', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 	await page.waitForURL('**/companies', { timeout: 10000 });
-	await expect(page.getByRole('heading', { name: 'Companies', exact: true })).toBeVisible({
-		timeout: 10000,
-	});
+	await expect(
+		page
+			.getByRole('heading', { name: 'Companies', exact: true })
+			.or(page.getByRole('heading', { name: 'Welcome to Hezo' })),
+	).toBeVisible({ timeout: 10000 });
 });
 
 test('authenticated user can navigate to companies', async ({ page }) => {

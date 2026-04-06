@@ -154,7 +154,7 @@ export class JobManager {
 				[WakeupStatus.Claimed, wakeup.id],
 			);
 
-			await this.activateAgent(wakeup.member_id, wakeup.company_id, wakeup.id);
+			await this.activateAgent(wakeup.member_id, wakeup.company_id, wakeup.id, wakeup.payload);
 		}
 	}
 
@@ -189,6 +189,7 @@ export class JobManager {
 		memberId: string,
 		companyId: string,
 		wakeupId?: string,
+		wakeupPayload?: Record<string, unknown>,
 	): Promise<void> {
 		const { db, docker, masterKeyManager, serverPort } = this.deps;
 
@@ -242,17 +243,55 @@ export class JobManager {
 			],
 		);
 
-		if (issues.rows.length === 0) {
-			if (wakeupId) {
-				await db.query(
-					`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
-					[WakeupStatus.Completed, wakeupId],
-				);
-			}
-			return;
-		}
+		let issue: {
+			id: string;
+			identifier: string;
+			title: string;
+			description: string;
+			status: string;
+			priority: string;
+			project_id: string;
+			rules: string | null;
+		};
 
-		const issue = issues.rows[0];
+		if (issues.rows.length === 0) {
+			// Coach agent may have no assigned issues but is woken by issue_done automation
+			if (wakeupPayload?.trigger === 'issue_done' && wakeupPayload?.issue_id) {
+				const payloadIssue = await db.query<{
+					id: string;
+					identifier: string;
+					title: string;
+					description: string;
+					status: string;
+					priority: string;
+					project_id: string;
+					rules: string | null;
+				}>(
+					'SELECT id, identifier, title, description, status, priority, project_id, rules FROM issues WHERE id = $1 AND company_id = $2',
+					[wakeupPayload.issue_id, companyId],
+				);
+				if (payloadIssue.rows.length === 0) {
+					if (wakeupId) {
+						await db.query(
+							`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
+							[WakeupStatus.Completed, wakeupId],
+						);
+					}
+					return;
+				}
+				issue = payloadIssue.rows[0];
+			} else {
+				if (wakeupId) {
+					await db.query(
+						`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
+						[WakeupStatus.Completed, wakeupId],
+					);
+				}
+				return;
+			}
+		} else {
+			issue = issues.rows[0];
+		}
 
 		const project = await db.query<{
 			id: string;
@@ -296,6 +335,7 @@ export class JobManager {
 					},
 					issue,
 					project.rows[0],
+					wakeupPayload,
 					signal,
 				);
 

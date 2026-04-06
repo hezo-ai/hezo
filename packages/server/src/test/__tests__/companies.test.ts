@@ -44,7 +44,7 @@ describe('companies CRUD', () => {
 		expect(body.data.name).toBe('NoteGenius AI');
 		expect(body.data.slug).toBe('notegenius-ai');
 		expect(body.data.issue_prefix).toBe('NA');
-		expect(body.data.agent_count).toBe(9);
+		expect(body.data.agent_count).toBe(11);
 
 		const kbRes = await app.request(`/api/companies/${body.data.id}/kb-docs`, {
 			headers: authHeader(token),
@@ -350,6 +350,6 @@ describe('slug-based access', () => {
 		});
 		expect(agentsRes.status).toBe(200);
 		const agentsBody = await agentsRes.json();
-		expect(agentsBody.data.length).toBe(9);
+		expect(agentsBody.data.length).toBe(11);
 	});
 });

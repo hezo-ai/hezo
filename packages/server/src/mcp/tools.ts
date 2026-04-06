@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	ApprovalStatus,
+	ApprovalType,
 	AuthType,
 	CommentContentType,
 	IssuePriority,
@@ -537,5 +538,133 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 		db,
 	);
 
+	// System Prompt Management (Coach + self only)
+	tool(
+		server,
+		'get_agent_system_prompt',
+		"Read an agent's system prompt. Only accessible by the Coach agent, the agent itself, or board users.",
+		{
+			company_id: z.string().describe('Company ID'),
+			agent_id: z.string().describe('Target agent member ID'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			if (!(await isCoachOrSelf(db, auth, args.agent_id as string))) {
+				return {
+					error: 'Access denied: only the Coach or the agent itself can read system prompts',
+				};
+			}
+
+			const r = await db.query<{ title: string; slug: string; system_prompt: string }>(
+				`SELECT ma.title, ma.slug, ma.system_prompt
+				 FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE ma.id = $1 AND m.company_id = $2`,
+				[args.agent_id, args.company_id],
+			);
+			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
+			return r.rows[0];
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'propose_system_prompt_update',
+		'Propose or apply a system prompt change for an agent. Only accessible by the Coach agent or the agent itself.',
+		{
+			company_id: z.string().describe('Company ID'),
+			agent_id: z.string().describe('Target agent member ID'),
+			new_system_prompt: z.string().describe('The full updated system prompt'),
+			change_summary: z.string().describe('Summary of what changed and why'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			if (!(await isCoachOrSelf(db, auth, args.agent_id as string))) {
+				return {
+					error: 'Access denied: only the Coach or the agent itself can update system prompts',
+				};
+			}
+
+			// Verify agent exists in company
+			const agentCheck = await db.query<{ system_prompt: string }>(
+				`SELECT ma.system_prompt FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE ma.id = $1 AND m.company_id = $2`,
+				[args.agent_id, args.company_id],
+			);
+			if (agentCheck.rows.length === 0) return { error: 'Agent not found in this company' };
+
+			// Check if company has coach_auto_apply enabled
+			const company = await db.query<{ coach_auto_apply: boolean }>(
+				'SELECT coach_auto_apply FROM companies WHERE id = $1',
+				[args.company_id],
+			);
+			const autoApply = company.rows[0]?.coach_auto_apply ?? false;
+
+			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+
+			if (autoApply) {
+				// Direct apply + record revision
+				const oldPrompt = agentCheck.rows[0].system_prompt;
+				const revNum = await db.query<{ n: number }>(
+					'SELECT COALESCE(MAX(revision_number), 0) + 1 AS n FROM system_prompt_revisions WHERE member_agent_id = $1',
+					[args.agent_id],
+				);
+				await db.query('UPDATE member_agents SET system_prompt = $1 WHERE id = $2', [
+					args.new_system_prompt,
+					args.agent_id,
+				]);
+				await db.query(
+					`INSERT INTO system_prompt_revisions (member_agent_id, company_id, revision_number, old_prompt, new_prompt, change_summary, author_member_id)
+					 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+					[
+						args.agent_id,
+						args.company_id,
+						revNum.rows[0].n,
+						oldPrompt,
+						args.new_system_prompt,
+						args.change_summary,
+						callerMemberId,
+					],
+				);
+				return { applied: true, message: 'System prompt updated directly (auto-apply enabled)' };
+			}
+
+			// Create approval request
+			const result = await db.query<{ id: string; status: string }>(
+				`INSERT INTO approvals (company_id, type, requested_by_member_id, payload)
+				 VALUES ($1, $2::approval_type, $3, $4::jsonb)
+				 RETURNING id, status`,
+				[
+					args.company_id,
+					ApprovalType.SystemPromptUpdate,
+					callerMemberId,
+					JSON.stringify({
+						member_id: args.agent_id,
+						new_system_prompt: args.new_system_prompt,
+						reason: args.change_summary,
+					}),
+				],
+			);
+			return { applied: false, approval_id: result.rows[0].id, status: result.rows[0].status };
+		},
+		db,
+	);
+
 	return [...registeredTools];
+}
+
+async function isCoachOrSelf(db: PGlite, auth: AuthInfo, targetAgentId: string): Promise<boolean> {
+	if (auth.type === AuthType.Board) return true;
+	if (auth.type === AuthType.Agent) {
+		if (auth.memberId === targetAgentId) return true;
+		const coach = await db.query<{ slug: string }>('SELECT slug FROM member_agents WHERE id = $1', [
+			auth.memberId,
+		]);
+		return coach.rows[0]?.slug === 'coach';
+	}
+	return false;
 }

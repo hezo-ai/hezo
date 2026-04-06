@@ -13,10 +13,32 @@ async function applyApprovalSideEffect(
 	const payload = approval.payload as Record<string, unknown>;
 	switch (approval.type) {
 		case ApprovalType.SystemPromptUpdate: {
+			const old = await db.query<{ system_prompt: string }>(
+				'SELECT system_prompt FROM member_agents WHERE id = $1',
+				[payload.member_id],
+			);
+			const revNum = await db.query<{ n: number }>(
+				'SELECT COALESCE(MAX(revision_number), 0) + 1 AS n FROM system_prompt_revisions WHERE member_agent_id = $1',
+				[payload.member_id],
+			);
 			await db.query('UPDATE member_agents SET system_prompt = $1 WHERE id = $2', [
 				payload.new_system_prompt,
 				payload.member_id,
 			]);
+			await db.query(
+				`INSERT INTO system_prompt_revisions (member_agent_id, company_id, revision_number, old_prompt, new_prompt, change_summary, author_member_id, approval_id)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				[
+					payload.member_id,
+					approval.company_id,
+					revNum.rows[0].n,
+					old.rows[0]?.system_prompt ?? '',
+					payload.new_system_prompt,
+					(payload.reason as string) ?? '',
+					(payload.requested_by as string) ?? (approval.requested_by_member_id as string) ?? null,
+					approval.id,
+				],
+			);
 			break;
 		}
 	}

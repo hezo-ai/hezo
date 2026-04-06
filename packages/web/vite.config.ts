@@ -1,13 +1,21 @@
 import tailwindcss from '@tailwindcss/vite';
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { createLogger, defineConfig } from 'vite';
 
 const serverPort = process.env.HEZO_SERVER_PORT || '3100';
 const webPort = Number(process.env.HEZO_WEB_PORT || '5173');
 const serverUrl = `http://localhost:${serverPort}`;
 
+const logger = createLogger();
+const originalError = logger.error.bind(logger);
+logger.error = (msg, options) => {
+	if (msg.includes('ws proxy socket error')) return;
+	originalError(msg, options);
+};
+
 export default defineConfig({
+	customLogger: logger,
 	plugins: [TanStackRouterVite({ quoteStyle: 'single' }), react(), tailwindcss()],
 	server: {
 		port: webPort,
@@ -17,7 +25,10 @@ export default defineConfig({
 			'/health': serverUrl,
 			'/mcp': serverUrl,
 			'/skill.md': serverUrl,
-			'/ws': { target: serverUrl.replace('http', 'ws'), ws: true },
+			'/ws': {
+				target: serverUrl.replace('http', 'ws'),
+				ws: true,
+			},
 		},
 	},
 });

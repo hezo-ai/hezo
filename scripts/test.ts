@@ -64,8 +64,22 @@ async function discoverTests(): Promise<TestFile[]> {
 	return files;
 }
 
+async function buildAgentBundle() {
+	console.log('Building agent bundle...');
+	const proc = Bun.spawn(['bun', 'run', 'build:agents'], {
+		cwd: resolve(ROOT, 'packages/server'),
+		stdout: 'inherit',
+		stderr: 'inherit',
+	});
+	const exitCode = await proc.exited;
+	if (exitCode !== 0) {
+		console.error('Failed to build agent bundle');
+		process.exit(1);
+	}
+}
+
 async function main() {
-	await buildShared();
+	await Promise.all([buildShared(), buildAgentBundle()]);
 
 	const e2eOnly = e2eFlag;
 	const testFiles = e2eOnly ? [] : await discoverTests();
