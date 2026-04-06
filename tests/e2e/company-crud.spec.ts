@@ -20,8 +20,8 @@ test('can create a company with Startup template and see auto-created agents', a
 	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
 
 	// Navigate to agents and verify auto-created agents are visible
-	await page.getByRole('link', { name: 'Agents' }).click();
-	await expect(page.getByRole('link', { name: 'Agents', exact: true })).toBeVisible({
+	await page.getByRole('link', { name: 'Team' }).click();
+	await expect(page.getByRole('link', { name: 'Team', exact: true })).toBeVisible({
 		timeout: 5000,
 	});
 
