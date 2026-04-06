@@ -538,7 +538,7 @@ const CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren =
 
 interface CompaniesCompanyIdRouteRouteChildren {
   CompaniesCompanyIdAuditLogRoute: typeof CompaniesCompanyIdAuditLogRoute
-CompaniesCompanyIdIndexRoute: typeof CompaniesCompanyIdIndexRoute
+  CompaniesCompanyIdIndexRoute: typeof CompaniesCompanyIdIndexRoute
   CompaniesCompanyIdProjectsProjectIdRouteRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren
   CompaniesCompanyIdAgentsAgentIdRoute: typeof CompaniesCompanyIdAgentsAgentIdRoute
   CompaniesCompanyIdAgentsHireRoute: typeof CompaniesCompanyIdAgentsHireRoute
@@ -557,7 +557,7 @@ CompaniesCompanyIdIndexRoute: typeof CompaniesCompanyIdIndexRoute
 const CompaniesCompanyIdRouteRouteChildren: CompaniesCompanyIdRouteRouteChildren =
   {
     CompaniesCompanyIdAuditLogRoute: CompaniesCompanyIdAuditLogRoute,
-CompaniesCompanyIdIndexRoute: CompaniesCompanyIdIndexRoute,
+    CompaniesCompanyIdIndexRoute: CompaniesCompanyIdIndexRoute,
     CompaniesCompanyIdProjectsProjectIdRouteRoute:
       CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren,
     CompaniesCompanyIdAgentsAgentIdRoute: CompaniesCompanyIdAgentsAgentIdRoute,
