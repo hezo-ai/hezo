@@ -252,7 +252,7 @@ export function buildApp(
 
 async function fetchConnectPublicKey(connectUrl: string): Promise<string> {
 	try {
-		const res = await fetch(`${connectUrl}/signing-key`);
+		const res = await fetch(`${connectUrl}/signing-key`, { signal: AbortSignal.timeout(5000) });
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		const { key } = (await res.json()) as { key: string };
 		console.log('Fetched Connect signing public key.');
