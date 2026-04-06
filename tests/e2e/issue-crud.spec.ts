@@ -75,16 +75,26 @@ test('issue detail shows execution lock banner when locked', async ({ page }) =>
 
 	// Get an agent to lock the issue
 	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
-	const agent = (await agentsRes.json()).data[0];
+	expect(agentsRes.ok()).toBeTruthy();
+	const agents = (await agentsRes.json()).data;
+	expect(agents.length).toBeGreaterThan(0);
+	const agent = agents[0];
 
 	// Acquire the execution lock
-	await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/lock`, {
+	const lockRes = await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/lock`, {
 		headers,
 		data: { member_id: agent.id },
 	});
+	expect(lockRes.ok()).toBeTruthy();
 
-	// Navigate to the issue detail page
-	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	// Navigate to the issue detail page and wait for the lock query to resolve
+	const [, lockApiRes] = await Promise.all([
+		page.goto(`/companies/${company.id}/issues/${issue.id}`),
+		page.waitForResponse(
+			(res) => res.url().includes(`/issues/${issue.id}/lock`) && res.request().method() === 'GET',
+		),
+	]);
+	expect(lockApiRes.ok()).toBeTruthy();
 
 	// Verify the lock banner is visible showing who is working
 	await expect(page.getByText('is working on this issue')).toBeVisible({ timeout: 10000 });
