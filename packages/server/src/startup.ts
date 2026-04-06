@@ -221,6 +221,10 @@ export function buildApp(
 
 		app.get('*', async (c) => {
 			const urlPath = new URL(c.req.url).pathname;
+
+			if (urlPath.startsWith('/api/') || urlPath.startsWith('/agent-api/')) {
+				return c.text('Not found', 404);
+			}
 			const filePath = urlPath === '/' ? '/index.html' : urlPath;
 			const fullPath = join(staticDir, filePath);
 

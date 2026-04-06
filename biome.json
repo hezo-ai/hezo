@@ -55,7 +55,8 @@
 			"!.turbo",
 			"!**/migrations-bundle.json",
 			"!**/agents-bundle.json",
-			"!**/routeTree.gen.ts"
+			"!**/routeTree.gen.ts",
+			"!**/static"
 		]
 	}
 }
