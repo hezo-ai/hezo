@@ -31,7 +31,7 @@ describe('company types CRUD', () => {
 		const builtin = body.data.find((t: Record<string, unknown>) => t.name === 'Startup');
 		expect(builtin).toBeDefined();
 		expect(builtin.is_builtin).toBe(true);
-		expect(builtin.agent_types).toHaveLength(10);
+		expect(builtin.agent_types).toHaveLength(11);
 	});
 
 	it('creates a custom company type', async () => {

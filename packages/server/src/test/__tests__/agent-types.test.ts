@@ -21,13 +21,13 @@ afterAll(async () => {
 });
 
 describe('agent types CRUD', () => {
-	it('lists all 9 built-in agent types', async () => {
+	it('lists all built-in agent types', async () => {
 		const res = await app.request('/api/agent-types', {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data).toHaveLength(10);
+		expect(body.data).toHaveLength(11);
 		expect(body.data.every((t: any) => t.is_builtin === true)).toBe(true);
 		expect(body.data.every((t: any) => t.source === 'builtin')).toBe(true);
 	});
@@ -38,13 +38,44 @@ describe('agent types CRUD', () => {
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.length).toBe(10);
+		expect(body.data.length).toBe(11);
 
 		const customRes = await app.request('/api/agent-types?source=custom', {
 			headers: authHeader(token),
 		});
 		const customBody = await customRes.json();
 		expect(customBody.data.length).toBe(0);
+	});
+
+	it('includes security-engineer in built-in agent types', async () => {
+		const res = await app.request('/api/agent-types', {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		const secEng = body.data.find((t: any) => t.slug === 'security-engineer');
+		expect(secEng).toBeDefined();
+		expect(secEng.name).toBe('Security Engineer');
+		expect(secEng.is_builtin).toBe(true);
+		expect(secEng.system_prompt_template).toContain('Security Engineer');
+	});
+
+	it('has sequential sort_orders with no gaps', async () => {
+		const res = await app.request('/api/agent-types', {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		// Get the Startup company type to check sort_orders
+		const ctRes = await app.request('/api/company-types', {
+			headers: authHeader(token),
+		});
+		const ctBody = await ctRes.json();
+		const startup = ctBody.data.find((t: any) => t.name === 'Startup');
+		const sortOrders = startup.agent_types
+			.map((a: any) => a.sort_order)
+			.sort((a: number, b: number) => a - b);
+		for (let i = 0; i < sortOrders.length; i++) {
+			expect(sortOrders[i]).toBe(i);
+		}
 	});
 
 	it('creates a custom agent type', async () => {
@@ -153,13 +184,13 @@ describe('agent types CRUD', () => {
 });
 
 describe('company types with agent types', () => {
-	it('built-in company type includes 9 agent types', async () => {
+	it('built-in company type includes all agent types', async () => {
 		const res = await app.request('/api/company-types', {
 			headers: authHeader(token),
 		});
 		const body = await res.json();
 		const builtin = body.data.find((t: any) => t.name === 'Startup');
-		expect(builtin.agent_types).toHaveLength(10);
+		expect(builtin.agent_types).toHaveLength(11);
 		expect(builtin.agent_types[0]).toHaveProperty('agent_type_id');
 		expect(builtin.agent_types[0]).toHaveProperty('name');
 		expect(builtin.agent_types[0]).toHaveProperty('slug');
@@ -212,7 +243,7 @@ describe('company creation with agent types', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		expect(agents).toHaveLength(10);
+		expect(agents).toHaveLength(11);
 		expect(agents.every((a: any) => a.agent_type_id != null)).toBe(true);
 	});
 });
