@@ -1,8 +1,8 @@
 import { type WsChatMessage, WsMessageType } from '@hezo/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
+import { useSocket } from '../contexts/socket-context';
 import { api } from '../lib/api';
-import { wsClient } from '../lib/ws';
 
 export interface ChatMessage {
 	id: string;
@@ -17,9 +17,10 @@ export interface ChatMessage {
 
 export function useChatMessages(companyId: string, issueId: string) {
 	const queryClient = useQueryClient();
+	const { subscribe } = useSocket();
 
 	useEffect(() => {
-		const unsubscribe = wsClient.on(WsMessageType.ChatMessage, (msg) => {
+		const unsubscribe = subscribe(WsMessageType.ChatMessage, (msg) => {
 			const chatMsg = msg as WsChatMessage;
 			if (chatMsg.issueId === issueId) {
 				queryClient.invalidateQueries({
@@ -28,7 +29,7 @@ export function useChatMessages(companyId: string, issueId: string) {
 			}
 		});
 		return unsubscribe;
-	}, [companyId, issueId, queryClient]);
+	}, [companyId, issueId, queryClient, subscribe]);
 
 	return useQuery({
 		queryKey: ['companies', companyId, 'issues', issueId, 'chat'],

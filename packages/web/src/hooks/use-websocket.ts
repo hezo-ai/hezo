@@ -1,8 +1,7 @@
 import { WsMessageType, type WsRowChangeMessage } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { api } from '../lib/api';
-import { wsClient } from '../lib/ws';
+import { useSocket } from '../contexts/socket-context';
 
 const TABLE_TO_QUERY_KEY: Record<
 	string,
@@ -27,19 +26,13 @@ const TABLE_TO_QUERY_KEY: Record<
 
 export function useWebSocket(wsCompanyId: string, routeCompanyId: string): void {
 	const queryClient = useQueryClient();
+	const { joinRoom, leaveRoom, subscribe } = useSocket();
 
 	useEffect(() => {
-		const token = api.getToken();
-		if (!token) return;
-
-		if (!wsClient.connected) {
-			wsClient.connect(token);
-		}
-
 		const room = `company:${wsCompanyId}`;
-		wsClient.subscribe(room);
+		joinRoom(room);
 
-		const unsubscribe = wsClient.on(WsMessageType.RowChange, (msg) => {
+		const unsubscribe = subscribe(WsMessageType.RowChange, (msg) => {
 			const { table, row } = msg as WsRowChangeMessage;
 			const keyMapper = TABLE_TO_QUERY_KEY[table];
 			if (keyMapper) {
@@ -52,7 +45,7 @@ export function useWebSocket(wsCompanyId: string, routeCompanyId: string): void 
 
 		return () => {
 			unsubscribe();
-			wsClient.unsubscribe(room);
+			leaveRoom(room);
 		};
-	}, [wsCompanyId, routeCompanyId, queryClient]);
+	}, [wsCompanyId, routeCompanyId, queryClient, joinRoom, leaveRoom, subscribe]);
 }

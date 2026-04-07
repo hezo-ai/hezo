@@ -320,6 +320,17 @@ export class JobManager {
 			[issue.id, memberId],
 		);
 
+		await db.query(
+			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
+			[AgentRuntimeStatus.Active, memberId],
+		);
+		this.deps.wsManager.broadcast(`company:${companyId}`, {
+			type: 'row_change',
+			table: 'member_agents',
+			action: 'UPDATE',
+			row: { id: memberId, runtime_status: AgentRuntimeStatus.Active },
+		});
+
 		const deps: RunnerDeps = {
 			db,
 			docker,
@@ -356,7 +367,7 @@ export class JobManager {
 	private async onAgentComplete(
 		memberId: string,
 		issueId: string,
-		_companyId: string,
+		companyId: string,
 		wakeupId: string | undefined,
 		result: RunResult,
 	): Promise<void> {
@@ -366,6 +377,17 @@ export class JobManager {
 			'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL',
 			[issueId, memberId],
 		);
+
+		await db.query(
+			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
+			[AgentRuntimeStatus.Idle, memberId],
+		);
+		this.deps.wsManager.broadcast(`company:${companyId}`, {
+			type: 'row_change',
+			table: 'member_agents',
+			action: 'UPDATE',
+			row: { id: memberId, runtime_status: AgentRuntimeStatus.Idle },
+		});
 
 		if (wakeupId) {
 			await db.query(

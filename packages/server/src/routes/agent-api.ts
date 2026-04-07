@@ -270,6 +270,13 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 					`UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2`,
 					[AgentRuntimeStatus.Paused, auth.memberId],
 				);
+				const wsManager = c.get('wsManager');
+				wsManager.broadcast(`company:${auth.companyId}`, {
+					type: 'row_change',
+					table: 'member_agents',
+					action: 'UPDATE',
+					row: { id: auth.memberId, runtime_status: AgentRuntimeStatus.Paused },
+				});
 				return c.json(
 					{
 						error: {
