@@ -402,7 +402,7 @@ describe('JobManager workflow methods', () => {
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).onAgentComplete(agentId, issueId, companyId, wakeupId, {
+			await (manager as any).onAgentComplete(agentId, 'Test Agent', issueId, companyId, wakeupId, {
 				success: true,
 				exitCode: 0,
 				stdout: '',
@@ -447,7 +447,7 @@ describe('JobManager workflow methods', () => {
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).onAgentComplete(agentId, issueId, companyId, wakeupId, {
+			await (manager as any).onAgentComplete(agentId, 'Test Agent', issueId, companyId, wakeupId, {
 				success: false,
 				exitCode: 1,
 				stdout: '',
@@ -478,7 +478,7 @@ describe('JobManager workflow methods', () => {
 			);
 
 			// Call without a wakeupId (heartbeat-triggered run scenario)
-			await (manager as any).onAgentComplete(agentId, issueId, companyId, undefined, {
+			await (manager as any).onAgentComplete(agentId, 'Test Agent', issueId, companyId, undefined, {
 				success: true,
 				exitCode: 0,
 				stdout: '',

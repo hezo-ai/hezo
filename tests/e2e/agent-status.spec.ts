@@ -17,7 +17,7 @@ test('team page shows org chart with status legend', async ({ page }) => {
 	await expect(page.getByText('Active').first()).toBeVisible({ timeout: 5000 });
 });
 
-test('agent detail page shows budget and heartbeat info', async ({ page }) => {
+test('agent detail page shows budget and heartbeat info on settings tab', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
@@ -30,6 +30,8 @@ test('agent detail page shows budget and heartbeat info', async ({ page }) => {
 	const firstAgent = (agents as any).data[0];
 
 	await page.goto(`/companies/${company.slug}/agents/${firstAgent.id}`);
+
+	await page.getByRole('link', { name: 'Settings' }).click();
 
 	await expect(page.getByText('Budget Usage')).toBeVisible({ timeout: 5000 });
 	await expect(page.getByText('Heartbeat').first()).toBeVisible({ timeout: 5000 });
@@ -52,7 +54,7 @@ test('project detail shows container section with rebuild button', async ({ page
 	await expect(page.getByRole('button', { name: /Rebuild/i })).toBeVisible({ timeout: 5000 });
 });
 
-test('agent detail page allows editing title', async ({ page }) => {
+test('agent detail page allows editing title on settings tab', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
@@ -64,6 +66,8 @@ test('agent detail page allows editing title', async ({ page }) => {
 	const agent = (agents as any).data.find((a: any) => a.admin_status === 'enabled');
 
 	await page.goto(`/companies/${company.slug}/agents/${agent.id}`);
+
+	await page.getByRole('link', { name: 'Settings' }).click();
 
 	const titleInput = page.getByLabel('Title');
 	await expect(titleInput).toBeVisible({ timeout: 5000 });

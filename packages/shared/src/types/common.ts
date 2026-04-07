@@ -56,6 +56,7 @@ export const CommentContentType = {
 	Preview: 'preview',
 	Trace: 'trace',
 	System: 'system',
+	Execution: 'execution',
 } as const;
 export type CommentContentType = (typeof CommentContentType)[keyof typeof CommentContentType];
 

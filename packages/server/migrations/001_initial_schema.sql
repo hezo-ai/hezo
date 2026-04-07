@@ -45,7 +45,7 @@ CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled', 'terminated');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopped', 'error');
 CREATE TYPE issue_status AS ENUM ('backlog', 'open', 'in_progress', 'review', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');
-CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system');
+CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'execution');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'company');
@@ -726,6 +726,7 @@ CREATE TABLE heartbeat_runs (
     company_id               UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     member_id                UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     wakeup_id                UUID REFERENCES agent_wakeup_requests(id) ON DELETE SET NULL,
+    issue_id                 UUID REFERENCES issues(id) ON DELETE SET NULL,
     status                   heartbeat_run_status NOT NULL DEFAULT 'queued',
     started_at               TIMESTAMPTZ,
     finished_at              TIMESTAMPTZ,
@@ -745,6 +746,7 @@ CREATE TABLE heartbeat_runs (
 CREATE INDEX idx_runs_member ON heartbeat_runs(member_id);
 CREATE INDEX idx_runs_status ON heartbeat_runs(status);
 CREATE INDEX idx_runs_company ON heartbeat_runs(company_id);
+CREATE INDEX idx_runs_issue ON heartbeat_runs(issue_id);
 
 -------------------------------------------------------------------------------
 -- AGENT TASK SESSIONS

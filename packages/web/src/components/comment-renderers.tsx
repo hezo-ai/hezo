@@ -1,4 +1,5 @@
-import { Check, ChevronDown, ChevronRight, ExternalLink, Terminal } from 'lucide-react';
+import { Link } from '@tanstack/react-router';
+import { ArrowRight, Check, ChevronDown, ChevronRight, ExternalLink, Terminal } from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from './ui/badge';
 
@@ -30,10 +31,13 @@ interface ToolCall {
 interface RenderProps {
 	comment: CommentData;
 	onChooseOption?: (commentId: string, chosenId: string) => void;
+	companyId?: string;
 }
 
-export function CommentRenderer({ comment, onChooseOption }: RenderProps) {
+export function CommentRenderer({ comment, onChooseOption, companyId }: RenderProps) {
 	switch (comment.content_type) {
+		case 'execution':
+			return <ExecutionComment comment={comment} companyId={companyId} />;
 		case 'trace':
 			return <TraceComment comment={comment} />;
 		case 'options':
@@ -45,6 +49,56 @@ export function CommentRenderer({ comment, onChooseOption }: RenderProps) {
 		default:
 			return <TextComment comment={comment} />;
 	}
+}
+
+function formatDuration(ms: number): string {
+	if (ms < 1000) return `${ms}ms`;
+	const seconds = Math.floor(ms / 1000);
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	const remainingSeconds = seconds % 60;
+	return `${minutes}m ${remainingSeconds}s`;
+}
+
+function ExecutionComment({ comment, companyId }: { comment: CommentData; companyId?: string }) {
+	const content = typeof comment.content === 'object' ? comment.content : {};
+	const status = content.status ?? 'unknown';
+	const statusColor = status === 'succeeded' ? 'green' : status === 'failed' ? 'red' : 'yellow';
+	const durationMs = content.duration_ms;
+	const stdoutPreview = content.stdout_preview ?? '';
+
+	return (
+		<div className="rounded-lg border border-border-subtle bg-bg-subtle p-3">
+			<div className="flex items-center gap-2 mb-1">
+				<Terminal className="w-3.5 h-3.5 text-text-muted" />
+				<Badge color={statusColor}>{status}</Badge>
+				{durationMs != null && (
+					<span className="text-xs text-text-muted">{formatDuration(durationMs)}</span>
+				)}
+				{content.exit_code != null && content.exit_code !== 0 && (
+					<span className="text-xs text-accent-red">exit: {content.exit_code}</span>
+				)}
+			</div>
+			{stdoutPreview && (
+				<pre className="text-[10px] font-mono text-text-muted bg-bg-muted rounded p-2 mt-2 max-h-16 overflow-hidden whitespace-pre-wrap">
+					{stdoutPreview}
+				</pre>
+			)}
+			{companyId && content.agent_id && content.heartbeat_run_id && (
+				<Link
+					to="/companies/$companyId/agents/$agentId/executions/$runId"
+					params={{
+						companyId,
+						agentId: content.agent_id,
+						runId: content.heartbeat_run_id,
+					}}
+					className="inline-flex items-center gap-1 text-xs text-accent-blue-text hover:underline mt-2"
+				>
+					View full log <ArrowRight className="w-3 h-3" />
+				</Link>
+			)}
+		</div>
+	);
 }
 
 function TextComment({ comment }: { comment: CommentData }) {
