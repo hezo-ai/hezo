@@ -331,4 +331,74 @@ describe('runAgent', () => {
 		expect(capturedPrompt).toContain('Review Completed Ticket');
 		expect(capturedPrompt).toContain('Comment History');
 	});
+
+	it('returns immediately when signal is already aborted', async () => {
+		const docker = createMockDocker({
+			execCreate: async () => {
+				throw new Error('should not be called');
+			},
+		});
+
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+		};
+
+		const ac = new AbortController();
+		ac.abort();
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeIssue(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.success).toBe(false);
+		expect(result.stderr).toBe('Aborted');
+		// No heartbeat run should be created since we aborted before that step
+		expect(result.heartbeatRunId).toBeUndefined();
+	});
+
+	it('records cancelled status when aborted mid-execution', async () => {
+		const ac = new AbortController();
+		const docker = createMockDocker({
+			execCreate: async () => {
+				ac.abort();
+				throw new DOMException('Aborted', 'AbortError');
+			},
+		});
+
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+		};
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeIssue(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.success).toBe(false);
+		expect(result.heartbeatRunId).toBeDefined();
+
+		// Heartbeat run should be marked as cancelled, not failed
+		const run = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe('cancelled');
+	});
 });

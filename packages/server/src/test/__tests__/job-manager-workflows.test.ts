@@ -343,8 +343,6 @@ describe('JobManager workflow methods', () => {
 			expect(manager.isTaskRunning(`agent:${agentId}`)).toBe(true);
 
 			manager.shutdown();
-			// Wait for the aborted task to settle before DB cleanup
-			await new Promise((r) => setTimeout(r, 100));
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 			await db.query(
 				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL',
