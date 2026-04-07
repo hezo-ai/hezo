@@ -25,7 +25,10 @@ function ContainerPage() {
 	const hasContainer = !!project?.container_id;
 	const isActive = isRunning || isCreating || isStopping;
 
-	const { logs, clear } = useContainerLogs(project?.id ?? '', isRunning && hasContainer && !!project?.id);
+	const { logs, clear } = useContainerLogs(
+		project?.id ?? '',
+		isRunning && hasContainer && !!project?.id,
+	);
 
 	const [autoScroll, setAutoScroll] = useState(true);
 	const logEndRef = useRef<HTMLDivElement>(null);

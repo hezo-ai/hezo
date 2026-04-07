@@ -5,7 +5,12 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../lib/types';
-import { provisionContainer, type ProjectRow, stopContainerGracefully, syncAllContainerStatuses } from '../../services/containers';
+import {
+	type ProjectRow,
+	provisionContainer,
+	stopContainerGracefully,
+	syncAllContainerStatuses,
+} from '../../services/containers';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
@@ -228,7 +233,15 @@ describe('provisionContainer broadcasting', () => {
 			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
 		).rows[0];
 
-		await provisionContainer(db, mockDocker, project, 'container-sync-co', dataDir, mockWsManager, companyId);
+		await provisionContainer(
+			db,
+			mockDocker,
+			project,
+			'container-sync-co',
+			dataDir,
+			mockWsManager,
+			companyId,
+		);
 
 		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(1);
 		const [room, event] = mockWsManager.broadcast.mock.calls[0];
@@ -258,7 +271,15 @@ describe('provisionContainer broadcasting', () => {
 		).rows[0];
 
 		await expect(
-			provisionContainer(db, mockDocker, project, 'container-sync-co', dataDir, mockWsManager, companyId),
+			provisionContainer(
+				db,
+				mockDocker,
+				project,
+				'container-sync-co',
+				dataDir,
+				mockWsManager,
+				companyId,
+			),
 		).rejects.toThrow('Image not found');
 
 		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(1);
@@ -289,7 +310,13 @@ describe('provisionContainer broadcasting', () => {
 		).rows[0];
 
 		// Should succeed without throwing, no broadcast
-		const containerId = await provisionContainer(db, mockDocker, project, 'container-sync-co', dataDir);
+		const containerId = await provisionContainer(
+			db,
+			mockDocker,
+			project,
+			'container-sync-co',
+			dataDir,
+		);
 		expect(containerId).toBe('no-ws-container');
 	});
 });
@@ -316,7 +343,14 @@ describe('stopContainerGracefully', () => {
 		const mockDocker = { stopContainer: vi.fn().mockResolvedValue(undefined) } as any;
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
-		await stopContainerGracefully(db, mockDocker, projectId, 'stop-test-container', mockWsManager, companyId);
+		await stopContainerGracefully(
+			db,
+			mockDocker,
+			projectId,
+			'stop-test-container',
+			mockWsManager,
+			companyId,
+		);
 
 		expect(mockDocker.stopContainer).toHaveBeenCalledWith('stop-test-container');
 
@@ -344,7 +378,14 @@ describe('stopContainerGracefully', () => {
 		} as any;
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
-		await stopContainerGracefully(db, mockDocker, projectId, 'fail-stop-container', mockWsManager, companyId);
+		await stopContainerGracefully(
+			db,
+			mockDocker,
+			projectId,
+			'fail-stop-container',
+			mockWsManager,
+			companyId,
+		);
 
 		const result = await db.query<{ container_status: string }>(
 			'SELECT container_status FROM projects WHERE id = $1',

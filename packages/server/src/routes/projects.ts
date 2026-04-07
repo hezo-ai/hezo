@@ -94,11 +94,17 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 		const docker = c.get('docker');
 		const dataDir = c.get('dataDir');
 		const wsManager = c.get('wsManager');
-		provisionContainer(db, docker, project as unknown as ProjectRow, companySlug, dataDir, wsManager, companyId).catch(
-			(error) => {
-				console.error(`Failed to provision container for project ${project.slug}:`, error);
-			},
-		);
+		provisionContainer(
+			db,
+			docker,
+			project as unknown as ProjectRow,
+			companySlug,
+			dataDir,
+			wsManager,
+			companyId,
+		).catch((error) => {
+			console.error(`Failed to provision container for project ${project.slug}:`, error);
+		});
 	}
 
 	return ok(c, project, 201);
@@ -309,10 +315,10 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 
 	if (!row.container_id) {
 		// No container yet (e.g. still provisioning) — just set status to stopped
-		await db.query(
-			'UPDATE projects SET container_status = $1::container_status WHERE id = $2',
-			[ContainerStatus.Stopped, projectId],
-		);
+		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
+			ContainerStatus.Stopped,
+			projectId,
+		]);
 		broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
 			id: projectId,
 			container_status: ContainerStatus.Stopped,

@@ -169,6 +169,26 @@ describe('companies CRUD', () => {
 		expect(slug2).toBe('duplicate-name-2');
 	});
 
+	it('auto-provisions a container for the operations project', async () => {
+		const res = await app.request('/api/companies', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Provision Test Co', issue_prefix: 'PTC' }),
+		});
+		expect(res.status).toBe(201);
+		const companyId = (await res.json()).data.id;
+
+		// Wait for async provisionContainer to attempt
+		await new Promise((r) => setTimeout(r, 200));
+
+		const opsProject = await db.query<{ container_status: string | null }>(
+			"SELECT container_status FROM projects WHERE company_id = $1 AND slug = 'operations'",
+			[companyId],
+		);
+		expect(opsProject.rows.length).toBe(1);
+		expect(opsProject.rows[0].container_status).not.toBeNull();
+	});
+
 	it('auto-derives issue prefix from company name', async () => {
 		const res = await app.request('/api/companies', {
 			method: 'POST',
