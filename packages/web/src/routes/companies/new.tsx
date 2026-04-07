@@ -184,7 +184,7 @@ function TemplateCard({
 		<button
 			type="button"
 			onClick={onClick}
-			className={`relative flex flex-col gap-1 rounded-lg border p-4 text-left transition-colors ${
+			className={`relative flex flex-col gap-1 rounded-lg border p-4 text-left transition-colors cursor-pointer ${
 				selected
 					? 'border-accent-blue bg-accent-blue-bg/30'
 					: 'border-border hover:border-border-hover'
@@ -204,16 +204,18 @@ function TemplateCard({
 				{agentCount > 0 && <Badge color="blue">{agentCount} agents</Badge>}
 				{isBlank && <Badge color="neutral">Includes CEO + Coach</Badge>}
 				{kbDocCount > 0 && <Badge color="green">{kbDocCount} docs</Badge>}
-				<button
-					type="button"
+				{/* biome-ignore lint/a11y/useValidAnchor: nested inside button, stopPropagation needed */}
+				<a
+					href="#see-more"
 					onClick={(e) => {
+						e.preventDefault();
 						e.stopPropagation();
 						onSeeMore();
 					}}
-					className="text-xs text-accent-blue hover:underline cursor-pointer ml-1 bg-transparent border-none p-0"
+					className="text-xs text-accent-blue hover:underline cursor-pointer ml-1"
 				>
 					see more
-				</button>
+				</a>
 			</div>
 		</button>
 	);

@@ -77,7 +77,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 							const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
 							return (
 								<Link
-									key={item.to}
+									key={`${item.to}-${JSON.stringify(item.params)}`}
 									to={item.to}
 									params={item.params ?? {}}
 									className={`block text-left text-[13px] pl-5 pr-3 py-1 rounded-radius-md transition-colors ${
