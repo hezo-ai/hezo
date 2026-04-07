@@ -165,6 +165,18 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 	);
 
 	const issue = result.rows[0] as Record<string, unknown>;
+
+	if (body.assignee_id) {
+		const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
+			body.assignee_id,
+		]);
+		if (isAgent.rows.length > 0) {
+			createWakeup(db, body.assignee_id, companyId, WakeupSource.Assignment, {
+				issue_id: issue.id as string,
+			}).catch((e) => console.error('Failed to create wakeup:', e));
+		}
+	}
+
 	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', issue);
 	auditLog(
 		db,
@@ -435,14 +447,21 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 		],
 	);
 
-	broadcastChange(
-		c,
-		`company:${companyId}`,
-		'issues',
-		'INSERT',
-		result.rows[0] as Record<string, unknown>,
-	);
-	return ok(c, result.rows[0], 201);
+	const subIssue = result.rows[0] as Record<string, unknown>;
+
+	if (body.assignee_id) {
+		const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
+			body.assignee_id,
+		]);
+		if (isAgent.rows.length > 0) {
+			createWakeup(db, body.assignee_id, companyId, WakeupSource.Assignment, {
+				issue_id: subIssue.id as string,
+			}).catch((e) => console.error('Failed to create wakeup:', e));
+		}
+	}
+
+	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', subIssue);
+	return ok(c, subIssue, 201);
 });
 
 issuesRoutes.get('/companies/:companyId/issues/:issueId/dependencies', async (c) => {
