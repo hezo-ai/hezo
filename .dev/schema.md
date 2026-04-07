@@ -13,7 +13,7 @@
 | `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget. Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
 | `company_types` | Company blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers. | Referenced by company_team_types. |
 | `company_type_agent_types` | Join table linking company types to agent types. Stores org chart hierarchy (reports_to_slug) and per-company-type config overrides (runtime type, heartbeat, budget). | belongs to company_type + agent_type |
-| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), `coach_auto_apply` (boolean), company-level budget. | Parent of everything. |
+| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), company-level budget. | Parent of everything. |
 | `company_team_types` | Many-to-many join table linking companies to the team types they were created from. | belongs to company + company_type |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
@@ -251,6 +251,19 @@ Agent-level takes precedence on name conflicts with company-level. Connected
 platform servers are added automatically — they are NOT written to the JSONB
 columns. The merged list is injected into the agent's subprocess runtime
 configuration.
+
+### Company Settings
+
+`companies.settings` is a JSONB object for company-level configuration:
+```json
+{
+  "coach_auto_apply": false
+}
+```
+
+- `coach_auto_apply` — when true, Coach-suggested system prompt improvements are auto-applied without board approval. Default false.
+
+Settings are merged on PATCH (`settings = settings || $1::jsonb`), so partial updates preserve existing keys.
 
 ### MPP (Machine Payments Protocol)
 

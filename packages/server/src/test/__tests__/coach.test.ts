@@ -280,30 +280,76 @@ describe('System prompt revision tracking', () => {
 	});
 });
 
-describe('coach_auto_apply company setting', () => {
-	it('defaults to false', async () => {
+describe('company settings JSONB', () => {
+	it('has correct default values', async () => {
 		const res = await app.request(`/api/companies/${companyId}`, {
 			headers: authHeader(boardToken),
 		});
 		const company = (await res.json()).data;
-		expect(company.coach_auto_apply).toBe(false);
+		expect(company.settings).toEqual({ coach_auto_apply: false });
 	});
 
-	it('can be toggled via PATCH', async () => {
+	it('can update coach_auto_apply via settings PATCH', async () => {
 		const res = await app.request(`/api/companies/${companyId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ coach_auto_apply: true }),
+			body: JSON.stringify({ settings: { coach_auto_apply: true } }),
 		});
 		expect(res.status).toBe(200);
 		const company = (await res.json()).data;
-		expect(company.coach_auto_apply).toBe(true);
+		expect(company.settings.coach_auto_apply).toBe(true);
 
-		// Reset
 		await app.request(`/api/companies/${companyId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ coach_auto_apply: false }),
+			body: JSON.stringify({ settings: { coach_auto_apply: false } }),
+		});
+	});
+
+	it('merges settings without clobbering existing keys', async () => {
+		await app.request(`/api/companies/${companyId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ settings: { coach_auto_apply: true } }),
+		});
+
+		const res = await app.request(`/api/companies/${companyId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ settings: { custom_key: 'hello' } }),
+		});
+		expect(res.status).toBe(200);
+		const company = (await res.json()).data;
+		expect(company.settings.coach_auto_apply).toBe(true);
+		expect(company.settings.custom_key).toBe('hello');
+
+		await app.request(`/api/companies/${companyId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ settings: { coach_auto_apply: false } }),
+		});
+	});
+
+	it('preserves settings when patching other fields', async () => {
+		await app.request(`/api/companies/${companyId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ settings: { coach_auto_apply: true } }),
+		});
+
+		const res = await app.request(`/api/companies/${companyId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ description: 'updated desc' }),
+		});
+		expect(res.status).toBe(200);
+		const company = (await res.json()).data;
+		expect(company.settings.coach_auto_apply).toBe(true);
+
+		await app.request(`/api/companies/${companyId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ settings: { coach_auto_apply: false } }),
 		});
 	});
 });

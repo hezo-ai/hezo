@@ -204,23 +204,16 @@ function TemplateCard({
 				{agentCount > 0 && <Badge color="blue">{agentCount} agents</Badge>}
 				{isBlank && <Badge color="neutral">Includes CEO + Coach</Badge>}
 				{kbDocCount > 0 && <Badge color="green">{kbDocCount} docs</Badge>}
-				<span
-					role="button"
-					tabIndex={0}
+				<button
+					type="button"
 					onClick={(e) => {
 						e.stopPropagation();
 						onSeeMore();
 					}}
-					onKeyDown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.stopPropagation();
-							onSeeMore();
-						}
-					}}
-					className="text-xs text-accent-blue hover:underline cursor-pointer ml-1"
+					className="text-xs text-accent-blue hover:underline cursor-pointer ml-1 bg-transparent border-none p-0"
 				>
 					see more
-				</span>
+				</button>
 			</div>
 		</button>
 	);

@@ -597,12 +597,11 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			);
 			if (agentCheck.rows.length === 0) return { error: 'Agent not found in this company' };
 
-			// Check if company has coach_auto_apply enabled
-			const company = await db.query<{ coach_auto_apply: boolean }>(
-				'SELECT coach_auto_apply FROM companies WHERE id = $1',
+			const company = await db.query<{ settings: Record<string, unknown> }>(
+				'SELECT settings FROM companies WHERE id = $1',
 				[args.company_id],
 			);
-			const autoApply = company.rows[0]?.coach_auto_apply ?? false;
+			const autoApply = (company.rows[0]?.settings?.coach_auto_apply as boolean) ?? false;
 
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 

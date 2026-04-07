@@ -479,7 +479,7 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **Security Engineer** — owns security posture. Reviews code for vulnerabilities, validates auth flows, audits dependencies, and ensures security best practices. Reports to Architect.
 
-**Coach** — reviews completed tickets to extract lessons learned and proposes system prompt improvements for other agents. The Coach helps the team continuously improve by identifying patterns in what worked well and what didn't. Reports to no one (independent role). The `companies.coach_auto_apply` boolean (default false) controls whether Coach-suggested system prompt improvements are auto-applied without board approval.
+**Coach** — reviews completed tickets to extract lessons learned and proposes system prompt improvements for other agents. The Coach helps the team continuously improve by identifying patterns in what worked well and what didn't. Reports to no one (independent role). The `companies.settings.coach_auto_apply` field (default false) controls whether Coach-suggested system prompt improvements are auto-applied without board approval.
 
 ### AGENTS.md — two tiers
 
@@ -2053,7 +2053,7 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `company_types` | Team type blueprints (recipes). Groups of agent types plus default KB docs, preferences. |
 | `company_type_agent_types` | Join table linking team types to agent types with org chart and config overrides. |
 | `company_team_types` | Many-to-many join table linking companies to the team types they were created from. |
-| `companies` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), budget. |
+| `companies` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), budget. |
 | `invites` | Pending invitations to join a company (7-day expiry) |
 | `api_keys` | Company-scoped API keys for external orchestrators. Stored hashed. |
 | `company_ssh_keys` | Generated SSH key pairs per company. Registered on GitHub via OAuth API. |
