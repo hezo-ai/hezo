@@ -1794,6 +1794,8 @@ all traceable in the audit log.
 ### Report Tool Calls
 
 #### `POST /issues/:issueId/comments/:commentId/tool-calls`
+**Not yet implemented.**
+
 Agent reports tool calls associated with a comment.
 
 Request:
@@ -1828,6 +1830,8 @@ debits the agent's budget atomically. If budget is exceeded, returns:
 ### Request Secret
 
 #### `POST /secrets/request`
+**Not yet implemented.**
+
 Agent requests access to a secret. Creates a pending approval.
 
 Request:
@@ -1850,6 +1854,8 @@ Response:
 ```
 
 #### `GET /secrets/mine`
+**Not yet implemented.**
+
 Agent lists secrets it currently has access to (granted, not revoked).
 
 Response:
@@ -1873,6 +1879,8 @@ via API.
 ### Self System Prompt
 
 #### `GET /self/system-prompt`
+**Not yet implemented.**
+
 Agent reads its own system prompt and agent type info.
 
 Response:
@@ -1887,6 +1895,8 @@ Response:
 ```
 
 #### `PATCH /self/system-prompt`
+**Not yet implemented.**
+
 Agent requests to update its own system prompt. Creates a `system_prompt_update` approval for board review.
 
 Request:
@@ -1914,6 +1924,8 @@ When the board approves, the system prompt is updated automatically.
 ### Request Hire
 
 #### `POST /agents/request-hire`
+**Not yet implemented.**
+
 Agent (e.g. CTO) requests to hire a new agent. Creates a pending approval.
 
 Request:
@@ -1937,6 +1949,8 @@ Request:
 ### Create Sub-Issue
 
 #### `POST /issues/:issueId/sub-issues`
+**Not yet implemented.**
+
 Agent creates a sub-issue (delegation).
 
 Request:
@@ -1958,6 +1972,8 @@ the request fails. Agents can delegate to peers (same level in the org chart) or
 ### Get Context
 
 #### `GET /context`
+**Not yet implemented.**
+
 Agent retrieves its full operational context in one call. Convenience endpoint
 that combines heartbeat data with system prompt, resolved variables, and org
 chart position.
@@ -2014,6 +2030,8 @@ Agent reads the company preferences document for its company.
 Response: full preferences object including `content`.
 
 #### `POST /company-preferences/update`
+**Not yet implemented.**
+
 Agent updates the company preferences document. No approval required. Creates a
 revision automatically. Auto-creates the preferences document if it doesn't exist.
 
@@ -2049,16 +2067,22 @@ Agent writes to `prd.md` create an approval request instead of writing the file 
 ### Knowledge Base (agent-side)
 
 #### `GET /kb-docs`
+**Not yet implemented.**
+
 Agent lists all knowledge base documents for its company.
 
 Response: array of doc metadata (same shape as board list, without content).
 
 #### `GET /kb-docs/:docId`
+**Not yet implemented.**
+
 Agent reads a full knowledge base document.
 
 Response: full doc object including `content`.
 
 #### `POST /kb-docs/propose-update`
+**Not yet implemented.**
+
 Agent proposes a new document or an edit to an existing document. Creates a
 `kb_update` approval with a diff.
 
@@ -2094,6 +2118,8 @@ The board sees the proposal in the approval inbox as a diff view (for edits)
 or a full preview (for new docs). On approval, the document is created/updated.
 
 #### `POST /plans/submit-for-review`
+**Not yet implemented.**
+
 Agent (typically Architect) submits an implementation plan for Product Lead
 review. Creates a `plan_review` approval.
 
@@ -2121,6 +2147,8 @@ The Product Lead (or any board member) reviews the plan in the approval inbox.
 On approval, the Engineer can begin implementation.
 
 #### `POST /issues/:issueId/attachments`
+**Not yet implemented.**
+
 Agent uploads a file attachment to an issue (screenshot, log, diagram, etc.).
 Multipart form data, same constraints as the board endpoint.
 
@@ -2129,37 +2157,52 @@ Multipart form data, same constraints as the board endpoint.
 ## WebSocket (real-time updates)
 
 ### `WS /ws`
-Board UI connects to receive real-time updates. Auth via user JWT or agent JWT.
 
-Server pushes events:
+Single WebSocket endpoint. Clients connect to `/ws` on the server (upgraded from HTTP). Auth via user JWT or agent JWT.
+
+### Room-based subscriptions
+
+After connecting, clients subscribe to rooms using UUIDs:
 
 ```json
-{ "type": "comment.created", "company_id": "...", "issue_id": "...", "comment": {...} }
-{ "type": "issue.updated", "company_id": "...", "issue": {...} }
-{ "type": "agent.status_changed", "company_id": "...", "agent_id": "...", "status": "active" }
-{ "type": "approval.created", "company_id": "...", "approval": {...} }
-{ "type": "approval.resolved", "company_id": "...", "approval": {...} }
-{ "type": "agent.heartbeat", "company_id": "...", "agent_id": "...", "last_heartbeat_at": "..." }
-{ "type": "budget.warning", "company_id": "...", "agent_id": "...", "percent_used": 80 }
-{ "type": "budget.exceeded", "company_id": "...", "agent_id": "...", "agent_title": "CMO" }
-{ "type": "live_chat.message", "company_id": "...", "issue_id": "...", "author": "board:alice", "text": "..." }
-{ "type": "kb_doc.updated", "company_id": "...", "doc_id": "...", "title": "..." }
-{ "type": "company_preferences.updated", "company_id": "...", "updated_by_agent_id": "..." }
-{ "type": "project_doc.created", "company_id": "...", "project_id": "...", "doc_id": "...", "doc_type": "tech_spec", "title": "..." }
-{ "type": "project_doc.updated", "company_id": "...", "project_id": "...", "doc_id": "...", "title": "..." }
-{ "type": "project_doc.deleted", "company_id": "...", "project_id": "...", "doc_id": "..." }
-{ "type": "connection.created", "company_id": "...", "platform": "github", "status": "active" }
-{ "type": "connection.expired", "company_id": "...", "platform": "gmail" }
-{ "type": "connection.disconnected", "company_id": "...", "platform": "stripe" }
-{ "type": "plan_review.submitted", "company_id": "...", "issue_id": "...", "approval_id": "..." }
-{ "type": "plan_review.approved", "company_id": "...", "issue_id": "...", "approval_id": "..." }
-{ "type": "plan_review.denied", "company_id": "...", "issue_id": "...", "approval_id": "..." }
+{ "action": "subscribe", "room": "company:<uuid>" }
+{ "action": "subscribe", "room": "issue:<uuid>" }
+{ "action": "subscribe", "room": "project:<uuid>" }
+{ "action": "unsubscribe", "room": "company:<uuid>" }
 ```
 
-Client can filter by company_id after connecting (send
-`{ "subscribe": ["company-uuid-1", "company-uuid-2"] }`).
+Room names always use UUIDs, never slugs. The frontend `useWebSocket` hook takes two params: the UUID for room subscription and the route-param slug for TanStack Query cache invalidation.
 
-In addition to system events, the WebSocket delivers row-level diffs for TanStack DB sync. Each diff message contains the table name, row ID, and changed fields, enabling optimistic UI updates without full refetches.
+### Server message types
+
+Defined in `@hezo/shared` as the `WsMessageType` enum:
+
+| Type | Description | Payload |
+|------|-------------|---------|
+| `connected` | Sent on initial connection | — |
+| `row_change` | Database row changed | `{ type, table, action, row }` where `action` is `INSERT`, `UPDATE`, or `DELETE` |
+| `chat_message` | Live chat message | `{ type, issueId, message: { id, chatId, authorMemberId, authorType, content, createdAt } }` |
+| `agent_lifecycle` | Agent status change | `{ type, memberId, status }` |
+| `container_log` | Container stdout/stderr stream | `{ type, projectId, stream, text }` where `stream` is `stdout` or `stderr` |
+| `error` | Error message | `{ type, code, message }` |
+
+### Client action types
+
+Defined in `@hezo/shared` as the `WsClientAction` enum:
+
+| Action | Description | Payload |
+|--------|-------------|---------|
+| `subscribe` | Subscribe to a room | `{ action, room }` |
+| `unsubscribe` | Unsubscribe from a room | `{ action, room }` |
+| `chat` | Send a chat message | `{ action, issueId, content, mentions? }` |
+
+### Cache invalidation
+
+`RowChange` messages trigger TanStack Query cache invalidation on the client. The frontend maps table names to query cache keys and calls `invalidateQueries`, causing affected queries to refetch. This provides real-time UI updates without requiring the server to push full data payloads.
+
+### Server-side broadcasting
+
+The server uses `broadcastChange()` for row-level changes and `broadcastEvent()` for typed events. Both broadcast to all subscribers of the relevant room (identified by UUID).
 
 ---
 
