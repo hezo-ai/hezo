@@ -615,16 +615,16 @@ Request:
   "project_id": "uuid",
   "title": "Implement WebSocket handler for real-time sync",
   "description": "We need a WebSocket handler that supports...",
-  "assignee_id": "uuid | null",
+  "assignee_id": "uuid",
   "parent_issue_id": "uuid | null",
   "priority": "urgent",
   "labels": ["backend", "collab"]
 }
 ```
 
-`project_id` is required (enforced). `number` is auto-assigned via
-`next_issue_number()`. If `assignee_id` is set to an agent, the agent receives
-an event trigger. If set to a board member, they are notified via inbox and
+`project_id` and `assignee_id` are required (enforced). `number` is auto-assigned via
+`next_issue_number()`. If the assignee is an agent, the agent receives
+an event trigger. If a board member, they are notified via inbox and
 configured messaging channels.
 
 #### `GET /companies/:companyId/issues/:issueId`
@@ -659,6 +659,7 @@ Response: full issue object + computed fields:
 #### `PATCH /companies/:companyId/issues/:issueId`
 Update issue fields: title, description, status, priority, assignee_id, labels, rules, progress_summary.
 
+`assignee_id` cannot be set to null — every issue must have an assignee.
 Changing `assignee_id` triggers an event on the newly assigned agent, or a notification to the newly assigned board member.
 Changing `status` to `done` or `closed` triggers preview cleanup.
 
@@ -1943,14 +1944,14 @@ Request:
 {
   "title": "Write unit tests for WebSocket reconnection",
   "description": "...",
-  "assignee_id": "uuid | null",
+  "assignee_id": "uuid",
   "priority": "high"
 }
 ```
 
-`project_id` is inherited from the parent issue. If `assignee_id` is set to an
-agent outside the creating agent's delegation scope, the request fails. Agents
-can delegate to peers (same level in the org chart) or downward.
+`project_id` is inherited from the parent issue. `assignee_id` is required. If
+`assignee_id` is set to an agent outside the creating agent's delegation scope,
+the request fails. Agents can delegate to peers (same level in the org chart) or downward.
 
 ---
 
@@ -2242,7 +2243,7 @@ Streamable HTTP MCP endpoint. Uses `@modelcontextprotocol/sdk` with the `McpServ
 | `list_companies` | List all companies | — |
 | `create_company` | Create a new company | `name`, `mission` |
 | `list_issues` | List issues with filtering | `company_id`, `project_id?`, `status?`, `assignee?` |
-| `create_issue` | Create a new issue | `company_id`, `project_id`, `title`, `description?`, `priority?` |
+| `create_issue` | Create a new issue | `company_id`, `project_id`, `title`, `assignee_id`, `description?`, `priority?` |
 | `update_issue` | Update an issue | `issue_id`, `status?`, `assignee?`, `priority?` |
 | `list_agents` | List agents in a company | `company_id` |
 | `hire_agent` | Create a new agent | `company_id`, `title`, `role_description`, `reports_to?` |

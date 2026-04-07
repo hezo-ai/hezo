@@ -404,33 +404,17 @@ function IssueDetailPage() {
 						onClick={() => setAssigneeOpen((o) => !o)}
 						className="flex items-center gap-1 w-full text-left text-[13px] text-text rounded-radius-md hover:bg-bg-subtle px-1 py-0.5 transition-colors"
 					>
-						{assignedAgent ? (
-							<AgentStatusLabel
-								name={assignedAgent.title}
-								runtimeStatus={assignedAgent.runtime_status}
-								className="flex-1 min-w-0"
-							/>
-						) : (
-							<span className="flex-1 text-text-muted">Unassigned</span>
-						)}
+						<AgentStatusLabel
+							name={assignedAgent?.title ?? '—'}
+							runtimeStatus={assignedAgent?.runtime_status ?? 'idle'}
+							className="flex-1 min-w-0"
+						/>
 						<ChevronDown
 							className={`w-3.5 h-3.5 text-text-subtle shrink-0 transition-transform ${assigneeOpen ? 'rotate-180' : ''}`}
 						/>
 					</button>
 					{assigneeOpen && (
 						<div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-radius-md border border-border bg-bg shadow-md max-h-48 overflow-y-auto">
-							<button
-								type="button"
-								onClick={() => {
-									updateIssue.mutate({ assignee_id: null });
-									setAssigneeOpen(false);
-								}}
-								className={`flex items-center w-full px-2.5 py-1.5 text-xs text-left hover:bg-bg-subtle transition-colors ${
-									!issue.assignee_id ? 'bg-bg-subtle font-medium' : 'text-text-muted'
-								}`}
-							>
-								Unassigned
-							</button>
 							{agents
 								?.filter((a) => a.admin_status !== 'terminated')
 								.map((a) => (

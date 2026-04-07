@@ -219,7 +219,7 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			title: z.string().describe('Issue title'),
 			description: z.string().optional().describe('Issue description'),
 			priority: z.string().optional().describe('Priority: low, medium, high, urgent'),
-			assignee_id: z.string().optional().describe('Assignee member ID'),
+			assignee_id: z.string().describe('Assignee member ID (required)'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -241,7 +241,7 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 				[
 					args.company_id,
 					args.project_id,
-					args.assignee_id ?? null,
+					args.assignee_id,
 					num,
 					identifier,
 					args.title,
@@ -266,7 +266,7 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			description: z.string().optional().describe('New description'),
 			status: z.string().optional().describe('New status'),
 			priority: z.string().optional().describe('New priority'),
-			assignee_id: z.string().optional().describe('New assignee ID (null to unassign)'),
+			assignee_id: z.string().optional().describe('New assignee ID'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);

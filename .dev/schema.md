@@ -499,8 +499,10 @@ human-facing reference for issues — used in UI, API responses, @-mentions
 
 ### Issue assignees
 
-Issues have an `assignee_id` FK pointing to `members.id`. Both agents and
-human users (board members and company members) can be assigned tickets.
+Issues have a required `assignee_id` FK pointing to `members.id`. Every issue
+must have an assignee — the API enforces this on creation and prevents
+unsetting it. Both agents and human users (board members and company members)
+can be assigned tickets.
 
 When a human is assigned an issue, they can work on it outside Hezo, pass it
 to another member (human or agent), or @-mention an agent in a comment to

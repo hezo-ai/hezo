@@ -1,6 +1,7 @@
 import { AgentAdminStatus } from '@hezo/shared';
 import { useAgents } from '../hooks/use-agents';
 import { useUiState, useUpdateUiState } from '../hooks/use-ui-state';
+import { AgentStatusLabel } from './agent-status-label';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 
 interface CompanySidebarProps {
@@ -41,7 +42,7 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 			children: activeAgents.map((agent) => ({
 				to: '/companies/$companyId/agents/$agentId',
 				params: { companyId, agentId: agent.id },
-				label: agent.title,
+				label: <AgentStatusLabel name={agent.title} runtimeStatus={agent.runtime_status} />,
 			})),
 		},
 		{

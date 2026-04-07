@@ -3,7 +3,7 @@ import { Link, useMatchRoute } from '@tanstack/react-router';
 interface SidebarNavItem {
 	to: string;
 	params?: Record<string, string>;
-	label: string;
+	label: React.ReactNode;
 	count?: number;
 }
 

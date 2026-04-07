@@ -44,23 +44,21 @@ beforeAll(async () => {
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
-		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ project_id: projectId, title: 'Agent Test Issue' }),
-	});
-	issueId = (await issueRes.json()).data.id;
-
 	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
 		headers: authHeader(boardToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
-		method: 'PATCH',
+	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ assignee_id: agentId }),
+		body: JSON.stringify({
+			project_id: projectId,
+			title: 'Agent Test Issue',
+			assignee_id: agentId,
+		}),
 	});
+	issueId = (await issueRes.json()).data.id;
 
 	masterKeyManager = ctx.masterKeyManager;
 	agentToken = await signAgentJwt(masterKeyManager, agentId, companyId);

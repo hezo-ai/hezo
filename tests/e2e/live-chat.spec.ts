@@ -25,9 +25,15 @@ async function createCompanyWithIssue(page: Page) {
 	});
 	const project = (await projectRes.json()).data;
 
+	const agentRes = await page.request.post(`/api/companies/${company.id}/agents`, {
+		headers,
+		data: { title: 'Chat Agent' },
+	});
+	const agent = (await agentRes.json()).data;
+
 	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
 		headers,
-		data: { project_id: project.id, title: 'Chat Test Issue' },
+		data: { project_id: project.id, title: 'Chat Test Issue', assignee_id: agent.id },
 	});
 	const issue = (await issueRes.json()).data;
 

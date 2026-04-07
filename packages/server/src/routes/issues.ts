@@ -128,6 +128,9 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 	if (!body.project_id || !body.title?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'project_id and title are required', 400);
 	}
+	if (!body.assignee_id) {
+		return err(c, 'INVALID_REQUEST', 'assignee_id is required', 400);
+	}
 
 	const companyResult = await db.query<{ issue_prefix: string }>(
 		'SELECT issue_prefix FROM companies WHERE id = $1',
@@ -278,6 +281,9 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		idx++;
 	}
 	if (body.assignee_id !== undefined) {
+		if (body.assignee_id === null) {
+			return err(c, 'INVALID_REQUEST', 'assignee_id cannot be null', 400);
+		}
 		sets.push(`assignee_id = $${idx}`);
 		params.push(body.assignee_id);
 		idx++;
@@ -414,6 +420,9 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 
 	if (!body.title?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'title is required', 400);
+	}
+	if (!body.assignee_id) {
+		return err(c, 'INVALID_REQUEST', 'assignee_id is required', 400);
 	}
 
 	const companyResult = await db.query<{ issue_prefix: string }>(

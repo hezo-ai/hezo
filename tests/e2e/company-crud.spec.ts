@@ -20,14 +20,12 @@ test('can create a company with Startup template and see auto-created agents', a
 	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
 
 	// Navigate to agents and verify auto-created agents are visible
-	await page.getByRole('link', { name: 'Team' }).click();
-	await expect(page.getByRole('link', { name: 'Team', exact: true })).toBeVisible({
-		timeout: 5000,
-	});
+	await page.getByRole('link', { name: 'All agents' }).click();
 
-	await expect(page.getByText('CEO')).toBeVisible({ timeout: 5000 });
-	await expect(page.getByText('Product Lead')).toBeVisible({ timeout: 5000 });
-	await expect(page.getByText('QA Engineer')).toBeVisible({ timeout: 5000 });
+	const main = page.getByRole('main');
+	await expect(main.getByText('CEO')).toBeVisible({ timeout: 5000 });
+	await expect(main.getByText('Product Lead')).toBeVisible({ timeout: 5000 });
+	await expect(main.getByText('QA Engineer')).toBeVisible({ timeout: 5000 });
 });
 
 test('new company page shows template selection', async ({ page }) => {
@@ -62,7 +60,8 @@ test('Blank template shows built-in agents note and creates CEO/Coach', async ({
 	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
 
 	// Navigate to Team and verify CEO and Coach exist
-	await page.getByRole('link', { name: 'Team' }).click();
-	await expect(page.getByText('CEO')).toBeVisible({ timeout: 5000 });
-	await expect(page.getByText('Coach')).toBeVisible({ timeout: 5000 });
+	await page.getByRole('link', { name: 'All agents' }).click();
+	const main = page.getByRole('main');
+	await expect(main.getByText('CEO')).toBeVisible({ timeout: 5000 });
+	await expect(main.getByText('Coach')).toBeVisible({ timeout: 5000 });
 });
