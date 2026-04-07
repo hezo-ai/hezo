@@ -255,7 +255,7 @@ Backend:
 
 UI:
 - WebSocket connection from browser to server
-- TanStack DB migration — replace TanStack Query polling with TanStack DB backed by WebSocket row-level diffs for all entity types
+- WebSocket real-time migration — replace TanStack Query polling with WebSocket-triggered cache invalidation for all entity types
 - Live Chat panel on issue detail — real-time agent conversation, session persistence across reloads
 - Tool call trace rendering — expandable trace blocks in issue comments
 - HTML preview rendering — iframe or proxy route for agent-generated previews
@@ -555,13 +555,14 @@ UI:
 |-------|-------|----------------|
 | 0 | Hezo Connect | Standalone GitHub OAuth relay, independently testable |
 | 1 | Foundation | Hono + PGlite + migrations + master key + CLI |
-| 2 | Core CRUD | Companies (with types), agents (all 9), issues, projects — all via REST |
+| 2 | Core CRUD | Companies (with types), agents (all 11), issues, projects — all via REST |
 | 3 | GitHub Integration | OAuth flow, token storage, repo validation and cloning |
 | 3.5 | UI Foundation + Core Screens | React app with all CRUD screens for Phases 0–3 APIs, master key gate, board inbox |
 | 4 | Agent Execution + UI | Docker per project, subprocesses, heartbeats, budgets + agent status UI, cost views |
-| 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack DB migration, live chat, real-time updates |
+| 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack Query, live chat, real-time updates |
 | 6 | MCP + Skill File + Binary Build | MCP endpoint, skill file + `bun build --compile` single binary, Playwright E2E |
 | 6.5 | Auth + Session Compaction | Custom OAuth auth (board members only), session compaction + login page, account settings |
+| 6.6 | UI Redesign + Agent Onboarding | Company icon rail, unified side menu, tab-based project view, agent onboarding via CEO |
 | 6.7 | Job Manager + Audit Log Navigation | cron-async job manager, container sync, audit log route |
 | 7 | Multi-User Roles + Invites | Member roles, scoped permissions, email invites + member management UI |
 | 8 | Adapters + Plugins + UI | Gemini/Codex adapters, plugin system + plugin management UI, runtime selector |

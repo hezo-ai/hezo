@@ -34,6 +34,7 @@ import { projectsRoutes } from './routes/projects';
 import { reposRoutes } from './routes/repos';
 import { secretsRoutes } from './routes/secrets';
 import { skillsRoutes } from './routes/skills';
+import { uiStateRoutes } from './routes/ui-state';
 import { DockerClient } from './services/docker';
 import { JobManager } from './services/job-manager';
 import { WebSocketManager } from './services/ws';
@@ -196,6 +197,7 @@ export function buildApp(
 	app.route('/api', kbDocsRoutes);
 	app.route('/api', skillsRoutes);
 	app.route('/api', preferencesRoutes);
+	app.route('/api', uiStateRoutes);
 	app.route('/api', projectDocsRoutes);
 	app.route('/api', connectionsRoutes);
 	app.route('/api', reposRoutes);
