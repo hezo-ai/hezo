@@ -347,16 +347,12 @@ async function buildCoachReviewPrompt(
 	return parts.join('\n');
 }
 
-async function createHeartbeatRun(
-	db: PGlite,
-	agent: AgentInfo,
-	_issue: IssueInfo,
-): Promise<string> {
+async function createHeartbeatRun(db: PGlite, agent: AgentInfo, issue: IssueInfo): Promise<string> {
 	const result = await db.query<{ id: string }>(
-		`INSERT INTO heartbeat_runs (member_id, company_id, status)
-		 VALUES ($1, $2, $3::heartbeat_run_status)
+		`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status)
+		 VALUES ($1, $2, $3, $4::heartbeat_run_status)
 		 RETURNING id`,
-		[agent.id, agent.company_id, HeartbeatRunStatus.Running],
+		[agent.id, agent.company_id, issue.id, HeartbeatRunStatus.Running],
 	);
 	return result.rows[0].id;
 }

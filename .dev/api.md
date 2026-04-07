@@ -16,17 +16,26 @@ Timestamps are ISO 8601. IDs are UUIDs. Money is in cents.
 
 Three auth methods:
 
+### Bootstrap — Master Key Exchange
+
+`POST /auth/token` exchanges the master key for a board JWT. This is the bootstrap endpoint for initial access.
+
+Request:
+```json
+{ "master_key": "..." }
+```
+
+Response:
+```json
+{ "data": { "token": "<user_jwt>" } }
+```
+
 ### Board — User JWT
-Stateless JWT signed with the master key. Issued after GitHub/GitLab OAuth login.
-Required for all human users. No session cookies.
+
+All subsequent requests use a stateless JWT signed with the master key. No session cookies.
 
 ```
 Authorization: Bearer <user_jwt>
-```
-
-User JWTs contain:
-```json
-{ "user_id": "...", "email": "...", "iat": ..., "exp": ... }
 ```
 
 ### Board — API key (remote orchestrators)
@@ -82,7 +91,7 @@ Response:
     {
       "id": "uuid",
       "name": "NoteGenius AI",
-      "mission": "Build the #1 AI note-taking app",
+      "description": "Build the #1 AI note-taking app",
       "agent_count": 6,
       "open_issue_count": 14,
       "total_budget_cents": 24000,
@@ -95,44 +104,29 @@ Response:
 ```
 
 #### `POST /companies`
-Create a company. Optionally seed from one or more team types.
+Create a company. Optionally seed from a template.
 
 Request:
 ```json
 {
   "name": "NoteGenius AI",
-  "mission": "Build the #1 AI note-taking app",
-  "team_type_ids": ["uuid", "uuid"]
+  "description": "Build the #1 AI note-taking app",
+  "template_id": "uuid",
+  "issue_prefix": "NOTE"
 }
 ```
 
-`team_type_ids` is optional. When set, agents are provisioned from all selected team types with automatic deduplication — if the same agent type appears in multiple team types, the first occurrence (by array order) wins and subsequent duplicates are skipped. The company-to-team-type associations are stored in the `company_team_types` join table.
-
-Each team type contributes:
-- Agent configurations (titles, prompts, org chart, runtimes, budgets)
-- Knowledge base documents
-- Company-level MCP server config
-- MPP config structure (wallet keys must be set up fresh)
-
-Not copied: projects, repos, issues, secrets, costs, audit log, API keys.
+`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). `issue_prefix` is optional and defaults to an auto-generated prefix from the company name.
 
 Response: full company object. On creation, the server automatically:
 
 1. Creates `~/.hezo/companies/{slug}/` folder structure with auto-generated AGENTS.md.
-2. Creates agent team from selected team types (deduplicated). The UI defaults to "Software Development" pre-selected.
-3. Creates a **"Setup" project** with an onboarding issue assigned to the CEO:
-   *"Set up repository access — configure deploy keys for connected GitHub account."*
-4. Generates an SSH key pair for the company and registers it on the connected GitHub account.
+2. Creates agent team from the selected template. The UI defaults to "Software Development" pre-selected.
+3. Creates an **"Operations" project** and auto-provisions its container.
 
-Docker container provisioning happens when the first project is created, not at company creation.
+Docker container provisioning for the Operations project happens at company creation. Other project containers are provisioned when those projects are created.
 
-The UI then prompts the owner to connect platforms via OAuth (Hezo Connect):
-- **GitHub** (required) — for repo access, PRs, Actions
-- **Gmail** (recommended) — for agent email
-- Other platforms optional: Stripe, PostHog, Railway, Vercel, DigitalOcean, X, GitLab
-
-Connections can be added or removed later in company settings.
-The board lands on a company with 9 agents and one actionable issue.
+The board lands on a company with 11 agents.
 
 #### `GET /companies/:companyId`
 Get company detail.
@@ -146,7 +140,8 @@ Request:
 ```json
 {
   "name": "NoteGenius AI",
-  "mission": "Updated mission statement",
+  "description": "Updated description",
+  "settings": { "coach_auto_apply": true },
   "mcp_servers": [
     { "name": "slack", "url": "https://mcp.slack.com/sse", "description": "Team Slack" }
   ],
@@ -281,7 +276,7 @@ Delete a custom agent type. Built-in types cannot be deleted (returns 403).
 #### `GET /companies/:companyId/agents`
 List agents for a company.
 
-Query params: `?status=active,idle`
+Query params: `?admin_status=enabled,disabled,terminated`
 
 Response:
 ```json
@@ -384,7 +379,16 @@ Enable a disabled agent.
 Terminate an agent. Kills the agent's subprocess. Unassigns all issues.
 Agent record is kept for audit trail (admin_status = `terminated`).
 
-#### `POST /companies/:companyId/projects/:projectId/rebuild-container`
+#### `GET /companies/:companyId/agents/:agentId/heartbeat-runs`
+Get agent execution history (last 20 runs). Returns recent heartbeat invocations with timing and status.
+
+#### `POST /companies/:companyId/projects/:projectId/container/start`
+Start the project container. No-op if already running.
+
+#### `POST /companies/:companyId/projects/:projectId/container/stop`
+Gracefully stop the project container. Stops all agent subprocesses in this project.
+
+#### `POST /companies/:companyId/projects/:projectId/container/rebuild`
 Tear down and rebuild the project's Docker container. Kills all agent subprocesses
 in this project, destroys the container, provisions a new one. Useful when base
 image or dependency config changes. All agents keep their identity and config.
@@ -611,16 +615,16 @@ Request:
   "project_id": "uuid",
   "title": "Implement WebSocket handler for real-time sync",
   "description": "We need a WebSocket handler that supports...",
-  "assignee_id": "uuid | null",
+  "assignee_id": "uuid",
   "parent_issue_id": "uuid | null",
   "priority": "urgent",
   "labels": ["backend", "collab"]
 }
 ```
 
-`project_id` is required (enforced). `number` is auto-assigned via
-`next_issue_number()`. If `assignee_id` is set to an agent, the agent receives
-an event trigger. If set to a board member, they are notified via inbox and
+`project_id` and `assignee_id` are required (enforced). `number` is auto-assigned via
+`next_issue_number()`. If the assignee is an agent, the agent receives
+an event trigger. If a board member, they are notified via inbox and
 configured messaging channels.
 
 #### `GET /companies/:companyId/issues/:issueId`
@@ -637,7 +641,7 @@ Response: full issue object + computed fields:
     "project_id": "uuid",
     "project_name": "Backend API",
     "project_goal": "Ship collaboration features",
-    "company_mission": "Build the #1 AI note-taking app",
+    "company_description": "Build the #1 AI note-taking app",
     "assignee_id": "uuid",
     "assignee_name": "Dev Engineer",
     "parent_issue_id": null,
@@ -655,6 +659,7 @@ Response: full issue object + computed fields:
 #### `PATCH /companies/:companyId/issues/:issueId`
 Update issue fields: title, description, status, priority, assignee_id, labels, rules, progress_summary.
 
+`assignee_id` cannot be set to null — every issue must have an assignee.
 Changing `assignee_id` triggers an event on the newly assigned agent, or a notification to the newly assigned board member.
 Changing `status` to `done` or `closed` triggers preview cleanup.
 
@@ -715,7 +720,7 @@ Response:
         "label": "Auth flow mockup",
         "description": "Interactive prototype of the login/signup flow"
       },
-      "preview_url": "/preview/company-uuid/project-uuid/agent-uuid/auth-flow-mockup.html",
+      "preview_url": "/api/companies/company-uuid/projects/project-uuid/preview/auth-flow-mockup.html",
       "tool_calls": [],
       "created_at": "..."
     }
@@ -820,6 +825,8 @@ Request:
 plaintext.
 
 #### `PATCH /companies/:companyId/secrets/:secretId`
+**Not yet implemented — planned for Phase 7+.**
+
 Update a secret's value or category. Rotating a value does not revoke existing
 grants.
 
@@ -840,6 +847,8 @@ lose access on next subprocess invocation.
 ### Secret Grants
 
 #### `GET /companies/:companyId/secrets/:secretId/grants`
+**Not yet implemented — planned for Phase 7+.**
+
 List grants for a secret.
 
 Response:
@@ -910,23 +919,27 @@ Response:
 }
 ```
 
-#### `POST /approvals/:approvalId/resolve`
-Approve or deny.
+#### `POST /companies/:companyId/approvals/:approvalId/approve`
+Approve a pending approval.
 
 Request:
 ```json
 {
-  "status": "approved",
-  "resolution_note": "Approved for project scope",
-  "grant_scope": "project"
+  "resolution_note": "Approved for project scope"
 }
 ```
 
-`grant_scope` is only relevant for `secret_access` approvals. When approved,
-the system creates the grant(s) and injects the secret(s) into the agent's
-subprocess on next invocation.
+When approved, side effects depend on approval type: `secret_access` approvals create grants, `hire` approvals trigger agent creation, etc.
 
-For `hire` approvals, approval triggers agent creation.
+#### `POST /companies/:companyId/approvals/:approvalId/deny`
+Deny a pending approval.
+
+Request:
+```json
+{
+  "resolution_note": "Not needed at this time"
+}
+```
 
 ---
 
@@ -1079,8 +1092,9 @@ Response:
 
 ### Previews (proxy)
 
-#### `GET /preview/:companyId/:projectId/:agentId/:filename`
-Serves a preview file from the agent's preview directory.
+#### `GET /companies/:companyId/projects/:projectId/preview/*`
+Serves static files from the project container workspace. The wildcard path
+maps to a file within the container's working directory.
 
 Headers on response:
 ```
@@ -1090,7 +1104,7 @@ Cache-Control: no-store
 ```
 
 Returns 404 if file doesn't exist. Returns 403 if the requesting user doesn't
-have board access to the company. Filenames are sanitized (no path traversal).
+have board access to the company. Paths are sanitized (no path traversal).
 
 ---
 
@@ -1130,12 +1144,12 @@ Request:
 
 `slug` is auto-derived from the title (lowercased, spaces → hyphens).
 
-#### `GET /companies/:companyId/kb-docs/:docId`
+#### `GET /companies/:companyId/kb-docs/:slug`
 Get full document content.
 
 Response: full doc object including `content` field.
 
-#### `PATCH /companies/:companyId/kb-docs/:docId`
+#### `PATCH /companies/:companyId/kb-docs/:slug`
 Update a document (board action). Direct edits by the board do not require
 approval.
 
@@ -1147,8 +1161,41 @@ Request:
 }
 ```
 
-#### `DELETE /companies/:companyId/kb-docs/:docId`
+#### `DELETE /companies/:companyId/kb-docs/:slug`
 Delete a knowledge base document.
+
+---
+
+### Skills
+
+#### `GET /companies/:companyId/skills`
+List the skills manifest for a company. Returns all installed skills with metadata.
+
+#### `GET /companies/:companyId/skills/:slug`
+Get a skill's content by slug.
+
+#### `POST /companies/:companyId/skills`
+Add or download a skill.
+
+Request:
+```json
+{
+  "name": "Code Review",
+  "source_url": "https://example.com/skills/code-review",
+  "description": "Automated code review skill"
+}
+```
+
+`source_url` is the remote source to download from. `description` is optional.
+
+#### `PATCH /companies/:companyId/skills/:slug`
+Update skill metadata.
+
+#### `DELETE /companies/:companyId/skills/:slug`
+Remove a skill.
+
+#### `POST /companies/:companyId/skills/:slug/sync`
+Sync a skill from its source URL, pulling the latest version.
 
 ---
 
@@ -1264,62 +1311,44 @@ Request:
 ### Live Chat
 
 Each issue has a **persistent live chat** — one ongoing conversation per issue, always
-available. The assigned agent is always a participant. Board members can @-mention any
-other agent to pull them in.
+available. The chat is auto-created with the issue, no sessions or setup required. The assigned agent is always a participant. Board members can @-mention any other agent to pull them in.
 
-#### `GET /companies/:companyId/issues/:issueId/live-chat`
-Get the live chat for this issue (transcript, participants, metadata).
-The chat is auto-created when the issue is created — no "start" step needed.
-
-Response:
-```json
-{
-  "data": {
-    "id": "uuid",
-    "issue_id": "uuid",
-    "assigned_agent_id": "uuid",
-    "active_agents": ["uuid-architect", "uuid-engineer"],
-    "message_count": 24,
-    "transcript": [
-      { "author": "board:alice", "text": "What auth strategy do you recommend?", "timestamp": "..." },
-      { "author": "agent:architect", "text": "For this API-first product, I'd suggest JWT...", "timestamp": "..." },
-      { "author": "board:alice", "text": "@engineer can you estimate effort for this?", "timestamp": "..." },
-      { "author": "agent:engineer", "text": "JWT with refresh tokens — about 2 phases...", "timestamp": "..." }
-    ],
-    "created_at": "..."
-  }
-}
-```
+#### `GET /companies/:companyId/issues/:issueId/chat/messages`
+Get chat messages for this issue.
 
 Query params:
 - `?after=<timestamp>` — only messages after this timestamp (for polling/pagination)
 - `?limit=50` — max messages to return (default 50, from most recent)
 
-#### `WS /ws/live-chat/:issueId`
-Real-time WebSocket for the issue's live chat. Board members and agents connect
-to send and receive messages.
-
-Send a message:
+Response:
 ```json
-{ "type": "message", "text": "What auth strategy do you recommend?" }
+{
+  "data": [
+    { "id": "uuid", "author": "board:alice", "content": "What auth strategy do you recommend?", "created_at": "..." },
+    { "id": "uuid", "author": "agent:architect", "content": "For this API-first product, I'd suggest JWT...", "created_at": "..." }
+  ]
+}
 ```
 
-@-mention an agent to pull them in:
+#### `POST /companies/:companyId/issues/:issueId/chat/messages`
+Post a chat message. The server detects @-mentions, wakes the mentioned agent
+immediately, and adds them to the chat.
+
+Request:
 ```json
-{ "type": "message", "text": "@architect what do you think about this approach?" }
+{
+  "content": "What auth strategy do you recommend?",
+  "mentions": ["architect"]
+}
 ```
 
-The server detects @-mentions, wakes the mentioned agent immediately, and adds
-them to the chat. Messages are appended to the transcript in real time.
-
-Agent tool call notifications:
-```json
-{ "type": "tool_call", "agent": "engineer", "tool_name": "bash", "status": "success", "summary": "npm test — 42 passed" }
-```
+`mentions` is optional. When present, the server wakes the mentioned agents by slug.
 
 ---
 
 ### File Attachments
+
+**Not yet implemented — planned for Phase 7+.**
 
 #### `GET /companies/:companyId/issues/:issueId/attachments`
 List file attachments for an issue.
@@ -1365,6 +1394,8 @@ Remove a file attachment from an issue. The underlying asset is deleted.
 ---
 
 ### Plugins
+
+**Not yet implemented — planned for Phase 8+.**
 
 #### `GET /plugins/registry`
 Browse and search the centralized plugin registry at plugins.hezo.ai.
@@ -1431,17 +1462,20 @@ List installed plugins for a company.
 
 ### Auth & Team
 
+Current auth uses `POST /auth/token` to exchange the master key for a board JWT (see Authentication section above). OAuth login (GitHub/GitLab) is planned for Phase 6.5.
+
+**OAuth login endpoints — not yet implemented — planned for Phase 6.5.**
+
 #### `GET /auth/github`
-Initiate GitHub OAuth login. Redirects to Hezo Connect which handles the OAuth flow. On success, creates or updates the user account and returns a signed user JWT.
+Initiate GitHub OAuth login.
 
 #### `GET /auth/gitlab`
-Initiate GitLab OAuth login. Same flow as GitHub.
+Initiate GitLab OAuth login.
 
 #### `GET /auth/callback`
-OAuth callback endpoint. Receives tokens from Hezo Connect, creates/updates user, issues a user JWT, redirects to the app with the token.
+OAuth callback endpoint.
 
-#### `POST /auth/logout`
-End the current session. Client discards the JWT.
+**Invite endpoints — not yet implemented — planned for Phase 7+.**
 
 #### `POST /companies/:companyId/invites`
 Invite a new member to the company. Board-only.
@@ -1477,6 +1511,8 @@ The invite code can be shared out-of-band (email, chat, etc.).
 
 #### `POST /invites/:code/accept`
 Accept an invite and join the company. Requires authentication (user JWT). The invite's role, title, permissions, and project scope are copied to a new member_users row.
+
+**Member management endpoints — not yet implemented — planned for Phase 7+.**
 
 #### `GET /companies/:companyId/members`
 List all members of a company.
@@ -1529,6 +1565,8 @@ Request:
 
 ### Board Inbox
 
+**Not yet implemented — planned for Phase 7+.**
+
 #### `GET /companies/:companyId/inbox`
 Aggregated notifications. Board members see all items (approvals, escalations, budget alerts, design reviews, etc.). Members see only items relevant to their assigned issues and project scope.
 
@@ -1561,6 +1599,8 @@ Dismiss an inbox item. Sets `dismissed_at`.
 
 ### Notification Preferences
 
+**Not yet implemented — planned for Phase 7+.**
+
 #### `GET /users/me/notification-preferences`
 List notification preferences for all channels.
 
@@ -1590,6 +1630,8 @@ Update notification preferences. Accepts an array of channel configs. Upserts by
 
 ### Slack Connection
 
+**Not yet implemented — planned for Phase 7+.**
+
 #### `GET /companies/:companyId/slack-connection`
 Get Slack connection status for a company.
 
@@ -1611,6 +1653,8 @@ Disconnect Slack from a company. Revokes the bot token secret.
 ---
 
 ### Webhooks
+
+**Not yet implemented — planned for Phase 7+.**
 
 #### `POST /webhooks/slack`
 Receives Slack Events API payloads. Handles interactive messages (approvals), slash commands, and channel messages directed at agents.
@@ -1750,6 +1794,8 @@ all traceable in the audit log.
 ### Report Tool Calls
 
 #### `POST /issues/:issueId/comments/:commentId/tool-calls`
+**Not yet implemented.**
+
 Agent reports tool calls associated with a comment.
 
 Request:
@@ -1784,6 +1830,8 @@ debits the agent's budget atomically. If budget is exceeded, returns:
 ### Request Secret
 
 #### `POST /secrets/request`
+**Not yet implemented.**
+
 Agent requests access to a secret. Creates a pending approval.
 
 Request:
@@ -1806,6 +1854,8 @@ Response:
 ```
 
 #### `GET /secrets/mine`
+**Not yet implemented.**
+
 Agent lists secrets it currently has access to (granted, not revoked).
 
 Response:
@@ -1829,6 +1879,8 @@ via API.
 ### Self System Prompt
 
 #### `GET /self/system-prompt`
+**Not yet implemented.**
+
 Agent reads its own system prompt and agent type info.
 
 Response:
@@ -1843,6 +1895,8 @@ Response:
 ```
 
 #### `PATCH /self/system-prompt`
+**Not yet implemented.**
+
 Agent requests to update its own system prompt. Creates a `system_prompt_update` approval for board review.
 
 Request:
@@ -1870,6 +1924,8 @@ When the board approves, the system prompt is updated automatically.
 ### Request Hire
 
 #### `POST /agents/request-hire`
+**Not yet implemented.**
+
 Agent (e.g. CTO) requests to hire a new agent. Creates a pending approval.
 
 Request:
@@ -1893,6 +1949,8 @@ Request:
 ### Create Sub-Issue
 
 #### `POST /issues/:issueId/sub-issues`
+**Not yet implemented.**
+
 Agent creates a sub-issue (delegation).
 
 Request:
@@ -1900,20 +1958,22 @@ Request:
 {
   "title": "Write unit tests for WebSocket reconnection",
   "description": "...",
-  "assignee_id": "uuid | null",
+  "assignee_id": "uuid",
   "priority": "high"
 }
 ```
 
-`project_id` is inherited from the parent issue. If `assignee_id` is set to an
-agent outside the creating agent's delegation scope, the request fails. Agents
-can delegate to peers (same level in the org chart) or downward.
+`project_id` is inherited from the parent issue. `assignee_id` is required. If
+`assignee_id` is set to an agent outside the creating agent's delegation scope,
+the request fails. Agents can delegate to peers (same level in the org chart) or downward.
 
 ---
 
 ### Get Context
 
 #### `GET /context`
+**Not yet implemented.**
+
 Agent retrieves its full operational context in one call. Convenience endpoint
 that combines heartbeat data with system prompt, resolved variables, and org
 chart position.
@@ -1970,6 +2030,8 @@ Agent reads the company preferences document for its company.
 Response: full preferences object including `content`.
 
 #### `POST /company-preferences/update`
+**Not yet implemented.**
+
 Agent updates the company preferences document. No approval required. Creates a
 revision automatically. Auto-creates the preferences document if it doesn't exist.
 
@@ -2005,16 +2067,22 @@ Agent writes to `prd.md` create an approval request instead of writing the file 
 ### Knowledge Base (agent-side)
 
 #### `GET /kb-docs`
+**Not yet implemented.**
+
 Agent lists all knowledge base documents for its company.
 
 Response: array of doc metadata (same shape as board list, without content).
 
 #### `GET /kb-docs/:docId`
+**Not yet implemented.**
+
 Agent reads a full knowledge base document.
 
 Response: full doc object including `content`.
 
 #### `POST /kb-docs/propose-update`
+**Not yet implemented.**
+
 Agent proposes a new document or an edit to an existing document. Creates a
 `kb_update` approval with a diff.
 
@@ -2050,6 +2118,8 @@ The board sees the proposal in the approval inbox as a diff view (for edits)
 or a full preview (for new docs). On approval, the document is created/updated.
 
 #### `POST /plans/submit-for-review`
+**Not yet implemented.**
+
 Agent (typically Architect) submits an implementation plan for Product Lead
 review. Creates a `plan_review` approval.
 
@@ -2077,6 +2147,8 @@ The Product Lead (or any board member) reviews the plan in the approval inbox.
 On approval, the Engineer can begin implementation.
 
 #### `POST /issues/:issueId/attachments`
+**Not yet implemented.**
+
 Agent uploads a file attachment to an issue (screenshot, log, diagram, etc.).
 Multipart form data, same constraints as the board endpoint.
 
@@ -2085,37 +2157,52 @@ Multipart form data, same constraints as the board endpoint.
 ## WebSocket (real-time updates)
 
 ### `WS /ws`
-Board UI connects to receive real-time updates. Auth via user JWT or agent JWT.
 
-Server pushes events:
+Single WebSocket endpoint. Clients connect to `/ws` on the server (upgraded from HTTP). Auth via user JWT or agent JWT.
+
+### Room-based subscriptions
+
+After connecting, clients subscribe to rooms using UUIDs:
 
 ```json
-{ "type": "comment.created", "company_id": "...", "issue_id": "...", "comment": {...} }
-{ "type": "issue.updated", "company_id": "...", "issue": {...} }
-{ "type": "agent.status_changed", "company_id": "...", "agent_id": "...", "status": "active" }
-{ "type": "approval.created", "company_id": "...", "approval": {...} }
-{ "type": "approval.resolved", "company_id": "...", "approval": {...} }
-{ "type": "agent.heartbeat", "company_id": "...", "agent_id": "...", "last_heartbeat_at": "..." }
-{ "type": "budget.warning", "company_id": "...", "agent_id": "...", "percent_used": 80 }
-{ "type": "budget.exceeded", "company_id": "...", "agent_id": "...", "agent_title": "CMO" }
-{ "type": "live_chat.message", "company_id": "...", "issue_id": "...", "author": "board:alice", "text": "..." }
-{ "type": "kb_doc.updated", "company_id": "...", "doc_id": "...", "title": "..." }
-{ "type": "company_preferences.updated", "company_id": "...", "updated_by_agent_id": "..." }
-{ "type": "project_doc.created", "company_id": "...", "project_id": "...", "doc_id": "...", "doc_type": "tech_spec", "title": "..." }
-{ "type": "project_doc.updated", "company_id": "...", "project_id": "...", "doc_id": "...", "title": "..." }
-{ "type": "project_doc.deleted", "company_id": "...", "project_id": "...", "doc_id": "..." }
-{ "type": "connection.created", "company_id": "...", "platform": "github", "status": "active" }
-{ "type": "connection.expired", "company_id": "...", "platform": "gmail" }
-{ "type": "connection.disconnected", "company_id": "...", "platform": "stripe" }
-{ "type": "plan_review.submitted", "company_id": "...", "issue_id": "...", "approval_id": "..." }
-{ "type": "plan_review.approved", "company_id": "...", "issue_id": "...", "approval_id": "..." }
-{ "type": "plan_review.denied", "company_id": "...", "issue_id": "...", "approval_id": "..." }
+{ "action": "subscribe", "room": "company:<uuid>" }
+{ "action": "subscribe", "room": "issue:<uuid>" }
+{ "action": "subscribe", "room": "project:<uuid>" }
+{ "action": "unsubscribe", "room": "company:<uuid>" }
 ```
 
-Client can filter by company_id after connecting (send
-`{ "subscribe": ["company-uuid-1", "company-uuid-2"] }`).
+Room names always use UUIDs, never slugs. The frontend `useWebSocket` hook takes two params: the UUID for room subscription and the route-param slug for TanStack Query cache invalidation.
 
-In addition to system events, the WebSocket delivers row-level diffs for TanStack DB sync. Each diff message contains the table name, row ID, and changed fields, enabling optimistic UI updates without full refetches.
+### Server message types
+
+Defined in `@hezo/shared` as the `WsMessageType` enum:
+
+| Type | Description | Payload |
+|------|-------------|---------|
+| `connected` | Sent on initial connection | — |
+| `row_change` | Database row changed | `{ type, table, action, row }` where `action` is `INSERT`, `UPDATE`, or `DELETE` |
+| `chat_message` | Live chat message | `{ type, issueId, message: { id, chatId, authorMemberId, authorType, content, createdAt } }` |
+| `agent_lifecycle` | Agent status change | `{ type, memberId, status }` |
+| `container_log` | Container stdout/stderr stream | `{ type, projectId, stream, text }` where `stream` is `stdout` or `stderr` |
+| `error` | Error message | `{ type, code, message }` |
+
+### Client action types
+
+Defined in `@hezo/shared` as the `WsClientAction` enum:
+
+| Action | Description | Payload |
+|--------|-------------|---------|
+| `subscribe` | Subscribe to a room | `{ action, room }` |
+| `unsubscribe` | Unsubscribe from a room | `{ action, room }` |
+| `chat` | Send a chat message | `{ action, issueId, content, mentions? }` |
+
+### Cache invalidation
+
+`RowChange` messages trigger TanStack Query cache invalidation on the client. The frontend maps table names to query cache keys and calls `invalidateQueries`, causing affected queries to refetch. This provides real-time UI updates without requiring the server to push full data payloads.
+
+### Server-side broadcasting
+
+The server uses `broadcastChange()` for row-level changes and `broadcastEvent()` for typed events. Both broadcast to all subscribers of the relevant room (identified by UUID).
 
 ---
 
@@ -2199,7 +2286,7 @@ Streamable HTTP MCP endpoint. Uses `@modelcontextprotocol/sdk` with the `McpServ
 | `list_companies` | List all companies | — |
 | `create_company` | Create a new company | `name`, `mission` |
 | `list_issues` | List issues with filtering | `company_id`, `project_id?`, `status?`, `assignee?` |
-| `create_issue` | Create a new issue | `company_id`, `project_id`, `title`, `description?`, `priority?` |
+| `create_issue` | Create a new issue | `company_id`, `project_id`, `title`, `assignee_id`, `description?`, `priority?` |
 | `update_issue` | Update an issue | `issue_id`, `status?`, `assignee?`, `priority?` |
 | `list_agents` | List agents in a company | `company_id` |
 | `hire_agent` | Create a new agent | `company_id`, `title`, `role_description`, `reports_to?` |

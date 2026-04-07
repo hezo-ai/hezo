@@ -8,6 +8,7 @@ const variants = {
 	outline: 'border border-border bg-transparent text-text hover:bg-bg-muted',
 	approve: 'bg-accent-green text-white font-medium hover:opacity-85',
 	'danger-text': 'bg-transparent text-accent-red hover:opacity-70',
+	link: 'bg-transparent text-accent-blue hover:underline p-0 border-none',
 } as const;
 
 const sizes = {

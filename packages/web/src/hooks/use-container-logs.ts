@@ -1,6 +1,6 @@
 import { type WsContainerLogMessage, WsMessageType } from '@hezo/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { wsClient } from '../lib/ws';
+import { useSocket } from '../contexts/socket-context';
 
 export interface LogLine {
 	id: number;
@@ -14,14 +14,15 @@ let nextLogId = 0;
 export function useContainerLogs(projectId: string, enabled: boolean) {
 	const [logs, setLogs] = useState<LogLine[]>([]);
 	const logsRef = useRef<LogLine[]>([]);
+	const { joinRoom, leaveRoom, subscribe } = useSocket();
 
 	useEffect(() => {
 		if (!enabled) return;
 
 		const room = `container-logs:${projectId}`;
-		wsClient.subscribe(room);
+		joinRoom(room);
 
-		const unsubscribe = wsClient.on(WsMessageType.ContainerLog, (msg) => {
+		const unsubscribe = subscribe(WsMessageType.ContainerLog, (msg) => {
 			const { stream, text } = msg as WsContainerLogMessage;
 			if ((msg as WsContainerLogMessage).projectId !== projectId) return;
 
@@ -34,9 +35,9 @@ export function useContainerLogs(projectId: string, enabled: boolean) {
 
 		return () => {
 			unsubscribe();
-			wsClient.unsubscribe(room);
+			leaveRoom(room);
 		};
-	}, [projectId, enabled]);
+	}, [projectId, enabled, joinRoom, leaveRoom, subscribe]);
 
 	const clear = useCallback(() => {
 		logsRef.current = [];

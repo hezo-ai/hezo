@@ -42,6 +42,11 @@ beforeAll(async () => {
 	});
 	projectId = (await projectRes.json()).data.id;
 
+	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+		headers: authHeader(boardToken),
+	});
+	agentId = (await agentsRes.json()).data[0].id;
+
 	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
@@ -49,14 +54,10 @@ beforeAll(async () => {
 			project_id: projectId,
 			title: 'Runner Issue',
 			description: 'Test description',
+			assignee_id: agentId,
 		}),
 	});
 	issueId = (await issueRes.json()).data.id;
-
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
-		headers: authHeader(boardToken),
-	});
-	agentId = (await agentsRes.json()).data[0].id;
 });
 
 afterAll(async () => {

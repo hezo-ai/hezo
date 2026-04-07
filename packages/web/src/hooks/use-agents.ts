@@ -32,7 +32,6 @@ export function useAgents(companyId: string, adminStatus?: string) {
 				`/api/companies/${companyId}/agents`,
 				adminStatus ? { admin_status: adminStatus } : undefined,
 			),
-		refetchInterval: 5_000,
 	});
 }
 

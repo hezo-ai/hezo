@@ -255,7 +255,7 @@ Backend:
 
 UI:
 - WebSocket connection from browser to server
-- TanStack DB migration — replace TanStack Query polling with TanStack DB backed by WebSocket row-level diffs for all entity types
+- WebSocket real-time migration — replace TanStack Query polling with WebSocket-triggered cache invalidation for all entity types
 - Live Chat panel on issue detail — real-time agent conversation, session persistence across reloads
 - Tool call trace rendering — expandable trace blocks in issue comments
 - HTML preview rendering — iframe or proxy route for agent-generated previews
@@ -589,23 +589,56 @@ UI:
 
 ---
 
+## Phase 11: Agent Execution Logs
+
+**Status:** Done (2026-04)
+
+**Goal:** Surface agent execution runs as comments on issues and restructure agent pages with Executions/Settings tabs for full run visibility.
+
+**What's included:**
+- `issue_id` column on `heartbeat_runs` to link runs to issues
+- `execution` content type for `issue_comments` — auto-created when agent run completes
+- Execution comment shows status badge, duration, stdout preview, with link to full log
+- Agent detail page restructured into tabbed layout (Executions | Settings)
+- Executions tab lists all past runs with status, issue, timing, cost
+- Execution detail sub-page shows full stdout/stderr excerpts, tokens, timing, cost
+- Settings tab contains budget, heartbeat, and agent configuration form
+- Single-run API endpoint: `GET /companies/:companyId/agents/:agentId/heartbeat-runs/:runId`
+- Heartbeat-runs list endpoint returns issue identifier and title via JOIN
+- Integration tests for heartbeat-runs API and execution comments
+- E2E tests for agent tabs navigation and execution list
+
+**How to test:**
+- Create a company with agents and trigger an agent run — execution comment appears on the issue
+- Navigate to agent page — Executions tab loads by default with run list
+- Click a run — detail page shows with stdout, stderr, timing, cost
+- Navigate to Settings tab — budget, heartbeat, and edit form visible
+- `bun run test --skip-e2e` passes all integration tests
+- `bun run test --e2e` passes all E2E tests including agent tab navigation
+
+**Depends on:** Phase 4
+
+---
+
 ## Phase Summary
 
 | Phase | Focus | Key Deliverable |
 |-------|-------|----------------|
 | 0 | Hezo Connect | Standalone GitHub OAuth relay, independently testable |
 | 1 | Foundation | Hono + PGlite + migrations + master key + CLI |
-| 2 | Core CRUD | Companies (with types), agents (all 9), issues, projects — all via REST |
+| 2 | Core CRUD | Companies (with types), agents (all 11), issues, projects — all via REST |
 | 3 | GitHub Integration | OAuth flow, token storage, repo validation and cloning |
 | 3.5 | UI Foundation + Core Screens | React app with all CRUD screens for Phases 0–3 APIs, master key gate, board inbox |
 | 4 | Agent Execution + UI | Docker per project, subprocesses, heartbeats, budgets + agent status UI, cost views |
-| 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack DB migration, live chat, real-time updates |
+| 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack Query, live chat, real-time updates |
 | 6 | MCP + Skill File + Binary Build | MCP endpoint, skill file + `bun build --compile` single binary, Playwright E2E |
 | 6.5 | Auth + Session Compaction | Custom OAuth auth (board members only), session compaction + login page, account settings |
+| 6.6 | UI Redesign + Agent Onboarding | Company icon rail, unified side menu, tab-based project view, agent onboarding via CEO |
 | 6.7 | Job Manager + Audit Log Navigation | cron-async job manager, container sync, audit log route |
 | 7 | Multi-User Roles + Invites | Member roles, scoped permissions, email invites + member management UI |
 | 8 | Adapters + Plugins + UI | Gemini/Codex adapters, plugin system + plugin management UI, runtime selector |
 | 9 | Full Platform Integrations + UI | All OAuth platforms, centrally hosted Connect + extended connection UI |
 | 10 | Deploy + Messaging + UI | Staging/production pipeline, Slack + Telegram + deploy status, notification preferences |
+| 11 | Agent Execution Logs | Execution comments on issues, agent Executions/Settings tabs, run detail pages |
 
 Each phase produces a testable increment. Phase 0 can be built and verified in isolation. Phases 1–3 give a working API server testable entirely with curl. Phase 3.5 makes everything browser-testable. From Phase 4 onward, every phase includes UI alongside backend so new functionality is always manually testable in the browser.

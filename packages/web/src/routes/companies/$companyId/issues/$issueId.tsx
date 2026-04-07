@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { Loader2, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AgentStatusLabel } from '../../../../components/agent-status-label';
 import { type CommentData, CommentRenderer } from '../../../../components/comment-renderers';
 import { LiveChatPanel } from '../../../../components/live-chat-panel';
 import { Avatar, avatarColorFromString } from '../../../../components/ui/avatar';
@@ -59,6 +60,21 @@ function IssueDetailPage() {
 	const [summaryText, setSummaryText] = useState('');
 	const [editingRules, setEditingRules] = useState(false);
 	const [rulesText, setRulesText] = useState('');
+	const [assigneeOpen, setAssigneeOpen] = useState(false);
+	const assigneeRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!assigneeOpen) return;
+		function onPointerDown(e: PointerEvent) {
+			if (assigneeRef.current && !assigneeRef.current.contains(e.target as Node)) {
+				setAssigneeOpen(false);
+			}
+		}
+		document.addEventListener('pointerdown', onPointerDown);
+		return () => document.removeEventListener('pointerdown', onPointerDown);
+	}, [assigneeOpen]);
+
+	const assignedAgent = agents?.find((a) => a.id === issue?.assignee_id);
 
 	if (isLoading || !issue)
 		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;
@@ -91,7 +107,6 @@ function IssueDetailPage() {
 					</Badge>
 					<Badge color={priorityColors[issue.priority] as 'neutral'}>{issue.priority}</Badge>
 					{issue.project_name && <Badge color="info">{issue.project_name}</Badge>}
-					{issue.assignee_name && <Badge color="purple">{issue.assignee_name}</Badge>}
 				</div>
 
 				<div className="flex flex-wrap gap-1.5 mb-5">
@@ -299,6 +314,7 @@ function IssueDetailPage() {
 												onChooseOption={(commentId, chosenId) =>
 													chooseOption.mutate({ commentId, chosen_id: chosenId })
 												}
+												companyId={companyId}
 											/>
 										</div>
 									</div>
@@ -380,24 +396,45 @@ function IssueDetailPage() {
 					</select>
 				</div>
 
-				<div>
+				<div ref={assigneeRef} className="relative">
 					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
 						Assignee
 					</span>
-					<select
-						value={issue.assignee_id ?? ''}
-						onChange={(e) => updateIssue.mutate({ assignee_id: e.target.value || null })}
-						className="w-full rounded-radius-md border border-border bg-bg px-2.5 py-1.5 text-xs text-text outline-none"
+					<button
+						type="button"
+						onClick={() => setAssigneeOpen((o) => !o)}
+						className="flex items-center gap-1 w-full text-left text-[13px] text-text rounded-radius-md hover:bg-bg-subtle px-1 py-0.5 transition-colors"
 					>
-						<option value="">Unassigned</option>
-						{agents
-							?.filter((a) => a.admin_status !== 'terminated')
-							.map((a) => (
-								<option key={a.id} value={a.id}>
-									{a.title}
-								</option>
-							))}
-					</select>
+						<AgentStatusLabel
+							name={assignedAgent?.title ?? '—'}
+							runtimeStatus={assignedAgent?.runtime_status ?? 'idle'}
+							className="flex-1 min-w-0"
+						/>
+						<ChevronDown
+							className={`w-3.5 h-3.5 text-text-subtle shrink-0 transition-transform ${assigneeOpen ? 'rotate-180' : ''}`}
+						/>
+					</button>
+					{assigneeOpen && (
+						<div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-radius-md border border-border bg-bg shadow-md max-h-48 overflow-y-auto">
+							{agents
+								?.filter((a) => a.admin_status !== 'terminated')
+								.map((a) => (
+									<button
+										type="button"
+										key={a.id}
+										onClick={() => {
+											updateIssue.mutate({ assignee_id: a.id });
+											setAssigneeOpen(false);
+										}}
+										className={`flex items-center w-full px-2.5 py-1.5 text-xs text-left hover:bg-bg-subtle transition-colors ${
+											a.id === issue.assignee_id ? 'bg-bg-subtle font-medium' : ''
+										}`}
+									>
+										<AgentStatusLabel name={a.title} runtimeStatus={a.runtime_status} />
+									</button>
+								))}
+						</div>
+					)}
 				</div>
 
 				<div>

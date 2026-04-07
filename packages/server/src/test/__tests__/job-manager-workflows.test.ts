@@ -74,6 +74,11 @@ beforeAll(async () => {
 	});
 	projectId = (await projectRes.json()).data.id;
 
+	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+		headers: authHeader(token),
+	});
+	agentId = (await agentsRes.json()).data[0].id;
+
 	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -81,14 +86,10 @@ beforeAll(async () => {
 			project_id: projectId,
 			title: 'Workflow Test Issue',
 			description: 'Test issue for workflow testing',
+			assignee_id: agentId,
 		}),
 	});
 	issueId = (await issueRes.json()).data.id;
-
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
-		headers: authHeader(token),
-	});
-	agentId = (await agentsRes.json()).data[0].id;
 });
 
 afterAll(async () => {
@@ -402,7 +403,7 @@ describe('JobManager workflow methods', () => {
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).onAgentComplete(agentId, issueId, companyId, wakeupId, {
+			await (manager as any).onAgentComplete(agentId, 'Test Agent', issueId, companyId, wakeupId, {
 				success: true,
 				exitCode: 0,
 				stdout: '',
@@ -447,7 +448,7 @@ describe('JobManager workflow methods', () => {
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).onAgentComplete(agentId, issueId, companyId, wakeupId, {
+			await (manager as any).onAgentComplete(agentId, 'Test Agent', issueId, companyId, wakeupId, {
 				success: false,
 				exitCode: 1,
 				stdout: '',
@@ -478,7 +479,7 @@ describe('JobManager workflow methods', () => {
 			);
 
 			// Call without a wakeupId (heartbeat-triggered run scenario)
-			await (manager as any).onAgentComplete(agentId, issueId, companyId, undefined, {
+			await (manager as any).onAgentComplete(agentId, 'Test Agent', issueId, companyId, undefined, {
 				success: true,
 				exitCode: 0,
 				stdout: '',

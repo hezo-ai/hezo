@@ -78,7 +78,7 @@ async function createIssue(coId: string): Promise<string> {
 	const issueRes = await app.request(`/api/companies/${coId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ project_id: projectId, title: 'Orphan Issue' }),
+		body: JSON.stringify({ project_id: projectId, title: 'Orphan Issue', assignee_id: agentId }),
 	});
 	return (await issueRes.json()).data.id;
 }
