@@ -204,7 +204,6 @@ function TemplateCard({
 				{agentCount > 0 && <Badge color="blue">{agentCount} agents</Badge>}
 				{isBlank && <Badge color="neutral">Includes CEO + Coach</Badge>}
 				{kbDocCount > 0 && <Badge color="green">{kbDocCount} docs</Badge>}
-				{/* biome-ignore lint/a11y/useValidAnchor: nested inside button, stopPropagation needed */}
 				<a
 					href="#see-more"
 					onClick={(e) => {
