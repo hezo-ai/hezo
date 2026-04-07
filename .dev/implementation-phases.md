@@ -549,6 +549,37 @@ UI:
 
 ---
 
+## Phase 11: Agent Execution Logs
+
+**Status:** Done (2026-04)
+
+**Goal:** Surface agent execution runs as comments on issues and restructure agent pages with Executions/Settings tabs for full run visibility.
+
+**What's included:**
+- `issue_id` column on `heartbeat_runs` to link runs to issues
+- `execution` content type for `issue_comments` — auto-created when agent run completes
+- Execution comment shows status badge, duration, stdout preview, with link to full log
+- Agent detail page restructured into tabbed layout (Executions | Settings)
+- Executions tab lists all past runs with status, issue, timing, cost
+- Execution detail sub-page shows full stdout/stderr excerpts, tokens, timing, cost
+- Settings tab contains budget, heartbeat, and agent configuration form
+- Single-run API endpoint: `GET /companies/:companyId/agents/:agentId/heartbeat-runs/:runId`
+- Heartbeat-runs list endpoint returns issue identifier and title via JOIN
+- Integration tests for heartbeat-runs API and execution comments
+- E2E tests for agent tabs navigation and execution list
+
+**How to test:**
+- Create a company with agents and trigger an agent run — execution comment appears on the issue
+- Navigate to agent page — Executions tab loads by default with run list
+- Click a run — detail page shows with stdout, stderr, timing, cost
+- Navigate to Settings tab — budget, heartbeat, and edit form visible
+- `bun run test --skip-e2e` passes all integration tests
+- `bun run test --e2e` passes all E2E tests including agent tab navigation
+
+**Depends on:** Phase 4
+
+---
+
 ## Phase Summary
 
 | Phase | Focus | Key Deliverable |
@@ -568,5 +599,6 @@ UI:
 | 8 | Adapters + Plugins + UI | Gemini/Codex adapters, plugin system + plugin management UI, runtime selector |
 | 9 | Full Platform Integrations + UI | All OAuth platforms, centrally hosted Connect + extended connection UI |
 | 10 | Deploy + Messaging + UI | Staging/production pipeline, Slack + Telegram + deploy status, notification preferences |
+| 11 | Agent Execution Logs | Execution comments on issues, agent Executions/Settings tabs, run detail pages |
 
 Each phase produces a testable increment. Phase 0 can be built and verified in isolation. Phases 1–3 give a working API server testable entirely with curl. Phase 3.5 makes everything browser-testable. From Phase 4 onward, every phase includes UI alongside backend so new functionality is always manually testable in the browser.

@@ -21,7 +21,7 @@
 | `repos` | Git repo (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. | belongs to project |
 | `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `ACME-42`). Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to company + project, assigned to member |
 | `issue_dependencies` | Many-to-many blocking relationships between issues. | links issue ↔ issue |
-| `issue_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. | belongs to issue |
+| `issue_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. Includes execution-type comments auto-created when agent runs complete. | belongs to issue |
 | `issue_attachments` | Links uploaded files to issues. | links asset ↔ issue |
 | `tool_calls` | Trace log entries. Linked to a comment (the agent message that triggered them). | belongs to comment + member_agent |
 | `secrets` | Encrypted key/value. Scoped to company or company+project. | belongs to company, optionally project |
@@ -38,7 +38,7 @@
 | `execution_locks` | Issue work ownership tracking. One agent works on an issue at a time. | belongs to issue + member_agent |
 | `system_prompt_revisions` | History of agent system prompt changes. Tracks old/new prompt, change summary, author. Linked to approval if change required approval. | belongs to member_agent + company |
 | `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. | belongs to member_agent + company |
-| `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. | belongs to member_agent + company |
+| `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the issue being worked on via `issue_id`. | belongs to member_agent + company, optionally issue |
 | `agent_task_sessions` | Per-task session persistence for session compaction. | belongs to member_agent, keyed by task |
 | `assets` | Uploaded files. Provider, object key, content type, SHA-256 hash. | belongs to company |
 | `plugins` | Installed plugins. Manifest, status, config. | belongs to company |
@@ -95,6 +95,7 @@ The `content_type` enum discriminates the shape:
 - `preview` → `{ "filename": "...", "label": "...", "description": "..." }`
 - `trace` → `{ "summary": "4 tool calls" }` (detail lives in `tool_calls` table)
 - `system` → `{ "text": "Agent disabled — budget limit reached" }`
+- `execution` → `{ "heartbeat_run_id", "agent_id", "agent_title", "status", "exit_code", "duration_ms", "stdout_preview" }` (auto-created on agent run completion)
 
 Live chat is displayed in a separate tab on the issue detail view,
 not as comments in the thread.

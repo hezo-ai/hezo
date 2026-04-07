@@ -314,6 +314,7 @@ function IssueDetailPage() {
 												onChooseOption={(commentId, chosenId) =>
 													chooseOption.mutate({ commentId, chosen_id: chosenId })
 												}
+												companyId={companyId}
 											/>
 										</div>
 									</div>

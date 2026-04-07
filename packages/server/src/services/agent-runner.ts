@@ -67,12 +67,20 @@ export async function runAgent(
 		};
 	}
 
+	if (signal?.aborted) {
+		return abortedResult(startTime);
+	}
+
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, agent.system_prompt, {
 		companyId: agent.company_id,
 		projectId: project.id,
 		agentId: agent.id,
 		dataDir: deps.dataDir,
 	});
+
+	if (signal?.aborted) {
+		return abortedResult(startTime);
+	}
 
 	if (resolvedPrompt.includes('{{requester_context}}')) {
 		const creator = await deps.db.query<{ display_name: string; member_type: string }>(
@@ -86,6 +94,10 @@ export async function runAgent(
 			? `This task was created by ${row.display_name} (${row.member_type}).`
 			: '';
 		resolvedPrompt = resolvedPrompt.replace(/\{\{requester_context\}\}/g, requesterText);
+	}
+
+	if (signal?.aborted) {
+		return abortedResult(startTime);
 	}
 
 	const agentJwt = await signAgentJwt(deps.masterKeyManager, agent.id, agent.company_id);
@@ -106,9 +118,17 @@ export async function runAgent(
 
 	const workingDir = '/workspace';
 
+	if (signal?.aborted) {
+		return abortedResult(startTime);
+	}
+
 	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue);
 
 	try {
+		if (signal?.aborted) {
+			throw new DOMException('Aborted', 'AbortError');
+		}
+
 		const execId = await deps.docker.execCreate(project.container_id, {
 			Cmd: ['claude', '-p', taskPrompt],
 			Env: env,
@@ -141,9 +161,10 @@ export async function runAgent(
 		};
 	} catch (error) {
 		const durationMs = Date.now() - startTime;
+		const isAbort = (error as Error).name === 'AbortError';
 
 		await updateHeartbeatRun(deps.db, heartbeatRunId, {
-			status: HeartbeatRunStatus.Failed,
+			status: isAbort ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
 			exitCode: -1,
 			durationMs,
 			stderr: (error as Error).message,
@@ -158,6 +179,16 @@ export async function runAgent(
 			heartbeatRunId,
 		};
 	}
+}
+
+function abortedResult(startTime: number): RunResult {
+	return {
+		success: false,
+		exitCode: -1,
+		stdout: '',
+		stderr: 'Aborted',
+		durationMs: Date.now() - startTime,
+	};
 }
 
 function buildTaskPrompt(systemPrompt: string, issue: IssueInfo): string {
@@ -268,16 +299,12 @@ async function buildCoachReviewPrompt(
 	return parts.join('\n');
 }
 
-async function createHeartbeatRun(
-	db: PGlite,
-	agent: AgentInfo,
-	_issue: IssueInfo,
-): Promise<string> {
+async function createHeartbeatRun(db: PGlite, agent: AgentInfo, issue: IssueInfo): Promise<string> {
 	const result = await db.query<{ id: string }>(
-		`INSERT INTO heartbeat_runs (member_id, company_id, status)
-		 VALUES ($1, $2, $3::heartbeat_run_status)
+		`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status)
+		 VALUES ($1, $2, $3, $4::heartbeat_run_status)
 		 RETURNING id`,
-		[agent.id, agent.company_id, HeartbeatRunStatus.Running],
+		[agent.id, agent.company_id, issue.id, HeartbeatRunStatus.Running],
 	);
 	return result.rows[0].id;
 }

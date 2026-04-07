@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	AgentRuntimeStatus,
+	CommentContentType,
 	IssuePriority,
 	TERMINAL_ISSUE_STATUSES,
 	WakeupStatus,
@@ -357,7 +358,14 @@ export class JobManager {
 					signal,
 				);
 
-				await this.onAgentComplete(memberId, issue.id, companyId, wakeupId, result);
+				await this.onAgentComplete(
+					memberId,
+					agent.rows[0].title,
+					issue.id,
+					companyId,
+					wakeupId,
+					result,
+				);
 				return result;
 			},
 			timeoutMs,
@@ -366,6 +374,7 @@ export class JobManager {
 
 	private async onAgentComplete(
 		memberId: string,
+		agentTitle: string,
 		issueId: string,
 		companyId: string,
 		wakeupId: string | undefined,
@@ -394,6 +403,31 @@ export class JobManager {
 				`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
 				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
 			);
+		}
+
+		try {
+			const content = {
+				heartbeat_run_id: result.heartbeatRunId,
+				agent_id: memberId,
+				agent_title: agentTitle,
+				status: result.success ? 'succeeded' : 'failed',
+				exit_code: result.exitCode,
+				duration_ms: result.durationMs,
+				stdout_preview: result.stdout?.slice(0, 200) ?? '',
+			};
+			await db.query(
+				`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+				 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
+				[issueId, memberId, CommentContentType.Execution, JSON.stringify(content)],
+			);
+			this.deps.wsManager.broadcast(`company:${companyId}`, {
+				type: 'row_change',
+				table: 'issue_comments',
+				action: 'INSERT',
+				row: { issue_id: issueId },
+			});
+		} catch (err) {
+			console.error('Failed to create execution comment:', err);
 		}
 	}
 
