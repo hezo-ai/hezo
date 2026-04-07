@@ -6,17 +6,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install AI coding CLIs
+#   @anthropic-ai/claude-code → claude
+#   @openai/codex             → codex
+#   @google/gemini-cli        → gemini
+#   kimi-code                 → kimi
 RUN npm install -g @anthropic-ai/claude-code \
-    && npm install -g @openai/codex-cli \
-    && npm install -g @anthropic-ai/gemini-cli \
-    && npm install -g @anthropic-ai/kimi-cli \
-    || true
-
-# NOTE: Package names above are placeholders — verify actual npm package names
-# before building. The key requirement is that all four CLIs are available:
-#   claude  (Claude Code)
-#   codex   (OpenAI Codex)
-#   gemini  (Google Gemini CLI)
-#   kimi    (Moonshot Kimi CLI)
+    && npm install -g @openai/codex \
+    && npm install -g @google/gemini-cli \
+    && npm install -g kimi-code
 
 WORKDIR /workspace
