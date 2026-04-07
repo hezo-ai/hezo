@@ -6,12 +6,14 @@ import {
 } from '@hezo/shared';
 import ReconnectingWebSocket from 'reconnecting-websocket';
 
-type MessageHandler = (msg: WsServerMessage) => void;
+export type MessageHandler = (msg: WsServerMessage) => void;
 
 export class WebSocketClient {
 	private ws: ReconnectingWebSocket | null = null;
 	private handlers = new Map<WsMessageType, Set<MessageHandler>>();
 	private subscribedRooms = new Set<string>();
+	onStatusChange?: (connected: boolean) => void;
+
 	connect(token: string): void {
 		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 		const url = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`;
@@ -25,9 +27,14 @@ export class WebSocketClient {
 		});
 
 		this.ws.onopen = () => {
+			this.onStatusChange?.(true);
 			for (const room of this.subscribedRooms) {
 				this.send({ action: WsClientAction.Subscribe, room });
 			}
+		};
+
+		this.ws.onclose = () => {
+			this.onStatusChange?.(false);
 		};
 
 		this.ws.onmessage = (event) => {
@@ -91,5 +98,3 @@ export class WebSocketClient {
 		}
 	}
 }
-
-export const wsClient = new WebSocketClient();

@@ -64,10 +64,10 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 	const issueId = c.req.param('issueId');
 	const auth = c.get('auth');
 
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
+	const issueCheck = await db.query<{ id: string; assignee_id: string | null }>(
+		'SELECT id, assignee_id FROM issues WHERE id = $1 AND company_id = $2',
+		[issueId, companyId],
+	);
 	if (issueCheck.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	}
@@ -102,6 +102,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 
 	const contentText = typeof body.content === 'object' ? JSON.stringify(body.content) : '';
 	const mentions = contentText.match(/@([\w-]+)/g);
+	const mentionedAgentIds = new Set<string>();
 	if (mentions) {
 		for (const mention of mentions) {
 			const slug = mention.slice(1);
@@ -112,10 +113,25 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 				[slug, companyId],
 			);
 			if (mentioned.rows.length > 0) {
+				mentionedAgentIds.add(mentioned.rows[0].id);
 				createWakeup(db, mentioned.rows[0].id, companyId, WakeupSource.Mention, {
 					issue_id: issueId,
 					comment_id: result.rows[0].id,
 				}).catch((e) => console.error('Failed to create mention wakeup:', e));
+			}
+		}
+	}
+
+	const assigneeId = issueCheck.rows[0].assignee_id;
+	if (assigneeId && !mentionedAgentIds.has(assigneeId)) {
+		const isSelfComment = auth.type === AuthType.Agent && auth.memberId === assigneeId;
+		if (!isSelfComment) {
+			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
+			if (isAgent.rows.length > 0) {
+				createWakeup(db, assigneeId, companyId, WakeupSource.Comment, {
+					issue_id: issueId,
+					comment_id: result.rows[0].id,
+				}).catch((e) => console.error('Failed to create comment wakeup:', e));
 			}
 		}
 	}

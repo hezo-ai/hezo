@@ -3,6 +3,7 @@ import { createRootRoute, Outlet, useParams } from '@tanstack/react-router';
 import { CompanyRail } from '../components/company-rail';
 import { CompanySidebar } from '../components/company-sidebar';
 import { MasterKeyGate } from '../components/master-key-gate';
+import { SocketProvider } from '../contexts/socket-context';
 import { useStatus } from '../hooks/use-status';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -34,17 +35,19 @@ function AppShell() {
 	}
 
 	return (
-		<div className="h-screen flex flex-row overflow-hidden">
-			<CompanyRail />
-			{companyId && (
-				<div className="w-[200px] shrink-0 border-r border-border bg-bg overflow-y-auto py-2">
-					<CompanySidebar companyId={companyId} />
-				</div>
-			)}
-			<main className="flex-1 overflow-auto">
-				<Outlet />
-			</main>
-		</div>
+		<SocketProvider token={api.getToken()}>
+			<div className="h-screen flex flex-row overflow-hidden">
+				<CompanyRail />
+				{companyId && (
+					<div className="w-[200px] shrink-0 border-r border-border bg-bg overflow-y-auto py-2">
+						<CompanySidebar companyId={companyId} />
+					</div>
+				)}
+				<main className="flex-1 overflow-auto">
+					<Outlet />
+				</main>
+			</div>
+		</SocketProvider>
 	);
 }
 

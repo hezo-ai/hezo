@@ -609,17 +609,44 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs', async (
 	const agentId = c.req.param('agentId');
 
 	const result = await db.query(
-		`SELECT id, member_id, company_id, wakeup_id, status,
-		        started_at, finished_at, exit_code, error,
-		        input_tokens, output_tokens, cost_cents,
-		        stdout_excerpt, stderr_excerpt, process_pid,
-		        retry_of_run_id, process_loss_retry_count
-		 FROM heartbeat_runs
-		 WHERE member_id = $1
-		 ORDER BY started_at DESC
-		 LIMIT 20`,
+		`SELECT hr.id, hr.member_id, hr.company_id, hr.wakeup_id, hr.issue_id,
+		        hr.status, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
+		        hr.input_tokens, hr.output_tokens, hr.cost_cents,
+		        hr.stdout_excerpt, hr.stderr_excerpt, hr.process_pid,
+		        hr.retry_of_run_id, hr.process_loss_retry_count,
+		        i.identifier AS issue_identifier, i.title AS issue_title
+		 FROM heartbeat_runs hr
+		 LEFT JOIN issues i ON i.id = hr.issue_id
+		 WHERE hr.member_id = $1
+		 ORDER BY hr.started_at DESC
+		 LIMIT 50`,
 		[agentId],
 	);
 
 	return ok(c, result.rows);
+});
+
+agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs/:runId', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const agentId = c.req.param('agentId');
+	const runId = c.req.param('runId');
+
+	const result = await db.query(
+		`SELECT hr.id, hr.member_id, hr.company_id, hr.wakeup_id, hr.issue_id,
+		        hr.status, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
+		        hr.input_tokens, hr.output_tokens, hr.cost_cents,
+		        hr.stdout_excerpt, hr.stderr_excerpt, hr.process_pid,
+		        hr.retry_of_run_id, hr.process_loss_retry_count,
+		        i.identifier AS issue_identifier, i.title AS issue_title
+		 FROM heartbeat_runs hr
+		 LEFT JOIN issues i ON i.id = hr.issue_id
+		 WHERE hr.id = $1 AND hr.member_id = $2`,
+		[runId, agentId],
+	);
+
+	if (result.rows.length === 0) return c.json({ error: 'Run not found' }, 404);
+	return ok(c, result.rows[0]);
 });

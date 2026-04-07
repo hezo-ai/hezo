@@ -178,13 +178,13 @@ function TemplateCard({
 }) {
 	const agentCount = type.agent_types?.length ?? 0;
 	const kbDocCount = type.kb_docs_config?.length ?? 0;
-	const hasDetails = agentCount > 0 || kbDocCount > 0;
+	const isBlank = agentCount === 0 && kbDocCount === 0;
 
 	return (
 		<button
 			type="button"
 			onClick={onClick}
-			className={`relative flex flex-col gap-1 rounded-lg border p-4 text-left transition-colors ${
+			className={`relative flex flex-col gap-1 rounded-lg border p-4 text-left transition-colors cursor-pointer ${
 				selected
 					? 'border-accent-blue bg-accent-blue-bg/30'
 					: 'border-border hover:border-border-hover'
@@ -200,22 +200,22 @@ function TemplateCard({
 				{type.source === 'marketplace' && <Badge color="purple">Marketplace</Badge>}
 			</div>
 			{type.description && <p className="text-xs text-text-muted pr-6">{type.description}</p>}
-			{hasDetails && (
-				<div className="flex items-center gap-2 mt-0.5">
-					{agentCount > 0 && <Badge color="blue">{agentCount} agents</Badge>}
-					{kbDocCount > 0 && <Badge color="green">{kbDocCount} docs</Badge>}
-					<button
-						type="button"
-						onClick={(e) => {
-							e.stopPropagation();
-							onSeeMore();
-						}}
-						className="text-xs text-accent-blue hover:underline cursor-pointer ml-1"
-					>
-						see more
-					</button>
-				</div>
-			)}
+			<div className="flex items-center gap-2 mt-0.5">
+				{agentCount > 0 && <Badge color="blue">{agentCount} agents</Badge>}
+				{isBlank && <Badge color="neutral">Includes CEO + Coach</Badge>}
+				{kbDocCount > 0 && <Badge color="green">{kbDocCount} docs</Badge>}
+				<a
+					href="#see-more"
+					onClick={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						onSeeMore();
+					}}
+					className="text-xs text-accent-blue hover:underline cursor-pointer ml-1"
+				>
+					see more
+				</a>
+			</div>
 		</button>
 	);
 }
@@ -288,9 +288,28 @@ function TemplateDetailModal({ type, onClose }: { type: CompanyType | null; onCl
 					)}
 
 					{agents.length === 0 && kbDocs.length === 0 && (
-						<p className="text-sm text-text-muted">
-							This template creates an empty company with no agents or documents.
-						</p>
+						<div>
+							<p className="text-sm text-text-muted mb-4">
+								Every company includes the built-in CEO and Coach agents. No additional agents or
+								documents will be created.
+							</p>
+							<div className="flex flex-col gap-2">
+								<div className="rounded-md border border-border px-3 py-2">
+									<span className="text-sm font-medium">CEO</span>
+									<p className="text-xs text-text-muted mt-0.5">
+										Translates company mission into actionable strategy, delegates work across
+										leadership, and resolves disputes between agents.
+									</p>
+								</div>
+								<div className="rounded-md border border-border px-3 py-2">
+									<span className="text-sm font-medium">Coach</span>
+									<p className="text-xs text-text-muted mt-0.5">
+										Reviews completed tickets to extract lessons and improve agent system prompts
+										over time.
+									</p>
+								</div>
+							</div>
+						</div>
 					)}
 				</Dialog.Content>
 			</Dialog.Portal>

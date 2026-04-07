@@ -33,14 +33,6 @@ beforeAll(async () => {
 	});
 	const projectId = (await projectRes.json()).data.id;
 
-	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ project_id: projectId, title: 'Test Issue' }),
-	});
-	issueId = (await issueRes.json()).data.id;
-
-	// Create an agent for mention testing
 	const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -49,6 +41,13 @@ beforeAll(async () => {
 	const agent = (await agentRes.json()).data;
 	agentId = agent.id;
 	agentSlug = agent.slug;
+
+	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ project_id: projectId, title: 'Test Issue', assignee_id: agentId }),
+	});
+	issueId = (await issueRes.json()).data.id;
 });
 
 afterAll(async () => {

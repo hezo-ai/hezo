@@ -44,8 +44,8 @@ Hezo ships as a single executable binary. No external database required. No clou
 | Encryption | AES-256-GCM | Master key held in memory only |
 | Project containers | Docker Engine API | One container per project (all repos checked out inside) |
 | Frontend | React (bundled into binary) | Served by the same Hono process, bundled via `bun build --compile` |
-| Frontend state | TanStack DB | Client-side querying over locally synced data |
-| Real-time | WebSocket (row-level diffs) | Server pushes row inserts/updates/deletes from PGlite. Client applies diffs to TanStack DB. |
+| Frontend state | TanStack Query | React Query for server state caching, WebSocket-triggered invalidation |
+| Real-time | WebSocket (row-change events) | Server pushes RowChange events. Client invalidates relevant TanStack Query cache keys, triggering refetch. |
 | AI agent interface | MCP (Streamable HTTP) | `@modelcontextprotocol/sdk` at `/mcp` endpoint |
 | Skill file | Served at `GET /skill.md` | Teaches external AI agents how to interact with Hezo |
 | REST API | JSON over HTTP | Board + agent endpoints at `/api` |
@@ -91,6 +91,8 @@ The master key is held in memory only — never written to disk. It encrypts all
    - **Failure** → prompt again or offer recovery.
 
 **Key principle:** CLI `--master-key` is for **unlocking** (verifying the canary) on startup. The web UI is for **setting/managing** the key. The CLI never sets a new key interactively.
+
+**On unlock:** `MasterKeyManager` fires registered `onUnlock` callbacks when the state transitions to `unlocked`. The server registers a callback at startup that starts the `JobManager` (agent wakeups, heartbeats, container sync, orphan detection). This means background processing begins as soon as the server is unlocked, regardless of whether the key was provided via CLI or web UI.
 
 **Recovery options** (after failed canary decryption, via web UI):
 - **Re-enter a different master key.** Try again with the correct key.
@@ -261,7 +263,7 @@ Hezo serves a **skill file** that teaches external AI agents (like Claude Code) 
 - One Hezo instance supports unlimited companies
 - Full data isolation between companies (every entity is company-scoped)
 - Home screen shows a card grid of all companies
-- Each company card displays: name, mission snippet, agent count, open issue count, budget burn bar
+- Each company card displays: name, description snippet, agent count, open issue count, budget burn bar
 - Click a company card to enter its workspace
 
 ### API access for external orchestrators
@@ -295,12 +297,12 @@ A **team type** (stored as `company_types`) specifies:
 - **Default preferences** — initial company preferences
 - **Default MCP servers** — company-level MCP server configuration
 
-Companies can be created with **multiple team types** selected. When multiple types share the same agent type, the first type (by selection order) wins — its config overrides are used and duplicates are skipped. The associations are stored in the `company_team_types` join table.
+A company is created from a single **template** (`template_id`). The selected template determines the starting agent roster, knowledge base, and preferences.
 
-The current 9-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher) is the built-in **"Software Development"** team type. It ships with Hezo and is pre-selected by default in the UI. Users are not limited to the agent types that come with their team types — they can add other agent types later.
+The current 11-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher, Security Engineer, Coach) is the built-in **"Software Development"** team type. It ships with Hezo and is pre-selected by default in the UI. Users are not limited to the agent types that come with their template — they can add other agent types later.
 
 **Creating agent types:**
-- 9 built-in agent types ship with Hezo
+- 11 built-in agent types ship with Hezo
 - Users can create custom agent types via the API
 - Future: agent types can be loaded from hezo connect (remote marketplace)
 
@@ -315,7 +317,7 @@ The current 9-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, U
 
 When a new company is created, the user selects a **company type** (see above). The system then clones from that type and automatically:
 
-1. **Creates the full 9-agent team** defined by the selected company type. For the built-in "Software Development" type, this includes (see `agents/` for full specs):
+1. **Creates the full 11-agent team** defined by the selected template. For the built-in "Software Development" type, this includes (see `agents/` for full specs):
    - CEO (reports to board)
    - Product Lead (reports to CEO)
    - Architect (reports to CEO)
@@ -323,8 +325,10 @@ When a new company is created, the user selects a **company type** (see above). 
    - QA Engineer (reports to Architect)
    - UI Designer (reports to Architect)
    - DevOps Engineer (reports to Architect) — **starts in `idle` status**
+   - Security Engineer (reports to Architect)
    - Marketing Lead (reports to CEO)
    - Researcher (reports to CEO)
+   - Coach (reports to no one) — reviews completed tickets to extract lessons and improve agent system prompts
 2. **Prompts the creator to connect platforms** via OAuth (see Hezo Connect, section 5b):
    - GitHub (required for repo access)
    - Gmail (recommended for agent email)
@@ -336,7 +340,7 @@ When a new company is created, the user selects a **company type** (see above). 
 
 All agent system prompts are pre-filled from templates and editable. The user can delete, modify, or add agents after creation. Connected platforms can be added or removed at any time in company settings.
 
-**Note:** The DevOps Engineer is part of the core 9-agent team but starts in `idle` status. It does not auto-activate at company creation. The DevOps Engineer activates when the board is ready for staging/production deployment — the board changes its status to `active` when needed.
+**Note:** The DevOps Engineer is part of the core 11-agent team but starts in `idle` status. It does not auto-activate at company creation. The DevOps Engineer activates when the board is ready for staging/production deployment — the board changes its status to `active` when needed.
 
 **First-run flow:** Hezo Connect must be running. The first user logs in via GitHub or GitLab OAuth → master key gate modal in the UI → forced company creation. No admin-without-company state.
 
@@ -362,7 +366,7 @@ Each connected platform auto-registers as a **company-level MCP server** so agen
 
 ### Company creation and team types
 
-Companies can be created from one or more **team types** (see "Team types" above). The selected team types determine the starting agent roster, knowledge base, and preferences. When multiple team types are selected, agents are deduplicated by `agent_type_id` — the first occurrence (by selection order) wins. Agents are provisioned by querying the `company_type_agent_types` join table for each selected type and creating instances from each unique referenced agent type. Each created agent stores an `agent_type_id` for provenance tracking. After creation, the company is fully independent of its source types — changes to the company do not affect the types, and vice versa.
+A company is created from a single **template** (`template_id`). The selected template determines the starting agent roster, knowledge base, and preferences. Agents are provisioned by querying the `company_type_agent_types` join table for the selected template and creating instances from each referenced agent type. Each created agent stores an `agent_type_id` for provenance tracking. After creation, the company is fully independent of its source template — changes to the company do not affect the template, and vice versa.
 
 Users can also **save an existing company as a new company type**. This snapshots:
 
@@ -407,7 +411,7 @@ The system prompt editor supports variables that are resolved at runtime:
 | Variable | Resolves to |
 |----------|------------|
 | `{{company_name}}` | Company name |
-| `{{company_mission}}` | Company mission statement |
+| `{{company_description}}` | Company description |
 | `{{reports_to}}` | Title of the agent's manager |
 | `{{project_context}}` | Current project goal + recent issue summaries |
 | `{{kb_context}}` | Relevant knowledge base documents (auto-selected based on current task) |
@@ -421,7 +425,7 @@ On agent creation, the UI provides a monospace editor with a toolbar for inserti
 
 ### Built-in role templates
 
-Hezo ships with 9 built-in agent types that form the default team for the "Software Development" company type. Full specifications for each role are in `agents/{slug}.md`. Role-specific instructions are embedded directly in the system prompt template — no separate skill files. Users can customize every field. All agent types are starting points, not fixed — agents can be added, removed, or reconfigured per-company.
+Hezo ships with 11 built-in agent types that form the default team for the "Software Development" company type. Full specifications for each role are in `agents/{slug}.md`. Role-specific instructions are embedded directly in the system prompt template — no separate skill files. Users can customize every field. All agent types are starting points, not fixed — agents can be added, removed, or reconfigured per-company.
 
 Users can also create **entirely new custom agent types** with arbitrary titles, descriptions, system prompts, runtime types, and reporting lines. For example, a user could create a "Data Scientist", "Security Auditor", or "Legal Researcher" agent type — any role needed. Custom agent types are first-class citizens — agents created from them appear in the org chart, receive issues, participate in delegation, and have their own budgets just like built-in types.
 
@@ -459,7 +463,7 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **CEO** — strategic direction, delegation, dispute resolution, escalation to board. Reports to board.
 
-**Product Lead** — owns product requirements. Writes PRDs with acceptance criteria. Opens live chats with the board to clarify ambiguous requirements. Ensures development aligns with company mission. Reports to CEO.
+**Product Lead** — owns product requirements. Writes PRDs with acceptance criteria. Opens live chats with the board to clarify ambiguous requirements. Ensures development aligns with company goals. Reports to CEO.
 
 **Architect** — owns technical vision. Adds technical specs, architecture decisions, and implementation phases to tickets after the Product Lead's PRD. Reviews and approves the Engineer's implementation plans. Has technical authority — decides HOW to build things. Reports to CEO. Direct reports: Engineer, QA Engineer, UI Designer, DevOps Engineer.
 
@@ -474,6 +478,10 @@ Feature work uses a **single ticket** for both design and implementation. When a
 **Marketing Lead** — owns marketing strategy and content. Writes blog posts, social media, changelogs, marketing copy (replaces the need for a separate Content Writer). Reports to CEO.
 
 **Researcher** — conducts competitive analysis, technical research, and feasibility studies. First step in the ticket workflow — produces research that informs the Product Lead's PRD. Works with CEO, Architect, UI Designer, and Marketing Lead. Does NOT communicate directly with the Engineer. Reports to CEO.
+
+**Security Engineer** — owns security posture. Reviews code for vulnerabilities, validates auth flows, audits dependencies, and ensures security best practices. Reports to Architect.
+
+**Coach** — reviews completed tickets to extract lessons learned and proposes system prompt improvements for other agents. The Coach helps the team continuously improve by identifying patterns in what worked well and what didn't. Reports to no one (independent role). The `companies.settings.coach_auto_apply` field (default false) controls whether Coach-suggested system prompt improvements are auto-applied without board approval.
 
 ### AGENTS.md — two tiers
 
@@ -1005,13 +1013,13 @@ Agents don't configure repos directly. They get access to repos through whicheve
 Four-level hierarchy with full goal ancestry:
 
 ```
-Company Mission
+Company Description
   └── Project Goal
         └── Agent Goal (implicit from assigned issues)
               └── Task / Issue
 ```
 
-Every issue carries context tracing back to the company mission. Agents always know *what* to do and *why*. The goal chain is visible in the issue detail sidebar.
+Every issue carries context tracing back to the company description. Agents always know *what* to do and *why*. The goal chain is visible in the issue detail sidebar.
 
 ### Projects
 
@@ -1077,7 +1085,7 @@ The primary work surface. Contains two tabs:
 **Header (always visible):**
 - Title, description, metadata (project tag, identifier, status, priority, assignee)
 - Quick action buttons: reassign, change status, escalate, pause agent
-- Goal chain sidebar (mission → project → task)
+- Goal chain sidebar (company description → project → task)
 - Cost for this issue
 - Process status of the assigned agent
 
@@ -1439,10 +1447,11 @@ Every agent has a heartbeat interval. Default is **60 minutes**. Configurable pe
 ### Event-based triggers (immediate wakeup)
 
 In addition to scheduled heartbeats, agents are triggered **immediately** by:
-- Task assignment (issue assigned to them)
+- Task assignment — issue assigned to them (on creation, update, or sub-issue creation)
 - @-mention in an issue comment or live chat
 - Option chosen by the board on one of their option cards
 - Approval resolved for one of their requests
+- Container start — when a project container starts, all enabled agents with non-terminal assigned issues in that project are woken
 
 Event-triggered wakeups do not wait for the next scheduled heartbeat — the agent subprocess is spawned immediately. Scheduled heartbeats are a fallback for idle agents with no pending events.
 
@@ -1454,6 +1463,17 @@ When multiple events fire for the same agent in quick succession (e.g. several @
 - Delivers all pending events in a single heartbeat response
 - Prevents redundant subprocess spawns and duplicate work
 - Maintains event ordering within the batch
+
+### Container lifecycle and agent state
+
+Agents execute inside project containers. Container state changes directly affect agent execution:
+
+- **Container start**: After a container starts (or completes a rebuild), the system creates wakeup requests for all enabled agents that have non-terminal assigned issues in that project. This ensures agents resume work after downtime.
+- **Container stop**: Before stopping a container, all running agent tasks for that project are cancelled via `JobManager.cancelTask()`. After the container stops, stale execution locks are released. The UI shows a confirmation dialog warning that running agent tasks will be cancelled.
+- **Container rebuild**: Same as stop (cancel running agents, release locks), followed by a full re-provision. After the new container is running, agents are re-triggered as with container start. The UI shows a confirmation dialog warning about unpushed work loss.
+- **Container crash**: The container-sync job detects the status change within 1 second and updates the DB. Orphan detection handles stale agent state.
+
+Agent runtime status (`active` / `idle` / `paused`) is updated in the database and broadcast via WebSocket when an agent is activated and when it completes.
 
 ### Issue work ownership
 
@@ -1959,7 +1979,7 @@ All of this happens within one ticket. The Comments tab shows the conversation f
 | 8 | **Company workspace — Org chart tab** | Read-only tree with status indicators. Click node to inspect agent. |
 | 9 | **Company workspace — Projects tab** | List of projects with goal, repo count, issue count. Click to see filtered issue list + repo management. Project detail includes a Documents tab showing project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan). |
 | 10 | **Company workspace — Knowledge base tab** | List of .md docs with title, last updated, updated by. Click to view/edit. Version history. Board can create docs directly. |
-| 11 | **Company workspace — Settings tab** | Board-only. Company mission editor, connected platforms (OAuth), secrets vault, MCP servers, MPP config, budget overview, company preferences, audit log viewer, plugin management, Slack integration, member management. |
+| 11 | **Company workspace — Settings tab** | Board-only. Company description editor, connected platforms (OAuth), secrets vault, MCP servers, MPP config, budget overview, company preferences, plugin management, Slack integration, member management. |
 | 12 | **Account settings** | All roles. Profile, Telegram bot setup, notification preferences. |
 
 ### Navigation structure
@@ -2047,7 +2067,7 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `company_types` | Team type blueprints (recipes). Groups of agent types plus default KB docs, preferences. |
 | `company_type_agent_types` | Join table linking team types to agent types with org chart and config overrides. |
 | `company_team_types` | Many-to-many join table linking companies to the team types they were created from. |
-| `companies` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), budget. |
+| `companies` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), budget. |
 | `invites` | Pending invitations to join a company (7-day expiry) |
 | `api_keys` | Company-scoped API keys for external orchestrators. Stored hashed. |
 | `company_ssh_keys` | Generated SSH key pairs per company. Registered on GitHub via OAuth API. |

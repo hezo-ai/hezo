@@ -25,6 +25,7 @@ export type AgentAdminStatus = (typeof AgentAdminStatus)[keyof typeof AgentAdmin
 export const ContainerStatus = {
 	Creating: 'creating',
 	Running: 'running',
+	Stopping: 'stopping',
 	Stopped: 'stopped',
 	Error: 'error',
 } as const;
@@ -56,6 +57,7 @@ export const CommentContentType = {
 	Preview: 'preview',
 	Trace: 'trace',
 	System: 'system',
+	Execution: 'execution',
 } as const;
 export type CommentContentType = (typeof CommentContentType)[keyof typeof CommentContentType];
 
@@ -132,6 +134,7 @@ export const WakeupSource = {
 	Automation: 'automation',
 	OptionChosen: 'option_chosen',
 	ChatMessage: 'chat_message',
+	Comment: 'comment',
 } as const;
 export type WakeupSource = (typeof WakeupSource)[keyof typeof WakeupSource];
 

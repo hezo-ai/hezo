@@ -10,6 +10,7 @@ let db: PGlite;
 let token: string;
 let companyId: string;
 let projectId: string;
+let agentId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -30,6 +31,13 @@ beforeAll(async () => {
 		body: JSON.stringify({ name: 'Main Project' }),
 	});
 	projectId = (await projectRes.json()).data.id;
+
+	const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title: 'Test Agent' }),
+	});
+	agentId = (await agentRes.json()).data.id;
 });
 
 afterAll(async () => {
@@ -45,6 +53,7 @@ describe('issues CRUD', () => {
 				project_id: projectId,
 				title: 'First issue',
 				priority: 'high',
+				assignee_id: agentId,
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -62,6 +71,7 @@ describe('issues CRUD', () => {
 			body: JSON.stringify({
 				project_id: projectId,
 				title: 'Second issue',
+				assignee_id: agentId,
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -130,7 +140,7 @@ describe('issues CRUD', () => {
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ title: 'Sub-task' }),
+				body: JSON.stringify({ title: 'Sub-task', assignee_id: agentId }),
 			},
 		);
 		expect(res.status).toBe(201);
@@ -180,6 +190,7 @@ describe('issues CRUD', () => {
 			body: JSON.stringify({
 				project_id: projectId,
 				title: 'To delete',
+				assignee_id: agentId,
 			}),
 		});
 		const issue = (await createRes.json()).data;
@@ -303,6 +314,55 @@ describe('issues CRUD', () => {
 		expect(listRes.status).toBe(200);
 		const issues = (await listRes.json()).data;
 		expect(issues[0]).not.toHaveProperty('rules');
+	});
+
+	it('rejects issue creation without assignee_id', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'No assignee issue',
+			}),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.message).toContain('assignee_id is required');
+	});
+
+	it('rejects sub-issue creation without assignee_id', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		const parentIssue = (await listRes.json()).data[0];
+
+		const res = await app.request(
+			`/api/companies/${companyId}/issues/${parentIssue.id}/sub-issues`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ title: 'Sub without assignee' }),
+			},
+		);
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.message).toContain('assignee_id is required');
+	});
+
+	it('rejects setting assignee_id to null on update', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		const issue = (await listRes.json()).data[0];
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ assignee_id: null }),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.message).toContain('assignee_id cannot be null');
 	});
 
 	it('prevents deleting an in-progress issue', async () => {

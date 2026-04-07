@@ -14,6 +14,9 @@
 			"correctness": {
 				"noUnusedImports": "warn",
 				"noUnusedVariables": "warn"
+			},
+			"a11y": {
+				"useValidAnchor": "warn"
 			}
 		}
 	},

@@ -65,7 +65,7 @@ beforeAll(async () => {
 		status: string,
 		proj: string,
 		description = '',
-		assigneeId: string | null = null,
+		assigneeId: string | null = memberId,
 	) => {
 		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
 			method: 'POST',

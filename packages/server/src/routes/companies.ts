@@ -1,10 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType, MemberType, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
+import { AuthType, BUILTIN_AGENT_SLUGS, MemberType, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { toIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess, requireSuperuser } from '../middleware/auth';
+import { type ProjectRow, provisionContainer } from '../services/containers';
 import { downloadAndSaveSkill, SkillDownloadError } from '../services/skill-downloader';
 
 export const companiesRoutes = new Hono<Env>();
@@ -113,7 +114,7 @@ companiesRoutes.post('/companies', async (c) => {
 
 		await db.query(
 			`INSERT INTO projects (company_id, name, slug, goal, is_internal)
-			 VALUES ($1, 'Operations', 'operations', 'Internal company operations and administrative tasks', true)`,
+			 VALUES ($1, 'Operations', 'operations', 'Administrative workspace for internal operations such as agent onboarding, team coordination, and company-wide tasks.', true)`,
 			[company.id],
 		);
 
@@ -126,11 +127,26 @@ companiesRoutes.post('/companies', async (c) => {
 			await createKbDocsFromTemplate(db, company.id, body.template_id);
 		}
 
+		await ensureBuiltinAgents(db, company.id);
+
 		await db.query('COMMIT');
 
+		const dataDir = c.get('dataDir');
+
 		if (body.template_id) {
-			const dataDir = c.get('dataDir');
 			await createSkillsFromTemplate(db, company.id, body.template_id, dataDir);
+		}
+
+		const opsResult = await db.query<ProjectRow>(
+			`SELECT id, company_id, slug, docker_base_image, container_id, container_status, dev_ports
+			 FROM projects WHERE company_id = $1 AND slug = 'operations'`,
+			[company.id],
+		);
+		if (opsResult.rows[0]) {
+			const docker = c.get('docker');
+			provisionContainer(db, docker, opsResult.rows[0], slug, dataDir).catch((error) => {
+				console.error(`Failed to provision container for operations project:`, error);
+			});
 		}
 
 		const result = await db.query(
@@ -188,7 +204,7 @@ companiesRoutes.patch('/companies/:companyId', async (c) => {
 		description?: string;
 		mcp_servers?: unknown[];
 		mpp_config?: Record<string, unknown>;
-		coach_auto_apply?: boolean;
+		settings?: Record<string, unknown>;
 	}>();
 
 	const sets: string[] = [];
@@ -217,7 +233,11 @@ companiesRoutes.patch('/companies/:companyId', async (c) => {
 	addField('description', body.description);
 	addField('mcp_servers', body.mcp_servers, true);
 	addField('mpp_config', body.mpp_config, true);
-	addField('coach_auto_apply', body.coach_auto_apply);
+	if (body.settings !== undefined) {
+		sets.push(`settings = settings || $${idx}::jsonb`);
+		params.push(JSON.stringify(body.settings));
+		idx++;
+	}
 
 	if (sets.length === 0) {
 		const result = await db.query('SELECT * FROM companies WHERE id = $1', [companyId]);
@@ -341,6 +361,59 @@ async function createAgentsFromTeamTypes(
 				]);
 			}
 		}
+	}
+}
+
+async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void> {
+	const existing = await db.query<{ slug: string }>(
+		`SELECT ma.slug FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.company_id = $1 AND ma.slug = ANY($2)`,
+		[companyId, [...BUILTIN_AGENT_SLUGS]],
+	);
+	const existingSlugs = new Set(existing.rows.map((r) => r.slug));
+	const missingSlugs = BUILTIN_AGENT_SLUGS.filter((s) => !existingSlugs.has(s));
+	if (missingSlugs.length === 0) return;
+
+	const agentTypes = await db.query<{
+		id: string;
+		name: string;
+		slug: string;
+		role_description: string;
+		system_prompt_template: string;
+		runtime_type: string;
+		heartbeat_interval_min: number;
+		monthly_budget_cents: number;
+	}>(
+		`SELECT id, name, slug, role_description, system_prompt_template,
+		        runtime_type, heartbeat_interval_min, monthly_budget_cents
+		 FROM agent_types WHERE slug = ANY($1)`,
+		[missingSlugs],
+	);
+
+	for (const at of agentTypes.rows) {
+		const memberResult = await db.query<{ id: string }>(
+			`INSERT INTO members (company_id, member_type, display_name)
+			 VALUES ($1, $2, $3)
+			 RETURNING id`,
+			[companyId, MemberType.Agent, at.name],
+		);
+		await db.query(
+			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, system_prompt,
+			                            runtime_type, heartbeat_interval_min, monthly_budget_cents)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_runtime, $8, $9)`,
+			[
+				memberResult.rows[0].id,
+				at.id,
+				at.name,
+				at.slug,
+				at.role_description,
+				at.system_prompt_template,
+				at.runtime_type,
+				at.heartbeat_interval_min,
+				at.monthly_budget_cents,
+			],
+		);
 	}
 }
 

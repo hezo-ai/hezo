@@ -40,17 +40,17 @@ beforeAll(async () => {
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ project_id: projectId, title: 'Lock Test Issue' }),
-	});
-	issueId = (await issueRes.json()).data.id;
-
 	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
+
+	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ project_id: projectId, title: 'Lock Test Issue', assignee_id: agentId }),
+	});
+	issueId = (await issueRes.json()).data.id;
 });
 
 afterAll(async () => {

@@ -41,7 +41,7 @@ test('agent detail page displays system prompt in textarea', async ({ page }) =>
 	const agents = ((await agentsRes.json()) as any).data;
 	const engineer = agents.find((a: any) => a.slug === 'engineer');
 
-	await page.goto(`/companies/${company.id}/agents/${engineer.id}`);
+	await page.goto(`/companies/${company.id}/agents/${engineer.id}/settings`);
 
 	const promptTextarea = page.getByLabel('System Prompt');
 	await expect(promptTextarea).toBeVisible({ timeout: 5000 });
@@ -64,7 +64,7 @@ test('system prompt can be edited and saved', async ({ page }) => {
 	const agents = ((await agentsRes.json()) as any).data;
 	const researcher = agents.find((a: any) => a.slug === 'researcher');
 
-	await page.goto(`/companies/${company.id}/agents/${researcher.id}`);
+	await page.goto(`/companies/${company.id}/agents/${researcher.id}/settings`);
 
 	const promptTextarea = page.getByLabel('System Prompt');
 	await expect(promptTextarea).toBeVisible({ timeout: 5000 });

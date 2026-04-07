@@ -42,10 +42,10 @@ CREATE TYPE member_type AS ENUM ('agent', 'user');
 CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini');
 CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
 CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled', 'terminated');
-CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopped', 'error');
+CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopping', 'stopped', 'error');
 CREATE TYPE issue_status AS ENUM ('backlog', 'open', 'in_progress', 'review', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');
-CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system');
+CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'execution');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'company');
@@ -55,7 +55,7 @@ CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
 CREATE TYPE platform_type AS ENUM ('github', 'gmail', 'gitlab', 'stripe', 'posthog', 'railway', 'vercel', 'digitalocean', 'x');
 CREATE TYPE connection_status AS ENUM ('active', 'expired', 'disconnected');
-CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'chat_message');
+CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'chat_message', 'comment');
 CREATE TYPE wakeup_status AS ENUM ('queued', 'claimed', 'completed', 'failed', 'skipped', 'coalesced', 'deferred', 'cancelled');
 CREATE TYPE heartbeat_run_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'timed_out');
 CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
@@ -144,7 +144,7 @@ CREATE TABLE companies (
     budget_reset_at      TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
     mcp_servers          JSONB NOT NULL DEFAULT '[]'::jsonb,
     mpp_config           JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
-    coach_auto_apply     BOOLEAN NOT NULL DEFAULT false,
+    settings             JSONB NOT NULL DEFAULT '{"coach_auto_apply": false}'::jsonb,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -213,6 +213,7 @@ CREATE TABLE member_users (
     role_title       TEXT,
     permissions_text TEXT NOT NULL DEFAULT '',
     project_ids      JSONB,
+    settings         JSONB NOT NULL DEFAULT '{}',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -726,6 +727,7 @@ CREATE TABLE heartbeat_runs (
     company_id               UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     member_id                UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     wakeup_id                UUID REFERENCES agent_wakeup_requests(id) ON DELETE SET NULL,
+    issue_id                 UUID REFERENCES issues(id) ON DELETE SET NULL,
     status                   heartbeat_run_status NOT NULL DEFAULT 'queued',
     started_at               TIMESTAMPTZ,
     finished_at              TIMESTAMPTZ,
@@ -745,6 +747,7 @@ CREATE TABLE heartbeat_runs (
 CREATE INDEX idx_runs_member ON heartbeat_runs(member_id);
 CREATE INDEX idx_runs_status ON heartbeat_runs(status);
 CREATE INDEX idx_runs_company ON heartbeat_runs(company_id);
+CREATE INDEX idx_runs_issue ON heartbeat_runs(issue_id);
 
 -------------------------------------------------------------------------------
 -- AGENT TASK SESSIONS

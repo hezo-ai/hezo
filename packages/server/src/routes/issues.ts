@@ -1,3 +1,4 @@
+import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	AuditAction,
@@ -17,6 +18,21 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess } from '../middleware/auth';
 import { createWakeup } from '../services/wakeup';
+
+async function wakeAgentIfAssigned(
+	db: PGlite,
+	assigneeId: string | null | undefined,
+	companyId: string,
+	issueId: string,
+): Promise<void> {
+	if (!assigneeId) return;
+	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
+	if (isAgent.rows.length > 0) {
+		createWakeup(db, assigneeId, companyId, WakeupSource.Assignment, {
+			issue_id: issueId,
+		}).catch((e) => console.error('[wakeup] Failed to create wakeup for assignment:', e));
+	}
+}
 
 export const issuesRoutes = new Hono<Env>();
 
@@ -128,6 +144,9 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 	if (!body.project_id || !body.title?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'project_id and title are required', 400);
 	}
+	if (!body.assignee_id) {
+		return err(c, 'INVALID_REQUEST', 'assignee_id is required', 400);
+	}
 
 	const companyResult = await db.query<{ issue_prefix: string }>(
 		'SELECT issue_prefix FROM companies WHERE id = $1',
@@ -165,6 +184,18 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 	);
 
 	const issue = result.rows[0] as Record<string, unknown>;
+
+	if (body.assignee_id) {
+		const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
+			body.assignee_id,
+		]);
+		if (isAgent.rows.length > 0) {
+			createWakeup(db, body.assignee_id, companyId, WakeupSource.Assignment, {
+				issue_id: issue.id as string,
+			}).catch((e) => console.error('Failed to create wakeup:', e));
+		}
+	}
+
 	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', issue);
 	auditLog(
 		db,
@@ -178,6 +209,7 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 			identifier,
 		},
 	).catch(() => {});
+	wakeAgentIfAssigned(db, body.assignee_id, companyId, issue.id as string);
 	return ok(c, issue, 201);
 });
 
@@ -266,6 +298,9 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		idx++;
 	}
 	if (body.assignee_id !== undefined) {
+		if (body.assignee_id === null) {
+			return err(c, 'INVALID_REQUEST', 'assignee_id cannot be null', 400);
+		}
 		sets.push(`assignee_id = $${idx}`);
 		params.push(body.assignee_id);
 		idx++;
@@ -302,16 +337,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		params,
 	);
 
-	if (body.assignee_id) {
-		const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
-			body.assignee_id,
-		]);
-		if (isAgent.rows.length > 0) {
-			createWakeup(db, body.assignee_id, companyId, WakeupSource.Assignment, {
-				issue_id: issueId,
-			}).catch((e) => console.error('Failed to create wakeup:', e));
-		}
-	}
+	wakeAgentIfAssigned(db, body.assignee_id, companyId, issueId);
 
 	if (body.status === IssueStatus.Done) {
 		const coach = await db.query<{ id: string }>(
@@ -403,6 +429,9 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 	if (!body.title?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'title is required', 400);
 	}
+	if (!body.assignee_id) {
+		return err(c, 'INVALID_REQUEST', 'assignee_id is required', 400);
+	}
 
 	const companyResult = await db.query<{ issue_prefix: string }>(
 		'SELECT issue_prefix FROM companies WHERE id = $1',
@@ -435,14 +464,10 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 		],
 	);
 
-	broadcastChange(
-		c,
-		`company:${companyId}`,
-		'issues',
-		'INSERT',
-		result.rows[0] as Record<string, unknown>,
-	);
-	return ok(c, result.rows[0], 201);
+	const subIssue = result.rows[0] as Record<string, unknown>;
+	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', subIssue);
+	wakeAgentIfAssigned(db, body.assignee_id, companyId, subIssue.id as string);
+	return ok(c, subIssue, 201);
 });
 
 issuesRoutes.get('/companies/:companyId/issues/:issueId/dependencies', async (c) => {
