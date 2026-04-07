@@ -16,17 +16,26 @@ Timestamps are ISO 8601. IDs are UUIDs. Money is in cents.
 
 Three auth methods:
 
+### Bootstrap — Master Key Exchange
+
+`POST /auth/token` exchanges the master key for a board JWT. This is the bootstrap endpoint for initial access.
+
+Request:
+```json
+{ "master_key": "..." }
+```
+
+Response:
+```json
+{ "data": { "token": "<user_jwt>" } }
+```
+
 ### Board — User JWT
-Stateless JWT signed with the master key. Issued after GitHub/GitLab OAuth login.
-Required for all human users. No session cookies.
+
+All subsequent requests use a stateless JWT signed with the master key. No session cookies.
 
 ```
 Authorization: Bearer <user_jwt>
-```
-
-User JWTs contain:
-```json
-{ "user_id": "...", "email": "...", "iat": ..., "exp": ... }
 ```
 
 ### Board — API key (remote orchestrators)
@@ -82,7 +91,7 @@ Response:
     {
       "id": "uuid",
       "name": "NoteGenius AI",
-      "mission": "Build the #1 AI note-taking app",
+      "description": "Build the #1 AI note-taking app",
       "agent_count": 6,
       "open_issue_count": 14,
       "total_budget_cents": 24000,
@@ -95,44 +104,29 @@ Response:
 ```
 
 #### `POST /companies`
-Create a company. Optionally seed from one or more team types.
+Create a company. Optionally seed from a template.
 
 Request:
 ```json
 {
   "name": "NoteGenius AI",
-  "mission": "Build the #1 AI note-taking app",
-  "team_type_ids": ["uuid", "uuid"]
+  "description": "Build the #1 AI note-taking app",
+  "template_id": "uuid",
+  "issue_prefix": "NOTE"
 }
 ```
 
-`team_type_ids` is optional. When set, agents are provisioned from all selected team types with automatic deduplication — if the same agent type appears in multiple team types, the first occurrence (by array order) wins and subsequent duplicates are skipped. The company-to-team-type associations are stored in the `company_team_types` join table.
-
-Each team type contributes:
-- Agent configurations (titles, prompts, org chart, runtimes, budgets)
-- Knowledge base documents
-- Company-level MCP server config
-- MPP config structure (wallet keys must be set up fresh)
-
-Not copied: projects, repos, issues, secrets, costs, audit log, API keys.
+`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). `issue_prefix` is optional and defaults to an auto-generated prefix from the company name.
 
 Response: full company object. On creation, the server automatically:
 
 1. Creates `~/.hezo/companies/{slug}/` folder structure with auto-generated AGENTS.md.
-2. Creates agent team from selected team types (deduplicated). The UI defaults to "Software Development" pre-selected.
-3. Creates a **"Setup" project** with an onboarding issue assigned to the CEO:
-   *"Set up repository access — configure deploy keys for connected GitHub account."*
-4. Generates an SSH key pair for the company and registers it on the connected GitHub account.
+2. Creates agent team from the selected template. The UI defaults to "Software Development" pre-selected.
+3. Creates an **"Operations" project** and auto-provisions its container.
 
-Docker container provisioning happens when the first project is created, not at company creation.
+Docker container provisioning for the Operations project happens at company creation. Other project containers are provisioned when those projects are created.
 
-The UI then prompts the owner to connect platforms via OAuth (Hezo Connect):
-- **GitHub** (required) — for repo access, PRs, Actions
-- **Gmail** (recommended) — for agent email
-- Other platforms optional: Stripe, PostHog, Railway, Vercel, DigitalOcean, X, GitLab
-
-Connections can be added or removed later in company settings.
-The board lands on a company with 9 agents and one actionable issue.
+The board lands on a company with 11 agents.
 
 #### `GET /companies/:companyId`
 Get company detail.
@@ -146,7 +140,8 @@ Request:
 ```json
 {
   "name": "NoteGenius AI",
-  "mission": "Updated mission statement",
+  "description": "Updated description",
+  "coach_auto_apply": true,
   "mcp_servers": [
     { "name": "slack", "url": "https://mcp.slack.com/sse", "description": "Team Slack" }
   ],
@@ -281,7 +276,7 @@ Delete a custom agent type. Built-in types cannot be deleted (returns 403).
 #### `GET /companies/:companyId/agents`
 List agents for a company.
 
-Query params: `?status=active,idle`
+Query params: `?admin_status=enabled,disabled,terminated`
 
 Response:
 ```json
@@ -384,7 +379,16 @@ Enable a disabled agent.
 Terminate an agent. Kills the agent's subprocess. Unassigns all issues.
 Agent record is kept for audit trail (admin_status = `terminated`).
 
-#### `POST /companies/:companyId/projects/:projectId/rebuild-container`
+#### `GET /companies/:companyId/agents/:agentId/heartbeat-runs`
+Get agent execution history (last 20 runs). Returns recent heartbeat invocations with timing and status.
+
+#### `POST /companies/:companyId/projects/:projectId/container/start`
+Start the project container. No-op if already running.
+
+#### `POST /companies/:companyId/projects/:projectId/container/stop`
+Gracefully stop the project container. Stops all agent subprocesses in this project.
+
+#### `POST /companies/:companyId/projects/:projectId/container/rebuild`
 Tear down and rebuild the project's Docker container. Kills all agent subprocesses
 in this project, destroys the container, provisions a new one. Useful when base
 image or dependency config changes. All agents keep their identity and config.
@@ -637,7 +641,7 @@ Response: full issue object + computed fields:
     "project_id": "uuid",
     "project_name": "Backend API",
     "project_goal": "Ship collaboration features",
-    "company_mission": "Build the #1 AI note-taking app",
+    "company_description": "Build the #1 AI note-taking app",
     "assignee_id": "uuid",
     "assignee_name": "Dev Engineer",
     "parent_issue_id": null,
@@ -715,7 +719,7 @@ Response:
         "label": "Auth flow mockup",
         "description": "Interactive prototype of the login/signup flow"
       },
-      "preview_url": "/preview/company-uuid/project-uuid/agent-uuid/auth-flow-mockup.html",
+      "preview_url": "/api/companies/company-uuid/projects/project-uuid/preview/auth-flow-mockup.html",
       "tool_calls": [],
       "created_at": "..."
     }
@@ -820,6 +824,8 @@ Request:
 plaintext.
 
 #### `PATCH /companies/:companyId/secrets/:secretId`
+**Not yet implemented — planned for Phase 7+.**
+
 Update a secret's value or category. Rotating a value does not revoke existing
 grants.
 
@@ -840,6 +846,8 @@ lose access on next subprocess invocation.
 ### Secret Grants
 
 #### `GET /companies/:companyId/secrets/:secretId/grants`
+**Not yet implemented — planned for Phase 7+.**
+
 List grants for a secret.
 
 Response:
@@ -910,23 +918,27 @@ Response:
 }
 ```
 
-#### `POST /approvals/:approvalId/resolve`
-Approve or deny.
+#### `POST /companies/:companyId/approvals/:approvalId/approve`
+Approve a pending approval.
 
 Request:
 ```json
 {
-  "status": "approved",
-  "resolution_note": "Approved for project scope",
-  "grant_scope": "project"
+  "resolution_note": "Approved for project scope"
 }
 ```
 
-`grant_scope` is only relevant for `secret_access` approvals. When approved,
-the system creates the grant(s) and injects the secret(s) into the agent's
-subprocess on next invocation.
+When approved, side effects depend on approval type: `secret_access` approvals create grants, `hire` approvals trigger agent creation, etc.
 
-For `hire` approvals, approval triggers agent creation.
+#### `POST /companies/:companyId/approvals/:approvalId/deny`
+Deny a pending approval.
+
+Request:
+```json
+{
+  "resolution_note": "Not needed at this time"
+}
+```
 
 ---
 
@@ -1079,8 +1091,9 @@ Response:
 
 ### Previews (proxy)
 
-#### `GET /preview/:companyId/:projectId/:agentId/:filename`
-Serves a preview file from the agent's preview directory.
+#### `GET /companies/:companyId/projects/:projectId/preview/*`
+Serves static files from the project container workspace. The wildcard path
+maps to a file within the container's working directory.
 
 Headers on response:
 ```
@@ -1090,7 +1103,7 @@ Cache-Control: no-store
 ```
 
 Returns 404 if file doesn't exist. Returns 403 if the requesting user doesn't
-have board access to the company. Filenames are sanitized (no path traversal).
+have board access to the company. Paths are sanitized (no path traversal).
 
 ---
 
@@ -1130,12 +1143,12 @@ Request:
 
 `slug` is auto-derived from the title (lowercased, spaces → hyphens).
 
-#### `GET /companies/:companyId/kb-docs/:docId`
+#### `GET /companies/:companyId/kb-docs/:slug`
 Get full document content.
 
 Response: full doc object including `content` field.
 
-#### `PATCH /companies/:companyId/kb-docs/:docId`
+#### `PATCH /companies/:companyId/kb-docs/:slug`
 Update a document (board action). Direct edits by the board do not require
 approval.
 
@@ -1147,8 +1160,41 @@ Request:
 }
 ```
 
-#### `DELETE /companies/:companyId/kb-docs/:docId`
+#### `DELETE /companies/:companyId/kb-docs/:slug`
 Delete a knowledge base document.
+
+---
+
+### Skills
+
+#### `GET /companies/:companyId/skills`
+List the skills manifest for a company. Returns all installed skills with metadata.
+
+#### `GET /companies/:companyId/skills/:slug`
+Get a skill's content by slug.
+
+#### `POST /companies/:companyId/skills`
+Add or download a skill.
+
+Request:
+```json
+{
+  "name": "Code Review",
+  "source_url": "https://example.com/skills/code-review",
+  "description": "Automated code review skill"
+}
+```
+
+`source_url` is the remote source to download from. `description` is optional.
+
+#### `PATCH /companies/:companyId/skills/:slug`
+Update skill metadata.
+
+#### `DELETE /companies/:companyId/skills/:slug`
+Remove a skill.
+
+#### `POST /companies/:companyId/skills/:slug/sync`
+Sync a skill from its source URL, pulling the latest version.
 
 ---
 
@@ -1264,62 +1310,44 @@ Request:
 ### Live Chat
 
 Each issue has a **persistent live chat** — one ongoing conversation per issue, always
-available. The assigned agent is always a participant. Board members can @-mention any
-other agent to pull them in.
+available. The chat is auto-created with the issue, no sessions or setup required. The assigned agent is always a participant. Board members can @-mention any other agent to pull them in.
 
-#### `GET /companies/:companyId/issues/:issueId/live-chat`
-Get the live chat for this issue (transcript, participants, metadata).
-The chat is auto-created when the issue is created — no "start" step needed.
-
-Response:
-```json
-{
-  "data": {
-    "id": "uuid",
-    "issue_id": "uuid",
-    "assigned_agent_id": "uuid",
-    "active_agents": ["uuid-architect", "uuid-engineer"],
-    "message_count": 24,
-    "transcript": [
-      { "author": "board:alice", "text": "What auth strategy do you recommend?", "timestamp": "..." },
-      { "author": "agent:architect", "text": "For this API-first product, I'd suggest JWT...", "timestamp": "..." },
-      { "author": "board:alice", "text": "@engineer can you estimate effort for this?", "timestamp": "..." },
-      { "author": "agent:engineer", "text": "JWT with refresh tokens — about 2 phases...", "timestamp": "..." }
-    ],
-    "created_at": "..."
-  }
-}
-```
+#### `GET /companies/:companyId/issues/:issueId/chat/messages`
+Get chat messages for this issue.
 
 Query params:
 - `?after=<timestamp>` — only messages after this timestamp (for polling/pagination)
 - `?limit=50` — max messages to return (default 50, from most recent)
 
-#### `WS /ws/live-chat/:issueId`
-Real-time WebSocket for the issue's live chat. Board members and agents connect
-to send and receive messages.
-
-Send a message:
+Response:
 ```json
-{ "type": "message", "text": "What auth strategy do you recommend?" }
+{
+  "data": [
+    { "id": "uuid", "author": "board:alice", "content": "What auth strategy do you recommend?", "created_at": "..." },
+    { "id": "uuid", "author": "agent:architect", "content": "For this API-first product, I'd suggest JWT...", "created_at": "..." }
+  ]
+}
 ```
 
-@-mention an agent to pull them in:
+#### `POST /companies/:companyId/issues/:issueId/chat/messages`
+Post a chat message. The server detects @-mentions, wakes the mentioned agent
+immediately, and adds them to the chat.
+
+Request:
 ```json
-{ "type": "message", "text": "@architect what do you think about this approach?" }
+{
+  "content": "What auth strategy do you recommend?",
+  "mentions": ["architect"]
+}
 ```
 
-The server detects @-mentions, wakes the mentioned agent immediately, and adds
-them to the chat. Messages are appended to the transcript in real time.
-
-Agent tool call notifications:
-```json
-{ "type": "tool_call", "agent": "engineer", "tool_name": "bash", "status": "success", "summary": "npm test — 42 passed" }
-```
+`mentions` is optional. When present, the server wakes the mentioned agents by slug.
 
 ---
 
 ### File Attachments
+
+**Not yet implemented — planned for Phase 7+.**
 
 #### `GET /companies/:companyId/issues/:issueId/attachments`
 List file attachments for an issue.
@@ -1365,6 +1393,8 @@ Remove a file attachment from an issue. The underlying asset is deleted.
 ---
 
 ### Plugins
+
+**Not yet implemented — planned for Phase 8+.**
 
 #### `GET /plugins/registry`
 Browse and search the centralized plugin registry at plugins.hezo.ai.
@@ -1431,17 +1461,20 @@ List installed plugins for a company.
 
 ### Auth & Team
 
+Current auth uses `POST /auth/token` to exchange the master key for a board JWT (see Authentication section above). OAuth login (GitHub/GitLab) is planned for Phase 6.5.
+
+**OAuth login endpoints — not yet implemented — planned for Phase 6.5.**
+
 #### `GET /auth/github`
-Initiate GitHub OAuth login. Redirects to Hezo Connect which handles the OAuth flow. On success, creates or updates the user account and returns a signed user JWT.
+Initiate GitHub OAuth login.
 
 #### `GET /auth/gitlab`
-Initiate GitLab OAuth login. Same flow as GitHub.
+Initiate GitLab OAuth login.
 
 #### `GET /auth/callback`
-OAuth callback endpoint. Receives tokens from Hezo Connect, creates/updates user, issues a user JWT, redirects to the app with the token.
+OAuth callback endpoint.
 
-#### `POST /auth/logout`
-End the current session. Client discards the JWT.
+**Invite endpoints — not yet implemented — planned for Phase 7+.**
 
 #### `POST /companies/:companyId/invites`
 Invite a new member to the company. Board-only.
@@ -1477,6 +1510,8 @@ The invite code can be shared out-of-band (email, chat, etc.).
 
 #### `POST /invites/:code/accept`
 Accept an invite and join the company. Requires authentication (user JWT). The invite's role, title, permissions, and project scope are copied to a new member_users row.
+
+**Member management endpoints — not yet implemented — planned for Phase 7+.**
 
 #### `GET /companies/:companyId/members`
 List all members of a company.
@@ -1529,6 +1564,8 @@ Request:
 
 ### Board Inbox
 
+**Not yet implemented — planned for Phase 7+.**
+
 #### `GET /companies/:companyId/inbox`
 Aggregated notifications. Board members see all items (approvals, escalations, budget alerts, design reviews, etc.). Members see only items relevant to their assigned issues and project scope.
 
@@ -1561,6 +1598,8 @@ Dismiss an inbox item. Sets `dismissed_at`.
 
 ### Notification Preferences
 
+**Not yet implemented — planned for Phase 7+.**
+
 #### `GET /users/me/notification-preferences`
 List notification preferences for all channels.
 
@@ -1590,6 +1629,8 @@ Update notification preferences. Accepts an array of channel configs. Upserts by
 
 ### Slack Connection
 
+**Not yet implemented — planned for Phase 7+.**
+
 #### `GET /companies/:companyId/slack-connection`
 Get Slack connection status for a company.
 
@@ -1611,6 +1652,8 @@ Disconnect Slack from a company. Revokes the bot token secret.
 ---
 
 ### Webhooks
+
+**Not yet implemented — planned for Phase 7+.**
 
 #### `POST /webhooks/slack`
 Receives Slack Events API payloads. Handles interactive messages (approvals), slash commands, and channel messages directed at agents.
