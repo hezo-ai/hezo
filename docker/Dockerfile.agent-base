@@ -9,10 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #   @anthropic-ai/claude-code → claude
 #   @openai/codex             → codex
 #   @google/gemini-cli        → gemini
-#   kimi-code                 → kimi
+#   kimi (via install script) → kimi
 RUN npm install -g @anthropic-ai/claude-code \
     && npm install -g @openai/codex \
     && npm install -g @google/gemini-cli \
-    && npm install -g kimi-code
+    && curl -LsSf https://code.kimi.com/install.sh | bash
 
 WORKDIR /workspace
