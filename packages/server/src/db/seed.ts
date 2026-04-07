@@ -317,6 +317,6 @@ Significant technical decisions should be documented with:
 		 ON CONFLICT (name) DO UPDATE SET
 		     description = EXCLUDED.description,
 		     source = EXCLUDED.source`,
-		['Blank', 'Start from scratch with no agents or documents'],
+		['Blank', 'Start from scratch with only the built-in CEO and Coach agents'],
 	);
 }

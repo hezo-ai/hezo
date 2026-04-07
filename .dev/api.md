@@ -845,9 +845,9 @@ lose access on next subprocess invocation.
 
 ### Secret Grants
 
-**`GET /companies/:companyId/secrets/:secretId/grants` — not yet implemented — planned for Phase 7+.**
-
 #### `GET /companies/:companyId/secrets/:secretId/grants`
+**Not yet implemented — planned for Phase 7+.**
+
 List grants for a secret.
 
 Response:

@@ -39,3 +39,30 @@ test('new company page shows template selection', async ({ page }) => {
 	await expect(page.getByText('Startup')).toBeVisible();
 	await expect(page.getByText('Blank')).toBeVisible();
 });
+
+test('Blank template shows built-in agents note and creates CEO/Coach', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+	await page.goto('/companies/new');
+
+	// Select Blank template
+	const blankCard = page.locator('button', { hasText: 'Blank' });
+	await blankCard.click();
+
+	// Verify the built-in agents badge is visible on the Blank card
+	await expect(blankCard.getByText('Includes CEO + Coach')).toBeVisible();
+
+	// Continue to details step
+	await page.getByRole('button', { name: 'Continue' }).click();
+
+	// Fill in company name and create
+	await page.getByLabel('Name').fill('Blank Test Co');
+	await page.getByRole('button', { name: 'Create' }).click();
+
+	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
+
+	// Navigate to Team and verify CEO and Coach exist
+	await page.getByRole('link', { name: 'Team' }).click();
+	await expect(page.getByText('CEO')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Coach')).toBeVisible({ timeout: 5000 });
+});

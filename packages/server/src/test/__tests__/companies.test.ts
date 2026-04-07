@@ -60,7 +60,7 @@ describe('companies CRUD', () => {
 		]);
 	});
 
-	it('creates a company without a type', async () => {
+	it('creates a company without a type and includes built-in agents', async () => {
 		const res = await app.request('/api/companies', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -72,7 +72,14 @@ describe('companies CRUD', () => {
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.issue_prefix).toBe('SOLO');
-		expect(body.data.agent_count).toBe(0);
+		expect(body.data.agent_count).toBe(2);
+
+		const agentsRes = await app.request(`/api/companies/${body.data.id}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await agentsRes.json()).data;
+		const slugs = agents.map((a: any) => a.slug).sort();
+		expect(slugs).toEqual(['ceo', 'coach']);
 	});
 
 	it('rejects duplicate issue prefix', async () => {
@@ -202,7 +209,7 @@ describe('companies CRUD', () => {
 });
 
 describe('template-based company creation', () => {
-	it('creates agents from a custom template', async () => {
+	it('creates agents from a custom template plus missing built-in agents', async () => {
 		const agentTypesRes = await app.request('/api/agent-types', {
 			headers: authHeader(token),
 		});
@@ -236,10 +243,17 @@ describe('template-based company creation', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.agent_count).toBe(2);
+		expect(body.data.agent_count).toBe(3);
+
+		const agentsRes = await app.request(`/api/companies/${body.data.id}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await agentsRes.json()).data;
+		const slugs = agents.map((a: any) => a.slug).sort();
+		expect(slugs).toEqual(['ceo', 'coach', 'researcher']);
 	});
 
-	it('creates no agents without a template', async () => {
+	it('creates only built-in agents without a template', async () => {
 		const res = await app.request('/api/companies', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -250,7 +264,107 @@ describe('template-based company creation', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.agent_count).toBe(0);
+		expect(body.data.agent_count).toBe(2);
+
+		const agentsRes = await app.request(`/api/companies/${body.data.id}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await agentsRes.json()).data;
+		const slugs = agents.map((a: any) => a.slug).sort();
+		expect(slugs).toEqual(['ceo', 'coach']);
+	});
+
+	it('creates CEO and Coach with Blank template', async () => {
+		const typesRes = await app.request('/api/company-types', {
+			headers: authHeader(token),
+		});
+		const blankType = (await typesRes.json()).data.find((t: any) => t.name === 'Blank');
+
+		const res = await app.request('/api/companies', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Blank Template Co',
+				issue_prefix: 'BTC',
+				template_id: blankType.id,
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.agent_count).toBe(2);
+
+		const agentsRes = await app.request(`/api/companies/${body.data.id}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await agentsRes.json()).data;
+		const slugs = agents.map((a: any) => a.slug).sort();
+		expect(slugs).toEqual(['ceo', 'coach']);
+	});
+
+	it('does not duplicate CEO/Coach when Startup template already includes them', async () => {
+		const res = await app.request('/api/companies', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Full Template Co',
+				issue_prefix: 'FTC',
+				template_id: builtinTypeId,
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.agent_count).toBe(11);
+
+		const agentsRes = await app.request(`/api/companies/${body.data.id}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await agentsRes.json()).data;
+		const ceos = agents.filter((a: any) => a.slug === 'ceo');
+		const coaches = agents.filter((a: any) => a.slug === 'coach');
+		expect(ceos).toHaveLength(1);
+		expect(coaches).toHaveLength(1);
+	});
+
+	it('creates CEO/Coach for custom template that omits them', async () => {
+		const agentTypesRes = await app.request('/api/agent-types', {
+			headers: authHeader(token),
+		});
+		const agentTypes = (await agentTypesRes.json()).data;
+		const researcher = agentTypes.find((a: any) => a.slug === 'researcher');
+
+		const typeRes = await app.request('/api/company-types', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Researcher Only',
+				description: 'Only a researcher',
+				agent_types: [
+					{ agent_type_id: researcher.id, sort_order: 0 },
+				],
+			}),
+		});
+		expect(typeRes.status).toBe(201);
+		const templateId = (await typeRes.json()).data.id;
+
+		const res = await app.request('/api/companies', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Researcher Co',
+				issue_prefix: 'RSC',
+				template_id: templateId,
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.agent_count).toBe(3);
+
+		const agentsRes = await app.request(`/api/companies/${body.data.id}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await agentsRes.json()).data;
+		const slugs = agents.map((a: any) => a.slug).sort();
+		expect(slugs).toEqual(['ceo', 'coach', 'researcher']);
 	});
 
 	it('populates company_team_types join table', async () => {
