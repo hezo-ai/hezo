@@ -13,7 +13,7 @@
 | `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget. Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
 | `company_types` | Company blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers. | Referenced by company_team_types. |
 | `company_type_agent_types` | Join table linking company types to agent types. Stores org chart hierarchy (reports_to_slug) and per-company-type config overrides (runtime type, heartbeat, budget). | belongs to company_type + agent_type |
-| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), company-level budget. | Parent of everything. |
+| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), `coach_auto_apply` (boolean), company-level budget. | Parent of everything. |
 | `company_team_types` | Many-to-many join table linking companies to the team types they were created from. | belongs to company + company_type |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
@@ -36,6 +36,7 @@
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to company |
 | `company_ssh_keys` | Generated SSH key pairs per company. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to company |
 | `execution_locks` | Issue work ownership tracking. One agent works on an issue at a time. | belongs to issue + member_agent |
+| `system_prompt_revisions` | History of agent system prompt changes. Tracks old/new prompt, change summary, author. Linked to approval if change required approval. | belongs to member_agent + company |
 | `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. | belongs to member_agent + company |
 | `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. | belongs to member_agent + company |
 | `agent_task_sessions` | Per-task session persistence for session compaction. | belongs to member_agent, keyed by task |
@@ -273,27 +274,25 @@ via the same `debit_agent_budget()` atomic function.
 
 When a company is created via `POST /companies`, the server automatically:
 1. Creates the `~/.hezo/companies/{slug}/` folder structure
-2. Creates the full 9-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer,
-   UI Designer, DevOps Engineer, Marketing Lead, Researcher) with pre-filled system
-   prompts from built-in role templates. DevOps Engineer starts in `idle` status.
+2. Creates the full 11-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer,
+   Security Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher, Coach)
+   with pre-filled system prompts from built-in role templates. DevOps Engineer starts
+   in `idle` status.
 3. Prompts the owner to connect platforms via OAuth (GitHub required, Gmail recommended)
-4. Creates a "Setup" project with an onboarding issue assigned to the CEO
+4. Creates an "Operations" project (`is_internal = true`) with an onboarding issue assigned to the CEO
 5. Generates an SSH key pair for the company and registers it on the connected GitHub account
 6. Auto-generates the company AGENTS.md KB doc with default engineering rules and writes it to disk
-
-Container provisioning happens when the first project is created, not at company creation.
+7. Auto-provisions a Docker container for the Operations project in the background
 
 This ensures the user never lands on an empty company.
 
 ### Team type provisioning
 
-`POST /companies` accepts an optional `team_type_ids` array. The server provisions
-agents from all selected team types via the `company_type_agent_types` join table,
-with automatic deduplication of overlapping agent roles:
+`POST /companies` accepts an optional `template_id` (a single company type UUID). The server provisions
+agents from the selected team type via the `company_type_agent_types` join table:
 
-1. For each team type (in array order), queries `company_type_agent_types JOIN agent_types`, ordered by `sort_order`
-2. Deduplicates by `agent_type_id` — first occurrence wins (keeps that type's config overrides)
-3. For each unique agent type, creates `members` + `member_agents` rows with:
+1. Queries `company_type_agent_types JOIN agent_types` for the selected template, ordered by `sort_order`
+2. For each agent type, creates `members` + `member_agents` rows with:
    - `agent_type_id` set to the originating agent type (for provenance tracking)
    - System prompt copied from `agent_types.system_prompt_template`
    - Config overrides applied from the join table (runtime type, heartbeat, budget)
@@ -318,7 +317,7 @@ defines a reusable role template with a system prompt template, default config
 (runtime type, heartbeat interval, monthly budget), and metadata.
 
 **Sources:**
-- `builtin` — shipped with Hezo (9 built-in types: CEO, Architect, Product Lead, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher)
+- `builtin` — shipped with Hezo (11 built-in types: CEO, Product Lead, Architect, Engineer, QA Engineer, Security Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher, Coach). Security Engineer reports to Architect. Coach is a standalone role that reviews completed tickets to extract lessons and improve system prompts.
 - `custom` — created by users for their specific needs
 - `remote` — loaded from hezo connect marketplace (future)
 
@@ -344,6 +343,10 @@ Agents can read and request updates to their own system prompts via the agent AP
 
 System prompt updates require board approval. When approved, the approval
 resolution handler applies the change by updating `member_agents.system_prompt`.
+
+### System prompt revisions
+
+`system_prompt_revisions` tracks the history of changes to agent system prompts. Each update records the old and new prompt text, a change summary, who authored the change, and optionally which approval authorized it. This enables auditability of prompt evolution and rollback if needed.
 
 ### Company preferences
 
