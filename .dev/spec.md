@@ -92,6 +92,8 @@ The master key is held in memory only — never written to disk. It encrypts all
 
 **Key principle:** CLI `--master-key` is for **unlocking** (verifying the canary) on startup. The web UI is for **setting/managing** the key. The CLI never sets a new key interactively.
 
+**On unlock:** `MasterKeyManager` fires registered `onUnlock` callbacks when the state transitions to `unlocked`. The server registers a callback at startup that starts the `JobManager` (agent wakeups, heartbeats, container sync, orphan detection). This means background processing begins as soon as the server is unlocked, regardless of whether the key was provided via CLI or web UI.
+
 **Recovery options** (after failed canary decryption, via web UI):
 - **Re-enter a different master key.** Try again with the correct key.
 - **Generate a new master key and start fresh.** Warn that all existing instance data (secrets, companies, agents) will be lost. If confirmed, wipe the database, store a new canary, and proceed with a clean instance.
@@ -1445,10 +1447,11 @@ Every agent has a heartbeat interval. Default is **60 minutes**. Configurable pe
 ### Event-based triggers (immediate wakeup)
 
 In addition to scheduled heartbeats, agents are triggered **immediately** by:
-- Task assignment (issue assigned to them)
+- Task assignment — issue assigned to them (on creation, update, or sub-issue creation)
 - @-mention in an issue comment or live chat
 - Option chosen by the board on one of their option cards
 - Approval resolved for one of their requests
+- Container start — when a project container starts, all enabled agents with non-terminal assigned issues in that project are woken
 
 Event-triggered wakeups do not wait for the next scheduled heartbeat — the agent subprocess is spawned immediately. Scheduled heartbeats are a fallback for idle agents with no pending events.
 
@@ -1460,6 +1463,17 @@ When multiple events fire for the same agent in quick succession (e.g. several @
 - Delivers all pending events in a single heartbeat response
 - Prevents redundant subprocess spawns and duplicate work
 - Maintains event ordering within the batch
+
+### Container lifecycle and agent state
+
+Agents execute inside project containers. Container state changes directly affect agent execution:
+
+- **Container start**: After a container starts (or completes a rebuild), the system creates wakeup requests for all enabled agents that have non-terminal assigned issues in that project. This ensures agents resume work after downtime.
+- **Container stop**: Before stopping a container, all running agent tasks for that project are cancelled via `JobManager.cancelTask()`. After the container stops, stale execution locks are released. The UI shows a confirmation dialog warning that running agent tasks will be cancelled.
+- **Container rebuild**: Same as stop (cancel running agents, release locks), followed by a full re-provision. After the new container is running, agents are re-triggered as with container start. The UI shows a confirmation dialog warning about unpushed work loss.
+- **Container crash**: The container-sync job detects the status change within 1 second and updates the DB. Orphan detection handles stale agent state.
+
+Agent runtime status (`active` / `idle` / `paused`) is updated in the database and broadcast via WebSocket when an agent is activated and when it completes.
 
 ### Issue work ownership
 

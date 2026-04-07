@@ -72,7 +72,11 @@ function ContainerPage() {
 					<Button
 						variant="ghost"
 						size="sm"
-						onClick={() => stopContainer.mutate()}
+						onClick={() => {
+							if (confirm('Stop this container? Running agent tasks will be cancelled.')) {
+								stopContainer.mutate();
+							}
+						}}
 						disabled={anyPending || isStopping || (!isRunning && !isCreating)}
 						title="Stop container"
 					>
@@ -86,7 +90,15 @@ function ContainerPage() {
 					<Button
 						variant="ghost"
 						size="sm"
-						onClick={() => rebuildContainer.mutate()}
+						onClick={() => {
+							if (
+								confirm(
+									'Rebuild container from scratch? All unpushed work will be lost and running agent tasks will be cancelled.',
+								)
+							) {
+								rebuildContainer.mutate();
+							}
+						}}
 						disabled={anyPending || isCreating || isStopping}
 						title="Rebuild container from scratch"
 					>

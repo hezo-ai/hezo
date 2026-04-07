@@ -338,9 +338,7 @@ describe('template-based company creation', () => {
 			body: JSON.stringify({
 				name: 'Researcher Only',
 				description: 'Only a researcher',
-				agent_types: [
-					{ agent_type_id: researcher.id, sort_order: 0 },
-				],
+				agent_types: [{ agent_type_id: researcher.id, sort_order: 0 }],
 			}),
 		});
 		expect(typeRes.status).toBe(201);

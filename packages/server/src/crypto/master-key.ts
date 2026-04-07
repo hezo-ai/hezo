@@ -14,6 +14,7 @@ export class MasterKeyManager {
 	private jwtKey: Buffer | null = null;
 	private masterKeyHex: string | null = null;
 	private state: MasterKeyState = 'unset';
+	private unlockCallbacks: Array<() => void> = [];
 
 	getState(): MasterKeyState {
 		return this.state;
@@ -63,6 +64,11 @@ export class MasterKeyManager {
 		return false;
 	}
 
+	onUnlock(callback: () => void): void {
+		this.unlockCallbacks.push(callback);
+		if (this.state === 'unlocked') callback();
+	}
+
 	async getJwtKey(): Promise<Buffer> {
 		if (this.jwtKey) return this.jwtKey;
 		if (!this.masterKeyHex) throw new Error('Master key not available');
@@ -73,7 +79,11 @@ export class MasterKeyManager {
 	private async setUnlocked(masterKeyHex: string): Promise<void> {
 		this.masterKeyHex = masterKeyHex;
 		this.key = await deriveKey(masterKeyHex, 'encryption');
+		const wasLocked = this.state !== 'unlocked';
 		this.state = 'unlocked';
+		if (wasLocked) {
+			for (const cb of this.unlockCallbacks) cb();
+		}
 	}
 
 	private async loadCanary(db: DbClient): Promise<string | null> {

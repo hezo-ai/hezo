@@ -1,4 +1,5 @@
-import { ContainerStatus, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
+import type { PGlite } from '@electric-sql/pglite';
+import { ContainerStatus, TERMINAL_ISSUE_STATUSES, WakeupSource } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { resolveProjectId } from '../lib/resolve';
@@ -13,6 +14,49 @@ import {
 	stopContainerGracefully,
 	teardownContainer,
 } from '../services/containers';
+import type { JobManager } from '../services/job-manager';
+import { createWakeup } from '../services/wakeup';
+
+async function cancelRunningAgentTasks(
+	db: PGlite,
+	jobManager: JobManager,
+	projectId: string,
+	companyId: string,
+): Promise<void> {
+	const running = await db.query<{ assignee_id: string }>(
+		`SELECT DISTINCT i.assignee_id
+		 FROM issues i
+		 JOIN execution_locks el ON el.issue_id = i.id AND el.released_at IS NULL
+		 WHERE i.project_id = $1 AND i.company_id = $2 AND i.assignee_id IS NOT NULL`,
+		[projectId, companyId],
+	);
+	for (const row of running.rows) {
+		jobManager.cancelTask(`agent:${row.assignee_id}`);
+	}
+}
+
+async function wakeAgentsWithPendingWork(
+	db: PGlite,
+	projectId: string,
+	companyId: string,
+): Promise<void> {
+	const { placeholders, values } = terminalStatusParams(3);
+	const pending = await db.query<{ agent_id: string }>(
+		`SELECT DISTINCT i.assignee_id AS agent_id
+		 FROM issues i
+		 JOIN member_agents ma ON ma.id = i.assignee_id
+		 WHERE i.project_id = $1 AND i.company_id = $2
+		   AND i.status NOT IN (${placeholders})
+		   AND ma.admin_status = 'enabled'`,
+		[projectId, companyId, ...values],
+	);
+	for (const row of pending.rows) {
+		createWakeup(db, row.agent_id, companyId, WakeupSource.Automation, {
+			trigger: 'container_start',
+			project_id: projectId,
+		}).catch((e) => console.error('[wakeup] Failed to create wakeup on container start:', e));
+	}
+}
 
 export const projectsRoutes = new Hono<Env>();
 
@@ -290,6 +334,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/start',
 			id: projectId,
 			container_status: ContainerStatus.Running,
 		});
+		wakeAgentsWithPendingWork(db, projectId, companyId);
 		return ok(c, { container_status: ContainerStatus.Running });
 	} catch (error) {
 		return err(c, 'DOCKER_ERROR', `Failed to start container: ${(error as Error).message}`, 500);
@@ -337,10 +382,11 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 
 	const docker = c.get('docker');
 	const wsManager = c.get('wsManager');
-
 	const jobManager = c.get('jobManager');
-	const taskKey = `stop:${projectId}`;
 
+	await cancelRunningAgentTasks(db, jobManager, projectId, companyId);
+
+	const taskKey = `stop:${projectId}`;
 	jobManager.launchTask(
 		taskKey,
 		async () => {
@@ -386,6 +432,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 	// Cancel any conflicting tasks before launching rebuild
 	jobManager.cancelTask(`stop:${projectId}`);
 	jobManager.cancelTask(taskKey);
+	await cancelRunningAgentTasks(db, jobManager, projectId, companyId);
 
 	const docker = c.get('docker');
 	const dataDir = c.get('dataDir');
@@ -414,6 +461,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 					wsManager,
 					companyId,
 				);
+				wakeAgentsWithPendingWork(db, projectId, companyId);
 			} catch (error) {
 				console.error(`Container rebuild failed for project ${projectId}:`, error);
 			}

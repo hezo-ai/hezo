@@ -97,6 +97,9 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		dataDir: config.dataDir,
 		wsManager,
 	});
+
+	masterKeyManager.onUnlock(() => jobManager.start());
+
 	const app = buildApp(
 		db,
 		masterKeyManager,
@@ -109,10 +112,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		wsManager,
 		jobManager,
 	);
-
-	if (masterKeyState === 'unlocked') {
-		jobManager.start();
-	}
 
 	return {
 		app,
