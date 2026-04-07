@@ -13,7 +13,7 @@ import { useProject } from '../../../../../hooks/use-projects';
 
 function ContainerPage() {
 	const { companyId, projectId } = Route.useParams();
-	const { data: project } = useProject(companyId, projectId, { refetchInterval: 5000 });
+	const { data: project } = useProject(companyId, projectId);
 	const startContainer = useStartContainer(companyId, projectId);
 	const stopContainer = useStopContainer(companyId, projectId);
 	const rebuildContainer = useRebuildContainer(companyId, projectId);
