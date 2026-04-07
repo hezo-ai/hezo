@@ -306,6 +306,10 @@ test('sidebar shows agent status badges', async ({ page }) => {
 	// Verify at least one agent in the sidebar has a status badge
 	const sidebar = page.locator('nav');
 	await expect(
-		sidebar.getByText('Idle').or(sidebar.getByText('Running')).or(sidebar.getByText('Paused')),
+		sidebar
+			.getByText('Idle')
+			.or(sidebar.getByText('Running'))
+			.or(sidebar.getByText('Paused'))
+			.first(),
 	).toBeVisible({ timeout: 10000 });
 });

@@ -16,7 +16,9 @@ test('agent page defaults to executions tab', async ({ page }) => {
 	await page.goto(`/companies/${company.slug}/agents/${agent.id}`);
 
 	await expect(page.getByRole('link', { name: 'Executions' })).toBeVisible({ timeout: 5000 });
-	await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible({ timeout: 5000 });
+	await expect(page.getByRole('main').getByRole('link', { name: 'Settings' })).toBeVisible({
+		timeout: 5000,
+	});
 
 	// Executions tab is active by default (redirected from index)
 	const executionsLink = page.getByRole('link', { name: 'Executions' });

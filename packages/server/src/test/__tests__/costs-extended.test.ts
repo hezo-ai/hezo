@@ -68,6 +68,7 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			title: 'Test Issue',
 			project_id: projectId,
+			assignee_id: agentId,
 		}),
 	});
 	issueId = (await issueRes.json()).data.id;

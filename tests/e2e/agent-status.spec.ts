@@ -31,7 +31,7 @@ test('agent detail page shows budget and heartbeat info on settings tab', async 
 
 	await page.goto(`/companies/${company.slug}/agents/${firstAgent.id}`);
 
-	await page.getByRole('link', { name: 'Settings' }).click();
+	await page.getByRole('main').getByRole('link', { name: 'Settings' }).click();
 
 	await expect(page.getByText('Budget Usage')).toBeVisible({ timeout: 5000 });
 	await expect(page.getByText('Heartbeat').first()).toBeVisible({ timeout: 5000 });
@@ -67,7 +67,7 @@ test('agent detail page allows editing title on settings tab', async ({ page }) 
 
 	await page.goto(`/companies/${company.slug}/agents/${agent.id}`);
 
-	await page.getByRole('link', { name: 'Settings' }).click();
+	await page.getByRole('main').getByRole('link', { name: 'Settings' }).click();
 
 	const titleInput = page.getByLabel('Title');
 	await expect(titleInput).toBeVisible({ timeout: 5000 });

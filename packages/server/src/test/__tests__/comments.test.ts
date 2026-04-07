@@ -220,6 +220,8 @@ describe('comment wakeups on assigned issues', () => {
 			}),
 		});
 		assignedIssueId = (await issueRes.json()).data.id;
+		// Wait for the fire-and-forget assignment wakeup to be committed
+		await new Promise((r) => setTimeout(r, 100));
 	});
 
 	it('creates comment wakeup when board user comments on agent-assigned issue', async () => {

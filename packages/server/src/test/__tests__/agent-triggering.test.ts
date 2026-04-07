@@ -91,7 +91,11 @@ describe('agent triggering', () => {
 		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ project_id: projectId, title: 'Unassigned task' }),
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Unassigned task',
+				assignee_id: agentId,
+			}),
 		});
 		const issueId = (await issueRes.json()).data.id;
 
@@ -115,7 +119,7 @@ describe('agent triggering', () => {
 		const parentRes = await app.request(`/api/companies/${companyId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ project_id: projectId, title: 'Parent task' }),
+			body: JSON.stringify({ project_id: projectId, title: 'Parent task', assignee_id: agentId }),
 		});
 		const parentId = (await parentRes.json()).data.id;
 
@@ -135,55 +139,35 @@ describe('agent triggering', () => {
 		expect(wakeups[0].source).toBe('assignment');
 	});
 
-	it('does not create wakeup when issue is created without assignee', async () => {
-		await clearWakeups();
-
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ project_id: projectId, title: 'No assignee' }),
-		});
-		expect(res.status).toBe(201);
-
-		await new Promise((r) => setTimeout(r, 50));
-
-		const wakeups = await getWakeups();
-		expect(wakeups.length).toBe(0);
-	});
-
-	it('does not create wakeup when assignee is cleared via PATCH', async () => {
+	it('rejects clearing assignee via PATCH', async () => {
 		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Will unassign',
+				title: 'Will try unassign',
 				assignee_id: agentId,
 			}),
 		});
 		const issueId = (await issueRes.json()).data.id;
-		await new Promise((r) => setTimeout(r, 50));
-
-		await clearWakeups();
 
 		const patchRes = await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: null }),
 		});
-		expect(patchRes.status).toBe(200);
-
-		await new Promise((r) => setTimeout(r, 50));
-
-		const wakeups = await getWakeups();
-		expect(wakeups.length).toBe(0);
+		expect(patchRes.status).toBe(400);
 	});
 
 	it('creates coach wakeup when issue is marked done', async () => {
 		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ project_id: projectId, title: 'Completing this' }),
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Completing this',
+				assignee_id: agentId,
+			}),
 		});
 		const issueId = (await issueRes.json()).data.id;
 
