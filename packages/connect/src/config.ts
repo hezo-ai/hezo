@@ -11,6 +11,18 @@ export interface ConnectConfig {
 		clientId: string;
 		clientSecret: string;
 	};
+	anthropic?: {
+		clientId: string;
+		clientSecret: string;
+	};
+	openai?: {
+		clientId: string;
+		clientSecret: string;
+	};
+	google?: {
+		clientId: string;
+		clientSecret: string;
+	};
 }
 
 export interface LoadConfigOptions {
@@ -51,6 +63,15 @@ export function loadConfig(options?: LoadConfigOptions): ConnectConfig {
 	const githubClientId = get('GITHUB_CLIENT_ID').asString();
 	const githubClientSecret = get('GITHUB_CLIENT_SECRET').asString();
 
+	const anthropicClientId = get('ANTHROPIC_CLIENT_ID').asString();
+	const anthropicClientSecret = get('ANTHROPIC_CLIENT_SECRET').asString();
+
+	const openaiClientId = get('OPENAI_CLIENT_ID').asString();
+	const openaiClientSecret = get('OPENAI_CLIENT_SECRET').asString();
+
+	const googleClientId = get('GOOGLE_CLIENT_ID').asString();
+	const googleClientSecret = get('GOOGLE_CLIENT_SECRET').asString();
+
 	return {
 		port,
 		mode: 'self_hosted',
@@ -59,6 +80,18 @@ export function loadConfig(options?: LoadConfigOptions): ConnectConfig {
 		github:
 			githubClientId && githubClientSecret
 				? { clientId: githubClientId, clientSecret: githubClientSecret }
+				: undefined,
+		anthropic:
+			anthropicClientId && anthropicClientSecret
+				? { clientId: anthropicClientId, clientSecret: anthropicClientSecret }
+				: undefined,
+		openai:
+			openaiClientId && openaiClientSecret
+				? { clientId: openaiClientId, clientSecret: openaiClientSecret }
+				: undefined,
+		google:
+			googleClientId && googleClientSecret
+				? { clientId: googleClientId, clientSecret: googleClientSecret }
 				: undefined,
 	};
 }

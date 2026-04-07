@@ -39,7 +39,7 @@ CREATE INDEX idx_auth_methods_user ON user_auth_methods(user_id);
 -------------------------------------------------------------------------------
 
 CREATE TYPE member_type AS ENUM ('agent', 'user');
-CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini');
+CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini', 'kimi');
 CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
 CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled', 'terminated');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopped', 'error');
@@ -53,7 +53,7 @@ CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'strategy', 'kb_upda
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
 CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
-CREATE TYPE platform_type AS ENUM ('github', 'gmail', 'gitlab', 'stripe', 'posthog', 'railway', 'vercel', 'digitalocean', 'x');
+CREATE TYPE platform_type AS ENUM ('github', 'gmail', 'gitlab', 'stripe', 'posthog', 'railway', 'vercel', 'digitalocean', 'x', 'anthropic', 'openai', 'google');
 CREATE TYPE connection_status AS ENUM ('active', 'expired', 'disconnected');
 CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'chat_message');
 CREATE TYPE wakeup_status AS ENUM ('queued', 'claimed', 'completed', 'failed', 'skipped', 'coalesced', 'deferred', 'cancelled');
@@ -269,7 +269,7 @@ CREATE TABLE projects (
     slug                TEXT NOT NULL,
     goal                TEXT NOT NULL DEFAULT '',
     is_internal         BOOLEAN NOT NULL DEFAULT false,
-    docker_base_image   TEXT NOT NULL DEFAULT 'node:24-slim',
+    docker_base_image   TEXT NOT NULL DEFAULT 'hezo/agent-base:latest',
     container_id        TEXT,
     container_status    container_status,
     designated_repo_id  UUID,
@@ -589,6 +589,31 @@ CREATE TABLE connected_platforms (
 );
 
 CREATE INDEX idx_connected_platforms_company ON connected_platforms(company_id);
+
+-------------------------------------------------------------------------------
+-- AI PROVIDER CONFIGS
+-------------------------------------------------------------------------------
+
+CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'moonshot');
+CREATE TYPE ai_auth_method AS ENUM ('api_key', 'oauth_token');
+
+CREATE TABLE ai_provider_configs (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    provider          ai_provider NOT NULL,
+    auth_method       ai_auth_method NOT NULL DEFAULT 'api_key',
+    label             TEXT NOT NULL DEFAULT '',
+    api_key_secret_id UUID NOT NULL REFERENCES secrets(id) ON DELETE CASCADE,
+    is_default        BOOLEAN NOT NULL DEFAULT false,
+    status            TEXT NOT NULL DEFAULT 'active',
+    metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (company_id, provider, api_key_secret_id)
+);
+
+CREATE INDEX idx_ai_provider_configs_company ON ai_provider_configs(company_id);
 
 -------------------------------------------------------------------------------
 -- ASSETS & ATTACHMENTS

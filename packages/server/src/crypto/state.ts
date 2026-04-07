@@ -12,6 +12,7 @@ export interface StatePayload {
 
 export interface OAuthStatePayload {
 	company_id: string;
+	ai_provider?: string;
 }
 
 /**

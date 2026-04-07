@@ -12,6 +12,7 @@ import { authMiddleware } from './middleware/auth';
 import { agentApiRoutes } from './routes/agent-api';
 import { agentTypesRoutes } from './routes/agent-types';
 import { agentsRoutes } from './routes/agents';
+import { aiProvidersRoutes } from './routes/ai-providers';
 import { apiKeysRoutes } from './routes/api-keys';
 import { approvalsRoutes } from './routes/approvals';
 import { auditLogRoutes } from './routes/audit-log';
@@ -198,6 +199,7 @@ export function buildApp(
 	app.route('/api', preferencesRoutes);
 	app.route('/api', projectDocsRoutes);
 	app.route('/api', connectionsRoutes);
+	app.route('/api', aiProvidersRoutes);
 	app.route('/api', reposRoutes);
 	app.route('/api', executionLocksRoutes);
 	app.route('/api', liveChatRoutes);

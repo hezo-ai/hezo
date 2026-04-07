@@ -1,0 +1,123 @@
+import { AI_PROVIDER_INFO, AiProvider } from '@hezo/shared';
+import { Key, Loader2, Shield } from 'lucide-react';
+import { useState } from 'react';
+import {
+	useAiProviderStatus,
+	useCreateAiProvider,
+	useStartAiProviderOAuth,
+} from '../hooks/use-ai-providers';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+
+const PROVIDERS = [
+	AiProvider.Anthropic,
+	AiProvider.OpenAI,
+	AiProvider.Google,
+	AiProvider.Moonshot,
+] as const;
+
+export function AiProviderSetupModal({ companyId }: { companyId: string }) {
+	const { data: status, isLoading } = useAiProviderStatus(companyId);
+
+	// Don't render if still loading or already configured
+	if (isLoading || status?.configured) return null;
+
+	return (
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+			<div className="bg-bg border border-border rounded-radius-lg shadow-lg w-full max-w-xl mx-4 p-6 max-h-[90vh] overflow-y-auto">
+				<div className="flex items-center gap-2 mb-1">
+					<Shield className="w-5 h-5 text-text-muted" />
+					<h2 className="text-lg font-semibold">Set up an AI provider</h2>
+				</div>
+				<p className="text-[13px] text-text-muted mb-6">
+					Configure at least one AI provider so your agents can run. You can add more later in
+					Settings.
+				</p>
+
+				<div className="space-y-3">
+					{PROVIDERS.map((provider) => (
+						<ProviderCard key={provider} companyId={companyId} provider={provider} />
+					))}
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function ProviderCard({ companyId, provider }: { companyId: string; provider: AiProvider }) {
+	const info = AI_PROVIDER_INFO[provider];
+	const [showKeyForm, setShowKeyForm] = useState(false);
+	const [apiKey, setApiKey] = useState('');
+	const createProvider = useCreateAiProvider(companyId);
+	const startOAuth = useStartAiProviderOAuth(companyId);
+
+	async function handleSubmitKey(e: React.FormEvent) {
+		e.preventDefault();
+		await createProvider.mutateAsync({ provider, api_key: apiKey });
+		setApiKey('');
+		setShowKeyForm(false);
+	}
+
+	async function handleOAuth() {
+		const result = await startOAuth.mutateAsync(provider);
+		window.location.href = result.auth_url;
+	}
+
+	return (
+		<div className="border border-border rounded-radius-md p-4">
+			<div className="flex items-center justify-between mb-2">
+				<div>
+					<span className="text-[13px] font-medium">{info.name}</span>
+					<Badge color="neutral" className="ml-2">
+						{info.runtimeLabel}
+					</Badge>
+				</div>
+			</div>
+
+			{showKeyForm ? (
+				<form onSubmit={handleSubmitKey} className="flex gap-2 mt-2">
+					<Input
+						type="password"
+						placeholder={info.keyPlaceholder}
+						value={apiKey}
+						onChange={(e) => setApiKey(e.target.value)}
+						required
+						className="flex-1"
+					/>
+					<Button type="submit" size="sm" disabled={createProvider.isPending}>
+						{createProvider.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+						Save
+					</Button>
+					<Button type="button" variant="secondary" size="sm" onClick={() => setShowKeyForm(false)}>
+						Cancel
+					</Button>
+				</form>
+			) : (
+				<div className="flex gap-2 mt-2">
+					{info.supportsOAuth && (
+						<Button
+							variant="secondary"
+							size="sm"
+							onClick={handleOAuth}
+							disabled={startOAuth.isPending}
+						>
+							{startOAuth.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+							Connect via OAuth
+						</Button>
+					)}
+					<Button variant="secondary" size="sm" onClick={() => setShowKeyForm(true)}>
+						<Key className="w-3 h-3" />
+						Enter API key
+					</Button>
+				</div>
+			)}
+
+			{createProvider.error && (
+				<p className="text-[13px] text-accent-red mt-2">
+					{(createProvider.error as { message?: string }).message || 'Failed to save'}
+				</p>
+			)}
+		</div>
+	);
+}

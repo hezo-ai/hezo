@@ -90,6 +90,7 @@ function makeAgent() {
 		title: 'Test Agent',
 		system_prompt: 'You are a helpful agent. Today is {{current_date}}.',
 		company_id: companyId,
+		runtime_type: 'claude_code' as const,
 	};
 }
 

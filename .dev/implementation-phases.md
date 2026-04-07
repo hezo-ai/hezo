@@ -444,6 +444,46 @@ UI:
 
 ---
 
+## Phase 7.5: AI Adapter Auth
+
+**Status:** Done (2026-04-07)
+
+**Goal:** AI provider credential management so agents can authenticate with their runtime's AI service.
+
+**What's included:**
+
+Backend:
+- `ai_provider_configs` table: per-company AI provider credential storage
+- `ai_provider` enum: anthropic, openai, google, moonshot
+- `ai_auth_method` enum: api_key, oauth_token (subscription mode)
+- `kimi` added to `agent_runtime` enum
+- CRUD routes for AI provider configs (`/api/companies/:companyId/ai-providers`)
+- Provider key verification endpoint (lightweight API call to provider)
+- AI provider status endpoint for setup detection
+- Agent runner injects provider-specific env vars per exec (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+- Agent runner dispatches correct CLI command per runtime type (claude, codex, gemini, kimi)
+- Connect OAuth providers for Anthropic, OpenAI, Google (subscription token flow)
+- OAuth callback creates ai_provider_configs with auth_method=oauth_token
+- Dockerfile.agent-base with all 4 AI CLIs pre-installed
+
+UI:
+- AI Providers settings section with per-provider cards
+- Manual API key entry (password input, format validation)
+- OAuth connection for subscription mode (Anthropic, OpenAI, Google)
+- Blocking setup modal after company creation (requires at least one provider)
+- Dynamic detection — modal re-checks on every page load, no stale state
+
+**How to test:**
+- Create company via browser — blocking modal appears
+- Enter API key in modal — modal closes, workspace accessible
+- Settings > AI Providers shows configured providers with status badges
+- Verify button tests key against provider API
+- Agent runner injects correct env var based on runtime type and auth method
+
+**Depends on:** Phase 7
+
+---
+
 ## Phase 8: Adapters + Plugins
 
 **Goal:** Non-Claude-Code agent runtimes and the plugin system.
