@@ -391,6 +391,16 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 	const dataDir = c.get('dataDir');
 	const wsManager = c.get('wsManager');
 
+	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
+		ContainerStatus.Creating,
+		projectId,
+	]);
+
+	broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+		id: projectId,
+		container_status: ContainerStatus.Creating,
+	});
+
 	jobManager.launchTask(
 		taskKey,
 		async () => {
@@ -410,11 +420,6 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 		},
 		REBUILD_TIMEOUT_MS,
 	);
-
-	broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
-		id: projectId,
-		container_status: ContainerStatus.Creating,
-	});
 
 	return ok(c, { container_status: ContainerStatus.Creating });
 });
