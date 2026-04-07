@@ -1,3 +1,4 @@
+import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	AuditAction,
@@ -17,6 +18,21 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess } from '../middleware/auth';
 import { createWakeup } from '../services/wakeup';
+
+async function wakeAgentIfAssigned(
+	db: PGlite,
+	assigneeId: string | null | undefined,
+	companyId: string,
+	issueId: string,
+): Promise<void> {
+	if (!assigneeId) return;
+	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
+	if (isAgent.rows.length > 0) {
+		createWakeup(db, assigneeId, companyId, WakeupSource.Assignment, {
+			issue_id: issueId,
+		}).catch((e) => console.error('[wakeup] Failed to create wakeup for assignment:', e));
+	}
+}
 
 export const issuesRoutes = new Hono<Env>();
 
@@ -193,6 +209,7 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 			identifier,
 		},
 	).catch(() => {});
+	wakeAgentIfAssigned(db, body.assignee_id, companyId, issue.id as string);
 	return ok(c, issue, 201);
 });
 
@@ -320,16 +337,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		params,
 	);
 
-	if (body.assignee_id) {
-		const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
-			body.assignee_id,
-		]);
-		if (isAgent.rows.length > 0) {
-			createWakeup(db, body.assignee_id, companyId, WakeupSource.Assignment, {
-				issue_id: issueId,
-			}).catch((e) => console.error('Failed to create wakeup:', e));
-		}
-	}
+	wakeAgentIfAssigned(db, body.assignee_id, companyId, issueId);
 
 	if (body.status === IssueStatus.Done) {
 		const coach = await db.query<{ id: string }>(
@@ -457,19 +465,8 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 	);
 
 	const subIssue = result.rows[0] as Record<string, unknown>;
-
-	if (body.assignee_id) {
-		const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
-			body.assignee_id,
-		]);
-		if (isAgent.rows.length > 0) {
-			createWakeup(db, body.assignee_id, companyId, WakeupSource.Assignment, {
-				issue_id: subIssue.id as string,
-			}).catch((e) => console.error('Failed to create wakeup:', e));
-		}
-	}
-
 	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', subIssue);
+	wakeAgentIfAssigned(db, body.assignee_id, companyId, subIssue.id as string);
 	return ok(c, subIssue, 201);
 });
 

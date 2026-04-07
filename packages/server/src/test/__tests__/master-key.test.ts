@@ -136,4 +136,45 @@ describe('MasterKeyManager', () => {
 		const state = await mgr2.initialize(db, key);
 		expect(state).toBe('unlocked');
 	});
+
+	it('fires onUnlock callback when transitioning to unlocked', async () => {
+		const key = generateMasterKey();
+		const mgr = new MasterKeyManager();
+		await mgr.initialize(db);
+		expect(mgr.getState()).toBe('unset');
+
+		let callCount = 0;
+		mgr.onUnlock(() => callCount++);
+
+		await mgr.unlock(db, key);
+		expect(callCount).toBe(1);
+
+		// Subsequent unlock with same key should NOT fire again
+		await mgr.unlock(db, key);
+		expect(callCount).toBe(1);
+	});
+
+	it('fires onUnlock immediately if already unlocked when registered', async () => {
+		const key = generateMasterKey();
+		const mgr = new MasterKeyManager();
+		await mgr.initialize(db, key);
+		expect(mgr.getState()).toBe('unlocked');
+
+		let fired = false;
+		mgr.onUnlock(() => {
+			fired = true;
+		});
+		expect(fired).toBe(true);
+	});
+
+	it('fires onUnlock callback on initialize with key', async () => {
+		const key = generateMasterKey();
+		const mgr = new MasterKeyManager();
+
+		let callCount = 0;
+		mgr.onUnlock(() => callCount++);
+
+		await mgr.initialize(db, key);
+		expect(callCount).toBe(1);
+	});
 });

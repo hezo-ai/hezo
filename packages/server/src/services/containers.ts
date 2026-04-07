@@ -211,6 +211,17 @@ export async function stopContainerGracefully(
 			projectId,
 		]);
 	}
+
+	// Release stale execution locks for issues in this project
+	await db
+		.query(
+			`UPDATE execution_locks SET released_at = now()
+		 WHERE released_at IS NULL
+		   AND issue_id IN (SELECT id FROM issues WHERE project_id = $1)`,
+			[projectId],
+		)
+		.catch((e) => console.error('[containers] Failed to release execution locks on stop:', e));
+
 	if (wsManager && companyId) {
 		const updated = await db.query<Record<string, unknown>>(
 			'SELECT * FROM projects WHERE id = $1',

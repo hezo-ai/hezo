@@ -15,6 +15,8 @@ import type { DockerClient } from './docker';
 import { detectOrphans } from './orphan-detector';
 import type { WebSocketManager } from './ws';
 
+const log = (...args: unknown[]) => console.log('[job-manager]', ...args);
+
 interface RunningTask {
 	key: string;
 	abortController: AbortController;
@@ -39,6 +41,7 @@ export class JobManager {
 	private runningTasks = new Map<string, RunningTask>();
 	private guards = new Map<string, boolean>();
 	private deps: JobManagerDeps;
+	private started = false;
 
 	constructor(deps: JobManagerDeps) {
 		this.deps = deps;
@@ -46,6 +49,8 @@ export class JobManager {
 	}
 
 	start(): void {
+		if (this.started) return;
+		this.started = true;
 		this.cron.createJob('wakeups', {
 			cron: '*/5 * * * * *',
 			onTick: () => this.guarded('wakeups', () => this.processWakeups()),
@@ -146,8 +151,13 @@ export class JobManager {
 			[coalescingCutoff, WakeupStatus.Queued],
 		);
 
+		if (wakeups.rows.length > 0) {
+			log(`Processing ${wakeups.rows.length} queued wakeup(s)`);
+		}
+
 		for (const wakeup of wakeups.rows) {
 			if (this.isTaskRunning(`agent:${wakeup.member_id}`)) {
+				log(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
 				continue;
 			}
 
@@ -156,7 +166,17 @@ export class JobManager {
 				[WakeupStatus.Claimed, wakeup.id],
 			);
 
-			await this.activateAgent(wakeup.member_id, wakeup.company_id, wakeup.id, wakeup.payload);
+			try {
+				await this.activateAgent(wakeup.member_id, wakeup.company_id, wakeup.id, wakeup.payload);
+			} catch (error) {
+				console.error(`[job-manager] activateAgent threw for wakeup ${wakeup.id}:`, error);
+				await db
+					.query('UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2', [
+						WakeupStatus.Failed,
+						wakeup.id,
+					])
+					.catch(() => {});
+			}
 		}
 	}
 
@@ -178,6 +198,10 @@ export class JobManager {
 			 LIMIT 5`,
 			[AgentAdminStatus.Enabled, AgentRuntimeStatus.Paused],
 		);
+
+		if (dueAgents.rows.length > 0) {
+			log(`${dueAgents.rows.length} agent(s) due for heartbeat`);
+		}
 
 		for (const agent of dueAgents.rows) {
 			if (this.isTaskRunning(`agent:${agent.id}`)) {
@@ -207,6 +231,7 @@ export class JobManager {
 		);
 
 		if (agent.rows.length === 0 || agent.rows[0].admin_status !== AgentAdminStatus.Enabled) {
+			log(`Agent ${memberId} not found or disabled — skipping`);
 			if (wakeupId) {
 				await db.query(
 					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
@@ -273,6 +298,7 @@ export class JobManager {
 					[wakeupPayload.issue_id, companyId],
 				);
 				if (payloadIssue.rows.length === 0) {
+					log(`Payload issue ${wakeupPayload.issue_id} not found for coach trigger`);
 					if (wakeupId) {
 						await db.query(
 							`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
@@ -283,6 +309,7 @@ export class JobManager {
 				}
 				issue = payloadIssue.rows[0];
 			} else {
+				log(`No actionable issues for agent ${memberId}`);
 				if (wakeupId) {
 					await db.query(
 						`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
@@ -305,6 +332,7 @@ export class JobManager {
 		]);
 
 		if (project.rows.length === 0 || !project.rows[0].container_id) {
+			log(`No container for project ${issue.project_id} — wakeup failed`);
 			if (wakeupId) {
 				await db.query(
 					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
@@ -331,6 +359,8 @@ export class JobManager {
 			action: 'UPDATE',
 			row: { id: memberId, runtime_status: AgentRuntimeStatus.Active },
 		});
+
+		log(`Launching agent ${agent.rows[0].title} for issue ${issue.identifier}`);
 
 		const deps: RunnerDeps = {
 			db,
@@ -382,13 +412,17 @@ export class JobManager {
 	): Promise<void> {
 		const { db } = this.deps;
 
+		log(
+			`Agent ${memberId} completed: success=${result.success}, exit=${result.exitCode}, duration=${result.durationMs}ms`,
+		);
+
 		await db.query(
 			'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL',
 			[issueId, memberId],
 		);
 
 		await db.query(
-			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
+			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status, last_heartbeat_at = now() WHERE id = $2',
 			[AgentRuntimeStatus.Idle, memberId],
 		);
 		this.deps.wsManager.broadcast(`company:${companyId}`, {
