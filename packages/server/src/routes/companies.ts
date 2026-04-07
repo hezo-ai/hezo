@@ -5,6 +5,7 @@ import { err, ok } from '../lib/response';
 import { toIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess, requireSuperuser } from '../middleware/auth';
+import { type ProjectRow, provisionContainer } from '../services/containers';
 import { downloadAndSaveSkill, SkillDownloadError } from '../services/skill-downloader';
 
 export const companiesRoutes = new Hono<Env>();
@@ -128,9 +129,22 @@ companiesRoutes.post('/companies', async (c) => {
 
 		await db.query('COMMIT');
 
+		const dataDir = c.get('dataDir');
+
 		if (body.template_id) {
-			const dataDir = c.get('dataDir');
 			await createSkillsFromTemplate(db, company.id, body.template_id, dataDir);
+		}
+
+		const opsResult = await db.query<ProjectRow>(
+			`SELECT id, company_id, slug, docker_base_image, container_id, container_status, dev_ports
+			 FROM projects WHERE company_id = $1 AND slug = 'operations'`,
+			[company.id],
+		);
+		if (opsResult.rows[0]) {
+			const docker = c.get('docker');
+			provisionContainer(db, docker, opsResult.rows[0], slug, dataDir).catch((error) => {
+				console.error(`Failed to provision container for operations project:`, error);
+			});
 		}
 
 		const result = await db.query(
