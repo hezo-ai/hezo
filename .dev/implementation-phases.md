@@ -559,9 +559,10 @@ UI:
 | 3 | GitHub Integration | OAuth flow, token storage, repo validation and cloning |
 | 3.5 | UI Foundation + Core Screens | React app with all CRUD screens for Phases 0–3 APIs, master key gate, board inbox |
 | 4 | Agent Execution + UI | Docker per project, subprocesses, heartbeats, budgets + agent status UI, cost views |
-| 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack DB migration, live chat, real-time updates |
+| 5 | Knowledge + Observability + UI | KB revisions, audit log, TanStack Query + WebSocket, live chat, real-time updates |
 | 6 | MCP + Skill File + Binary Build | MCP endpoint, skill file + `bun build --compile` single binary, Playwright E2E |
 | 6.5 | Auth + Session Compaction | Custom OAuth auth (board members only), session compaction + login page, account settings |
+| 6.6 | UI Redesign + Agent Onboarding | Company icon rail, unified side menu, tab-based project view, agent onboarding via CEO |
 | 6.7 | Job Manager + Audit Log Navigation | cron-async job manager, container sync, audit log route |
 | 7 | Multi-User Roles + Invites | Member roles, scoped permissions, email invites + member management UI |
 | 8 | Adapters + Plugins + UI | Gemini/Codex adapters, plugin system + plugin management UI, runtime selector |
