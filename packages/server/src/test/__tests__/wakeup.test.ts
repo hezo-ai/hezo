@@ -186,17 +186,14 @@ describe('wakeup service', () => {
 
 		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
-		const subRes = await app.request(
-			`/api/companies/${companyId}/issues/${parentId}/sub-issues`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					title: 'Sub-issue with agent',
-					assignee_id: agentId,
-				}),
-			},
-		);
+		const subRes = await app.request(`/api/companies/${companyId}/issues/${parentId}/sub-issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				title: 'Sub-issue with agent',
+				assignee_id: agentId,
+			}),
+		});
 		expect(subRes.status).toBe(201);
 
 		await new Promise((r) => setTimeout(r, 50));

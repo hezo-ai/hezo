@@ -141,7 +141,7 @@ Request:
 {
   "name": "NoteGenius AI",
   "description": "Updated description",
-  "coach_auto_apply": true,
+  "settings": { "coach_auto_apply": true },
   "mcp_servers": [
     { "name": "slack", "url": "https://mcp.slack.com/sse", "description": "Team Slack" }
   ],

@@ -144,7 +144,7 @@ CREATE TABLE companies (
     budget_reset_at      TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
     mcp_servers          JSONB NOT NULL DEFAULT '[]'::jsonb,
     mpp_config           JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
-    coach_auto_apply     BOOLEAN NOT NULL DEFAULT false,
+    settings             JSONB NOT NULL DEFAULT '{"coach_auto_apply": false}'::jsonb,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );

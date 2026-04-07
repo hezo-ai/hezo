@@ -35,6 +35,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 								className="flex items-center w-full uppercase text-[11px] text-text-subtle font-medium tracking-wide px-3 pt-3 pb-1 hover:text-text transition-colors"
 							>
 								<svg
+									aria-hidden="true"
 									className={`w-3 h-3 mr-1 transition-transform ${section.collapsed ? '' : 'rotate-90'}`}
 									viewBox="0 0 16 16"
 									fill="currentColor"
@@ -70,23 +71,25 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 							</Link>
 						);
 					})}
-					{section.collapsible && !section.collapsed && section.children?.map((item) => {
-						const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
-						return (
-							<Link
-								key={item.to}
-								to={item.to}
-								params={item.params ?? {}}
-								className={`block text-left text-[13px] pl-5 pr-3 py-1 rounded-radius-md transition-colors ${
-									isActive
-										? 'text-text font-medium bg-bg-subtle'
-										: 'text-text-muted hover:text-text hover:bg-bg-subtle'
-								}`}
-							>
-								{item.label}
-							</Link>
-						);
-					})}
+					{section.collapsible &&
+						!section.collapsed &&
+						section.children?.map((item) => {
+							const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
+							return (
+								<Link
+									key={item.to}
+									to={item.to}
+									params={item.params ?? {}}
+									className={`block text-left text-[13px] pl-5 pr-3 py-1 rounded-radius-md transition-colors ${
+										isActive
+											? 'text-text font-medium bg-bg-subtle'
+											: 'text-text-muted hover:text-text hover:bg-bg-subtle'
+									}`}
+								>
+									{item.label}
+								</Link>
+							);
+						})}
 				</div>
 			))}
 		</nav>

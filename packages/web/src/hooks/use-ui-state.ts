@@ -20,8 +20,7 @@ export function useUiState(companyId: string) {
 
 export function useUpdateUiState(companyId: string) {
 	return useMutation({
-		mutationFn: (data: UiState) =>
-			api.patch<UiState>(`/api/companies/${companyId}/ui-state`, data),
+		mutationFn: (data: UiState) => api.patch<UiState>(`/api/companies/${companyId}/ui-state`, data),
 		onMutate: async (data) => {
 			await queryClient.cancelQueries({ queryKey: ['companies', companyId, 'ui-state'] });
 			const previous = queryClient.getQueryData<UiState>(['companies', companyId, 'ui-state']);

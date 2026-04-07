@@ -138,7 +138,7 @@ const db = new PGlite({
 
 - `live.changes(sql, params, key, callback)` — emits granular insert/update/delete deltas keyed by a primary key column. Used server-side to detect row changes.
 
-**Frontend sync:** The browser uses **TanStack Query** (React Query) for server state caching. The server pushes **RowChange events** (inserts, updates, deletes) over WebSocket. The client maps table names to TanStack Query cache keys and invalidates them, triggering a refetch. This approach keeps the frontend data fresh without polling.
+**Frontend sync:** The browser uses **TanStack DB** for client-side querying over a locally synced dataset. The server pushes **row-level diffs** (inserts, updates, deletes) over WebSocket. The client applies diffs to TanStack DB, which re-renders React components reactively. This approach gives the frontend a local query engine without needing PGlite in the browser.
 
 **WebSocket** carries both row-level diffs for data sync and system events (agent subprocess lifecycle, container status, live chat messages, notifications).
 
@@ -479,7 +479,7 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **Security Engineer** — owns security posture. Reviews code for vulnerabilities, validates auth flows, audits dependencies, and ensures security best practices. Reports to Architect.
 
-**Coach** — reviews completed tickets to extract lessons learned and proposes system prompt improvements for other agents. The Coach helps the team continuously improve by identifying patterns in what worked well and what didn't. Reports to no one (independent role). The `companies.coach_auto_apply` boolean (default false) controls whether Coach-suggested system prompt improvements are auto-applied without board approval.
+**Coach** — reviews completed tickets to extract lessons learned and proposes system prompt improvements for other agents. The Coach helps the team continuously improve by identifying patterns in what worked well and what didn't. Reports to no one (independent role). The `companies.settings.coach_auto_apply` field (default false) controls whether Coach-suggested system prompt improvements are auto-applied without board approval.
 
 ### AGENTS.md — two tiers
 
@@ -2053,7 +2053,7 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `company_types` | Team type blueprints (recipes). Groups of agent types plus default KB docs, preferences. |
 | `company_type_agent_types` | Join table linking team types to agent types with org chart and config overrides. |
 | `company_team_types` | Many-to-many join table linking companies to the team types they were created from. |
-| `companies` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `coach_auto_apply` (boolean), budget. |
+| `companies` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), budget. |
 | `invites` | Pending invitations to join a company (7-day expiry) |
 | `api_keys` | Company-scoped API keys for external orchestrators. Stored hashed. |
 | `company_ssh_keys` | Generated SSH key pairs per company. Registered on GitHub via OAuth API. |
@@ -2066,7 +2066,7 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `secrets` | Encrypted key-value. Scoped to company or company+project. |
 | `secret_grants` | Links secrets to agents. Revocable. |
 | `approvals` | Pending board decisions. Polymorphic payload. |
-| `cost_entries` | Immutable spend records per agent per issue. |
+| `cost_entries` | Immutable spend records. Includes `provider` and `model` fields. |
 | `audit_log` | Append-only. Never updated or deleted. |
 | `kb_docs` | Knowledge base documents. AGENTS.md is a special KB doc written to disk. |
 | `live_chats` | Persistent live chat per issue. One ongoing conversation. |
@@ -2081,22 +2081,25 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 ```
 member_type:          agent, user
 agent_runtime:        claude_code, codex, gemini
-agent_runtime_status: active, idle, paused
+agent_runtime_status: active, idle
 agent_admin_status:   enabled, disabled, terminated
 member_role:          board, member
-container_status:     creating, running, stopping, stopped, error
+container_status:     creating, running, stopped, error    (tracks project container status)
 issue_status:         backlog, open, in_progress, review, blocked, done, closed, cancelled
 issue_priority:       urgent, high, medium, low
+comment_author_type:  board, agent, system
 comment_content_type: text, options, preview, trace, system
 tool_call_status:     running, success, error
 secret_category:      ssh_key, credential, api_token, certificate, other
 grant_scope:          single, project, company
-approval_type:        secret_access, hire, strategy, kb_update, plan_review, deploy_production, oauth_request, system_prompt_update
+approval_type:        secret_access, hire, strategy, plan_review, kb_update, deploy_production
 approval_status:      pending, approved, denied
 audit_actor_type:     board, agent, system
 repo_host_type:       github
 platform_type:        github, gmail, gitlab, stripe, posthog, railway, vercel, digitalocean, x
 connection_status:    active, expired, disconnected
+project_doc_type:     (removed — project docs are files in .dev/)
+auth_provider:        github, gitlab
 ```
 
 ### Atomic functions
@@ -2144,7 +2147,7 @@ Three token types:
 | Agent API | Heartbeat, context, comments, tool calls, delegation, secret requests, KB proposals, deploy requests. |
 | MCP Endpoint | Streamable HTTP at `/mcp`. Mirrors Board API as MCP tools for external AI agents. |
 | Skill File | `GET /skill.md`. Dynamically generated documentation for AI agent onboarding. |
-| WebSocket | RowChange events for TanStack Query cache invalidation + system events (agent lifecycle, container status, live chat). |
+| WebSocket | Row-level diffs for TanStack DB sync + system events (agent lifecycle, container status, live chat). |
 
 ---
 
@@ -2170,8 +2173,8 @@ The following specification details are maintained in separate files:
 - **`schema.md`** — Data model design decisions, rationale for table structures (including members base table, custom auth, SSH keys, execution locks, issue dependencies)
 - **`api.md`** — Complete API reference with all endpoints, request/response shapes, query parameters, and WebSocket event types
 - **`connect-spec.md`** — Hezo Connect OAuth gateway specification (self-hosted and centrally hosted modes)
-- **`implementation-phases.md`** — Implementation phases from Phase 0 (Hezo Connect) through Phase 10 (Deploy + Messaging)
-- **`agents/`** — Full role specifications for each of the 11 built-in agent roles (`ceo.md`, `product-lead.md`, `architect.md`, `engineer.md`, `qa-engineer.md`, `security-engineer.md`, `ui-designer.md`, `devops-engineer.md`, `marketing-lead.md`, `researcher.md`, `coach.md`)
+- **`implementation-phases.md`** — 12 implementation phases from Phase 0 (Hezo Connect) through Phase 11 (Deploy + Messaging)
+- **`agents/`** — Full role specifications for each of the 9 built-in agent roles (`ceo.md`, `product-lead.md`, `architect.md`, `engineer.md`, `qa-engineer.md`, `ui-designer.md`, `devops-engineer.md`, `marketing-lead.md`, `researcher.md`)
 
 ## Appendix B: Endpoint count
 

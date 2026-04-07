@@ -1,7 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType, MemberType, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
+import { AuthType, BUILTIN_AGENT_SLUGS, MemberType, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
 import { Hono } from 'hono';
-import { BUILTIN_AGENT_SLUGS } from '@hezo/shared';
 import { err, ok } from '../lib/response';
 import { toIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
@@ -205,7 +204,7 @@ companiesRoutes.patch('/companies/:companyId', async (c) => {
 		description?: string;
 		mcp_servers?: unknown[];
 		mpp_config?: Record<string, unknown>;
-		coach_auto_apply?: boolean;
+		settings?: Record<string, unknown>;
 	}>();
 
 	const sets: string[] = [];
@@ -234,7 +233,11 @@ companiesRoutes.patch('/companies/:companyId', async (c) => {
 	addField('description', body.description);
 	addField('mcp_servers', body.mcp_servers, true);
 	addField('mpp_config', body.mpp_config, true);
-	addField('coach_auto_apply', body.coach_auto_apply);
+	if (body.settings !== undefined) {
+		sets.push(`settings = settings || $${idx}::jsonb`);
+		params.push(JSON.stringify(body.settings));
+		idx++;
+	}
 
 	if (sets.length === 0) {
 		const result = await db.query('SELECT * FROM companies WHERE id = $1', [companyId]);
