@@ -58,7 +58,7 @@ export class JobManager {
 			onTick: () => this.guarded('orphan-detection', () => this.detectOrphanedRuns()),
 		});
 		this.cron.createJob('container-sync', {
-			cron: '*/5 * * * * *',
+			cron: '* * * * * *',
 			onTick: () => this.guarded('container-sync', () => this.syncContainerStatuses()),
 		});
 		console.log('Job manager started.');

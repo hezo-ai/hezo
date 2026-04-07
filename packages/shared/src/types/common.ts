@@ -25,6 +25,7 @@ export type AgentAdminStatus = (typeof AgentAdminStatus)[keyof typeof AgentAdmin
 export const ContainerStatus = {
 	Creating: 'creating',
 	Running: 'running',
+	Stopping: 'stopping',
 	Stopped: 'stopped',
 	Error: 'error',
 } as const;

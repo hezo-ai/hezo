@@ -25,7 +25,7 @@ const TABLE_TO_QUERY_KEY: Record<
 	repos: (cid) => [['companies', cid, 'projects']],
 };
 
-export function useWebSocket(companyId: string): void {
+export function useWebSocket(wsCompanyId: string, routeCompanyId: string): void {
 	const queryClient = useQueryClient();
 
 	useEffect(() => {
@@ -36,14 +36,14 @@ export function useWebSocket(companyId: string): void {
 			wsClient.connect(token);
 		}
 
-		const room = `company:${companyId}`;
+		const room = `company:${wsCompanyId}`;
 		wsClient.subscribe(room);
 
 		const unsubscribe = wsClient.on(WsMessageType.RowChange, (msg) => {
 			const { table, row } = msg as WsRowChangeMessage;
 			const keyMapper = TABLE_TO_QUERY_KEY[table];
 			if (keyMapper) {
-				const keys = keyMapper(companyId, row);
+				const keys = keyMapper(routeCompanyId, row);
 				for (const key of keys) {
 					queryClient.invalidateQueries({ queryKey: key });
 				}
@@ -54,5 +54,5 @@ export function useWebSocket(companyId: string): void {
 			unsubscribe();
 			wsClient.unsubscribe(room);
 		};
-	}, [companyId, queryClient]);
+	}, [wsCompanyId, routeCompanyId, queryClient]);
 }

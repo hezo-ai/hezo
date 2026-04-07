@@ -27,6 +27,8 @@ export async function provisionContainer(
 	project: ProjectRow,
 	companySlug: string,
 	dataDir: string,
+	wsManager?: WebSocketManager,
+	companyId?: string,
 ): Promise<string> {
 	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 		ContainerStatus.Creating,
@@ -90,6 +92,13 @@ export async function provisionContainer(
 
 		await docker.pullImage(project.docker_base_image);
 
+		// Remove any existing container with the same name to avoid conflicts
+		try {
+			await docker.removeContainer(containerName, true);
+		} catch {
+			// Container doesn't exist — expected
+		}
+
 		const { Id } = await docker.createContainer(containerName, {
 			Image: project.docker_base_image,
 			Cmd: ['sleep', 'infinity'],
@@ -110,12 +119,41 @@ export async function provisionContainer(
 			[Id, ContainerStatus.Running, project.id],
 		);
 
+		if (wsManager && companyId) {
+			const updated = await db.query<Record<string, unknown>>(
+				'SELECT * FROM projects WHERE id = $1',
+				[project.id],
+			);
+			if (updated.rows[0]) {
+				wsManager.broadcast(`company:${companyId}`, {
+					type: 'row_change',
+					table: 'projects',
+					action: 'UPDATE',
+					row: updated.rows[0],
+				});
+			}
+		}
+
 		return Id;
 	} catch (error) {
 		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 			ContainerStatus.Error,
 			project.id,
 		]);
+		if (wsManager && companyId) {
+			const updated = await db.query<Record<string, unknown>>(
+				'SELECT * FROM projects WHERE id = $1',
+				[project.id],
+			);
+			if (updated.rows[0]) {
+				wsManager.broadcast(`company:${companyId}`, {
+					type: 'row_change',
+					table: 'projects',
+					action: 'UPDATE',
+					row: updated.rows[0],
+				});
+			}
+		}
 		throw error;
 	}
 }
@@ -153,12 +191,50 @@ export async function teardownContainer(
 	removeProjectWorkspace(dataDir, companySlug, projectSlug);
 }
 
+export async function stopContainerGracefully(
+	db: PGlite,
+	docker: DockerClient,
+	projectId: string,
+	containerId: string,
+	wsManager?: WebSocketManager,
+	companyId?: string,
+): Promise<void> {
+	try {
+		await docker.stopContainer(containerId);
+		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
+			ContainerStatus.Stopped,
+			projectId,
+		]);
+	} catch {
+		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
+			ContainerStatus.Error,
+			projectId,
+		]);
+	}
+	if (wsManager && companyId) {
+		const updated = await db.query<Record<string, unknown>>(
+			'SELECT * FROM projects WHERE id = $1',
+			[projectId],
+		);
+		if (updated.rows[0]) {
+			wsManager.broadcast(`company:${companyId}`, {
+				type: 'row_change',
+				table: 'projects',
+				action: 'UPDATE',
+				row: updated.rows[0],
+			});
+		}
+	}
+}
+
 export async function rebuildContainer(
 	db: PGlite,
 	docker: DockerClient,
 	project: ProjectRow,
 	companySlug: string,
 	dataDir: string,
+	wsManager?: WebSocketManager,
+	companyId?: string,
 ): Promise<string> {
 	if (project.container_id) {
 		try {
@@ -173,7 +249,7 @@ export async function rebuildContainer(
 		}
 	}
 
-	return provisionContainer(db, docker, project, companySlug, dataDir);
+	return provisionContainer(db, docker, project, companySlug, dataDir, wsManager, companyId);
 }
 
 export async function syncContainerStatus(

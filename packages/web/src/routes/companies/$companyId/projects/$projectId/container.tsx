@@ -18,11 +18,14 @@ function ContainerPage() {
 	const stopContainer = useStopContainer(companyId, projectId);
 	const rebuildContainer = useRebuildContainer(companyId, projectId);
 
-	const isRunning = project?.container_status === 'running';
-	const isCreating = project?.container_status === 'creating';
+	const status = project?.container_status;
+	const isRunning = status === 'running';
+	const isCreating = status === 'creating';
+	const isStopping = status === 'stopping';
 	const hasContainer = !!project?.container_id;
+	const isActive = isRunning || isCreating || isStopping;
 
-	const { logs, clear } = useContainerLogs(project?.id ?? '', isRunning && !!project?.id);
+	const { logs, clear } = useContainerLogs(project?.id ?? '', isRunning && hasContainer && !!project?.id);
 
 	const [autoScroll, setAutoScroll] = useState(true);
 	const logEndRef = useRef<HTMLDivElement>(null);
@@ -53,7 +56,7 @@ function ContainerPage() {
 						variant="ghost"
 						size="sm"
 						onClick={() => startContainer.mutate()}
-						disabled={anyPending || isRunning || isCreating || !hasContainer}
+						disabled={anyPending || isActive || !hasContainer}
 						title="Start container"
 					>
 						{startContainer.isPending ? (
@@ -67,10 +70,10 @@ function ContainerPage() {
 						variant="ghost"
 						size="sm"
 						onClick={() => stopContainer.mutate()}
-						disabled={anyPending || !isRunning}
+						disabled={anyPending || isStopping || (!isRunning && !isCreating)}
 						title="Stop container"
 					>
-						{stopContainer.isPending ? (
+						{stopContainer.isPending || isStopping ? (
 							<Loader2 className="w-3 h-3 animate-spin" />
 						) : (
 							<Square className="w-3 h-3" />
@@ -81,7 +84,7 @@ function ContainerPage() {
 						variant="ghost"
 						size="sm"
 						onClick={() => rebuildContainer.mutate()}
-						disabled={anyPending || isCreating}
+						disabled={anyPending || isCreating || isStopping}
 						title="Rebuild container from scratch"
 					>
 						{rebuildContainer.isPending ? (
@@ -143,7 +146,21 @@ function ContainerPage() {
 				<div className="bg-[#0d1117] h-[400px] overflow-y-auto p-3 font-mono text-xs leading-relaxed">
 					{!isRunning && logs.length === 0 && (
 						<span className="text-text-subtle">
-							{hasContainer ? 'Container is not running.' : 'No container provisioned.'}
+							{isCreating ? (
+								<span className="inline-flex items-center gap-2">
+									<Loader2 className="w-3 h-3 animate-spin" />
+									Provisioning container…
+								</span>
+							) : isStopping ? (
+								<span className="inline-flex items-center gap-2">
+									<Loader2 className="w-3 h-3 animate-spin" />
+									Stopping container…
+								</span>
+							) : hasContainer ? (
+								'Container is not running.'
+							) : (
+								'No container provisioned.'
+							)}
 						</span>
 					)}
 					{logs.map((line) => (
@@ -166,6 +183,7 @@ function ContainerStatusBadge({ status }: { status: string | null }) {
 	const config: Record<string, { color: string; label: string }> = {
 		creating: { color: 'warning', label: 'Provisioning' },
 		running: { color: 'success', label: 'Running' },
+		stopping: { color: 'warning', label: 'Stopping' },
 		stopped: { color: 'neutral', label: 'Stopped' },
 		error: { color: 'danger', label: 'Error' },
 	};

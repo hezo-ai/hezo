@@ -42,7 +42,7 @@ CREATE TYPE member_type AS ENUM ('agent', 'user');
 CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini');
 CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
 CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled', 'terminated');
-CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopped', 'error');
+CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopping', 'stopped', 'error');
 CREATE TYPE issue_status AS ENUM ('backlog', 'open', 'in_progress', 'review', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');
 CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system');

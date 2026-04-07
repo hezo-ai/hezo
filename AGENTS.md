@@ -87,6 +87,16 @@ Never commit generated build output (`.js`, `.d.ts`, `.js.map`, `.d.ts.map`) tha
 - Use shared constants and enums from `@hezo/shared` (`packages/shared/src/types/common.ts`) instead of hardcoded string literals. Never use raw strings for status values, entity types, approval types, or other enumerated values in application code. If a new enum value is needed, add it to the shared package first.
 - Use `bunx` instead of `npx` for running package binaries (e.g. `bunx playwright test`, `bunx vitest run`).
 
+## Slugs vs UUIDs
+
+Browser-facing URLs use slugs (e.g. `/companies/test/projects/operations`). All internal identifiers (database keys, WebSocket room names, server broadcasts) use UUIDs.
+
+- **Route params** are slugs. All TanStack Query keys must use the route-param value (slug), not resolved UUIDs, so that WebSocket-driven `invalidateQueries` matches.
+- **WebSocket rooms** use UUIDs (e.g. `company:${uuid}`). The `useWebSocket` hook takes two params: the UUID for room subscription and the route-param slug for query invalidation.
+- **Server broadcasts** always use UUIDs for room names. The frontend resolves the UUID via `company?.id` for room subscription but keeps the slug for query cache operations.
+
+Never mix these two identifier spaces — using a UUID in a query key or a slug in a WebSocket room will silently break real-time updates.
+
 ## UX
 
 All UI must be mobile-first. Design for three breakpoints:
