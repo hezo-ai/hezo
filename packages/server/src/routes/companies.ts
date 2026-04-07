@@ -114,7 +114,7 @@ companiesRoutes.post('/companies', async (c) => {
 
 		await db.query(
 			`INSERT INTO projects (company_id, name, slug, goal, is_internal)
-			 VALUES ($1, 'Operations', 'operations', 'Internal company operations and administrative tasks', true)`,
+			 VALUES ($1, 'Operations', 'operations', 'Administrative workspace for internal operations such as agent onboarding, team coordination, and company-wide tasks.', true)`,
 			[company.id],
 		);
 

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, getToken, waitForPageLoad } from './helpers';
+import { authenticate, createCompanyWithAgents, getToken, waitForPageLoad } from './helpers';
 
 test('can create an issue', async ({ page }) => {
 	await page.goto('/');
@@ -146,4 +146,216 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 	await page.reload();
 	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 10000 });
 	await expect(page.getByText('Implementation started')).toBeVisible({ timeout: 10000 });
+});
+
+test('issue detail shows assignee with status badge', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	// Get agents
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
+	expect(agents.length).toBeGreaterThan(0);
+	const agent = agents[0];
+
+	// Create project and issue assigned to agent
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Assignee Project' },
+	});
+	const project = (await projectRes.json()).data;
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: { project_id: project.id, title: 'Assignee Badge Issue', assignee_id: agent.id },
+	});
+	const issue = (await issueRes.json()).data;
+
+	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await waitForPageLoad(page);
+
+	// Verify agent name is displayed in the sidebar
+	const sidebar = page.locator('.grid > div:last-child');
+	await expect(sidebar.getByText(agent.title)).toBeVisible({ timeout: 10000 });
+
+	// Verify a status badge (Idle/Running/Paused) is shown
+	await expect(
+		sidebar.getByText('Idle').or(sidebar.getByText('Running')).or(sidebar.getByText('Paused')),
+	).toBeVisible();
+
+	// Verify chevron button exists
+	await expect(sidebar.locator('button svg.lucide-chevron-down')).toBeVisible();
+});
+
+test('can change assignee via popover dropdown', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
+	expect(agents.length).toBeGreaterThanOrEqual(2);
+	const agent1 = agents[0];
+	const agent2 = agents[1];
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Change Assignee Project' },
+	});
+	const project = (await projectRes.json()).data;
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: { project_id: project.id, title: 'Change Assignee Issue', assignee_id: agent1.id },
+	});
+	const issue = (await issueRes.json()).data;
+
+	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await waitForPageLoad(page);
+
+	const sidebar = page.locator('.grid > div:last-child');
+	await expect(sidebar.getByText(agent1.title)).toBeVisible({ timeout: 10000 });
+
+	// Click the assignee button to open dropdown
+	await sidebar.locator('button', { has: page.locator('svg.lucide-chevron-down') }).click();
+
+	// Dropdown should appear with agents
+	const dropdown = sidebar.locator('.absolute');
+	await expect(dropdown).toBeVisible();
+	await expect(dropdown.getByText(agent2.title)).toBeVisible();
+
+	// Select a different agent
+	await dropdown.locator('button', { hasText: agent2.title }).click();
+
+	// Dropdown should close and new assignee should be shown
+	await expect(dropdown).toBeHidden();
+	await expect(sidebar.getByText(agent2.title)).toBeVisible({ timeout: 10000 });
+});
+
+test('can unassign via popover dropdown', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
+	const agent = agents[0];
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Unassign Project' },
+	});
+	const project = (await projectRes.json()).data;
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: { project_id: project.id, title: 'Unassign Issue', assignee_id: agent.id },
+	});
+	const issue = (await issueRes.json()).data;
+
+	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await waitForPageLoad(page);
+
+	const sidebar = page.locator('.grid > div:last-child');
+	await expect(sidebar.getByText(agent.title)).toBeVisible({ timeout: 10000 });
+
+	// Open dropdown
+	await sidebar.locator('button', { has: page.locator('svg.lucide-chevron-down') }).click();
+	const dropdown = sidebar.locator('.absolute');
+	await expect(dropdown).toBeVisible();
+
+	// Click Unassigned
+	await dropdown.locator('button', { hasText: 'Unassigned' }).click();
+
+	// Should now show Unassigned text
+	await expect(dropdown).toBeHidden();
+	await expect(sidebar.getByText('Unassigned')).toBeVisible({ timeout: 10000 });
+});
+
+test('assignee dropdown closes on outside click', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Outside Click Project' },
+	});
+	const project = (await projectRes.json()).data;
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: { project_id: project.id, title: 'Outside Click Issue' },
+	});
+	const issue = (await issueRes.json()).data;
+
+	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await waitForPageLoad(page);
+
+	const sidebar = page.locator('.grid > div:last-child');
+
+	// Open dropdown
+	await sidebar.locator('button', { has: page.locator('svg.lucide-chevron-down') }).click();
+	const dropdown = sidebar.locator('.absolute');
+	await expect(dropdown).toBeVisible();
+
+	// Click outside (on the main content area)
+	await page.locator('h1').click();
+
+	// Dropdown should close
+	await expect(dropdown).toBeHidden();
+});
+
+test('unassigned issue shows Unassigned text with chevron', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const token = await getToken(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const companyRes = await page.request.post('/api/companies', {
+		headers,
+		data: {
+			name: `Unassigned Display ${Date.now()}`,
+			issue_prefix: `UD${Date.now().toString().slice(-4)}`,
+		},
+	});
+	const company = (await companyRes.json()).data;
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Unassigned Display Project' },
+	});
+	const project = (await projectRes.json()).data;
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: { project_id: project.id, title: 'No Assignee Issue' },
+	});
+	const issue = (await issueRes.json()).data;
+
+	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await waitForPageLoad(page);
+
+	const sidebar = page.locator('.grid > div:last-child');
+
+	// Should show Unassigned text in the assignee button
+	await expect(sidebar.getByRole('button', { name: 'Unassigned' })).toBeVisible({ timeout: 10000 });
+
+	// Should have chevron button
+	await expect(sidebar.locator('button svg.lucide-chevron-down')).toBeVisible();
+
+	// Should NOT have a status badge (no Idle/Running/Paused)
+	await expect(sidebar.getByText('Idle')).toBeHidden();
+	await expect(sidebar.getByText('Running')).toBeHidden();
+	await expect(sidebar.getByText('Paused')).toBeHidden();
 });

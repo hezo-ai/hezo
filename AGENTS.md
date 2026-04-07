@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-Note that dev docs (prd, schema, impl phases, etc) are in `.dev` folder.
+Note that dev docs (prd, schema, impl phases, etc) are in `.dev` folder. Consult these documents during research and planning phases to better understand the code architecture and purpose quicker. And keep these documents in sync with the codebase.
 
 ## Commands
 

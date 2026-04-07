@@ -34,11 +34,16 @@ export function useProjects(companyId: string) {
 	});
 }
 
-export function useProject(companyId: string, projectId: string, enabled = true) {
+export function useProject(
+	companyId: string,
+	projectId: string,
+	options?: { enabled?: boolean; refetchInterval?: number },
+) {
 	return useQuery({
 		queryKey: ['companies', companyId, 'projects', projectId],
 		queryFn: () => api.get<Project>(`/api/companies/${companyId}/projects/${projectId}`),
-		enabled,
+		enabled: options?.enabled,
+		refetchInterval: options?.refetchInterval,
 	});
 }
 

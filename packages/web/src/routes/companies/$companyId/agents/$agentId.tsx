@@ -2,6 +2,7 @@ import { AgentAdminStatus, AgentRuntimeStatus } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { ArrowLeft, Loader2, Power, PowerOff, Skull } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { RUNTIME_BADGE } from '../../../../components/agent-status-label';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
@@ -15,12 +16,6 @@ import {
 	useUpdateAgent,
 } from '../../../../hooks/use-agents';
 import { useHeartbeatRuns } from '../../../../hooks/use-heartbeat-runs';
-
-const RUNTIME_BADGE: Record<string, { color: string; label: string }> = {
-	[AgentRuntimeStatus.Active]: { color: 'green', label: 'Running' },
-	[AgentRuntimeStatus.Paused]: { color: 'yellow', label: 'Paused' },
-	[AgentRuntimeStatus.Idle]: { color: 'neutral', label: 'Idle' },
-};
 
 function AgentDetailPage() {
 	const { companyId, agentId } = Route.useParams();

@@ -213,6 +213,7 @@ CREATE TABLE member_users (
     role_title       TEXT,
     permissions_text TEXT NOT NULL DEFAULT '',
     project_ids      JSONB,
+    settings         JSONB NOT NULL DEFAULT '{}',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );

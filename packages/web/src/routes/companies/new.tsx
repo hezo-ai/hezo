@@ -204,16 +204,23 @@ function TemplateCard({
 				<div className="flex items-center gap-2 mt-0.5">
 					{agentCount > 0 && <Badge color="blue">{agentCount} agents</Badge>}
 					{kbDocCount > 0 && <Badge color="green">{kbDocCount} docs</Badge>}
-					<button
-						type="button"
+					<span
+						role="button"
+						tabIndex={0}
 						onClick={(e) => {
 							e.stopPropagation();
 							onSeeMore();
 						}}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.stopPropagation();
+								onSeeMore();
+							}
+						}}
 						className="text-xs text-accent-blue hover:underline cursor-pointer ml-1"
 					>
 						see more
-					</button>
+					</span>
 				</div>
 			)}
 		</button>
