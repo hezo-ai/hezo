@@ -8,10 +8,94 @@ import {
 	verifyState,
 } from '../crypto/state.js';
 import type { TokenCodeStore } from '../crypto/token-store.js';
-import { exchangeCode, type FetchFn, fetchUserInfo } from '../providers/github.js';
+import * as anthropicProvider from '../providers/anthropic.js';
+import * as githubProvider from '../providers/github.js';
+import * as googleProvider from '../providers/google.js';
+import * as openaiProvider from '../providers/openai.js';
 
-const SUPPORTED_PLATFORMS = new Set(['github']);
-const GITHUB_SCOPES = 'repo,workflow,read:org';
+export type FetchFn = typeof globalThis.fetch;
+
+interface ProviderDefinition {
+	authUrl: string;
+	scopes: string;
+	exchangeCode: (
+		code: string,
+		clientId: string,
+		clientSecret: string,
+		redirectUri: string,
+		fetchFn: FetchFn,
+	) => Promise<{ access_token: string; scope: string }>;
+	// biome-ignore lint/suspicious/noExplicitAny: provider user info types vary
+	fetchUserInfo: (accessToken: string, fetchFn: FetchFn) => Promise<any>;
+	// biome-ignore lint/suspicious/noExplicitAny: provider user info types vary
+	buildMetadata: (userInfo: any) => string;
+}
+
+const PROVIDER_REGISTRY: Record<string, ProviderDefinition> = {
+	github: {
+		authUrl: 'https://github.com/login/oauth/authorize',
+		scopes: 'repo,workflow,read:org',
+		exchangeCode: githubProvider.exchangeCode,
+		fetchUserInfo: githubProvider.fetchUserInfo,
+		buildMetadata: (userInfo) => {
+			const info = userInfo as { login: string; avatar_url: string; email: string | null };
+			return Buffer.from(
+				JSON.stringify({
+					username: info.login,
+					avatar_url: info.avatar_url,
+					email: info.email,
+				}),
+			).toString('base64url');
+		},
+	},
+	anthropic: {
+		authUrl: 'https://console.anthropic.com/oauth/authorize',
+		scopes: 'openid profile email',
+		exchangeCode: anthropicProvider.exchangeCode,
+		fetchUserInfo: anthropicProvider.fetchUserInfo,
+		buildMetadata: (userInfo) => {
+			const info = userInfo as { email: string; name: string };
+			return Buffer.from(
+				JSON.stringify({
+					email: info.email,
+					name: info.name,
+				}),
+			).toString('base64url');
+		},
+	},
+	openai: {
+		authUrl: 'https://auth.openai.com/authorize',
+		scopes: 'openid profile email',
+		exchangeCode: openaiProvider.exchangeCode,
+		fetchUserInfo: openaiProvider.fetchUserInfo,
+		buildMetadata: (userInfo) => {
+			const info = userInfo as { email: string; name: string };
+			return Buffer.from(
+				JSON.stringify({
+					email: info.email,
+					name: info.name,
+				}),
+			).toString('base64url');
+		},
+	},
+	google: {
+		authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+		scopes: 'openid email profile https://www.googleapis.com/auth/generative-language',
+		exchangeCode: googleProvider.exchangeCode,
+		fetchUserInfo: googleProvider.fetchUserInfo,
+		buildMetadata: (userInfo) => {
+			const info = userInfo as { email: string; name: string };
+			return Buffer.from(
+				JSON.stringify({
+					email: info.email,
+					name: info.name,
+				}),
+			).toString('base64url');
+		},
+	},
+};
+
+const SUPPORTED_PLATFORMS = new Set(Object.keys(PROVIDER_REGISTRY));
 
 function errorRedirect(
 	callbackUrl: string,
@@ -52,11 +136,22 @@ export function oauthRoutes(
 			);
 		}
 
-		if (!config.github) {
+		const providerConfig = config[platform as keyof ConnectConfig] as
+			| { clientId: string; clientSecret: string }
+			| undefined;
+
+		if (!providerConfig) {
 			return c.redirect(
-				errorRedirect(callbackUrl, platform, 'missing_config', 'GitHub OAuth is not configured'),
+				errorRedirect(
+					callbackUrl,
+					platform,
+					'missing_config',
+					`${platform} OAuth is not configured`,
+				),
 			);
 		}
+
+		const provider = PROVIDER_REGISTRY[platform];
 
 		const nonce = createNonce();
 		nonceStore.add(nonce);
@@ -77,13 +172,18 @@ export function oauthRoutes(
 		connectCallbackUrl.pathname = `/auth/${platform}/callback`;
 		connectCallbackUrl.search = '';
 
-		const githubUrl = new URL('https://github.com/login/oauth/authorize');
-		githubUrl.searchParams.set('client_id', config.github.clientId);
-		githubUrl.searchParams.set('redirect_uri', connectCallbackUrl.toString());
-		githubUrl.searchParams.set('scope', GITHUB_SCOPES);
-		githubUrl.searchParams.set('state', signedState);
+		const authUrl = new URL(provider.authUrl);
+		authUrl.searchParams.set('client_id', providerConfig.clientId);
+		authUrl.searchParams.set('redirect_uri', connectCallbackUrl.toString());
+		authUrl.searchParams.set('scope', provider.scopes);
+		authUrl.searchParams.set('state', signedState);
 
-		return c.redirect(githubUrl.toString());
+		// Google requires response_type parameter
+		if (platform === 'google') {
+			authUrl.searchParams.set('response_type', 'code');
+		}
+
+		return c.redirect(authUrl.toString());
 	});
 
 	routes.get('/auth/:platform/callback', async (c) => {
@@ -127,33 +227,38 @@ export function oauthRoutes(
 			);
 		}
 
-		if (!config.github) {
+		const providerConfig = config[platform as keyof ConnectConfig] as
+			| { clientId: string; clientSecret: string }
+			| undefined;
+
+		if (!providerConfig) {
 			return c.redirect(
-				errorRedirect(callbackUrl, platform, 'missing_config', 'GitHub OAuth is not configured'),
+				errorRedirect(
+					callbackUrl,
+					platform,
+					'missing_config',
+					`${platform} OAuth is not configured`,
+				),
 			);
 		}
+
+		const provider = PROVIDER_REGISTRY[platform];
 
 		const connectCallbackUrl = new URL(c.req.url);
 		connectCallbackUrl.search = '';
 
 		try {
-			const tokenResponse = await exchangeCode(
+			const tokenResponse = await provider.exchangeCode(
 				code,
-				config.github.clientId,
-				config.github.clientSecret,
+				providerConfig.clientId,
+				providerConfig.clientSecret,
 				connectCallbackUrl.toString(),
 				fetchFn,
 			);
 
-			const userInfo = await fetchUserInfo(tokenResponse.access_token, fetchFn);
+			const userInfo = await provider.fetchUserInfo(tokenResponse.access_token, fetchFn);
 
-			const metadata = Buffer.from(
-				JSON.stringify({
-					username: userInfo.login,
-					avatar_url: userInfo.avatar_url,
-					email: userInfo.email,
-				}),
-			).toString('base64url');
+			const metadata = provider.buildMetadata(userInfo);
 
 			// Store token server-side and redirect with a short-lived one-time code
 			const tokenCode = tokenCodeStore.store({

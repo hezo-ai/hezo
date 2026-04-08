@@ -5,6 +5,7 @@ export const AgentRuntime = {
 	ClaudeCode: 'claude_code',
 	Codex: 'codex',
 	Gemini: 'gemini',
+	Kimi: 'kimi',
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
@@ -116,6 +117,9 @@ export const PlatformType = {
 	Vercel: 'vercel',
 	DigitalOcean: 'digitalocean',
 	X: 'x',
+	Anthropic: 'anthropic',
+	OpenAI: 'openai',
+	Google: 'google',
 } as const;
 export type PlatformType = (typeof PlatformType)[keyof typeof PlatformType];
 
@@ -248,4 +252,97 @@ export const PRIORITY_ORDER: Record<IssuePriority, number> = {
 	[IssuePriority.High]: 1,
 	[IssuePriority.Medium]: 2,
 	[IssuePriority.Low]: 3,
+};
+
+// --- AI Provider Configuration ---
+
+export const AiProvider = {
+	Anthropic: 'anthropic',
+	OpenAI: 'openai',
+	Google: 'google',
+	Moonshot: 'moonshot',
+} as const;
+export type AiProvider = (typeof AiProvider)[keyof typeof AiProvider];
+
+export const AiAuthMethod = {
+	ApiKey: 'api_key',
+	OAuthToken: 'oauth_token',
+} as const;
+export type AiAuthMethod = (typeof AiAuthMethod)[keyof typeof AiAuthMethod];
+
+export const AiProviderStatus = {
+	Active: 'active',
+	Invalid: 'invalid',
+	Revoked: 'revoked',
+} as const;
+export type AiProviderStatus = (typeof AiProviderStatus)[keyof typeof AiProviderStatus];
+
+export const RUNTIME_TO_PROVIDER: Record<AgentRuntime, AiProvider> = {
+	[AgentRuntime.ClaudeCode]: AiProvider.Anthropic,
+	[AgentRuntime.Codex]: AiProvider.OpenAI,
+	[AgentRuntime.Gemini]: AiProvider.Google,
+	[AgentRuntime.Kimi]: AiProvider.Moonshot,
+};
+
+export const PROVIDER_TO_ENV_VAR: Record<AiProvider, Record<string, string>> = {
+	[AiProvider.Anthropic]: {
+		[AiAuthMethod.ApiKey]: 'ANTHROPIC_API_KEY',
+		[AiAuthMethod.OAuthToken]: 'CLAUDE_CODE_OAUTH_TOKEN',
+	},
+	[AiProvider.OpenAI]: {
+		[AiAuthMethod.ApiKey]: 'OPENAI_API_KEY',
+		[AiAuthMethod.OAuthToken]: 'CODEX_OAUTH_TOKEN',
+	},
+	[AiProvider.Google]: {
+		[AiAuthMethod.ApiKey]: 'GOOGLE_API_KEY',
+		[AiAuthMethod.OAuthToken]: 'GEMINI_OAUTH_TOKEN',
+	},
+	[AiProvider.Moonshot]: {
+		[AiAuthMethod.ApiKey]: 'MOONSHOT_API_KEY',
+	},
+};
+
+export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
+	[AgentRuntime.ClaudeCode]: 'claude',
+	[AgentRuntime.Codex]: 'codex',
+	[AgentRuntime.Gemini]: 'gemini',
+	[AgentRuntime.Kimi]: 'kimi',
+};
+
+export const AI_PROVIDER_INFO: Record<
+	AiProvider,
+	{
+		name: string;
+		runtimeLabel: string;
+		supportsOAuth: boolean;
+		keyPrefix?: string;
+		keyPlaceholder: string;
+	}
+> = {
+	[AiProvider.Anthropic]: {
+		name: 'Anthropic',
+		runtimeLabel: 'Claude Code',
+		supportsOAuth: true,
+		keyPrefix: 'sk-ant-',
+		keyPlaceholder: 'sk-ant-...',
+	},
+	[AiProvider.OpenAI]: {
+		name: 'OpenAI',
+		runtimeLabel: 'Codex',
+		supportsOAuth: true,
+		keyPrefix: 'sk-',
+		keyPlaceholder: 'sk-...',
+	},
+	[AiProvider.Google]: {
+		name: 'Google',
+		runtimeLabel: 'Gemini',
+		supportsOAuth: true,
+		keyPlaceholder: 'AIza...',
+	},
+	[AiProvider.Moonshot]: {
+		name: 'Moonshot',
+		runtimeLabel: 'Kimi',
+		supportsOAuth: false,
+		keyPlaceholder: 'sk-...',
+	},
 };

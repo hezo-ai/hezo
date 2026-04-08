@@ -26,16 +26,16 @@ describe('GET /health', () => {
 });
 
 describe('GET /platforms', () => {
-	it('returns platform list with github', async () => {
+	it('returns platform list with all supported platforms', async () => {
 		const res = await ctx.app.request('/platforms');
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.platforms).toHaveLength(1);
-		expect(body.platforms[0]).toEqual({
-			id: 'github',
-			name: 'GitHub',
-			scopes: ['repo', 'workflow', 'read:org'],
-		});
+		expect(body.platforms).toHaveLength(4);
+		const ids = body.platforms.map((p: any) => p.id);
+		expect(ids).toContain('github');
+		expect(ids).toContain('anthropic');
+		expect(ids).toContain('openai');
+		expect(ids).toContain('google');
 	});
 });
 

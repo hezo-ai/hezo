@@ -50,6 +50,7 @@
 | `company_issue_counters` | Helper for atomic issue numbering. | belongs to company |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
 | `slack_connections` | Per-company Slack app config. Bot token encrypted in secrets. | belongs to company |
+| `ai_provider_configs` | Per-company AI provider credentials. Stores encrypted API keys or OAuth tokens for Claude/Codex/Gemini/Kimi. Auth method distinguishes API key vs subscription OAuth token. Agent runner decrypts at execution time and injects as env var. | belongs to company, references secrets |
 
 ## Key design decisions
 

@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, TEST_MASTER_KEY } from './helpers';
+import { authenticate, configureAiProvider, TEST_MASTER_KEY } from './helpers';
 
 async function getToken(page: Page): Promise<string> {
 	const tokenRes = await page.request.post('/api/auth/token', {
@@ -18,6 +18,7 @@ async function createCompanyWithIssue(page: Page) {
 		data: { name: `Chat Test ${Date.now()}`, issue_prefix: `CT${Date.now().toString().slice(-4)}` },
 	});
 	const company = (await companyRes.json()).data;
+	await configureAiProvider(page, company.id, headers);
 
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers,

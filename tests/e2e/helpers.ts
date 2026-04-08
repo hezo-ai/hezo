@@ -24,6 +24,18 @@ export async function getToken(page: Page): Promise<string> {
 	return json.data?.token ?? json.token;
 }
 
+/** Configure a default AI provider for a company so the blocking setup modal doesn't appear. */
+export async function configureAiProvider(
+	page: Page,
+	companyId: string,
+	headers: Record<string, string>,
+) {
+	await page.request.post(`/api/companies/${companyId}/ai-providers`, {
+		headers: { ...headers, 'Content-Type': 'application/json' },
+		data: { provider: 'anthropic', api_key: 'sk-ant-e2e-test-key' },
+	});
+}
+
 export async function createCompanyWithAgents(page: Page) {
 	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
@@ -41,7 +53,26 @@ export async function createCompanyWithAgents(page: Page) {
 		},
 	});
 	const company = ((await companyRes.json()) as any).data;
+
+	await configureAiProvider(page, company.id, headers);
+
 	return { company, token };
+}
+
+/** Dismiss the AI provider setup modal by entering a test API key via the UI. */
+export async function dismissAiProviderModal(page: Page) {
+	const modal = page.getByText('Set up an AI provider');
+	try {
+		await modal.waitFor({ state: 'visible', timeout: 5000 });
+	} catch {
+		return;
+	}
+
+	await page.getByRole('button', { name: 'Enter API key' }).first().click();
+	await page.locator('input[type="password"]').first().fill('sk-ant-e2e-test-key');
+	await page.getByRole('button', { name: 'Save' }).first().click();
+
+	await expect(modal).toBeHidden({ timeout: 10000 });
 }
 
 export async function waitForPageLoad(page: Page, timeout = 15000) {

@@ -1,0 +1,18 @@
+FROM node:24-slim
+
+# Install common development tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl jq openssh-client ca-certificates python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install AI coding CLIs
+#   @anthropic-ai/claude-code → claude
+#   @openai/codex             → codex
+#   @google/gemini-cli        → gemini
+#   kimi (via install script) → kimi
+RUN npm install -g @anthropic-ai/claude-code \
+    && npm install -g @openai/codex \
+    && npm install -g @google/gemini-cli \
+    && curl -LsSf https://code.kimi.com/install.sh | bash
+
+WORKDIR /workspace

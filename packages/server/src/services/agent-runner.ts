@@ -1,7 +1,15 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
+import {
+	type AgentRuntime,
+	ContainerStatus,
+	HeartbeatRunStatus,
+	PROVIDER_TO_ENV_VAR,
+	RUNTIME_COMMANDS,
+	RUNTIME_TO_PROVIDER,
+} from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { signAgentJwt } from '../middleware/auth';
+import { getProviderCredential } from './ai-provider-keys';
 import type { DockerClient } from './docker';
 import { resolveSystemPrompt } from './template-resolver';
 
@@ -10,6 +18,7 @@ interface AgentInfo {
 	title: string;
 	system_prompt: string;
 	company_id: string;
+	runtime_type: AgentRuntime;
 }
 
 interface IssueInfo {
@@ -116,6 +125,45 @@ export async function runAgent(
 		`HEZO_ISSUE_IDENTIFIER=${issue.identifier}`,
 	];
 
+	// Inject all AI provider env vars as empty defaults
+	const allEnvVars = new Set<string>();
+	for (const methods of Object.values(PROVIDER_TO_ENV_VAR)) {
+		for (const envVar of Object.values(methods)) {
+			allEnvVars.add(envVar);
+		}
+	}
+	for (const envVar of allEnvVars) {
+		env.push(`${envVar}=`);
+	}
+
+	// Resolve the agent's specific credential and override the relevant env var
+	const runtimeType = agent.runtime_type;
+	const provider = RUNTIME_TO_PROVIDER[runtimeType];
+	const credential = await getProviderCredential(
+		deps.db,
+		deps.masterKeyManager,
+		agent.company_id,
+		provider,
+	);
+
+	if (!credential) {
+		return {
+			success: false,
+			exitCode: -1,
+			stdout: '',
+			stderr: `No ${provider} credential configured. Add one in Settings > AI Providers.`,
+			durationMs: Date.now() - startTime,
+		};
+	}
+
+	const envVarName = PROVIDER_TO_ENV_VAR[provider]?.[credential.authMethod];
+	if (envVarName) {
+		const idx = env.findIndex((e) => e.startsWith(`${envVarName}=`));
+		if (idx >= 0) env[idx] = `${envVarName}=${credential.value}`;
+	}
+
+	const cliCommand = RUNTIME_COMMANDS[runtimeType] || 'claude';
+
 	const workingDir = '/workspace';
 
 	if (signal?.aborted) {
@@ -130,7 +178,7 @@ export async function runAgent(
 		}
 
 		const execId = await deps.docker.execCreate(project.container_id, {
-			Cmd: ['claude', '-p', taskPrompt],
+			Cmd: [cliCommand, '-p', taskPrompt],
 			Env: env,
 			WorkingDir: workingDir,
 			AttachStdout: true,

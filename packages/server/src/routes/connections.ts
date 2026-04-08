@@ -7,7 +7,7 @@ import { removeSSHKeyFromGitHub } from '../services/github';
 import { getCompanySSHKey } from '../services/ssh-keys';
 import { getOAuthToken } from '../services/token-store';
 
-const SUPPORTED_PLATFORMS = new Set(['github']);
+const SUPPORTED_PLATFORMS = new Set(['github', 'anthropic', 'openai', 'google']);
 
 export const connectionsRoutes = new Hono<Env>();
 

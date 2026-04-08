@@ -35,6 +35,16 @@ beforeAll(async () => {
 	});
 	companyId = (await companyRes.json()).data.id;
 
+	// Configure an AI provider so the agent runner can resolve credentials
+	await app.request(`/api/companies/${companyId}/ai-providers`, {
+		method: 'POST',
+		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			provider: 'anthropic',
+			api_key: 'sk-ant-test-runner-key',
+		}),
+	});
+
 	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
@@ -91,6 +101,7 @@ function makeAgent() {
 		title: 'Test Agent',
 		system_prompt: 'You are a helpful agent. Today is {{current_date}}.',
 		company_id: companyId,
+		runtime_type: 'claude_code' as const,
 	};
 }
 

@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
+	type AgentRuntime,
 	AgentRuntimeStatus,
 	CommentContentType,
 	IssuePriority,
@@ -225,8 +226,9 @@ export class JobManager {
 			system_prompt: string;
 			admin_status: string;
 			heartbeat_interval_min: number;
+			runtime_type: string;
 		}>(
-			`SELECT id, title, system_prompt, admin_status, heartbeat_interval_min FROM member_agents WHERE id = $1`,
+			`SELECT id, title, system_prompt, admin_status, heartbeat_interval_min, runtime_type FROM member_agents WHERE id = $1`,
 			[memberId],
 		);
 
@@ -381,6 +383,7 @@ export class JobManager {
 						title: agent.rows[0].title,
 						system_prompt: agent.rows[0].system_prompt,
 						company_id: companyId,
+						runtime_type: agent.rows[0].runtime_type as AgentRuntime,
 					},
 					issue,
 					project.rows[0],

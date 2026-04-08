@@ -21,7 +21,8 @@ secretsRoutes.get('/companies/:companyId/secrets', async (c) => {
            (SELECT count(*) FROM secret_grants sg WHERE sg.secret_id = s.id AND sg.revoked_at IS NULL)::int AS grant_count
     FROM secrets s
     LEFT JOIN projects p ON p.id = s.project_id
-    WHERE s.company_id = $1`;
+    WHERE s.company_id = $1
+      AND s.id NOT IN (SELECT api_key_secret_id FROM ai_provider_configs WHERE company_id = $1)`;
 	const params: unknown[] = [companyId];
 
 	if (projectId) {

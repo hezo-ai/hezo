@@ -1,10 +1,19 @@
-import { ApprovalStatus, ApprovalType, PlatformType } from '@hezo/shared';
+import {
+	AiAuthMethod,
+	type AiProvider,
+	ApprovalStatus,
+	ApprovalType,
+	PlatformType,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { verifyOAuthState } from '../crypto/state';
 import type { Env } from '../lib/types';
+import { storeAiProviderKey } from '../services/ai-provider-keys';
 import { registerSSHKeyOnGitHub } from '../services/github';
 import { generateCompanySSHKey, getCompanySSHKey, updateGitHubKeyId } from '../services/ssh-keys';
 import { storeOAuthToken } from '../services/token-store';
+
+const AI_PROVIDER_PLATFORMS = new Set(['anthropic', 'openai', 'google']);
 
 export const oauthCallbackRoutes = new Hono<Env>();
 
@@ -89,6 +98,26 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 		return c.redirect(
 			`/error?message=${encodeURIComponent('Failed to exchange token with Connect service')}`,
 		);
+	}
+
+	// For AI provider platforms, store as ai_provider_config with oauth_token auth method
+	if (AI_PROVIDER_PLATFORMS.has(platform)) {
+		try {
+			await storeAiProviderKey(
+				db,
+				masterKeyManager,
+				companyId,
+				platform as AiProvider,
+				accessToken,
+				AiAuthMethod.OAuthToken,
+				metadata.email ? `${platform} (${metadata.email})` : platform,
+				metadata,
+			);
+		} catch (e) {
+			console.warn('AI provider config creation failed:', e instanceof Error ? e.message : e);
+		}
+
+		return c.redirect(`/companies/${companyId}/settings?ai_provider_connected=${platform}`);
 	}
 
 	await storeOAuthToken(
