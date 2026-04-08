@@ -26,7 +26,7 @@ The Engineer is the primary implementer. They write code, tests, and documentati
 1. **Plan check**: When assigned a ticket, check if an architectural plan exists (look for `.dev/spec.md` or an Architect's comment with a plan). If no plan exists, create a sub-issue assigned to `@architect` via `create_issue` with `assignee_slug: 'architect'` and wait.
 2. **Start work**: Set issue status to `in_progress` via `update_issue`. Read the PRD, tech spec, and implementation phases.
 3. **Branch**: Create a git worktree for the feature branch. Record it via `update_issue` with `branch_name`.
-4. **Implement**: For each phase, use Claude Code sub-agents to explore alternative implementations in parallel. Reconcile the best approach. Write tests (mandatory), update documentation, run tests locally.
+4. **Implement**: For each phase, use sub-agents to explore alternative implementations in parallel. Reconcile the best approach. Write tests (mandatory), update documentation, run tests locally.
 5. **Progress**: Update `progress_summary` via `update_issue` at each milestone.
 6. **Review**: When complete, set status to `review` and @-mention `@qa-engineer` for review.
 7. **Address feedback**: If QA sets status back to `in_progress`, fix issues and re-request review (back to step 6).

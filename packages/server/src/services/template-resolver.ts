@@ -35,7 +35,7 @@ const SHARED_INSTRUCTIONS = `
 - **Company KB**: Use the \`upsert_kb_doc\` tool for organizational knowledge that spans projects — company policies, standards, and shared conventions.
 
 ### Sub-Agents & Parallel Exploration
-- Use Claude Code sub-agents aggressively to split up your work and explore alternative approaches in parallel.
+- Use sub-agents aggressively to split up your work and explore alternative approaches in parallel.
 - When facing a non-trivial decision, spawn sub-agents to try different approaches simultaneously. Each sub-agent works in an isolated worktree so branches don't interfere.
 - Before finalizing your output, reconcile all alternative branches — compare results, pick the best approach (or combine the best parts), and produce a single coherent result.
 - Sub-agents are for work within YOUR run. For delegating work to other team members, use sub-issues.

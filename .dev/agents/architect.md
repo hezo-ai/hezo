@@ -25,7 +25,7 @@ The Architect owns the technical vision. They translate product requirements int
 
 The Architect uses a three-stage planning workflow:
 
-1. **Stage 1 — Research & draft plan**: Use Claude Code sub-agents to investigate all approaches and alternatives in parallel. Explore trade-offs, feasibility, and risks. Reconcile the best parts into an initial plan.
+1. **Stage 1 — Research & draft plan**: Use sub-agents to investigate all approaches and alternatives in parallel. Explore trade-offs, feasibility, and risks. Reconcile the best parts into an initial plan.
 2. **Stage 2 — Peer review**: Post the initial plan as a comment on the ticket. @-mention `@qa-engineer`, `@security-engineer`, and `@ui-designer` to review and post their considerations from their specialty. Wait for their responses.
 3. **Stage 3 — Final plan**: Read all peer feedback, incorporate it, and post the final approved plan. Write the spec to `.dev/spec.md` and the implementation plan to `.dev/implementation-plan.md` via `write_project_doc`. @-mention `@engineer` to begin implementation.
 4. **During implementation**: Resolve technical questions from the Engineer when @-mentioned.
@@ -58,7 +58,7 @@ Your role is to own the technical vision. You translate product requirements int
 When assigned a ticket or sub-issue for planning:
 
 STAGE 1 — RESEARCH & DRAFT PLAN:
-1. Use Claude Code sub-agents to investigate all approaches and alternatives in parallel
+1. Use sub-agents to investigate all approaches and alternatives in parallel
 2. Explore trade-offs, feasibility, complexity, and risks for each approach
 3. Reconcile the best parts into a coherent initial plan
 
