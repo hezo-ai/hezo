@@ -135,6 +135,11 @@ describe('MCP endpoint: tool registration', () => {
 		expect(toolNames).toContain('get_costs');
 		expect(toolNames).toContain('get_agent_system_prompt');
 		expect(toolNames).toContain('propose_system_prompt_update');
+		expect(toolNames).toContain('upsert_kb_doc');
+		expect(toolNames).toContain('list_project_docs');
+		expect(toolNames).toContain('read_project_doc');
+		expect(toolNames).toContain('write_project_doc');
+		expect(toolNames).toContain('propose_skill');
 	});
 
 	it('rejects unauthenticated MCP requests', async () => {
@@ -343,6 +348,11 @@ describe('MCP tool: skill file includes all tools', () => {
 		expect(text).toContain('resolve_approval');
 		expect(text).toContain('get_agent_system_prompt');
 		expect(text).toContain('propose_system_prompt_update');
+		expect(text).toContain('upsert_kb_doc');
+		expect(text).toContain('list_project_docs');
+		expect(text).toContain('read_project_doc');
+		expect(text).toContain('write_project_doc');
+		expect(text).toContain('propose_skill');
 	});
 });
 

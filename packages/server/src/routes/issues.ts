@@ -1,6 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	AgentAdminStatus,
 	AuditAction,
 	AuditActorType,
 	AuditEntityType,
@@ -17,6 +16,7 @@ import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess } from '../middleware/auth';
+import { triggerStatusAutomations } from '../services/issue-automation';
 import { createWakeup } from '../services/wakeup';
 
 async function wakeAgentIfAssigned(
@@ -271,6 +271,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		labels?: string[];
 		progress_summary?: string | null;
 		rules?: string | null;
+		branch_name?: string | null;
 	}>();
 
 	const sets: string[] = [];
@@ -326,6 +327,11 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		params.push(body.rules);
 		idx++;
 	}
+	if (body.branch_name !== undefined) {
+		sets.push(`branch_name = $${idx}`);
+		params.push(body.branch_name);
+		idx++;
+	}
 
 	if (sets.length === 0) {
 		return ok(c, existing.rows[0]);
@@ -339,21 +345,10 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 
 	wakeAgentIfAssigned(db, body.assignee_id, companyId, issueId);
 
-	if (body.status === IssueStatus.Done) {
-		const coach = await db.query<{ id: string }>(
-			`SELECT ma.id FROM member_agents ma
-			 JOIN members m ON m.id = ma.id
-			 WHERE m.company_id = $1 AND ma.slug = 'coach'
-			   AND ma.admin_status = $2::agent_admin_status
-			 LIMIT 1`,
-			[companyId, AgentAdminStatus.Enabled],
+	if (body.status) {
+		triggerStatusAutomations(db, companyId, issueId, body.status).catch((e) =>
+			console.error('Failed to trigger status automations:', e),
 		);
-		if (coach.rows.length > 0) {
-			createWakeup(db, coach.rows[0].id, companyId, WakeupSource.Automation, {
-				issue_id: issueId,
-				trigger: 'issue_done',
-			}).catch((e) => console.error('Failed to wake Coach:', e));
-		}
 	}
 
 	broadcastChange(

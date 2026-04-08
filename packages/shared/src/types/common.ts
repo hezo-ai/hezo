@@ -37,6 +37,7 @@ export const IssueStatus = {
 	Open: 'open',
 	InProgress: 'in_progress',
 	Review: 'review',
+	Approved: 'approved',
 	Blocked: 'blocked',
 	Done: 'done',
 	Closed: 'closed',
@@ -86,6 +87,7 @@ export const ApprovalType = {
 	DeployProduction: 'deploy_production',
 	OauthRequest: 'oauth_request',
 	SystemPromptUpdate: 'system_prompt_update',
+	SkillProposal: 'skill_proposal',
 } as const;
 export type ApprovalType = (typeof ApprovalType)[keyof typeof ApprovalType];
 

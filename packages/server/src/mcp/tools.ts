@@ -6,10 +6,14 @@ import {
 	CommentContentType,
 	IssuePriority,
 	IssueStatus,
+	WakeupSource,
 } from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { listDocFiles, readDocFile, resolveDevDocsPath, writeDocFile } from '../lib/docs';
 import type { AuthInfo } from '../lib/types';
+import { triggerStatusAutomations } from '../services/issue-automation';
+import { createWakeup } from '../services/wakeup';
 
 export interface ToolDef {
 	name: string;
@@ -77,7 +81,7 @@ async function verifyCompanyAccess(
 	return 'Access denied';
 }
 
-export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
+export function registerTools(server: McpServer, db: PGlite, dataDir: string): ToolDef[] {
 	registeredTools.length = 0;
 
 	// Companies
@@ -212,18 +216,39 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 	tool(
 		server,
 		'create_issue',
-		'Create a new issue',
+		'Create a new issue. Use parent_issue_id for sub-issues. Use assignee_slug as alternative to assignee_id.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().describe('Project ID'),
 			title: z.string().describe('Issue title'),
 			description: z.string().optional().describe('Issue description'),
 			priority: z.string().optional().describe('Priority: low, medium, high, urgent'),
-			assignee_id: z.string().describe('Assignee member ID (required)'),
+			assignee_id: z.string().optional().describe('Assignee member ID'),
+			assignee_slug: z
+				.string()
+				.optional()
+				.describe('Assignee agent slug (alternative to assignee_id)'),
+			parent_issue_id: z.string().optional().describe('Parent issue ID (creates a sub-issue)'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
+
+			// Resolve assignee: prefer assignee_id, fall back to slug lookup
+			let assigneeId = args.assignee_id as string | undefined;
+			if (!assigneeId && args.assignee_slug) {
+				const agent = await db.query<{ id: string }>(
+					`SELECT ma.id FROM member_agents ma
+					 JOIN members m ON m.id = ma.id
+					 WHERE ma.slug = $1 AND m.company_id = $2`,
+					[args.assignee_slug, args.company_id],
+				);
+				if (agent.rows.length === 0)
+					return { error: `Agent with slug '${args.assignee_slug}' not found` };
+				assigneeId = agent.rows[0].id;
+			}
+			if (!assigneeId) return { error: 'Either assignee_id or assignee_slug is required' };
+
 			const companyResult = await db.query<{ issue_prefix: string }>(
 				'SELECT issue_prefix FROM companies WHERE id = $1',
 				[args.company_id],
@@ -235,13 +260,14 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			);
 			const num = numberResult.rows[0].number;
 			const identifier = `${companyResult.rows[0].issue_prefix}-${num}`;
-			const r = await db.query(
-				`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier, title, description, status, priority)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority) RETURNING *`,
+			const r = await db.query<{ id: string }>(
+				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, number, identifier, title, description, status, priority)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority) RETURNING *`,
 				[
 					args.company_id,
 					args.project_id,
-					args.assignee_id,
+					assigneeId,
+					args.parent_issue_id ?? null,
 					num,
 					identifier,
 					args.title,
@@ -250,6 +276,15 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 					args.priority ?? IssuePriority.Medium,
 				],
 			);
+
+			// Wake the assigned agent
+			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
+			if (isAgent.rows.length > 0) {
+				createWakeup(db, assigneeId, args.company_id as string, WakeupSource.Assignment, {
+					issue_id: r.rows[0].id,
+				}).catch((e) => console.error('Failed to wake agent:', e));
+			}
+
 			return r.rows[0];
 		},
 		db,
@@ -258,15 +293,23 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 	tool(
 		server,
 		'update_issue',
-		'Update an issue',
+		'Update an issue. Agents can use this to change status, update progress, set rules, and record branch names.',
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
 			title: z.string().optional().describe('New title'),
 			description: z.string().optional().describe('New description'),
-			status: z.string().optional().describe('New status'),
+			status: z
+				.string()
+				.optional()
+				.describe(
+					'New status (backlog, open, in_progress, review, approved, blocked, done, closed, cancelled)',
+				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z.string().optional().describe('New assignee ID'),
+			progress_summary: z.string().optional().describe('Progress summary update'),
+			rules: z.string().optional().describe('Rules/constraints for this issue'),
+			branch_name: z.string().optional().describe('Git branch name for this issue'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -276,13 +319,23 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			let idx = 1;
 			for (const [key, val] of Object.entries(args)) {
 				if (['company_id', 'issue_id'].includes(key) || val === undefined) continue;
-				const col =
-					key === 'status'
-						? `status = $${idx}::issue_status`
-						: key === 'priority'
-							? `priority = $${idx}::issue_priority`
-							: `${key} = $${idx}`;
-				sets.push(col);
+				if (key === 'status') {
+					sets.push(`status = $${idx}::issue_status`);
+				} else if (key === 'priority') {
+					sets.push(`priority = $${idx}::issue_priority`);
+				} else if (key === 'progress_summary') {
+					sets.push(`progress_summary = $${idx}`);
+					params.push(val);
+					idx++;
+					sets.push('progress_summary_updated_at = now()');
+					const updatedBy = auth.type === AuthType.Agent ? auth.memberId : null;
+					sets.push(`progress_summary_updated_by = $${idx}`);
+					params.push(updatedBy);
+					idx++;
+					continue;
+				} else {
+					sets.push(`${key} = $${idx}`);
+				}
 				params.push(val);
 				idx++;
 			}
@@ -292,7 +345,37 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 				`UPDATE issues SET ${sets.join(', ')} WHERE id = $${idx} AND company_id = $${idx + 1} RETURNING *`,
 				params,
 			);
-			return r.rows[0] ?? null;
+			if (!r.rows[0]) return null;
+
+			// Trigger status automations (e.g. Coach wakeup on Done)
+			if (args.status) {
+				triggerStatusAutomations(
+					db,
+					args.company_id as string,
+					args.issue_id as string,
+					args.status as string,
+				).catch((e) => console.error('Failed to trigger status automations:', e));
+			}
+
+			// Wake agent if assignee changed
+			if (args.assignee_id) {
+				const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
+					args.assignee_id,
+				]);
+				if (isAgent.rows.length > 0) {
+					createWakeup(
+						db,
+						args.assignee_id as string,
+						args.company_id as string,
+						WakeupSource.Assignment,
+						{
+							issue_id: args.issue_id,
+						},
+					).catch((e) => console.error('Failed to wake agent:', e));
+				}
+			}
+
+			return r.rows[0];
 		},
 		db,
 	);
@@ -542,7 +625,7 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 	tool(
 		server,
 		'get_agent_system_prompt',
-		"Read an agent's system prompt. Only accessible by the Coach agent, the agent itself, or board users.",
+		"Read an agent's system prompt. Accessible by any agent or board user in the same company.",
 		{
 			company_id: z.string().describe('Company ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -551,10 +634,9 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 
-			if (!(await isCoachOrSelf(db, auth, args.agent_id as string))) {
-				return {
-					error: 'Access denied: only the Coach or the agent itself can read system prompts',
-				};
+			// Any agent or board user in the same company can read other agents' prompts
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
+				return { error: 'Access denied' };
 			}
 
 			const r = await db.query<{ title: string; slug: string; system_prompt: string }>(
@@ -653,7 +735,187 @@ export function registerTools(server: McpServer, db: PGlite): ToolDef[] {
 		db,
 	);
 
+	// KB Docs: upsert
+	tool(
+		server,
+		'upsert_kb_doc',
+		'Create or update a knowledge base document',
+		{
+			company_id: z.string().describe('Company ID'),
+			title: z.string().describe('Document title'),
+			slug: z.string().describe('URL-safe slug (e.g. "coding-standards")'),
+			content: z.string().describe('Document content (markdown)'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const r = await db.query(
+				`INSERT INTO kb_docs (company_id, title, slug, content, last_updated_by_member_id)
+				 VALUES ($1, $2, $3, $4, $5)
+				 ON CONFLICT (company_id, slug) DO UPDATE
+				 SET title = EXCLUDED.title, content = EXCLUDED.content,
+				     last_updated_by_member_id = EXCLUDED.last_updated_by_member_id, updated_at = now()
+				 RETURNING *`,
+				[args.company_id, args.title, args.slug, args.content, callerMemberId],
+			);
+			return r.rows[0];
+		},
+		db,
+	);
+
+	// Project docs
+	tool(
+		server,
+		'list_project_docs',
+		'List files in the project .dev/ documentation folder',
+		{
+			company_id: z.string().describe('Company ID'),
+			project_id: z.string().describe('Project ID'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const devPath = await resolveDevPath(
+				db,
+				dataDir,
+				args.company_id as string,
+				args.project_id as string,
+			);
+			if ('error' in devPath) return { error: devPath.error };
+			return { files: listDocFiles(devPath.devPath) };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'read_project_doc',
+		'Read a file from the project .dev/ documentation folder',
+		{
+			company_id: z.string().describe('Company ID'),
+			project_id: z.string().describe('Project ID'),
+			filename: z.string().describe('Filename to read (e.g. "spec.md")'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const devPath = await resolveDevPath(
+				db,
+				dataDir,
+				args.company_id as string,
+				args.project_id as string,
+			);
+			if ('error' in devPath) return { error: devPath.error };
+			const content = readDocFile(devPath.devPath, args.filename as string);
+			if (content === null) return { error: `File '${args.filename}' not found` };
+			return { filename: args.filename, content };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'write_project_doc',
+		'Write a file to the project .dev/ documentation folder. For high-level project context only.',
+		{
+			company_id: z.string().describe('Company ID'),
+			project_id: z.string().describe('Project ID'),
+			filename: z.string().describe('Filename to write (e.g. "spec.md")'),
+			content: z.string().describe('File content (markdown)'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const devPath = await resolveDevPath(
+				db,
+				dataDir,
+				args.company_id as string,
+				args.project_id as string,
+			);
+			if ('error' in devPath) return { error: devPath.error };
+			const filePath = writeDocFile(
+				devPath.devPath,
+				args.filename as string,
+				args.content as string,
+			);
+			return { written: true, path: filePath };
+		},
+		db,
+	);
+
+	// Skill proposals
+	tool(
+		server,
+		'propose_skill',
+		'Propose a new skill. Creates an approval request that, when approved, writes the skill file.',
+		{
+			company_id: z.string().describe('Company ID'),
+			skill_name: z.string().describe('Human-readable skill name'),
+			skill_slug: z.string().describe('URL-safe slug for the skill file'),
+			content: z.string().describe('Skill content (markdown)'),
+			reason: z.string().describe('Why this skill should be added'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const result = await db.query<{ id: string; status: string }>(
+				`INSERT INTO approvals (company_id, type, requested_by_member_id, payload)
+				 VALUES ($1, $2::approval_type, $3, $4::jsonb)
+				 RETURNING id, status`,
+				[
+					args.company_id,
+					ApprovalType.SkillProposal,
+					callerMemberId,
+					JSON.stringify({
+						skill_name: args.skill_name,
+						skill_slug: args.skill_slug,
+						content: args.content,
+						reason: args.reason,
+					}),
+				],
+			);
+			return { approval_id: result.rows[0].id, status: result.rows[0].status };
+		},
+		db,
+	);
+
 	return [...registeredTools];
+}
+
+/**
+ * Resolve the .dev/ docs path for a project's designated repo.
+ */
+async function resolveDevPath(
+	db: PGlite,
+	dataDir: string,
+	companyId: string,
+	projectId: string,
+): Promise<{ devPath: string } | { error: string }> {
+	const project = await db.query<{ slug: string; designated_repo_id: string | null }>(
+		'SELECT slug, designated_repo_id FROM projects WHERE id = $1 AND company_id = $2',
+		[projectId, companyId],
+	);
+	if (!project.rows[0]) return { error: 'Project not found' };
+	if (!project.rows[0].designated_repo_id) return { error: 'No designated repo for this project' };
+	const repo = await db.query<{ short_name: string }>(
+		'SELECT short_name FROM repos WHERE id = $1',
+		[project.rows[0].designated_repo_id],
+	);
+	if (!repo.rows[0]) return { error: 'Repo not found' };
+	const company = await db.query<{ slug: string }>('SELECT slug FROM companies WHERE id = $1', [
+		companyId,
+	]);
+	if (!company.rows[0]) return { error: 'Company not found' };
+	return {
+		devPath: resolveDevDocsPath(
+			dataDir,
+			company.rows[0].slug,
+			project.rows[0].slug,
+			repo.rows[0].short_name,
+		),
+	};
 }
 
 async function isCoachOrSelf(db: PGlite, auth: AuthInfo, targetAgentId: string): Promise<boolean> {

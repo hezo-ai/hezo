@@ -53,21 +53,21 @@ describe('template resolver', () => {
 		const result = await resolveSystemPrompt(db, 'Working for {{company_name}}.', {
 			companyId,
 		});
-		expect(result).toBe('Working for Template Co.');
+		expect(result).toContain('Working for Template Co.');
 	});
 
 	it('resolves {{company_mission}} to company description', async () => {
 		const result = await resolveSystemPrompt(db, 'Mission: {{company_mission}}', {
 			companyId,
 		});
-		expect(result).toBe('Mission: Build amazing things');
+		expect(result).toContain('Mission: Build amazing things');
 	});
 
 	it('resolves {{company_description}} to company description', async () => {
 		const result = await resolveSystemPrompt(db, 'Desc: {{company_description}}', {
 			companyId,
 		});
-		expect(result).toBe('Desc: Build amazing things');
+		expect(result).toContain('Desc: Build amazing things');
 	});
 
 	it('resolves company_name, company_mission, and company_description in a single query', async () => {
@@ -76,7 +76,7 @@ describe('template resolver', () => {
 			'{{company_name}} - {{company_mission}} ({{company_description}})',
 			{ companyId },
 		);
-		expect(result).toBe('Template Co - Build amazing things (Build amazing things)');
+		expect(result).toContain('Template Co - Build amazing things (Build amazing things)');
 	});
 
 	it('resolves {{kb_context}} with no docs', async () => {
@@ -93,17 +93,17 @@ describe('template resolver', () => {
 		expect(result).toContain('No preferences set');
 	});
 
-	it('resolves {{project_docs_context}} to filesystem reference', async () => {
+	it('resolves {{project_docs_context}} without designated repo', async () => {
 		const result = await resolveSystemPrompt(db, 'Docs: {{project_docs_context}}', {
 			companyId,
 			projectId,
 		});
-		expect(result).toContain('.dev/ folder');
+		expect(result).toContain('No project documentation available');
 	});
 
 	it('passes through text without template variables', async () => {
 		const result = await resolveSystemPrompt(db, 'Hello world', { companyId });
-		expect(result).toBe('Hello world');
+		expect(result).toContain('Hello world');
 	});
 
 	it('resolves multiple variables in one template', async () => {
@@ -120,14 +120,27 @@ describe('template resolver', () => {
 		const result = await resolveSystemPrompt(db, 'Reports to: {{reports_to}}', {
 			companyId,
 		});
-		expect(result).toBe('Reports to: ');
+		expect(result).toContain('Reports to: ');
 	});
 
 	it('resolves {{requester_context}} to empty string', async () => {
 		const result = await resolveSystemPrompt(db, 'Context: {{requester_context}}', {
 			companyId,
 		});
-		expect(result).toBe('Context: ');
+		expect(result).toContain('Context: ');
+	});
+
+	it('appends shared working guidelines to every prompt', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId });
+		expect(result).toContain('## Working Guidelines');
+		expect(result).toContain('### Ticket Maintenance');
+		expect(result).toContain('### Knowledge Maintenance');
+		expect(result).toContain('### Sub-Agents & Parallel Exploration');
+		expect(result).toContain('### Sub-Issue Delegation');
+		expect(result).toContain('update_issue');
+		expect(result).toContain('write_project_doc');
+		expect(result).toContain('upsert_kb_doc');
+		expect(result).toContain('create_issue');
 	});
 });
 
@@ -175,7 +188,7 @@ describe('template resolver with agents', () => {
 			companyId: agentCompanyId,
 			agentId: engineerAgentId,
 		});
-		expect(result).toBe('Reports to: Architect');
+		expect(result).toContain('Reports to: Architect');
 	});
 
 	it('resolves {{reports_to}} for CEO (no manager) to empty string', async () => {
@@ -183,7 +196,7 @@ describe('template resolver with agents', () => {
 			companyId: agentCompanyId,
 			agentId: ceoAgentId,
 		});
-		expect(result).toBe('Reports to: ');
+		expect(result).toContain('Reports to: ');
 	});
 
 	it('resolves a full system prompt template with all variables', async () => {
@@ -213,7 +226,7 @@ Current date: {{current_date}}
 		expect(result).toMatch(/Current date: \d{4}-\d{2}-\d{2}/);
 		expect(result).toContain('Company Overview');
 		expect(result).toContain('No preferences set');
-		expect(result).toContain('.dev/ folder');
+		expect(result).toContain('No project documentation available');
 	});
 
 	it('agents created from company type have system prompts', async () => {
