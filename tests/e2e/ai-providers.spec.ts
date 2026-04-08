@@ -46,12 +46,11 @@ test.describe('Blocking setup modal', () => {
 		await expect(page.getByText('Set up an AI provider')).toBeVisible({ timeout: 10000 });
 
 		// Click "Enter API key" on Anthropic card
-		const anthropicCard = page.locator('div').filter({ hasText: 'Anthropic' }).first();
-		await anthropicCard.getByRole('button', { name: 'Enter API key' }).click();
+		await page.getByRole('button', { name: 'Enter API key' }).first().click();
 
 		// Fill in the API key form
-		await anthropicCard.locator('input[type="password"]').fill('sk-ant-test-key-12345');
-		await anthropicCard.getByRole('button', { name: 'Save' }).click();
+		await page.locator('input[type="password"]').first().fill('sk-ant-test-key-12345');
+		await page.getByRole('button', { name: 'Save' }).first().click();
 
 		// Modal should close
 		await expect(page.getByText('Set up an AI provider')).toBeHidden({ timeout: 10000 });
@@ -122,11 +121,10 @@ test.describe('AI Providers settings section', () => {
 		const section = page.locator('#settings-ai-providers');
 		await expect(section.getByText('AI providers')).toBeVisible({ timeout: 5000 });
 
-		// Add an OpenAI key via the settings section
-		const openaiCard = section.locator('div').filter({ hasText: 'OpenAI' }).first();
-		await openaiCard.getByRole('button', { name: 'Enter API key' }).click();
-		await openaiCard.locator('input[type="password"]').fill('sk-openai-test-key-12345');
-		await openaiCard.getByRole('button', { name: 'Save' }).click();
+		// Add an Anthropic key via the settings section (first unconfigured provider)
+		await section.getByRole('button', { name: 'Enter API key' }).first().click();
+		await section.locator('input[type="password"]').fill('sk-ant-test-key-12345');
+		await section.getByRole('button', { name: 'Save' }).click();
 
 		// Should show as configured with Active badge
 		await expect(section.getByText('active')).toBeVisible({ timeout: 5000 });

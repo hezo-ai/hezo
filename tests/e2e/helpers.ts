@@ -62,15 +62,16 @@ export async function createCompanyWithAgents(page: Page) {
 /** Dismiss the AI provider setup modal by entering a test API key via the UI. */
 export async function dismissAiProviderModal(page: Page) {
 	const modal = page.getByText('Set up an AI provider');
-	const visible = await modal.isVisible().catch(() => false);
-	if (!visible) return;
+	try {
+		await modal.waitFor({ state: 'visible', timeout: 5000 });
+	} catch {
+		return;
+	}
 
-	// Click "Enter API key" on the first provider card (Anthropic)
 	await page.getByRole('button', { name: 'Enter API key' }).first().click();
 	await page.locator('input[type="password"]').first().fill('sk-ant-e2e-test-key');
 	await page.getByRole('button', { name: 'Save' }).first().click();
 
-	// Wait for modal to disappear
 	await expect(modal).toBeHidden({ timeout: 10000 });
 }
 

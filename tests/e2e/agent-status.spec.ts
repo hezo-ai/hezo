@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	createCompanyWithAgents,
+	dismissAiProviderModal,
+	waitForPageLoad,
+} from './helpers';
 
 test('team page shows org chart with status legend', async ({ page }) => {
 	await page.goto('/');
@@ -66,6 +71,7 @@ test('agent detail page allows editing title on settings tab', async ({ page }) 
 	const agent = (agents as any).data.find((a: any) => a.admin_status === 'enabled');
 
 	await page.goto(`/companies/${company.slug}/agents/${agent.id}`);
+	await dismissAiProviderModal(page);
 
 	await page.getByRole('main').getByRole('link', { name: 'Settings' }).click();
 
