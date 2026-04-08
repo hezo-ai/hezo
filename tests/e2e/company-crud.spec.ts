@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { authenticate } from './helpers';
+import { authenticate, dismissAiProviderModal } from './helpers';
 
 test('can create a company with Startup template and see auto-created agents', async ({ page }) => {
 	await page.goto('/');
@@ -16,6 +16,9 @@ test('can create a company with Startup template and see auto-created agents', a
 	// Fill in company name and create
 	await page.getByLabel('Name').fill('Test Corp');
 	await page.getByRole('button', { name: 'Create' }).click();
+
+	// Dismiss the AI provider setup modal
+	await dismissAiProviderModal(page);
 
 	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
 
@@ -56,6 +59,9 @@ test('Blank template shows built-in agents note and creates CEO/Coach', async ({
 	// Fill in company name and create
 	await page.getByLabel('Name').fill('Blank Test Co');
 	await page.getByRole('button', { name: 'Create' }).click();
+
+	// Dismiss the AI provider setup modal
+	await dismissAiProviderModal(page);
 
 	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
 

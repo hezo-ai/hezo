@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, TEST_MASTER_KEY } from './helpers';
+import { authenticate, configureAiProvider, TEST_MASTER_KEY } from './helpers';
 
 async function getToken(page: Page): Promise<string> {
 	const tokenRes = await page.request.post('/api/auth/token', {
@@ -18,7 +18,9 @@ async function createCompany(page: Page, token: string) {
 			issue_prefix: `AU${Date.now().toString().slice(-4)}`,
 		},
 	});
-	return (await companyRes.json()).data;
+	const company = (await companyRes.json()).data;
+	await configureAiProvider(page, company.id, headers);
+	return company;
 }
 
 test('audit log page renders at dedicated route', async ({ page }) => {
