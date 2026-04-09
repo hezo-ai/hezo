@@ -3,12 +3,6 @@ import type { PGlite } from '@electric-sql/pglite';
 import { ApprovalStatus, ApprovalType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
-import {
-	readSkillManifest,
-	resolveSkillsPath,
-	writeSkillFile,
-	writeSkillManifest,
-} from '../lib/docs';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess, requireCompanyAccessForResource } from '../middleware/auth';
@@ -84,27 +78,6 @@ async function applyApprovalSideEffect(
 					 VALUES ($1, (SELECT COALESCE(MAX(revision_number), 0) + 1 FROM skill_revisions WHERE skill_id = $1), $2, $3, 'Created via approval', $4)`,
 					[skillResult.rows[0].id, content, contentHash, requestedBy],
 				);
-			}
-
-			// Sync to filesystem for backward compat
-			const company = await db.query<{ slug: string }>('SELECT slug FROM companies WHERE id = $1', [
-				companyId,
-			]);
-			if (company.rows[0]) {
-				const skillsDir = resolveSkillsPath(dataDir, company.rows[0].slug);
-				writeSkillFile(skillsDir, slug, content);
-				const manifest = readSkillManifest(skillsDir);
-				if (!manifest.skills.some((s) => s.slug === slug)) {
-					manifest.skills.push({
-						name,
-						slug,
-						description: (payload.reason as string) ?? '',
-						source_url: '',
-						content_hash: contentHash,
-						last_synced_at: new Date().toISOString(),
-					});
-					writeSkillManifest(skillsDir, manifest);
-				}
 			}
 			break;
 		}

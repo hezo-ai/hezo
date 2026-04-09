@@ -1,11 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	listDocFiles,
-	readAllSkillContents,
-	readDocFile,
-	resolveDevDocsPath,
-	resolveSkillsPath,
-} from '../lib/docs';
+import { listDocFiles, readDocFile, resolveDevDocsPath } from '../lib/docs';
 
 interface ResolveContext {
 	companyId: string;
@@ -104,7 +98,6 @@ export async function resolveSystemPrompt(
 
 	if (resolved.includes('{{skills_context}}')) {
 		let skillsText = 'No skills configured.';
-		// Load skills from DB (source of truth)
 		const dbSkills = await db.query<{ name: string; content: string }>(
 			'SELECT name, content FROM skills WHERE company_id = $1 AND is_active = true ORDER BY name',
 			[ctx.companyId],
@@ -113,21 +106,6 @@ export async function resolveSystemPrompt(
 			skillsText = dbSkills.rows
 				.map((s) => `## Skill: ${s.name}\n${s.content}`)
 				.join('\n\n---\n\n');
-		} else if (ctx.dataDir) {
-			// Filesystem fallback for backward compatibility
-			if (!companySlug) {
-				const slugResult = await db.query<{ slug: string }>(
-					'SELECT slug FROM companies WHERE id = $1',
-					[ctx.companyId],
-				);
-				companySlug = slugResult.rows[0]?.slug;
-			}
-			if (companySlug) {
-				const skills = readAllSkillContents(resolveSkillsPath(ctx.dataDir, companySlug));
-				if (skills.length > 0) {
-					skillsText = skills.map((s) => `## Skill: ${s.name}\n${s.content}`).join('\n\n---\n\n');
-				}
-			}
 		}
 		resolved = resolved.replace(/\{\{skills_context\}\}/g, skillsText);
 	}

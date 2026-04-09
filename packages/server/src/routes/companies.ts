@@ -450,43 +450,17 @@ async function createSkillsFromTemplate(
 	const skills = result.rows[0]?.skills_config ?? [];
 	if (skills.length === 0) return;
 
-	const company = await db.query<{ slug: string }>('SELECT slug FROM companies WHERE id = $1', [
-		companyId,
-	]);
-	const companySlug = company.rows[0]?.slug;
-	if (!companySlug) return;
-
 	for (const skill of skills) {
 		const slug = toSlug(skill.name);
 		if (!slug) continue;
 		try {
 			const { content, hash } = await downloadSkillContent(skill.source_url);
-
-			// Write to DB (source of truth)
 			await db.query(
 				`INSERT INTO skills (company_id, name, slug, description, content, source_url, content_hash)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7)
 				 ON CONFLICT (company_id, slug) DO NOTHING`,
 				[companyId, skill.name, slug, skill.description ?? '', content, skill.source_url, hash],
 			);
-
-			// Also write to filesystem for backward compat
-			const { resolveSkillsPath, writeSkillFile, readSkillManifest, writeSkillManifest } =
-				await import('../lib/docs');
-			const skillsDir = resolveSkillsPath(dataDir, companySlug);
-			writeSkillFile(skillsDir, slug, content);
-			const manifest = readSkillManifest(skillsDir);
-			if (!manifest.skills.some((s) => s.slug === slug)) {
-				manifest.skills.push({
-					name: skill.name,
-					slug,
-					description: skill.description ?? '',
-					source_url: skill.source_url,
-					content_hash: hash,
-					last_synced_at: new Date().toISOString(),
-				});
-				writeSkillManifest(skillsDir, manifest);
-			}
 		} catch (e) {
 			if (e instanceof SkillDownloadError) {
 				console.warn(`Failed to download template skill "${skill.name}": ${e.message}`);

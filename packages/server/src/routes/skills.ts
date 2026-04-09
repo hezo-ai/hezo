@@ -1,14 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { PGlite } from '@electric-sql/pglite';
 import type { SkillRecord } from '@hezo/shared';
 import { Hono } from 'hono';
-import {
-	deleteSkillFile,
-	readSkillManifest,
-	resolveSkillsPath,
-	writeSkillFile,
-	writeSkillManifest,
-} from '../lib/docs';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
@@ -16,13 +8,6 @@ import { requireCompanyAccess } from '../middleware/auth';
 import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
 
 export const skillsRoutes = new Hono<Env>();
-
-async function getCompanySlug(db: PGlite, companyId: string): Promise<string | null> {
-	const result = await db.query<{ slug: string }>('SELECT slug FROM companies WHERE id = $1', [
-		companyId,
-	]);
-	return result.rows[0]?.slug ?? null;
-}
 
 function downloadErrorStatus(reason: SkillDownloadError['reason']): 400 | 404 | 422 | 503 {
 	switch (reason) {
@@ -37,36 +22,6 @@ function downloadErrorStatus(reason: SkillDownloadError['reason']): 400 | 404 | 
 		case 'network':
 			return 503;
 	}
-}
-
-/** Sync a skill record to the filesystem for Docker container access. */
-function syncToFilesystem(
-	dataDir: string,
-	companySlug: string,
-	skill: Pick<
-		SkillRecord,
-		'slug' | 'name' | 'description' | 'source_url' | 'content_hash' | 'content'
-	>,
-): void {
-	const skillsDir = resolveSkillsPath(dataDir, companySlug);
-	writeSkillFile(skillsDir, skill.slug, skill.content);
-	// Keep writing manifest for backward compat with older container setups
-	const manifest = readSkillManifest(skillsDir);
-	const entry = {
-		name: skill.name,
-		slug: skill.slug,
-		description: skill.description,
-		source_url: skill.source_url ?? '',
-		content_hash: skill.content_hash,
-		last_synced_at: new Date().toISOString(),
-	};
-	const idx = manifest.skills.findIndex((s) => s.slug === skill.slug);
-	if (idx >= 0) {
-		manifest.skills[idx] = entry;
-	} else {
-		manifest.skills.push(entry);
-	}
-	writeSkillManifest(skillsDir, manifest);
 }
 
 skillsRoutes.get('/companies/:companyId/skills', async (c) => {
@@ -113,7 +68,6 @@ skillsRoutes.post('/companies/:companyId/skills', async (c) => {
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const dataDir = c.get('dataDir');
 	const { companyId } = access;
 
 	const body = await c.req.json<{
@@ -173,12 +127,6 @@ skillsRoutes.post('/companies/:companyId/skills', async (c) => {
 			[skill.id, content, hash],
 		);
 
-		// Sync to filesystem
-		const companySlug = await getCompanySlug(db, companyId);
-		if (companySlug) {
-			syncToFilesystem(dataDir, companySlug, skill);
-		}
-
 		return ok(c, skill, 201);
 	} catch (e) {
 		if (e instanceof SkillDownloadError) {
@@ -193,7 +141,6 @@ skillsRoutes.patch('/companies/:companyId/skills/:slug', async (c) => {
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const dataDir = c.get('dataDir');
 	const { companyId } = access;
 	const slug = c.req.param('slug');
 
@@ -261,12 +208,6 @@ skillsRoutes.patch('/companies/:companyId/skills/:slug', async (c) => {
 		);
 	}
 
-	// Sync to filesystem
-	const companySlug = await getCompanySlug(db, companyId);
-	if (companySlug) {
-		syncToFilesystem(dataDir, companySlug, skill);
-	}
-
 	return ok(c, skill);
 });
 
@@ -275,7 +216,6 @@ skillsRoutes.post('/companies/:companyId/skills/:slug/sync', async (c) => {
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const dataDir = c.get('dataDir');
 	const { companyId } = access;
 	const slug = c.req.param('slug');
 
@@ -316,12 +256,6 @@ skillsRoutes.post('/companies/:companyId/skills/:slug/sync', async (c) => {
 			[skill.id, nextRev, content, hash],
 		);
 
-		// Sync to filesystem
-		const companySlug = await getCompanySlug(db, companyId);
-		if (companySlug) {
-			syncToFilesystem(dataDir, companySlug, skill);
-		}
-
 		return ok(c, skill);
 	} catch (e) {
 		if (e instanceof SkillDownloadError) {
@@ -336,7 +270,6 @@ skillsRoutes.delete('/companies/:companyId/skills/:slug', async (c) => {
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const dataDir = c.get('dataDir');
 	const { companyId } = access;
 	const slug = c.req.param('slug');
 
@@ -347,16 +280,6 @@ skillsRoutes.delete('/companies/:companyId/skills/:slug', async (c) => {
 
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Skill not found', 404);
-	}
-
-	// Remove from filesystem
-	const companySlug = await getCompanySlug(db, companyId);
-	if (companySlug) {
-		const skillsDir = resolveSkillsPath(dataDir, companySlug);
-		deleteSkillFile(skillsDir, slug);
-		const manifest = readSkillManifest(skillsDir);
-		manifest.skills = manifest.skills.filter((s) => s.slug !== slug);
-		writeSkillManifest(skillsDir, manifest);
 	}
 
 	return c.json({ data: null }, 200);

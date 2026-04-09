@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
@@ -7,13 +7,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { generateMasterKey, MasterKeyManager } from '../../crypto/master-key';
 import { loadAgentRoles } from '../../db/agent-roles';
 import { seedBuiltins } from '../../db/seed';
-import {
-	readAllSkillContents,
-	readSkillManifest,
-	resolveSkillsPath,
-	writeSkillFile,
-	writeSkillManifest,
-} from '../../lib/docs';
 import type { Env } from '../../lib/types';
 import { signBoardJwt } from '../../middleware/auth';
 import { parseGitHubRawUrl, SkillDownloadError } from '../../services/skill-downloader';
@@ -109,45 +102,7 @@ describe('parseGitHubRawUrl', () => {
 	});
 });
 
-describe('Skill filesystem helpers', () => {
-	it('reads empty manifest when file does not exist', () => {
-		const skillsDir = join(tempDataDir, 'companies', 'nonexistent', 'skills');
-		const manifest = readSkillManifest(skillsDir);
-		expect(manifest).toEqual({ skills: [] });
-	});
-
-	it('writes and reads skill files + manifest', () => {
-		const skillsDir = resolveSkillsPath(tempDataDir, 'fs-test');
-		writeSkillFile(skillsDir, 'my-skill', '# Hello');
-		writeSkillManifest(skillsDir, {
-			skills: [
-				{
-					name: 'My Skill',
-					slug: 'my-skill',
-					description: 'test',
-					source_url: 'https://example.com/skill.md',
-					content_hash: 'abc',
-					last_synced_at: '2026-01-01T00:00:00.000Z',
-				},
-			],
-		});
-		const manifest = readSkillManifest(skillsDir);
-		expect(manifest.skills).toHaveLength(1);
-		expect(manifest.skills[0].slug).toBe('my-skill');
-		const all = readAllSkillContents(skillsDir);
-		expect(all).toEqual([{ name: 'My Skill', content: '# Hello' }]);
-	});
-});
-
 describe('Skills API', () => {
-	beforeEach(() => {
-		// Reset skills directory between tests
-		const skillsDir = resolveSkillsPath(tempDataDir, companySlug);
-		if (existsSync(skillsDir)) {
-			rmSync(skillsDir, { recursive: true, force: true });
-		}
-	});
-
 	it('creates a skill by downloading from a URL', async () => {
 		stubFetch('# Git Best Practices\n\nDo good things.');
 
@@ -165,10 +120,7 @@ describe('Skills API', () => {
 		expect(body.data.slug).toBe('git-best-practices');
 		expect(body.data.name).toBe('Git Best Practices');
 		expect(body.data.content_hash).toBeTruthy();
-
-		const skillsDir = resolveSkillsPath(tempDataDir, companySlug);
-		const content = readFileSync(join(skillsDir, 'git-best-practices.md'), 'utf-8');
-		expect(content).toBe('# Git Best Practices\n\nDo good things.');
+		expect(body.data.content).toBe('# Git Best Practices\n\nDo good things.');
 	});
 
 	it('lists skills', async () => {
@@ -250,10 +202,8 @@ describe('Skills API', () => {
 			body: '{}',
 		});
 		expect(res.status).toBe(200);
-
-		const skillsDir = resolveSkillsPath(tempDataDir, companySlug);
-		const content = readFileSync(join(skillsDir, 'sync-test.md'), 'utf-8');
-		expect(content).toBe('# Version 2');
+		const syncBody = await res.json();
+		expect(syncBody.data.content).toBe('# Version 2');
 	});
 
 	it('deletes a skill', async () => {
@@ -275,9 +225,6 @@ describe('Skills API', () => {
 			headers: authHeader(token),
 		});
 		expect(getRes.status).toBe(404);
-
-		const skillsDir = resolveSkillsPath(tempDataDir, companySlug);
-		expect(existsSync(join(skillsDir, 'delete-me.md'))).toBe(false);
 	});
 
 	it('returns 404 for nonexistent skill', async () => {
@@ -338,12 +285,7 @@ describe('Template resolver with skills_context', () => {
 	});
 
 	it('falls back to placeholder when no skills', async () => {
-		// Clean DB skills and filesystem
 		await db.query('DELETE FROM skills WHERE company_id = $1', [companyId]);
-		const skillsDir = resolveSkillsPath(tempDataDir, companySlug);
-		if (existsSync(skillsDir)) {
-			rmSync(skillsDir, { recursive: true, force: true });
-		}
 
 		const resolved = await resolveSystemPrompt(db, '{{skills_context}}', {
 			companyId,
