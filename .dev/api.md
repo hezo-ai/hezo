@@ -380,18 +380,10 @@ Terminate an agent. Kills the agent's subprocess. Unassigns all issues.
 Agent record is kept for audit trail (admin_status = `terminated`).
 
 #### `GET /companies/:companyId/agents/:agentId/heartbeat-runs`
-Get agent execution history (last 20 runs). Returns recent heartbeat invocations with timing and status.
+Get agent execution history (last 50 runs). Returns recent heartbeat invocations with timing and status.
 
-#### `POST /companies/:companyId/projects/:projectId/container/start`
-Start the project container. No-op if already running.
-
-#### `POST /companies/:companyId/projects/:projectId/container/stop`
-Gracefully stop the project container. Stops all agent subprocesses in this project.
-
-#### `POST /companies/:companyId/projects/:projectId/container/rebuild`
-Tear down and rebuild the project's Docker container. Kills all agent subprocesses
-in this project, destroys the container, provisions a new one. Useful when base
-image or dependency config changes. All agents keep their identity and config.
+#### `GET /companies/:companyId/agents/:agentId/heartbeat-runs/:runId`
+Get a single heartbeat run with issue metadata.
 
 ---
 
@@ -466,18 +458,19 @@ Response:
 ```
 
 #### `POST /companies/:companyId/projects`
-Create a project.
+Create a project. Container is auto-provisioned asynchronously.
 
 Request:
 ```json
 {
   "name": "Backend API",
-  "goal": "Ship collaboration features"
+  "goal": "Ship collaboration features",
+  "docker_base_image": "node:20"
 }
 ```
 
 #### `GET /companies/:companyId/projects/:projectId`
-Get project detail including repos.
+Get project detail including repos. Accepts project ID or slug.
 
 Response: project object + `repos` array.
 
@@ -485,7 +478,19 @@ Response: project object + `repos` array.
 Update name, goal.
 
 #### `DELETE /companies/:companyId/projects/:projectId`
-Delete project. Fails if there are open issues referencing it.
+Delete project. Cannot delete internal projects (e.g. Operations). Fails if there are open issues referencing it. Tears down the container asynchronously.
+
+#### `POST /companies/:companyId/projects/:projectId/container/start`
+Start the project container. Container must be provisioned. Wakes agents with pending work. Returns `{ container_status: "running" }`.
+
+#### `POST /companies/:companyId/projects/:projectId/container/stop`
+Gracefully stop the project container. Cancels running agent tasks. Returns `{ container_status: "stopping" }`.
+
+#### `POST /companies/:companyId/projects/:projectId/container/rebuild`
+Tear down and rebuild the project's Docker container. Kills all agent subprocesses
+in this project, destroys the container, provisions a new one. Useful when base
+image or dependency config changes. All agents keep their identity and config.
+Returns `{ container_status: "creating" }`.
 
 ---
 
@@ -664,7 +669,37 @@ Changing `assignee_id` triggers an event on the newly assigned agent, or a notif
 Changing `status` to `done` or `closed` triggers preview cleanup.
 
 #### `DELETE /companies/:companyId/issues/:issueId`
-Delete an issue. Only allowed if status is `open` and no comments exist.
+Delete an issue. Only allowed if status is `backlog` or `open`, and no comments exist.
+
+#### `POST /companies/:companyId/issues/:issueId/sub-issues`
+Create a sub-issue. `project_id` is inherited from the parent.
+
+Request:
+```json
+{
+  "title": "Write unit tests for WebSocket reconnection",
+  "description": "...",
+  "assignee_id": "uuid",
+  "priority": "high",
+  "labels": ["testing"]
+}
+```
+
+#### `GET /companies/:companyId/issues/:issueId/dependencies`
+List dependencies (blocking issues) for an issue.
+
+#### `POST /companies/:companyId/issues/:issueId/dependencies`
+Add a dependency. An issue cannot block itself, and both issues must be in the same company.
+
+Request:
+```json
+{
+  "blocked_by_issue_id": "uuid"
+}
+```
+
+#### `DELETE /companies/:companyId/issues/:issueId/dependencies/:depId`
+Remove a dependency.
 
 ---
 
@@ -825,8 +860,6 @@ Request:
 plaintext.
 
 #### `PATCH /companies/:companyId/secrets/:secretId`
-**Not yet implemented — planned for Phase 7+.**
-
 Update a secret's value or category. Rotating a value does not revoke existing
 grants.
 
@@ -847,8 +880,6 @@ lose access on next subprocess invocation.
 ### Secret Grants
 
 #### `GET /companies/:companyId/secrets/:secretId/grants`
-**Not yet implemented — planned for Phase 7+.**
-
 List grants for a secret.
 
 Response:
@@ -919,26 +950,32 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/approvals/:approvalId/approve`
-Approve a pending approval.
+#### `POST /companies/:companyId/approvals`
+Create an approval request directly. Used internally by agents and the board.
 
 Request:
 ```json
 {
+  "type": "secret_access",
+  "requested_by_member_id": "uuid",
+  "payload": { ... }
+}
+```
+
+#### `POST /approvals/:approvalId/resolve`
+Approve or deny a pending approval.
+
+Request:
+```json
+{
+  "status": "approved",
   "resolution_note": "Approved for project scope"
 }
 ```
 
-When approved, side effects depend on approval type: `secret_access` approvals create grants, `hire` approvals trigger agent creation, etc.
+`status` must be `"approved"` or `"denied"`.
 
-#### `POST /companies/:companyId/approvals/:approvalId/deny`
-Deny a pending approval.
-
-Request:
-```json
-{
-  "resolution_note": "Not needed at this time"
-}
+When approved, side effects depend on approval type: `SystemPromptUpdate` approvals update the agent's system prompt and record a revision; `SkillProposal` approvals write the skill to the database.
 ```
 
 ---
@@ -966,6 +1003,20 @@ Response (when `group_by=agent`):
     ],
     "total_cents": 12700
   }
+}
+```
+
+#### `POST /companies/:companyId/costs`
+Create a cost entry. Returns 402 if the agent's budget is exceeded.
+
+Request:
+```json
+{
+  "member_id": "uuid",
+  "amount_cents": 100,
+  "issue_id": "uuid",
+  "project_id": "uuid",
+  "description": "API call cost"
 }
 ```
 
@@ -1023,10 +1074,10 @@ Response:
     },
     {
       "id": "uuid",
-      "platform": "gmail",
+      "platform": "anthropic",
       "status": "active",
-      "scopes": "gmail.send,gmail.readonly",
-      "metadata": { "email": "company@gmail.com" },
+      "scopes": "",
+      "metadata": {},
       "token_expires_at": "...",
       "connected_at": "..."
     }
@@ -1038,8 +1089,7 @@ Response:
 Initiate an OAuth connection. Returns a redirect URL that the UI opens in a
 new window/tab for the user to authorize.
 
-`platform` is one of: `github`, `gmail`, `gitlab`, `stripe`, `posthog`,
-`railway`, `vercel`, `digitalocean`, `x`.
+`platform` is one of: `github`, `anthropic`, `openai`, `google`.
 
 Response:
 ```json
@@ -1051,32 +1101,12 @@ Response:
 }
 ```
 
-#### `GET /oauth/callback`
-OAuth callback endpoint. The browser is redirected here by Hezo Connect after
-the user authorizes and Connect exchanges the auth code for tokens.
-
-This endpoint is not called directly by the UI — it's the browser redirect
-target from Hezo Connect.
-
-Query params: `?platform=github&access_token=...&scopes=...&metadata=...&state=...`
-
-On error: `?error=access_denied&platform=github&state=...`
-
-Processing:
-1. Verify the `state` parameter signature
-2. Extract `company_id` from the state payload
-3. Encrypt the access token with the master key, store in `secrets` table
-4. Upsert `connected_platforms` row (status=active, token reference, scopes, metadata)
-5. Dismiss any existing `oauth_request` inbox items for this company+platform
-6. Redirect browser to company settings page with success/failure message
-
 #### `DELETE /companies/:companyId/connections/:connectionId`
-Disconnect a platform. Revokes tokens (if the provider supports it), removes
-the MCP server registration, and deletes the connection record.
+Disconnect a platform. Removes SSH keys from GitHub if applicable, cleans up
+associated secrets, and deletes the connection record.
 
 #### `POST /companies/:companyId/connections/:connectionId/refresh`
-Force a token refresh. Normally handled automatically, but available for
-manual intervention when a connection is in `expired` status.
+Force a token refresh. Returns updated status and token expiry.
 
 Response:
 ```json
@@ -1087,6 +1117,96 @@ Response:
   }
 }
 ```
+
+---
+
+### AI Providers
+
+#### `GET /companies/:companyId/ai-providers`
+List all AI provider configurations for a company.
+
+#### `GET /companies/:companyId/ai-providers/status`
+Get lightweight status indicating whether any provider is configured.
+
+#### `POST /companies/:companyId/ai-providers`
+Add an AI provider configuration.
+
+Request:
+```json
+{
+  "provider": "anthropic",
+  "api_key": "sk-ant-...",
+  "label": "Main Anthropic account",
+  "auth_method": "api_key"
+}
+```
+
+`provider` is one of: `anthropic`, `openai`, `google`, `moonshot`. Returns 409 if a duplicate configuration exists.
+
+#### `DELETE /companies/:companyId/ai-providers/:configId`
+Remove an AI provider configuration.
+
+#### `PATCH /companies/:companyId/ai-providers/:configId/default`
+Set a configuration as the default for its provider type.
+
+#### `POST /companies/:companyId/ai-providers/:provider/oauth/start`
+Initiate OAuth flow for a provider (`anthropic`, `openai`, `google`). Returns `auth_url` and `state`.
+
+#### `POST /companies/:companyId/ai-providers/:configId/verify`
+Verify an API key by making a lightweight call to the provider. Updates config status to `invalid` if the key is bad.
+
+---
+
+### Execution Locks
+
+#### `GET /companies/:companyId/issues/:issueId/lock`
+Get current locks on an issue.
+
+Response:
+```json
+{
+  "data": {
+    "locks": [{ "id": "uuid", "issue_id": "uuid", "member_id": "uuid", "lock_type": "write", "locked_at": "...", "member_name": "..." }],
+    "has_write_lock": true
+  }
+}
+```
+
+#### `POST /companies/:companyId/issues/:issueId/lock`
+Acquire a lock. Write locks are exclusive; read locks are shared (blocked only by write locks). Returns 409 if already locked.
+
+Request:
+```json
+{
+  "member_id": "uuid",
+  "lock_type": "write"
+}
+```
+
+#### `DELETE /companies/:companyId/issues/:issueId/lock`
+Release all locks for the issue.
+
+---
+
+### Semantic Search
+
+#### `GET /companies/:companyId/search`
+Natural language search across company content.
+
+Query params:
+- `?q=query` — search query (required)
+- `?scope=all` — `all`, `kb_docs`, `issues`, or `skills` (default `all`)
+- `?limit=10` — max results (default 10)
+
+---
+
+### UI State
+
+#### `GET /companies/:companyId/ui-state`
+Get the board user's UI state settings (stored as JSON in member_users). Board users only.
+
+#### `PATCH /companies/:companyId/ui-state`
+Update UI state settings (merged with existing). Board users only.
 
 ---
 
@@ -1138,11 +1258,12 @@ Request:
 ```json
 {
   "title": "Coding Standards",
-  "content": "# Coding Standards\n\n## TypeScript\n- Always use strict mode..."
+  "content": "# Coding Standards\n\n## TypeScript\n- Always use strict mode...",
+  "slug": "coding-standards"
 }
 ```
 
-`slug` is auto-derived from the title (lowercased, spaces → hyphens).
+`slug` is optional — auto-derived from the title if not provided (lowercased, spaces → hyphens).
 
 #### `GET /companies/:companyId/kb-docs/:slug`
 Get full document content.
@@ -1150,19 +1271,33 @@ Get full document content.
 Response: full doc object including `content` field.
 
 #### `PATCH /companies/:companyId/kb-docs/:slug`
-Update a document (board action). Direct edits by the board do not require
-approval.
+Update a document. Direct edits by the board do not require approval.
+Agent edits create a pending approval instead (returns 202).
 
 Request:
 ```json
 {
   "title": "Coding Standards",
-  "content": "# Coding Standards\n\n## Updated content..."
+  "content": "# Coding Standards\n\n## Updated content...",
+  "change_summary": "Updated TypeScript guidelines"
 }
 ```
 
 #### `DELETE /companies/:companyId/kb-docs/:slug`
 Delete a knowledge base document.
+
+#### `POST /companies/:companyId/kb-docs/:slug/restore`
+Restore a document to a previous revision. Board-only (agents cannot restore).
+
+Request:
+```json
+{
+  "revision_number": 3
+}
+```
+
+#### `GET /companies/:companyId/kb-docs/:slug/revisions`
+List revision history for a knowledge base document, ordered by revision_number descending.
 
 ---
 
@@ -1175,21 +1310,23 @@ List the skills manifest for a company. Returns all installed skills with metada
 Get a skill's content by slug.
 
 #### `POST /companies/:companyId/skills`
-Add or download a skill.
+Add or download a skill. Downloads content from `source_url`.
 
 Request:
 ```json
 {
   "name": "Code Review",
   "source_url": "https://example.com/skills/code-review",
-  "description": "Automated code review skill"
+  "description": "Automated code review skill",
+  "slug": "code-review",
+  "tags": ["review", "quality"]
 }
 ```
 
-`source_url` is the remote source to download from. `description` is optional.
+`source_url` is required (the remote source to download from). `description`, `slug`, and `tags` are optional.
 
 #### `PATCH /companies/:companyId/skills/:slug`
-Update skill metadata.
+Update skill metadata or content. If `content` changes, creates a new skill revision.
 
 #### `DELETE /companies/:companyId/skills/:slug`
 Remove a skill.
@@ -1255,33 +1392,33 @@ Response:
 
 ### Project Documents
 
-Project documents are file-based — stored as `.dev/*.md` files in the project's designated repo worktree. The project must have a `designated_repo_id` set. Returns 404 if no designated repo is configured.
+Project documents are stored in the database, identified by filename (e.g. `prd.md`, `spec.md`).
 
 #### `GET /companies/:companyId/projects/:projectId/docs`
-List all project document files in the `.dev/` folder.
+List all project documents.
 
 Response:
 ```json
 {
   "data": [
-    { "filename": "spec.md", "path": ".dev/spec.md" },
-    { "filename": "prd.md", "path": ".dev/prd.md" }
+    { "id": "uuid", "filename": "spec.md", "updated_at": "..." },
+    { "id": "uuid", "filename": "prd.md", "updated_at": "..." }
   ]
 }
 ```
 
 #### `GET /companies/:companyId/projects/:projectId/docs/:filename`
-Read a project document file.
+Read a project document by filename.
 
 Response:
 ```json
 {
-  "data": { "filename": "spec.md", "path": ".dev/spec.md", "content": "# Technical Specification\n..." }
+  "data": { "id": "uuid", "filename": "spec.md", "content": "# Technical Specification\n...", "updated_at": "..." }
 }
 ```
 
 #### `PUT /companies/:companyId/projects/:projectId/docs/:filename`
-Write a project document file. Agent writes to `prd.md` create an approval request instead of writing directly.
+Write a project document (upsert). Agent writes to `prd.md` create an approval request (202 response) instead of writing directly.
 
 Request:
 ```json
@@ -1291,7 +1428,7 @@ Request:
 ```
 
 #### `DELETE /companies/:companyId/projects/:projectId/docs/:filename`
-Delete a project document file.
+Delete a project document.
 
 #### `GET /companies/:companyId/projects/:projectId/agents-md`
 Read the project's AGENTS.md file.
@@ -1331,18 +1468,17 @@ Response:
 ```
 
 #### `POST /companies/:companyId/issues/:issueId/chat/messages`
-Post a chat message. The server detects @-mentions, wakes the mentioned agent
-immediately, and adds them to the chat.
+Post a chat message. The server detects @-mentions in the content text, wakes
+the mentioned agent immediately, and adds them to the chat.
 
 Request:
 ```json
 {
-  "content": "What auth strategy do you recommend?",
-  "mentions": ["architect"]
+  "content": "What auth strategy do you recommend? @architect"
 }
 ```
 
-`mentions` is optional. When present, the server wakes the mentioned agents by slug.
+Mentions are parsed from the content text (e.g. `@architect`). The server creates wakeups for mentioned agents.
 
 ---
 
@@ -1712,7 +1848,7 @@ Response:
         "priority": "urgent",
         "project_name": "Backend API",
         "project_goal": "Ship collaboration features",
-        "company_mission": "Build the #1 AI note-taking app",
+        "company_description": "Build the #1 AI note-taking app",
         "repos": [
           { "short_name": "api", "url": "https://github.com/org/api" }
         ],
@@ -1794,8 +1930,6 @@ all traceable in the audit log.
 ### Report Tool Calls
 
 #### `POST /issues/:issueId/comments/:commentId/tool-calls`
-**Not yet implemented.**
-
 Agent reports tool calls associated with a comment.
 
 Request:
@@ -1830,8 +1964,6 @@ debits the agent's budget atomically. If budget is exceeded, returns:
 ### Request Secret
 
 #### `POST /secrets/request`
-**Not yet implemented.**
-
 Agent requests access to a secret. Creates a pending approval.
 
 Request:
@@ -1854,8 +1986,6 @@ Response:
 ```
 
 #### `GET /secrets/mine`
-**Not yet implemented.**
-
 Agent lists secrets it currently has access to (granted, not revoked).
 
 Response:
@@ -1879,8 +2009,6 @@ via API.
 ### Self System Prompt
 
 #### `GET /self/system-prompt`
-**Not yet implemented.**
-
 Agent reads its own system prompt and agent type info.
 
 Response:
@@ -1895,8 +2023,6 @@ Response:
 ```
 
 #### `PATCH /self/system-prompt`
-**Not yet implemented.**
-
 Agent requests to update its own system prompt. Creates a `system_prompt_update` approval for board review.
 
 Request:
@@ -1993,7 +2119,7 @@ Response:
     "company": {
       "id": "uuid",
       "name": "NoteGenius AI",
-      "mission": "Build the #1 AI note-taking app"
+      "description": "Build the #1 AI note-taking app"
     },
     "assigned_issues": [...],
     "available_secrets": ["GITHUB_TOKEN", "NPM_TOKEN"],
@@ -2162,14 +2288,17 @@ Single WebSocket endpoint. Clients connect to `/ws` on the server (upgraded from
 
 ### Room-based subscriptions
 
-After connecting, clients subscribe to rooms using UUIDs:
+After connecting, clients subscribe to rooms:
 
 ```json
 { "action": "subscribe", "room": "company:<uuid>" }
-{ "action": "subscribe", "room": "issue:<uuid>" }
-{ "action": "subscribe", "room": "project:<uuid>" }
+{ "action": "subscribe", "room": "container-logs:<projectId>" }
 { "action": "unsubscribe", "room": "company:<uuid>" }
 ```
+
+Two room types are supported:
+- `company:<uuid>` — receives row changes, chat messages, and agent lifecycle events for the company. Access is verified (agents/API keys must match company; board users must be members or superusers).
+- `container-logs:<projectId>` — streams Docker container stdout/stderr for a project.
 
 Room names always use UUIDs, never slugs. The frontend `useWebSocket` hook takes two params: the UUID for room subscription and the route-param slug for TanStack Query cache invalidation.
 
@@ -2195,6 +2324,8 @@ Defined in `@hezo/shared` as the `WsClientAction` enum:
 | `subscribe` | Subscribe to a room | `{ action, room }` |
 | `unsubscribe` | Unsubscribe from a room | `{ action, room }` |
 | `chat` | Send a chat message | `{ action, issueId, content, mentions? }` |
+
+Note: The `chat` action is defined in the shared types but not currently handled by the WebSocket server. Chat messages are sent via the REST endpoint `POST /companies/:companyId/issues/:issueId/chat/messages` and broadcast to subscribers via `chat_message` events.
 
 ### Cache invalidation
 
@@ -2283,25 +2414,36 @@ Streamable HTTP MCP endpoint. Uses `@modelcontextprotocol/sdk` with the `McpServ
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `list_companies` | List all companies | — |
-| `create_company` | Create a new company | `name`, `mission` |
-| `list_issues` | List issues with filtering | `company_id`, `project_id?`, `status?`, `assignee?` |
-| `create_issue` | Create a new issue | `company_id`, `project_id`, `title`, `assignee_id`, `description?`, `priority?` |
-| `update_issue` | Update an issue | `issue_id`, `status?`, `assignee?`, `priority?` |
+| `list_companies` | List accessible companies | — |
+| `get_company` | Get company by ID | `company_id` |
+| `create_company` | Create a new company (superuser only) | `name`, `description` |
+| `list_issues` | List issues with filtering | `company_id`, `project_id?`, `status?` |
+| `get_issue` | Get issue details | `company_id`, `issue_id` |
+| `create_issue` | Create a new issue | `company_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
+| `update_issue` | Update an issue | `company_id`, `issue_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
 | `list_agents` | List agents in a company | `company_id` |
-| `hire_agent` | Create a new agent | `company_id`, `title`, `role_description`, `reports_to?` |
-| `post_comment` | Post a comment on an issue | `issue_id`, `content`, `content_type?` |
-| `list_comments` | List comments on an issue | `issue_id` |
-| `approve_request` | Approve a pending approval | `approval_id`, `scope?` |
-| `deny_request` | Deny a pending approval | `approval_id`, `reason?` |
-| `list_approvals` | List pending approvals | `company_id`, `type?` |
-| `search_kb` | Search knowledge base documents | `company_id`, `query` |
-| `update_kb_doc` | Create or update a KB document | `company_id`, `slug`, `title`, `content` |
-| `get_cost_summary` | Get cost breakdown | `company_id`, `group_by?` |
-| `list_projects` | List projects in a company | `company_id` |
-| `list_secrets` | List secret names (not values) | `company_id`, `project_id?` |
+| `list_projects` | List projects | `company_id` |
+| `create_project` | Create a project | `company_id`, `name` |
+| `list_comments` | List issue comments | `company_id`, `issue_id` |
+| `create_comment` | Add comment to issue | `company_id`, `issue_id`, `content`, `content_type?` |
+| `list_approvals` | List pending approvals | `company_id` |
+| `resolve_approval` | Resolve an approval | `company_id`, `approval_id`, `status` (`approved`/`denied`), `resolution_note?` |
+| `list_kb_docs` | List knowledge base documents | `company_id` |
+| `get_kb_doc` | Get KB doc by slug | `company_id`, `slug` |
+| `upsert_kb_doc` | Create or update a KB document | `company_id`, `slug`, `title`, `content` |
+| `get_costs` | Get cost summary | `company_id`, `group_by?` (`agent`/`project`/`day`) |
+| `get_agent_system_prompt` | Read agent's system prompt | `company_id`, `agent_id` |
+| `propose_system_prompt_update` | Propose or auto-apply system prompt change | `company_id`, `agent_id`, `system_prompt`, `reason` |
+| `list_project_docs` | List project docs | `company_id`, `project_id` |
+| `read_project_doc` | Read project doc by filename | `company_id`, `project_id`, `filename` |
+| `write_project_doc` | Write project doc | `company_id`, `project_id`, `filename`, `content` |
+| `propose_skill` | Create approval for new skill | `company_id`, `name`, `content`, `description?` |
+| `semantic_search` | Natural language search | `company_id`, `query`, `scope?` (`all`/`kb_docs`/`issues`/`skills`/`project_docs`), `limit?` |
+| `list_skills` | List active skills | `company_id`, `tags?` |
+| `get_skill` | Get skill by slug | `company_id`, `slug` |
+| `create_skill` | Create skill directly | `company_id`, `name`, `content`, `description?` |
 
-MCP tools call the same business logic layer as REST endpoints. Additional tools are registered dynamically when plugins are activated.
+MCP tools call the same business logic layer as REST endpoints.
 
 ---
 
