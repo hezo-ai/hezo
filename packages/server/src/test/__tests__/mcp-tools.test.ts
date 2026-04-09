@@ -2,16 +2,13 @@ import type { PGlite } from '@electric-sql/pglite';
 import { AuthType } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { MasterKeyManager } from '../../crypto/master-key';
 import type { AuthInfo, Env } from '../../lib/types';
-import { signAgentJwt } from '../../middleware/auth';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let masterKeyManager: MasterKeyManager;
 
 let companyId: string;
 let agentId: string;
@@ -26,7 +23,6 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;
-	masterKeyManager = ctx.masterKeyManager;
 
 	const typesRes = await app.request('/api/company-types', {
 		headers: authHeader(token),
@@ -377,5 +373,170 @@ describe('MCP endpoint: tool call integration', () => {
 		// If auth injection works, we get companies; if not, we get an error
 		// Either way the endpoint responds correctly
 		expect(data).toBeDefined();
+	});
+});
+
+describe('MCP tool handlers: additional data queries via DB', () => {
+	it('get_issue query returns correct issue', async () => {
+		const r = await db.query('SELECT * FROM issues WHERE id = $1', [issueId]);
+		expect(r.rows.length).toBe(1);
+		expect((r.rows[0] as any).title).toBe('Seed Issue');
+		expect((r.rows[0] as any).project_id).toBe(projectId);
+	});
+
+	it('create_comment inserts correctly', async () => {
+		const r = await db.query(
+			`INSERT INTO issue_comments (issue_id, content_type, content)
+			 VALUES ($1, 'text'::comment_content_type, $2::jsonb)
+			 RETURNING *`,
+			[issueId, JSON.stringify('MCP comment test')],
+		);
+		expect(r.rows.length).toBe(1);
+		expect((r.rows[0] as any).content).toBe('MCP comment test');
+	});
+
+	it('list_comments query returns comments for issue', async () => {
+		const r = await db.query(
+			'SELECT * FROM issue_comments WHERE issue_id = $1 ORDER BY created_at ASC',
+			[issueId],
+		);
+		expect(r.rows.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('upsert_kb_doc inserts a new doc', async () => {
+		const r = await db.query(
+			`INSERT INTO kb_docs (company_id, title, slug, content)
+			 VALUES ($1, 'MCP KB Doc', 'mcp-kb-doc', 'Created via MCP')
+			 RETURNING *`,
+			[companyId],
+		);
+		expect(r.rows.length).toBe(1);
+		expect((r.rows[0] as any).slug).toBe('mcp-kb-doc');
+	});
+
+	it('get_kb_doc query returns doc by slug', async () => {
+		const r = await db.query('SELECT * FROM kb_docs WHERE company_id = $1 AND slug = $2', [
+			companyId,
+			'mcp-kb-doc',
+		]);
+		expect(r.rows.length).toBe(1);
+		expect((r.rows[0] as any).title).toBe('MCP KB Doc');
+		expect((r.rows[0] as any).content).toBe('Created via MCP');
+	});
+
+	it('resolve_approval updates approval status', async () => {
+		const approvalRes = await db.query<{ id: string }>(
+			`INSERT INTO approvals (company_id, type, payload)
+			 VALUES ($1, 'strategy'::approval_type, '{"plan": "resolve test"}'::jsonb) RETURNING id`,
+			[companyId],
+		);
+		const aid = approvalRes.rows[0].id;
+
+		await db.query(
+			`UPDATE approvals SET status = 'approved'::approval_status, resolution_note = 'LGTM', resolved_at = now() WHERE id = $1`,
+			[aid],
+		);
+
+		const r = await db.query('SELECT * FROM approvals WHERE id = $1', [aid]);
+		expect((r.rows[0] as any).status).toBe('approved');
+		expect((r.rows[0] as any).resolution_note).toBe('LGTM');
+	});
+
+	it('get_costs query returns cost summary', async () => {
+		const r = await db.query<{ total_cents: number }>(
+			'SELECT COALESCE(SUM(amount_cents), 0)::int AS total_cents FROM cost_entries WHERE company_id = $1',
+			[companyId],
+		);
+		expect(r.rows[0].total_cents).toBeDefined();
+	});
+
+	it('get_agent_system_prompt query returns prompt', async () => {
+		const r = await db.query(`SELECT ma.system_prompt FROM member_agents ma WHERE ma.id = $1`, [
+			agentId,
+		]);
+		expect(r.rows.length).toBe(1);
+		const prompt = (r.rows[0] as any).system_prompt;
+		expect(typeof prompt === 'string' || prompt === null).toBe(true);
+	});
+
+	it('write_project_doc inserts correctly', async () => {
+		const r = await db.query(
+			`INSERT INTO project_docs (company_id, project_id, filename, content)
+			 VALUES ($1, $2, 'test-doc.md', '# Test Document')
+			 ON CONFLICT (project_id, filename) DO UPDATE SET content = EXCLUDED.content
+			 RETURNING *`,
+			[companyId, projectId],
+		);
+		expect(r.rows.length).toBe(1);
+		expect((r.rows[0] as any).filename).toBe('test-doc.md');
+	});
+
+	it('read_project_doc query returns doc content', async () => {
+		const r = await db.query('SELECT * FROM project_docs WHERE project_id = $1 AND filename = $2', [
+			projectId,
+			'test-doc.md',
+		]);
+		expect(r.rows.length).toBe(1);
+		expect((r.rows[0] as any).content).toBe('# Test Document');
+	});
+
+	it('list_project_docs query returns docs for project', async () => {
+		const r = await db.query('SELECT * FROM project_docs WHERE project_id = $1 ORDER BY filename', [
+			projectId,
+		]);
+		expect(r.rows.length).toBeGreaterThanOrEqual(1);
+		const filenames = r.rows.map((d: any) => d.filename);
+		expect(filenames).toContain('test-doc.md');
+	});
+
+	it('create_skill inserts correctly', async () => {
+		const r = await db.query(
+			`INSERT INTO skills (company_id, name, slug, content, is_active)
+			 VALUES ($1, 'MCP Test Skill', 'mcp-test-skill', 'Skill content', true)
+			 RETURNING *`,
+			[companyId],
+		);
+		expect(r.rows.length).toBe(1);
+		expect((r.rows[0] as any).slug).toBe('mcp-test-skill');
+	});
+
+	it('list_skills query returns active skills', async () => {
+		const r = await db.query(
+			'SELECT * FROM skills WHERE company_id = $1 AND is_active = true ORDER BY name',
+			[companyId],
+		);
+		expect(r.rows.length).toBeGreaterThanOrEqual(1);
+		const slugs = r.rows.map((s: any) => s.slug);
+		expect(slugs).toContain('mcp-test-skill');
+	});
+
+	it('get_skill query returns skill by slug', async () => {
+		const r = await db.query('SELECT * FROM skills WHERE company_id = $1 AND slug = $2', [
+			companyId,
+			'mcp-test-skill',
+		]);
+		expect(r.rows.length).toBe(1);
+		expect((r.rows[0] as any).name).toBe('MCP Test Skill');
+		expect((r.rows[0] as any).content).toBe('Skill content');
+	});
+
+	it('propose_skill creates an approval', async () => {
+		const r = await db.query<{ id: string }>(
+			`INSERT INTO approvals (company_id, requested_by_member_id, type, payload)
+			 VALUES ($1, $2, 'skill_proposal'::approval_type, $3::jsonb)
+			 RETURNING id`,
+			[
+				companyId,
+				agentId,
+				JSON.stringify({
+					skill_name: 'Proposed Skill',
+					skill_slug: 'proposed-skill',
+					content: 'Proposed skill content',
+					reason: 'Useful for deployment',
+				}),
+			],
+		);
+		expect(r.rows.length).toBe(1);
+		expect(r.rows[0].id).toBeDefined();
 	});
 });
