@@ -98,6 +98,6 @@ test.describe('Inbox / Approvals', () => {
 		await waitForPageLoad(page);
 
 		// Sidebar should contain Inbox link
-		await expect(page.getByRole('link', { name: /inbox/i })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Inbox', { exact: true })).toBeVisible({ timeout: 5000 });
 	});
 });

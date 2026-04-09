@@ -13,25 +13,25 @@ test.describe('Project CRUD', () => {
 		await page.getByRole('button', { name: 'New project' }).click();
 
 		// Fill in the dialog
-		await page.getByLabel('Name').fill('Operations');
-		await page.getByLabel('Goal').fill('Handle all operational tasks');
+		await page.getByLabel('Name').fill('Marketing Campaign');
+		await page.getByLabel('Goal').fill('Plan Q3 marketing initiatives');
 
 		// Submit
 		await page.getByRole('button', { name: 'Create' }).click();
 
 		// Verify project appears in the list
-		await expect(page.getByText('Operations')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('Handle all operational tasks')).toBeVisible();
+		await expect(page.getByText('Marketing Campaign')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Plan Q3 marketing initiatives')).toBeVisible();
 	});
 
-	test('project list shows empty state', async ({ page }) => {
+	test('project list shows default Operations project', async ({ page }) => {
 		await authenticate(page);
 		const { company } = await createCompanyWithAgents(page);
 
 		await page.goto(`/companies/${company.slug}/projects`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByText('No projects yet')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('heading', { name: 'Operations' })).toBeVisible({ timeout: 5000 });
 	});
 
 	test('project list shows issue and repo counts', async ({ page }) => {
@@ -50,9 +50,10 @@ test.describe('Project CRUD', () => {
 		await waitForPageLoad(page);
 
 		// Verify the project card shows counts
-		await expect(page.getByText('Count Test')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('0 issues')).toBeVisible();
-		await expect(page.getByText('0 repos')).toBeVisible();
+		const card = page.locator('a', { hasText: 'Count Test' });
+		await expect(card).toBeVisible({ timeout: 5000 });
+		await expect(card.getByText('0 issues')).toBeVisible();
+		await expect(card.getByText('0 repos')).toBeVisible();
 	});
 
 	test('project card links to project detail', async ({ page }) => {
