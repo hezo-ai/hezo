@@ -22,11 +22,9 @@ let projectId: string;
 let tempDataDir: string;
 
 beforeAll(async () => {
-	// Create a temp data dir for file operations
 	tempDataDir = join(tmpdir(), `hezo-test-docs-${Date.now()}`);
 	mkdirSync(tempDataDir, { recursive: true });
 
-	// Build app with dataDir set
 	db = await createTestDbWithMigrations();
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyHex = generateMasterKey();
@@ -42,7 +40,6 @@ beforeAll(async () => {
 	);
 	token = await signBoardJwt(masterKeyManager, userResult.rows[0].id);
 
-	// Create company
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -50,31 +47,12 @@ beforeAll(async () => {
 	});
 	companyId = (await companyRes.json()).data.id;
 
-	// Create project
 	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Main Project' }),
 	});
 	projectId = (await projectRes.json()).data.id;
-
-	// Create a repo record and set it as designated repo
-	const repoResult = await db.query(
-		`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
-		 VALUES ($1, 'main-app', 'org/main-app', 'github')
-		 RETURNING id`,
-		[projectId],
-	);
-	const repoId = (repoResult.rows[0] as any).id;
-
-	await db.query('UPDATE projects SET designated_repo_id = $1 WHERE id = $2', [repoId, projectId]);
-
-	// Create the directory structure on disk
-	// We need to figure out the company slug and project slug
-	// Company slug is derived from issue_prefix (lowercased)
-	// Project slug is derived from project name (lowercased, hyphenated)
-	const repoDir = join(tempDataDir, 'companies', 'dtc', 'projects', 'main-project', 'main-app');
-	mkdirSync(join(repoDir, '.dev'), { recursive: true });
 });
 
 afterAll(async () => {
@@ -82,8 +60,8 @@ afterAll(async () => {
 	rmSync(tempDataDir, { recursive: true, force: true });
 });
 
-describe('Project docs (file-based)', () => {
-	it('lists docs from empty .dev/ folder', async () => {
+describe('Project docs (DB-backed)', () => {
+	it('lists docs (empty initially)', async () => {
 		const res = await app.request(`/api/companies/${companyId}/projects/${projectId}/docs`, {
 			headers: authHeader(token),
 		});
@@ -105,6 +83,7 @@ describe('Project docs (file-based)', () => {
 		const body = await res.json();
 		expect(body.data.filename).toBe('spec.md');
 		expect(body.data.content).toContain('Tech Spec');
+		expect(body.data.id).toBeDefined();
 	});
 
 	it('reads the doc back', async () => {
@@ -135,7 +114,7 @@ describe('Project docs (file-based)', () => {
 		expect(res.status).toBe(404);
 	});
 
-	it('updates a doc via PUT', async () => {
+	it('updates a doc via PUT (upsert)', async () => {
 		const res = await app.request(
 			`/api/companies/${companyId}/projects/${projectId}/docs/spec.md`,
 			{
@@ -150,7 +129,6 @@ describe('Project docs (file-based)', () => {
 	});
 
 	it('deletes a doc', async () => {
-		// Create one to delete
 		await app.request(`/api/companies/${companyId}/projects/${projectId}/docs/to-delete.md`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -163,7 +141,6 @@ describe('Project docs (file-based)', () => {
 		);
 		expect(deleteRes.status).toBe(200);
 
-		// Verify it's gone
 		const getRes = await app.request(
 			`/api/companies/${companyId}/projects/${projectId}/docs/to-delete.md`,
 			{ headers: authHeader(token) },
@@ -171,10 +148,92 @@ describe('Project docs (file-based)', () => {
 		expect(getRes.status).toBe(404);
 	});
 
-	it('reads and writes AGENTS.md', async () => {
-		// Write AGENTS.md
+	it('works for projects without a designated repo', async () => {
+		// Project docs are DB-backed, so no repo is needed
+		const res = await app.request(`/api/companies/${companyId}/projects/${projectId}/docs`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+	});
+
+	it('stores docs in the database', async () => {
+		const result = await db.query(
+			'SELECT * FROM project_docs WHERE project_id = $1 AND filename = $2',
+			[projectId, 'spec.md'],
+		);
+		expect(result.rows.length).toBe(1);
+		expect((result.rows[0] as any).content).toContain('Tech Spec v2');
+	});
+
+	it('creates multiple docs for same project', async () => {
+		await app.request(`/api/companies/${companyId}/projects/${projectId}/docs/prd.md`, {
+			method: 'PUT',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: '# PRD\n\nProduct requirements.' }),
+		});
+		await app.request(
+			`/api/companies/${companyId}/projects/${projectId}/docs/implementation-plan.md`,
+			{
+				method: 'PUT',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ content: '# Implementation Plan\n\nPhase 1...' }),
+			},
+		);
+
+		const res = await app.request(`/api/companies/${companyId}/projects/${projectId}/docs`, {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		const filenames = body.data.map((d: any) => d.filename);
+		expect(filenames).toContain('prd.md');
+		expect(filenames).toContain('implementation-plan.md');
+		expect(filenames).toContain('spec.md');
+	});
+});
+
+describe('AGENTS.md (filesystem-based)', () => {
+	let repoProjectId: string;
+
+	beforeAll(async () => {
+		// Create a project with a designated repo for AGENTS.md tests
+		const projRes = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Repo Project' }),
+		});
+		repoProjectId = (await projRes.json()).data.id;
+
+		const repoResult = await db.query(
+			`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
+			 VALUES ($1, 'main-app', 'org/main-app', 'github') RETURNING id`,
+			[repoProjectId],
+		);
+		const repoId = (repoResult.rows[0] as any).id;
+		await db.query('UPDATE projects SET designated_repo_id = $1, slug = $2 WHERE id = $3', [
+			repoId,
+			'repo-project',
+			repoProjectId,
+		]);
+
+		// Get company slug
+		const company = await db.query<{ slug: string }>('SELECT slug FROM companies WHERE id = $1', [
+			companyId,
+		]);
+		const companySlug = company.rows[0].slug;
+		const repoDir = join(
+			tempDataDir,
+			'companies',
+			companySlug,
+			'projects',
+			'repo-project',
+			'main-app',
+		);
+		mkdirSync(repoDir, { recursive: true });
+	});
+
+	it('writes and reads AGENTS.md', async () => {
 		const writeRes = await app.request(
-			`/api/companies/${companyId}/projects/${projectId}/agents-md`,
+			`/api/companies/${companyId}/projects/${repoProjectId}/agents-md`,
 			{
 				method: 'PUT',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -182,31 +241,28 @@ describe('Project docs (file-based)', () => {
 			},
 		);
 		expect(writeRes.status).toBe(200);
-		const writeBody = await writeRes.json();
-		expect(writeBody.data.filename).toBe('AGENTS.md');
 
-		// Read AGENTS.md
 		const readRes = await app.request(
-			`/api/companies/${companyId}/projects/${projectId}/agents-md`,
+			`/api/companies/${companyId}/projects/${repoProjectId}/agents-md`,
 			{ headers: authHeader(token) },
 		);
 		expect(readRes.status).toBe(200);
-		const readBody = await readRes.json();
-		expect(readBody.data.content).toContain('Agent Rules');
+		const body = await readRes.json();
+		expect(body.data.content).toContain('Agent Rules');
 	});
 
-	it('returns 404 for project without designated repo', async () => {
-		// Create a project without a repo
+	it('returns 404 for AGENTS.md on project without repo', async () => {
 		const projRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No Repo Project' }),
+			body: JSON.stringify({ name: 'No Repo' }),
 		});
 		const noRepoProjId = (await projRes.json()).data.id;
 
-		const res = await app.request(`/api/companies/${companyId}/projects/${noRepoProjId}/docs`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/companies/${companyId}/projects/${noRepoProjId}/agents-md`,
+			{ headers: authHeader(token) },
+		);
 		expect(res.status).toBe(404);
 	});
 });

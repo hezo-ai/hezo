@@ -73,7 +73,7 @@ export async function generateEmbedding(
  */
 export async function embedAndStore(
 	db: PGlite,
-	table: 'kb_docs' | 'issues' | 'skills',
+	table: 'kb_docs' | 'issues' | 'skills' | 'project_docs',
 	id: string,
 	text: string,
 ): Promise<void> {
@@ -85,7 +85,7 @@ export async function embedAndStore(
 }
 
 export interface SearchResult {
-	type: 'kb_doc' | 'issue' | 'skill';
+	type: 'kb_doc' | 'issue' | 'skill' | 'project_doc';
 	id: string;
 	title: string;
 	snippet: string;
@@ -101,7 +101,7 @@ export async function semanticSearch(
 	companyId: string,
 	query: string,
 	options: {
-		scope?: 'all' | 'kb_docs' | 'issues' | 'skills';
+		scope?: 'all' | 'kb_docs' | 'issues' | 'skills' | 'project_docs';
 		limit?: number;
 	} = {},
 ): Promise<SearchResult[]> {
@@ -178,6 +178,31 @@ export async function semanticSearch(
 		}
 	}
 
+	if (scope === 'all' || scope === 'project_docs') {
+		const pdResults = await db.query<{
+			id: string;
+			filename: string;
+			content: string;
+			score: number;
+		}>(
+			`SELECT id, filename, LEFT(content, 200) AS content, 1 - (embedding <=> $1::vector) AS score
+			 FROM project_docs
+			 WHERE company_id = $2 AND embedding IS NOT NULL
+			 ORDER BY embedding <=> $1::vector
+			 LIMIT $3`,
+			[vectorStr, companyId, limit],
+		);
+		for (const r of pdResults.rows) {
+			results.push({
+				type: 'project_doc',
+				id: r.id,
+				title: r.filename,
+				snippet: r.content,
+				score: r.score,
+			});
+		}
+	}
+
 	// Sort all results by score descending
 	results.sort((a, b) => b.score - a.score);
 	return results.slice(0, limit);
@@ -216,6 +241,15 @@ export async function processPendingEmbeddings(db: PGlite): Promise<number> {
 	);
 	for (const skill of skills.rows) {
 		await embedAndStore(db, 'skills', skill.id, `${skill.name}\n${skill.content}`);
+		processed++;
+	}
+
+	// Project docs
+	const projectDocs = await db.query<{ id: string; filename: string; content: string }>(
+		`SELECT id, filename, content FROM project_docs WHERE embedding IS NULL LIMIT 5`,
+	);
+	for (const doc of projectDocs.rows) {
+		await embedAndStore(db, 'project_docs', doc.id, `${doc.filename}\n${doc.content}`);
 		processed++;
 	}
 

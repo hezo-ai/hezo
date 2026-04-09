@@ -754,6 +754,28 @@ CREATE TABLE skill_revisions (
 CREATE INDEX idx_skill_revisions_skill ON skill_revisions(skill_id);
 
 -------------------------------------------------------------------------------
+-- PROJECT DOCUMENTS
+-------------------------------------------------------------------------------
+
+CREATE TABLE project_docs (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id            UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    company_id            UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    filename              TEXT NOT NULL,
+    content               TEXT NOT NULL DEFAULT '',
+    last_updated_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
+    embedding             vector(384),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE(project_id, filename)
+);
+
+CREATE INDEX idx_project_docs_project ON project_docs(project_id);
+CREATE INDEX idx_project_docs_company ON project_docs(company_id);
+CREATE INDEX idx_project_docs_embedding ON project_docs USING hnsw (embedding vector_cosine_ops);
+
+-------------------------------------------------------------------------------
 -- SYSTEM PROMPT REVISIONS
 -------------------------------------------------------------------------------
 

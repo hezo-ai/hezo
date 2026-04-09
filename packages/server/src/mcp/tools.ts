@@ -10,7 +10,6 @@ import {
 } from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { listDocFiles, readDocFile, resolveDevDocsPath, writeDocFile } from '../lib/docs';
 import type { AuthInfo } from '../lib/types';
 import { triggerStatusAutomations } from '../services/issue-automation';
 import { createWakeup } from '../services/wakeup';
@@ -768,7 +767,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 	tool(
 		server,
 		'list_project_docs',
-		'List files in the project .dev/ documentation folder',
+		'List project documentation files (PRD, spec, implementation plan, etc.)',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().describe('Project ID'),
@@ -776,14 +775,11 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const devPath = await resolveDevPath(
-				db,
-				dataDir,
-				args.company_id as string,
-				args.project_id as string,
+			const result = await db.query(
+				'SELECT id, filename, updated_at FROM project_docs WHERE project_id = $1 ORDER BY filename',
+				[args.project_id],
 			);
-			if ('error' in devPath) return { error: devPath.error };
-			return { files: listDocFiles(devPath.devPath) };
+			return { files: result.rows };
 		},
 		db,
 	);
@@ -791,7 +787,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 	tool(
 		server,
 		'read_project_doc',
-		'Read a file from the project .dev/ documentation folder',
+		'Read a project documentation file by filename',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().describe('Project ID'),
@@ -800,16 +796,12 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const devPath = await resolveDevPath(
-				db,
-				dataDir,
-				args.company_id as string,
-				args.project_id as string,
+			const result = await db.query<{ filename: string; content: string }>(
+				'SELECT filename, content FROM project_docs WHERE project_id = $1 AND filename = $2',
+				[args.project_id, args.filename],
 			);
-			if ('error' in devPath) return { error: devPath.error };
-			const content = readDocFile(devPath.devPath, args.filename as string);
-			if (content === null) return { error: `File '${args.filename}' not found` };
-			return { filename: args.filename, content };
+			if (result.rows.length === 0) return { error: `File '${args.filename}' not found` };
+			return result.rows[0];
 		},
 		db,
 	);
@@ -817,7 +809,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 	tool(
 		server,
 		'write_project_doc',
-		'Write a file to the project .dev/ documentation folder. For high-level project context only.',
+		'Write a project documentation file. For high-level project context: PRD, spec, implementation plan, research.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().describe('Project ID'),
@@ -827,19 +819,18 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const devPath = await resolveDevPath(
-				db,
-				dataDir,
-				args.company_id as string,
-				args.project_id as string,
+			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const result = await db.query<{ id: string; filename: string }>(
+				`INSERT INTO project_docs (project_id, company_id, filename, content, last_updated_by_member_id)
+				 VALUES ($1, $2, $3, $4, $5)
+				 ON CONFLICT (project_id, filename) DO UPDATE SET
+				   content = EXCLUDED.content,
+				   last_updated_by_member_id = EXCLUDED.last_updated_by_member_id,
+				   updated_at = now()
+				 RETURNING id, filename`,
+				[args.project_id, args.company_id, args.filename, args.content, callerMemberId],
 			);
-			if ('error' in devPath) return { error: devPath.error };
-			const filePath = writeDocFile(
-				devPath.devPath,
-				args.filename as string,
-				args.content as string,
-			);
-			return { written: true, path: filePath };
+			return { written: true, id: result.rows[0].id, filename: result.rows[0].filename };
 		},
 		db,
 	);
@@ -890,7 +881,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			company_id: z.string().describe('Company ID'),
 			query: z.string().describe('Natural language search query'),
 			scope: z
-				.enum(['all', 'kb_docs', 'issues', 'skills'])
+				.enum(['all', 'kb_docs', 'issues', 'skills', 'project_docs'])
 				.optional()
 				.describe('Limit search to specific content type (default: all)'),
 			limit: z.number().optional().describe('Max results (default: 10)'),
@@ -908,7 +899,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			}
 
 			const results = await semanticSearch(db, args.company_id as string, args.query as string, {
-				scope: (args.scope as 'all' | 'kb_docs' | 'issues' | 'skills') ?? 'all',
+				scope: (args.scope as 'all' | 'kb_docs' | 'issues' | 'skills' | 'project_docs') ?? 'all',
 				limit: (args.limit as number) ?? 10,
 			});
 
@@ -1027,40 +1018,6 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 	);
 
 	return [...registeredTools];
-}
-
-/**
- * Resolve the .dev/ docs path for a project's designated repo.
- */
-async function resolveDevPath(
-	db: PGlite,
-	dataDir: string,
-	companyId: string,
-	projectId: string,
-): Promise<{ devPath: string } | { error: string }> {
-	const project = await db.query<{ slug: string; designated_repo_id: string | null }>(
-		'SELECT slug, designated_repo_id FROM projects WHERE id = $1 AND company_id = $2',
-		[projectId, companyId],
-	);
-	if (!project.rows[0]) return { error: 'Project not found' };
-	if (!project.rows[0].designated_repo_id) return { error: 'No designated repo for this project' };
-	const repo = await db.query<{ short_name: string }>(
-		'SELECT short_name FROM repos WHERE id = $1',
-		[project.rows[0].designated_repo_id],
-	);
-	if (!repo.rows[0]) return { error: 'Repo not found' };
-	const company = await db.query<{ slug: string }>('SELECT slug FROM companies WHERE id = $1', [
-		companyId,
-	]);
-	if (!company.rows[0]) return { error: 'Company not found' };
-	return {
-		devPath: resolveDevDocsPath(
-			dataDir,
-			company.rows[0].slug,
-			project.rows[0].slug,
-			repo.rows[0].short_name,
-		),
-	};
 }
 
 async function isCoachOrSelf(db: PGlite, auth: AuthInfo, targetAgentId: string): Promise<boolean> {
