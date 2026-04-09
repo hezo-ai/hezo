@@ -150,7 +150,7 @@ export function buildApp(
 	});
 
 	// Initialize MCP server
-	initMcpServer(db);
+	initMcpServer(db, config.dataDir);
 
 	// Public routes
 	app.route('/', healthRoutes);

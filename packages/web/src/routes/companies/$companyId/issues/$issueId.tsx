@@ -20,12 +20,21 @@ import {
 	useUpdateIssue,
 } from '../../../../hooks/use-issues';
 
-const statusFlow = ['backlog', 'open', 'in_progress', 'review', 'done', 'closed'] as const;
+const statusFlow = [
+	'backlog',
+	'open',
+	'in_progress',
+	'review',
+	'approved',
+	'done',
+	'closed',
+] as const;
 const statusColors: Record<string, string> = {
 	backlog: 'neutral',
 	open: 'info',
 	in_progress: 'warning',
 	review: 'purple',
+	approved: 'success',
 	blocked: 'danger',
 	done: 'success',
 	closed: 'neutral',

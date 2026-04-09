@@ -2,6 +2,12 @@ import type { PGlite } from '@electric-sql/pglite';
 import { ApprovalStatus, ApprovalType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import {
+	readSkillManifest,
+	resolveSkillsPath,
+	writeSkillFile,
+	writeSkillManifest,
+} from '../lib/docs';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess, requireCompanyAccessForResource } from '../middleware/auth';
@@ -9,6 +15,7 @@ import { requireCompanyAccess, requireCompanyAccessForResource } from '../middle
 async function applyApprovalSideEffect(
 	db: PGlite,
 	approval: Record<string, unknown>,
+	dataDir: string,
 ): Promise<void> {
 	const payload = approval.payload as Record<string, unknown>;
 	switch (approval.type) {
@@ -39,6 +46,32 @@ async function applyApprovalSideEffect(
 					approval.id,
 				],
 			);
+			break;
+		}
+		case ApprovalType.SkillProposal: {
+			const companyId = approval.company_id as string;
+			const company = await db.query<{ slug: string }>('SELECT slug FROM companies WHERE id = $1', [
+				companyId,
+			]);
+			if (company.rows[0]) {
+				const skillsDir = resolveSkillsPath(dataDir, company.rows[0].slug);
+				const slug = payload.skill_slug as string;
+				const name = payload.skill_name as string;
+				const content = payload.content as string;
+				writeSkillFile(skillsDir, slug, content);
+				const manifest = readSkillManifest(skillsDir);
+				if (!manifest.skills.some((s) => s.slug === slug)) {
+					manifest.skills.push({
+						name,
+						slug,
+						description: (payload.reason as string) ?? '',
+						source_url: '',
+						content_hash: '',
+						last_synced_at: new Date().toISOString(),
+					});
+					writeSkillManifest(skillsDir, manifest);
+				}
+			}
 			break;
 		}
 	}
@@ -146,7 +179,8 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 	const row = result.rows[0] as Record<string, unknown>;
 
 	if (body.status === ApprovalStatus.Approved) {
-		await applyApprovalSideEffect(db, row);
+		const dataDir = c.get('dataDir');
+		await applyApprovalSideEffect(db, row, dataDir);
 	}
 
 	if (row.company_id) {

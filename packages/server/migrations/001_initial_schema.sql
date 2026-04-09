@@ -43,13 +43,13 @@ CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini', 'kimi');
 CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
 CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled', 'terminated');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopping', 'stopped', 'error');
-CREATE TYPE issue_status AS ENUM ('backlog', 'open', 'in_progress', 'review', 'blocked', 'done', 'closed', 'cancelled');
+CREATE TYPE issue_status AS ENUM ('backlog', 'open', 'in_progress', 'review', 'approved', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');
 CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'execution');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'company');
-CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'strategy', 'kb_update', 'plan_review', 'deploy_production', 'oauth_request', 'system_prompt_update');
+CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'strategy', 'kb_update', 'plan_review', 'deploy_production', 'oauth_request', 'system_prompt_update', 'skill_proposal');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
 CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
@@ -365,6 +365,7 @@ CREATE TABLE issues (
     progress_summary_updated_at  TIMESTAMPTZ,
     progress_summary_updated_by  UUID REFERENCES members(id) ON DELETE SET NULL,
     rules                TEXT,
+    branch_name          TEXT,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 

@@ -21,7 +21,7 @@ interface AgentInfo {
 	runtime_type: AgentRuntime;
 }
 
-interface IssueInfo {
+export interface IssueInfo {
 	id: string;
 	identifier: string;
 	title: string;
@@ -114,7 +114,7 @@ export async function runAgent(
 	const isCoachReview = wakeupPayload?.trigger === 'issue_done';
 	const taskPrompt = isCoachReview
 		? await buildCoachReviewPrompt(deps.db, resolvedPrompt, issue, agent.company_id)
-		: buildTaskPrompt(resolvedPrompt, issue);
+		: buildTaskPrompt(resolvedPrompt, issue, wakeupPayload);
 
 	const env: string[] = [
 		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
@@ -239,7 +239,11 @@ function abortedResult(startTime: number): RunResult {
 	};
 }
 
-function buildTaskPrompt(systemPrompt: string, issue: IssueInfo): string {
+export function buildTaskPrompt(
+	systemPrompt: string,
+	issue: IssueInfo,
+	wakeupPayload?: Record<string, unknown>,
+): string {
 	const parts = [
 		systemPrompt,
 		'',
@@ -258,6 +262,19 @@ function buildTaskPrompt(systemPrompt: string, issue: IssueInfo): string {
 	}
 
 	parts.push(issue.description || 'No description provided.');
+
+	// Inject retry context when this is an orphan retry
+	if (wakeupPayload?.previous_failure) {
+		const pf = wakeupPayload.previous_failure as Record<string, unknown>;
+		parts.push('');
+		parts.push(`## Retry Attempt ${wakeupPayload.retry_count}/${wakeupPayload.max_retries}`);
+		parts.push('The previous attempt FAILED. Analyze the error and try a different approach.');
+		if (pf.exit_code !== undefined && pf.exit_code !== null)
+			parts.push(`**Exit code:** ${pf.exit_code}`);
+		if (pf.stderr_tail) parts.push(`**Error output:**\n\`\`\`\n${pf.stderr_tail}\n\`\`\``);
+		if (pf.stdout_tail) parts.push(`**Last output:**\n\`\`\`\n${pf.stdout_tail}\n\`\`\``);
+	}
+
 	parts.push('');
 	parts.push('Work on this task. Post comments via the Agent API to report progress.');
 

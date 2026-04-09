@@ -10,9 +10,9 @@ import { registerTools, type ToolDef } from './tools';
 let mcpServer: McpServer | null = null;
 let toolDefs: ToolDef[] = [];
 
-export function initMcpServer(db: PGlite): ToolDef[] {
+export function initMcpServer(db: PGlite, dataDir: string): ToolDef[] {
 	mcpServer = new McpServer({ name: 'hezo', version: '0.1.0' });
-	toolDefs = registerTools(mcpServer, db);
+	toolDefs = registerTools(mcpServer, db, dataDir);
 	return toolDefs;
 }
 
