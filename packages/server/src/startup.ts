@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
+import { vector } from '@electric-sql/pglite/vector';
 import { type Context, Hono } from 'hono';
 import type { HezoConfig } from './cli';
 import { MasterKeyManager } from './crypto/master-key';
@@ -76,9 +77,9 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	try {
 		const { NodeFS } = await import('@electric-sql/pglite/nodefs');
-		db = new PGlite({ fs: new NodeFS(pgDataPath) });
+		db = new PGlite({ fs: new NodeFS(pgDataPath), extensions: { vector } });
 	} catch {
-		db = new PGlite();
+		db = new PGlite({ extensions: { vector } });
 	}
 
 	await db.exec(BASE_SCHEMA);
