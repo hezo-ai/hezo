@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import { type RunnerDeps, type RunResult, runAgent } from '../../services/agent-runner';
@@ -17,6 +17,8 @@ let companyId: string;
 let projectId: string;
 let issueId: string;
 let agentId: string;
+
+const originalFetch = globalThis.fetch;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -35,6 +37,9 @@ beforeAll(async () => {
 	});
 	companyId = (await companyRes.json()).data.id;
 
+	// Mock fetch for provider key validation during setup
+	globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+
 	// Configure an AI provider so the agent runner can resolve credentials
 	await app.request(`/api/companies/${companyId}/ai-providers`, {
 		method: 'POST',
@@ -44,6 +49,9 @@ beforeAll(async () => {
 			api_key: 'sk-ant-test-runner-key',
 		}),
 	});
+
+	// Restore real fetch for the rest of the tests
+	globalThis.fetch = originalFetch;
 
 	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',

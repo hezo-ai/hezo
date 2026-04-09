@@ -1,6 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
@@ -9,6 +9,8 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let companyId: string;
+
+const originalFetch = globalThis.fetch;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -22,6 +24,15 @@ beforeAll(async () => {
 		body: JSON.stringify({ name: 'AI Provider Co', issue_prefix: 'AIP' }),
 	});
 	companyId = (await companyRes.json()).data.id;
+});
+
+beforeEach(() => {
+	// Mock fetch to simulate provider validation succeeding by default
+	globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+});
+
+afterEach(() => {
+	globalThis.fetch = originalFetch;
 });
 
 afterAll(async () => {
@@ -202,5 +213,49 @@ describe('AI providers key format validation', () => {
 		});
 		// Moonshot has no keyPrefix, so any format should be accepted
 		expect(res.status).toBe(201);
+	});
+});
+
+describe('AI providers key validation against provider API', () => {
+	it('rejects a key that the provider says is invalid', async () => {
+		globalThis.fetch = vi
+			.fn()
+			.mockResolvedValue({ ok: false, status: 401 }) as unknown as typeof fetch;
+
+		const res = await app.request(`/api/companies/${companyId}/ai-providers`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider: 'anthropic', api_key: 'sk-ant-invalid-key' }),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.code).toBe('INVALID_KEY');
+	});
+
+	it('returns 503 when the provider is unreachable', async () => {
+		globalThis.fetch = vi
+			.fn()
+			.mockRejectedValue(new Error('Network error')) as unknown as unknown as typeof fetch;
+
+		const res = await app.request(`/api/companies/${companyId}/ai-providers`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider: 'openai', api_key: 'sk-unreachable-key' }),
+		});
+		expect(res.status).toBe(503);
+		const body = await res.json();
+		expect(body.error.code).toBe('VALIDATION_FAILED');
+	});
+
+	it('stores the key when provider confirms it is valid', async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+
+		const res = await app.request(`/api/companies/${companyId}/ai-providers`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider: 'google', api_key: 'AIza-valid-test-key' }),
+		});
+		expect(res.status).toBe(201);
+		expect((await res.json()).data.id).toBeDefined();
 	});
 });

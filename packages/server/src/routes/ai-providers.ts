@@ -89,6 +89,28 @@ aiProvidersRoutes.post('/companies/:companyId/ai-providers', async (c) => {
 		);
 	}
 
+	// Validate the key against the provider's API before storing
+	if (authMethod === AiAuthMethod.ApiKey) {
+		try {
+			const valid = await verifyProviderKey(provider, body.api_key, authMethod);
+			if (!valid) {
+				return err(
+					c,
+					'INVALID_KEY',
+					`API key validation failed — the key was rejected by ${info.name}`,
+					400,
+				);
+			}
+		} catch {
+			return err(
+				c,
+				'VALIDATION_FAILED',
+				'Could not reach the provider to validate the key. Please try again.',
+				503,
+			);
+		}
+	}
+
 	try {
 		const configId = await storeAiProviderKey(
 			db,
