@@ -104,7 +104,17 @@ export async function resolveSystemPrompt(
 
 	if (resolved.includes('{{skills_context}}')) {
 		let skillsText = 'No skills configured.';
-		if (ctx.dataDir) {
+		// Load skills from DB (source of truth)
+		const dbSkills = await db.query<{ name: string; content: string }>(
+			'SELECT name, content FROM skills WHERE company_id = $1 AND is_active = true ORDER BY name',
+			[ctx.companyId],
+		);
+		if (dbSkills.rows.length > 0) {
+			skillsText = dbSkills.rows
+				.map((s) => `## Skill: ${s.name}\n${s.content}`)
+				.join('\n\n---\n\n');
+		} else if (ctx.dataDir) {
+			// Filesystem fallback for backward compatibility
 			if (!companySlug) {
 				const slugResult = await db.query<{ slug: string }>(
 					'SELECT slug FROM companies WHERE id = $1',

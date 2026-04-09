@@ -12,6 +12,7 @@ let companyId: string;
 let projectId: string;
 let issueId: string;
 let agentId: string;
+let secondAgentId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -43,7 +44,9 @@ beforeAll(async () => {
 	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
 		headers: authHeader(token),
 	});
-	agentId = (await agentsRes.json()).data[0].id;
+	const agents = (await agentsRes.json()).data;
+	agentId = agents[0].id;
+	secondAgentId = agents[1].id;
 
 	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
 		method: 'POST',
@@ -58,16 +61,17 @@ afterAll(async () => {
 });
 
 describe('execution locks', () => {
-	it('returns null when no lock exists', async () => {
+	it('returns empty locks when no lock exists', async () => {
 		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/lock`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data).toBeNull();
+		expect(body.data.locks).toEqual([]);
+		expect(body.data.has_write_lock).toBe(false);
 	});
 
-	it('creates a lock', async () => {
+	it('creates a write lock (default)', async () => {
 		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/lock`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -77,25 +81,38 @@ describe('execution locks', () => {
 		const body = await res.json();
 		expect(body.data.issue_id).toBe(issueId);
 		expect(body.data.member_id).toBe(agentId);
+		expect(body.data.lock_type).toBe('write');
 	});
 
-	it('prevents double-locking', async () => {
+	it('prevents another write lock while write lock active', async () => {
 		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/lock`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ member_id: agentId }),
+			body: JSON.stringify({ member_id: secondAgentId }),
 		});
 		expect(res.status).toBe(409);
 	});
 
-	it('returns the active lock', async () => {
+	it('prevents read lock while write lock active', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/lock`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ member_id: secondAgentId, lock_type: 'read' }),
+		});
+		expect(res.status).toBe(409);
+	});
+
+	it('returns active locks with lock_type', async () => {
 		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/lock`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.member_id).toBe(agentId);
-		expect(body.data).toHaveProperty('member_name');
+		expect(body.data.locks.length).toBe(1);
+		expect(body.data.locks[0].member_id).toBe(agentId);
+		expect(body.data.locks[0].lock_type).toBe('write');
+		expect(body.data.has_write_lock).toBe(true);
+		expect(body.data.locks[0]).toHaveProperty('member_name');
 	});
 
 	it('releases the lock', async () => {
@@ -108,7 +125,8 @@ describe('execution locks', () => {
 		const checkRes = await app.request(`/api/companies/${companyId}/issues/${issueId}/lock`, {
 			headers: authHeader(token),
 		});
-		expect((await checkRes.json()).data).toBeNull();
+		const body = await checkRes.json();
+		expect(body.data.locks).toEqual([]);
 	});
 
 	it('allows re-locking after release', async () => {
@@ -118,5 +136,46 @@ describe('execution locks', () => {
 			body: JSON.stringify({ member_id: agentId }),
 		});
 		expect(res.status).toBe(201);
+
+		// Clean up for read lock tests
+		await app.request(`/api/companies/${companyId}/issues/${issueId}/lock`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+	});
+
+	it('allows multiple read locks on same issue', async () => {
+		const res1 = await app.request(`/api/companies/${companyId}/issues/${issueId}/lock`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ member_id: agentId, lock_type: 'read' }),
+		});
+		expect(res1.status).toBe(201);
+		expect((await res1.json()).data.lock_type).toBe('read');
+
+		const res2 = await app.request(`/api/companies/${companyId}/issues/${issueId}/lock`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ member_id: secondAgentId, lock_type: 'read' }),
+		});
+		expect(res2.status).toBe(201);
+		expect((await res2.json()).data.lock_type).toBe('read');
+
+		// Verify both locks exist
+		const checkRes = await app.request(`/api/companies/${companyId}/issues/${issueId}/lock`, {
+			headers: authHeader(token),
+		});
+		const body = await checkRes.json();
+		expect(body.data.locks.length).toBe(2);
+		expect(body.data.has_write_lock).toBe(false);
+	});
+
+	it('prevents write lock while read locks active', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/lock`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ member_id: agentId }),
+		});
+		expect(res.status).toBe(409);
 	});
 });

@@ -4,7 +4,9 @@ import {
 	type AgentRuntime,
 	AgentRuntimeStatus,
 	CommentContentType,
+	ExecutionLockType,
 	IssuePriority,
+	READER_AGENT_SLUGS,
 	TERMINAL_ISSUE_STATUSES,
 	WakeupStatus,
 } from '@hezo/shared';
@@ -67,6 +69,10 @@ export class JobManager {
 		this.cron.createJob('container-sync', {
 			cron: '* * * * * *',
 			onTick: () => this.guarded('container-sync', () => this.syncContainerStatuses()),
+		});
+		this.cron.createJob('embeddings', {
+			cron: '*/30 * * * * *',
+			onTick: () => this.guarded('embeddings', () => this.processEmbeddingQueue()),
 		});
 		console.log('Job manager started.');
 	}
@@ -223,12 +229,13 @@ export class JobManager {
 		const agent = await db.query<{
 			id: string;
 			title: string;
+			slug: string;
 			system_prompt: string;
 			admin_status: string;
 			heartbeat_interval_min: number;
 			runtime_type: string;
 		}>(
-			`SELECT id, title, system_prompt, admin_status, heartbeat_interval_min, runtime_type FROM member_agents WHERE id = $1`,
+			`SELECT id, title, slug, system_prompt, admin_status, heartbeat_interval_min, runtime_type FROM member_agents WHERE id = $1`,
 			[memberId],
 		);
 
@@ -344,12 +351,43 @@ export class JobManager {
 			return;
 		}
 
-		await db.query(
-			`INSERT INTO execution_locks (issue_id, member_id)
-			 VALUES ($1, $2)
-			 ON CONFLICT DO NOTHING`,
-			[issue.id, memberId],
-		);
+		// Determine lock type: readers (Coach, QA, Security) get shared locks; others get exclusive
+		const isCoachReview = wakeupPayload?.trigger === 'issue_done';
+		const lockType =
+			isCoachReview || READER_AGENT_SLUGS.has(agent.rows[0].slug)
+				? ExecutionLockType.Read
+				: ExecutionLockType.Write;
+
+		// Acquire lock with proper exclusion semantics
+		const lockQuery =
+			lockType === ExecutionLockType.Write
+				? // Write lock: exclusive — no other locks allowed
+					`INSERT INTO execution_locks (issue_id, member_id, lock_type)
+					 SELECT $1, $2, 'write'
+					 WHERE NOT EXISTS (
+					   SELECT 1 FROM execution_locks WHERE issue_id = $1 AND released_at IS NULL
+					 )
+					 RETURNING id`
+				: // Read lock: shared — blocked only by write locks
+					`INSERT INTO execution_locks (issue_id, member_id, lock_type)
+					 SELECT $1, $2, 'read'
+					 WHERE NOT EXISTS (
+					   SELECT 1 FROM execution_locks WHERE issue_id = $1 AND lock_type = 'write' AND released_at IS NULL
+					 )
+					 RETURNING id`;
+
+		const lockResult = await db.query<{ id: string }>(lockQuery, [issue.id, memberId]);
+
+		if (lockResult.rows.length === 0) {
+			log(`Could not acquire ${lockType} lock on issue ${issue.identifier} — deferring wakeup`);
+			if (wakeupId) {
+				await db.query(
+					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
+					[WakeupStatus.Deferred, wakeupId],
+				);
+			}
+			return;
+		}
 
 		await db.query(
 			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
@@ -475,5 +513,13 @@ export class JobManager {
 
 	private async syncContainerStatuses(): Promise<void> {
 		await syncAllContainerStatuses(this.deps.db, this.deps.docker, this.deps.wsManager);
+	}
+
+	private async processEmbeddingQueue(): Promise<void> {
+		const { processPendingEmbeddings } = await import('./embeddings');
+		const count = await processPendingEmbeddings(this.deps.db);
+		if (count > 0) {
+			log(`Processed ${count} embedding(s)`);
+		}
 	}
 }

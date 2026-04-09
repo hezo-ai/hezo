@@ -33,6 +33,7 @@ import { previewRoutes } from './routes/preview';
 import { projectDocsRoutes } from './routes/project-docs';
 import { projectsRoutes } from './routes/projects';
 import { reposRoutes } from './routes/repos';
+import { searchRoutes } from './routes/search';
 import { secretsRoutes } from './routes/secrets';
 import { skillsRoutes } from './routes/skills';
 import { uiStateRoutes } from './routes/ui-state';
@@ -100,7 +101,16 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		wsManager,
 	});
 
-	masterKeyManager.onUnlock(() => jobManager.start());
+	masterKeyManager.onUnlock(() => {
+		jobManager.start();
+		// Initialize embedding model in background (downloads on first use)
+		import('./services/embeddings').then(({ initializeEmbeddingModel }) => {
+			const { join } = require('node:path') as typeof import('node:path');
+			initializeEmbeddingModel(join(config.dataDir, 'models')).catch((err) =>
+				console.error('[startup] Embedding model init failed:', err),
+			);
+		});
+	});
 
 	const app = buildApp(
 		db,
@@ -206,6 +216,7 @@ export function buildApp(
 	app.route('/api', liveChatRoutes);
 	app.route('/api', auditLogRoutes);
 	app.route('/api', previewRoutes);
+	app.route('/api', searchRoutes);
 
 	// Static file serving for compiled binary (frontend assets)
 	const staticDir = resolve(new URL('.', import.meta.url).pathname, '..', 'static');

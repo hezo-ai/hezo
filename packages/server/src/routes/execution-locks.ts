@@ -1,3 +1,4 @@
+import { ExecutionLockType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -23,7 +24,7 @@ executionLocksRoutes.get('/companies/:companyId/issues/:issueId/lock', async (c)
 	}
 
 	const result = await db.query(
-		`SELECT el.id, el.issue_id, el.member_id, el.locked_at,
+		`SELECT el.id, el.issue_id, el.member_id, el.lock_type, el.locked_at,
 		        COALESCE(ma.title, m.display_name) AS member_name
 		 FROM execution_locks el
 		 JOIN members m ON m.id = el.member_id
@@ -33,10 +34,13 @@ executionLocksRoutes.get('/companies/:companyId/issues/:issueId/lock', async (c)
 	);
 
 	if (result.rows.length === 0) {
-		return ok(c, null);
+		return ok(c, { locks: [], has_write_lock: false });
 	}
 
-	return ok(c, result.rows[0]);
+	const locks = result.rows as Array<Record<string, unknown>>;
+	const hasWriteLock = locks.some((l) => l.lock_type === ExecutionLockType.Write);
+
+	return ok(c, { locks, has_write_lock: hasWriteLock });
 });
 
 executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c) => {
@@ -55,24 +59,35 @@ executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c
 		return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	}
 
-	const body = await c.req.json<{ member_id: string }>();
+	const body = await c.req.json<{ member_id: string; lock_type?: string }>();
 	if (!body.member_id) {
 		return err(c, 'INVALID_REQUEST', 'member_id is required', 400);
 	}
 
-	// Atomic lock acquisition: attempt insert, return conflict if already locked
-	const result = await db.query(
-		`INSERT INTO execution_locks (issue_id, member_id)
-		 SELECT $1, $2
-		 WHERE NOT EXISTS (
-		   SELECT 1 FROM execution_locks WHERE issue_id = $1 AND released_at IS NULL
-		 )
-		 RETURNING *`,
-		[issueId, body.member_id],
-	);
+	const lockType =
+		body.lock_type === ExecutionLockType.Read ? ExecutionLockType.Read : ExecutionLockType.Write;
+
+	// Write lock: exclusive — no other locks allowed
+	// Read lock: shared — blocked only by write locks
+	const lockQuery =
+		lockType === ExecutionLockType.Write
+			? `INSERT INTO execution_locks (issue_id, member_id, lock_type)
+			   SELECT $1, $2, 'write'
+			   WHERE NOT EXISTS (
+			     SELECT 1 FROM execution_locks WHERE issue_id = $1 AND released_at IS NULL
+			   )
+			   RETURNING *`
+			: `INSERT INTO execution_locks (issue_id, member_id, lock_type)
+			   SELECT $1, $2, 'read'
+			   WHERE NOT EXISTS (
+			     SELECT 1 FROM execution_locks WHERE issue_id = $1 AND lock_type = 'write' AND released_at IS NULL
+			   )
+			   RETURNING *`;
+
+	const result = await db.query(lockQuery, [issueId, body.member_id]);
 
 	if (result.rows.length === 0) {
-		return err(c, 'CONFLICT', 'Issue is already locked by another agent', 409);
+		return err(c, 'CONFLICT', 'Issue is already locked', 409);
 	}
 
 	broadcastChange(

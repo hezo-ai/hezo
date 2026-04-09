@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
 import { ApprovalStatus, ApprovalType } from '@hezo/shared';
 import { Hono } from 'hono';
@@ -50,14 +51,47 @@ async function applyApprovalSideEffect(
 		}
 		case ApprovalType.SkillProposal: {
 			const companyId = approval.company_id as string;
+			const slug = payload.skill_slug as string;
+			const name = payload.skill_name as string;
+			const content = payload.content as string;
+			const contentHash = createHash('sha256').update(content).digest('hex');
+			const requestedBy =
+				(payload.requested_by as string) ?? (approval.requested_by_member_id as string) ?? null;
+
+			// Write to DB (source of truth)
+			const skillResult = await db.query<{ id: string }>(
+				`INSERT INTO skills (company_id, name, slug, description, content, content_hash, created_by_member_id)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7)
+				 ON CONFLICT (company_id, slug) DO UPDATE SET
+				   content = EXCLUDED.content,
+				   content_hash = EXCLUDED.content_hash,
+				   updated_at = now()
+				 RETURNING id`,
+				[
+					companyId,
+					name,
+					slug,
+					(payload.reason as string) ?? '',
+					content,
+					contentHash,
+					requestedBy,
+				],
+			);
+
+			if (skillResult.rows[0]) {
+				await db.query(
+					`INSERT INTO skill_revisions (skill_id, revision_number, content, content_hash, change_summary, author_member_id)
+					 VALUES ($1, (SELECT COALESCE(MAX(revision_number), 0) + 1 FROM skill_revisions WHERE skill_id = $1), $2, $3, 'Created via approval', $4)`,
+					[skillResult.rows[0].id, content, contentHash, requestedBy],
+				);
+			}
+
+			// Sync to filesystem for backward compat
 			const company = await db.query<{ slug: string }>('SELECT slug FROM companies WHERE id = $1', [
 				companyId,
 			]);
 			if (company.rows[0]) {
 				const skillsDir = resolveSkillsPath(dataDir, company.rows[0].slug);
-				const slug = payload.skill_slug as string;
-				const name = payload.skill_name as string;
-				const content = payload.content as string;
 				writeSkillFile(skillsDir, slug, content);
 				const manifest = readSkillManifest(skillsDir);
 				if (!manifest.skills.some((s) => s.slug === slug)) {
@@ -66,7 +100,7 @@ async function applyApprovalSideEffect(
 						slug,
 						description: (payload.reason as string) ?? '',
 						source_url: '',
-						content_hash: '',
+						content_hash: contentHash,
 						last_synced_at: new Date().toISOString(),
 					});
 					writeSkillManifest(skillsDir, manifest);

@@ -810,18 +810,31 @@ function SkillsSection({ companyId }: { companyId: string }) {
 									<span className="text-xs text-text-subtle font-mono">{s.slug}</span>
 								</div>
 								{s.description && <span className="text-xs text-text-subtle">{s.description}</span>}
-								<span className="text-xs text-text-subtle truncate">{s.source_url}</span>
+								{s.tags?.length > 0 && (
+									<div className="flex gap-1 flex-wrap">
+										{s.tags.map((tag) => (
+											<span key={tag} className="text-[10px] bg-bg-subtle px-1.5 py-0.5 rounded">
+												{tag}
+											</span>
+										))}
+									</div>
+								)}
+								{s.source_url && (
+									<span className="text-xs text-text-subtle truncate">{s.source_url}</span>
+								)}
 							</div>
 							<div className="flex items-center gap-1">
-								<button
-									type="button"
-									onClick={() => syncSkill.mutate(s.slug)}
-									disabled={syncSkill.isPending}
-									className="text-text-subtle hover:text-text p-1"
-									title="Re-download"
-								>
-									<RefreshCw className="w-3.5 h-3.5" />
-								</button>
+								{s.source_url && (
+									<button
+										type="button"
+										onClick={() => syncSkill.mutate(s.slug)}
+										disabled={syncSkill.isPending}
+										className="text-text-subtle hover:text-text p-1"
+										title="Re-download"
+									>
+										<RefreshCw className="w-3.5 h-3.5" />
+									</button>
+								)}
 								<button
 									type="button"
 									onClick={() => deleteSkill.mutate(s.slug)}

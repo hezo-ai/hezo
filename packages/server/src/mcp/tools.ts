@@ -881,6 +881,151 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		db,
 	);
 
+	// Semantic search
+	tool(
+		server,
+		'semantic_search',
+		'Search across knowledge base docs, issues, and skills using natural language. Returns ranked results by relevance.',
+		{
+			company_id: z.string().describe('Company ID'),
+			query: z.string().describe('Natural language search query'),
+			scope: z
+				.enum(['all', 'kb_docs', 'issues', 'skills'])
+				.optional()
+				.describe('Limit search to specific content type (default: all)'),
+			limit: z.number().optional().describe('Max results (default: 10)'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			const { isModelReady, semanticSearch } = await import('../services/embeddings');
+			if (!isModelReady()) {
+				return {
+					error:
+						'Embedding model not loaded yet. Search will be available shortly after server start.',
+				};
+			}
+
+			const results = await semanticSearch(db, args.company_id as string, args.query as string, {
+				scope: (args.scope as 'all' | 'kb_docs' | 'issues' | 'skills') ?? 'all',
+				limit: (args.limit as number) ?? 10,
+			});
+
+			return { results, count: results.length };
+		},
+		db,
+	);
+
+	// Skills - DB-backed CRUD
+	tool(
+		server,
+		'list_skills',
+		'List all active skills for a company. Returns name, slug, description, and tags.',
+		{
+			company_id: z.string().describe('Company ID'),
+			tags: z.string().optional().describe('Filter by tag (comma-separated)'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			let query = `SELECT id, name, slug, description, tags, created_at, updated_at
+			             FROM skills WHERE company_id = $1 AND is_active = true`;
+			const params: unknown[] = [args.company_id];
+
+			if (args.tags) {
+				const tagList = (args.tags as string).split(',').map((t) => t.trim());
+				query += ` AND tags ?| $2`;
+				params.push(tagList);
+			}
+
+			query += ' ORDER BY name';
+			const result = await db.query(query, params);
+			return { skills: result.rows };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'get_skill',
+		'Get the full content of a skill by slug.',
+		{
+			company_id: z.string().describe('Company ID'),
+			slug: z.string().describe('Skill slug'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			const result = await db.query('SELECT * FROM skills WHERE company_id = $1 AND slug = $2', [
+				args.company_id,
+				args.slug,
+			]);
+			if (result.rows.length === 0) return { error: 'Skill not found' };
+			return result.rows[0];
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'create_skill',
+		'Create a new skill directly (no approval needed). Use propose_skill if approval is required.',
+		{
+			company_id: z.string().describe('Company ID'),
+			name: z.string().describe('Human-readable skill name'),
+			slug: z.string().describe('URL-safe slug'),
+			content: z.string().describe('Skill content (markdown)'),
+			description: z.string().optional().describe('Short description'),
+			tags: z.string().optional().describe('Comma-separated tags'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const { createHash } = await import('node:crypto');
+			const contentHash = createHash('sha256')
+				.update(args.content as string)
+				.digest('hex');
+			const tagList = args.tags ? (args.tags as string).split(',').map((t) => t.trim()) : [];
+
+			const result = await db.query<{ id: string; slug: string }>(
+				`INSERT INTO skills (company_id, name, slug, description, content, content_hash, created_by_member_id, tags)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+				 ON CONFLICT (company_id, slug) DO UPDATE SET
+				   content = EXCLUDED.content,
+				   content_hash = EXCLUDED.content_hash,
+				   description = EXCLUDED.description,
+				   tags = EXCLUDED.tags,
+				   updated_at = now()
+				 RETURNING id, slug`,
+				[
+					args.company_id,
+					args.name,
+					args.slug,
+					(args.description as string) ?? '',
+					args.content,
+					contentHash,
+					callerMemberId,
+					JSON.stringify(tagList),
+				],
+			);
+
+			const skillId = result.rows[0].id;
+			await db.query(
+				`INSERT INTO skill_revisions (skill_id, revision_number, content, content_hash, change_summary, author_member_id)
+				 VALUES ($1, (SELECT COALESCE(MAX(revision_number), 0) + 1 FROM skill_revisions WHERE skill_id = $1), $2, $3, 'Created via MCP', $4)`,
+				[skillId, args.content, contentHash, callerMemberId],
+			);
+
+			return { skill_id: skillId, slug: result.rows[0].slug, created: true };
+		},
+		db,
+	);
+
 	return [...registeredTools];
 }
 
