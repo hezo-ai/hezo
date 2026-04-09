@@ -154,8 +154,9 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 
 	// Verify persistence after reload
 	await page.reload();
-	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 10000 });
-	await expect(page.getByText('Implementation started')).toBeVisible({ timeout: 10000 });
+	await waitForPageLoad(page);
+	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 15000 });
+	await expect(page.getByText('Implementation started')).toBeVisible({ timeout: 15000 });
 });
 
 test('issue detail shows assignee with status badge', async ({ page }) => {

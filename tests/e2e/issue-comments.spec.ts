@@ -50,10 +50,11 @@ test.describe('Issue Comments', () => {
 
 		// Type a comment
 		const commentInput = page.getByPlaceholder('Add a comment...');
+		await expect(commentInput).toBeVisible({ timeout: 10000 });
 		await commentInput.fill('This is a test comment');
 
 		// Submit the comment
-		await page.getByRole('button', { name: 'Comment' }).click();
+		await page.getByRole('button', { name: 'Comment', exact: true }).click();
 
 		// Verify comment appears
 		await expect(page.getByText('This is a test comment')).toBeVisible({ timeout: 5000 });

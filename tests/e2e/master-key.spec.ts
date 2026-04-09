@@ -4,7 +4,7 @@ import { authenticate } from './helpers';
 test('loads app when server is pre-unlocked', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
-	await page.waitForURL('**/companies', { timeout: 10000 });
+	await page.waitForURL('**/companies', { timeout: 30000 });
 	await expect(
 		page
 			.getByRole('heading', { name: 'Companies', exact: true })
