@@ -48,7 +48,7 @@ describe('migration runner', () => {
 
 	it('warns when a migration checksum has changed', async () => {
 		const db = await createMemoryDb();
-		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
 		try {
 			await runMigrations(db, {
@@ -59,9 +59,9 @@ describe('migration runner', () => {
 				'001_test.sql': 'CREATE TABLE test_table (id SERIAL PRIMARY KEY, name TEXT);',
 			});
 
-			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('001_test.sql'));
+			expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('001_test.sql'));
 		} finally {
-			warnSpy.mockRestore();
+			logSpy.mockRestore();
 			await safeClose(db);
 		}
 	});

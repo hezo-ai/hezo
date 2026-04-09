@@ -15,9 +15,12 @@ import { buildMeta, parsePagination } from '../lib/pagination';
 import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { triggerStatusAutomations } from '../services/issue-automation';
 import { createWakeup } from '../services/wakeup';
+
+const log = logger.child('routes');
 
 async function wakeAgentIfAssigned(
 	db: PGlite,
@@ -30,7 +33,7 @@ async function wakeAgentIfAssigned(
 	if (isAgent.rows.length > 0) {
 		createWakeup(db, assigneeId, companyId, WakeupSource.Assignment, {
 			issue_id: issueId,
-		}).catch((e) => console.error('[wakeup] Failed to create wakeup for assignment:', e));
+		}).catch((e) => log.error('Failed to create wakeup for assignment:', e));
 	}
 }
 
@@ -192,7 +195,7 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 		if (isAgent.rows.length > 0) {
 			createWakeup(db, body.assignee_id, companyId, WakeupSource.Assignment, {
 				issue_id: issue.id as string,
-			}).catch((e) => console.error('Failed to create wakeup:', e));
+			}).catch((e) => log.error('Failed to create wakeup:', e));
 		}
 	}
 
@@ -347,7 +350,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 
 	if (body.status) {
 		triggerStatusAutomations(db, companyId, issueId, body.status).catch((e) =>
-			console.error('Failed to trigger status automations:', e),
+			log.error('Failed to trigger status automations:', e),
 		);
 	}
 

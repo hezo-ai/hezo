@@ -4,6 +4,10 @@ import type { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { type Context, Hono } from 'hono';
 import type { HezoConfig } from './cli';
+import { logger } from './logger';
+
+const log = logger.child('startup');
+
 import { MasterKeyManager } from './crypto/master-key';
 import { BASE_SCHEMA } from './db/schema';
 import type { Env } from './lib/types';
@@ -108,7 +112,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		import('./services/embeddings').then(({ initializeEmbeddingModel }) => {
 			const { join } = require('node:path') as typeof import('node:path');
 			initializeEmbeddingModel(join(config.dataDir, 'models')).catch((err) =>
-				console.error('[startup] Embedding model init failed:', err),
+				log.error('Embedding model init failed:', err),
 			);
 		});
 	});
@@ -270,10 +274,10 @@ async function fetchConnectPublicKey(connectUrl: string): Promise<string> {
 		const res = await fetch(`${connectUrl}/signing-key`, { signal: AbortSignal.timeout(5000) });
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		const { key } = (await res.json()) as { key: string };
-		console.log('Fetched Connect signing public key.');
+		log.info('Fetched Connect signing public key.');
 		return key;
 	} catch {
-		console.warn('Could not fetch Connect signing key. OAuth flows will be unavailable.');
+		log.warn('Could not fetch Connect signing key. OAuth flows will be unavailable.');
 		return '';
 	}
 }
@@ -290,7 +294,7 @@ async function runAvailableMigrations(db: PGlite): Promise<void> {
 			const migrations = await loadFilesystemMigrations(migrationsDir);
 			await runMigrations(db, migrations);
 		} catch {
-			console.warn('No migrations found. Run build:migrations or add migration files.');
+			log.warn('No migrations found. Run build:migrations or add migration files.');
 		}
 	}
 }
@@ -308,7 +312,7 @@ async function runSeed(db: PGlite): Promise<void> {
 		) {
 			return;
 		}
-		console.error('Seed failed:', err);
+		log.error('Seed failed:', err);
 	}
 }
 
@@ -327,10 +331,10 @@ async function resolveMasterKeyState(
 				? 'Invalid master key provided. Server starting in locked state.'
 				: 'Server starting in locked state. Provide master key to unlock.',
 		};
-		console.log(messages[state]);
+		log.info(messages[state]);
 		return state;
 	} catch {
-		console.warn('Master key module not available. Skipping key verification.');
+		log.warn('Master key module not available. Skipping key verification.');
 		return 'unset';
 	}
 }

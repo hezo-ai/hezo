@@ -6,6 +6,7 @@ import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import {
 	type ProjectRow,
@@ -16,6 +17,8 @@ import {
 } from '../services/containers';
 import type { JobManager } from '../services/job-manager';
 import { createWakeup } from '../services/wakeup';
+
+const log = logger.child('routes');
 
 async function cancelRunningAgentTasks(
 	db: PGlite,
@@ -54,7 +57,7 @@ async function wakeAgentsWithPendingWork(
 		createWakeup(db, row.agent_id, companyId, WakeupSource.Automation, {
 			trigger: 'container_start',
 			project_id: projectId,
-		}).catch((e) => console.error('[wakeup] Failed to create wakeup on container start:', e));
+		}).catch((e) => log.error('Failed to create wakeup on container start:', e));
 	}
 }
 
@@ -147,7 +150,7 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 			wsManager,
 			companyId,
 		).catch((error) => {
-			console.error(`Failed to provision container for project ${project.slug}:`, error);
+			log.error(`Failed to provision container for project ${project.slug}:`, error);
 		});
 	}
 
@@ -298,7 +301,7 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 			existing.rows[0].slug,
 			dataDir,
 		).catch((error) => {
-			console.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
+			log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
 		});
 	}
 
@@ -463,7 +466,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 				);
 				wakeAgentsWithPendingWork(db, projectId, companyId);
 			} catch (error) {
-				console.error(`Container rebuild failed for project ${projectId}:`, error);
+				log.error(`Container rebuild failed for project ${projectId}:`, error);
 			}
 		},
 		REBUILD_TIMEOUT_MS,

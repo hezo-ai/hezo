@@ -8,10 +8,13 @@ import {
 import { Hono } from 'hono';
 import { verifyOAuthState } from '../crypto/state';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { storeAiProviderKey } from '../services/ai-provider-keys';
 import { registerSSHKeyOnGitHub } from '../services/github';
 import { generateCompanySSHKey, getCompanySSHKey, updateGitHubKeyId } from '../services/ssh-keys';
 import { storeOAuthToken } from '../services/token-store';
+
+const log = logger.child('routes');
 
 const AI_PROVIDER_PLATFORMS = new Set(['anthropic', 'openai', 'google']);
 
@@ -114,7 +117,7 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 				metadata,
 			);
 		} catch (e) {
-			console.warn('AI provider config creation failed:', e instanceof Error ? e.message : e);
+			log.warn('AI provider config creation failed:', e instanceof Error ? e.message : e);
 		}
 
 		return c.redirect(`/companies/${companyId}/settings?ai_provider_connected=${platform}`);
@@ -146,7 +149,7 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 				await updateGitHubKeyId(db, companyId, githubKeyId);
 			}
 		} catch (err) {
-			console.warn('SSH key registration failed:', err instanceof Error ? err.message : err);
+			log.warn('SSH key registration failed:', err instanceof Error ? err.message : err);
 		}
 	}
 

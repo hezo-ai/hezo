@@ -5,12 +5,15 @@ import { broadcastChange } from '../lib/broadcast';
 import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { cloneRepo } from '../services/git';
 import { parseGitHubUrl, validateRepoAccess } from '../services/github';
 import { getCompanySSHKey } from '../services/ssh-keys';
 import { getOAuthToken } from '../services/token-store';
 import { getWorkspacePath } from '../services/workspace';
+
+const log = logger.child('routes');
 
 export const reposRoutes = new Hono<Env>();
 
@@ -129,7 +132,7 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 			if (sshKey) {
 				const targetDir = join(workspacePath, body.short_name);
 				cloneRepo(repoIdentifier, targetDir, sshKey.privateKey).catch((error) => {
-					console.error(`Failed to clone ${repoIdentifier}:`, error);
+					log.error(`Failed to clone ${repoIdentifier}:`, error);
 				});
 			}
 		}

@@ -12,13 +12,14 @@ import {
 } from '@hezo/shared';
 import { Cron } from 'cron-async';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
 import { syncAllContainerStatuses } from './containers';
 import type { DockerClient } from './docker';
 import { detectOrphans } from './orphan-detector';
 import type { WebSocketManager } from './ws';
 
-const log = (...args: unknown[]) => console.log('[job-manager]', ...args);
+const log = logger.child('job-manager');
 
 interface RunningTask {
 	key: string;
@@ -74,7 +75,7 @@ export class JobManager {
 			cron: '*/30 * * * * *',
 			onTick: () => this.guarded('embeddings', () => this.processEmbeddingQueue()),
 		});
-		console.log('Job manager started.');
+		log.info('Job manager started.');
 	}
 
 	launchTask(key: string, fn: (signal: AbortSignal) => Promise<unknown>, timeoutMs: number): void {
@@ -82,7 +83,7 @@ export class JobManager {
 		const ac = new AbortController();
 
 		const timeoutId = setTimeout(() => {
-			console.warn(`Task ${key} timed out after ${timeoutMs}ms`);
+			log.warn(`Task ${key} timed out after ${timeoutMs}ms`);
 			ac.abort();
 		}, timeoutMs);
 
@@ -123,7 +124,7 @@ export class JobManager {
 		}
 		this.runningTasks.clear();
 		this.cron.shutdown();
-		console.log('Job manager stopped.');
+		log.info('Job manager stopped.');
 	}
 
 	private async guarded(name: string, fn: () => Promise<void>): Promise<void> {
@@ -132,7 +133,7 @@ export class JobManager {
 		try {
 			await fn();
 		} catch (error) {
-			console.error(`Job ${name} error:`, error);
+			log.error(`Job ${name} error:`, error);
 		} finally {
 			this.guards.set(name, false);
 		}
@@ -159,12 +160,12 @@ export class JobManager {
 		);
 
 		if (wakeups.rows.length > 0) {
-			log(`Processing ${wakeups.rows.length} queued wakeup(s)`);
+			log.debug(`Processing ${wakeups.rows.length} queued wakeup(s)`);
 		}
 
 		for (const wakeup of wakeups.rows) {
 			if (this.isTaskRunning(`agent:${wakeup.member_id}`)) {
-				log(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
+				log.debug(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
 				continue;
 			}
 
@@ -176,7 +177,7 @@ export class JobManager {
 			try {
 				await this.activateAgent(wakeup.member_id, wakeup.company_id, wakeup.id, wakeup.payload);
 			} catch (error) {
-				console.error(`[job-manager] activateAgent threw for wakeup ${wakeup.id}:`, error);
+				log.error(`activateAgent threw for wakeup ${wakeup.id}:`, error);
 				await db
 					.query('UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2', [
 						WakeupStatus.Failed,
@@ -207,7 +208,7 @@ export class JobManager {
 		);
 
 		if (dueAgents.rows.length > 0) {
-			log(`${dueAgents.rows.length} agent(s) due for heartbeat`);
+			log.debug(`${dueAgents.rows.length} agent(s) due for heartbeat`);
 		}
 
 		for (const agent of dueAgents.rows) {
@@ -240,7 +241,7 @@ export class JobManager {
 		);
 
 		if (agent.rows.length === 0 || agent.rows[0].admin_status !== AgentAdminStatus.Enabled) {
-			log(`Agent ${memberId} not found or disabled — skipping`);
+			log.debug(`Agent ${memberId} not found or disabled — skipping`);
 			if (wakeupId) {
 				await db.query(
 					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
@@ -307,7 +308,7 @@ export class JobManager {
 					[wakeupPayload.issue_id, companyId],
 				);
 				if (payloadIssue.rows.length === 0) {
-					log(`Payload issue ${wakeupPayload.issue_id} not found for coach trigger`);
+					log.debug(`Payload issue ${wakeupPayload.issue_id} not found for coach trigger`);
 					if (wakeupId) {
 						await db.query(
 							`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
@@ -318,7 +319,7 @@ export class JobManager {
 				}
 				issue = payloadIssue.rows[0];
 			} else {
-				log(`No actionable issues for agent ${memberId}`);
+				log.debug(`No actionable issues for agent ${memberId}`);
 				if (wakeupId) {
 					await db.query(
 						`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
@@ -341,7 +342,7 @@ export class JobManager {
 		]);
 
 		if (project.rows.length === 0 || !project.rows[0].container_id) {
-			log(`No container for project ${issue.project_id} — wakeup failed`);
+			log.debug(`No container for project ${issue.project_id} — wakeup failed`);
 			if (wakeupId) {
 				await db.query(
 					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
@@ -379,7 +380,9 @@ export class JobManager {
 		const lockResult = await db.query<{ id: string }>(lockQuery, [issue.id, memberId]);
 
 		if (lockResult.rows.length === 0) {
-			log(`Could not acquire ${lockType} lock on issue ${issue.identifier} — deferring wakeup`);
+			log.debug(
+				`Could not acquire ${lockType} lock on issue ${issue.identifier} — deferring wakeup`,
+			);
 			if (wakeupId) {
 				await db.query(
 					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
@@ -400,7 +403,7 @@ export class JobManager {
 			row: { id: memberId, runtime_status: AgentRuntimeStatus.Active },
 		});
 
-		log(`Launching agent ${agent.rows[0].title} for issue ${issue.identifier}`);
+		log.debug(`Launching agent ${agent.rows[0].title} for issue ${issue.identifier}`);
 
 		const deps: RunnerDeps = {
 			db,
@@ -453,7 +456,7 @@ export class JobManager {
 	): Promise<void> {
 		const { db } = this.deps;
 
-		log(
+		log.debug(
 			`Agent ${memberId} completed: success=${result.success}, exit=${result.exitCode}, duration=${result.durationMs}ms`,
 		);
 
@@ -502,7 +505,7 @@ export class JobManager {
 				row: { issue_id: issueId },
 			});
 		} catch (err) {
-			console.error('Failed to create execution comment:', err);
+			log.error('Failed to create execution comment:', err);
 		}
 	}
 
@@ -519,7 +522,7 @@ export class JobManager {
 		const { processPendingEmbeddings } = await import('./embeddings');
 		const count = await processPendingEmbeddings(this.deps.db);
 		if (count > 0) {
-			log(`Processed ${count} embedding(s)`);
+			log.debug(`Processed ${count} embedding(s)`);
 		}
 	}
 }

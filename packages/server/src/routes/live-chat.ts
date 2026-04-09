@@ -3,8 +3,11 @@ import { Hono } from 'hono';
 import { broadcastEvent } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { createWakeup } from '../services/wakeup';
+
+const log = logger.child('routes');
 
 export const liveChatRoutes = new Hono<Env>();
 
@@ -110,7 +113,7 @@ liveChatRoutes.post('/companies/:companyId/issues/:issueId/chat/messages', async
 				createWakeup(db, mentioned.rows[0].id, companyId, WakeupSource.ChatMessage, {
 					issue_id: issueId,
 					chat_message_id: message.id,
-				}).catch((e) => console.error('Failed to create chat_message wakeup:', e));
+				}).catch((e) => log.error('Failed to create chat_message wakeup:', e));
 			}
 		}
 	}

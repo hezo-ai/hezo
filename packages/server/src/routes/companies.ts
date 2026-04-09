@@ -4,8 +4,12 @@ import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { toIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess, requireSuperuser } from '../middleware/auth';
 import { type ProjectRow, provisionContainer } from '../services/containers';
+
+const log = logger.child('routes');
+
 import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
 
 export const companiesRoutes = new Hono<Env>();
@@ -145,7 +149,7 @@ companiesRoutes.post('/companies', async (c) => {
 		if (opsResult.rows[0]) {
 			const docker = c.get('docker');
 			provisionContainer(db, docker, opsResult.rows[0], slug, dataDir).catch((error) => {
-				console.error(`Failed to provision container for operations project:`, error);
+				log.error(`Failed to provision container for operations project:`, error);
 			});
 		}
 
@@ -463,7 +467,7 @@ async function createSkillsFromTemplate(
 			);
 		} catch (e) {
 			if (e instanceof SkillDownloadError) {
-				console.warn(`Failed to download template skill "${skill.name}": ${e.message}`);
+				log.warn(`Failed to download template skill "${skill.name}": ${e.message}`);
 				continue;
 			}
 			throw e;

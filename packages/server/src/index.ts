@@ -3,10 +3,13 @@ import { AuthType } from '@hezo/shared';
 import { app } from './app';
 import { parseArgs } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
+import { logger } from './logger';
 import { verifyToken } from './middleware/auth';
 import { ContainerLogStreamer } from './services/container-logs';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { startup } from './startup';
+
+const log = logger.child('server');
 
 interface WsConnectionData extends WsData {
 	_token?: string;
@@ -52,14 +55,14 @@ startup(config)
 		mkmRef = result.masterKeyManager;
 		dockerRef = result.docker;
 		const url = `http://localhost:${result.port}`;
-		console.log(`Hezo server running at ${url} [${result.masterKeyState}]`);
+		log.info(`Hezo server running at ${url} [${result.masterKeyState}]`);
 		if (!config.noOpen) {
 			Bun.spawn(['open', 'http://localhost:5173']);
 		}
 	})
 	.catch((err) => {
-		console.error('Startup failed, serving minimal app:', err);
-		console.log(`Hezo server (minimal) starting on port ${config.port}...`);
+		log.error('Startup failed, serving minimal app:', err);
+		log.info(`Hezo server (minimal) starting on port ${config.port}...`);
 	});
 
 export default {

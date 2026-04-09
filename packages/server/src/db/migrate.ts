@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
+import { logger } from '../logger';
+
+const log = logger.child('migrate');
 
 export async function runMigrations(db: PGlite, migrations: Record<string, string>): Promise<void> {
 	await db.exec(`
@@ -24,7 +27,7 @@ export async function runMigrations(db: PGlite, migrations: Record<string, strin
 
 		if (appliedMap.has(filename)) {
 			if (appliedMap.get(filename) !== checksum) {
-				console.warn(`Warning: migration ${filename} has changed since it was applied`);
+				log.warn(`Migration ${filename} has changed since it was applied`);
 			}
 			continue;
 		}
@@ -37,7 +40,7 @@ export async function runMigrations(db: PGlite, migrations: Record<string, strin
 				checksum,
 			]);
 			await db.exec('COMMIT');
-			console.log(`Applied migration: ${filename}`);
+			log.info(`Applied migration: ${filename}`);
 		} catch (err) {
 			await db.exec('ROLLBACK');
 			throw new Error(`Migration ${filename} failed: ${err}`);

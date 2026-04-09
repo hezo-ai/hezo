@@ -3,8 +3,11 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { createWakeup } from '../services/wakeup';
+
+const log = logger.child('routes');
 
 export const commentsRoutes = new Hono<Env>();
 
@@ -117,7 +120,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 				createWakeup(db, mentioned.rows[0].id, companyId, WakeupSource.Mention, {
 					issue_id: issueId,
 					comment_id: result.rows[0].id,
-				}).catch((e) => console.error('Failed to create mention wakeup:', e));
+				}).catch((e) => log.error('Failed to create mention wakeup:', e));
 			}
 		}
 	}
@@ -131,7 +134,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 				createWakeup(db, assigneeId, companyId, WakeupSource.Comment, {
 					issue_id: issueId,
 					comment_id: result.rows[0].id,
-				}).catch((e) => console.error('Failed to create comment wakeup:', e));
+				}).catch((e) => log.error('Failed to create comment wakeup:', e));
 			}
 		}
 	}
@@ -217,7 +220,7 @@ commentsRoutes.post(
 				createWakeup(db, assigneeId, companyId, WakeupSource.OptionChosen, {
 					issue_id: existing.rows[0].issue_id,
 					chosen_id: body.chosen_id,
-				}).catch((e) => console.error('Failed to create option_chosen wakeup:', e));
+				}).catch((e) => log.error('Failed to create option_chosen wakeup:', e));
 			}
 		}
 

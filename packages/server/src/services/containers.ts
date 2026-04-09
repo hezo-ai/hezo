@@ -3,9 +3,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import { ContainerStatus } from '@hezo/shared';
+import { logger } from '../logger';
 import type { DockerClient } from './docker';
 import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
 import type { WebSocketManager } from './ws';
+
+const log = logger.child('containers');
 
 export interface ProjectRow {
 	id: string;
@@ -214,7 +217,7 @@ export async function stopContainerGracefully(
 		   AND issue_id IN (SELECT id FROM issues WHERE project_id = $1)`,
 			[projectId],
 		)
-		.catch((e) => console.error('[containers] Failed to release execution locks on stop:', e));
+		.catch((e) => log.error('Failed to release execution locks on stop:', e));
 
 	if (wsManager && companyId) {
 		const updated = await db.query<Record<string, unknown>>(

@@ -11,8 +11,11 @@ import {
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { AuthInfo } from '../lib/types';
+import { logger } from '../logger';
 import { triggerStatusAutomations } from '../services/issue-automation';
 import { createWakeup } from '../services/wakeup';
+
+const log = logger.child('mcp');
 
 export interface ToolDef {
 	name: string;
@@ -281,7 +284,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			if (isAgent.rows.length > 0) {
 				createWakeup(db, assigneeId, args.company_id as string, WakeupSource.Assignment, {
 					issue_id: r.rows[0].id,
-				}).catch((e) => console.error('Failed to wake agent:', e));
+				}).catch((e) => log.error('Failed to wake agent:', e));
 			}
 
 			return r.rows[0];
@@ -353,7 +356,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 					args.company_id as string,
 					args.issue_id as string,
 					args.status as string,
-				).catch((e) => console.error('Failed to trigger status automations:', e));
+				).catch((e) => log.error('Failed to trigger status automations:', e));
 			}
 
 			// Wake agent if assignee changed
@@ -370,7 +373,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 						{
 							issue_id: args.issue_id,
 						},
-					).catch((e) => console.error('Failed to wake agent:', e));
+					).catch((e) => log.error('Failed to wake agent:', e));
 				}
 			}
 

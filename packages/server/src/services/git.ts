@@ -7,13 +7,13 @@ import { join } from 'node:path';
 function spawn(
 	cmd: string,
 	args: string[],
-	opts: { cwd?: string; env?: Record<string, string | undefined> } = {},
+	opts: { cwd?: string; env?: Record<string, string | undefined>; timeout?: number } = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
 	return new Promise((resolve) => {
 		execFile(
 			cmd,
 			args,
-			{ cwd: opts.cwd, env: { ...process.env, ...opts.env } },
+			{ cwd: opts.cwd, env: { ...process.env, ...opts.env }, timeout: opts.timeout },
 			(error, stdout, stderr) => {
 				resolve({
 					exitCode: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
@@ -37,7 +37,7 @@ export async function cloneRepo(
 		writeFileSync(keyFile, sshPrivateKeyPem, { mode: 0o600 });
 		chmodSync(keyFile, 0o600);
 
-		const sshCommand = `ssh -i ${keyFile} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null`;
+		const sshCommand = `ssh -i ${keyFile} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10`;
 
 		const { exitCode, stderr } = await spawn('git', ['clone', sshUrl, targetDir], {
 			env: { GIT_SSH_COMMAND: sshCommand },

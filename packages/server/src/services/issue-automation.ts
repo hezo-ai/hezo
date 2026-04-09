@@ -1,6 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { AgentAdminStatus, IssueStatus, WakeupSource } from '@hezo/shared';
+import { logger } from '../logger';
 import { createWakeup } from './wakeup';
+
+const log = logger.child('automation');
 
 /**
  * Trigger automations when an issue's status changes.
@@ -28,7 +31,7 @@ export async function triggerStatusAutomations(
 			createWakeup(db, coach.rows[0].id, companyId, WakeupSource.Automation, {
 				issue_id: issueId,
 				trigger: 'issue_done',
-			}).catch((e) => console.error('Failed to wake Coach:', e));
+			}).catch((e) => log.error('Failed to wake Coach:', e));
 		}
 	}
 }

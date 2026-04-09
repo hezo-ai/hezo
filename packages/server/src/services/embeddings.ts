@@ -1,4 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { logger } from '../logger';
+
+const log = logger.child('embeddings');
 
 export const EMBEDDING_DIMENSIONS = 384;
 const MODEL_ID = 'Xenova/bge-small-en-v1.5';
@@ -31,9 +34,9 @@ export async function initializeEmbeddingModel(cacheDir?: string): Promise<void>
 				dtype: 'q8' as 'fp32',
 			});
 			extractor = pipe as unknown as typeof extractor;
-			console.log('[embeddings] Model loaded:', MODEL_ID);
+			log.info('Model loaded:', MODEL_ID);
 		} catch (err) {
-			console.error('[embeddings] Failed to load model:', err);
+			log.error('Failed to load model:', err);
 			initPromise = null;
 		}
 	})();
