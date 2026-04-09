@@ -1,5 +1,6 @@
 import { AgentAdminStatus } from '@hezo/shared';
 import { useAgents } from '../hooks/use-agents';
+import { useProjects } from '../hooks/use-projects';
 import { useUiState, useUpdateUiState } from '../hooks/use-ui-state';
 import { AgentStatusLabel } from './agent-status-label';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
@@ -11,6 +12,7 @@ interface CompanySidebarProps {
 export function CompanySidebar({ companyId }: CompanySidebarProps) {
 	const params = { companyId };
 	const { data: agents } = useAgents(companyId);
+	const { data: projects } = useProjects(companyId);
 	const { data: uiState } = useUiState(companyId);
 	const updateUiState = useUpdateUiState(companyId);
 
@@ -18,7 +20,14 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 		.filter((a) => a.admin_status !== AgentAdminStatus.Terminated)
 		.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
+	const sortedProjects = [...(projects ?? [])].sort((a, b) => {
+		if (a.name.toLowerCase() === 'operations') return -1;
+		if (b.name.toLowerCase() === 'operations') return 1;
+		return a.name.localeCompare(b.name);
+	});
+
 	const teamExpanded = uiState?.sidebar?.team_expanded ?? true;
+	const projectsExpanded = uiState?.sidebar?.projects_expanded ?? true;
 
 	const sections: SidebarNavSection[] = [
 		{
@@ -26,10 +35,21 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 		},
 		{
 			title: 'Work',
-			items: [
-				{ to: '/companies/$companyId/issues', params, label: 'Issues' },
-				{ to: '/companies/$companyId/projects', params, label: 'Projects' },
-			],
+			items: [{ to: '/companies/$companyId/issues', params, label: 'Issues' }],
+		},
+		{
+			title: 'Projects',
+			collapsible: true,
+			collapsed: !projectsExpanded,
+			onToggle: () => {
+				updateUiState.mutate({ sidebar: { projects_expanded: !projectsExpanded } });
+			},
+			items: [],
+			children: sortedProjects.map((project) => ({
+				to: '/companies/$companyId/projects/$projectId',
+				params: { companyId, projectId: project.slug },
+				label: project.name,
+			})),
 		},
 		{
 			title: 'Team',
@@ -38,7 +58,7 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 			onToggle: () => {
 				updateUiState.mutate({ sidebar: { team_expanded: !teamExpanded } });
 			},
-			items: [{ to: '/companies/$companyId/agents', params, label: 'All agents' }],
+			items: [],
 			children: activeAgents.map((agent) => ({
 				to: '/companies/$companyId/agents/$agentId',
 				params: { companyId, agentId: agent.id },

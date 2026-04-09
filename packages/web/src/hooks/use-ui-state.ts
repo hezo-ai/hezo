@@ -4,6 +4,7 @@ import { queryClient } from '../lib/query-client';
 
 interface SidebarState {
 	team_expanded?: boolean;
+	projects_expanded?: boolean;
 }
 
 export interface UiState {

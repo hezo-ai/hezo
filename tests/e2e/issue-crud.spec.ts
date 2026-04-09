@@ -1,5 +1,15 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 import { authenticate, createCompanyWithAgents, getToken, waitForPageLoad } from './helpers';
+
+async function suppressAiModal(page: Page) {
+	await page.route('**/ai-providers/status', (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ data: { configured: true } }),
+		}),
+	);
+}
 
 test('can create an issue with required assignee', async ({ page }) => {
 	await page.goto('/');
@@ -14,20 +24,16 @@ test('can create an issue with required assignee', async ({ page }) => {
 	expect(agents.length).toBeGreaterThan(0);
 	const agent = agents[0];
 
-	// Create a project first
-	await page.goto(`/companies/${company.id}`);
-	await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
-	await page.getByRole('link', { name: 'Projects' }).click();
-	await page
-		.getByRole('button', { name: 'New Project' })
-		.filter({ hasText: 'New project' })
-		.click();
-	await page.getByLabel('Name').fill('Test Project');
-	await page.getByRole('button', { name: 'Create' }).click();
-	await expect(page.getByText('Test Project')).toBeVisible({ timeout: 5000 });
+	// Create a project via API
+	await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Test Project' },
+	});
 
-	// Create issue — assignee is required
-	await page.getByRole('link', { name: 'Issues', exact: true }).click();
+	// Navigate to issues
+	await suppressAiModal(page);
+	await page.goto(`/companies/${company.slug}/issues`);
+	await waitForPageLoad(page);
 	await expect(page.getByRole('button', { name: 'New Issue' }).first()).toBeVisible({
 		timeout: 10000,
 	});
