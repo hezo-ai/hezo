@@ -135,11 +135,20 @@ function IssueDetailPage() {
 					))}
 				</div>
 
-				{lock && (
-					<div className="flex items-center gap-2 mb-4 rounded-radius-md bg-accent-blue-bg px-3 py-2 text-xs">
-						<span className="w-2 h-2 rounded-full bg-accent-blue animate-pulse" />
-						<span className="text-accent-blue-text font-medium">{lock.member_name}</span>
-						<span className="text-text-muted">is working on this issue</span>
+				{lock && lock.locks.length > 0 && (
+					<div className="flex flex-col gap-1 mb-4">
+						{lock.locks.map((l) => (
+							<div
+								key={l.id}
+								className="flex items-center gap-2 rounded-radius-md bg-accent-blue-bg px-3 py-2 text-xs"
+							>
+								<span className="w-2 h-2 rounded-full bg-accent-blue animate-pulse" />
+								<span className="text-accent-blue-text font-medium">{l.member_name}</span>
+								<span className="text-text-muted">
+									{l.lock_type === 'write' ? 'is working on this issue' : 'is reviewing this issue'}
+								</span>
+							</div>
+						))}
 					</div>
 				)}
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
@@ -7,16 +7,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { generateMasterKey, MasterKeyManager } from '../../crypto/master-key';
 import { loadAgentRoles } from '../../db/agent-roles';
 import { seedBuiltins } from '../../db/seed';
-import {
-	readAllSkillContents,
-	readSkillManifest,
-	resolveSkillsPath,
-	writeSkillFile,
-	writeSkillManifest,
-} from '../../lib/docs';
 import type { Env } from '../../lib/types';
 import { signBoardJwt } from '../../middleware/auth';
-import { parseGitHubRawUrl, SkillDownloadError, syncSkill } from '../../services/skill-downloader';
+import { parseGitHubRawUrl, SkillDownloadError } from '../../services/skill-downloader';
 import { resolveSystemPrompt } from '../../services/template-resolver';
 import { buildApp } from '../../startup';
 import { safeClose } from '../helpers';
@@ -109,45 +102,7 @@ describe('parseGitHubRawUrl', () => {
 	});
 });
 
-describe('Skill filesystem helpers', () => {
-	it('reads empty manifest when file does not exist', () => {
-		const skillsDir = join(tempDataDir, 'companies', 'nonexistent', 'skills');
-		const manifest = readSkillManifest(skillsDir);
-		expect(manifest).toEqual({ skills: [] });
-	});
-
-	it('writes and reads skill files + manifest', () => {
-		const skillsDir = resolveSkillsPath(tempDataDir, 'fs-test');
-		writeSkillFile(skillsDir, 'my-skill', '# Hello');
-		writeSkillManifest(skillsDir, {
-			skills: [
-				{
-					name: 'My Skill',
-					slug: 'my-skill',
-					description: 'test',
-					source_url: 'https://example.com/skill.md',
-					content_hash: 'abc',
-					last_synced_at: '2026-01-01T00:00:00.000Z',
-				},
-			],
-		});
-		const manifest = readSkillManifest(skillsDir);
-		expect(manifest.skills).toHaveLength(1);
-		expect(manifest.skills[0].slug).toBe('my-skill');
-		const all = readAllSkillContents(skillsDir);
-		expect(all).toEqual([{ name: 'My Skill', content: '# Hello' }]);
-	});
-});
-
 describe('Skills API', () => {
-	beforeEach(() => {
-		// Reset skills directory between tests
-		const skillsDir = resolveSkillsPath(tempDataDir, companySlug);
-		if (existsSync(skillsDir)) {
-			rmSync(skillsDir, { recursive: true, force: true });
-		}
-	});
-
 	it('creates a skill by downloading from a URL', async () => {
 		stubFetch('# Git Best Practices\n\nDo good things.');
 
@@ -165,10 +120,7 @@ describe('Skills API', () => {
 		expect(body.data.slug).toBe('git-best-practices');
 		expect(body.data.name).toBe('Git Best Practices');
 		expect(body.data.content_hash).toBeTruthy();
-
-		const skillsDir = resolveSkillsPath(tempDataDir, companySlug);
-		const content = readFileSync(join(skillsDir, 'git-best-practices.md'), 'utf-8');
-		expect(content).toBe('# Git Best Practices\n\nDo good things.');
+		expect(body.data.content).toBe('# Git Best Practices\n\nDo good things.');
 	});
 
 	it('lists skills', async () => {
@@ -190,7 +142,11 @@ describe('Skills API', () => {
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data).toHaveLength(2);
+		// At least the 2 we just created (plus any from earlier tests)
+		expect(body.data.length).toBeGreaterThanOrEqual(2);
+		const slugs = body.data.map((s: any) => s.slug);
+		expect(slugs).toContain('alpha');
+		expect(slugs).toContain('beta');
 	});
 
 	it('gets skill by slug with content', async () => {
@@ -246,10 +202,8 @@ describe('Skills API', () => {
 			body: '{}',
 		});
 		expect(res.status).toBe(200);
-
-		const skillsDir = resolveSkillsPath(tempDataDir, companySlug);
-		const content = readFileSync(join(skillsDir, 'sync-test.md'), 'utf-8');
-		expect(content).toBe('# Version 2');
+		const syncBody = await res.json();
+		expect(syncBody.data.content).toBe('# Version 2');
 	});
 
 	it('deletes a skill', async () => {
@@ -271,9 +225,6 @@ describe('Skills API', () => {
 			headers: authHeader(token),
 		});
 		expect(getRes.status).toBe(404);
-
-		const skillsDir = resolveSkillsPath(tempDataDir, companySlug);
-		expect(existsSync(join(skillsDir, 'delete-me.md'))).toBe(false);
 	});
 
 	it('returns 404 for nonexistent skill', async () => {
@@ -313,24 +264,16 @@ describe('Skills API', () => {
 });
 
 describe('Template resolver with skills_context', () => {
-	it('injects skill contents into the prompt', async () => {
-		const skillsDir = resolveSkillsPath(tempDataDir, companySlug);
-		if (existsSync(skillsDir)) {
-			rmSync(skillsDir, { recursive: true, force: true });
-		}
-		writeSkillFile(skillsDir, 'direct-skill', '# Direct Skill\nDo the thing.');
-		writeSkillManifest(skillsDir, {
-			skills: [
-				{
-					name: 'Direct Skill',
-					slug: 'direct-skill',
-					description: '',
-					source_url: 'https://example.com/d.md',
-					content_hash: 'hash',
-					last_synced_at: '2026-01-01T00:00:00.000Z',
-				},
-			],
-		});
+	it('injects skill contents into the prompt from DB', async () => {
+		// Clean DB skills for this test
+		await db.query('DELETE FROM skills WHERE company_id = $1', [companyId]);
+
+		// Insert a skill directly into DB
+		await db.query(
+			`INSERT INTO skills (company_id, name, slug, content, content_hash, is_active)
+			 VALUES ($1, 'Direct Skill', 'direct-skill', '# Direct Skill\nDo the thing.', 'hash', true)`,
+			[companyId],
+		);
 
 		const resolved = await resolveSystemPrompt(db, 'Agent prompt.\n\n{{skills_context}}\n\nEnd.', {
 			companyId,
@@ -342,10 +285,7 @@ describe('Template resolver with skills_context', () => {
 	});
 
 	it('falls back to placeholder when no skills', async () => {
-		const skillsDir = resolveSkillsPath(tempDataDir, companySlug);
-		if (existsSync(skillsDir)) {
-			rmSync(skillsDir, { recursive: true, force: true });
-		}
+		await db.query('DELETE FROM skills WHERE company_id = $1', [companyId]);
 
 		const resolved = await resolveSystemPrompt(db, '{{skills_context}}', {
 			companyId,
@@ -355,14 +295,44 @@ describe('Template resolver with skills_context', () => {
 	});
 });
 
-describe('syncSkill downloader function', () => {
-	it('throws when skill does not exist', async () => {
-		const skillsDir = resolveSkillsPath(tempDataDir, 'nonexistent-co');
-		if (existsSync(skillsDir)) {
-			rmSync(skillsDir, { recursive: true, force: true });
-		}
-		await expect(syncSkill(tempDataDir, 'nonexistent-co', 'missing-slug')).rejects.toThrow(
-			SkillDownloadError,
+describe('skills DB operations', () => {
+	it('creates a skill via POST and stores in DB', async () => {
+		// This test relies on the download mock from the parent describe
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response('# Test skill content', { status: 200, headers: { 'content-length': '22' } }),
 		);
+
+		const res = await app.request(`/api/companies/${companyId}/skills`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', ...authHeader(token) },
+			body: JSON.stringify({
+				name: 'DB Test Skill',
+				source_url: 'https://example.com/skill.md',
+				description: 'A test skill',
+				tags: ['test', 'db'],
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = (await res.json()) as { data: Record<string, unknown> };
+		expect(body.data.name).toBe('DB Test Skill');
+		expect(body.data.id).toBeDefined();
+		expect(body.data.tags).toEqual(['test', 'db']);
+		expect(body.data.content).toBe('# Test skill content');
+
+		// Verify it's in the database
+		const dbResult = await db.query('SELECT * FROM skills WHERE company_id = $1 AND slug = $2', [
+			companyId,
+			'db-test-skill',
+		]);
+		expect(dbResult.rows.length).toBe(1);
+	});
+
+	it('lists skills from DB', async () => {
+		const res = await app.request(`/api/companies/${companyId}/skills`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { data: Array<Record<string, unknown>> };
+		expect(Array.isArray(body.data)).toBe(true);
 	});
 });

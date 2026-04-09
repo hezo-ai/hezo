@@ -1,12 +1,4 @@
 import { createHash } from 'node:crypto';
-import type { SkillManifestEntry } from '@hezo/shared';
-import {
-	deleteSkillFile,
-	readSkillManifest,
-	resolveSkillsPath,
-	writeSkillFile,
-	writeSkillManifest,
-} from '../lib/docs';
 
 const MAX_SKILL_BYTES = 512 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 10_000;
@@ -120,99 +112,11 @@ export async function downloadSkillContent(
 	return { content, hash };
 }
 
-export interface SkillInput {
-	name: string;
-	slug: string;
-	description: string;
-	source_url: string;
-}
-
 /**
- * Download a skill and save it to the company skills directory,
- * updating the manifest. Overwrites any existing skill with the same slug.
+ * Re-download a skill from its source URL and return new content + hash.
  */
-export async function downloadAndSaveSkill(
-	dataDir: string,
-	companySlug: string,
-	skill: SkillInput,
-): Promise<SkillManifestEntry> {
-	const { content, hash } = await downloadSkillContent(skill.source_url);
-	const skillsDir = resolveSkillsPath(dataDir, companySlug);
-
-	writeSkillFile(skillsDir, skill.slug, content);
-
-	const manifest = readSkillManifest(skillsDir);
-	const entry: SkillManifestEntry = {
-		name: skill.name,
-		slug: skill.slug,
-		description: skill.description,
-		source_url: skill.source_url,
-		content_hash: hash,
-		last_synced_at: new Date().toISOString(),
-	};
-
-	const existingIndex = manifest.skills.findIndex((s) => s.slug === skill.slug);
-	if (existingIndex >= 0) {
-		manifest.skills[existingIndex] = entry;
-	} else {
-		manifest.skills.push(entry);
-	}
-	writeSkillManifest(skillsDir, manifest);
-
-	return entry;
-}
-
-/**
- * Re-download an existing skill from its stored source URL.
- */
-export async function syncSkill(
-	dataDir: string,
-	companySlug: string,
-	slug: string,
-): Promise<SkillManifestEntry> {
-	const skillsDir = resolveSkillsPath(dataDir, companySlug);
-	const manifest = readSkillManifest(skillsDir);
-	const existing = manifest.skills.find((s) => s.slug === slug);
-	if (!existing) {
-		throw new SkillDownloadError(`Skill not found: ${slug}`, 'not_found');
-	}
-	return downloadAndSaveSkill(dataDir, companySlug, {
-		name: existing.name,
-		slug: existing.slug,
-		description: existing.description,
-		source_url: existing.source_url,
-	});
-}
-
-/**
- * Remove a skill from the filesystem and manifest.
- */
-export function removeSkill(dataDir: string, companySlug: string, slug: string): boolean {
-	const skillsDir = resolveSkillsPath(dataDir, companySlug);
-	const manifest = readSkillManifest(skillsDir);
-	const index = manifest.skills.findIndex((s) => s.slug === slug);
-	if (index < 0) return false;
-	manifest.skills.splice(index, 1);
-	writeSkillManifest(skillsDir, manifest);
-	deleteSkillFile(skillsDir, slug);
-	return true;
-}
-
-/**
- * Update a skill's metadata (name, description) in the manifest.
- */
-export function updateSkillMetadata(
-	dataDir: string,
-	companySlug: string,
-	slug: string,
-	update: { name?: string; description?: string },
-): SkillManifestEntry | null {
-	const skillsDir = resolveSkillsPath(dataDir, companySlug);
-	const manifest = readSkillManifest(skillsDir);
-	const entry = manifest.skills.find((s) => s.slug === slug);
-	if (!entry) return null;
-	if (update.name !== undefined) entry.name = update.name;
-	if (update.description !== undefined) entry.description = update.description;
-	writeSkillManifest(skillsDir, manifest);
-	return entry;
+export async function syncSkillFromUrl(
+	sourceUrl: string,
+): Promise<{ content: string; hash: string }> {
+	return downloadSkillContent(sourceUrl);
 }

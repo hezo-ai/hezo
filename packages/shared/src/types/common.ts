@@ -217,24 +217,39 @@ export const CompanyTypeSource = {
 } as const;
 export type CompanyTypeSource = (typeof CompanyTypeSource)[keyof typeof CompanyTypeSource];
 
-export interface SkillManifestEntry {
-	name: string;
-	slug: string;
-	description: string;
-	source_url: string;
-	content_hash: string;
-	last_synced_at: string;
-}
-
-export interface SkillManifest {
-	skills: SkillManifestEntry[];
-}
-
 export interface SkillTemplateConfig {
 	name: string;
 	source_url: string;
 	description?: string;
 }
+
+export interface SkillRecord {
+	id: string;
+	company_id: string;
+	name: string;
+	slug: string;
+	description: string;
+	content: string;
+	source_url: string | null;
+	content_hash: string;
+	created_by_member_id: string | null;
+	tags: string[];
+	is_active: boolean;
+	created_at: string;
+	updated_at: string;
+}
+
+export const ExecutionLockType = {
+	Read: 'read',
+	Write: 'write',
+} as const;
+export type ExecutionLockType = (typeof ExecutionLockType)[keyof typeof ExecutionLockType];
+
+export const READER_AGENT_SLUGS: ReadonlySet<string> = new Set([
+	'coach',
+	'qa-engineer',
+	'security-engineer',
+]);
 
 export const AuditAction = {
 	Created: 'created',

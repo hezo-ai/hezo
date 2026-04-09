@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
+import { vector } from '@electric-sql/pglite/vector';
 import { type Context, Hono } from 'hono';
 import type { HezoConfig } from './cli';
 import { MasterKeyManager } from './crypto/master-key';
@@ -33,6 +34,7 @@ import { previewRoutes } from './routes/preview';
 import { projectDocsRoutes } from './routes/project-docs';
 import { projectsRoutes } from './routes/projects';
 import { reposRoutes } from './routes/repos';
+import { searchRoutes } from './routes/search';
 import { secretsRoutes } from './routes/secrets';
 import { skillsRoutes } from './routes/skills';
 import { uiStateRoutes } from './routes/ui-state';
@@ -75,9 +77,9 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	try {
 		const { NodeFS } = await import('@electric-sql/pglite/nodefs');
-		db = new PGlite({ fs: new NodeFS(pgDataPath) });
+		db = new PGlite({ fs: new NodeFS(pgDataPath), extensions: { vector } });
 	} catch {
-		db = new PGlite();
+		db = new PGlite({ extensions: { vector } });
 	}
 
 	await db.exec(BASE_SCHEMA);
@@ -100,7 +102,16 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		wsManager,
 	});
 
-	masterKeyManager.onUnlock(() => jobManager.start());
+	masterKeyManager.onUnlock(() => {
+		jobManager.start();
+		// Initialize embedding model in background (downloads on first use)
+		import('./services/embeddings').then(({ initializeEmbeddingModel }) => {
+			const { join } = require('node:path') as typeof import('node:path');
+			initializeEmbeddingModel(join(config.dataDir, 'models')).catch((err) =>
+				console.error('[startup] Embedding model init failed:', err),
+			);
+		});
+	});
 
 	const app = buildApp(
 		db,
@@ -206,6 +217,7 @@ export function buildApp(
 	app.route('/api', liveChatRoutes);
 	app.route('/api', auditLogRoutes);
 	app.route('/api', previewRoutes);
+	app.route('/api', searchRoutes);
 
 	// Static file serving for compiled binary (frontend assets)
 	const staticDir = resolve(new URL('.', import.meta.url).pathname, '..', 'static');

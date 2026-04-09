@@ -37,7 +37,7 @@ Hezo ships as a single executable binary. No external database required. No clou
 |-----------|-----------|-------|
 | Server | Hono (TypeScript) | Lightweight HTTP framework |
 | Binary | `bun build --compile` | Single executable, cross-platform |
-| Database | PGlite with NodeFS | Filesystem-persisted embedded Postgres at `~/.hezo/pgdata` |
+| Database | PGlite with NodeFS + pgvector | Filesystem-persisted embedded Postgres at `~/.hezo/pgdata`, vector search via pgvector extension |
 | Persistence path | `~/.hezo/` by default | Overridable via `--data-dir` CLI arg |
 | Live queries | PGlite `live.query()` / `live.changes()` | Real-time UI updates without polling |
 | Migrations | Custom SQL runner | Numbered SQL files, bundled into binary via `@hiddentao/zip-json`, runs on startup |
@@ -255,6 +255,29 @@ Hezo serves a **skill file** that teaches external AI agents (like Claude Code) 
 - Examples of typical interactions
 
 **Dynamically generated:** The skill file is generated at startup from the registered MCP tool definitions, ensuring it is always up-to-date with the current tool surface. Changes to MCP tools automatically update the skill file.
+
+### Skills (DB-backed)
+
+Skills are reusable instruction documents stored in the `skills` table (company-scoped). They are injected into every agent's system prompt via the `{{skills_context}}` template variable.
+
+Skills have: name, slug, description, content (markdown), tags (JSONB array), source URL (optional, for skills downloaded from GitHub), content hash, creator tracking, and revision history (`skill_revisions` table).
+
+**Creation paths:**
+- Board downloads from URL via Settings UI
+- Agent proposes via `propose_skill` MCP tool (creates approval)
+- Agent creates directly via `create_skill` MCP tool
+
+**Agent access:** `list_skills`, `get_skill`, `create_skill` MCP tools. Skills are also injected into prompts at activation time.
+
+### Semantic search (pgvector + local embeddings)
+
+Hezo includes built-in semantic search powered by pgvector (enabled in PGlite) and a local embedding model (`BAAI/bge-small-en-v1.5`, 33M params, ~50MB RAM). The model downloads on first use and runs in-process — no API key, no cost, fully offline after first download.
+
+**Searchable content:** KB docs, issues, skills, and project docs all have `embedding vector(384)` columns. A background job generates embeddings for new content every 30 seconds.
+
+**Agent access:** `semantic_search` MCP tool searches across all content types by natural language query, returning ranked results with relevance scores. Scope can be limited to specific content types.
+
+**REST endpoint:** `GET /companies/:companyId/search?q=...&scope=...` for the UI.
 
 ---
 
@@ -493,9 +516,7 @@ Each repo in a project has its own `AGENTS.md` at its root. The designated repo'
 
 ### Designated repo and project documents
 
-When a project is created, a repo must be added (create new or add existing). The first repo added becomes the **designated repo** (`projects.designated_repo_id`). It holds project documents in a `.dev/` folder and AGENTS.md at the repo root. Even if more repos are added later, the first one remains the designated repo.
-
-Project documents in `.dev/`:
+Project documents are stored in the database (`project_docs` table), not the filesystem. Every project can have docs regardless of whether it has a repo. Common documents:
 - `spec.md` — tech spec
 - `prd.md` — product requirements (board approval required for agent changes)
 - `implementation-phases.md` — ordered implementation plan
@@ -503,7 +524,9 @@ Project documents in `.dev/`:
 - `ui-design-decisions.md` — design rationale
 - Other ad-hoc documents
 
-These are tracked by git — revision history comes from `git log`. Agents read/write these files directly. PRD changes by agents require board approval; all other docs are updated freely.
+Agents read/write project docs via MCP tools (`list_project_docs`, `read_project_doc`, `write_project_doc`). PRD changes by agents require board approval; all other docs are updated freely. Project docs support semantic search via pgvector embeddings.
+
+`AGENTS.md` is the exception — it stays as a git-tracked file at the repo root of the designated repo, since it needs to be discoverable by coding agents working in the repo.
 
 Role-specific instructions are embedded directly in each agent's system prompt template — no separate skill files.
 
@@ -1475,9 +1498,14 @@ Agents execute inside project containers. Container state changes directly affec
 
 Agent runtime status (`active` / `idle` / `paused`) is updated in the database and broadcast via WebSocket when an agent is activated and when it completes.
 
-### Issue work ownership
+### Issue work ownership (read/write locks)
 
-An issue can only be actively worked on by **one agent at a time**. When an agent is assigned to an issue and begins work, that agent holds exclusive ownership of the issue. This prevents multiple agents from making conflicting changes to the same codebase or producing duplicate work. Execution locking applies only to agent-assigned issues — board-member-assigned issues have no execution lock.
+Execution locks support two modes: **write locks** (exclusive) and **read locks** (shared).
+
+- **Write lock**: Only one agent at a time. Used by agents doing implementation work (Engineer, Architect, etc.). Prevents conflicting codebase changes.
+- **Read lock**: Multiple agents simultaneously. Used by agents doing review work (QA Engineer, Security Engineer, Coach). Multiple reviewers can review the same issue in parallel, but a write lock blocks all read locks and vice versa.
+
+Lock type is determined automatically: Coach (issue_done trigger), QA Engineer, and Security Engineer get read locks; all others get write locks. The REST API also accepts an explicit `lock_type` parameter.
 
 Work on an issue can span **hours or days** — this is not a short-lived database lock. The agent retains ownership until:
 - The issue is reassigned to a different agent or board member
@@ -1676,7 +1704,7 @@ Each project has a set of living documents stored as files in the designated rep
 
 ### Living documents
 
-Project documents must always reflect the current state of decisions and codebase. **Any agent** can update any project document — not just the creator. When implementation diverges from the spec, the relevant `.dev/` documents must be updated. A session-end hook ensures agents update `.dev/` docs after making changes.
+Project documents must always reflect the current state of decisions and codebase. **Any agent** can update any project document — not just the creator. When implementation diverges from the spec, the relevant project docs must be updated. Agents use the `write_project_doc` MCP tool to update docs.
 
 ### No approval required for updates (except PRD)
 
@@ -1688,13 +1716,11 @@ When an agent tries to update `prd.md` via the API, the system creates a pending
 
 ### How it works
 
-Documents are stored as files in `{designated-repo}/.dev/`. Agents access them directly from the filesystem (inside the container at `/workspace/{repo-short-name}/.dev/`). The API provides CRUD endpoints that read/write files on the host filesystem. Revision history comes from git.
-
-The `project_docs` and `project_doc_revisions` DB tables have been removed — git handles project-level doc storage and versioning.
+Documents are stored in the `project_docs` table. Agents access them via MCP tools (`list_project_docs`, `read_project_doc`, `write_project_doc`). Documents are also injected into agent prompts via the `{{project_docs_context}}` template variable at activation time. Semantic search via pgvector embeddings is supported.
 
 ### Project documents in the UI
 
-Accessible from the project detail view as a **Documents tab**. The UI uses the project docs API (`GET/PUT/DELETE /projects/:id/docs/:filename`) to browse and edit documents. Revision history served via `git log`.
+Accessible from the project detail view as a **Documents tab**. The UI uses the project docs API (`GET/PUT/DELETE /projects/:id/docs/:filename`) to browse and edit documents.
 
 ---
 
@@ -2076,7 +2102,7 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `issues` | Tickets. Must have a project. Assignee references `members.id`. |
 | `issue_dependencies` | Many-to-many blocking relationships between issues. |
 | `issue_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. |
-| `execution_locks` | Issue work ownership tracking — one agent works on an issue at a time. |
+| `execution_locks` | Issue work ownership tracking — read/write locks. Multiple readers (reviewers) or one exclusive writer. |
 | `secrets` | Encrypted key-value. Scoped to company or company+project. |
 | `secret_grants` | Links secrets to agents. Revocable. |
 | `approvals` | Pending board decisions. Polymorphic payload. |
@@ -2084,7 +2110,9 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `audit_log` | Append-only. Never updated or deleted. |
 | `kb_docs` | Knowledge base documents. AGENTS.md is a special KB doc written to disk. |
 | `live_chats` | Persistent live chat per issue. One ongoing conversation. |
-| ~~`project_docs`~~ | _Removed — project docs live in the designated repo's `.dev/` folder, versioned by git._ |
+| `project_docs` | Project documentation (PRD, spec, implementation plan, etc.) — DB-backed, company-scoped, with embeddings. |
+| `skills` | Reusable instruction documents — DB-backed, company-scoped, with tags, revisions, and embeddings. |
+| `skill_revisions` | Version history for skills. |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. |
 | `plugins` | Installed plugins. Config, capabilities, status. Local-only for MVP. |
 | `notification_preferences` | Per-user notification routing. |

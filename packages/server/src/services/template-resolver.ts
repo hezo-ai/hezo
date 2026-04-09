@@ -1,11 +1,4 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	listDocFiles,
-	readAllSkillContents,
-	readDocFile,
-	resolveDevDocsPath,
-	resolveSkillsPath,
-} from '../lib/docs';
 
 interface ResolveContext {
 	companyId: string;
@@ -104,20 +97,14 @@ export async function resolveSystemPrompt(
 
 	if (resolved.includes('{{skills_context}}')) {
 		let skillsText = 'No skills configured.';
-		if (ctx.dataDir) {
-			if (!companySlug) {
-				const slugResult = await db.query<{ slug: string }>(
-					'SELECT slug FROM companies WHERE id = $1',
-					[ctx.companyId],
-				);
-				companySlug = slugResult.rows[0]?.slug;
-			}
-			if (companySlug) {
-				const skills = readAllSkillContents(resolveSkillsPath(ctx.dataDir, companySlug));
-				if (skills.length > 0) {
-					skillsText = skills.map((s) => `## Skill: ${s.name}\n${s.content}`).join('\n\n---\n\n');
-				}
-			}
+		const dbSkills = await db.query<{ name: string; content: string }>(
+			'SELECT name, content FROM skills WHERE company_id = $1 AND is_active = true ORDER BY name',
+			[ctx.companyId],
+		);
+		if (dbSkills.rows.length > 0) {
+			skillsText = dbSkills.rows
+				.map((s) => `## Skill: ${s.name}\n${s.content}`)
+				.join('\n\n---\n\n');
 		}
 		resolved = resolved.replace(/\{\{skills_context\}\}/g, skillsText);
 	}
@@ -134,44 +121,15 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{company_preferences_context\}\}/g, prefsText);
 	}
 
-	// Resolve project docs from the designated repo's .dev/ folder
 	if (resolved.includes('{{project_docs_context}}')) {
 		let docsText = 'No project documentation available.';
-		if (ctx.projectId && ctx.dataDir) {
-			if (!companySlug) {
-				const slugResult = await db.query<{ slug: string }>(
-					'SELECT slug FROM companies WHERE id = $1',
-					[ctx.companyId],
-				);
-				companySlug = slugResult.rows[0]?.slug;
-			}
-			if (companySlug) {
-				const project = await db.query<{ slug: string; designated_repo_id: string | null }>(
-					'SELECT slug, designated_repo_id FROM projects WHERE id = $1',
-					[ctx.projectId],
-				);
-				if (project.rows[0]?.designated_repo_id) {
-					const repo = await db.query<{ short_name: string }>(
-						'SELECT short_name FROM repos WHERE id = $1',
-						[project.rows[0].designated_repo_id],
-					);
-					if (repo.rows[0]) {
-						const devPath = resolveDevDocsPath(
-							ctx.dataDir,
-							companySlug,
-							project.rows[0].slug,
-							repo.rows[0].short_name,
-						);
-						const files = listDocFiles(devPath);
-						if (files.length > 0) {
-							const fileContents = files.map((f) => {
-								const content = readDocFile(devPath, f);
-								return `## ${f}\n${content ?? '(empty)'}`;
-							});
-							docsText = fileContents.join('\n\n---\n\n');
-						}
-					}
-				}
+		if (ctx.projectId) {
+			const docs = await db.query<{ filename: string; content: string }>(
+				'SELECT filename, content FROM project_docs WHERE project_id = $1 ORDER BY filename',
+				[ctx.projectId],
+			);
+			if (docs.rows.length > 0) {
+				docsText = docs.rows.map((d) => `## ${d.filename}\n${d.content}`).join('\n\n---\n\n');
 			}
 		}
 		resolved = resolved.replace(/\{\{project_docs_context\}\}/g, docsText);

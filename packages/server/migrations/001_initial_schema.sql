@@ -1,5 +1,7 @@
 -- Initial schema for the company orchestration platform
 
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -------------------------------------------------------------------------------
 -- SYSTEM META
 -------------------------------------------------------------------------------
@@ -366,6 +368,7 @@ CREATE TABLE issues (
     progress_summary_updated_by  UUID REFERENCES members(id) ON DELETE SET NULL,
     rules                TEXT,
     branch_name          TEXT,
+    embedding            vector(384),
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -378,6 +381,7 @@ CREATE INDEX idx_issues_assignee ON issues(assignee_id);
 CREATE INDEX idx_issues_status ON issues(company_id, status);
 CREATE INDEX idx_issues_parent ON issues(parent_issue_id);
 CREATE INDEX idx_issues_identifier ON issues(identifier);
+CREATE INDEX idx_issues_embedding ON issues USING hnsw (embedding vector_cosine_ops);
 
 -------------------------------------------------------------------------------
 -- ISSUE DEPENDENCIES
@@ -402,6 +406,7 @@ CREATE TABLE execution_locks (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     issue_id    UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     member_id   UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    lock_type   TEXT NOT NULL DEFAULT 'write' CHECK (lock_type IN ('read', 'write')),
     locked_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     released_at TIMESTAMPTZ
 );
@@ -535,6 +540,7 @@ CREATE TABLE kb_docs (
     slug                     TEXT NOT NULL,
     content                  TEXT NOT NULL DEFAULT '',
     last_updated_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
+    embedding                vector(384),
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -542,6 +548,7 @@ CREATE TABLE kb_docs (
 );
 
 CREATE INDEX idx_kb_docs_company ON kb_docs(company_id);
+CREATE INDEX idx_kb_docs_embedding ON kb_docs USING hnsw (embedding vector_cosine_ops);
 
 -------------------------------------------------------------------------------
 -- LIVE CHATS
@@ -700,6 +707,73 @@ CREATE TABLE kb_doc_revisions (
 );
 
 CREATE INDEX idx_kb_revisions_doc ON kb_doc_revisions(doc_id);
+
+-------------------------------------------------------------------------------
+-- SKILLS
+-------------------------------------------------------------------------------
+
+CREATE TABLE skills (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id            UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    name                  TEXT NOT NULL,
+    slug                  TEXT NOT NULL,
+    description           TEXT NOT NULL DEFAULT '',
+    content               TEXT NOT NULL DEFAULT '',
+    source_url            TEXT,
+    content_hash          TEXT NOT NULL DEFAULT '',
+    created_by_member_id  UUID REFERENCES members(id) ON DELETE SET NULL,
+    tags                  JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_active             BOOLEAN NOT NULL DEFAULT true,
+    embedding             vector(384),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE(company_id, slug)
+);
+
+CREATE INDEX idx_skills_company ON skills(company_id);
+CREATE INDEX idx_skills_embedding ON skills USING hnsw (embedding vector_cosine_ops);
+
+-------------------------------------------------------------------------------
+-- SKILL REVISIONS
+-------------------------------------------------------------------------------
+
+CREATE TABLE skill_revisions (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    skill_id          UUID NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    revision_number   INTEGER NOT NULL,
+    content           TEXT NOT NULL,
+    content_hash      TEXT NOT NULL DEFAULT '',
+    change_summary    TEXT NOT NULL DEFAULT '',
+    author_member_id  UUID REFERENCES members(id) ON DELETE SET NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (skill_id, revision_number)
+);
+
+CREATE INDEX idx_skill_revisions_skill ON skill_revisions(skill_id);
+
+-------------------------------------------------------------------------------
+-- PROJECT DOCUMENTS
+-------------------------------------------------------------------------------
+
+CREATE TABLE project_docs (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id            UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    company_id            UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    filename              TEXT NOT NULL,
+    content               TEXT NOT NULL DEFAULT '',
+    last_updated_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
+    embedding             vector(384),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE(project_id, filename)
+);
+
+CREATE INDEX idx_project_docs_project ON project_docs(project_id);
+CREATE INDEX idx_project_docs_company ON project_docs(company_id);
+CREATE INDEX idx_project_docs_embedding ON project_docs USING hnsw (embedding vector_cosine_ops);
 
 -------------------------------------------------------------------------------
 -- SYSTEM PROMPT REVISIONS

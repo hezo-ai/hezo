@@ -35,7 +35,10 @@
 | `live_chat_messages` | Individual messages in a live chat. Author, content, metadata. | belongs to live_chat |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to company |
 | `company_ssh_keys` | Generated SSH key pairs per company. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to company |
-| `execution_locks` | Issue work ownership tracking. One agent works on an issue at a time. | belongs to issue + member_agent |
+| `execution_locks` | Issue work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to issue + member_agent |
+| `skills` | Reusable instruction documents (DB-backed). Tags, content, source URL, creator tracking, embeddings. | belongs to company |
+| `skill_revisions` | Version history for skills. | belongs to skill |
+| `project_docs` | Project documentation (PRD, spec, etc.). DB-backed with embeddings. | belongs to project + company |
 | `system_prompt_revisions` | History of agent system prompt changes. Tracks old/new prompt, change summary, author. Linked to approval if change required approval. | belongs to member_agent + company |
 | `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. | belongs to member_agent + company |
 | `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the issue being worked on via `issue_id`. | belongs to member_agent + company, optionally issue |
@@ -511,21 +514,20 @@ to another member (human or agent), or @-mention an agent in a comment to
 request specific help. When an agent is assigned, the standard agent execution
 flow applies.
 
-### Execution locks (separate table)
+### Execution locks (read/write)
 
-The `execution_locks` table tracks issue work ownership:
-- `issue_id` FK (unique — at most one lock per issue)
-- `agent_member_id` FK → members.id
-- `heartbeat_run_id` FK
+The `execution_locks` table tracks issue work ownership with read/write semantics:
+- `issue_id` FK
+- `member_id` FK → members.id
+- `lock_type` TEXT — `'read'` or `'write'`
 - `locked_at` timestamp
+- `released_at` timestamp (soft delete)
 
-When an agent begins work on an issue, a row is inserted into `execution_locks`.
-This is a work ownership marker, not a short-lived database lock — ownership
-persists across heartbeat cycles and may span hours or days. Only one agent
-works on a given issue at a time. If a second agent tries to work on an owned
-issue, its wakeup is deferred with status `deferred_issue_execution` and
-promoted when ownership is released (on completion, reassignment, or agent
-pause/termination). Execution locking applies only to agent-assigned issues.
+**Write locks** are exclusive — no other locks (read or write) can coexist. Used by agents doing implementation (Engineer, Architect, etc.).
+
+**Read locks** are shared — multiple readers can hold locks simultaneously, blocked only by write locks. Used by agents doing review (QA Engineer, Security Engineer, Coach).
+
+Lock type is determined automatically from agent slug (`READER_AGENT_SLUGS: coach, qa-engineer, security-engineer`) and wakeup context (issue_done trigger → read). If a lock can't be acquired, the wakeup is deferred.
 
 ### Issue dependencies
 

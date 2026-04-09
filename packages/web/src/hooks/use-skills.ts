@@ -3,12 +3,18 @@ import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
 export interface Skill {
+	id: string;
+	company_id: string;
 	name: string;
 	slug: string;
 	description: string;
-	source_url: string;
+	source_url: string | null;
 	content_hash: string;
-	last_synced_at: string;
+	created_by_member_id: string | null;
+	tags: string[];
+	is_active: boolean;
+	created_at: string;
+	updated_at: string;
 }
 
 export interface SkillDetail extends Skill {
@@ -32,8 +38,12 @@ export function useSkillDetail(companyId: string, slug: string | null) {
 
 export function useCreateSkill(companyId: string) {
 	return useMutation({
-		mutationFn: (data: { name: string; source_url: string; description?: string }) =>
-			api.post<Skill>(`/api/companies/${companyId}/skills`, data),
+		mutationFn: (data: {
+			name: string;
+			source_url: string;
+			description?: string;
+			tags?: string[];
+		}) => api.post<SkillDetail>(`/api/companies/${companyId}/skills`, data),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'skills'] }),
 	});
@@ -42,7 +52,7 @@ export function useCreateSkill(companyId: string) {
 export function useSyncSkill(companyId: string) {
 	return useMutation({
 		mutationFn: (slug: string) =>
-			api.post<Skill>(`/api/companies/${companyId}/skills/${slug}/sync`, {}),
+			api.post<SkillDetail>(`/api/companies/${companyId}/skills/${slug}/sync`, {}),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'skills'] }),
 	});

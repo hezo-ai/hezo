@@ -6,7 +6,7 @@ import { toIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess, requireSuperuser } from '../middleware/auth';
 import { type ProjectRow, provisionContainer } from '../services/containers';
-import { downloadAndSaveSkill, SkillDownloadError } from '../services/skill-downloader';
+import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
 
 export const companiesRoutes = new Hono<Env>();
 
@@ -450,22 +450,17 @@ async function createSkillsFromTemplate(
 	const skills = result.rows[0]?.skills_config ?? [];
 	if (skills.length === 0) return;
 
-	const company = await db.query<{ slug: string }>('SELECT slug FROM companies WHERE id = $1', [
-		companyId,
-	]);
-	const companySlug = company.rows[0]?.slug;
-	if (!companySlug) return;
-
 	for (const skill of skills) {
 		const slug = toSlug(skill.name);
 		if (!slug) continue;
 		try {
-			await downloadAndSaveSkill(dataDir, companySlug, {
-				name: skill.name,
-				slug,
-				description: skill.description ?? '',
-				source_url: skill.source_url,
-			});
+			const { content, hash } = await downloadSkillContent(skill.source_url);
+			await db.query(
+				`INSERT INTO skills (company_id, name, slug, description, content, source_url, content_hash)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7)
+				 ON CONFLICT (company_id, slug) DO NOTHING`,
+				[companyId, skill.name, slug, skill.description ?? '', content, skill.source_url, hash],
+			);
 		} catch (e) {
 			if (e instanceof SkillDownloadError) {
 				console.warn(`Failed to download template skill "${skill.name}": ${e.message}`);
