@@ -1,14 +1,9 @@
 import { AgentAdminStatus, AgentRuntimeStatus } from '@hezo/shared';
 import { createFileRoute, Link, Outlet, useMatchRoute } from '@tanstack/react-router';
-import { ArrowLeft, Power, PowerOff, Skull } from 'lucide-react';
+import { ArrowLeft, Power, PowerOff } from 'lucide-react';
 import { Badge } from '../../../../../components/ui/badge';
 import { Button } from '../../../../../components/ui/button';
-import {
-	useAgent,
-	useDisableAgent,
-	useEnableAgent,
-	useTerminateAgent,
-} from '../../../../../hooks/use-agents';
+import { useAgent, useDisableAgent, useEnableAgent } from '../../../../../hooks/use-agents';
 
 const RUNTIME_BADGE: Record<string, { color: string; label: string }> = {
 	[AgentRuntimeStatus.Active]: { color: 'green', label: 'Running' },
@@ -32,7 +27,6 @@ function AgentLayout() {
 	const { data: agent, isLoading } = useAgent(companyId, agentId);
 	const disableAgent = useDisableAgent(companyId);
 	const enableAgent = useEnableAgent(companyId);
-	const terminateAgent = useTerminateAgent(companyId);
 	const matchRoute = useMatchRoute();
 	const params = { companyId, agentId };
 
@@ -55,18 +49,14 @@ function AgentLayout() {
 					{agent.title}
 					{agent.admin_status === AgentAdminStatus.Disabled ? ' (disabled)' : ''}
 				</h1>
-				{agent.admin_status === AgentAdminStatus.Terminated ? (
-					<Badge color="gray">Terminated</Badge>
-				) : (
-					<Badge
-						color={
-							(RUNTIME_BADGE[agent.runtime_status] ?? RUNTIME_BADGE[AgentRuntimeStatus.Idle])
-								.color as 'gray'
-						}
-					>
-						{(RUNTIME_BADGE[agent.runtime_status] ?? RUNTIME_BADGE[AgentRuntimeStatus.Idle]).label}
-					</Badge>
-				)}
+				<Badge
+					color={
+						(RUNTIME_BADGE[agent.runtime_status] ?? RUNTIME_BADGE[AgentRuntimeStatus.Idle])
+							.color as 'gray'
+					}
+				>
+					{(RUNTIME_BADGE[agent.runtime_status] ?? RUNTIME_BADGE[AgentRuntimeStatus.Idle]).label}
+				</Badge>
 			</div>
 
 			<div className="flex gap-2 mb-6">
@@ -78,17 +68,6 @@ function AgentLayout() {
 				{agent.admin_status === AgentAdminStatus.Disabled && (
 					<Button variant="secondary" size="sm" onClick={() => enableAgent.mutate(agentId)}>
 						<Power className="w-3 h-3" /> Enable
-					</Button>
-				)}
-				{agent.admin_status !== AgentAdminStatus.Terminated && (
-					<Button
-						variant="destructive"
-						size="sm"
-						onClick={() => {
-							if (confirm('Terminate this agent?')) terminateAgent.mutate(agentId);
-						}}
-					>
-						<Skull className="w-3 h-3" /> Terminate
 					</Button>
 				)}
 			</div>

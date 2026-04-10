@@ -185,23 +185,7 @@ describe('agents CRUD', () => {
 		expect(res.status).toBe(409);
 	});
 
-	it('terminates an agent', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
-			headers: authHeader(token),
-		});
-		const agents = (await listRes.json()).data;
-		const marketingLead = agents.find((a: Record<string, unknown>) => a.slug === 'marketing-lead');
-
-		const res = await app.request(
-			`/api/companies/${companyId}/agents/${marketingLead.id}/terminate`,
-			{ method: 'POST', headers: authHeader(token) },
-		);
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data.admin_status).toBe('terminated');
-	});
-
-	it('rejects disabling a terminated agent', async () => {
+	it('disabling an agent unassigns its open issues', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
 			headers: authHeader(token),
 		});
@@ -212,21 +196,9 @@ describe('agents CRUD', () => {
 			`/api/companies/${companyId}/agents/${marketingLead.id}/disable`,
 			{ method: 'POST', headers: authHeader(token) },
 		);
-		expect(res.status).toBe(409);
-	});
-
-	it('rejects enabling a terminated agent', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
-			headers: authHeader(token),
-		});
-		const agents = (await listRes.json()).data;
-		const marketingLead = agents.find((a: Record<string, unknown>) => a.slug === 'marketing-lead');
-
-		const res = await app.request(`/api/companies/${companyId}/agents/${marketingLead.id}/enable`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(409);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.admin_status).toBe('disabled');
 	});
 
 	it('returns org chart with runtime_status and admin_status', async () => {

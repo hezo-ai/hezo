@@ -34,7 +34,7 @@ function AgentSettingsPage() {
 	if (isLoading || !agent) return <div className="text-text-muted text-sm">Loading...</div>;
 
 	const otherAgents =
-		agents?.filter((a) => a.id !== agentId && a.admin_status !== AgentAdminStatus.Terminated) ?? [];
+		agents?.filter((a) => a.id !== agentId && a.admin_status !== AgentAdminStatus.Disabled) ?? [];
 
 	async function handleSave(e: React.FormEvent) {
 		e.preventDefault();

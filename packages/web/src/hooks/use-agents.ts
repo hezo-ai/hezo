@@ -113,12 +113,3 @@ export function useOnboardAgent(companyId: string) {
 		},
 	});
 }
-
-export function useTerminateAgent(companyId: string) {
-	return useMutation({
-		mutationFn: (agentId: string) =>
-			api.post(`/api/companies/${companyId}/agents/${agentId}/terminate`),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] }),
-	});
-}

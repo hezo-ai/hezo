@@ -120,7 +120,7 @@ export function CreateIssueDialog({
 								>
 									<option value="">Select assignee</option>
 									{agents
-										?.filter((a) => a.admin_status !== 'terminated')
+										?.filter((a) => a.admin_status !== 'disabled')
 										.map((a) => (
 											<option key={a.id} value={a.id}>
 												{a.title}

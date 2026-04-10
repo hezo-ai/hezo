@@ -88,7 +88,7 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 		const agents = (await agentsRes.json()).data;
 		const ceo = agents.find((a: Record<string, unknown>) => a.slug === 'ceo');
 
-		await app.request(`/api/companies/${bareCompanyId}/agents/${ceo.id}/terminate`, {
+		await app.request(`/api/companies/${bareCompanyId}/agents/${ceo.id}/disable`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
@@ -193,14 +193,13 @@ describe('agent listing with admin_status filter', () => {
 	});
 
 	it('returns empty array when filter matches no agents', async () => {
-		const res = await app.request(`/api/companies/${companyId}/agents?admin_status=terminated`, {
+		const res = await app.request(`/api/companies/${companyId}/agents?admin_status=disabled`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		// No terminated agents in a fresh company
 		expect(Array.isArray(body.data)).toBe(true);
-		expect(body.data.every((a: Record<string, unknown>) => a.admin_status === 'terminated')).toBe(
+		expect(body.data.every((a: Record<string, unknown>) => a.admin_status === 'disabled')).toBe(
 			true,
 		);
 	});

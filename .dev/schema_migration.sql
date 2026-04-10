@@ -64,7 +64,7 @@ CREATE INDEX idx_sessions_token ON sessions(token);
 
 CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini', 'bash', 'http');
 CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
-CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled', 'terminated');
+CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopped', 'error');
 CREATE TYPE issue_status AS ENUM ('backlog', 'open', 'in_progress', 'review', 'approved', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');

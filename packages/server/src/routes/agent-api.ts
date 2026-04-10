@@ -49,7 +49,6 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 
 	if (
 		agentRow.admin_status === AgentAdminStatus.Disabled ||
-		agentRow.admin_status === AgentAdminStatus.Terminated ||
 		agentRow.runtime_status === AgentRuntimeStatus.Paused
 	) {
 		return ok(c, {

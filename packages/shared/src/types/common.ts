@@ -19,7 +19,6 @@ export type AgentRuntimeStatus = (typeof AgentRuntimeStatus)[keyof typeof AgentR
 export const AgentAdminStatus = {
 	Enabled: 'enabled',
 	Disabled: 'disabled',
-	Terminated: 'terminated',
 } as const;
 export type AgentAdminStatus = (typeof AgentAdminStatus)[keyof typeof AgentAdminStatus];
 

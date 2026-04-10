@@ -186,8 +186,8 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 	const ceoResult = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = 'ceo' AND ma.admin_status != $2::agent_admin_status`,
-		[companyId, AgentAdminStatus.Terminated],
+		 WHERE m.company_id = $1 AND ma.slug = 'ceo' AND ma.admin_status = $2::agent_admin_status`,
+		[companyId, AgentAdminStatus.Enabled],
 	);
 
 	const opsProject = await db.query<{ id: string }>(
@@ -237,8 +237,8 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 			const existingAgents = await db.query<{ title: string; role_description: string }>(
 				`SELECT ma.title, ma.role_description
 				 FROM member_agents ma JOIN members m ON m.id = ma.id
-				 WHERE m.company_id = $1 AND ma.admin_status != $2::agent_admin_status AND ma.id != $3`,
-				[companyId, AgentAdminStatus.Terminated, memberId],
+				 WHERE m.company_id = $1 AND ma.admin_status = $2::agent_admin_status AND ma.id != $3`,
+				[companyId, AgentAdminStatus.Enabled, memberId],
 			);
 
 			const teamRoster = existingAgents.rows
@@ -477,9 +477,6 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/disable', async (c) => 
 		[agentId, companyId],
 	);
 	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Agent not found', 404);
-	if (existing.rows[0].admin_status === AgentAdminStatus.Terminated) {
-		return err(c, 'INVALID_STATE', 'Cannot disable a terminated agent', 409);
-	}
 	if (existing.rows[0].admin_status === AgentAdminStatus.Disabled) {
 		return err(c, 'INVALID_STATE', 'Agent is already disabled', 409);
 	}
@@ -488,6 +485,12 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/disable', async (c) => 
 		AgentAdminStatus.Disabled,
 		agentId,
 	]);
+
+	const terminalPlaceholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${i + 2}`).join(', ');
+	await db.query(
+		`UPDATE issues SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN (${terminalPlaceholders})`,
+		[agentId, ...TERMINAL_ISSUE_STATUSES],
+	);
 
 	broadcastChange(c, `company:${companyId}`, 'member_agents', 'UPDATE', {
 		id: agentId,
@@ -509,9 +512,6 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/enable', async (c) => {
 		[agentId, companyId],
 	);
 	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Agent not found', 404);
-	if (existing.rows[0].admin_status === AgentAdminStatus.Terminated) {
-		return err(c, 'INVALID_STATE', 'Cannot enable a terminated agent', 409);
-	}
 	if (existing.rows[0].admin_status === AgentAdminStatus.Enabled) {
 		return err(c, 'INVALID_STATE', 'Agent is already enabled', 409);
 	}
@@ -526,41 +526,6 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/enable', async (c) => {
 		admin_status: AgentAdminStatus.Enabled,
 	});
 	return ok(c, { admin_status: AgentAdminStatus.Enabled });
-});
-
-agentsRoutes.post('/companies/:companyId/agents/:agentId/terminate', async (c) => {
-	const access = await requireCompanyAccess(c);
-	if (access instanceof Response) return access;
-
-	const db = c.get('db');
-	const { companyId } = access;
-	const agentId = c.req.param('agentId');
-
-	const existing = await db.query<{ admin_status: string }>(
-		'SELECT ma.admin_status FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1 AND m.company_id = $2',
-		[agentId, companyId],
-	);
-	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Agent not found', 404);
-	if (existing.rows[0].admin_status === AgentAdminStatus.Terminated) {
-		return err(c, 'INVALID_STATE', 'Agent is already terminated', 409);
-	}
-
-	await db.query(`UPDATE member_agents SET admin_status = $1::agent_admin_status WHERE id = $2`, [
-		AgentAdminStatus.Terminated,
-		agentId,
-	]);
-
-	const terminalPlaceholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${i + 2}`).join(', ');
-	await db.query(
-		`UPDATE issues SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN (${terminalPlaceholders})`,
-		[agentId, ...TERMINAL_ISSUE_STATUSES],
-	);
-
-	broadcastChange(c, `company:${companyId}`, 'member_agents', 'UPDATE', {
-		id: agentId,
-		admin_status: AgentAdminStatus.Terminated,
-	});
-	return ok(c, { admin_status: AgentAdminStatus.Terminated });
 });
 
 agentsRoutes.get('/companies/:companyId/org-chart', async (c) => {

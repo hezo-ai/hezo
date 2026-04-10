@@ -17,7 +17,7 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 	const updateUiState = useUpdateUiState(companyId);
 
 	const activeAgents = (agents ?? [])
-		.filter((a) => a.admin_status !== AgentAdminStatus.Terminated)
+		.filter((a) => a.admin_status !== AgentAdminStatus.Disabled)
 		.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
 	const sortedProjects = [...(projects ?? [])].sort((a, b) => {

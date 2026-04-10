@@ -435,7 +435,7 @@ function IssueDetailPage() {
 					{assigneeOpen && (
 						<div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-radius-md border border-border bg-bg shadow-md max-h-48 overflow-y-auto">
 							{agents
-								?.filter((a) => a.admin_status !== 'terminated')
+								?.filter((a) => a.admin_status !== 'disabled')
 								.map((a) => (
 									<button
 										type="button"

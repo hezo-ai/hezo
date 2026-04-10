@@ -7,7 +7,7 @@ import type { OrgNode } from '../../../../hooks/use-org-chart';
 import { useOrgChart } from '../../../../hooks/use-org-chart';
 
 function orgDotStatus(node: OrgNode): 'active' | 'idle' | 'paused' | 'disabled' {
-	if (node.admin_status === 'disabled' || node.admin_status === 'terminated') return 'disabled';
+	if (node.admin_status === 'disabled') return 'disabled';
 	if (node.runtime_status === 'paused') return 'paused';
 	return node.runtime_status === 'active' ? 'active' : 'idle';
 }
