@@ -1,3 +1,4 @@
+import { AgentEffort } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
 import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -62,6 +63,8 @@ function IssueDetailPage() {
 	const createSubIssue = useCreateSubIssue(companyId, issueId);
 	const removeDep = useRemoveDependency(companyId, issueId);
 	const [commentText, setCommentText] = useState('');
+	// Per-comment reasoning effort. Empty string = use the agent's default effort.
+	const [commentEffort, setCommentEffort] = useState<'' | AgentEffort>('');
 	const [subIssueTitle, setSubIssueTitle] = useState('');
 	const [showSubForm, setShowSubForm] = useState(false);
 	const [activeTab, setActiveTab] = useState<'comments' | 'chat'>('comments');
@@ -91,8 +94,12 @@ function IssueDetailPage() {
 	async function handleComment(e: React.FormEvent) {
 		e.preventDefault();
 		if (!commentText.trim()) return;
-		await createComment.mutateAsync({ content: commentText });
+		await createComment.mutateAsync({
+			content: commentText,
+			...(commentEffort ? { effort: commentEffort } : {}),
+		});
 		setCommentText('');
+		setCommentEffort('');
 	}
 
 	async function handleSubIssue(e: React.FormEvent) {
@@ -346,7 +353,23 @@ function IssueDetailPage() {
 									placeholder="Add a comment..."
 									className="min-h-[60px]"
 								/>
-								<div className="flex justify-end">
+								<div className="flex items-center justify-between gap-2">
+									<label className="flex items-center gap-2 text-[11px] text-text-muted">
+										<span>Effort</span>
+										<select
+											value={commentEffort}
+											onChange={(e) => setCommentEffort(e.target.value as '' | AgentEffort)}
+											className="bg-background border border-border rounded-radius-md px-2 py-1 text-[11px]"
+											aria-label="Reasoning effort for the agent run triggered by this comment"
+										>
+											<option value="">Default</option>
+											<option value={AgentEffort.Minimal}>Minimal</option>
+											<option value={AgentEffort.Low}>Low</option>
+											<option value={AgentEffort.Medium}>Medium</option>
+											<option value={AgentEffort.High}>High</option>
+											<option value={AgentEffort.Max}>Max (ultrathink)</option>
+										</select>
+									</label>
 									<Button
 										type="submit"
 										size="sm"

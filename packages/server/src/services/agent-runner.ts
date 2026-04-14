@@ -11,6 +11,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { signAgentJwt } from '../middleware/auth';
 import { getProviderCredential } from './ai-provider-keys';
 import type { DockerClient } from './docker';
+import { applyEffortToRuntime, resolveEffort } from './effort';
 import { resolveSystemPrompt } from './template-resolver';
 
 interface AgentInfo {
@@ -19,6 +20,11 @@ interface AgentInfo {
 	system_prompt: string;
 	company_id: string;
 	runtime_type: AgentRuntime;
+	/**
+	 * Baseline effort for this agent. Overridden by `effort` on the wakeup
+	 * payload when present.
+	 */
+	default_effort?: string | null;
 }
 
 export interface IssueInfo {
@@ -111,10 +117,20 @@ export async function runAgent(
 
 	const agentJwt = await signAgentJwt(deps.masterKeyManager, agent.id, agent.company_id);
 
+	// Resolve the effort level for this run. A comment-supplied override (on the
+	// wakeup payload) trumps the agent's configured default; both fall back to
+	// the global default. The result is then translated into runtime-specific
+	// CLI args / env vars / prompt directives.
+	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort);
+	const effortApplication = applyEffortToRuntime(agent.runtime_type, effort);
+
 	const isCoachReview = wakeupPayload?.trigger === 'issue_done';
-	const taskPrompt = isCoachReview
+	const basePrompt = isCoachReview
 		? await buildCoachReviewPrompt(deps.db, resolvedPrompt, issue, agent.company_id)
 		: buildTaskPrompt(resolvedPrompt, issue, wakeupPayload);
+	const taskPrompt = effortApplication.promptDirective
+		? `${basePrompt}\n\n${effortApplication.promptDirective}`
+		: basePrompt;
 
 	const env: string[] = [
 		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
@@ -123,6 +139,8 @@ export async function runAgent(
 		`HEZO_COMPANY_ID=${agent.company_id}`,
 		`HEZO_ISSUE_ID=${issue.id}`,
 		`HEZO_ISSUE_IDENTIFIER=${issue.identifier}`,
+		`HEZO_AGENT_EFFORT=${effort}`,
+		...effortApplication.extraEnv,
 	];
 
 	// Inject all AI provider env vars as empty defaults
@@ -178,7 +196,7 @@ export async function runAgent(
 		}
 
 		const execId = await deps.docker.execCreate(project.container_id, {
-			Cmd: [cliCommand, '-p', taskPrompt],
+			Cmd: [cliCommand, ...effortApplication.extraArgs, '-p', taskPrompt],
 			Env: env,
 			WorkingDir: workingDir,
 			AttachStdout: true,

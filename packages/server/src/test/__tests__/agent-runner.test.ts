@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
+import { AgentEffort, ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
@@ -375,6 +375,128 @@ describe('runAgent', () => {
 		expect(result.stderr).toBe('Aborted');
 		// No heartbeat run should be created since we aborted before that step
 		expect(result.heartbeatRunId).toBeUndefined();
+	});
+
+	describe('effort configuration', () => {
+		it('appends the ultrathink directive when the wakeup asks for max effort', async () => {
+			let capturedPrompt = '';
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedPrompt = opts.Cmd[opts.Cmd.length - 1];
+					return 'exec-ultra';
+				},
+				execStart: async () => ({ stdout: 'ok', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+			};
+
+			await runAgent(deps, makeAgent(), makeIssue(), makeProject(), {
+				effort: AgentEffort.Max,
+			});
+
+			expect(capturedPrompt.trim().endsWith('ultrathink')).toBe(true);
+		});
+
+		it("uses the agent's default_effort when the wakeup carries no override", async () => {
+			let capturedPrompt = '';
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedPrompt = opts.Cmd[opts.Cmd.length - 1];
+					return 'exec-default';
+				},
+				execStart: async () => ({ stdout: 'ok', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+			};
+
+			await runAgent(
+				deps,
+				{ ...makeAgent(), default_effort: AgentEffort.High },
+				makeIssue(),
+				makeProject(),
+			);
+
+			expect(capturedPrompt.trim().endsWith('think hard')).toBe(true);
+		});
+
+		it('exposes HEZO_AGENT_EFFORT in the container env', async () => {
+			let capturedEnv: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedEnv = opts.Env;
+					return 'exec-env-effort';
+				},
+				execStart: async () => ({ stdout: 'ok', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+			};
+
+			await runAgent(deps, makeAgent(), makeIssue(), makeProject(), {
+				effort: AgentEffort.Low,
+			});
+
+			expect(capturedEnv).toContain(`HEZO_AGENT_EFFORT=${AgentEffort.Low}`);
+		});
+
+		it('passes model_reasoning_effort CLI flag for the Codex runtime', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-codex';
+				},
+				execStart: async () => ({ stdout: 'ok', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+			};
+
+			// Reconfigure the provider so the Codex runtime can resolve a credential.
+			await app.request(`/api/companies/${companyId}/ai-providers`, {
+				method: 'POST',
+				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ provider: 'openai', api_key: 'sk-test-codex' }),
+			});
+
+			await runAgent(
+				deps,
+				{ ...makeAgent(), runtime_type: 'codex' as any },
+				makeIssue(),
+				makeProject(),
+				{ effort: AgentEffort.High },
+			);
+
+			expect(capturedCmd[0]).toBe('codex');
+			expect(capturedCmd).toContain('-c');
+			expect(capturedCmd).toContain('model_reasoning_effort=high');
+		});
 	});
 
 	it('records cancelled status when aborted mid-execution', async () => {

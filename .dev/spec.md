@@ -309,7 +309,7 @@ A **company type** (also called a template or recipe) defines the blueprint for 
 - **Name and slug** — e.g., "CEO" / `ceo`
 - **Role description** — what this agent type does
 - **System prompt template** — with `{{placeholder}}` variables resolved at runtime
-- **Default config** — runtime type, heartbeat interval, monthly budget
+- **Default config** — runtime type, default reasoning effort, heartbeat interval, monthly budget
 - **Source** — `builtin` (shipped with Hezo), `custom` (user-created), or `remote` (loaded from hezo connect marketplace)
 
 A **team type** (stored as `company_types`) specifies:
@@ -1486,6 +1486,18 @@ When multiple events fire for the same agent in quick succession (e.g. several @
 - Delivers all pending events in a single heartbeat response
 - Prevents redundant subprocess spawns and duplicate work
 - Maintains event ordering within the batch
+
+### Reasoning effort
+
+Every agent run picks a reasoning effort level (`minimal | low | medium | high | max`). The effective level is resolved per-run with this precedence:
+
+1. An explicit `effort` value on the triggering wakeup payload — set by a human via the comment composer, or by an MCP caller that wants a single run to reason harder.
+2. The agent's `default_effort` column (copied from the agent type when the agent is hired; editable per-agent).
+3. The global `medium` fallback.
+
+Each runtime translates the resolved level to its native knob: Claude Code appends `think`/`think hard`/`ultrathink` to the task prompt, Codex passes `-c model_reasoning_effort=<level>` (with `max` mapped to `high`), Gemini sets `GEMINI_REASONING_EFFORT` in the container env, and Kimi falls back to a prompt-only directive. The resolved level is also exposed as `HEZO_AGENT_EFFORT` so agent-side tooling can read it.
+
+Built-in defaults: CEO and Architect default to `max` (ultrathink) so their planning runs get the full thinking budget, the Product Lead / QA / Security / Researcher default to `high`, and implementer roles default to `medium`.
 
 ### Container lifecycle and agent state
 
