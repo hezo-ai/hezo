@@ -123,3 +123,4 @@ Rules:
 | Monthly budget | $50 |
 | Docker base image | node:24-slim |
 | Runtime type | claude_code |
+| Default effort | medium (board can bump via comment for tricky work) |
