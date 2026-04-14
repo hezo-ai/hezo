@@ -8,7 +8,7 @@
 | `users` | Global human identity. Display name, avatar. One per human across all companies. | Standalone (identity). |
 | `user_auth_methods` | OAuth login methods (GitHub, GitLab). Links provider identity to user. | belongs to user |
 | `members` | Base table for all company participants (agents and users). Has `member_type` enum discriminator. Shared UUID used by child tables. | belongs to company |
-| `member_agents` | Agent-specific extension. System prompt, runtime type, budget, heartbeat, org chart. References agent_type_id for provenance. | extends member (PK = member.id), optionally references agent_type |
+| `member_agents` | Agent-specific extension. System prompt, runtime type, `default_effort` (reasoning level applied to runs), budget, heartbeat, org chart. References agent_type_id for provenance. | extends member (PK = member.id), optionally references agent_type |
 | `member_users` | User-in-company extension. Role (board/member), role_title, permissions_text, project_ids. Links to global user. | extends member (PK = member.id), references user |
 | `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget. Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
 | `company_types` | Company blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers. | Referenced by company_team_types. |
@@ -549,6 +549,31 @@ duplicate runs.
 Event-based triggers (@-mention, assignment, option chosen, approval resolved)
 wake agents immediately — they do not wait for the next scheduled heartbeat.
 Scheduled heartbeats are a fallback for idle agents with no pending events.
+
+### Reasoning effort
+
+Each agent run picks a reasoning effort level from the `agent_effort` enum
+(`minimal | low | medium | high | max`). The effective level is resolved at
+activation time with this precedence:
+
+1. An explicit `effort` value on the triggering wakeup payload — set by a
+   human who posted a comment or by an MCP caller that wants to bump up
+   reasoning for a specific run.
+2. The agent's `member_agents.default_effort` column (copied from
+   `agent_types.default_effort` at company creation time).
+3. The global `DEFAULT_EFFORT` fallback (`medium`).
+
+Planning-heavy roles (CEO, Architect) default to `max` so their plans go
+through ultrathink; implementers default to `medium`. Each runtime translates
+the resolved level to its native knob:
+
+- `claude_code` → appends `think` / `think hard` / `ultrathink` to the task prompt.
+- `codex` → passes `-c model_reasoning_effort=<level>` (with `max` mapped to `high`).
+- `gemini` → sets `GEMINI_REASONING_EFFORT` in the container env.
+- `kimi` → prompt directive only (no native knob).
+
+The resolved level is also exposed to the container as `HEZO_AGENT_EFFORT`
+so agent-side tooling can read it.
 
 ### Session compaction
 

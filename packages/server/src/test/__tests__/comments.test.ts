@@ -281,6 +281,60 @@ describe('comment wakeups on assigned issues', () => {
 		expect(commentWakeups.rows.length).toBe(0);
 	});
 
+	it('propagates a per-comment effort override onto the wakeup payload', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+
+		const res = await app.request(
+			`/api/companies/${companyId}/issues/${assignedIssueId}/comments`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					content_type: 'text',
+					content: { text: 'Please think harder about this.' },
+					effort: 'max',
+				}),
+			},
+		);
+		expect(res.status).toBe(201);
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		const wakeups = await db.query<{ payload: Record<string, unknown> }>(
+			"SELECT payload FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'comment'",
+			[agentId],
+		);
+		expect(wakeups.rows.length).toBe(1);
+		expect(wakeups.rows[0].payload.effort).toBe('max');
+	});
+
+	it('silently ignores an invalid effort value (does not block commenting)', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+
+		const res = await app.request(
+			`/api/companies/${companyId}/issues/${assignedIssueId}/comments`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					content_type: 'text',
+					content: { text: 'Typical effort' },
+					effort: 'not-a-real-level',
+				}),
+			},
+		);
+		expect(res.status).toBe(201);
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		const wakeups = await db.query<{ payload: Record<string, unknown> }>(
+			"SELECT payload FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'comment'",
+			[agentId],
+		);
+		expect(wakeups.rows.length).toBe(1);
+		expect(wakeups.rows[0].payload.effort).toBeUndefined();
+	});
+
 	it('does not self-notify when assigned agent comments on own issue', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
 

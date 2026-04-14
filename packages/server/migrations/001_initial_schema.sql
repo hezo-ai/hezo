@@ -42,6 +42,7 @@ CREATE INDEX idx_auth_methods_user ON user_auth_methods(user_id);
 
 CREATE TYPE member_type AS ENUM ('agent', 'user');
 CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini', 'kimi');
+CREATE TYPE agent_effort AS ENUM ('minimal', 'low', 'medium', 'high', 'max');
 CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
 CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled', 'terminated');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopping', 'stopped', 'error');
@@ -79,6 +80,7 @@ CREATE TABLE agent_types (
     role_description       TEXT NOT NULL DEFAULT '',
     system_prompt_template TEXT NOT NULL DEFAULT '',
     runtime_type           agent_runtime NOT NULL DEFAULT 'claude_code',
+    default_effort         agent_effort NOT NULL DEFAULT 'medium',
     heartbeat_interval_min INTEGER NOT NULL DEFAULT 60,
     monthly_budget_cents   INTEGER NOT NULL DEFAULT 3000,
     is_builtin             BOOLEAN NOT NULL DEFAULT false,
@@ -189,6 +191,7 @@ CREATE TABLE member_agents (
     role_description        TEXT NOT NULL DEFAULT '',
     system_prompt           TEXT NOT NULL DEFAULT '',
     runtime_type            agent_runtime NOT NULL DEFAULT 'claude_code',
+    default_effort          agent_effort NOT NULL DEFAULT 'medium',
     heartbeat_interval_min  INTEGER NOT NULL DEFAULT 60,
     monthly_budget_cents    INTEGER NOT NULL DEFAULT 3000,
     budget_used_cents       INTEGER NOT NULL DEFAULT 0,

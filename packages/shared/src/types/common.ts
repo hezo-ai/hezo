@@ -9,6 +9,36 @@ export const AgentRuntime = {
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
+/**
+ * Reasoning/thinking effort level applied to an individual agent run.
+ *
+ * Each runtime maps this to its native knob (Claude Code → "think" / "ultrathink"
+ * prompt keywords, Codex → `model_reasoning_effort` CLI flag, etc.). See
+ * `packages/server/src/services/effort.ts` for the concrete mappings.
+ */
+export const AgentEffort = {
+	Minimal: 'minimal',
+	Low: 'low',
+	Medium: 'medium',
+	High: 'high',
+	Max: 'max',
+} as const;
+export type AgentEffort = (typeof AgentEffort)[keyof typeof AgentEffort];
+
+export const EFFORT_ORDER: Record<AgentEffort, number> = {
+	[AgentEffort.Minimal]: 0,
+	[AgentEffort.Low]: 1,
+	[AgentEffort.Medium]: 2,
+	[AgentEffort.High]: 3,
+	[AgentEffort.Max]: 4,
+};
+
+export const DEFAULT_EFFORT: AgentEffort = AgentEffort.Medium;
+
+export function isAgentEffort(value: unknown): value is AgentEffort {
+	return typeof value === 'string' && value in EFFORT_ORDER;
+}
+
 export const AgentRuntimeStatus = {
 	Active: 'active',
 	Idle: 'idle',

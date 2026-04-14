@@ -27,7 +27,7 @@ export function useComments(companyId: string, issueId: string) {
 
 export function useCreateComment(companyId: string, issueId: string) {
 	return useMutation({
-		mutationFn: (data: { content: string; content_type?: string }) =>
+		mutationFn: (data: { content: string; content_type?: string; effort?: string }) =>
 			api.post<Comment>(`/api/companies/${companyId}/issues/${issueId}/comments`, data),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
