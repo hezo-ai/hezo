@@ -110,3 +110,4 @@ Rules:
 | Monthly budget | $30 |
 | Docker base image | node:24-slim |
 | Runtime type | claude_code |
+| Default effort | high (deep exploration benefits research) |

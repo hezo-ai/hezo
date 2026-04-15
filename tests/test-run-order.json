@@ -72,5 +72,6 @@
 	"packages/server/src/test/__tests__/github-extended.test.ts": 1098,
 	"packages/server/src/test/__tests__/slug.test.ts": 1078,
 	"packages/server/src/test/__tests__/ai-providers.test.ts": 4304,
-	"packages/server/src/test/__tests__/git-extended.test.ts": 29865
+	"packages/server/src/test/__tests__/git-extended.test.ts": 29865,
+	"packages/server/src/test/__tests__/effort.test.ts": 8724
 }

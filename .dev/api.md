@@ -233,6 +233,7 @@ Response:
       "role_description": "...",
       "system_prompt_template": "You are the CEO of {{company_name}}...",
       "runtime_type": "claude_code",
+      "default_effort": "max",
       "heartbeat_interval_min": 120,
       "monthly_budget_cents": 2000,
       "is_builtin": true,
@@ -255,10 +256,16 @@ Request:
   "role_description": "Builds models and analyzes data",
   "system_prompt_template": "You are a data scientist for {{company_name}}.",
   "runtime_type": "claude_code",
+  "default_effort": "medium",
   "heartbeat_interval_min": 60,
   "monthly_budget_cents": 5000
 }
 ```
+
+`default_effort` is optional. Valid values: `minimal | low | medium | high | max`.
+It is the baseline reasoning level every agent created from this type inherits
+(each agent can also override it individually, and each run can override it
+again via a comment — see [Reasoning effort](#reasoning-effort)).
 
 #### `GET /agent-types/:id`
 Get a single agent type.
@@ -290,6 +297,7 @@ Response:
       "title": "Dev Engineer",
       "role_description": "Senior Engineer",
       "runtime_type": "claude_code",
+      "default_effort": "medium",
       "heartbeat_interval_min": 30,
       "monthly_budget_cents": 3000,
       "budget_used_cents": 1800,
@@ -315,6 +323,7 @@ Request:
   "system_prompt": "You are the **Frontend Engineer** at {{company_name}}...",
   "reports_to": "uuid",
   "runtime_type": "claude_code",
+  "default_effort": "medium",
   "heartbeat_interval_min": 60,
   "monthly_budget_cents": 3000,
   "mcp_servers": [
@@ -343,6 +352,7 @@ Request:
   "role_description": "Analyzes data and builds ML models",
   "system_prompt": "You are the Data Scientist at {{company_name}}...",
   "runtime_type": "claude_code",
+  "default_effort": "medium",
   "heartbeat_interval_min": 60,
   "monthly_budget_cents": 3000
 }
@@ -364,10 +374,14 @@ Get agent detail including system prompt.
 Response: full agent object (same as list item + `system_prompt` + `mcp_servers` fields).
 
 #### `PATCH /companies/:companyId/agents/:agentId`
-Update agent config: title, role_description, system_prompt, heartbeat_interval_min,
-monthly_budget_cents, reports_to, mcp_servers.
+Update agent config: title, role_description, system_prompt, default_effort,
+heartbeat_interval_min, monthly_budget_cents, reports_to, mcp_servers.
 
 Cannot update: status (use lifecycle endpoints), budget_used_cents (system-managed).
+
+`default_effort` accepts `minimal | low | medium | high | max`. It sets the
+baseline reasoning level applied to every run of this agent; comments posted
+on the issue can override it per-run — see [Reasoning effort](#reasoning-effort).
 
 #### `POST /companies/:companyId/agents/:agentId/disable`
 Disable an agent. Stops heartbeats, kills subprocess if running. Does not affect the project container.
@@ -770,11 +784,18 @@ Request:
 ```json
 {
   "content_type": "text",
-  "content": { "text": "Make sure we handle reconnection gracefully..." }
+  "content": { "text": "Make sure we handle reconnection gracefully..." },
+  "effort": "max"
 }
 ```
 
 `author_type` is always `board` for this endpoint.
+
+`effort` is optional. When set (valid values: `minimal | low | medium | high | max`),
+it overrides the assigned agent's `default_effort` for the wakeup triggered by
+this comment — useful for asking an agent to think harder about a tricky piece
+of feedback. Invalid values are silently dropped. See
+[Reasoning effort](#reasoning-effort).
 
 #### `POST /companies/:companyId/issues/:issueId/comments/:commentId/choose`
 Board picks an option on an options-type comment.
@@ -1797,6 +1818,42 @@ Receives Slack Events API payloads. Handles interactive messages (approvals), sl
 
 #### `POST /webhooks/telegram`
 Receives Telegram Bot API webhook updates. Handles bot commands (`/issues`, `/approve`, `/comment`), inline keyboard callbacks, and text messages.
+
+---
+
+## Reasoning effort
+
+Every agent run picks a reasoning effort level from the `agent_effort` enum:
+
+```
+minimal | low | medium | high | max
+```
+
+The effective level is resolved at run-activation time with this precedence
+(highest wins):
+
+1. An explicit `effort` value on the triggering wakeup payload — set by a
+   human via a comment, or by an MCP caller that wants a single run to reason
+   harder.
+2. The agent's `default_effort` column on `member_agents` (copied from
+   `agent_types.default_effort` when the agent is hired).
+3. The global default, `medium`.
+
+Each runtime translates the resolved level to its native knob:
+
+| Runtime | Translation |
+|---------|-------------|
+| `claude_code` | Appends `think` / `think hard` / `ultrathink` to the task prompt. |
+| `codex` | Passes `-c model_reasoning_effort=<level>` (`max` → `high`). |
+| `gemini` | Sets `GEMINI_REASONING_EFFORT=<level>` in the container env. |
+| `kimi` | Prompt-only directive (no native knob). |
+
+The resolved level is also exposed as `HEZO_AGENT_EFFORT` in the container
+env so agent-side tooling can read it.
+
+Built-in agent defaults: CEO and Architect default to `max` (ultrathink),
+Product Lead / QA / Security / Researcher to `high`, all implementers to
+`medium`.
 
 ---
 

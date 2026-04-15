@@ -235,8 +235,10 @@ export class JobManager {
 			admin_status: string;
 			heartbeat_interval_min: number;
 			runtime_type: string;
+			default_effort: string;
 		}>(
-			`SELECT id, title, slug, system_prompt, admin_status, heartbeat_interval_min, runtime_type FROM member_agents WHERE id = $1`,
+			`SELECT id, title, slug, system_prompt, admin_status, heartbeat_interval_min, runtime_type, default_effort
+			 FROM member_agents WHERE id = $1`,
 			[memberId],
 		);
 
@@ -425,6 +427,7 @@ export class JobManager {
 						system_prompt: agent.rows[0].system_prompt,
 						company_id: companyId,
 						runtime_type: agent.rows[0].runtime_type as AgentRuntime,
+						default_effort: agent.rows[0].default_effort,
 					},
 					issue,
 					project.rows[0],

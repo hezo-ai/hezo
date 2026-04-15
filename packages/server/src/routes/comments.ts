@@ -5,6 +5,7 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
+import { parseEffortFromCommentBody } from '../services/effort';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
@@ -78,11 +79,16 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 	const body = await c.req.json<{
 		content_type?: string;
 		content: Record<string, unknown>;
+		effort?: string;
 	}>();
 
 	if (!body.content) {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
+
+	// Optional per-comment effort override. Board users set this to dial up/down
+	// the reasoning budget of the agent run that the comment triggers.
+	const commentEffort = parseEffortFromCommentBody(body);
 
 	let authorMemberId: string | null = null;
 	if (auth.type === AuthType.Board) {
@@ -120,6 +126,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 				createWakeup(db, mentioned.rows[0].id, companyId, WakeupSource.Mention, {
 					issue_id: issueId,
 					comment_id: result.rows[0].id,
+					...(commentEffort ? { effort: commentEffort } : {}),
 				}).catch((e) => log.error('Failed to create mention wakeup:', e));
 			}
 		}
@@ -134,6 +141,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 				createWakeup(db, assigneeId, companyId, WakeupSource.Comment, {
 					issue_id: issueId,
 					comment_id: result.rows[0].id,
+					...(commentEffort ? { effort: commentEffort } : {}),
 				}).catch((e) => log.error('Failed to create comment wakeup:', e));
 			}
 		}

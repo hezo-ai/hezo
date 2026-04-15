@@ -620,6 +620,38 @@ UI:
 
 ---
 
+## Phase 11.5: Per-Run Reasoning Effort
+
+**Status:** Done (2026-04-14)
+
+**Goal:** Let operators dial the reasoning budget of individual agent runs. Planners default to ultrathink; humans can override per-comment for specific runs.
+
+**What's included:**
+
+Backend:
+- `agent_effort` enum: `minimal | low | medium | high | max`
+- `default_effort` column on `agent_types` and `member_agents`
+- Per-role seed defaults: CEO / Architect → `max`; Product Lead / QA / Security / Researcher → `high`; implementers → `medium`
+- Effort resolver service with precedence: wakeup payload override → agent default → `medium`
+- Runtime translation: Claude Code (`think`/`ultrathink` prompt keyword), Codex (`-c model_reasoning_effort=<level>`), Gemini (`GEMINI_REASONING_EFFORT` env), Kimi (prompt directive only)
+- Resolved level exposed as `HEZO_AGENT_EFFORT` env var for agent-side tooling
+- Comments endpoint accepts `effort` field; forwards onto the mention/comment wakeup payload
+- Agent CRUD routes accept and validate `default_effort`
+
+UI:
+- Effort selector dropdown on the issue comment composer (Default, Minimal, Low, Medium, High, Max ultrathink)
+
+**How to test:**
+- Post a comment with `effort: "max"` → wakeup payload carries the override
+- Run an agent with Claude Code runtime → task prompt ends with `ultrathink` at max effort, `think hard` at high
+- Run an agent with Codex runtime → command includes `-c model_reasoning_effort=high`
+- Change an agent's `default_effort` via PATCH → subsequent runs use the new level
+- `bun run test --skip-e2e` passes all unit/integration tests (40 new assertions in `effort.test.ts`, `agent-runner.test.ts`, `comments.test.ts`)
+
+**Depends on:** Phase 4, Phase 7.5
+
+---
+
 ## Phase Summary
 
 | Phase | Focus | Key Deliverable |
@@ -640,5 +672,6 @@ UI:
 | 9 | Full Platform Integrations + UI | All OAuth platforms, centrally hosted Connect + extended connection UI |
 | 10 | Deploy + Messaging + UI | Staging/production pipeline, Slack + Telegram + deploy status, notification preferences |
 | 11 | Agent Execution Logs | Execution comments on issues, agent Executions/Settings tabs, run detail pages |
+| 11.5 | Per-Run Reasoning Effort | `agent_effort` enum, per-agent `default_effort`, per-comment override, runtime-native knobs (ultrathink, model_reasoning_effort) |
 
 Each phase produces a testable increment. Phase 0 can be built and verified in isolation. Phases 1–3 give a working API server testable entirely with curl. Phase 3.5 makes everything browser-testable. From Phase 4 onward, every phase includes UI alongside backend so new functionality is always manually testable in the browser.
