@@ -53,6 +53,10 @@ export function useHeartbeatRun(companyId: string, agentId: string, runId: strin
 			api.get<HeartbeatRun>(
 				`/api/companies/${companyId}/agents/${agentId}/heartbeat-runs/${runId}`,
 			),
+		refetchInterval: (query) => {
+			const status = query.state.data?.status;
+			return status === 'running' || status === 'queued' ? 10_000 : false;
+		},
 	});
 }
 

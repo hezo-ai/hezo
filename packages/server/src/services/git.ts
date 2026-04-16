@@ -16,14 +16,23 @@ function spawn(
 			args,
 			{ cwd: opts.cwd, env: { ...process.env, ...opts.env }, timeout: opts.timeout },
 			(error, stdout, stderr) => {
+				const timedOut = error && 'killed' in error && error.killed;
 				resolve({
 					exitCode: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
 					stdout: stdout?.toString() ?? '',
-					stderr: stderr?.toString() ?? '',
+					stderr: timedOut
+						? `timed out after ${Math.round((opts.timeout ?? 0) / 1000)}s`
+						: (stderr?.toString() ?? ''),
 				});
 			},
 		);
 	});
+}
+
+function formatGitError(stderr: string): string {
+	const trimmed = stderr.trim();
+	if (trimmed.startsWith('timed out')) return trimmed;
+	return trimmed;
 }
 
 const SSH_HOSTS: Record<RepoHostType, string> = {
@@ -66,8 +75,11 @@ export async function cloneRepo(
 	const sshUrl = buildGitSshUrl(hostType, repoIdentifier);
 	const { env, cleanup } = sshEnvWithKey(sshPrivateKeyPem);
 	try {
-		const { exitCode, stderr } = await spawn('git', ['clone', sshUrl, targetDir], { env });
-		if (exitCode !== 0) return { success: false, error: stderr.trim() };
+		const { exitCode, stderr } = await spawn('git', ['clone', sshUrl, targetDir], {
+			env,
+			timeout: 120_000,
+		});
+		if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
 		return { success: true };
 	} finally {
 		cleanup();
@@ -98,8 +110,9 @@ export async function fetchRepo(
 		const { exitCode, stderr } = await spawn('git', ['fetch', '--all', '--prune'], {
 			cwd: repoDir,
 			env,
+			timeout: 60_000,
 		});
-		if (exitCode !== 0) return { success: false, error: stderr.trim() };
+		if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
 		return { success: true };
 	} finally {
 		cleanup();
@@ -114,15 +127,17 @@ export async function ensureIssueWorktree(
 	if (existsSync(join(worktreePath, '.git'))) {
 		const ff = await spawn('git', ['merge', '--ff-only', `origin/${branchName}`], {
 			cwd: worktreePath,
+			timeout: 30_000,
 		});
 		if (ff.exitCode !== 0 && !ff.stderr.toLowerCase().includes("couldn't find remote ref")) {
-			return { success: true, created: false, error: ff.stderr.trim() };
+			return { success: true, created: false, error: formatGitError(ff.stderr) };
 		}
 		return { success: true, created: false };
 	}
 
 	const remoteCheck = await spawn('git', ['rev-parse', '--verify', `origin/${branchName}`], {
 		cwd: repoDir,
+		timeout: 30_000,
 	});
 
 	let result: Awaited<ReturnType<typeof spawn>>;
@@ -130,16 +145,17 @@ export async function ensureIssueWorktree(
 		result = await spawn(
 			'git',
 			['worktree', 'add', '--track', '-b', branchName, worktreePath, `origin/${branchName}`],
-			{ cwd: repoDir },
+			{ cwd: repoDir, timeout: 30_000 },
 		);
 	} else {
 		result = await spawn('git', ['worktree', 'add', '-b', branchName, worktreePath], {
 			cwd: repoDir,
+			timeout: 30_000,
 		});
 	}
 
 	if (result.exitCode !== 0) {
-		return { success: false, created: false, error: result.stderr.trim() };
+		return { success: false, created: false, error: formatGitError(result.stderr) };
 	}
 	return { success: true, created: true };
 }

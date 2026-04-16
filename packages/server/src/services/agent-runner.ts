@@ -227,6 +227,8 @@ export async function runAgent(
 	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue);
 	const logBuffer = new CappedLogBuffer(LOG_CAP_BYTES);
 
+	let lastFlushTime = Date.now();
+
 	const broadcast = (stream: 'stdout' | 'stderr', text: string) => {
 		logBuffer.append(stream, text);
 		deps.wsManager?.broadcast(`project-runs:${project.id}`, {
@@ -237,6 +239,17 @@ export async function runAgent(
 			stream,
 			text,
 		});
+
+		const now = Date.now();
+		if (now - lastFlushTime > 5000) {
+			lastFlushTime = now;
+			deps.db
+				.query('UPDATE heartbeat_runs SET log_text = $1 WHERE id = $2', [
+					logBuffer.toString(),
+					heartbeatRunId,
+				])
+				.catch(() => {});
+		}
 	};
 
 	const prep = await prepareWorktrees(deps, project, issue, broadcast, signal);
@@ -334,8 +347,7 @@ async function prepareWorktrees(
 		return { workingDir: '/workspace', designatedRepo: null };
 	}
 
-	// Best-effort reconcile: ensures any newly-added or previously-failed clone
-	// is present before the agent starts.
+	broadcast('stdout', '(syncing repos...)\n');
 	const syncRes = await ensureProjectRepos(
 		deps.db,
 		deps.masterKeyManager,
@@ -374,14 +386,16 @@ async function prepareWorktrees(
 		}
 
 		if (companySshKey) {
+			broadcast('stdout', `git fetch ${repo.short_name}...\n`);
 			const fetchRes = await fetchRepo(repoDir, companySshKey.privateKey);
 			if (fetchRes.success) {
-				broadcast('stdout', `git fetch ${repo.short_name}\n`);
+				broadcast('stdout', `git fetch ${repo.short_name} done\n`);
 			} else {
 				broadcast('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
 			}
 		}
 
+		broadcast('stdout', `git worktree ${repo.short_name}...\n`);
 		const wt = await ensureIssueWorktree(repoDir, worktreePath, branchName);
 		if (!wt.success) {
 			broadcast('stderr', `git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}\n`);
