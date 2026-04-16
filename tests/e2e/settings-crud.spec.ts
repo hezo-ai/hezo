@@ -99,6 +99,7 @@ test('can edit and save preferences', async ({ page }) => {
 	await prefsSection.locator('textarea').fill('Always be concise.');
 	await prefsSection.getByRole('button', { name: 'Save' }).click();
 
+	await expect(prefsSection.getByRole('button', { name: 'Edit' })).toBeVisible({ timeout: 5000 });
 	await expect(prefsSection.getByText('Always be concise.')).toBeVisible({ timeout: 5000 });
 
 	await page.reload();
