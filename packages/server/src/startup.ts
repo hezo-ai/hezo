@@ -95,7 +95,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	const connectPublicKey = await fetchConnectPublicKey(config.connectUrl);
 
-	const docker = new DockerClient();
+	const docker = process.env.HEZO_SKIP_DOCKER ? DockerClient.createNoop() : new DockerClient();
 	const wsManager = new WebSocketManager();
 	const jobManager = new JobManager({
 		db,

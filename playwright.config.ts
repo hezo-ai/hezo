@@ -25,6 +25,7 @@ export default defineConfig({
 			reuseExistingServer: true,
 			env: {
 				SKIP_AI_KEY_VALIDATION: '1',
+				HEZO_SKIP_DOCKER: '1',
 			},
 		},
 		{

@@ -42,6 +42,27 @@ export class DockerClient {
 		this.socketPath = socketPath;
 	}
 
+	static createNoop(): DockerClient {
+		const stub = {
+			ping: async () => true,
+			pullImage: async () => {},
+			createContainer: async (name: string) => ({ Id: `noop-${name}`, Warnings: [] }),
+			startContainer: async () => {},
+			stopContainer: async () => {},
+			removeContainer: async () => {},
+			inspectContainer: async (id: string) => ({
+				Id: id,
+				State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+				Config: { Image: 'noop' },
+			}),
+			containerLogs: async () => new Response(new ReadableStream()),
+			execCreate: async () => 'noop-exec',
+			execStart: async () => ({ stdout: '', stderr: '' }),
+			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		};
+		return stub as unknown as DockerClient;
+	}
+
 	private async request(
 		method: string,
 		path: string,
