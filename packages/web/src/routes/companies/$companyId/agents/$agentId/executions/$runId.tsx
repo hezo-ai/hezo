@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { ArrowLeft } from 'lucide-react';
-import { useEffect, useMemo, useRef } from 'react';
+import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { LogViewer } from '../../../../../../components/log-viewer';
 import { Badge } from '../../../../../../components/ui/badge';
 import { useHeartbeatRun } from '../../../../../../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../../../../../../hooks/use-run-logs';
@@ -39,20 +40,7 @@ function ExecutionDetailPage() {
 	const isActive = run?.status === 'running' || run?.status === 'queued';
 	const { lines } = useRunLogs(run?.project_id ?? null, run?.id ?? null, run?.log_text, isActive);
 
-	const logBoxRef = useRef<HTMLPreElement>(null);
-	const lastLineCount = useRef(0);
-
-	useEffect(() => {
-		const box = logBoxRef.current;
-		if (!box) return;
-		const atBottom =
-			box.scrollHeight - box.scrollTop - box.clientHeight < 80 ||
-			lines.length === lastLineCount.current;
-		if (atBottom) {
-			box.scrollTop = box.scrollHeight;
-		}
-		lastLineCount.current = lines.length;
-	}, [lines]);
+	const [invocationExpanded, setInvocationExpanded] = useState(false);
 
 	const displayedCommand = useMemo(
 		() => run?.invocation_command ?? null,
@@ -134,16 +122,32 @@ function ExecutionDetailPage() {
 
 			{displayedCommand && (
 				<div className="mb-3">
-					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">
+					<button
+						type="button"
+						onClick={() => setInvocationExpanded(!invocationExpanded)}
+						className="flex items-center gap-1.5 text-[11px] text-text-subtle uppercase tracking-wider hover:text-text-muted mb-1"
+					>
+						{invocationExpanded ? (
+							<ChevronDown className="w-3 h-3" />
+						) : (
+							<ChevronRight className="w-3 h-3" />
+						)}
 						Invocation
-					</div>
-					<pre className="text-xs font-mono bg-bg-muted rounded-lg p-3 overflow-x-auto whitespace-pre-wrap text-text-muted">
-						{displayedCommand}
-					</pre>
-					{run.working_dir && (
-						<div className="mt-1 text-[11px] text-text-subtle">
-							cwd: <span className="font-mono">{run.working_dir}</span>
-						</div>
+					</button>
+					{invocationExpanded && (
+						<>
+							<pre
+								data-testid="run-invocation-body"
+								className="text-xs font-mono bg-bg-muted rounded-lg p-3 overflow-x-auto whitespace-pre-wrap text-text-muted"
+							>
+								{displayedCommand}
+							</pre>
+							{run.working_dir && (
+								<div className="mt-1 text-[11px] text-text-subtle">
+									cwd: <span className="font-mono">{run.working_dir}</span>
+								</div>
+							)}
+						</>
 					)}
 				</div>
 			)}
@@ -158,30 +162,13 @@ function ExecutionDetailPage() {
 			)}
 
 			<div className="mb-4">
-				<div className="flex items-center justify-between mb-1">
-					<div className="text-[11px] text-text-subtle uppercase tracking-wider">
-						Log {isActive && <span className="ml-1 text-accent-yellow">(live)</span>}
-					</div>
-					<div className="text-[11px] text-text-subtle">{lines.length} lines</div>
-				</div>
-				<pre
-					ref={logBoxRef}
-					data-testid="run-log"
-					className="text-xs font-mono bg-bg-muted rounded-lg p-3 max-h-[60vh] overflow-auto whitespace-pre-wrap text-text-muted"
-				>
-					{lines.length === 0
-						? isActive
-							? 'Waiting for log output...'
-							: 'No output captured.'
-						: lines.map((line) => (
-								<div
-									key={line.id}
-									className={line.stream === 'stderr' ? 'text-accent-red-text' : ''}
-								>
-									{line.text}
-								</div>
-							))}
-				</pre>
+				<LogViewer
+					lines={lines}
+					emptyState={isActive ? 'Waiting for log output...' : 'No output captured.'}
+					liveLabel={isActive ? <span className="text-accent-yellow">(live)</span> : null}
+					heightClassName="max-h-[60vh]"
+					testId="run-log"
+				/>
 			</div>
 		</div>
 	);

@@ -355,6 +355,18 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.Kimi]: 'kimi',
 };
 
+/**
+ * Flags that each CLI needs to run fully non-interactively. Agent runs happen
+ * inside locked-down Docker containers driven by `docker exec`, so any prompt
+ * for user approval would hang the run indefinitely.
+ */
+export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> = {
+	[AgentRuntime.ClaudeCode]: ['--dangerously-skip-permissions'],
+	[AgentRuntime.Codex]: ['--dangerously-bypass-approvals-and-sandbox'],
+	[AgentRuntime.Gemini]: ['--yolo'],
+	[AgentRuntime.Kimi]: [],
+};
+
 export const AI_PROVIDER_INFO: Record<
 	AiProvider,
 	{

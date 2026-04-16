@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ExternalLink, Loader2, Play, RefreshCw, Square, Trash2 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { ExternalLink, Loader2, Play, RefreshCw, Square } from 'lucide-react';
+import { LogViewer } from '../../../../../components/log-viewer';
 import { Badge } from '../../../../../components/ui/badge';
 import { Button } from '../../../../../components/ui/button';
 import {
@@ -28,15 +28,6 @@ function ContainerPage() {
 
 	const logPhase = isCreating ? 'creating' : isRunning ? 'running' : isError ? 'error' : null;
 	const { logs, clear } = useContainerLogs(project?.id ?? '', project?.id ? logPhase : null);
-
-	const [autoScroll, setAutoScroll] = useState(true);
-	const logEndRef = useRef<HTMLDivElement>(null);
-	const prevLogCount = useRef(0);
-
-	if (autoScroll && logs.length !== prevLogCount.current) {
-		prevLogCount.current = logs.length;
-		queueMicrotask(() => logEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
-	}
 
 	if (!project) return null;
 
@@ -138,56 +129,27 @@ function ContainerPage() {
 				)}
 			</div>
 
-			{/* Log Viewer */}
-			<div className="flex flex-col rounded-lg border border-border-subtle overflow-hidden">
-				<div className="flex items-center justify-between bg-bg-subtle px-3 py-1.5 border-b border-border-subtle">
-					<span className="text-xs text-text-muted font-medium">Logs</span>
-					<div className="flex items-center gap-2">
-						<label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
-							<input
-								type="checkbox"
-								checked={autoScroll}
-								onChange={(e) => setAutoScroll(e.target.checked)}
-								className="rounded"
-							/>
-							Auto-scroll
-						</label>
-						<Button variant="ghost" size="sm" onClick={clear} className="text-xs h-6 px-2">
-							<Trash2 className="w-3 h-3" /> Clear
-						</Button>
-					</div>
-				</div>
-				<div className="bg-[#0d1117] h-[400px] overflow-y-auto p-3 font-mono text-xs leading-relaxed">
-					{!isRunning && logs.length === 0 && (
-						<span className="text-text-subtle">
-							{isCreating ? (
-								<span className="inline-flex items-center gap-2">
-									<Loader2 className="w-3 h-3 animate-spin" />
-									Provisioning container…
-								</span>
-							) : isStopping ? (
-								<span className="inline-flex items-center gap-2">
-									<Loader2 className="w-3 h-3 animate-spin" />
-									Stopping container…
-								</span>
-							) : hasContainer ? (
-								'Container is not running.'
-							) : (
-								'No container provisioned.'
-							)}
+			<LogViewer
+				lines={logs}
+				onClear={clear}
+				emptyState={
+					isCreating ? (
+						<span className="inline-flex items-center gap-2">
+							<Loader2 className="w-3 h-3 animate-spin" />
+							Provisioning container…
 						</span>
-					)}
-					{logs.map((line) => (
-						<div
-							key={line.id}
-							className={line.stream === 'stderr' ? 'text-red-400' : 'text-gray-300'}
-						>
-							{line.text}
-						</div>
-					))}
-					<div ref={logEndRef} />
-				</div>
-			</div>
+					) : isStopping ? (
+						<span className="inline-flex items-center gap-2">
+							<Loader2 className="w-3 h-3 animate-spin" />
+							Stopping container…
+						</span>
+					) : hasContainer ? (
+						'Container is not running.'
+					) : (
+						'No container provisioned.'
+					)
+				}
+			/>
 		</div>
 	);
 }

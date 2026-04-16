@@ -718,6 +718,58 @@ describe('runAgent', () => {
 			expect(row.rows[0].log_text).toContain('[stderr] a warning');
 		});
 
+		it('passes --dangerously-skip-permissions for claude_code runtime', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-claude-skip';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+			};
+
+			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+
+			expect(capturedCmd).toContain('--dangerously-skip-permissions');
+		});
+
+		it('passes --dangerously-bypass-approvals-and-sandbox for codex runtime', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-codex-bypass';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+			};
+
+			await runAgent(
+				deps,
+				{ ...makeAgent(), runtime_type: 'codex' as any },
+				makeIssue(),
+				makeProject(),
+			);
+
+			expect(capturedCmd[0]).toBe('codex');
+			expect(capturedCmd).toContain('--dangerously-bypass-approvals-and-sandbox');
+		});
+
 		it('falls back to /workspace when no repos are linked', async () => {
 			let capturedWorkingDir = '';
 			const docker = createMockDocker({

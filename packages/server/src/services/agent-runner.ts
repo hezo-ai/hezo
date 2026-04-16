@@ -6,6 +6,7 @@ import {
 	ContainerStatus,
 	HeartbeatRunStatus,
 	PROVIDER_TO_ENV_VAR,
+	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
 	RUNTIME_TO_PROVIDER,
 	WsMessageType,
@@ -240,7 +241,14 @@ export async function runAgent(
 
 	const prep = await prepareWorktrees(deps, agent, project, issue, broadcast, signal);
 
-	const execCmd = [cliCommand, ...mcpFlags, ...effortApplication.extraArgs, '-p', taskPrompt];
+	const execCmd = [
+		cliCommand,
+		...mcpFlags,
+		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
+		...effortApplication.extraArgs,
+		'-p',
+		taskPrompt,
+	];
 
 	// Redact JWT for persisted invocation. Keep everything else so operators can
 	// see exactly what was invoked.
