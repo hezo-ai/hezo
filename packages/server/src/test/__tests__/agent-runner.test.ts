@@ -487,11 +487,14 @@ describe('runAgent', () => {
 			};
 
 			// Reconfigure the provider so the Codex runtime can resolve a credential.
+			// Mock fetch so verifyProviderKey doesn't make a real network call.
+			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
 			await app.request(`/api/companies/${companyId}/ai-providers`, {
 				method: 'POST',
 				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ provider: 'openai', api_key: 'sk-test-codex' }),
 			});
+			globalThis.fetch = originalFetch;
 
 			await runAgent(
 				deps,

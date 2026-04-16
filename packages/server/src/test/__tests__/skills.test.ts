@@ -13,7 +13,7 @@ import { parseGitHubRawUrl, SkillDownloadError } from '../../services/skill-down
 import { resolveSystemPrompt } from '../../services/template-resolver';
 import { buildApp } from '../../startup';
 import { safeClose } from '../helpers';
-import { authHeader } from '../helpers/app';
+import { authHeader, createStubDocker } from '../helpers/app';
 import { createTestDbWithMigrations } from '../helpers/db';
 
 let app: Hono<Env>;
@@ -49,11 +49,12 @@ beforeAll(async () => {
 	const masterKeyHex = generateMasterKey();
 	await masterKeyManager.initialize(db, masterKeyHex);
 	await seedBuiltins(db, await loadAgentRoles());
-	app = buildApp(db, masterKeyManager, {
-		dataDir: tempDataDir,
-		connectUrl: '',
-		connectPublicKey: '',
-	});
+	app = buildApp(
+		db,
+		masterKeyManager,
+		{ dataDir: tempDataDir, connectUrl: '', connectPublicKey: '' },
+		createStubDocker(),
+	);
 	const userResult = await db.query<{ id: string }>(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('Skills Admin', true) RETURNING id",
 	);

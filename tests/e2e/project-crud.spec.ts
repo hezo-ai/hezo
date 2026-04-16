@@ -20,8 +20,9 @@ test.describe('Project CRUD', () => {
 		await page.getByRole('button', { name: 'Create' }).click();
 
 		// Verify project appears in the list
-		await expect(page.getByText('Marketing Campaign')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('Plan Q3 marketing initiatives')).toBeVisible();
+		const main = page.getByRole('main');
+		await expect(main.getByText('Marketing Campaign')).toBeVisible({ timeout: 5000 });
+		await expect(main.getByText('Plan Q3 marketing initiatives')).toBeVisible();
 	});
 
 	test('project list shows default Operations project', async ({ page }) => {
@@ -50,7 +51,7 @@ test.describe('Project CRUD', () => {
 		await waitForPageLoad(page);
 
 		// Verify the project card shows counts
-		const card = page.locator('a', { hasText: 'Count Test' });
+		const card = page.getByRole('main').locator('a', { hasText: 'Count Test' });
 		await expect(card).toBeVisible({ timeout: 5000 });
 		await expect(card.getByText('0 issues')).toBeVisible();
 		await expect(card.getByText('0 repos')).toBeVisible();
@@ -71,7 +72,7 @@ test.describe('Project CRUD', () => {
 		await waitForPageLoad(page);
 
 		// Click on the project card
-		await page.getByText('Linkable Project').click();
+		await page.getByRole('main').getByText('Linkable Project').click();
 
 		// Should navigate to project detail page
 		await expect(page).toHaveURL(

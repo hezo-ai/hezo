@@ -23,6 +23,9 @@ export default defineConfig({
 			cwd: './packages/server',
 			port: SERVER_PORT,
 			reuseExistingServer: true,
+			env: {
+				SKIP_AI_KEY_VALIDATION: '1',
+			},
 		},
 		{
 			command: 'bun run --watch src/index.ts',

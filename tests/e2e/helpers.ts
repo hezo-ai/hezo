@@ -44,11 +44,12 @@ export async function createCompanyWithAgents(page: Page) {
 	const types = await typesRes.json();
 	const typeId = (types as any).data.find((t: any) => t.name === 'Startup')?.id;
 
+	const uid = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
 	const companyRes = await page.request.post('/api/companies', {
 		headers,
 		data: {
-			name: `Test Co ${Date.now()}`,
-			issue_prefix: `TC${Date.now().toString().slice(-4)}`,
+			name: `Test Co ${uid}`,
+			issue_prefix: `T${uid.slice(-6).toUpperCase()}`,
 			template_id: typeId,
 		},
 	});

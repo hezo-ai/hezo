@@ -46,6 +46,7 @@ afterAll(async () => {
 
 describe('syncAllContainerStatuses', () => {
 	it('does nothing when no projects have containers', async () => {
+		await db.query('UPDATE projects SET container_id = NULL');
 		const mockDocker = { inspectContainer: vi.fn() } as any;
 		await syncAllContainerStatuses(db, mockDocker);
 		expect(mockDocker.inspectContainer).not.toHaveBeenCalled();

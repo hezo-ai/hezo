@@ -90,7 +90,7 @@ aiProvidersRoutes.post('/companies/:companyId/ai-providers', async (c) => {
 	}
 
 	// Validate the key against the provider's API before storing
-	if (authMethod === AiAuthMethod.ApiKey) {
+	if (authMethod === AiAuthMethod.ApiKey && !process.env.SKIP_AI_KEY_VALIDATION) {
 		try {
 			const valid = await verifyProviderKey(provider, body.api_key, authMethod);
 			if (!valid) {
