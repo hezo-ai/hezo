@@ -2540,8 +2540,18 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `list_skills` | List active skills | `company_id`, `tags?` |
 | `get_skill` | Get skill by slug | `company_id`, `slug` |
 | `create_skill` | Create skill directly | `company_id`, `name`, `content`, `description?` |
+| `set_agent_summary` | Set an agent's auto-generated description | `company_id`, `agent_id`, `summary` (≤1000 chars) |
+| `set_team_summary` | Set the team collaboration description (CEO only) | `company_id`, `summary` (≤4000 chars) |
 
 MCP tools call the same business logic layer as REST endpoints.
+
+### Description-update issue convention
+
+To trigger runtime regeneration of agent and team descriptions, the system
+creates an issue with the `description-update` label in the Operations project,
+assigned to the CEO agent. The CEO processes this issue by calling
+`set_agent_summary` for each agent and `set_team_summary` for the company,
+then marks the issue done.
 
 ---
 

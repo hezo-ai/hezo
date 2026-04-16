@@ -7,6 +7,7 @@ export interface Company {
 	name: string;
 	slug: string;
 	description: string | null;
+	team_summary: string | null;
 	issue_prefix: string;
 	team_type_ids: string[];
 	mcp_servers: unknown[];

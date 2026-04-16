@@ -82,11 +82,19 @@ companiesRoutes.post('/companies', async (c) => {
 
 	await db.query('BEGIN');
 	try {
+		const teamSummaryResult = body.template_id
+			? await db.query<{ default_team_summary: string }>(
+					'SELECT default_team_summary FROM company_types WHERE id = $1',
+					[body.template_id],
+				)
+			: null;
+		const teamSummary = teamSummaryResult?.rows[0]?.default_team_summary ?? '';
+
 		const companyResult = await db.query(
-			`INSERT INTO companies (name, slug, description, issue_prefix)
-       VALUES ($1, $2, $3, $4)
+			`INSERT INTO companies (name, slug, description, team_summary, issue_prefix)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-			[body.name.trim(), slug, body.description ?? '', issuePrefix],
+			[body.name.trim(), slug, body.description ?? '', teamSummary, issuePrefix],
 		);
 		const company = companyResult.rows[0] as { id: string; [key: string]: unknown };
 
@@ -280,6 +288,7 @@ interface AgentTypeRow {
 	name: string;
 	slug: string;
 	role_description: string;
+	default_summary: string;
 	system_prompt_template: string;
 	runtime_type: string;
 	default_effort: string;
@@ -299,7 +308,8 @@ async function createAgentsFromTeamTypes(
 	const allRows: AgentTypeRow[] = [];
 	for (const typeId of teamTypeIds) {
 		const joinRows = await db.query<AgentTypeRow>(
-			`SELECT at.id, at.name, at.slug, at.role_description, at.system_prompt_template,
+			`SELECT at.id, at.name, at.slug, at.role_description, at.default_summary,
+			        at.system_prompt_template,
 			        at.runtime_type, at.default_effort, at.heartbeat_interval_min, at.monthly_budget_cents,
 			        ctat.reports_to_slug,
 			        ctat.runtime_type_override, ctat.heartbeat_interval_override, ctat.monthly_budget_override
@@ -340,15 +350,17 @@ async function createAgentsFromTeamTypes(
 		slugToMemberId.set(row.slug, memberId);
 
 		await db.query(
-			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, system_prompt,
+			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
+			                            system_prompt,
 			                            runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_runtime, $8::agent_effort, $9, $10)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_runtime, $9::agent_effort, $10, $11)`,
 			[
 				memberId,
 				row.id,
 				row.name,
 				row.slug,
 				row.role_description,
+				row.default_summary ?? '',
 				row.system_prompt_template,
 				runtimeType,
 				row.default_effort,
@@ -388,13 +400,14 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 		name: string;
 		slug: string;
 		role_description: string;
+		default_summary: string;
 		system_prompt_template: string;
 		runtime_type: string;
 		default_effort: string;
 		heartbeat_interval_min: number;
 		monthly_budget_cents: number;
 	}>(
-		`SELECT id, name, slug, role_description, system_prompt_template,
+		`SELECT id, name, slug, role_description, default_summary, system_prompt_template,
 		        runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents
 		 FROM agent_types WHERE slug = ANY($1)`,
 		[missingSlugs],
@@ -408,15 +421,17 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 			[companyId, MemberType.Agent, at.name],
 		);
 		await db.query(
-			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, system_prompt,
+			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
+			                            system_prompt,
 			                            runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_runtime, $8::agent_effort, $9, $10)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_runtime, $9::agent_effort, $10, $11)`,
 			[
 				memberResult.rows[0].id,
 				at.id,
 				at.name,
 				at.slug,
 				at.role_description,
+				at.default_summary ?? '',
 				at.system_prompt_template,
 				at.runtime_type,
 				at.default_effort,

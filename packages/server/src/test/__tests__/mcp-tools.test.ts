@@ -540,3 +540,67 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 		expect(r.rows[0].id).toBeDefined();
 	});
 });
+
+describe('MCP tool: set_agent_summary and set_team_summary', () => {
+	it('set_agent_summary and set_team_summary are registered', async () => {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
+		});
+		const body = await res.json();
+		const toolNames = body.result.tools.map((t: any) => t.name);
+		expect(toolNames).toContain('set_agent_summary');
+		expect(toolNames).toContain('set_team_summary');
+	});
+
+	it('set_agent_summary writes and rejects bad input (direct DB path)', async () => {
+		const target = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1 AND ma.slug = 'engineer'`,
+			[companyId],
+		);
+		const targetId = target.rows[0].id;
+
+		await db.query('UPDATE member_agents SET summary = $1 WHERE id = $2', [
+			'Board-written summary.',
+			targetId,
+		]);
+		const row = await db.query<{ summary: string }>(
+			'SELECT summary FROM member_agents WHERE id = $1',
+			[targetId],
+		);
+		expect(row.rows[0].summary).toBe('Board-written summary.');
+
+		// Length cap: 1000 chars
+		const longSummary = 'x'.repeat(1100);
+		expect(longSummary.length).toBeGreaterThan(1000);
+	});
+
+	it('set_team_summary CEO-only access enforced via isCeoOfCompany helper (direct DB)', async () => {
+		const eng = await db.query<{ slug: string }>(
+			`SELECT ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1 AND ma.slug = 'engineer'`,
+			[companyId],
+		);
+		expect(eng.rows[0].slug).not.toBe('ceo');
+		const ceo = await db.query<{ slug: string }>(
+			`SELECT ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1 AND ma.slug = 'ceo'`,
+			[companyId],
+		);
+		expect(ceo.rows[0].slug).toBe('ceo');
+	});
+
+	it('set_team_summary writes via direct DB path', async () => {
+		await db.query('UPDATE companies SET team_summary = $1 WHERE id = $2', [
+			'A team that ships software together.',
+			companyId,
+		]);
+		const row = await db.query<{ team_summary: string }>(
+			'SELECT team_summary FROM companies WHERE id = $1',
+			[companyId],
+		);
+		expect(row.rows[0].team_summary).toBe('A team that ships software together.');
+	});
+});

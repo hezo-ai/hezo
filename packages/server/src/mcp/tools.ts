@@ -737,6 +737,78 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		db,
 	);
 
+	// Description maintenance — used by the CEO (and self) to write back
+	// auto-generated agent and team summaries.
+	tool(
+		server,
+		'set_agent_summary',
+		'Save a short human-readable summary for an agent (≤1000 chars, single paragraph, plain prose). Callable by any agent in the same company or any board user; the CEO is the expected caller, but agents may also self-summarise.',
+		{
+			company_id: z.string().describe('Company ID'),
+			agent_id: z.string().describe('Target agent member ID'),
+			summary: z.string().describe('The new summary, ≤1000 chars'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
+				return { error: 'Access denied' };
+			}
+
+			const summary = String(args.summary ?? '').trim();
+			if (summary.length === 0) return { error: 'summary must be non-empty' };
+			if (summary.length > 1000) {
+				return { error: `summary too long (${summary.length} chars; max 1000)` };
+			}
+
+			const r = await db.query<{ id: string }>(
+				`UPDATE member_agents SET summary = $1, updated_at = now()
+				 WHERE id = $2 AND id IN (
+				   SELECT m.id FROM members m WHERE m.id = $2 AND m.company_id = $3
+				 )
+				 RETURNING id`,
+				[summary, args.agent_id, args.company_id],
+			);
+			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
+
+			return { updated: true };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'set_team_summary',
+		'Save the team-level collaboration summary for a company (≤4000 chars, plain prose, may span paragraphs). Only callable by the CEO of that company.',
+		{
+			company_id: z.string().describe('Company ID'),
+			summary: z.string().describe('The new team summary, ≤4000 chars'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			if (!(await isCeoOfCompany(db, auth, args.company_id as string))) {
+				return { error: 'Access denied: only the CEO can update the team summary' };
+			}
+
+			const summary = String(args.summary ?? '').trim();
+			if (summary.length === 0) return { error: 'summary must be non-empty' };
+			if (summary.length > 4000) {
+				return { error: `summary too long (${summary.length} chars; max 4000)` };
+			}
+
+			await db.query('UPDATE companies SET team_summary = $1, updated_at = now() WHERE id = $2', [
+				summary,
+				args.company_id,
+			]);
+
+			return { updated: true };
+		},
+		db,
+	);
+
 	// KB Docs: upsert
 	tool(
 		server,
@@ -1033,4 +1105,15 @@ async function isCoachOrSelf(db: PGlite, auth: AuthInfo, targetAgentId: string):
 		return coach.rows[0]?.slug === 'coach';
 	}
 	return false;
+}
+
+async function isCeoOfCompany(db: PGlite, auth: AuthInfo, companyId: string): Promise<boolean> {
+	if (auth.type !== AuthType.Agent) return false;
+	const r = await db.query<{ slug: string }>(
+		`SELECT ma.slug FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE ma.id = $1 AND m.company_id = $2`,
+		[auth.memberId, companyId],
+	);
+	return r.rows[0]?.slug === 'ceo';
 }

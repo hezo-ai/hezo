@@ -454,6 +454,10 @@ Users can also create **entirely new custom agent types** with arbitrary titles,
 
 Agents can request updates to their own system prompts via `PATCH /agent-api/self/system-prompt`, subject to board approval. This allows agents to evolve their behavior when directed by a human member.
 
+### Agent and team auto-descriptions
+
+Every agent carries a short summary (≤5 lines) describing its role and capabilities. Every company carries a team summary (≤20 lines) describing how the agents collaborate. Built-in agent types ship with pre-baked defaults from `packages/server/src/db/agent-summaries.json`, copied to each agent and company during provisioning. At runtime the CEO can regenerate descriptions via `description-update` issues in Operations, calling the `set_agent_summary` and `set_team_summary` MCP tools.
+
 ### Ticket workflow
 
 Every feature ticket follows this flow:

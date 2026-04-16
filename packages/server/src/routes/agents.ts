@@ -12,7 +12,11 @@ import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import { buildUpdateSet, terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
+import { enqueueAgentSummaryTask, enqueueTeamSummaryTask } from '../services/description-tasks';
+
+const log = logger.child('routes');
 
 export const agentsRoutes = new Hono<Env>();
 
@@ -21,7 +25,7 @@ export const agentsRoutes = new Hono<Env>();
  * `assigned_issue_count` requires the caller to bind terminal statuses via `terminalStatusParams`.
  */
 const AGENT_BASE_COLUMNS = `m.id, m.company_id, m.display_name, m.created_at,
-	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
+	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary, ma.system_prompt, ma.runtime_type,
 	ma.default_effort,
 	ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
 	ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
@@ -157,6 +161,14 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 			'INSERT',
 			result.rows[0] as Record<string, unknown>,
 		);
+
+		enqueueAgentSummaryTask(db, companyId, memberId, 'created').catch((e) =>
+			log.error('Failed to enqueue agent summary task:', e),
+		);
+		enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
+			log.error('Failed to enqueue team summary task:', e),
+		);
+
 		return ok(c, result.rows[0], 201);
 	} catch (e) {
 		await db.query('ROLLBACK');
@@ -336,6 +348,13 @@ ${teamRoster}`;
 			);
 		}
 
+		enqueueAgentSummaryTask(db, companyId, memberId, 'created').catch((e) =>
+			log.error('Failed to enqueue agent summary task:', e),
+		);
+		enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
+			log.error('Failed to enqueue team summary task:', e),
+		);
+
 		return ok(c, { agent: agentResult.rows[0], issue }, 201);
 	} catch (e) {
 		await db.query('ROLLBACK');
@@ -473,6 +492,17 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		'UPDATE',
 		result.rows[0] as Record<string, unknown>,
 	);
+
+	if (body.system_prompt !== undefined || body.role_description !== undefined) {
+		const reason = body.system_prompt !== undefined ? 'prompt_updated' : 'role_updated';
+		enqueueAgentSummaryTask(db, companyId, agentId, reason).catch((e) =>
+			log.error('Failed to enqueue agent summary task:', e),
+		);
+		enqueueTeamSummaryTask(db, companyId, 'prompt_updated').catch((e) =>
+			log.error('Failed to enqueue team summary task:', e),
+		);
+	}
+
 	return ok(c, result.rows[0]);
 });
 
@@ -508,6 +538,11 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/disable', async (c) => 
 		id: agentId,
 		admin_status: AgentAdminStatus.Disabled,
 	});
+
+	enqueueTeamSummaryTask(db, companyId, 'enabled_changed').catch((e) =>
+		log.error('Failed to enqueue team summary task:', e),
+	);
+
 	return ok(c, { admin_status: AgentAdminStatus.Disabled });
 });
 
@@ -537,6 +572,11 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/enable', async (c) => {
 		id: agentId,
 		admin_status: AgentAdminStatus.Enabled,
 	});
+
+	enqueueTeamSummaryTask(db, companyId, 'enabled_changed').catch((e) =>
+		log.error('Failed to enqueue team summary task:', e),
+	);
+
 	return ok(c, { admin_status: AgentAdminStatus.Enabled });
 });
 

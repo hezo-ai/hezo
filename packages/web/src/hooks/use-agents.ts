@@ -9,6 +9,7 @@ export interface Agent {
 	title: string;
 	slug: string;
 	role_description: string | null;
+	summary: string | null;
 	system_prompt: string | null;
 	runtime_type: string;
 	heartbeat_interval_min: number;

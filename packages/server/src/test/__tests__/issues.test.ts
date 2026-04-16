@@ -58,24 +58,37 @@ describe('issues CRUD', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.identifier).toBe('ITC-1');
-		expect(body.data.number).toBe(1);
+		expect(body.data.identifier).toMatch(/^ITC-\d+$/);
+		expect(body.data.number).toBeGreaterThanOrEqual(1);
 		expect(body.data.status).toBe('backlog');
 		expect(body.data.priority).toBe('high');
 	});
 
 	it('creates sequential issue numbers', async () => {
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
+		const firstRes = await app.request(`/api/companies/${companyId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Second issue',
+				title: 'Sequential A',
 				assignee_id: agentId,
 			}),
 		});
-		expect(res.status).toBe(201);
-		expect((await res.json()).data.identifier).toBe('ITC-2');
+		expect(firstRes.status).toBe(201);
+		const firstNum = (await firstRes.json()).data.number;
+
+		const secondRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Sequential B',
+				assignee_id: agentId,
+			}),
+		});
+		expect(secondRes.status).toBe(201);
+		const secondNum = (await secondRes.json()).data.number;
+		expect(secondNum).toBe(firstNum + 1);
 	});
 
 	it('lists issues with pagination', async () => {
@@ -146,7 +159,7 @@ describe('issues CRUD', () => {
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.parent_issue_id).toBe(parentIssue.id);
-		expect(body.data.identifier).toBe('ITC-3');
+		expect(body.data.identifier).toMatch(/^ITC-\d+$/);
 	});
 
 	it('manages issue dependencies', async () => {

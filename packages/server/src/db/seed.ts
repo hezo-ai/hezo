@@ -1,5 +1,8 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { AgentEffort } from '@hezo/shared';
+import agentSummaries from './agent-summaries.json' with { type: 'json' };
+
+const summaries: { agents: Record<string, string>; teams: Record<string, string> } = agentSummaries;
 
 interface AgentTypeDef {
 	name: string;
@@ -162,13 +165,15 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 
 	for (const def of defs) {
 		await db.query(
-			`INSERT INTO agent_types (name, slug, description, role_description, system_prompt_template,
+			`INSERT INTO agent_types (name, slug, description, role_description, default_summary,
+			                          system_prompt_template,
 			                          runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents,
 			                          is_builtin, source)
-			 VALUES ($1, $2, $3, $4, $5, $6::agent_runtime, $7::agent_effort, $8, $9, true, 'builtin'::agent_type_source)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_runtime, $8::agent_effort, $9, $10, true, 'builtin'::agent_type_source)
 			 ON CONFLICT (slug) DO UPDATE SET
 			     name = EXCLUDED.name,
 			     role_description = EXCLUDED.role_description,
+			     default_summary = EXCLUDED.default_summary,
 			     system_prompt_template = EXCLUDED.system_prompt_template,
 			     runtime_type = EXCLUDED.runtime_type,
 			     default_effort = EXCLUDED.default_effort,
@@ -180,6 +185,7 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 				def.slug,
 				def.role_description,
 				def.role_description,
+				summaries.agents[def.slug] ?? '',
 				role(def.slug),
 				def.runtime_type,
 				def.default_effort,
@@ -304,10 +310,12 @@ Significant technical decisions should be documented with:
 	const skillsConfig: Array<{ name: string; source_url: string; description?: string }> = [];
 
 	const startupResult = await db.query<{ id: string }>(
-		`INSERT INTO company_types (name, description, is_builtin, source, kb_docs_config, skills_config)
-		 VALUES ($1, $2, true, 'builtin'::company_type_source, $3::jsonb, $4::jsonb)
+		`INSERT INTO company_types (name, description, default_team_summary, is_builtin, source,
+		                            kb_docs_config, skills_config)
+		 VALUES ($1, $2, $3, true, 'builtin'::company_type_source, $4::jsonb, $5::jsonb)
 		 ON CONFLICT (name) DO UPDATE SET
 		     description = EXCLUDED.description,
+		     default_team_summary = EXCLUDED.default_team_summary,
 		     kb_docs_config = EXCLUDED.kb_docs_config,
 		     skills_config = EXCLUDED.skills_config,
 		     source = EXCLUDED.source
@@ -315,6 +323,7 @@ Significant technical decisions should be documented with:
 		[
 			'Startup',
 			'Full-stack software development team with 10 specialized agents and starter knowledge base',
+			summaries.teams.Startup ?? '',
 			JSON.stringify(kbDocsConfig),
 			JSON.stringify(skillsConfig),
 		],
@@ -333,11 +342,16 @@ Significant technical decisions should be documented with:
 	}
 
 	await db.query(
-		`INSERT INTO company_types (name, description, is_builtin, source)
-		 VALUES ($1, $2, true, 'builtin'::company_type_source)
+		`INSERT INTO company_types (name, description, default_team_summary, is_builtin, source)
+		 VALUES ($1, $2, $3, true, 'builtin'::company_type_source)
 		 ON CONFLICT (name) DO UPDATE SET
 		     description = EXCLUDED.description,
+		     default_team_summary = EXCLUDED.default_team_summary,
 		     source = EXCLUDED.source`,
-		['Blank', 'Start from scratch with only the built-in CEO and Coach agents'],
+		[
+			'Blank',
+			'Start from scratch with only the built-in CEO and Coach agents',
+			summaries.teams.Blank ?? '',
+		],
 	);
 }

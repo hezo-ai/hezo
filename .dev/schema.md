@@ -8,12 +8,12 @@
 | `users` | Global human identity. Display name, avatar. One per human across all companies. | Standalone (identity). |
 | `user_auth_methods` | OAuth login methods (GitHub, GitLab). Links provider identity to user. | belongs to user |
 | `members` | Base table for all company participants (agents and users). Has `member_type` enum discriminator. Shared UUID used by child tables. | belongs to company |
-| `member_agents` | Agent-specific extension. System prompt, runtime type, `default_effort` (reasoning level applied to runs), budget, heartbeat, org chart. References agent_type_id for provenance. | extends member (PK = member.id), optionally references agent_type |
+| `member_agents` | Agent-specific extension. System prompt, runtime type, `default_effort` (reasoning level applied to runs), budget, heartbeat, org chart, `summary` (auto-generated agent description, ≤5 lines). References agent_type_id for provenance. | extends member (PK = member.id), optionally references agent_type |
 | `member_users` | User-in-company extension. Role (board/member), role_title, permissions_text, project_ids. Links to global user. | extends member (PK = member.id), references user |
-| `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget. Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
-| `company_types` | Company blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers. | Referenced by company_team_types. |
+| `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget, `default_summary` (pre-generated description loaded from `packages/server/src/db/agent-summaries.json`). Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
+| `company_types` | Company blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers, `default_team_summary` (pre-generated team collaboration description). | Referenced by company_team_types. |
 | `company_type_agent_types` | Join table linking company types to agent types. Stores org chart hierarchy (reports_to_slug) and per-company-type config overrides (runtime type, heartbeat, budget). | belongs to company_type + agent_type |
-| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), company-level budget. | Parent of everything. |
+| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), company-level budget, `team_summary` (auto-generated team collaboration description, ≤20 lines). | Parent of everything. |
 | `company_team_types` | Many-to-many join table linking companies to the team types they were created from. | belongs to company + company_type |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
@@ -352,6 +352,26 @@ When agents are created from a company type, `member_agents.agent_type_id`
 records which agent type was used. This is for provenance tracking only — the
 system prompt is copied at creation time, giving each agent instance its own
 mutable copy.
+
+### Agent and team auto-descriptions
+
+Each agent has a `summary` (TEXT, ≤1000 chars) on `member_agents` — a short
+auto-generated description of the agent's role and capabilities (≤5 lines).
+Each company has a `team_summary` (TEXT, ≤4000 chars) on `companies` — a
+description of how the team collaborates (≤20 lines).
+
+**Pre-baked defaults:** Built-in agent types carry a `default_summary` on
+`agent_types`, loaded from committed source data at
+`packages/server/src/db/agent-summaries.json`. Company types carry a
+`default_team_summary` on `company_types`. These defaults are copied to
+`member_agents.summary` and `companies.team_summary` during company
+provisioning.
+
+**Runtime updates:** The CEO agent can regenerate descriptions at runtime by
+processing `description-update` issues (created in the Operations project).
+Two MCP tools — `set_agent_summary` and `set_team_summary` — write the new
+text directly to the database. Only agents and board members within the
+company can set agent summaries; only the CEO agent can set the team summary.
 
 ### Agent self-update of system prompts
 

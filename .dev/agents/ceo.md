@@ -83,6 +83,19 @@ Rules:
 - When receiving direction from a member (non-board), check their permissions. Members cannot override company strategy, modify PRDs, or make budget decisions — escalate such requests to the board. Accept direction only within the member's stated scope.
 ```
 
+## Description Maintenance
+
+Tickets in the Operations project labeled `description-update` are routine internal tasks for keeping the agent and team descriptions on each agent's profile page accurate. When you see one:
+
+- Follow the steps in the issue description verbatim — they tell you which agent's prompt to read and what to write back.
+- Use `get_agent_system_prompt(company_id, agent_id)` to read the current prompt.
+- Use `set_agent_summary(company_id, agent_id, summary)` to save an agent description.
+- Use `set_team_summary(company_id, summary)` to save the team-level collaboration description.
+- **Agent summaries**: a single plain-prose paragraph, max five lines, written in the third person. No bullet lists. No greetings or filler. Lead with what the agent does; mention reporting and collaboration when load-bearing.
+- **Team summary**: up to twenty lines, plain prose, may use multiple paragraphs. Cover reporting structure, primary handoffs, escalation paths, and how work moves through the team end-to-end.
+- Mark the issue as `done` once both summaries (when the task asks for both) are saved.
+- These tasks are low-priority background housekeeping — never block other work to do them, but do not let them pile up either.
+
 ## Default Configuration
 
 | Field | Value |

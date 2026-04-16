@@ -3,6 +3,7 @@ import { Plus, UserPlus } from 'lucide-react';
 import { Button } from '../../../../components/ui/button';
 import { EmptyState } from '../../../../components/ui/empty-state';
 import { StatusDot } from '../../../../components/ui/status-dot';
+import { useCompany } from '../../../../hooks/use-companies';
 import type { OrgNode } from '../../../../hooks/use-org-chart';
 import { useOrgChart } from '../../../../hooks/use-org-chart';
 
@@ -43,6 +44,7 @@ function OrgNodeComponent({ node, companyId }: { node: OrgNode; companyId: strin
 function TeamPage() {
 	const { companyId } = Route.useParams();
 	const { data: orgChart, isLoading } = useOrgChart(companyId);
+	const { data: company } = useCompany(companyId);
 
 	if (isLoading)
 		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;
@@ -57,6 +59,17 @@ function TeamPage() {
 						<UserPlus className="w-4 h-4" /> Hire agent
 					</Button>
 				</Link>
+			</div>
+
+			<div
+				data-testid="team-summary"
+				className="rounded-lg border border-border-subtle bg-bg-subtle p-4 text-sm leading-relaxed text-text whitespace-pre-line mb-6"
+			>
+				{company?.team_summary?.trim() ? (
+					company.team_summary
+				) : (
+					<span className="italic text-text-muted">Team description being generated…</span>
+				)}
 			</div>
 
 			{!hasMembers ? (

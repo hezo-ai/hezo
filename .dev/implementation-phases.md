@@ -670,6 +670,34 @@ UI:
 
 ---
 
+## Phase 12: Agent & Team Auto-Descriptions
+
+**Status:** Done (2026-04-17)
+
+**Goal:** Auto-generated descriptions for agents and teams — pre-baked defaults for built-in types, runtime regeneration via CEO-managed tickets.
+
+**What's included:**
+
+Backend:
+- `member_agents.summary` (TEXT) — agent description, ≤5 lines / 1000 chars
+- `companies.team_summary` (TEXT) — team collaboration description, ≤20 lines / 4000 chars
+- `agent_types.default_summary` (TEXT) — pre-generated defaults loaded from `packages/server/src/db/agent-summaries.json`
+- `company_types.default_team_summary` (TEXT) — pre-generated team defaults
+- Summaries copied to agents and company during provisioning
+- `set_agent_summary` MCP tool — any agent or board member in the company can set an agent's summary
+- `set_team_summary` MCP tool — CEO agent only, sets the company team summary
+- `description-update` label convention: issue created in Operations project, assigned to CEO, triggers regeneration
+
+**How to test:**
+- Create a company from built-in template — agents have pre-baked summaries, company has team summary
+- CEO processes a `description-update` issue — calls MCP tools to update summaries
+- Non-CEO agent cannot call `set_team_summary` (rejected)
+- `bun run test --skip-e2e` passes
+
+**Depends on:** Phase 11.5
+
+---
+
 ## Phase Summary
 
 | Phase | Focus | Key Deliverable |
@@ -691,5 +719,6 @@ UI:
 | 10 | Deploy + Messaging + UI | Staging/production pipeline, Slack + Telegram + deploy status, notification preferences |
 | 11 | Agent Execution Logs | Execution comments on issues, agent Executions/Settings tabs, run detail pages |
 | 11.5 | Per-Run Reasoning Effort | `agent_effort` enum, per-agent `default_effort`, per-comment override, runtime-native knobs (ultrathink, model_reasoning_effort) |
+| 12 | Agent & Team Auto-Descriptions | Pre-baked summaries for built-in types, runtime regeneration via CEO tickets, `set_agent_summary` / `set_team_summary` MCP tools |
 
 Each phase produces a testable increment. Phase 0 can be built and verified in isolation. Phases 1–3 give a working API server testable entirely with curl. Phase 3.5 makes everything browser-testable. From Phase 4 onward, every phase includes UI alongside backend so new functionality is always manually testable in the browser.

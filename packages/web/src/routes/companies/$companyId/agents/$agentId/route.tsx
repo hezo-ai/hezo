@@ -56,6 +56,17 @@ function AgentLayout() {
 				</Badge>
 			</div>
 
+			<div
+				data-testid="agent-summary"
+				className="rounded-lg border border-border-subtle bg-bg-subtle p-4 text-sm leading-relaxed text-text mb-6"
+			>
+				{agent.summary?.trim() ? (
+					agent.summary
+				) : (
+					<span className="italic text-text-muted">Description being generated…</span>
+				)}
+			</div>
+
 			<div className="flex gap-1 border-b border-border mb-6 mt-6">
 				{tabs.map((tab) => {
 					const isActive = matchRoute({ to: tab.to, params, fuzzy: true });
