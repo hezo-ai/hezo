@@ -27,7 +27,7 @@ function ContainerPage() {
 	const isActive = isRunning || isCreating || isStopping;
 
 	const logPhase = isCreating ? 'creating' : isRunning ? 'running' : isError ? 'error' : null;
-	const { logs, clear } = useContainerLogs(project?.id ?? '', project?.id ? logPhase : null);
+	const { lines: logs, clear } = useContainerLogs(project?.id ?? '', project?.id ? logPhase : null);
 
 	if (!project) return null;
 

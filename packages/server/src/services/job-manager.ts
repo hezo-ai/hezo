@@ -12,6 +12,7 @@ import {
 } from '@hezo/shared';
 import { Cron } from 'cron-async';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
 import { syncAllContainerStatuses } from './containers';
@@ -406,11 +407,9 @@ export class JobManager {
 			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
 			[AgentRuntimeStatus.Active, memberId],
 		);
-		this.deps.wsManager.broadcast(`company:${companyId}`, {
-			type: 'row_change',
-			table: 'member_agents',
-			action: 'UPDATE',
-			row: { id: memberId, runtime_status: AgentRuntimeStatus.Active },
+		broadcastRowChange(this.deps.wsManager, `company:${companyId}`, 'member_agents', 'UPDATE', {
+			id: memberId,
+			runtime_status: AgentRuntimeStatus.Active,
 		});
 
 		log.debug(`Launching agent ${agent.rows[0].title} for issue ${issue.identifier}`);
@@ -481,11 +480,9 @@ export class JobManager {
 			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status, last_heartbeat_at = now() WHERE id = $2',
 			[AgentRuntimeStatus.Idle, memberId],
 		);
-		this.deps.wsManager.broadcast(`company:${companyId}`, {
-			type: 'row_change',
-			table: 'member_agents',
-			action: 'UPDATE',
-			row: { id: memberId, runtime_status: AgentRuntimeStatus.Idle },
+		broadcastRowChange(this.deps.wsManager, `company:${companyId}`, 'member_agents', 'UPDATE', {
+			id: memberId,
+			runtime_status: AgentRuntimeStatus.Idle,
 		});
 
 		if (wakeupId) {
@@ -510,11 +507,8 @@ export class JobManager {
 				 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
 				[issueId, memberId, CommentContentType.Execution, JSON.stringify(content)],
 			);
-			this.deps.wsManager.broadcast(`company:${companyId}`, {
-				type: 'row_change',
-				table: 'issue_comments',
-				action: 'INSERT',
-				row: { issue_id: issueId },
+			broadcastRowChange(this.deps.wsManager, `company:${companyId}`, 'issue_comments', 'INSERT', {
+				issue_id: issueId,
 			});
 		} catch (err) {
 			log.error('Failed to create execution comment:', err);

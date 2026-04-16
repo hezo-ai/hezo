@@ -53,34 +53,6 @@ export class DockerClient {
 		this.socketPath = socketPath;
 	}
 
-	static createNoop(): DockerClient {
-		const stub = {
-			ping: async () => true,
-			imageExists: async () => true,
-			pullImage: async () => {},
-			createContainer: async (name: string) => ({ Id: `noop-${name}`, Warnings: [] }),
-			startContainer: async () => {},
-			stopContainer: async () => {},
-			removeContainer: async () => {},
-			inspectContainer: async (id: string) => ({
-				Id: id,
-				State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
-				Config: { Image: 'noop' },
-			}),
-			containerLogs: async () => new Response(new ReadableStream()),
-			execCreate: async () => 'noop-exec',
-			execStart: async (
-				_id: string,
-				opts?: ExecStartOpts,
-			): Promise<{ stdout: string; stderr: string }> => {
-				if (!opts?.onChunk) return { stdout: '', stderr: '' };
-				return runSyntheticExec(opts);
-			},
-			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
-		};
-		return stub as unknown as DockerClient;
-	}
-
 	private async request(
 		method: string,
 		path: string,
@@ -268,37 +240,6 @@ function demuxDockerStream(raw: Uint8Array): { stdout: string; stderr: string } 
 		stdout: decoder.decode(concatUint8Arrays(stdout)),
 		stderr: decoder.decode(concatUint8Arrays(stderr)),
 	};
-}
-
-// When a Hezo server is running with HEZO_SKIP_DOCKER (e.g. the Playwright
-// e2e server), the docker stub synthesises a short scripted exec so that
-// runtime consumers — WebSocket subscribers, log accumulators, exit
-// inspectors — observe the same event shape they would from a real agent.
-// The output is deterministic so tests can assert on specific lines.
-const SYNTHETIC_EXEC_SCRIPT: Array<{
-	stream: 'stdout' | 'stderr';
-	text: string;
-	delayMs?: number;
-}> = [
-	{ stream: 'stdout', text: '[synthetic] starting agent run\n', delayMs: 10 },
-	{ stream: 'stdout', text: '[synthetic] analyzing task\n', delayMs: 10 },
-	{ stream: 'stdout', text: '[synthetic] writing response\n', delayMs: 10 },
-	{ stream: 'stdout', text: '[synthetic] task complete\n', delayMs: 10 },
-];
-
-async function runSyntheticExec(opts: ExecStartOpts): Promise<{ stdout: string; stderr: string }> {
-	let stdoutAcc = '';
-	let stderrAcc = '';
-	for (const entry of SYNTHETIC_EXEC_SCRIPT) {
-		if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-		if (entry.stream === 'stdout') stdoutAcc += entry.text;
-		else stderrAcc += entry.text;
-		await opts.onChunk?.(entry);
-		if (entry.delayMs) {
-			await new Promise((r) => setTimeout(r, entry.delayMs));
-		}
-	}
-	return { stdout: stdoutAcc, stderr: stderrAcc };
 }
 
 async function streamDockerExec(

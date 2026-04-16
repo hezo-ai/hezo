@@ -20,3 +20,35 @@ export async function resolveProjectId(
 	);
 	return result.rows[0]?.id ?? null;
 }
+
+export interface ProjectLocator {
+	id: string;
+	slug: string;
+	companyId: string;
+	companySlug: string;
+}
+
+export async function getProjectLocator(
+	db: PGlite,
+	projectId: string,
+): Promise<ProjectLocator | null> {
+	const result = await db.query<{
+		id: string;
+		slug: string;
+		company_id: string;
+		company_slug: string;
+	}>(
+		`SELECT p.id, p.slug, p.company_id, c.slug AS company_slug
+		 FROM projects p JOIN companies c ON c.id = p.company_id
+		 WHERE p.id = $1`,
+		[projectId],
+	);
+	const row = result.rows[0];
+	if (!row) return null;
+	return {
+		id: row.id,
+		slug: row.slug,
+		companyId: row.company_id,
+		companySlug: row.company_slug,
+	};
+}

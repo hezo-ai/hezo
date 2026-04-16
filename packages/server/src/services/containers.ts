@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import { ContainerStatus } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { broadcastProjectUpdate } from '../lib/broadcast';
 import { logger } from '../logger';
 import type { DockerClient } from './docker';
 import { ensureImage } from './ensure-image';
@@ -24,20 +25,26 @@ export interface ProjectRow {
 	dev_ports: Array<{ container: number; host: number }>;
 }
 
+export interface ContainerDeps {
+	db: PGlite;
+	docker: DockerClient;
+	dataDir: string;
+	wsManager?: WebSocketManager;
+	masterKeyManager?: MasterKeyManager;
+	provisioningLogs?: ProvisioningLogBroadcaster;
+}
+
 const PORT_POOL_START = 10000;
 const PORT_POOL_END = 19999;
 
 export async function provisionContainer(
-	db: PGlite,
-	docker: DockerClient,
+	deps: ContainerDeps,
 	project: ProjectRow,
 	companySlug: string,
-	dataDir: string,
-	wsManager?: WebSocketManager,
-	companyId?: string,
-	provisioningLogs?: ProvisioningLogBroadcaster,
-	masterKeyManager?: MasterKeyManager,
 ): Promise<string> {
+	const { db, docker, dataDir, wsManager, masterKeyManager, provisioningLogs } = deps;
+	const companyId = project.company_id;
+
 	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 		ContainerStatus.Creating,
 		project.id,
@@ -90,7 +97,6 @@ export async function provisionContainer(
 		}
 
 		const containerName = `hezo-${companySlug}-${project.slug}`;
-
 		const extraHosts = ['host.docker.internal:host-gateway'];
 
 		const env = ['HEZO_API_URL=http://host.docker.internal:3100/agent-api'];
@@ -104,7 +110,6 @@ export async function provisionContainer(
 		});
 
 		emit('stdout', `→ Creating container ${containerName}`);
-		// Remove any existing container with the same name to avoid conflicts
 		try {
 			await docker.removeContainer(containerName, true);
 		} catch {
@@ -139,7 +144,7 @@ export async function provisionContainer(
 				masterKeyManager,
 				{
 					id: project.id,
-					company_id: project.company_id,
+					company_id: companyId,
 					companySlug,
 					projectSlug: project.slug,
 				},
@@ -155,21 +160,7 @@ export async function provisionContainer(
 		}
 
 		emit('stdout', '✓ Container ready');
-
-		if (wsManager && companyId) {
-			const updated = await db.query<Record<string, unknown>>(
-				'SELECT * FROM projects WHERE id = $1',
-				[project.id],
-			);
-			if (updated.rows[0]) {
-				wsManager.broadcast(`company:${companyId}`, {
-					type: 'row_change',
-					table: 'projects',
-					action: 'UPDATE',
-					row: updated.rows[0],
-				});
-			}
-		}
+		await broadcastProjectUpdate(db, wsManager, companyId, project.id);
 
 		return Id;
 	} catch (error) {
@@ -181,32 +172,19 @@ export async function provisionContainer(
 			ContainerStatus.Error,
 			project.id,
 		]);
-		if (wsManager && companyId) {
-			const updated = await db.query<Record<string, unknown>>(
-				'SELECT * FROM projects WHERE id = $1',
-				[project.id],
-			);
-			if (updated.rows[0]) {
-				wsManager.broadcast(`company:${companyId}`, {
-					type: 'row_change',
-					table: 'projects',
-					action: 'UPDATE',
-					row: updated.rows[0],
-				});
-			}
-		}
+		await broadcastProjectUpdate(db, wsManager, companyId, project.id);
 		throw error;
 	}
 }
 
 export async function teardownContainer(
-	db: PGlite,
-	docker: DockerClient,
+	deps: ContainerDeps,
 	projectId: string,
 	companySlug: string,
 	projectSlug: string,
-	dataDir: string,
 ): Promise<void> {
+	const { db, docker, dataDir } = deps;
+
 	const result = await db.query<{ container_id: string | null }>(
 		'SELECT container_id FROM projects WHERE id = $1',
 		[projectId],
@@ -233,13 +211,13 @@ export async function teardownContainer(
 }
 
 export async function stopContainerGracefully(
-	db: PGlite,
-	docker: DockerClient,
+	deps: ContainerDeps,
 	projectId: string,
+	companyId: string,
 	containerId: string,
-	wsManager?: WebSocketManager,
-	companyId?: string,
 ): Promise<void> {
+	const { db, docker, wsManager } = deps;
+
 	try {
 		await docker.stopContainer(containerId);
 		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
@@ -263,33 +241,15 @@ export async function stopContainerGracefully(
 		)
 		.catch((e) => log.error('Failed to release execution locks on stop:', e));
 
-	if (wsManager && companyId) {
-		const updated = await db.query<Record<string, unknown>>(
-			'SELECT * FROM projects WHERE id = $1',
-			[projectId],
-		);
-		if (updated.rows[0]) {
-			wsManager.broadcast(`company:${companyId}`, {
-				type: 'row_change',
-				table: 'projects',
-				action: 'UPDATE',
-				row: updated.rows[0],
-			});
-		}
-	}
+	await broadcastProjectUpdate(db, wsManager, companyId, projectId);
 }
 
 export async function rebuildContainer(
-	db: PGlite,
-	docker: DockerClient,
+	deps: ContainerDeps,
 	project: ProjectRow,
 	companySlug: string,
-	dataDir: string,
-	wsManager?: WebSocketManager,
-	companyId?: string,
-	provisioningLogs?: ProvisioningLogBroadcaster,
-	masterKeyManager?: MasterKeyManager,
 ): Promise<string> {
+	const { docker, provisioningLogs } = deps;
 	provisioningLogs?.clear(project.id);
 
 	if (project.container_id) {
@@ -310,17 +270,7 @@ export async function rebuildContainer(
 		}
 	}
 
-	return provisionContainer(
-		db,
-		docker,
-		project,
-		companySlug,
-		dataDir,
-		wsManager,
-		companyId,
-		provisioningLogs,
-		masterKeyManager,
-	);
+	return provisionContainer(deps, project, companySlug);
 }
 
 export async function syncContainerStatus(
@@ -364,19 +314,8 @@ export async function syncAllContainerStatuses(
 		const oldStatus = project.container_status;
 		const newStatus = await syncContainerStatus(db, docker, project.id, project.container_id);
 
-		if (newStatus !== oldStatus && wsManager) {
-			const updated = await db.query<Record<string, unknown>>(
-				'SELECT * FROM projects WHERE id = $1',
-				[project.id],
-			);
-			if (updated.rows[0]) {
-				wsManager.broadcast(`company:${project.company_id}`, {
-					type: 'row_change',
-					table: 'projects',
-					action: 'UPDATE',
-					row: updated.rows[0],
-				});
-			}
+		if (newStatus !== oldStatus) {
+			await broadcastProjectUpdate(db, wsManager, project.company_id, project.id);
 		}
 	}
 }

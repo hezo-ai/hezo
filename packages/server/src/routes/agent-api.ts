@@ -8,6 +8,7 @@ import {
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
+import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 
 export const agentApiRoutes = new Hono<Env>();
@@ -64,7 +65,8 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 		});
 	}
 
-	const terminalPlaceholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${i + 3}`).join(', ');
+	const ts = terminalStatusParams(3, false);
+	const terminalPlaceholders = ts.placeholders;
 
 	const issues = await db.query(
 		`SELECT i.id, i.number, i.identifier, i.title, i.description, i.status, i.priority,

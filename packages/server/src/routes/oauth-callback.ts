@@ -1,6 +1,7 @@
 import {
 	AiAuthMethod,
 	type AiProvider,
+	ALL_AI_PROVIDERS,
 	ApprovalStatus,
 	ApprovalType,
 	PlatformType,
@@ -16,7 +17,7 @@ import { storeOAuthToken } from '../services/token-store';
 
 const log = logger.child('routes');
 
-const AI_PROVIDER_PLATFORMS = new Set(['anthropic', 'openai', 'google']);
+const AI_PROVIDER_PLATFORMS = new Set<string>(ALL_AI_PROVIDERS);
 
 export const oauthCallbackRoutes = new Hono<Env>();
 

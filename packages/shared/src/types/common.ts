@@ -367,22 +367,31 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	[AgentRuntime.Kimi]: [],
 };
 
-export const AI_PROVIDER_INFO: Record<
-	AiProvider,
-	{
-		name: string;
-		runtimeLabel: string;
-		supportsOAuth: boolean;
-		keyPrefix?: string;
-		keyPlaceholder: string;
-	}
-> = {
+export interface AiProviderVerifyEndpoint {
+	url: string | ((apiKey: string) => string);
+	headers: Record<string, string> | ((apiKey: string) => Record<string, string>);
+}
+
+export interface AiProviderInfo {
+	name: string;
+	runtimeLabel: string;
+	supportsOAuth: boolean;
+	keyPrefix?: string;
+	keyPlaceholder: string;
+	verifyEndpoint: AiProviderVerifyEndpoint;
+}
+
+export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	[AiProvider.Anthropic]: {
 		name: 'Anthropic',
 		runtimeLabel: 'Claude Code',
 		supportsOAuth: true,
 		keyPrefix: 'sk-ant-',
 		keyPlaceholder: 'sk-ant-...',
+		verifyEndpoint: {
+			url: 'https://api.anthropic.com/v1/models',
+			headers: (apiKey) => ({ 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }),
+		},
 	},
 	[AiProvider.OpenAI]: {
 		name: 'OpenAI',
@@ -390,17 +399,35 @@ export const AI_PROVIDER_INFO: Record<
 		supportsOAuth: true,
 		keyPrefix: 'sk-',
 		keyPlaceholder: 'sk-...',
+		verifyEndpoint: {
+			url: 'https://api.openai.com/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
 	},
 	[AiProvider.Google]: {
 		name: 'Google',
 		runtimeLabel: 'Gemini',
 		supportsOAuth: true,
 		keyPlaceholder: 'AIza...',
+		verifyEndpoint: {
+			url: (apiKey) => `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`,
+			headers: {},
+		},
 	},
 	[AiProvider.Moonshot]: {
 		name: 'Moonshot',
 		runtimeLabel: 'Kimi',
 		supportsOAuth: false,
 		keyPlaceholder: 'sk-...',
+		verifyEndpoint: {
+			url: 'https://api.moonshot.cn/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
 	},
 };
+
+export const ALL_AI_PROVIDERS: ReadonlyArray<AiProvider> = Object.values(AiProvider);
+
+export const OAUTH_AI_PROVIDERS: ReadonlyArray<AiProvider> = ALL_AI_PROVIDERS.filter(
+	(p) => AI_PROVIDER_INFO[p].supportsOAuth,
+);

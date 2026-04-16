@@ -59,6 +59,8 @@
 			"!**/migrations-bundle.json",
 			"!**/agents-bundle.json",
 			"!tests/test-run-order.json",
+			"!test-results",
+			"!playwright-report",
 			"!**/routeTree.gen.ts",
 			"!**/static"
 		]

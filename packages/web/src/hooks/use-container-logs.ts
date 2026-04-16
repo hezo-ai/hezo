@@ -1,51 +1,13 @@
 import { type WsContainerLogMessage, WsMessageType } from '@hezo/shared';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSocket } from '../contexts/socket-context';
+import { type LogStreamLine, useLogStream } from './use-log-stream';
 
-export interface LogLine {
-	id: number;
-	stream: 'stdout' | 'stderr';
-	text: string;
-}
-
-const MAX_LINES = 5000;
-let nextLogId = 0;
+export type LogLine = LogStreamLine;
 
 export function useContainerLogs(projectId: string, phase: string | null) {
-	const [logs, setLogs] = useState<LogLine[]>([]);
-	const logsRef = useRef<LogLine[]>([]);
-	const { joinRoom, leaveRoom, subscribe } = useSocket();
-
-	useEffect(() => {
-		if (!phase || !projectId) return;
-
-		logsRef.current = [];
-		setLogs([]);
-
-		const room = `container-logs:${projectId}`;
-		joinRoom(room);
-
-		const unsubscribe = subscribe(WsMessageType.ContainerLog, (msg) => {
-			const { stream, text } = msg as WsContainerLogMessage;
-			if ((msg as WsContainerLogMessage).projectId !== projectId) return;
-
-			const lines = text.split('\n').filter((l) => l.length > 0);
-			const newEntries = lines.map((l) => ({ id: nextLogId++, stream, text: l }));
-
-			logsRef.current = [...logsRef.current, ...newEntries].slice(-MAX_LINES);
-			setLogs(logsRef.current);
-		});
-
-		return () => {
-			unsubscribe();
-			leaveRoom(room);
-		};
-	}, [projectId, phase, joinRoom, leaveRoom, subscribe]);
-
-	const clear = useCallback(() => {
-		logsRef.current = [];
-		setLogs([]);
-	}, []);
-
-	return { logs, clear };
+	return useLogStream<WsContainerLogMessage>({
+		room: phase && projectId ? `container-logs:${projectId}` : null,
+		messageType: WsMessageType.ContainerLog,
+		enabled: !!phase && !!projectId,
+		extractChunk: (m) => (m.projectId === projectId ? { stream: m.stream, text: m.text } : null),
+	});
 }

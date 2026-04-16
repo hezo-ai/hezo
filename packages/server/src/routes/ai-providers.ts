@@ -1,4 +1,10 @@
-import { AI_PROVIDER_INFO, AiAuthMethod, type AiProvider } from '@hezo/shared';
+import {
+	AI_PROVIDER_INFO,
+	AiAuthMethod,
+	type AiProvider,
+	ALL_AI_PROVIDERS,
+	OAUTH_AI_PROVIDERS,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { signOAuthState } from '../crypto/state';
 import { err, ok } from '../lib/response';
@@ -13,8 +19,8 @@ import {
 	storeAiProviderKey,
 } from '../services/ai-provider-keys';
 
-const VALID_PROVIDERS = new Set(['anthropic', 'openai', 'google', 'moonshot']);
-const OAUTH_PROVIDERS = new Set(['anthropic', 'openai', 'google']);
+const VALID_PROVIDERS = new Set<string>(ALL_AI_PROVIDERS);
+const OAUTH_PROVIDERS = new Set<string>(OAUTH_AI_PROVIDERS);
 
 export const aiProvidersRoutes = new Hono<Env>();
 
@@ -220,38 +226,18 @@ async function verifyProviderKey(
 	apiKey: string,
 	authMethod: string,
 ): Promise<boolean> {
-	const endpoints: Record<string, { url: string; headers: Record<string, string> }> = {
-		anthropic: {
-			url: 'https://api.anthropic.com/v1/models',
-			headers: {
-				'x-api-key': apiKey,
-				'anthropic-version': '2023-06-01',
-			},
-		},
-		openai: {
-			url: 'https://api.openai.com/v1/models',
-			headers: { Authorization: `Bearer ${apiKey}` },
-		},
-		google: {
-			url: `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`,
-			headers: {},
-		},
-		moonshot: {
-			url: 'https://api.moonshot.cn/v1/models',
-			headers: { Authorization: `Bearer ${apiKey}` },
-		},
-	};
+	if (authMethod === AiAuthMethod.OAuthToken) return true;
 
-	if (authMethod === AiAuthMethod.OAuthToken) {
-		return true;
-	}
+	const endpoint = AI_PROVIDER_INFO[provider]?.verifyEndpoint;
+	if (!endpoint) return false;
 
-	const config = endpoints[provider];
-	if (!config) return false;
+	const url = typeof endpoint.url === 'function' ? endpoint.url(apiKey) : endpoint.url;
+	const headers =
+		typeof endpoint.headers === 'function' ? endpoint.headers(apiKey) : endpoint.headers;
 
-	const res = await fetch(config.url, {
+	const res = await fetch(url, {
 		method: 'GET',
-		headers: config.headers,
+		headers,
 		signal: AbortSignal.timeout(10000),
 	});
 

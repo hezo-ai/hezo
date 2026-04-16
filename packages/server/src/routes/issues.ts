@@ -13,7 +13,7 @@ import { Hono } from 'hono';
 import { auditLog } from '../lib/audit';
 import { broadcastChange } from '../lib/broadcast';
 import { buildMeta, parsePagination } from '../lib/pagination';
-import { resolveProjectId } from '../lib/resolve';
+import { getProjectLocator, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -386,24 +386,24 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		if ((TERMINAL_ISSUE_STATUSES as readonly string[]).includes(body.status)) {
 			const dataDir = c.get('dataDir');
 			if (dataDir) {
-				const pc = await db.query<{
-					identifier: string;
-					project_slug: string;
-					company_slug: string;
-				}>(
-					`SELECT i.identifier, p.slug AS project_slug, co.slug AS company_slug
-					 FROM issues i
-					 JOIN projects p ON p.id = i.project_id
-					 JOIN companies co ON co.id = p.company_id
-					 WHERE i.id = $1`,
+				const issueRow = await db.query<{ identifier: string; project_id: string }>(
+					'SELECT identifier, project_id FROM issues WHERE id = $1',
 					[issueId],
 				);
-				const row = pc.rows[0];
-				if (row) {
-					try {
-						removeIssueWorktrees(dataDir, row.company_slug, row.project_slug, row.identifier);
-					} catch (error) {
-						log.error(`Failed to clean up worktrees for issue ${row.identifier}:`, error);
+				const issueInfo = issueRow.rows[0];
+				if (issueInfo) {
+					const locator = await getProjectLocator(db, issueInfo.project_id);
+					if (locator) {
+						try {
+							removeIssueWorktrees(
+								dataDir,
+								locator.companySlug,
+								locator.slug,
+								issueInfo.identifier,
+							);
+						} catch (error) {
+							log.error(`Failed to clean up worktrees for issue ${issueInfo.identifier}:`, error);
+						}
 					}
 				}
 			}

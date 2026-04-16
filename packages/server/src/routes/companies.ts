@@ -1,26 +1,18 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType, BUILTIN_AGENT_SLUGS, MemberType, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
+import { AuthType, BUILTIN_AGENT_SLUGS, MemberType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { toIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
+import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess, requireSuperuser } from '../middleware/auth';
 import { type ProjectRow, provisionContainer } from '../services/containers';
+import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
 
 const log = logger.child('routes');
 
-import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
-
 export const companiesRoutes = new Hono<Env>();
-
-/** Generate parameterized placeholders for terminal issue statuses, starting at the given index. */
-function terminalStatusParams(startIdx: number): { placeholders: string; values: string[] } {
-	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${startIdx + i}::issue_status`).join(
-		', ',
-	);
-	return { placeholders, values: [...TERMINAL_ISSUE_STATUSES] };
-}
 
 companiesRoutes.get('/companies', async (c) => {
 	const db = c.get('db');
@@ -147,20 +139,17 @@ companiesRoutes.post('/companies', async (c) => {
 			[company.id],
 		);
 		if (opsResult.rows[0]) {
-			const docker = c.get('docker');
-			const wsManager = c.get('wsManager');
-			const provisioningLogs = c.get('provisioningLogs');
-			const masterKeyManager = c.get('masterKeyManager');
 			provisionContainer(
-				db,
-				docker,
+				{
+					db,
+					docker: c.get('docker'),
+					dataDir,
+					wsManager: c.get('wsManager'),
+					masterKeyManager: c.get('masterKeyManager'),
+					provisioningLogs: c.get('provisioningLogs'),
+				},
 				opsResult.rows[0],
 				slug,
-				dataDir,
-				wsManager,
-				company.id,
-				provisioningLogs,
-				masterKeyManager,
 			).catch((error) => {
 				log.error(`Failed to provision container for operations project:`, error);
 			});

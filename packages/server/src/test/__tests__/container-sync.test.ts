@@ -238,13 +238,9 @@ describe('provisionContainer broadcasting', () => {
 		).rows[0];
 
 		await provisionContainer(
-			db,
-			mockDocker,
+			{ db, docker: mockDocker, dataDir, wsManager: mockWsManager },
 			project,
 			'container-sync-co',
-			dataDir,
-			mockWsManager,
-			companyId,
 		);
 
 		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(1);
@@ -277,13 +273,9 @@ describe('provisionContainer broadcasting', () => {
 
 		await expect(
 			provisionContainer(
-				db,
-				mockDocker,
+				{ db, docker: mockDocker, dataDir, wsManager: mockWsManager },
 				project,
 				'container-sync-co',
-				dataDir,
-				mockWsManager,
-				companyId,
 			),
 		).rejects.toThrow('Image not found');
 
@@ -317,11 +309,9 @@ describe('provisionContainer broadcasting', () => {
 
 		// Should succeed without throwing, no broadcast
 		const containerId = await provisionContainer(
-			db,
-			mockDocker,
+			{ db, docker: mockDocker, dataDir },
 			project,
 			'container-sync-co',
-			dataDir,
 		);
 		expect(containerId).toBe('no-ws-container');
 	});
@@ -349,14 +339,9 @@ describe('provisionContainer broadcasting', () => {
 		).rows[0];
 
 		await provisionContainer(
-			db,
-			mockDocker,
+			{ db, docker: mockDocker, dataDir, wsManager: mockWsManager, provisioningLogs },
 			project,
 			'container-sync-co',
-			dataDir,
-			mockWsManager,
-			companyId,
-			provisioningLogs,
 		);
 
 		const logRoom = `container-logs:${projectId}`;
@@ -396,14 +381,9 @@ describe('provisionContainer broadcasting', () => {
 
 		await expect(
 			provisionContainer(
-				db,
-				mockDocker,
+				{ db, docker: mockDocker, dataDir, wsManager: mockWsManager, provisioningLogs },
 				project,
 				'container-sync-co',
-				dataDir,
-				mockWsManager,
-				companyId,
-				provisioningLogs,
 			),
 		).rejects.toThrow('boom');
 
@@ -441,12 +421,10 @@ describe('stopContainerGracefully', () => {
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
 		await stopContainerGracefully(
-			db,
-			mockDocker,
+			{ db, docker: mockDocker, dataDir: '', wsManager: mockWsManager },
 			projectId,
-			'stop-test-container',
-			mockWsManager,
 			companyId,
+			'stop-test-container',
 		);
 
 		expect(mockDocker.stopContainer).toHaveBeenCalledWith('stop-test-container');
@@ -476,12 +454,10 @@ describe('stopContainerGracefully', () => {
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
 		await stopContainerGracefully(
-			db,
-			mockDocker,
+			{ db, docker: mockDocker, dataDir: '', wsManager: mockWsManager },
 			projectId,
-			'fail-stop-container',
-			mockWsManager,
 			companyId,
+			'fail-stop-container',
 		);
 
 		const result = await db.query<{ container_status: string }>(
@@ -503,7 +479,12 @@ describe('stopContainerGracefully', () => {
 
 		const mockDocker = { stopContainer: vi.fn().mockResolvedValue(undefined) } as any;
 
-		await stopContainerGracefully(db, mockDocker, projectId, 'no-ws-stop');
+		await stopContainerGracefully(
+			{ db, docker: mockDocker, dataDir: '' },
+			projectId,
+			companyId,
+			'no-ws-stop',
+		);
 
 		const result = await db.query<{ container_status: string }>(
 			'SELECT container_status FROM projects WHERE id = $1',

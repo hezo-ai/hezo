@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	type AgentRuntime,
+	type AiProvider,
 	ContainerStatus,
 	HeartbeatRunStatus,
 	PROVIDER_TO_ENV_VAR,
@@ -13,10 +14,11 @@ import {
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { signAgentJwt } from '../middleware/auth';
-import { getProviderCredential } from './ai-provider-keys';
+import { type AiProviderCredential, getProviderCredential } from './ai-provider-keys';
 import type { DockerClient, ExecLogChunk } from './docker';
-import { applyEffortToRuntime, resolveEffort } from './effort';
+import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import { ensureIssueWorktree, fetchRepo } from './git';
+import { CappedLogBuffer } from './log-buffer';
 import { ensureProjectRepos } from './repo-sync';
 import { getCompanySSHKey } from './ssh-keys';
 import { resolveSystemPrompt } from './template-resolver';
@@ -79,36 +81,40 @@ interface RepoRow {
 	repo_identifier: string;
 }
 
-export async function runAgent(
+/**
+ * Build the env-var entries for a given provider/auth method. Only the matching
+ * env var is set; agents that read a different var won't see the credential.
+ */
+export function buildProviderEnv(provider: AiProvider, credential: AiProviderCredential): string[] {
+	const envVarName = PROVIDER_TO_ENV_VAR[provider]?.[credential.authMethod];
+	if (!envVarName) return [];
+	return [`${envVarName}=${credential.value}`];
+}
+
+interface RunContext {
+	cmd: string[];
+	env: string[];
+	taskPrompt: string;
+	effort: string;
+	effortApplication: EffortRuntimeApplication;
+	agentJwt: string;
+}
+
+async function buildRunContext(
 	deps: RunnerDeps,
 	agent: AgentInfo,
 	issue: IssueInfo,
 	project: ProjectInfo,
-	wakeupPayload?: Record<string, unknown>,
-	signal?: AbortSignal,
-): Promise<RunResult> {
-	const startTime = Date.now();
-
-	if (!project.container_id || project.container_status !== ContainerStatus.Running) {
-		return {
-			success: false,
-			exitCode: -1,
-			stdout: '',
-			stderr: 'Project container is not running',
-			durationMs: Date.now() - startTime,
-		};
-	}
-
-	if (signal?.aborted) return abortedResult(startTime);
-
+	wakeupPayload: Record<string, unknown> | undefined,
+	credential: AiProviderCredential,
+	provider: AiProvider,
+): Promise<RunContext> {
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, agent.system_prompt, {
 		companyId: agent.company_id,
 		projectId: project.id,
 		agentId: agent.id,
 		dataDir: deps.dataDir,
 	});
-
-	if (signal?.aborted) return abortedResult(startTime);
 
 	if (resolvedPrompt.includes('{{requester_context}}')) {
 		const creator = await deps.db.query<{ display_name: string; member_type: string }>(
@@ -124,10 +130,7 @@ export async function runAgent(
 		resolvedPrompt = resolvedPrompt.replace(/\{\{requester_context\}\}/g, requesterText);
 	}
 
-	if (signal?.aborted) return abortedResult(startTime);
-
 	const agentJwt = await signAgentJwt(deps.masterKeyManager, agent.id, agent.company_id);
-
 	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort);
 	const effortApplication = applyEffortToRuntime(agent.runtime_type, effort);
 
@@ -148,80 +151,11 @@ export async function runAgent(
 		`HEZO_ISSUE_IDENTIFIER=${issue.identifier}`,
 		`HEZO_AGENT_EFFORT=${effort}`,
 		...effortApplication.extraEnv,
+		...buildProviderEnv(provider, credential),
 	];
 
-	const allEnvVars = new Set<string>();
-	for (const methods of Object.values(PROVIDER_TO_ENV_VAR)) {
-		for (const envVar of Object.values(methods)) {
-			allEnvVars.add(envVar);
-		}
-	}
-	for (const envVar of allEnvVars) {
-		env.push(`${envVar}=`);
-	}
-
 	const runtimeType = agent.runtime_type;
-	const provider = RUNTIME_TO_PROVIDER[runtimeType];
-	const credential = await getProviderCredential(deps.db, deps.masterKeyManager, provider);
-
-	if (!credential) {
-		return {
-			success: false,
-			exitCode: -1,
-			stdout: '',
-			stderr: `No ${provider} credential configured. Add one in Settings > AI Providers.`,
-			durationMs: Date.now() - startTime,
-		};
-	}
-
-	const envVarName = PROVIDER_TO_ENV_VAR[provider]?.[credential.authMethod];
-	if (envVarName) {
-		const idx = env.findIndex((e) => e.startsWith(`${envVarName}=`));
-		if (idx >= 0) env[idx] = `${envVarName}=${credential.value}`;
-	}
-
 	const cliCommand = RUNTIME_COMMANDS[runtimeType] || 'claude';
-
-	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue);
-
-	// Build the MCP flags and working dir. Worktree prep streams setup lines to
-	// the same run-log channel that carries the agent's own stdout/stderr.
-	const logBuffer: { bytes: number; parts: string[]; truncated: boolean } = {
-		bytes: 0,
-		parts: [],
-		truncated: false,
-	};
-
-	const persistChunk = (stream: 'stdout' | 'stderr', text: string) => {
-		if (logBuffer.truncated) return;
-		const marker = stream === 'stderr' ? `[stderr] ${text}` : text;
-		const remaining = LOG_CAP_BYTES - logBuffer.bytes;
-		if (remaining <= 0) {
-			logBuffer.truncated = true;
-			return;
-		}
-		if (marker.length > remaining) {
-			logBuffer.parts.push(marker.slice(0, remaining));
-			logBuffer.bytes = LOG_CAP_BYTES;
-			logBuffer.truncated = true;
-		} else {
-			logBuffer.parts.push(marker);
-			logBuffer.bytes += marker.length;
-		}
-	};
-
-	const broadcast = (stream: 'stdout' | 'stderr', text: string) => {
-		persistChunk(stream, text);
-		deps.wsManager?.broadcast(`project-runs:${project.id}`, {
-			type: WsMessageType.RunLog,
-			projectId: project.id,
-			runId: heartbeatRunId,
-			issueId: issue.id,
-			stream,
-			text,
-		});
-	};
-
 	const mcpFlags =
 		runtimeType === 'claude_code'
 			? [
@@ -239,9 +173,7 @@ export async function runAgent(
 				]
 			: [];
 
-	const prep = await prepareWorktrees(deps, agent, project, issue, broadcast, signal);
-
-	const execCmd = [
+	const cmd = [
 		cliCommand,
 		...mcpFlags,
 		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
@@ -250,9 +182,66 @@ export async function runAgent(
 		taskPrompt,
 	];
 
-	// Redact JWT for persisted invocation. Keep everything else so operators can
-	// see exactly what was invoked.
-	const redactedCmd = execCmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
+	return { cmd, env, taskPrompt, effort, effortApplication, agentJwt };
+}
+
+export async function runAgent(
+	deps: RunnerDeps,
+	agent: AgentInfo,
+	issue: IssueInfo,
+	project: ProjectInfo,
+	wakeupPayload?: Record<string, unknown>,
+	signal?: AbortSignal,
+): Promise<RunResult> {
+	const startTime = Date.now();
+
+	if (!project.container_id || project.container_status !== ContainerStatus.Running) {
+		return failedResult('Project container is not running', startTime);
+	}
+
+	if (signal?.aborted) return abortedResult(startTime);
+
+	const provider = RUNTIME_TO_PROVIDER[agent.runtime_type];
+	const credential = await getProviderCredential(deps.db, deps.masterKeyManager, provider);
+	if (!credential) {
+		return failedResult(
+			`No ${provider} credential configured. Add one in Settings > AI Providers.`,
+			startTime,
+		);
+	}
+
+	if (signal?.aborted) return abortedResult(startTime);
+
+	const context = await buildRunContext(
+		deps,
+		agent,
+		issue,
+		project,
+		wakeupPayload,
+		credential,
+		provider,
+	);
+
+	if (signal?.aborted) return abortedResult(startTime);
+
+	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue);
+	const logBuffer = new CappedLogBuffer(LOG_CAP_BYTES);
+
+	const broadcast = (stream: 'stdout' | 'stderr', text: string) => {
+		logBuffer.append(stream, text);
+		deps.wsManager?.broadcast(`project-runs:${project.id}`, {
+			type: WsMessageType.RunLog,
+			projectId: project.id,
+			runId: heartbeatRunId,
+			issueId: issue.id,
+			stream,
+			text,
+		});
+	};
+
+	const prep = await prepareWorktrees(deps, project, issue, broadcast, signal);
+
+	const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
 	const invocationCommand = `$ ${redactedCmd
 		.map((a) => (a.includes(' ') || a.includes('"') ? JSON.stringify(a) : a))
 		.join(' ')}`;
@@ -268,8 +257,8 @@ export async function runAgent(
 		if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
 		const execId = await deps.docker.execCreate(project.container_id, {
-			Cmd: execCmd,
-			Env: env,
+			Cmd: context.cmd,
+			Env: context.env,
 			WorkingDir: prep.workingDir,
 			User: 'node',
 			AttachStdout: true,
@@ -283,24 +272,16 @@ export async function runAgent(
 		const { stdout, stderr } = await deps.docker.execStart(execId, { signal, onChunk });
 		const execInfo = await deps.docker.execInspect(execId);
 		const durationMs = Date.now() - startTime;
-
 		const success = execInfo.ExitCode === 0;
 
 		await updateHeartbeatRun(deps.db, heartbeatRunId, {
 			status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
 			exitCode: execInfo.ExitCode,
 			durationMs,
-			logText: finalizeLogText(logBuffer),
+			logText: logBuffer.toString(),
 		});
 
-		return {
-			success,
-			exitCode: execInfo.ExitCode,
-			stdout,
-			stderr,
-			durationMs,
-			heartbeatRunId,
-		};
+		return { success, exitCode: execInfo.ExitCode, stdout, stderr, durationMs, heartbeatRunId };
 	} catch (error) {
 		const durationMs = Date.now() - startTime;
 		const isAbort = (error as Error).name === 'AbortError';
@@ -312,7 +293,7 @@ export async function runAgent(
 			status: isAbort ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
 			exitCode: -1,
 			durationMs,
-			logText: finalizeLogText(logBuffer),
+			logText: logBuffer.toString(),
 			error: errorMessage,
 		});
 
@@ -327,27 +308,16 @@ export async function runAgent(
 	}
 }
 
-function finalizeLogText(buffer: { parts: string[]; truncated: boolean; bytes: number }): string {
-	const text = buffer.parts.join('');
-	if (buffer.truncated) {
-		return `${text}\n...[truncated — log capped at ${LOG_CAP_BYTES} bytes]`;
-	}
-	return text;
+function failedResult(stderr: string, startTime: number): RunResult {
+	return { success: false, exitCode: -1, stdout: '', stderr, durationMs: Date.now() - startTime };
 }
 
 function abortedResult(startTime: number): RunResult {
-	return {
-		success: false,
-		exitCode: -1,
-		stdout: '',
-		stderr: 'Aborted',
-		durationMs: Date.now() - startTime,
-	};
+	return failedResult('Aborted', startTime);
 }
 
 async function prepareWorktrees(
 	deps: RunnerDeps,
-	_agent: AgentInfo,
 	project: ProjectInfo,
 	issue: IssueInfo,
 	broadcast: (stream: 'stdout' | 'stderr', text: string) => void,

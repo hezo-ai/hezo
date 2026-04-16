@@ -97,7 +97,13 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	const connectPublicKey = await fetchConnectPublicKey(config.connectUrl);
 
-	const docker = process.env.HEZO_SKIP_DOCKER ? DockerClient.createNoop() : new DockerClient();
+	let docker: DockerClient;
+	if (process.env.HEZO_SKIP_DOCKER) {
+		const { createFakeDockerClient } = await import('./test/helpers/fake-docker.js');
+		docker = createFakeDockerClient();
+	} else {
+		docker = new DockerClient();
+	}
 	const wsManager = new WebSocketManager();
 	const provisioningLogs = new ProvisioningLogBroadcaster();
 	provisioningLogs.setWsManager(wsManager);

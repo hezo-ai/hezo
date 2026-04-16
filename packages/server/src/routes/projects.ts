@@ -1,14 +1,16 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { ContainerStatus, TERMINAL_ISSUE_STATUSES, WakeupSource } from '@hezo/shared';
-import { Hono } from 'hono';
+import { ContainerStatus, WakeupSource } from '@hezo/shared';
+import { type Context, Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
+import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import {
+	type ContainerDeps,
 	type ProjectRow,
 	provisionContainer,
 	rebuildContainer,
@@ -17,6 +19,17 @@ import {
 } from '../services/containers';
 import type { JobManager } from '../services/job-manager';
 import { createWakeup } from '../services/wakeup';
+
+function buildContainerDeps(c: Context<Env>): ContainerDeps {
+	return {
+		db: c.get('db'),
+		docker: c.get('docker'),
+		dataDir: c.get('dataDir'),
+		wsManager: c.get('wsManager'),
+		masterKeyManager: c.get('masterKeyManager'),
+		provisioningLogs: c.get('provisioningLogs'),
+	};
+}
 
 const log = logger.child('routes');
 
@@ -62,14 +75,6 @@ async function wakeAgentsWithPendingWork(
 }
 
 export const projectsRoutes = new Hono<Env>();
-
-/** Generate parameterized placeholders for terminal issue statuses, starting at the given index. */
-function terminalStatusParams(startIdx: number): { placeholders: string; values: string[] } {
-	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${startIdx + i}::issue_status`).join(
-		', ',
-	);
-	return { placeholders, values: [...TERMINAL_ISSUE_STATUSES] };
-}
 
 projectsRoutes.get('/companies/:companyId/projects', async (c) => {
 	const access = await requireCompanyAccess(c);
@@ -138,24 +143,11 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 	const companySlug = companySlugResult.rows[0]?.slug;
 
 	if (companySlug) {
-		const docker = c.get('docker');
-		const dataDir = c.get('dataDir');
-		const wsManager = c.get('wsManager');
-		const provisioningLogs = c.get('provisioningLogs');
-		const masterKeyManager = c.get('masterKeyManager');
-		provisionContainer(
-			db,
-			docker,
-			project as unknown as ProjectRow,
-			companySlug,
-			dataDir,
-			wsManager,
-			companyId,
-			provisioningLogs,
-			masterKeyManager,
-		).catch((error) => {
-			log.error(`Failed to provision container for project ${project.slug}:`, error);
-		});
+		provisionContainer(buildContainerDeps(c), project as unknown as ProjectRow, companySlug).catch(
+			(error) => {
+				log.error(`Failed to provision container for project ${project.slug}:`, error);
+			},
+		);
 	}
 
 	return ok(c, project, 201);
@@ -295,15 +287,11 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 	const companySlug = companySlugResult.rows[0]?.slug;
 
 	if (companySlug) {
-		const docker = c.get('docker');
-		const dataDir = c.get('dataDir');
 		await teardownContainer(
-			db,
-			docker,
+			buildContainerDeps(c),
 			projectId,
 			companySlug,
 			existing.rows[0].slug,
-			dataDir,
 		).catch((error) => {
 			log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
 		});
@@ -387,9 +375,8 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 		container_status: ContainerStatus.Stopping,
 	});
 
-	const docker = c.get('docker');
-	const wsManager = c.get('wsManager');
 	const jobManager = c.get('jobManager');
+	const containerDeps = buildContainerDeps(c);
 
 	await cancelRunningAgentTasks(db, jobManager, projectId, companyId);
 
@@ -400,7 +387,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 	jobManager.launchTask(
 		taskKey,
 		async () => {
-			await stopContainerGracefully(db, docker, projectId, containerId, wsManager, companyId);
+			await stopContainerGracefully(containerDeps, projectId, companyId, containerId);
 		},
 		60_000,
 	);
@@ -444,10 +431,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 	jobManager.cancelTask(taskKey);
 	await cancelRunningAgentTasks(db, jobManager, projectId, companyId);
 
-	const docker = c.get('docker');
-	const dataDir = c.get('dataDir');
-	const wsManager = c.get('wsManager');
-	const provisioningLogs = c.get('provisioningLogs');
+	const containerDeps = buildContainerDeps(c);
 
 	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 		ContainerStatus.Creating,
@@ -463,16 +447,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 		taskKey,
 		async () => {
 			try {
-				await rebuildContainer(
-					db,
-					docker,
-					projectResult.rows[0] as ProjectRow,
-					companySlug,
-					dataDir,
-					wsManager,
-					companyId,
-					provisioningLogs,
-				);
+				await rebuildContainer(containerDeps, projectResult.rows[0] as ProjectRow, companySlug);
 				wakeAgentsWithPendingWork(db, projectId, companyId);
 			} catch (error) {
 				log.error(`Container rebuild failed for project ${projectId}:`, error);

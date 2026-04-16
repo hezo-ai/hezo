@@ -5,24 +5,35 @@ import {
 	IssueStatus,
 	isAgentEffort,
 	MemberType,
-	TERMINAL_ISSUE_STATUSES,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
+import { buildUpdateSet, terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess } from '../middleware/auth';
 
 export const agentsRoutes = new Hono<Env>();
 
-/** Generate parameterized placeholders for terminal issue statuses, starting at the given index. */
-function terminalStatusParams(startIdx: number): { placeholders: string; values: string[] } {
-	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${startIdx + i}::issue_status`).join(
-		', ',
-	);
-	return { placeholders, values: [...TERMINAL_ISSUE_STATUSES] };
-}
+/**
+ * Common projection for agent rows. JOIN against `members m` and `member_agents ma`.
+ * `assigned_issue_count` requires the caller to bind terminal statuses via `terminalStatusParams`.
+ */
+const AGENT_BASE_COLUMNS = `m.id, m.company_id, m.display_name, m.created_at,
+	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
+	ma.default_effort,
+	ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
+	ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
+	ma.mcp_servers, ma.updated_at`;
+
+const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.company_id, hr.wakeup_id, hr.issue_id,
+	hr.status, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
+	hr.input_tokens, hr.output_tokens, hr.cost_cents,
+	hr.invocation_command, hr.log_text, hr.working_dir,
+	hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
+	i.identifier AS issue_identifier, i.title AS issue_title,
+	i.project_id AS project_id`;
 
 agentsRoutes.get('/companies/:companyId/agents', async (c) => {
 	const access = await requireCompanyAccess(c);
@@ -34,17 +45,12 @@ agentsRoutes.get('/companies/:companyId/agents', async (c) => {
 
 	const ts = terminalStatusParams(2);
 	let query = `
-    SELECT m.id, m.company_id, m.display_name, m.created_at,
-           ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
-           ma.default_effort,
-           ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
-           ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.updated_at,
-           ma.reports_to,
-           (SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
-           (SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts.placeholders}))::int AS assigned_issue_count
-    FROM members m
-    JOIN member_agents ma ON ma.id = m.id
-    WHERE m.company_id = $1`;
+		SELECT ${AGENT_BASE_COLUMNS},
+			(SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
+			(SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts.placeholders}))::int AS assigned_issue_count
+		FROM members m
+		JOIN member_agents ma ON ma.id = m.id
+		WHERE m.company_id = $1`;
 	const params: unknown[] = [companyId, ...ts.values];
 
 	if (adminFilter) {
@@ -137,14 +143,10 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 		await db.query('COMMIT');
 
 		const result = await db.query(
-			`SELECT m.id, m.company_id, m.display_name, m.created_at,
-              ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
-              ma.default_effort,
-              ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
-              ma.runtime_status, ma.admin_status, ma.reports_to, ma.mcp_servers, ma.updated_at
-       FROM members m
-       JOIN member_agents ma ON ma.id = m.id
-       WHERE m.id = $1`,
+			`SELECT ${AGENT_BASE_COLUMNS}
+			 FROM members m
+			 JOIN member_agents ma ON ma.id = m.id
+			 WHERE m.id = $1`,
 			[memberId],
 		);
 
@@ -310,11 +312,7 @@ ${teamRoster}`;
 		await db.query('COMMIT');
 
 		const agentResult = await db.query(
-			`SELECT m.id, m.company_id, m.display_name, m.created_at,
-			        ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
-			        ma.default_effort,
-			        ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
-			        ma.runtime_status, ma.admin_status, ma.reports_to, ma.mcp_servers, ma.updated_at
+			`SELECT ${AGENT_BASE_COLUMNS}
 			 FROM members m
 			 JOIN member_agents ma ON ma.id = m.id
 			 WHERE m.id = $1`,
@@ -354,17 +352,12 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId', async (c) => {
 
 	const ts2 = terminalStatusParams(3);
 	const result = await db.query(
-		`SELECT m.id, m.company_id, m.display_name, m.created_at,
-            ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.system_prompt, ma.runtime_type,
-            ma.default_effort,
-            ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
-            ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
-            ma.mcp_servers, ma.updated_at,
-            (SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
-            (SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts2.placeholders}))::int AS assigned_issue_count
-     FROM members m
-     JOIN member_agents ma ON ma.id = m.id
-     WHERE m.id = $1 AND m.company_id = $2`,
+		`SELECT ${AGENT_BASE_COLUMNS},
+			(SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
+			(SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts2.placeholders}))::int AS assigned_issue_count
+		 FROM members m
+		 JOIN member_agents ma ON ma.id = m.id
+		 WHERE m.id = $1 AND m.company_id = $2`,
 		[c.req.param('agentId'), companyId, ...ts2.values],
 	);
 
@@ -406,26 +399,21 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		return err(c, 'INVALID_REQUEST', `Invalid default_effort: ${body.default_effort}`, 400);
 	}
 
-	const sets: string[] = [];
-	const params: unknown[] = [];
-	let idx = 1;
-
-	const addField = (field: string, value: unknown, cast?: string) => {
-		if (value !== undefined) {
-			sets.push(`${field} = $${idx}${cast ? `::${cast}` : ''}`);
-			params.push(cast === 'jsonb' ? JSON.stringify(value) : value);
-			idx++;
-		}
-	};
-
-	addField('title', body.title?.trim());
-	addField('role_description', body.role_description);
-	addField('system_prompt', body.system_prompt);
-	addField('reports_to', body.reports_to);
-	addField('default_effort', body.default_effort, 'agent_effort');
-	addField('heartbeat_interval_min', body.heartbeat_interval_min);
-	addField('monthly_budget_cents', body.monthly_budget_cents);
-	addField('mcp_servers', body.mcp_servers, 'jsonb');
+	const {
+		clauses: sets,
+		params,
+		nextIdx,
+	} = buildUpdateSet([
+		{ column: 'title', value: body.title?.trim() },
+		{ column: 'role_description', value: body.role_description },
+		{ column: 'system_prompt', value: body.system_prompt },
+		{ column: 'reports_to', value: body.reports_to },
+		{ column: 'default_effort', value: body.default_effort, cast: 'agent_effort' },
+		{ column: 'heartbeat_interval_min', value: body.heartbeat_interval_min },
+		{ column: 'monthly_budget_cents', value: body.monthly_budget_cents },
+		{ column: 'mcp_servers', value: body.mcp_servers, cast: 'jsonb' },
+	]);
+	const idx = nextIdx;
 
 	if (sets.length === 0) {
 		const result = await db.query(
@@ -510,10 +498,10 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/disable', async (c) => 
 		agentId,
 	]);
 
-	const terminalPlaceholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${i + 2}`).join(', ');
+	const ts = terminalStatusParams(2, false);
 	await db.query(
-		`UPDATE issues SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN (${terminalPlaceholders})`,
-		[agentId, ...TERMINAL_ISSUE_STATUSES],
+		`UPDATE issues SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN (${ts.placeholders})`,
+		[agentId, ...ts.values],
 	);
 
 	broadcastChange(c, `company:${companyId}`, 'member_agents', 'UPDATE', {
@@ -598,13 +586,7 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs', async (
 	const agentId = c.req.param('agentId');
 
 	const result = await db.query(
-		`SELECT hr.id, hr.member_id, hr.company_id, hr.wakeup_id, hr.issue_id,
-		        hr.status, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
-		        hr.input_tokens, hr.output_tokens, hr.cost_cents,
-		        hr.invocation_command, hr.log_text, hr.working_dir,
-		        hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
-		        i.identifier AS issue_identifier, i.title AS issue_title,
-		        i.project_id AS project_id
+		`SELECT ${HEARTBEAT_RUN_COLUMNS}
 		 FROM heartbeat_runs hr
 		 LEFT JOIN issues i ON i.id = hr.issue_id
 		 WHERE hr.member_id = $1
@@ -625,13 +607,7 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs/:runId', 
 	const runId = c.req.param('runId');
 
 	const result = await db.query(
-		`SELECT hr.id, hr.member_id, hr.company_id, hr.wakeup_id, hr.issue_id,
-		        hr.status, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
-		        hr.input_tokens, hr.output_tokens, hr.cost_cents,
-		        hr.invocation_command, hr.log_text, hr.working_dir,
-		        hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
-		        i.identifier AS issue_identifier, i.title AS issue_title,
-		        i.project_id AS project_id
+		`SELECT ${HEARTBEAT_RUN_COLUMNS}
 		 FROM heartbeat_runs hr
 		 LEFT JOIN issues i ON i.id = hr.issue_id
 		 WHERE hr.id = $1 AND hr.member_id = $2`,

@@ -1,18 +1,14 @@
-import { join } from 'node:path';
 import { ApprovalType, PlatformType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
-import { resolveProjectId } from '../lib/resolve';
+import { getProjectLocator, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
-import { cloneRepo } from '../services/git';
 import { parseGitHubUrl, validateRepoAccess } from '../services/github';
-import { removeRepoFromWorkspace } from '../services/repo-sync';
-import { getCompanySSHKey } from '../services/ssh-keys';
+import { ensureProjectRepos, removeRepoFromWorkspace } from '../services/repo-sync';
 import { getOAuthToken } from '../services/token-store';
-import { getWorkspacePath } from '../services/workspace';
 
 const log = logger.child('routes');
 
@@ -115,34 +111,26 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 	let cloneError: string | undefined;
 
 	if (dataDir) {
-		const projectResult = await db.query<{ slug: string; company_id: string }>(
-			'SELECT slug, company_id FROM projects WHERE id = $1',
-			[projectId],
-		);
-		const companySlugResult = await db.query<{ slug: string }>(
-			'SELECT slug FROM companies WHERE id = $1',
-			[projectResult.rows[0]?.company_id],
-		);
-
-		if (projectResult.rows[0] && companySlugResult.rows[0]) {
-			const workspacePath = getWorkspacePath(
+		const locator = await getProjectLocator(db, projectId);
+		if (locator) {
+			const syncRes = await ensureProjectRepos(
+				db,
+				masterKeyManager,
+				{
+					id: projectId,
+					company_id: companyId,
+					companySlug: locator.companySlug,
+					projectSlug: locator.slug,
+				},
 				dataDir,
-				companySlugResult.rows[0].slug,
-				projectResult.rows[0].slug,
 			);
-			const masterKeyManager = c.get('masterKeyManager');
-			const sshKey = await getCompanySSHKey(db, companyId, masterKeyManager);
-
-			if (sshKey) {
-				const targetDir = join(workspacePath, body.short_name);
-				const cloneResult = await cloneRepo(repoIdentifier, targetDir, sshKey.privateKey);
-				if (cloneResult.success) {
-					cloneStatus = 'cloned';
-				} else {
-					cloneStatus = 'failed';
-					cloneError = cloneResult.error ?? 'unknown error';
-					log.error(`Failed to clone ${repoIdentifier}:`, cloneError);
-				}
+			const failed = syncRes.failed.find((f) => f.short_name === body.short_name);
+			if (failed) {
+				cloneStatus = 'failed';
+				cloneError = failed.error;
+				log.error(`Failed to clone ${repoIdentifier}:`, cloneError);
+			} else if (syncRes.cloned.includes(body.short_name)) {
+				cloneStatus = 'cloned';
 			}
 		}
 	}
@@ -183,18 +171,13 @@ reposRoutes.delete('/companies/:companyId/projects/:projectId/repos/:repoId', as
 
 	const dataDir = c.get('dataDir');
 	if (dataDir) {
-		const pc = await db.query<{ project_slug: string; company_slug: string }>(
-			`SELECT p.slug AS project_slug, c.slug AS company_slug
-			 FROM projects p JOIN companies c ON c.id = p.company_id
-			 WHERE p.id = $1`,
-			[projectId],
-		);
-		if (pc.rows[0]) {
+		const locator = await getProjectLocator(db, projectId);
+		if (locator) {
 			try {
 				removeRepoFromWorkspace(
 					dataDir,
-					pc.rows[0].company_slug,
-					pc.rows[0].project_slug,
+					locator.companySlug,
+					locator.slug,
 					result.rows[0].short_name,
 				);
 			} catch (error) {
