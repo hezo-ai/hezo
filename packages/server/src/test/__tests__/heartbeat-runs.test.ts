@@ -82,7 +82,9 @@ describe('heartbeat-runs API', () => {
 			 SET status = 'succeeded'::heartbeat_run_status,
 			     finished_at = now(),
 			     exit_code = 0,
-			     stdout_excerpt = 'test output',
+			     log_text = 'test output',
+			     invocation_command = '$ claude --mcp-config {...} -p task',
+			     working_dir = '/worktrees/RT-1/main',
 			     started_at = now()
 			 WHERE id = $1`,
 			[runId],
@@ -112,7 +114,9 @@ describe('heartbeat-runs API', () => {
 		expect(body.data.id).toBe(runId);
 		expect(body.data.issue_title).toBe('Test Issue');
 		expect(body.data.status).toBe('succeeded');
-		expect(body.data.stdout_excerpt).toBe('test output');
+		expect(body.data.log_text).toBe('test output');
+		expect(body.data.invocation_command).toContain('$ claude --mcp-config');
+		expect(body.data.working_dir).toBe('/worktrees/RT-1/main');
 	});
 
 	it('returns 404 for nonexistent run', async () => {

@@ -1,7 +1,9 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { ArrowLeft } from 'lucide-react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Badge } from '../../../../../../components/ui/badge';
 import { useHeartbeatRun } from '../../../../../../hooks/use-heartbeat-runs';
+import { useRunLogs } from '../../../../../../hooks/use-run-logs';
 
 function formatDuration(startedAt: string, finishedAt: string | null): string {
 	if (!finishedAt) return 'In progress...';
@@ -34,6 +36,29 @@ function ExecutionDetailPage() {
 	const { companyId, agentId, runId } = Route.useParams();
 	const { data: run, isLoading } = useHeartbeatRun(companyId, agentId, runId);
 
+	const isActive = run?.status === 'running' || run?.status === 'queued';
+	const { lines } = useRunLogs(run?.project_id ?? null, run?.id ?? null, run?.log_text, isActive);
+
+	const logBoxRef = useRef<HTMLPreElement>(null);
+	const lastLineCount = useRef(0);
+
+	useEffect(() => {
+		const box = logBoxRef.current;
+		if (!box) return;
+		const atBottom =
+			box.scrollHeight - box.scrollTop - box.clientHeight < 80 ||
+			lines.length === lastLineCount.current;
+		if (atBottom) {
+			box.scrollTop = box.scrollHeight;
+		}
+		lastLineCount.current = lines.length;
+	}, [lines]);
+
+	const displayedCommand = useMemo(
+		() => run?.invocation_command ?? null,
+		[run?.invocation_command],
+	);
+
 	if (isLoading) return <div className="text-text-muted text-sm">Loading...</div>;
 	if (!run) return <div className="text-text-muted text-sm">Run not found.</div>;
 
@@ -52,7 +77,6 @@ function ExecutionDetailPage() {
 				<Badge color={statusColor(run.status) as 'green'}>{run.status}</Badge>
 			</div>
 
-			{/* Metadata grid */}
 			<div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
 				<div className="rounded-lg border border-border-subtle bg-bg p-3">
 					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Duration</div>
@@ -101,7 +125,6 @@ function ExecutionDetailPage() {
 				)}
 			</div>
 
-			{/* Issue link */}
 			{run.issue_identifier && (
 				<div className="mb-4 text-xs text-text-muted">
 					Issue: <span className="font-mono text-text">{run.issue_identifier}</span>
@@ -109,7 +132,22 @@ function ExecutionDetailPage() {
 				</div>
 			)}
 
-			{/* Error */}
+			{displayedCommand && (
+				<div className="mb-3">
+					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">
+						Invocation
+					</div>
+					<pre className="text-xs font-mono bg-bg-muted rounded-lg p-3 overflow-x-auto whitespace-pre-wrap text-text-muted">
+						{displayedCommand}
+					</pre>
+					{run.working_dir && (
+						<div className="mt-1 text-[11px] text-text-subtle">
+							cwd: <span className="font-mono">{run.working_dir}</span>
+						</div>
+					)}
+				</div>
+			)}
+
 			{run.error && (
 				<div className="mb-4">
 					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Error</div>
@@ -119,25 +157,32 @@ function ExecutionDetailPage() {
 				</div>
 			)}
 
-			{/* Stdout */}
-			{run.stdout_excerpt && (
-				<div className="mb-4">
-					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Stdout</div>
-					<pre className="text-xs font-mono bg-bg-muted rounded-lg p-3 max-h-96 overflow-auto whitespace-pre-wrap text-text-muted">
-						{run.stdout_excerpt}
-					</pre>
+			<div className="mb-4">
+				<div className="flex items-center justify-between mb-1">
+					<div className="text-[11px] text-text-subtle uppercase tracking-wider">
+						Log {isActive && <span className="ml-1 text-accent-yellow">(live)</span>}
+					</div>
+					<div className="text-[11px] text-text-subtle">{lines.length} lines</div>
 				</div>
-			)}
-
-			{/* Stderr */}
-			{run.stderr_excerpt && (
-				<div className="mb-4">
-					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Stderr</div>
-					<pre className="text-xs font-mono bg-accent-red-bg/30 rounded-lg p-3 max-h-96 overflow-auto whitespace-pre-wrap text-accent-red-text">
-						{run.stderr_excerpt}
-					</pre>
-				</div>
-			)}
+				<pre
+					ref={logBoxRef}
+					data-testid="run-log"
+					className="text-xs font-mono bg-bg-muted rounded-lg p-3 max-h-[60vh] overflow-auto whitespace-pre-wrap text-text-muted"
+				>
+					{lines.length === 0
+						? isActive
+							? 'Waiting for log output...'
+							: 'No output captured.'
+						: lines.map((line) => (
+								<div
+									key={line.id}
+									className={line.stream === 'stderr' ? 'text-accent-red-text' : ''}
+								>
+									{line.text}
+								</div>
+							))}
+				</pre>
+			</div>
 		</div>
 	);
 }

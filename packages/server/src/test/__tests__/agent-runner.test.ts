@@ -41,12 +41,13 @@ beforeAll(async () => {
 	globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
 
 	// Configure an AI provider so the agent runner can resolve credentials
-	await app.request(`/api/companies/${companyId}/ai-providers`, {
+	await app.request('/api/ai-providers', {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			provider: 'anthropic',
 			api_key: 'sk-ant-test-runner-key',
+			label: 'anthropic-runner',
 		}),
 	});
 
@@ -85,6 +86,7 @@ afterAll(async () => {
 function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 	return {
 		ping: async () => true,
+		imageExists: async () => true,
 		pullImage: async () => {},
 		createContainer: async () => ({ Id: 'container-123', Warnings: [] }),
 		startContainer: async () => {},
@@ -130,8 +132,11 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 	return {
 		id: projectId,
 		slug: 'runner-project',
+		company_id: companyId,
+		company_slug: 'runner-co',
 		container_id: 'container-123',
 		container_status: ContainerStatus.Running,
+		designated_repo_id: null,
 		...overrides,
 	};
 }
@@ -269,8 +274,7 @@ describe('runAgent', () => {
 	it('includes issue rules in task prompt when present', async () => {
 		const docker = createMockDocker({
 			execCreate: async (_containerId: string, opts: any) => {
-				// Verify the prompt includes rules
-				const prompt = opts.Cmd[2];
+				const prompt = opts.Cmd[opts.Cmd.length - 1];
 				expect(prompt).toContain('Rules for this issue');
 				expect(prompt).toContain('Always write tests');
 				return 'exec-rules';
@@ -328,7 +332,7 @@ describe('runAgent', () => {
 		let capturedPrompt = '';
 		const docker = createMockDocker({
 			execCreate: async (_containerId: string, opts: any) => {
-				capturedPrompt = opts.Cmd[2];
+				capturedPrompt = opts.Cmd[opts.Cmd.length - 1];
 				return 'exec-coach';
 			},
 			execStart: async () => ({ stdout: 'reviewed', stderr: '' }),
@@ -489,10 +493,14 @@ describe('runAgent', () => {
 			// Reconfigure the provider so the Codex runtime can resolve a credential.
 			// Mock fetch so verifyProviderKey doesn't make a real network call.
 			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
-			await app.request(`/api/companies/${companyId}/ai-providers`, {
+			await app.request('/api/ai-providers', {
 				method: 'POST',
 				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ provider: 'openai', api_key: 'sk-test-codex' }),
+				body: JSON.stringify({
+					provider: 'openai',
+					api_key: 'sk-test-codex',
+					label: 'openai-codex',
+				}),
 			});
 			globalThis.fetch = originalFetch;
 
@@ -545,5 +553,199 @@ describe('runAgent', () => {
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].status).toBe('cancelled');
+	});
+
+	describe('MCP config + logs + worktree', () => {
+		it('sets started_at to a real timestamp', async () => {
+			const docker = createMockDocker({
+				execCreate: async () => 'exec-start',
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+			};
+
+			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+
+			expect(result.heartbeatRunId).toBeDefined();
+			const row = await db.query<{ started_at: string | null }>(
+				'SELECT started_at FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(row.rows[0].started_at).not.toBeNull();
+			expect(new Date(row.rows[0].started_at!).getTime()).toBeGreaterThan(Date.now() - 10_000);
+		});
+
+		it('passes --mcp-config and --strict-mcp-config for claude_code runtime', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-mcp';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3100,
+				dataDir: '/tmp/test-data',
+			};
+
+			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+
+			expect(capturedCmd).toContain('--mcp-config');
+			expect(capturedCmd).toContain('--strict-mcp-config');
+			const mcpIdx = capturedCmd.indexOf('--mcp-config');
+			const mcpJson = capturedCmd[mcpIdx + 1];
+			const parsed = JSON.parse(mcpJson) as {
+				mcpServers: { hezo: { type: string; url: string; headers: Record<string, string> } };
+			};
+			expect(parsed.mcpServers.hezo.type).toBe('http');
+			expect(parsed.mcpServers.hezo.url).toBe('http://host.docker.internal:3100/mcp');
+			expect(parsed.mcpServers.hezo.headers.Authorization).toMatch(/^Bearer /);
+		});
+
+		it('does not pass --mcp-config for non-claude runtimes', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-nomcp';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+			};
+
+			await runAgent(
+				deps,
+				{ ...makeAgent(), runtime_type: 'codex' as any },
+				makeIssue(),
+				makeProject(),
+			);
+
+			expect(capturedCmd).not.toContain('--mcp-config');
+			expect(capturedCmd).not.toContain('--strict-mcp-config');
+		});
+
+		it('persists invocation_command with JWT redacted', async () => {
+			const docker = createMockDocker({
+				execCreate: async () => 'exec-inv',
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+			};
+
+			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+
+			const row = await db.query<{ invocation_command: string | null }>(
+				'SELECT invocation_command FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(row.rows[0].invocation_command).toBeTruthy();
+			expect(row.rows[0].invocation_command!).toMatch(/Bearer \*\*\*/);
+			expect(row.rows[0].invocation_command!).not.toMatch(/Bearer eyJ/);
+		});
+
+		it('streams run log chunks via onChunk and persists log_text', async () => {
+			const broadcasts: Array<{ room: string; event: any }> = [];
+			const wsManager = {
+				broadcast: (room: string, event: any) => {
+					broadcasts.push({ room, event });
+				},
+				subscribe: () => {},
+				unsubscribe: () => {},
+				unsubscribeAll: () => {},
+				getRoomSize: () => 0,
+				getTotalConnections: () => 0,
+			} as any;
+
+			const docker = createMockDocker({
+				execCreate: async () => 'exec-stream',
+				execStart: async (_id: string, opts: any) => {
+					if (opts?.onChunk) {
+						await opts.onChunk({ stream: 'stdout', text: 'hello ' });
+						await opts.onChunk({ stream: 'stdout', text: 'world\n' });
+						await opts.onChunk({ stream: 'stderr', text: 'a warning\n' });
+					}
+					return { stdout: 'hello world\n', stderr: 'a warning\n' };
+				},
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				wsManager,
+			};
+
+			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+
+			const runLogBroadcasts = broadcasts.filter((b) => b.event.type === 'run_log');
+			expect(runLogBroadcasts.length).toBeGreaterThan(0);
+			expect(runLogBroadcasts[0].room).toBe(`project-runs:${projectId}`);
+			expect(runLogBroadcasts.some((b) => b.event.text.includes('hello'))).toBe(true);
+			expect(runLogBroadcasts.some((b) => b.event.stream === 'stderr')).toBe(true);
+
+			const row = await db.query<{ log_text: string }>(
+				'SELECT log_text FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(row.rows[0].log_text).toContain('hello world');
+			expect(row.rows[0].log_text).toContain('[stderr] a warning');
+		});
+
+		it('falls back to /workspace when no repos are linked', async () => {
+			let capturedWorkingDir = '';
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedWorkingDir = opts.WorkingDir;
+					return 'exec-nowt';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+			};
+
+			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+
+			expect(capturedWorkingDir).toBe('/workspace');
+
+			const row = await db.query<{ working_dir: string | null }>(
+				'SELECT working_dir FROM heartbeat_runs WHERE member_id = $1 ORDER BY started_at DESC LIMIT 1',
+				[agentId],
+			);
+			expect(row.rows[0].working_dir).toBe('/workspace');
+		});
 	});
 });

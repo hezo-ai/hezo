@@ -21,6 +21,7 @@ let agentId: string;
 function createMockDocker(): DockerClient {
 	return {
 		ping: async () => true,
+		imageExists: async () => true,
 		pullImage: async () => {},
 		createContainer: async () => ({ Id: 'container-123', Warnings: [] }),
 		startContainer: async () => {},

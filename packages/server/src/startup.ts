@@ -44,6 +44,7 @@ import { skillsRoutes } from './routes/skills';
 import { uiStateRoutes } from './routes/ui-state';
 import { DockerClient } from './services/docker';
 import { JobManager } from './services/job-manager';
+import { ProvisioningLogBroadcaster } from './services/provisioning-logs';
 import { WebSocketManager } from './services/ws';
 
 export type { HezoConfig };
@@ -65,6 +66,7 @@ export interface StartupResult {
 	db: PGlite;
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
+	provisioningLogs: ProvisioningLogBroadcaster;
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
@@ -97,6 +99,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	const docker = process.env.HEZO_SKIP_DOCKER ? DockerClient.createNoop() : new DockerClient();
 	const wsManager = new WebSocketManager();
+	const provisioningLogs = new ProvisioningLogBroadcaster();
+	provisioningLogs.setWsManager(wsManager);
 	const jobManager = new JobManager({
 		db,
 		docker,
@@ -128,6 +132,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker,
 		wsManager,
 		jobManager,
+		provisioningLogs,
 	);
 
 	return {
@@ -139,6 +144,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		db,
 		docker,
 		masterKeyManager,
+		provisioningLogs,
 	};
 }
 
@@ -149,8 +155,10 @@ export function buildApp(
 	docker: DockerClient = new DockerClient(),
 	wsManager: WebSocketManager = new WebSocketManager(),
 	jobManager?: JobManager,
+	provisioningLogs: ProvisioningLogBroadcaster = new ProvisioningLogBroadcaster(),
 ): Hono<Env> {
 	const app = new Hono<Env>();
+	provisioningLogs.setWsManager(wsManager);
 
 	app.use('*', async (c, next) => {
 		c.set('db', db);
@@ -158,6 +166,7 @@ export function buildApp(
 		c.set('docker', docker);
 		c.set('wsManager', wsManager);
 		if (jobManager) c.set('jobManager', jobManager);
+		c.set('provisioningLogs', provisioningLogs);
 		c.set('dataDir', config.dataDir);
 		c.set('connectUrl', config.connectUrl);
 		c.set('connectPublicKey', config.connectPublicKey);

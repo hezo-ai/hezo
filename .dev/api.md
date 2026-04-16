@@ -394,10 +394,26 @@ Terminate an agent. Kills the agent's subprocess. Unassigns all issues.
 Agent record is kept for audit trail (admin_status = `terminated`).
 
 #### `GET /companies/:companyId/agents/:agentId/heartbeat-runs`
-Get agent execution history (last 50 runs). Returns recent heartbeat invocations with timing and status.
+Get agent execution history (last 50 runs). Each row includes timing
+(`started_at`, `finished_at`, `status`, `exit_code`), usage (`input_tokens`,
+`output_tokens`, `cost_cents`), and the new log fields:
+
+- `invocation_command` — the exact CLI passed to `docker exec` with the JWT
+  redacted.
+- `log_text` — interleaved stdout/stderr captured from the streaming exec,
+  capped at 1 MB. Stderr lines are prefixed `[stderr] `.
+- `working_dir` — the container path the exec was rooted at (per-issue worktree
+  or `/workspace`).
+- `project_id` — project the run belongs to, used by the UI to subscribe to
+  the corresponding `project-runs:<projectId>` WebSocket room.
 
 #### `GET /companies/:companyId/agents/:agentId/heartbeat-runs/:runId`
-Get a single heartbeat run with issue metadata.
+Get a single heartbeat run with issue metadata and the full fields listed above.
+
+#### `GET /companies/:companyId/issues/:issueId/latest-run`
+Returns the most recent `heartbeat_run` for the issue (or `null` if none).
+Powers the minified log strip on the issue detail page so it can subscribe to
+the run's live stream and link to the full run page.
 
 ---
 
@@ -577,8 +593,19 @@ The `REPO_ACCESS_FAILED` message includes the connected GitHub username (from
 `connected_platforms.metadata.username`) so the board knows which account needs
 access to the repository.
 
+**Synchronous clone:** on a successful insert the server clones the repo via
+SSH into `<dataDir>/companies/<company-slug>/projects/<project-slug>/workspace/<short_name>/`
+(bind-mounted as `/workspace/<short_name>/` inside the project container) and
+returns the result in the response body as `clone_status` (`"cloned"`,
+`"skipped"`, or `"failed"`) and `clone_error` (string or `null`). Clone
+failures do not fail the request — the repo record is still created, and
+`ensureProjectRepos` will retry on the next agent run or the next container
+provision.
+
 #### `DELETE /companies/:companyId/projects/:projectId/repos/:repoId`
-Remove a repo from a project.
+Remove a repo from a project. The server also removes the repo's on-disk
+workspace directory and every per-issue worktree derived from it
+(`<workspace>/<short_name>/` and `<worktrees>/<issue>/<short_name>/`).
 
 ---
 
@@ -1143,38 +1170,42 @@ Response:
 
 ### AI Providers
 
-#### `GET /companies/:companyId/ai-providers`
-List all AI provider configurations for a company.
+AI provider credentials are **instance-level**: a single set of configs is shared across every company in the Hezo instance. Keys are encrypted with the master key. The web shell blocks the app with a full-screen setup gate until at least one provider is configured; it re-appears if the last active provider is deleted.
 
-#### `GET /companies/:companyId/ai-providers/status`
-Get lightweight status indicating whether any provider is configured.
+Authentication: read endpoints require a board-role token. Mutation endpoints (`POST`, `DELETE`, `PATCH`, OAuth start, verify) additionally require superuser.
 
-#### `POST /companies/:companyId/ai-providers`
-Add an AI provider configuration.
+#### `GET /ai-providers`
+List all configured AI providers.
+
+#### `GET /ai-providers/status`
+Lightweight status check. Returns `{ configured: boolean, providers: string[] }`.
+
+#### `POST /ai-providers`
+Add an AI provider configuration. Validates key format and (unless `SKIP_AI_KEY_VALIDATION` is set) makes a live call to the provider to confirm the key works before storing.
 
 Request:
 ```json
 {
   "provider": "anthropic",
   "api_key": "sk-ant-...",
-  "label": "Main Anthropic account",
+  "label": "anthropic-primary",
   "auth_method": "api_key"
 }
 ```
 
-`provider` is one of: `anthropic`, `openai`, `google`, `moonshot`. Returns 409 if a duplicate configuration exists.
+`provider` is one of: `anthropic`, `openai`, `google`, `moonshot`. `label` is optional; the server auto-derives one from the provider name if omitted. Returns 409 if a `(provider, label)` pair already exists.
 
-#### `DELETE /companies/:companyId/ai-providers/:configId`
-Remove an AI provider configuration.
+#### `DELETE /ai-providers/:configId`
+Remove a configuration.
 
-#### `PATCH /companies/:companyId/ai-providers/:configId/default`
-Set a configuration as the default for its provider type.
+#### `PATCH /ai-providers/:configId/default`
+Mark a config as the default for its provider (exactly one default per provider is enforced by a partial unique index).
 
-#### `POST /companies/:companyId/ai-providers/:provider/oauth/start`
-Initiate OAuth flow for a provider (`anthropic`, `openai`, `google`). Returns `auth_url` and `state`.
+#### `POST /ai-providers/:provider/oauth/start`
+Initiate OAuth flow for a provider (`anthropic`, `openai`, `google`). Returns `auth_url` and `state`. State carries `ai_provider` only — no company context.
 
-#### `POST /companies/:companyId/ai-providers/:configId/verify`
-Verify an API key by making a lightweight call to the provider. Updates config status to `invalid` if the key is bad.
+#### `POST /ai-providers/:configId/verify`
+Verify a stored key by making a lightweight call to the provider. Updates config status to `invalid` if the key is bad.
 
 ---
 
@@ -2350,12 +2381,14 @@ After connecting, clients subscribe to rooms:
 ```json
 { "action": "subscribe", "room": "company:<uuid>" }
 { "action": "subscribe", "room": "container-logs:<projectId>" }
+{ "action": "subscribe", "room": "project-runs:<projectId>" }
 { "action": "unsubscribe", "room": "company:<uuid>" }
 ```
 
-Two room types are supported:
+Room types:
 - `company:<uuid>` — receives row changes, chat messages, and agent lifecycle events for the company. Access is verified (agents/API keys must match company; board users must be members or superusers).
-- `container-logs:<projectId>` — streams Docker container stdout/stderr for a project.
+- `container-logs:<projectId>` — streams Docker container stdout/stderr for a project's main process.
+- `project-runs:<projectId>` — streams `run_log` messages from every agent `docker exec` on that project. Clients filter by `runId` to isolate a specific run.
 
 Room names always use UUIDs, never slugs. The frontend `useWebSocket` hook takes two params: the UUID for room subscription and the route-param slug for TanStack Query cache invalidation.
 
@@ -2370,6 +2403,7 @@ Defined in `@hezo/shared` as the `WsMessageType` enum:
 | `chat_message` | Live chat message | `{ type, issueId, message: { id, chatId, authorMemberId, authorType, content, createdAt } }` |
 | `agent_lifecycle` | Agent status change | `{ type, memberId, status }` |
 | `container_log` | Container stdout/stderr stream | `{ type, projectId, stream, text }` where `stream` is `stdout` or `stderr` |
+| `run_log` | Agent run stdout/stderr (streaming `docker exec` output plus worktree-prep steps and the invocation line) | `{ type, projectId, runId, issueId, stream, text }` |
 | `error` | Error message | `{ type, code, message }` |
 
 ### Client action types
@@ -2461,7 +2495,14 @@ Hezo exposes an MCP (Model Context Protocol) endpoint for external AI agents to 
 
 Streamable HTTP MCP endpoint. Uses `@modelcontextprotocol/sdk` with the `McpServer` class. Supports bidirectional messaging with optional Server-Sent Events (SSE) for streaming responses.
 
-**Authentication:** Same as REST API — user JWT, or API key (`Authorization: Bearer hezo_<key>`).
+**Authentication:** Same as REST API — user JWT, or API key (`Authorization: Bearer hezo_<key>`). Agent runs authenticate with a per-run JWT (`signAgentJwt`) that scopes access to the agent's member identity and company.
+
+**How agent sessions reach this endpoint:** the runner builds an MCP config
+per run and passes it to Claude Code via the `--mcp-config <json>` flag (plus
+`--strict-mcp-config` so no ambient `~/.claude.json` leaks). The config points
+at `http://host.docker.internal:<serverPort>/mcp` and carries
+`Authorization: Bearer <agent-jwt>` as a header. The flag is only set for the
+`claude_code` runtime; other runtimes keep their current non-MCP behaviour.
 
 **Capabilities:**
 - `tools` — Hezo registers all operations as MCP tools

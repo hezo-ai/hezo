@@ -601,9 +601,10 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs', async (
 		`SELECT hr.id, hr.member_id, hr.company_id, hr.wakeup_id, hr.issue_id,
 		        hr.status, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
 		        hr.input_tokens, hr.output_tokens, hr.cost_cents,
-		        hr.stdout_excerpt, hr.stderr_excerpt, hr.process_pid,
-		        hr.retry_of_run_id, hr.process_loss_retry_count,
-		        i.identifier AS issue_identifier, i.title AS issue_title
+		        hr.invocation_command, hr.log_text, hr.working_dir,
+		        hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
+		        i.identifier AS issue_identifier, i.title AS issue_title,
+		        i.project_id AS project_id
 		 FROM heartbeat_runs hr
 		 LEFT JOIN issues i ON i.id = hr.issue_id
 		 WHERE hr.member_id = $1
@@ -627,9 +628,10 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs/:runId', 
 		`SELECT hr.id, hr.member_id, hr.company_id, hr.wakeup_id, hr.issue_id,
 		        hr.status, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
 		        hr.input_tokens, hr.output_tokens, hr.cost_cents,
-		        hr.stdout_excerpt, hr.stderr_excerpt, hr.process_pid,
-		        hr.retry_of_run_id, hr.process_loss_retry_count,
-		        i.identifier AS issue_identifier, i.title AS issue_title
+		        hr.invocation_command, hr.log_text, hr.working_dir,
+		        hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
+		        i.identifier AS issue_identifier, i.title AS issue_title,
+		        i.project_id AS project_id
 		 FROM heartbeat_runs hr
 		 LEFT JOIN issues i ON i.id = hr.issue_id
 		 WHERE hr.id = $1 AND hr.member_id = $2`,

@@ -44,14 +44,10 @@ export async function detectOrphans(db: PGlite, runningPids: Set<number>): Promi
 		);
 
 		if (run.process_loss_retry_count + 1 < MAX_RETRIES) {
-			// Fetch failure context from the run to enrich the retry payload
 			const failedRun = await db.query<{
 				exit_code: number | null;
-				stdout_excerpt: string | null;
-				stderr_excerpt: string | null;
-			}>('SELECT exit_code, stdout_excerpt, stderr_excerpt FROM heartbeat_runs WHERE id = $1', [
-				run.id,
-			]);
+				log_text: string | null;
+			}>('SELECT exit_code, log_text FROM heartbeat_runs WHERE id = $1', [run.id]);
 			const fr = failedRun.rows[0];
 
 			await createWakeup(db, run.member_id, run.company_id, WakeupSource.Timer, {
@@ -61,8 +57,7 @@ export async function detectOrphans(db: PGlite, runningPids: Set<number>): Promi
 				previous_failure: {
 					run_id: run.id,
 					exit_code: fr?.exit_code ?? null,
-					stdout_tail: fr?.stdout_excerpt?.slice(-500) ?? null,
-					stderr_tail: fr?.stderr_excerpt?.slice(-500) ?? null,
+					log_tail: fr?.log_text?.slice(-1000) ?? null,
 				},
 			});
 		} else {

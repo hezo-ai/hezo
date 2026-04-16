@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, configureAiProvider, TEST_MASTER_KEY } from './helpers';
+import { authenticate, TEST_MASTER_KEY } from './helpers';
 
 async function getToken(page: Page): Promise<string> {
 	const tokenRes = await page.request.post('/api/auth/token', {
@@ -19,7 +19,6 @@ async function createCompany(page: Page, token: string) {
 		},
 	});
 	const company = (await companyRes.json()).data;
-	await configureAiProvider(page, company.id, headers);
 	return company;
 }
 

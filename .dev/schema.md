@@ -53,7 +53,7 @@
 | `company_issue_counters` | Helper for atomic issue numbering. | belongs to company |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
 | `slack_connections` | Per-company Slack app config. Bot token encrypted in secrets. | belongs to company |
-| `ai_provider_configs` | Per-company AI provider credentials. Stores encrypted API keys or OAuth tokens for Claude/Codex/Gemini/Kimi. Auth method distinguishes API key vs subscription OAuth token. Agent runner decrypts at execution time and injects as env var. | belongs to company, references secrets |
+| `ai_provider_configs` | Instance-level AI provider credentials shared across every company in the Hezo instance. Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription OAuth token. A partial unique index on `is_default` enforces one default per provider. Agent runner decrypts at execution time and injects as env var. | instance-scoped |
 
 ## Key design decisions
 
@@ -585,9 +585,49 @@ for continuity.
 
 ### Heartbeat runs
 
-`heartbeat_runs` stores one row per agent execution with full traceability:
-invocation source, status, timing, token usage, cost, log references,
-and retry tracking for orphan recovery.
+`heartbeat_runs` stores one row per agent execution with full traceability.
+Each row captures:
+
+- **Timing**: `started_at` (`NOT NULL DEFAULT now()`), `finished_at`, `status`
+  (`queued` → `running` → `succeeded` / `failed` / `cancelled` / `timed_out`),
+  `exit_code`.
+- **Invocation**: `invocation_command` is the exact CLI that was passed to
+  `docker exec` (with the agent JWT redacted to `Bearer ***`). `working_dir` is
+  the container path the exec was rooted at (normally the designated repo's
+  per-issue worktree, e.g. `/worktrees/<issue-identifier>/<repo-short-name>`).
+- **Logs**: `log_text` holds interleaved stdout and stderr captured from the
+  streaming Docker exec, capped at 1 MB (with a `...[truncated — log capped at
+  N bytes]` marker when exceeded). Stderr lines are prefixed `[stderr] ` so
+  consumers can tint them without needing a second column. The same stream is
+  broadcast live over the `project-runs:<projectId>` WebSocket room as each
+  chunk arrives, so a run's detail page and the associated issue page can
+  render output in real time.
+- **Usage**: `input_tokens`, `output_tokens`, `cost_cents`.
+- **Retry tracking**: `retry_of_run_id`, `process_loss_retry_count`,
+  `process_pid` — the orphan detector uses these to recover runs whose process
+  disappeared.
+
+### Workspaces, repos, and worktrees
+
+Each project has a single container and a per-project directory on disk that
+is bind-mounted into the container:
+
+- `<dataDir>/companies/<company-slug>/projects/<project-slug>/workspace/` ↔
+  `/workspace/` in the container. For every repo linked to the project,
+  `ensureProjectRepos` populates a subdirectory `<workspace>/<short-name>/`.
+  The repo-add route (`POST /repos`), container provision, and the agent
+  runner all call this helper, so the set of on-disk clones stays in sync
+  with the `repos` rows for the project.
+- `<dataDir>/.../worktrees/` ↔ `/worktrees/` in the container. For each issue
+  an agent works on, the runner creates `git worktree` directories under
+  `/worktrees/<issue-identifier>/<repo-short-name>/` on the branch
+  `hezo/<issue-identifier>`. Worktrees persist across runs on the same issue
+  so iterative work survives between invocations, and are torn down when the
+  issue transitions to a terminal status (`done`, `cancelled`, etc.) or its
+  repo is detached.
+- The agent's working directory resolves to the designated repo's worktree
+  when repos are present, otherwise falls back to `/workspace` with a warning
+  so that projects without a designated repo still run.
 
 ### KB document revisions
 

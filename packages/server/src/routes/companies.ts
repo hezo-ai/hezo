@@ -148,7 +148,20 @@ companiesRoutes.post('/companies', async (c) => {
 		);
 		if (opsResult.rows[0]) {
 			const docker = c.get('docker');
-			provisionContainer(db, docker, opsResult.rows[0], slug, dataDir).catch((error) => {
+			const wsManager = c.get('wsManager');
+			const provisioningLogs = c.get('provisioningLogs');
+			const masterKeyManager = c.get('masterKeyManager');
+			provisionContainer(
+				db,
+				docker,
+				opsResult.rows[0],
+				slug,
+				dataDir,
+				wsManager,
+				company.id,
+				provisioningLogs,
+				masterKeyManager,
+			).catch((error) => {
 				log.error(`Failed to provision container for operations project:`, error);
 			});
 		}

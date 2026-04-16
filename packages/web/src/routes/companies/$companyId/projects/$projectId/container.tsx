@@ -22,13 +22,12 @@ function ContainerPage() {
 	const isRunning = status === 'running';
 	const isCreating = status === 'creating';
 	const isStopping = status === 'stopping';
+	const isError = status === 'error';
 	const hasContainer = !!project?.container_id;
 	const isActive = isRunning || isCreating || isStopping;
 
-	const { logs, clear } = useContainerLogs(
-		project?.id ?? '',
-		isRunning && hasContainer && !!project?.id,
-	);
+	const logPhase = isCreating ? 'creating' : isRunning ? 'running' : isError ? 'error' : null;
+	const { logs, clear } = useContainerLogs(project?.id ?? '', project?.id ? logPhase : null);
 
 	const [autoScroll, setAutoScroll] = useState(true);
 	const logEndRef = useRef<HTMLDivElement>(null);

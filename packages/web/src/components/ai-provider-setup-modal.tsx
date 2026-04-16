@@ -1,11 +1,7 @@
 import { AI_PROVIDER_INFO, AiProvider } from '@hezo/shared';
 import { Key, Loader2, Shield } from 'lucide-react';
 import { useState } from 'react';
-import {
-	useAiProviderStatus,
-	useCreateAiProvider,
-	useStartAiProviderOAuth,
-} from '../hooks/use-ai-providers';
+import { useCreateAiProvider, useStartAiProviderOAuth } from '../hooks/use-ai-providers';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -17,12 +13,7 @@ const PROVIDERS = [
 	AiProvider.Moonshot,
 ] as const;
 
-export function AiProviderSetupModal({ companyId }: { companyId: string }) {
-	const { data: status, isLoading } = useAiProviderStatus(companyId);
-
-	// Don't render if still loading or already configured
-	if (isLoading || status?.configured) return null;
-
+export function AiProviderSetupModal() {
 	return (
 		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
 			<div className="bg-bg border border-border rounded-radius-lg shadow-lg w-full max-w-xl mx-4 p-6 max-h-[90vh] overflow-y-auto">
@@ -31,13 +22,13 @@ export function AiProviderSetupModal({ companyId }: { companyId: string }) {
 					<h2 className="text-lg font-semibold">Set up an AI provider</h2>
 				</div>
 				<p className="text-[13px] text-text-muted mb-6">
-					Configure at least one AI provider so your agents can run. You can add more later in
-					Settings.
+					Configure at least one AI provider so your agents can run. These credentials are shared
+					across every company in this Hezo instance.
 				</p>
 
 				<div className="space-y-3">
 					{PROVIDERS.map((provider) => (
-						<ProviderCard key={provider} companyId={companyId} provider={provider} />
+						<ProviderCard key={provider} provider={provider} />
 					))}
 				</div>
 			</div>
@@ -45,12 +36,12 @@ export function AiProviderSetupModal({ companyId }: { companyId: string }) {
 	);
 }
 
-function ProviderCard({ companyId, provider }: { companyId: string; provider: AiProvider }) {
+function ProviderCard({ provider }: { provider: AiProvider }) {
 	const info = AI_PROVIDER_INFO[provider];
 	const [showKeyForm, setShowKeyForm] = useState(false);
 	const [apiKey, setApiKey] = useState('');
-	const createProvider = useCreateAiProvider(companyId);
-	const startOAuth = useStartAiProviderOAuth(companyId);
+	const createProvider = useCreateAiProvider();
+	const startOAuth = useStartAiProviderOAuth();
 
 	async function handleSubmitKey(e: React.FormEvent) {
 		e.preventDefault();

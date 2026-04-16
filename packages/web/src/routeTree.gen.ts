@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CompaniesIndexRouteImport } from './routes/companies/index'
+import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as CompaniesNewRouteImport } from './routes/companies/new'
 import { Route as CompaniesCompanyIdRouteRouteImport } from './routes/companies/$companyId/route'
 import { Route as CompaniesCompanyIdIndexRouteImport } from './routes/companies/$companyId/index'
@@ -46,6 +47,11 @@ const IndexRoute = IndexRouteImport.update({
 const CompaniesIndexRoute = CompaniesIndexRouteImport.update({
   id: '/companies/',
   path: '/companies/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsAiProvidersRoute = SettingsAiProvidersRouteImport.update({
+  id: '/settings/ai-providers',
+  path: '/settings/ai-providers',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CompaniesNewRoute = CompaniesNewRouteImport.update({
@@ -205,6 +211,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/companies/$companyId': typeof CompaniesCompanyIdRouteRouteWithChildren
   '/companies/new': typeof CompaniesNewRoute
+  '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/companies/': typeof CompaniesIndexRoute
   '/companies/$companyId/audit-log': typeof CompaniesCompanyIdAuditLogRoute
   '/companies/$companyId/': typeof CompaniesCompanyIdIndexRoute
@@ -234,6 +241,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/companies/new': typeof CompaniesNewRoute
+  '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/companies': typeof CompaniesIndexRoute
   '/companies/$companyId/audit-log': typeof CompaniesCompanyIdAuditLogRoute
   '/companies/$companyId': typeof CompaniesCompanyIdIndexRoute
@@ -263,6 +271,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/companies/$companyId': typeof CompaniesCompanyIdRouteRouteWithChildren
   '/companies/new': typeof CompaniesNewRoute
+  '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/companies/': typeof CompaniesIndexRoute
   '/companies/$companyId/audit-log': typeof CompaniesCompanyIdAuditLogRoute
   '/companies/$companyId/': typeof CompaniesCompanyIdIndexRoute
@@ -295,6 +304,7 @@ export interface FileRouteTypes {
     | '/'
     | '/companies/$companyId'
     | '/companies/new'
+    | '/settings/ai-providers'
     | '/companies/'
     | '/companies/$companyId/audit-log'
     | '/companies/$companyId/'
@@ -324,6 +334,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/companies/new'
+    | '/settings/ai-providers'
     | '/companies'
     | '/companies/$companyId/audit-log'
     | '/companies/$companyId'
@@ -352,6 +363,7 @@ export interface FileRouteTypes {
     | '/'
     | '/companies/$companyId'
     | '/companies/new'
+    | '/settings/ai-providers'
     | '/companies/'
     | '/companies/$companyId/audit-log'
     | '/companies/$companyId/'
@@ -383,6 +395,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CompaniesCompanyIdRouteRoute: typeof CompaniesCompanyIdRouteRouteWithChildren
   CompaniesNewRoute: typeof CompaniesNewRoute
+  SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
   CompaniesIndexRoute: typeof CompaniesIndexRoute
 }
 
@@ -400,6 +413,13 @@ declare module '@tanstack/react-router' {
       path: '/companies'
       fullPath: '/companies/'
       preLoaderRoute: typeof CompaniesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/ai-providers': {
+      id: '/settings/ai-providers'
+      path: '/settings/ai-providers'
+      fullPath: '/settings/ai-providers'
+      preLoaderRoute: typeof SettingsAiProvidersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/companies/new': {
@@ -686,6 +706,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CompaniesCompanyIdRouteRoute: CompaniesCompanyIdRouteRouteWithChildren,
   CompaniesNewRoute: CompaniesNewRoute,
+  SettingsAiProvidersRoute: SettingsAiProvidersRoute,
   CompaniesIndexRoute: CompaniesIndexRoute,
 }
 export const routeTree = rootRouteImport

@@ -94,13 +94,15 @@ test('agent disable and enable lifecycle', async ({ page }) => {
 	await page.goto(`/companies/${company.slug}/agents/${enabledAgent.id}`);
 	await waitForPageLoad(page);
 
-	const disableBtn = page.getByRole('button', { name: /Disable/i });
+	await page.getByRole('main').getByRole('link', { name: 'Settings' }).click();
+
+	const disableBtn = page.getByRole('button', { name: /Disable agent/i });
 	await expect(disableBtn).toBeVisible({ timeout: 10000 });
 	await disableBtn.click();
 
 	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 5000 });
 
-	const enableBtn = page.getByRole('button', { name: /Enable/i });
+	const enableBtn = page.getByRole('button', { name: /Enable agent/i });
 	await expect(enableBtn).toBeVisible({ timeout: 5000 });
 	await enableBtn.click();
 

@@ -1,17 +1,25 @@
 import { AgentAdminStatus } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Power, PowerOff } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '../../../../../components/ui/button';
 import { Input } from '../../../../../components/ui/input';
 import { Textarea } from '../../../../../components/ui/textarea';
-import { useAgent, useAgents, useUpdateAgent } from '../../../../../hooks/use-agents';
+import {
+	useAgent,
+	useAgents,
+	useDisableAgent,
+	useEnableAgent,
+	useUpdateAgent,
+} from '../../../../../hooks/use-agents';
 
 function AgentSettingsPage() {
 	const { companyId, agentId } = Route.useParams();
 	const { data: agent, isLoading } = useAgent(companyId, agentId);
 	const { data: agents } = useAgents(companyId);
 	const updateAgent = useUpdateAgent(companyId, agentId);
+	const disableAgent = useDisableAgent(companyId);
+	const enableAgent = useEnableAgent(companyId);
 
 	const [title, setTitle] = useState('');
 	const [roleDesc, setRoleDesc] = useState('');
@@ -144,6 +152,35 @@ function AgentSettingsPage() {
 					</Button>
 				</div>
 			</form>
+
+			<div className="mt-8 pt-6 border-t border-border-subtle">
+				<div className="text-sm font-medium mb-1">Agent status</div>
+				<div className="text-xs text-text-muted mb-3">
+					{agent.admin_status === AgentAdminStatus.Enabled
+						? 'Disabling unassigns this agent from open issues and stops it from being scheduled.'
+						: 'This agent is disabled and cannot be assigned new work. Enable to resume scheduling.'}
+				</div>
+				{agent.admin_status === AgentAdminStatus.Enabled && (
+					<Button
+						variant="secondary"
+						size="sm"
+						onClick={() => disableAgent.mutate(agentId)}
+						disabled={disableAgent.isPending}
+					>
+						<PowerOff className="w-3 h-3" /> Disable agent
+					</Button>
+				)}
+				{agent.admin_status === AgentAdminStatus.Disabled && (
+					<Button
+						variant="secondary"
+						size="sm"
+						onClick={() => enableAgent.mutate(agentId)}
+						disabled={enableAgent.isPending}
+					>
+						<Power className="w-3 h-3" /> Enable agent
+					</Button>
+				)}
+			</div>
 		</div>
 	);
 }

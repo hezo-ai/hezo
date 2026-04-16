@@ -4,6 +4,7 @@ export enum WsMessageType {
 	ChatMessage = 'chat_message',
 	AgentLifecycle = 'agent_lifecycle',
 	ContainerLog = 'container_log',
+	RunLog = 'run_log',
 	Error = 'error',
 }
 
@@ -52,6 +53,15 @@ export interface WsContainerLogMessage {
 	text: string;
 }
 
+export interface WsRunLogMessage {
+	type: WsMessageType.RunLog;
+	projectId: string;
+	runId: string;
+	issueId: string | null;
+	stream: 'stdout' | 'stderr';
+	text: string;
+}
+
 export interface WsErrorMessage {
 	type: WsMessageType.Error;
 	code: string;
@@ -63,6 +73,7 @@ export type WsServerMessage =
 	| WsChatMessage
 	| WsAgentLifecycleMessage
 	| WsContainerLogMessage
+	| WsRunLogMessage
 	| WsConnectedMessage
 	| WsErrorMessage;
 

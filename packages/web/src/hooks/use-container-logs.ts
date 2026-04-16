@@ -11,13 +11,16 @@ export interface LogLine {
 const MAX_LINES = 5000;
 let nextLogId = 0;
 
-export function useContainerLogs(projectId: string, enabled: boolean) {
+export function useContainerLogs(projectId: string, phase: string | null) {
 	const [logs, setLogs] = useState<LogLine[]>([]);
 	const logsRef = useRef<LogLine[]>([]);
 	const { joinRoom, leaveRoom, subscribe } = useSocket();
 
 	useEffect(() => {
-		if (!enabled) return;
+		if (!phase || !projectId) return;
+
+		logsRef.current = [];
+		setLogs([]);
 
 		const room = `container-logs:${projectId}`;
 		joinRoom(room);
@@ -37,7 +40,7 @@ export function useContainerLogs(projectId: string, enabled: boolean) {
 			unsubscribe();
 			leaveRoom(room);
 		};
-	}, [projectId, enabled, joinRoom, leaveRoom, subscribe]);
+	}, [projectId, phase, joinRoom, leaveRoom, subscribe]);
 
 	const clear = useCallback(() => {
 		logsRef.current = [];

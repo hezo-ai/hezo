@@ -1,9 +1,11 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, Outlet, useParams } from '@tanstack/react-router';
+import { AiProviderSetupModal } from '../components/ai-provider-setup-modal';
 import { CompanyRail } from '../components/company-rail';
 import { CompanySidebar } from '../components/company-sidebar';
 import { MasterKeyGate } from '../components/master-key-gate';
 import { SocketProvider } from '../contexts/socket-context';
+import { useAiProviderStatus } from '../hooks/use-ai-providers';
 import { useStatus } from '../hooks/use-status';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -16,22 +18,36 @@ function RootLayout() {
 	);
 }
 
+function Spinner() {
+	return (
+		<div className="flex items-center justify-center h-screen">
+			<div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+		</div>
+	);
+}
+
 function AppShell() {
 	const { data: status, isLoading } = useStatus();
 	const params = useParams({ strict: false }) as Record<string, string>;
 	const companyId = params.companyId;
+	const unlocked = status?.masterKeyState === 'unlocked';
+	const hasToken = !!api.getToken();
 
-	if (isLoading) {
-		return (
-			<div className="flex items-center justify-center h-screen">
-				<div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-			</div>
-		);
-	}
+	const { data: providerStatus, isLoading: providersLoading } = useAiProviderStatus({
+		enabled: unlocked && hasToken,
+	});
+
+	if (isLoading) return <Spinner />;
 
 	if (status?.masterKeyState === 'unset' || status?.masterKeyState === 'locked') {
 		api.clearToken();
 		return <MasterKeyGate state={status.masterKeyState} />;
+	}
+
+	if (providersLoading || !providerStatus) return <Spinner />;
+
+	if (!providerStatus.configured) {
+		return <AiProviderSetupModal />;
 	}
 
 	return (

@@ -26,6 +26,7 @@ export default defineConfig({
 			env: {
 				SKIP_AI_KEY_VALIDATION: '1',
 				HEZO_SKIP_DOCKER: '1',
+				HEZO_WAKEUP_COALESCING_MS: '100',
 			},
 		},
 		{

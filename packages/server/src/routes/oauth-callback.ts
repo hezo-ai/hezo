@@ -50,6 +50,14 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 	}
 
 	const companyId = statePayload.company_id;
+	const isAiProvider = AI_PROVIDER_PLATFORMS.has(platform);
+
+	if (!isAiProvider && !companyId) {
+		return c.json(
+			{ error: { code: 'BAD_REQUEST', message: 'State missing company_id for platform flow' } },
+			400,
+		);
+	}
 
 	// Exchange the one-time code for the actual token via Connect service
 	const exchangeCodeParam = c.req.query('code');
@@ -104,12 +112,11 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 	}
 
 	// For AI provider platforms, store as ai_provider_config with oauth_token auth method
-	if (AI_PROVIDER_PLATFORMS.has(platform)) {
+	if (isAiProvider) {
 		try {
 			await storeAiProviderKey(
 				db,
 				masterKeyManager,
-				companyId,
 				platform as AiProvider,
 				accessToken,
 				AiAuthMethod.OAuthToken,
@@ -120,7 +127,14 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 			log.warn('AI provider config creation failed:', e instanceof Error ? e.message : e);
 		}
 
-		return c.redirect(`/companies/${companyId}/settings?ai_provider_connected=${platform}`);
+		return c.redirect(`/settings/ai-providers?ai_provider_connected=${platform}`);
+	}
+
+	if (!companyId) {
+		return c.json(
+			{ error: { code: 'BAD_REQUEST', message: 'State missing company_id for platform flow' } },
+			400,
+		);
 	}
 
 	await storeOAuthToken(

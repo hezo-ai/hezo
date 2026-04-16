@@ -750,16 +750,16 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
 
 ### Git worktrees for parallelism
 
-Repos are cloned once (via SSH) in the project folder. When an agent needs to work on a repo, a **git worktree** is created in the project's `worktrees/` folder. This enables:
+Repos are cloned once (via SSH) into the project's `workspace/<repo-short-name>/` directory. When an agent starts a run on an issue, the runner lazily creates a **git worktree per (issue × repo)** so iterative work across runs on the same issue persists and concurrent issues cannot collide.
 
-- Multiple agents working on the same repo simultaneously (different branches)
-- The same agent working on multiple branches in parallel via subagents
-- No conflicts between concurrent operations on the same repository
+- Multiple agents working on different issues use different worktrees — no conflicts.
+- Repeated runs on the same issue reuse the existing worktree, pulling latest changes via `git fetch` + fast-forward merge.
+- The agent's working directory is the **designated repo's worktree**; other repos sit alongside and the agent can `cd` into them.
 
-Worktree naming convention: `{repo-short-name}-{branch-slug}-agent-{agent-id}`
-Worktree location: `~/.hezo/companies/{company}/projects/{project}/worktrees/`
+Worktree layout: `~/.hezo/companies/{company}/projects/{project}/worktrees/{issue-identifier}/{repo-short-name}/`
+Branch name: `hezo/{issue-identifier}`
 
-Worktrees are created on demand when an agent starts work on an issue, and cleaned up when the issue is closed or the agent is reassigned.
+Worktrees are created on first run of an issue and removed when the issue transitions to a terminal status (done/cancelled) or its repo is detached.
 
 ### Docker container configuration
 
@@ -818,8 +818,9 @@ At runtime, the company's SSH private key is injected into agent subprocesses fo
 | Project deleted | Container destroyed. All associated worktrees cleaned up. |
 | Company deleted | All project containers destroyed. |
 | Server startup / every 5s | Container status sync — DB state reconciled with Docker. Stale "running" status corrected to "stopped" or "error". Changes broadcast via WebSocket. |
-| Issue assigned | Worktree created for the repo + branch. Available inside container via `/worktrees/`. |
-| Issue closed | Worktree cleaned up (merged branch deleted, worktree pruned). |
+| Issue assigned | No-op until the first run. Worktrees are created lazily when an agent starts executing against the issue. |
+| Issue first run | Runner creates `/worktrees/{issue-identifier}/{repo-short-name}/` on branch `hezo/{issue-identifier}` for every linked repo, then runs the agent with the designated repo's worktree as its working directory. |
+| Issue closed | Per-issue worktree directory `/worktrees/{issue-identifier}/` is removed (all per-repo worktrees under it). |
 
 ### Agent subprocess model
 

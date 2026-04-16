@@ -11,6 +11,7 @@ import {
 	stopContainerGracefully,
 	syncAllContainerStatuses,
 } from '../../services/containers';
+import { ProvisioningLogBroadcaster } from '../../services/provisioning-logs';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
@@ -214,9 +215,10 @@ describe('provisionContainer broadcasting', () => {
 		// Wait for the async provisionContainer triggered by creation to settle
 		await new Promise((r) => setTimeout(r, 100));
 
-		// Reset status so we can test provisionContainer directly
+		// Reset status and use an image not in the local-build registry so ensureImage
+		// routes through pullImage instead of attempting a real docker build.
 		await db.query(
-			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
+			"UPDATE projects SET container_id = NULL, container_status = NULL, docker_base_image = 'test-unregistered:latest' WHERE id = $1",
 			[projectId],
 		);
 	});
@@ -224,6 +226,7 @@ describe('provisionContainer broadcasting', () => {
 	it('broadcasts row_change on successful provisioning', async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 		const mockDocker = {
+			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn().mockResolvedValue(undefined),
 			createContainer: vi.fn().mockResolvedValue({ Id: 'test-container-123' }),
 			startContainer: vi.fn().mockResolvedValue(undefined),
@@ -263,6 +266,7 @@ describe('provisionContainer broadcasting', () => {
 
 		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 		const mockDocker = {
+			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn().mockRejectedValue(new Error('Image not found')),
 		} as any;
 		const mockWsManager = { broadcast: vi.fn() } as any;
@@ -301,6 +305,7 @@ describe('provisionContainer broadcasting', () => {
 
 		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 		const mockDocker = {
+			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn().mockResolvedValue(undefined),
 			createContainer: vi.fn().mockResolvedValue({ Id: 'no-ws-container' }),
 			startContainer: vi.fn().mockResolvedValue(undefined),
@@ -319,6 +324,97 @@ describe('provisionContainer broadcasting', () => {
 			dataDir,
 		);
 		expect(containerId).toBe('no-ws-container');
+	});
+
+	it('streams provisioning step lines through the provisioning log broadcaster', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
+			[projectId],
+		);
+
+		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
+		const mockDocker = {
+			imageExists: vi.fn().mockResolvedValue(false),
+			pullImage: vi.fn().mockResolvedValue(undefined),
+			createContainer: vi.fn().mockResolvedValue({ Id: 'logs-container' }),
+			startContainer: vi.fn().mockResolvedValue(undefined),
+			removeContainer: vi.fn().mockResolvedValue(undefined),
+		} as any;
+		const mockWsManager = { broadcast: vi.fn() } as any;
+		const provisioningLogs = new ProvisioningLogBroadcaster();
+		provisioningLogs.setWsManager(mockWsManager);
+
+		const project = (
+			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
+		).rows[0];
+
+		await provisionContainer(
+			db,
+			mockDocker,
+			project,
+			'container-sync-co',
+			dataDir,
+			mockWsManager,
+			companyId,
+			provisioningLogs,
+		);
+
+		const logRoom = `container-logs:${projectId}`;
+		const logLines = mockWsManager.broadcast.mock.calls
+			.filter(([room]: [string]) => room === logRoom)
+			.map(([, event]: [string, any]) => event.text as string);
+
+		expect(logLines).toEqual(
+			expect.arrayContaining([
+				expect.stringContaining('Preparing workspace'),
+				expect.stringContaining('Resolving image'),
+				expect.stringContaining('Creating container'),
+				'→ Starting container',
+				'✓ Container ready',
+			]),
+		);
+	});
+
+	it('emits a failure line through the provisioning log broadcaster on error', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
+			[projectId],
+		);
+
+		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
+		const mockDocker = {
+			imageExists: vi.fn().mockResolvedValue(false),
+			pullImage: vi.fn().mockRejectedValue(new Error('boom')),
+		} as any;
+		const mockWsManager = { broadcast: vi.fn() } as any;
+		const provisioningLogs = new ProvisioningLogBroadcaster();
+		provisioningLogs.setWsManager(mockWsManager);
+
+		const project = (
+			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
+		).rows[0];
+
+		await expect(
+			provisionContainer(
+				db,
+				mockDocker,
+				project,
+				'container-sync-co',
+				dataDir,
+				mockWsManager,
+				companyId,
+				provisioningLogs,
+			),
+		).rejects.toThrow('boom');
+
+		const logRoom = `container-logs:${projectId}`;
+		const logLines = mockWsManager.broadcast.mock.calls
+			.filter(([room]: [string]) => room === logRoom)
+			.map(([, event]: [string, any]) => event.text as string);
+
+		expect(logLines.some((line: string) => line.includes('✗ Provisioning failed: boom'))).toBe(
+			true,
+		);
 	});
 });
 

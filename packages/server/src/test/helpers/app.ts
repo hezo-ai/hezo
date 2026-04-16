@@ -22,6 +22,7 @@ export const TEST_CONNECT_PUBLIC_KEY = testKeyPair.publicKey;
 export function createStubDocker(): DockerClient {
 	return {
 		ping: async () => true,
+		imageExists: async () => true,
 		pullImage: async () => {},
 		createContainer: async () => ({ Id: 'stub-container', Warnings: [] }),
 		startContainer: async () => {},

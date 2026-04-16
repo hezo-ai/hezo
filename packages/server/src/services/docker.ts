@@ -22,6 +22,16 @@ interface ExecConfig {
 	AttachStderr: boolean;
 }
 
+export interface ExecLogChunk {
+	stream: 'stdout' | 'stderr';
+	text: string;
+}
+
+export interface ExecStartOpts {
+	signal?: AbortSignal;
+	onChunk?: (chunk: ExecLogChunk) => void | Promise<void>;
+}
+
 interface ContainerInfo {
 	Id: string;
 	State: {
@@ -45,6 +55,7 @@ export class DockerClient {
 	static createNoop(): DockerClient {
 		const stub = {
 			ping: async () => true,
+			imageExists: async () => true,
 			pullImage: async () => {},
 			createContainer: async (name: string) => ({ Id: `noop-${name}`, Warnings: [] }),
 			startContainer: async () => {},
@@ -57,7 +68,13 @@ export class DockerClient {
 			}),
 			containerLogs: async () => new Response(new ReadableStream()),
 			execCreate: async () => 'noop-exec',
-			execStart: async () => ({ stdout: '', stderr: '' }),
+			execStart: async (
+				_id: string,
+				opts?: ExecStartOpts,
+			): Promise<{ stdout: string; stderr: string }> => {
+				if (!opts?.onChunk) return { stdout: '', stderr: '' };
+				return runSyntheticExec(opts);
+			},
 			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 		};
 		return stub as unknown as DockerClient;
@@ -87,6 +104,16 @@ export class DockerClient {
 		} catch {
 			return false;
 		}
+	}
+
+	async imageExists(image: string): Promise<boolean> {
+		const res = await this.request('GET', `/images/${encodeURIComponent(image)}/json`);
+		if (res.ok) {
+			await res.text();
+			return true;
+		}
+		await res.text();
+		return false;
 	}
 
 	async pullImage(image: string): Promise<void> {
@@ -182,21 +209,25 @@ export class DockerClient {
 
 	async execStart(
 		execId: string,
-		signal?: AbortSignal,
+		opts: ExecStartOpts = {},
 	): Promise<{ stdout: string; stderr: string }> {
 		const res = await this.request(
 			'POST',
 			`/exec/${execId}/start`,
 			{ Detach: false, Tty: false },
-			signal,
+			opts.signal,
 		);
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker execStart failed (${res.status}): ${text}`);
 		}
 
-		const raw = new Uint8Array(await res.arrayBuffer());
-		return demuxDockerStream(raw);
+		if (!opts.onChunk) {
+			const raw = new Uint8Array(await res.arrayBuffer());
+			return demuxDockerStream(raw);
+		}
+
+		return streamDockerExec(res, opts.onChunk, opts.signal);
 	}
 
 	async execInspect(execId: string): Promise<{ ExitCode: number; Running: boolean; Pid: number }> {
@@ -236,6 +267,88 @@ function demuxDockerStream(raw: Uint8Array): { stdout: string; stderr: string } 
 		stdout: decoder.decode(concatUint8Arrays(stdout)),
 		stderr: decoder.decode(concatUint8Arrays(stderr)),
 	};
+}
+
+// When a Hezo server is running with HEZO_SKIP_DOCKER (e.g. the Playwright
+// e2e server), the docker stub synthesises a short scripted exec so that
+// runtime consumers — WebSocket subscribers, log accumulators, exit
+// inspectors — observe the same event shape they would from a real agent.
+// The output is deterministic so tests can assert on specific lines.
+const SYNTHETIC_EXEC_SCRIPT: Array<{
+	stream: 'stdout' | 'stderr';
+	text: string;
+	delayMs?: number;
+}> = [
+	{ stream: 'stdout', text: '[synthetic] starting agent run\n', delayMs: 10 },
+	{ stream: 'stdout', text: '[synthetic] analyzing task\n', delayMs: 10 },
+	{ stream: 'stdout', text: '[synthetic] writing response\n', delayMs: 10 },
+	{ stream: 'stdout', text: '[synthetic] task complete\n', delayMs: 10 },
+];
+
+async function runSyntheticExec(opts: ExecStartOpts): Promise<{ stdout: string; stderr: string }> {
+	let stdoutAcc = '';
+	let stderrAcc = '';
+	for (const entry of SYNTHETIC_EXEC_SCRIPT) {
+		if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+		if (entry.stream === 'stdout') stdoutAcc += entry.text;
+		else stderrAcc += entry.text;
+		await opts.onChunk?.(entry);
+		if (entry.delayMs) {
+			await new Promise((r) => setTimeout(r, entry.delayMs));
+		}
+	}
+	return { stdout: stdoutAcc, stderr: stderrAcc };
+}
+
+async function streamDockerExec(
+	res: Response,
+	onChunk: (c: ExecLogChunk) => void | Promise<void>,
+	signal?: AbortSignal,
+): Promise<{ stdout: string; stderr: string }> {
+	const reader = res.body?.getReader();
+	if (!reader) return { stdout: '', stderr: '' };
+
+	const decoder = new TextDecoder();
+	const stdoutParts: string[] = [];
+	const stderrParts: string[] = [];
+	let buffer = new Uint8Array(0);
+
+	const drainFrames = async () => {
+		while (buffer.length >= 8) {
+			const streamType = buffer[0];
+			const size = (buffer[4] << 24) | (buffer[5] << 16) | (buffer[6] << 8) | buffer[7];
+			if (buffer.length < 8 + size) break;
+			const payload = buffer.slice(8, 8 + size);
+			buffer = buffer.slice(8 + size);
+			const text = decoder.decode(payload);
+			const stream: 'stdout' | 'stderr' = streamType === 2 ? 'stderr' : 'stdout';
+			if (stream === 'stdout') stdoutParts.push(text);
+			else stderrParts.push(text);
+			await onChunk({ stream, text });
+		}
+	};
+
+	try {
+		while (true) {
+			if (signal?.aborted) {
+				throw new DOMException('Aborted', 'AbortError');
+			}
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (value) {
+				const next = new Uint8Array(buffer.length + value.length);
+				next.set(buffer);
+				next.set(value, buffer.length);
+				buffer = next;
+				await drainFrames();
+			}
+		}
+		await drainFrames();
+	} finally {
+		reader.releaseLock();
+	}
+
+	return { stdout: stdoutParts.join(''), stderr: stderrParts.join('') };
 }
 
 function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {

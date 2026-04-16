@@ -38,7 +38,7 @@ export interface JobManagerDeps {
 	wsManager: WebSocketManager;
 }
 
-const COALESCING_WINDOW_MS = 10_000;
+const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 10_000);
 
 export class JobManager {
 	private cron: Cron;
@@ -337,11 +337,19 @@ export class JobManager {
 		const project = await db.query<{
 			id: string;
 			slug: string;
+			company_id: string;
+			company_slug: string;
 			container_id: string;
 			container_status: string;
-		}>('SELECT id, slug, container_id, container_status FROM projects WHERE id = $1', [
-			issue.project_id,
-		]);
+			designated_repo_id: string | null;
+		}>(
+			`SELECT p.id, p.slug, p.company_id, c.slug AS company_slug,
+			        p.container_id, p.container_status, p.designated_repo_id
+			 FROM projects p
+			 JOIN companies c ON c.id = p.company_id
+			 WHERE p.id = $1`,
+			[issue.project_id],
+		);
 
 		if (project.rows.length === 0 || !project.rows[0].container_id) {
 			log.debug(`No container for project ${issue.project_id} — wakeup failed`);
@@ -413,6 +421,7 @@ export class JobManager {
 			masterKeyManager,
 			serverPort,
 			dataDir: this.deps.dataDir,
+			wsManager: this.deps.wsManager,
 		};
 		const timeoutMs = agent.rows[0].heartbeat_interval_min * 60 * 1000;
 

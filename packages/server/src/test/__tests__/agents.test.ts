@@ -250,7 +250,7 @@ describe('heartbeat runs', () => {
 		const agent = agents[0];
 
 		await db.query(
-			`INSERT INTO heartbeat_runs (member_id, company_id, status, started_at, finished_at, exit_code, stdout_excerpt)
+			`INSERT INTO heartbeat_runs (member_id, company_id, status, started_at, finished_at, exit_code, log_text)
 			 VALUES ($1, $2, 'succeeded', now() - interval '5 minutes', now(), 0, 'All done')`,
 			[agent.id, companyId],
 		);
@@ -263,6 +263,6 @@ describe('heartbeat runs', () => {
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
 		expect(body.data[0].status).toBe('succeeded');
 		expect(body.data[0].exit_code).toBe(0);
-		expect(body.data[0].stdout_excerpt).toBe('All done');
+		expect(body.data[0].log_text).toBe('All done');
 	});
 });

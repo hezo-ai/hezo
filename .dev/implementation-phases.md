@@ -189,7 +189,10 @@ Screens:
 
 ## Phase 4: Agent Execution
 
-**Status:** Done (2026-04)
+**Status:** Done (2026-04) — amended 2026-04-16 with in-container MCP wiring,
+per-issue worktrees on every linked repo, realtime run-log streaming, and the
+`started_at` / `invocation_command` / `log_text` / `working_dir` columns on
+`heartbeat_runs`.
 
 **Goal:** Agents can actually run. Docker containers per project, subprocesses, heartbeats, worktrees, budget enforcement.
 
@@ -197,10 +200,25 @@ Screens:
 
 Backend:
 - Project Docker container lifecycle (provision, start, stop, rebuild via Docker Engine API)
-  - One container per project (all repos checked out inside)
+  - One container per project (all project repos checked out at
+    `/workspace/<repo-short-name>/` inside; kept in sync by
+    `ensureProjectRepos` on provision, on repo attach, and before every run)
   - Dev port forwarding for preview access
 - Agent subprocess management (`claude_code` adapter: subprocess in project container via `docker exec`)
-- Git worktrees for parallel agent work
+- In-container MCP wiring: the runner passes `--mcp-config <json>` and
+  `--strict-mcp-config` to Claude Code for each run, pointing at
+  `http://host.docker.internal:<serverPort>/mcp` with the agent's per-run JWT
+- Git worktrees per issue on every linked repo
+  (`/worktrees/<issue-identifier>/<repo-short-name>/` on branch
+  `hezo/<issue-identifier>`). The agent's working directory resolves to the
+  designated repo's worktree; other repos sit alongside. Worktrees persist
+  across runs on the same issue and are removed when the issue transitions to
+  a terminal status or its repo is detached.
+- Streaming run logs: Docker exec output is demuxed per-frame, broadcast over
+  the `project-runs:<projectId>` WebSocket room as `run_log` messages, and
+  accumulated into `heartbeat_runs.log_text` (capped at 1 MB with a truncation
+  marker). The exact CLI is persisted as `invocation_command` with the JWT
+  redacted.
 - Heartbeat engine: wakeup queue, coalescing, timer ticks
 - Issue work ownership (claim on start, release on complete/reassign/pause)
 - Orphan detection and auto-retry
@@ -453,31 +471,31 @@ UI:
 **What's included:**
 
 Backend:
-- `ai_provider_configs` table: per-company AI provider credential storage
+- `ai_provider_configs` table: instance-level AI provider credential storage, encrypted credential inlined on each row
 - `ai_provider` enum: anthropic, openai, google, moonshot
 - `ai_auth_method` enum: api_key, oauth_token (subscription mode)
 - `kimi` added to `agent_runtime` enum
-- CRUD routes for AI provider configs (`/api/companies/:companyId/ai-providers`)
+- Instance-level CRUD routes for AI provider configs (`/api/ai-providers`). Mutations require superuser.
 - Provider key verification endpoint (lightweight API call to provider)
 - AI provider status endpoint for setup detection
 - Agent runner injects provider-specific env vars per exec (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
 - Agent runner dispatches correct CLI command per runtime type (claude, codex, gemini, kimi)
 - Connect OAuth providers for Anthropic, OpenAI, Google (subscription token flow)
-- OAuth callback creates ai_provider_configs with auth_method=oauth_token
+- OAuth callback stores AI provider tokens with auth_method=oauth_token; OAuth state carries only `ai_provider` (no company_id)
 - Dockerfile.agent-base with all 4 AI CLIs pre-installed
 
 UI:
-- AI Providers settings section with per-provider cards
+- Dedicated `/settings/ai-providers` route with per-provider cards
 - Manual API key entry (password input, format validation)
 - OAuth connection for subscription mode (Anthropic, OpenAI, Google)
-- Blocking setup modal after company creation (requires at least one provider)
-- Dynamic detection — modal re-checks on every page load, no stale state
+- Full-screen setup gate rendered by the root shell immediately after master-key unlock, before the app is interactive. Blocks company creation until at least one provider is active. Re-raises if the last provider is deleted.
 
 **How to test:**
-- Create company via browser — blocking modal appears
-- Enter API key in modal — modal closes, workspace accessible
-- Settings > AI Providers shows configured providers with status badges
+- Fresh instance → enter master key → gate appears before any company UI is reachable
+- Enter API key in gate → gate drops, company list visible, create company succeeds
+- `/settings/ai-providers` shows configured providers with status badges
 - Verify button tests key against provider API
+- Delete the last key → gate re-appears over whichever route you were on
 - Agent runner injects correct env var based on runtime type and auth method
 
 **Depends on:** Phase 7

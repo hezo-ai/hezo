@@ -610,22 +610,22 @@ CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'moonshot');
 CREATE TYPE ai_auth_method AS ENUM ('api_key', 'oauth_token');
 
 CREATE TABLE ai_provider_configs (
-    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    provider          ai_provider NOT NULL,
-    auth_method       ai_auth_method NOT NULL DEFAULT 'api_key',
-    label             TEXT NOT NULL DEFAULT '',
-    api_key_secret_id UUID NOT NULL REFERENCES secrets(id) ON DELETE CASCADE,
-    is_default        BOOLEAN NOT NULL DEFAULT false,
-    status            TEXT NOT NULL DEFAULT 'active',
-    metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider             ai_provider NOT NULL,
+    auth_method          ai_auth_method NOT NULL DEFAULT 'api_key',
+    label                TEXT NOT NULL,
+    encrypted_credential TEXT NOT NULL,
+    is_default           BOOLEAN NOT NULL DEFAULT false,
+    status               TEXT NOT NULL DEFAULT 'active',
+    metadata             JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE (company_id, provider, api_key_secret_id)
+    UNIQUE (provider, label)
 );
 
-CREATE INDEX idx_ai_provider_configs_company ON ai_provider_configs(company_id);
+CREATE UNIQUE INDEX ai_provider_configs_default_per_provider
+    ON ai_provider_configs(provider) WHERE is_default;
 
 -------------------------------------------------------------------------------
 -- ASSETS & ATTACHMENTS
@@ -832,15 +832,16 @@ CREATE TABLE heartbeat_runs (
     wakeup_id                UUID REFERENCES agent_wakeup_requests(id) ON DELETE SET NULL,
     issue_id                 UUID REFERENCES issues(id) ON DELETE SET NULL,
     status                   heartbeat_run_status NOT NULL DEFAULT 'queued',
-    started_at               TIMESTAMPTZ,
+    started_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at              TIMESTAMPTZ,
     exit_code                INTEGER,
     error                    TEXT,
     input_tokens             BIGINT NOT NULL DEFAULT 0,
     output_tokens            BIGINT NOT NULL DEFAULT 0,
     cost_cents               INTEGER NOT NULL DEFAULT 0,
-    stdout_excerpt           TEXT,
-    stderr_excerpt           TEXT,
+    invocation_command       TEXT,
+    log_text                 TEXT NOT NULL DEFAULT '',
+    working_dir              TEXT,
     process_pid              INTEGER,
     retry_of_run_id          UUID REFERENCES heartbeat_runs(id),
     process_loss_retry_count INTEGER NOT NULL DEFAULT 0,

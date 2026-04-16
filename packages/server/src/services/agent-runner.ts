@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	type AgentRuntime,
@@ -6,13 +8,21 @@ import {
 	PROVIDER_TO_ENV_VAR,
 	RUNTIME_COMMANDS,
 	RUNTIME_TO_PROVIDER,
+	WsMessageType,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { signAgentJwt } from '../middleware/auth';
 import { getProviderCredential } from './ai-provider-keys';
-import type { DockerClient } from './docker';
+import type { DockerClient, ExecLogChunk } from './docker';
 import { applyEffortToRuntime, resolveEffort } from './effort';
+import { ensureIssueWorktree, fetchRepo } from './git';
+import { ensureProjectRepos } from './repo-sync';
+import { getCompanySSHKey } from './ssh-keys';
 import { resolveSystemPrompt } from './template-resolver';
+import { getWorkspacePath, getWorktreesPath } from './workspace';
+import type { WebSocketManager } from './ws';
+
+const LOG_CAP_BYTES = 1_000_000;
 
 interface AgentInfo {
 	id: string;
@@ -20,10 +30,6 @@ interface AgentInfo {
 	system_prompt: string;
 	company_id: string;
 	runtime_type: AgentRuntime;
-	/**
-	 * Baseline effort for this agent. Overridden by `effort` on the wakeup
-	 * payload when present.
-	 */
 	default_effort?: string | null;
 }
 
@@ -41,8 +47,11 @@ export interface IssueInfo {
 interface ProjectInfo {
 	id: string;
 	slug: string;
+	company_id: string;
+	company_slug: string;
 	container_id: string;
 	container_status: string;
+	designated_repo_id: string | null;
 }
 
 export interface RunResult {
@@ -60,6 +69,13 @@ export interface RunnerDeps {
 	masterKeyManager: MasterKeyManager;
 	serverPort: number;
 	dataDir: string;
+	wsManager?: WebSocketManager;
+}
+
+interface RepoRow {
+	id: string;
+	short_name: string;
+	repo_identifier: string;
 }
 
 export async function runAgent(
@@ -82,9 +98,7 @@ export async function runAgent(
 		};
 	}
 
-	if (signal?.aborted) {
-		return abortedResult(startTime);
-	}
+	if (signal?.aborted) return abortedResult(startTime);
 
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, agent.system_prompt, {
 		companyId: agent.company_id,
@@ -93,9 +107,7 @@ export async function runAgent(
 		dataDir: deps.dataDir,
 	});
 
-	if (signal?.aborted) {
-		return abortedResult(startTime);
-	}
+	if (signal?.aborted) return abortedResult(startTime);
 
 	if (resolvedPrompt.includes('{{requester_context}}')) {
 		const creator = await deps.db.query<{ display_name: string; member_type: string }>(
@@ -111,16 +123,10 @@ export async function runAgent(
 		resolvedPrompt = resolvedPrompt.replace(/\{\{requester_context\}\}/g, requesterText);
 	}
 
-	if (signal?.aborted) {
-		return abortedResult(startTime);
-	}
+	if (signal?.aborted) return abortedResult(startTime);
 
 	const agentJwt = await signAgentJwt(deps.masterKeyManager, agent.id, agent.company_id);
 
-	// Resolve the effort level for this run. A comment-supplied override (on the
-	// wakeup payload) trumps the agent's configured default; both fall back to
-	// the global default. The result is then translated into runtime-specific
-	// CLI args / env vars / prompt directives.
 	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort);
 	const effortApplication = applyEffortToRuntime(agent.runtime_type, effort);
 
@@ -143,7 +149,6 @@ export async function runAgent(
 		...effortApplication.extraEnv,
 	];
 
-	// Inject all AI provider env vars as empty defaults
 	const allEnvVars = new Set<string>();
 	for (const methods of Object.values(PROVIDER_TO_ENV_VAR)) {
 		for (const envVar of Object.values(methods)) {
@@ -154,15 +159,9 @@ export async function runAgent(
 		env.push(`${envVar}=`);
 	}
 
-	// Resolve the agent's specific credential and override the relevant env var
 	const runtimeType = agent.runtime_type;
 	const provider = RUNTIME_TO_PROVIDER[runtimeType];
-	const credential = await getProviderCredential(
-		deps.db,
-		deps.masterKeyManager,
-		agent.company_id,
-		provider,
-	);
+	const credential = await getProviderCredential(deps.db, deps.masterKeyManager, provider);
 
 	if (!credential) {
 		return {
@@ -182,28 +181,97 @@ export async function runAgent(
 
 	const cliCommand = RUNTIME_COMMANDS[runtimeType] || 'claude';
 
-	const workingDir = '/workspace';
-
-	if (signal?.aborted) {
-		return abortedResult(startTime);
-	}
-
 	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue);
 
-	try {
-		if (signal?.aborted) {
-			throw new DOMException('Aborted', 'AbortError');
+	// Build the MCP flags and working dir. Worktree prep streams setup lines to
+	// the same run-log channel that carries the agent's own stdout/stderr.
+	const logBuffer: { bytes: number; parts: string[]; truncated: boolean } = {
+		bytes: 0,
+		parts: [],
+		truncated: false,
+	};
+
+	const persistChunk = (stream: 'stdout' | 'stderr', text: string) => {
+		if (logBuffer.truncated) return;
+		const marker = stream === 'stderr' ? `[stderr] ${text}` : text;
+		const remaining = LOG_CAP_BYTES - logBuffer.bytes;
+		if (remaining <= 0) {
+			logBuffer.truncated = true;
+			return;
 		}
+		if (marker.length > remaining) {
+			logBuffer.parts.push(marker.slice(0, remaining));
+			logBuffer.bytes = LOG_CAP_BYTES;
+			logBuffer.truncated = true;
+		} else {
+			logBuffer.parts.push(marker);
+			logBuffer.bytes += marker.length;
+		}
+	};
+
+	const broadcast = (stream: 'stdout' | 'stderr', text: string) => {
+		persistChunk(stream, text);
+		deps.wsManager?.broadcast(`project-runs:${project.id}`, {
+			type: WsMessageType.RunLog,
+			projectId: project.id,
+			runId: heartbeatRunId,
+			issueId: issue.id,
+			stream,
+			text,
+		});
+	};
+
+	const mcpFlags =
+		runtimeType === 'claude_code'
+			? [
+					'--mcp-config',
+					JSON.stringify({
+						mcpServers: {
+							hezo: {
+								type: 'http',
+								url: `http://host.docker.internal:${deps.serverPort}/mcp`,
+								headers: { Authorization: `Bearer ${agentJwt}` },
+							},
+						},
+					}),
+					'--strict-mcp-config',
+				]
+			: [];
+
+	const prep = await prepareWorktrees(deps, agent, project, issue, broadcast, signal);
+
+	const execCmd = [cliCommand, ...mcpFlags, ...effortApplication.extraArgs, '-p', taskPrompt];
+
+	// Redact JWT for persisted invocation. Keep everything else so operators can
+	// see exactly what was invoked.
+	const redactedCmd = execCmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
+	const invocationCommand = `$ ${redactedCmd
+		.map((a) => (a.includes(' ') || a.includes('"') ? JSON.stringify(a) : a))
+		.join(' ')}`;
+
+	await deps.db.query(
+		`UPDATE heartbeat_runs SET invocation_command = $1, working_dir = $2 WHERE id = $3`,
+		[invocationCommand, prep.workingDir, heartbeatRunId],
+	);
+
+	broadcast('stdout', `${invocationCommand}\n`);
+
+	try {
+		if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
 		const execId = await deps.docker.execCreate(project.container_id, {
-			Cmd: [cliCommand, ...effortApplication.extraArgs, '-p', taskPrompt],
+			Cmd: execCmd,
 			Env: env,
-			WorkingDir: workingDir,
+			WorkingDir: prep.workingDir,
 			AttachStdout: true,
 			AttachStderr: true,
 		});
 
-		const { stdout, stderr } = await deps.docker.execStart(execId, signal);
+		const onChunk = async (chunk: ExecLogChunk) => {
+			broadcast(chunk.stream, chunk.text);
+		};
+
+		const { stdout, stderr } = await deps.docker.execStart(execId, { signal, onChunk });
 		const execInfo = await deps.docker.execInspect(execId);
 		const durationMs = Date.now() - startTime;
 
@@ -213,8 +281,7 @@ export async function runAgent(
 			status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
 			exitCode: execInfo.ExitCode,
 			durationMs,
-			stdout: stdout.slice(0, 10000),
-			stderr: stderr.slice(0, 10000),
+			logText: finalizeLogText(logBuffer),
 		});
 
 		return {
@@ -228,23 +295,35 @@ export async function runAgent(
 	} catch (error) {
 		const durationMs = Date.now() - startTime;
 		const isAbort = (error as Error).name === 'AbortError';
+		const errorMessage = (error as Error).message;
+
+		broadcast('stderr', `\n[runner] ${errorMessage}\n`);
 
 		await updateHeartbeatRun(deps.db, heartbeatRunId, {
 			status: isAbort ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
 			exitCode: -1,
 			durationMs,
-			stderr: (error as Error).message,
+			logText: finalizeLogText(logBuffer),
+			error: errorMessage,
 		});
 
 		return {
 			success: false,
 			exitCode: -1,
 			stdout: '',
-			stderr: (error as Error).message,
+			stderr: errorMessage,
 			durationMs,
 			heartbeatRunId,
 		};
 	}
+}
+
+function finalizeLogText(buffer: { parts: string[]; truncated: boolean; bytes: number }): string {
+	const text = buffer.parts.join('');
+	if (buffer.truncated) {
+		return `${text}\n...[truncated — log capped at ${LOG_CAP_BYTES} bytes]`;
+	}
+	return text;
 }
 
 function abortedResult(startTime: number): RunResult {
@@ -255,6 +334,90 @@ function abortedResult(startTime: number): RunResult {
 		stderr: 'Aborted',
 		durationMs: Date.now() - startTime,
 	};
+}
+
+async function prepareWorktrees(
+	deps: RunnerDeps,
+	_agent: AgentInfo,
+	project: ProjectInfo,
+	issue: IssueInfo,
+	broadcast: (stream: 'stdout' | 'stderr', text: string) => void,
+	signal?: AbortSignal,
+): Promise<{ workingDir: string; designatedRepo: RepoRow | null }> {
+	const repos = await deps.db.query<RepoRow>(
+		`SELECT id, short_name, repo_identifier FROM repos
+		 WHERE project_id = $1 ORDER BY created_at ASC`,
+		[project.id],
+	);
+
+	if (repos.rows.length === 0) {
+		broadcast('stdout', '(no repos linked to project — running in /workspace)\n');
+		return { workingDir: '/workspace', designatedRepo: null };
+	}
+
+	// Best-effort reconcile: ensures any newly-added or previously-failed clone
+	// is present before the agent starts.
+	const syncRes = await ensureProjectRepos(
+		deps.db,
+		deps.masterKeyManager,
+		{
+			id: project.id,
+			company_id: project.company_id,
+			companySlug: project.company_slug,
+			projectSlug: project.slug,
+		},
+		deps.dataDir,
+		(stream, text) => broadcast(stream, `${text}\n`),
+	);
+	if (syncRes.cloned.length > 0) {
+		broadcast('stdout', `(cloned ${syncRes.cloned.length} repo(s) on demand)\n`);
+	}
+
+	if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
+
+	const companySshKey = await getCompanySSHKey(deps.db, project.company_id, deps.masterKeyManager);
+
+	const workspaceRoot = getWorkspacePath(deps.dataDir, project.company_slug, project.slug);
+	const worktreesRoot = getWorktreesPath(deps.dataDir, project.company_slug, project.slug);
+	const issueWorktreeRoot = join(worktreesRoot, issue.identifier);
+	mkdirSync(issueWorktreeRoot, { recursive: true });
+
+	const branchName = `hezo/${issue.identifier}`;
+
+	for (const repo of repos.rows) {
+		if (signal?.aborted) break;
+		const repoDir = join(workspaceRoot, repo.short_name);
+		const worktreePath = join(issueWorktreeRoot, repo.short_name);
+
+		if (!existsSync(join(repoDir, '.git'))) {
+			broadcast('stderr', `(skipping worktree for ${repo.short_name} — not cloned)\n`);
+			continue;
+		}
+
+		if (companySshKey) {
+			const fetchRes = await fetchRepo(repoDir, companySshKey.privateKey);
+			if (fetchRes.success) {
+				broadcast('stdout', `git fetch ${repo.short_name}\n`);
+			} else {
+				broadcast('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
+			}
+		}
+
+		const wt = await ensureIssueWorktree(repoDir, worktreePath, branchName);
+		if (!wt.success) {
+			broadcast('stderr', `git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}\n`);
+		} else if (wt.created) {
+			broadcast('stdout', `git worktree add ${repo.short_name} @ ${branchName}\n`);
+		}
+	}
+
+	const designated = project.designated_repo_id
+		? repos.rows.find((r) => r.id === project.designated_repo_id)
+		: null;
+	const primary = designated ?? repos.rows[0];
+	const workingDir = `/worktrees/${issue.identifier}/${primary.short_name}`;
+
+	return { workingDir, designatedRepo: primary ?? null };
 }
 
 export function buildTaskPrompt(
@@ -281,7 +444,6 @@ export function buildTaskPrompt(
 
 	parts.push(issue.description || 'No description provided.');
 
-	// Inject retry context when this is an orphan retry
 	if (wakeupPayload?.previous_failure) {
 		const pf = wakeupPayload.previous_failure as Record<string, unknown>;
 		parts.push('');
@@ -305,7 +467,6 @@ async function buildCoachReviewPrompt(
 	issue: IssueInfo,
 	companyId: string,
 ): Promise<string> {
-	// Fetch full comment history for the completed issue
 	const comments = await db.query<{
 		content_type: string;
 		content: Record<string, unknown>;
@@ -323,7 +484,6 @@ async function buildCoachReviewPrompt(
 		[issue.id],
 	);
 
-	// Fetch agents involved in this issue (assignee + commenters)
 	const involvedAgents = await db.query<{
 		id: string;
 		title: string;
@@ -384,8 +544,8 @@ async function buildCoachReviewPrompt(
 
 async function createHeartbeatRun(db: PGlite, agent: AgentInfo, issue: IssueInfo): Promise<string> {
 	const result = await db.query<{ id: string }>(
-		`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status)
-		 VALUES ($1, $2, $3, $4::heartbeat_run_status)
+		`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+		 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())
 		 RETURNING id`,
 		[agent.id, agent.company_id, issue.id, HeartbeatRunStatus.Running],
 	);
@@ -399,8 +559,8 @@ async function updateHeartbeatRun(
 		status: string;
 		exitCode: number;
 		durationMs: number;
-		stdout?: string;
-		stderr?: string;
+		logText?: string;
+		error?: string;
 	},
 ): Promise<void> {
 	await db.query(
@@ -408,15 +568,9 @@ async function updateHeartbeatRun(
 		 SET status = $1::heartbeat_run_status,
 		     finished_at = now(),
 		     exit_code = $2,
-		     stdout_excerpt = $3,
-		     stderr_excerpt = $4
+		     log_text = $3,
+		     error = COALESCE($4, error)
 		 WHERE id = $5`,
-		[
-			update.status,
-			update.exitCode,
-			update.stdout?.slice(0, 2000) ?? '',
-			update.stderr?.slice(0, 2000) ?? '',
-			runId,
-		],
+		[update.status, update.exitCode, update.logText ?? '', update.error ?? null, runId],
 	);
 }

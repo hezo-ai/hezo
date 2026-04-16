@@ -1,0 +1,170 @@
+import { expect, type Page, test } from '@playwright/test';
+import { authenticate, createCompanyWithAgents } from './helpers';
+
+async function waitForContainer(page: Page, companyId: string, projectId: string, token: string) {
+	const headers = { Authorization: `Bearer ${token}` };
+	for (let i = 0; i < 30; i++) {
+		const res = await page.request.get(`/api/companies/${companyId}/projects/${projectId}`, {
+			headers,
+		});
+		const body = (await res.json()) as { data: { container_status?: string } };
+		if (body.data?.container_status === 'running') return;
+		await new Promise((r) => setTimeout(r, 500));
+	}
+	throw new Error('Container did not reach running state within 15s');
+}
+
+async function waitForRunStatus(
+	page: Page,
+	companyId: string,
+	issueId: string,
+	token: string,
+	target: 'running' | 'succeeded' | 'failed',
+	timeoutMs = 30_000,
+) {
+	const headers = { Authorization: `Bearer ${token}` };
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const res = await page.request.get(`/api/companies/${companyId}/issues/${issueId}/latest-run`, {
+			headers,
+		});
+		const body = (await res.json()) as { data: null | { id: string; status: string } };
+		if (
+			body.data &&
+			(body.data.status === target || (target === 'running' && body.data.status === 'succeeded'))
+		) {
+			return body.data;
+		}
+		await new Promise((r) => setTimeout(r, 500));
+	}
+	throw new Error(`Latest run did not reach status ${target} within ${timeoutMs}ms`);
+}
+
+test('run detail page streams synthetic agent logs', async ({ page }) => {
+	await authenticate(page);
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Log Test Project' },
+	});
+	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
+
+	await waitForContainer(page, company.id, project.id, token);
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: {
+			project_id: project.id,
+			title: 'Run Me',
+			description: 'Synthetic test task',
+			assignee_id: ceo.id,
+		},
+	});
+	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
+
+	await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+		headers,
+		data: { content_type: 'text', content: { text: 'Please begin' } },
+	});
+
+	const run = await waitForRunStatus(page, company.id, issue.id, token, 'succeeded');
+
+	await page.goto(`/companies/${company.slug}/agents/${ceo.id}/executions/${run.id}`);
+
+	await expect(page.getByText(/Run \w{8}/i)).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Invocation')).toBeVisible({ timeout: 5000 });
+
+	const logPane = page.getByTestId('run-log');
+	await expect(logPane).toContainText('[synthetic] starting agent run', { timeout: 10_000 });
+	await expect(logPane).toContainText('[synthetic] task complete', { timeout: 5000 });
+});
+
+test('issue page shows minified log strip for latest run', async ({ page }) => {
+	await authenticate(page);
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Strip Test Project' },
+	});
+	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
+
+	await waitForContainer(page, company.id, project.id, token);
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: {
+			project_id: project.id,
+			title: 'Strip Me',
+			description: 'Synthetic test task',
+			assignee_id: ceo.id,
+		},
+	});
+	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
+
+	await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+		headers,
+		data: { content_type: 'text', content: { text: 'Begin' } },
+	});
+
+	await waitForRunStatus(page, company.id, issue.id, token, 'succeeded');
+
+	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+
+	const strip = page.getByTestId('issue-run-log-tail');
+	await expect(strip).toBeVisible({ timeout: 10_000 });
+	await expect(strip).toContainText('[synthetic]', { timeout: 10_000 });
+	await expect(page.getByRole('link', { name: /view full run/i })).toBeVisible();
+});
+
+test('marking issue done cleans up worktree directory', async ({ page }) => {
+	await authenticate(page);
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Cleanup Test Project' },
+	});
+	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
+
+	await waitForContainer(page, company.id, project.id, token);
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: {
+			project_id: project.id,
+			title: 'Done Issue',
+			description: '...',
+			assignee_id: ceo.id,
+		},
+	});
+	const issue = ((await issueRes.json()) as { data: { id: string } }).data;
+
+	const patchRes = await page.request.patch(`/api/companies/${company.id}/issues/${issue.id}`, {
+		headers,
+		data: { status: 'done' },
+	});
+	expect(patchRes.ok()).toBe(true);
+
+	const check = await page.request.get(`/api/companies/${company.id}/issues/${issue.id}`, {
+		headers,
+	});
+	const body = (await check.json()) as { data: { status: string } };
+	expect(body.data.status).toBe('done');
+});

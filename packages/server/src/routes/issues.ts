@@ -6,6 +6,7 @@ import {
 	AuthType,
 	IssuePriority,
 	IssueStatus,
+	TERMINAL_ISSUE_STATUSES,
 	WakeupSource,
 } from '@hezo/shared';
 import { Hono } from 'hono';
@@ -18,6 +19,7 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { triggerStatusAutomations } from '../services/issue-automation';
+import { removeIssueWorktrees } from '../services/repo-sync';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
@@ -249,6 +251,34 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
+issuesRoutes.get('/companies/:companyId/issues/:issueId/latest-run', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const issueId = c.req.param('issueId');
+
+	const result = await db.query(
+		`SELECT hr.id, hr.member_id, hr.status, hr.started_at, hr.finished_at,
+		        hr.exit_code, hr.log_text, hr.invocation_command, hr.working_dir,
+		        i.project_id AS project_id,
+		        ma.title AS agent_title, ma.slug AS agent_slug
+		 FROM heartbeat_runs hr
+		 JOIN issues i ON i.id = hr.issue_id
+		 LEFT JOIN member_agents ma ON ma.id = hr.member_id
+		 WHERE hr.issue_id = $1 AND hr.company_id = $2
+		 ORDER BY hr.started_at DESC
+		 LIMIT 1`,
+		[issueId, companyId],
+	);
+
+	if (result.rows.length === 0) {
+		return ok(c, null);
+	}
+	return ok(c, result.rows[0]);
+});
+
 issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	const access = await requireCompanyAccess(c);
 	if (access instanceof Response) return access;
@@ -352,6 +382,32 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		triggerStatusAutomations(db, companyId, issueId, body.status).catch((e) =>
 			log.error('Failed to trigger status automations:', e),
 		);
+
+		if ((TERMINAL_ISSUE_STATUSES as readonly string[]).includes(body.status)) {
+			const dataDir = c.get('dataDir');
+			if (dataDir) {
+				const pc = await db.query<{
+					identifier: string;
+					project_slug: string;
+					company_slug: string;
+				}>(
+					`SELECT i.identifier, p.slug AS project_slug, co.slug AS company_slug
+					 FROM issues i
+					 JOIN projects p ON p.id = i.project_id
+					 JOIN companies co ON co.id = p.company_id
+					 WHERE i.id = $1`,
+					[issueId],
+				);
+				const row = pc.rows[0];
+				if (row) {
+					try {
+						removeIssueWorktrees(dataDir, row.company_slug, row.project_slug, row.identifier);
+					} catch (error) {
+						log.error(`Failed to clean up worktrees for issue ${row.identifier}:`, error);
+					}
+				}
+			}
+		}
 	}
 
 	broadcastChange(

@@ -6,6 +6,7 @@ import type { MasterKeyManager } from './crypto/master-key';
 import { logger } from './logger';
 import { verifyToken } from './middleware/auth';
 import { ContainerLogStreamer } from './services/container-logs';
+import type { ProvisioningLogBroadcaster } from './services/provisioning-logs';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { startup } from './startup';
 
@@ -24,6 +25,7 @@ let wsManager: WebSocketManager | null = null;
 let dbRef: PGlite | null = null;
 let mkmRef: MasterKeyManager | null = null;
 let dockerRef: import('./services/docker').DockerClient | null = null;
+let provisioningLogsRef: ProvisioningLogBroadcaster | null = null;
 const containerLogStreamer = new ContainerLogStreamer();
 
 async function validateToken(token: string): Promise<WsData['auth'] | null> {
@@ -54,6 +56,7 @@ startup(config)
 		dbRef = result.db;
 		mkmRef = result.masterKeyManager;
 		dockerRef = result.docker;
+		provisioningLogsRef = result.provisioningLogs;
 		const url = `http://localhost:${result.port}`;
 		log.info(`Hezo server running at ${url} [${result.masterKeyState}]`);
 		if (!config.noOpen) {
@@ -143,10 +146,14 @@ export default {
 						const row = project.rows[0];
 						const allowed = await canAccessCompany(ws.data.auth, row.company_id);
 						if (!allowed) return;
-						if (!row.container_id || row.container_status !== 'running') return;
 
 						wsManager.subscribe(ws as unknown as WsSocket, data.room);
-						containerLogStreamer.subscribe(projectId, row.container_id, wsManager, dockerRef);
+						provisioningLogsRef?.replay(projectId, (payload) => {
+							ws.send(JSON.stringify(payload));
+						});
+						if (row.container_id && row.container_status === 'running') {
+							containerLogStreamer.subscribe(projectId, row.container_id, wsManager, dockerRef);
+						}
 						return;
 					}
 				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {

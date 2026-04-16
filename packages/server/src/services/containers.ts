@@ -3,8 +3,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import { ContainerStatus } from '@hezo/shared';
+import type { MasterKeyManager } from '../crypto/master-key';
 import { logger } from '../logger';
 import type { DockerClient } from './docker';
+import { ensureImage } from './ensure-image';
+import type { ProvisioningLogBroadcaster } from './provisioning-logs';
+import { ensureProjectRepos } from './repo-sync';
 import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
 import type { WebSocketManager } from './ws';
 
@@ -31,13 +35,20 @@ export async function provisionContainer(
 	dataDir: string,
 	wsManager?: WebSocketManager,
 	companyId?: string,
+	provisioningLogs?: ProvisioningLogBroadcaster,
+	masterKeyManager?: MasterKeyManager,
 ): Promise<string> {
 	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 		ContainerStatus.Creating,
 		project.id,
 	]);
 
+	provisioningLogs?.clear(project.id);
+	const emit = (stream: 'stdout' | 'stderr', text: string) =>
+		provisioningLogs?.emit(project.id, stream, text);
+
 	try {
+		emit('stdout', `→ Preparing workspace for ${companySlug}/${project.slug}`);
 		const projectDir = ensureProjectWorkspace(dataDir, companySlug, project.slug);
 		const workspacePath = join(projectDir, 'workspace');
 		const worktreesPath = join(projectDir, 'worktrees');
@@ -87,8 +98,12 @@ export async function provisionContainer(
 			env.push('SSH_AUTH_SOCK=/tmp/ssh-agent.sock');
 		}
 
-		await docker.pullImage(project.docker_base_image);
+		emit('stdout', `→ Resolving image ${project.docker_base_image}`);
+		await ensureImage(docker, project.docker_base_image, {
+			onLine: (stream, text) => emit(stream, text),
+		});
 
+		emit('stdout', `→ Creating container ${containerName}`);
 		// Remove any existing container with the same name to avoid conflicts
 		try {
 			await docker.removeContainer(containerName, true);
@@ -109,12 +124,37 @@ export async function provisionContainer(
 			ExposedPorts: exposedPorts,
 		});
 
+		emit('stdout', '→ Starting container');
 		await docker.startContainer(Id);
 
 		await db.query(
 			'UPDATE projects SET container_id = $1, container_status = $2::container_status WHERE id = $3',
 			[Id, ContainerStatus.Running, project.id],
 		);
+
+		if (masterKeyManager) {
+			emit('stdout', '→ Syncing project repos');
+			const syncRes = await ensureProjectRepos(
+				db,
+				masterKeyManager,
+				{
+					id: project.id,
+					company_id: project.company_id,
+					companySlug,
+					projectSlug: project.slug,
+				},
+				dataDir,
+				(stream, text) => emit(stream, text),
+			);
+			if (syncRes.failed.length > 0) {
+				emit(
+					'stderr',
+					`⚠ ${syncRes.failed.length} repo(s) failed to clone; container is usable but some repos may be missing`,
+				);
+			}
+		}
+
+		emit('stdout', '✓ Container ready');
 
 		if (wsManager && companyId) {
 			const updated = await db.query<Record<string, unknown>>(
@@ -133,6 +173,10 @@ export async function provisionContainer(
 
 		return Id;
 	} catch (error) {
+		emit(
+			'stderr',
+			`✗ Provisioning failed: ${error instanceof Error ? error.message : String(error)}`,
+		);
 		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 			ContainerStatus.Error,
 			project.id,
@@ -243,8 +287,17 @@ export async function rebuildContainer(
 	dataDir: string,
 	wsManager?: WebSocketManager,
 	companyId?: string,
+	provisioningLogs?: ProvisioningLogBroadcaster,
+	masterKeyManager?: MasterKeyManager,
 ): Promise<string> {
+	provisioningLogs?.clear(project.id);
+
 	if (project.container_id) {
+		provisioningLogs?.emit(
+			project.id,
+			'stdout',
+			`→ Removing previous container ${project.container_id.slice(0, 12)}`,
+		);
 		try {
 			await docker.stopContainer(project.container_id);
 		} catch {
@@ -257,7 +310,17 @@ export async function rebuildContainer(
 		}
 	}
 
-	return provisionContainer(db, docker, project, companySlug, dataDir, wsManager, companyId);
+	return provisionContainer(
+		db,
+		docker,
+		project,
+		companySlug,
+		dataDir,
+		wsManager,
+		companyId,
+		provisioningLogs,
+		masterKeyManager,
+	);
 }
 
 export async function syncContainerStatus(

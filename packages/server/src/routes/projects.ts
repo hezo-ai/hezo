@@ -141,6 +141,8 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 		const docker = c.get('docker');
 		const dataDir = c.get('dataDir');
 		const wsManager = c.get('wsManager');
+		const provisioningLogs = c.get('provisioningLogs');
+		const masterKeyManager = c.get('masterKeyManager');
 		provisionContainer(
 			db,
 			docker,
@@ -149,6 +151,8 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 			dataDir,
 			wsManager,
 			companyId,
+			provisioningLogs,
+			masterKeyManager,
 		).catch((error) => {
 			log.error(`Failed to provision container for project ${project.slug}:`, error);
 		});
@@ -389,11 +393,14 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 
 	await cancelRunningAgentTasks(db, jobManager, projectId, companyId);
 
+	const containerId = row.container_id;
+	if (!containerId) return ok(c, { container_status: ContainerStatus.Stopping });
+
 	const taskKey = `stop:${projectId}`;
 	jobManager.launchTask(
 		taskKey,
 		async () => {
-			await stopContainerGracefully(db, docker, projectId, row.container_id!, wsManager, companyId);
+			await stopContainerGracefully(db, docker, projectId, containerId, wsManager, companyId);
 		},
 		60_000,
 	);
@@ -440,6 +447,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 	const docker = c.get('docker');
 	const dataDir = c.get('dataDir');
 	const wsManager = c.get('wsManager');
+	const provisioningLogs = c.get('provisioningLogs');
 
 	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 		ContainerStatus.Creating,
@@ -463,6 +471,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 					dataDir,
 					wsManager,
 					companyId,
+					provisioningLogs,
 				);
 				wakeAgentsWithPendingWork(db, projectId, companyId);
 			} catch (error) {

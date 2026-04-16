@@ -31,7 +31,7 @@ test.describe('Inbox / Approvals', () => {
 		await waitForPageLoad(page);
 
 		// Verify approval card is visible
-		await expect(page.getByText('Inbox')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('strategy')).toBeVisible();
 		await expect(page.getByText('Launch new product line')).toBeVisible();
 

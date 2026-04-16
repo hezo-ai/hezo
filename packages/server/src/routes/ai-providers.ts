@@ -3,10 +3,11 @@ import { Hono } from 'hono';
 import { signOAuthState } from '../crypto/state';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireSuperuser } from '../middleware/auth';
 import {
 	deleteAiProviderConfig,
 	getAiProviderStatus,
+	getProviderConfigCredential,
 	listAiProviders,
 	setDefaultAiProvider,
 	storeAiProviderKey,
@@ -17,34 +18,27 @@ const OAUTH_PROVIDERS = new Set(['anthropic', 'openai', 'google']);
 
 export const aiProvidersRoutes = new Hono<Env>();
 
-// List configured AI providers for a company
-aiProvidersRoutes.get('/companies/:companyId/ai-providers', async (c) => {
-	const access = await requireCompanyAccess(c);
-	if (access instanceof Response) return access;
-
+// List configured AI providers (instance-wide)
+aiProvidersRoutes.get('/ai-providers', async (c) => {
 	const db = c.get('db');
-	const configs = await listAiProviders(db, access.companyId);
+	const configs = await listAiProviders(db);
 	return ok(c, configs);
 });
 
 // Check if any AI provider is configured (lightweight status check)
-aiProvidersRoutes.get('/companies/:companyId/ai-providers/status', async (c) => {
-	const access = await requireCompanyAccess(c);
-	if (access instanceof Response) return access;
-
+aiProvidersRoutes.get('/ai-providers/status', async (c) => {
 	const db = c.get('db');
-	const status = await getAiProviderStatus(db, access.companyId);
+	const status = await getAiProviderStatus(db);
 	return ok(c, status);
 });
 
 // Add an AI provider config (manual API key entry)
-aiProvidersRoutes.post('/companies/:companyId/ai-providers', async (c) => {
-	const access = await requireCompanyAccess(c);
-	if (access instanceof Response) return access;
+aiProvidersRoutes.post('/ai-providers', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
 
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const { companyId } = access;
 
 	const body = await c.req.json<{
 		provider: string;
@@ -74,7 +68,6 @@ aiProvidersRoutes.post('/companies/:companyId/ai-providers', async (c) => {
 	const provider = body.provider as AiProvider;
 	const authMethod = (body.auth_method as AiAuthMethod) || AiAuthMethod.ApiKey;
 
-	// Basic format validation
 	const info = AI_PROVIDER_INFO[provider];
 	if (
 		info.keyPrefix &&
@@ -89,7 +82,6 @@ aiProvidersRoutes.post('/companies/:companyId/ai-providers', async (c) => {
 		);
 	}
 
-	// Validate the key against the provider's API before storing
 	if (authMethod === AiAuthMethod.ApiKey && !process.env.SKIP_AI_KEY_VALIDATION) {
 		try {
 			const valid = await verifyProviderKey(provider, body.api_key, authMethod);
@@ -115,33 +107,31 @@ aiProvidersRoutes.post('/companies/:companyId/ai-providers', async (c) => {
 		const configId = await storeAiProviderKey(
 			db,
 			masterKeyManager,
-			companyId,
 			provider,
 			body.api_key,
 			authMethod,
-			body.label?.trim() || '',
+			body.label?.trim(),
 		);
 
 		return ok(c, { id: configId }, 201);
 	} catch (e) {
 		const message = e instanceof Error ? e.message : 'Failed to store AI provider config';
 		if (message.includes('unique') || message.includes('duplicate')) {
-			return err(c, 'DUPLICATE', 'This provider is already configured with this key', 409);
+			return err(c, 'DUPLICATE', 'A config with this provider and label already exists', 409);
 		}
 		return err(c, 'INTERNAL', message, 500);
 	}
 });
 
 // Delete an AI provider config
-aiProvidersRoutes.delete('/companies/:companyId/ai-providers/:configId', async (c) => {
-	const access = await requireCompanyAccess(c);
-	if (access instanceof Response) return access;
+aiProvidersRoutes.delete('/ai-providers/:configId', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
 
 	const db = c.get('db');
-	const { companyId } = access;
 	const configId = c.req.param('configId');
 
-	const deleted = await deleteAiProviderConfig(db, companyId, configId);
+	const deleted = await deleteAiProviderConfig(db, configId);
 	if (!deleted) {
 		return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
 	}
@@ -150,15 +140,14 @@ aiProvidersRoutes.delete('/companies/:companyId/ai-providers/:configId', async (
 });
 
 // Set an AI provider config as default for its provider
-aiProvidersRoutes.patch('/companies/:companyId/ai-providers/:configId/default', async (c) => {
-	const access = await requireCompanyAccess(c);
-	if (access instanceof Response) return access;
+aiProvidersRoutes.patch('/ai-providers/:configId/default', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
 
 	const db = c.get('db');
-	const { companyId } = access;
 	const configId = c.req.param('configId');
 
-	const updated = await setDefaultAiProvider(db, companyId, configId);
+	const updated = await setDefaultAiProvider(db, configId);
 	if (!updated) {
 		return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
 	}
@@ -167,13 +156,12 @@ aiProvidersRoutes.patch('/companies/:companyId/ai-providers/:configId/default', 
 });
 
 // Start OAuth flow for an AI provider (subscription mode)
-aiProvidersRoutes.post('/companies/:companyId/ai-providers/:provider/oauth/start', async (c) => {
-	const access = await requireCompanyAccess(c);
-	if (access instanceof Response) return access;
+aiProvidersRoutes.post('/ai-providers/:provider/oauth/start', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
 
 	const masterKeyManager = c.get('masterKeyManager');
 	const connectUrl = c.get('connectUrl');
-	const { companyId } = access;
 	const provider = c.req.param('provider');
 
 	if (!OAUTH_PROVIDERS.has(provider)) {
@@ -184,10 +172,7 @@ aiProvidersRoutes.post('/companies/:companyId/ai-providers/:provider/oauth/start
 		return err(c, 'CONNECT_UNAVAILABLE', 'Hezo Connect URL is not configured', 503);
 	}
 
-	const state = await signOAuthState(
-		{ company_id: companyId, ai_provider: provider },
-		masterKeyManager,
-	);
+	const state = await signOAuthState({ ai_provider: provider }, masterKeyManager);
 
 	const origin = new URL(c.req.url).origin;
 	const callbackUrl = `${origin}/oauth/callback`;
@@ -198,47 +183,28 @@ aiProvidersRoutes.post('/companies/:companyId/ai-providers/:provider/oauth/start
 });
 
 // Verify an AI provider key by making a lightweight API call
-aiProvidersRoutes.post('/companies/:companyId/ai-providers/:configId/verify', async (c) => {
-	const access = await requireCompanyAccess(c);
-	if (access instanceof Response) return access;
+aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
 
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const { companyId } = access;
 	const configId = c.req.param('configId');
 
-	const encryptionKey = masterKeyManager.getKey();
-	if (!encryptionKey) {
+	if (!masterKeyManager.getKey()) {
 		return err(c, 'LOCKED', 'Server must be unlocked', 401);
 	}
 
-	// Get the config and decrypt the key
-	const result = await db.query<{
-		provider: string;
-		auth_method: string;
-		encrypted_value: string;
-	}>(
-		`SELECT apc.provider, apc.auth_method, s.encrypted_value
-		 FROM ai_provider_configs apc
-		 JOIN secrets s ON s.id = apc.api_key_secret_id
-		 WHERE apc.id = $1 AND apc.company_id = $2`,
-		[configId, companyId],
-	);
-
-	if (result.rows.length === 0) {
+	const cred = await getProviderConfigCredential(db, masterKeyManager, configId);
+	if (!cred) {
 		return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
 	}
 
-	const { provider, auth_method } = result.rows[0];
-	const { decrypt } = await import('../crypto/encryption');
-	const apiKey = decrypt(result.rows[0].encrypted_value, encryptionKey);
-
 	try {
-		const valid = await verifyProviderKey(provider as AiProvider, apiKey, auth_method);
+		const valid = await verifyProviderKey(cred.provider as AiProvider, cred.value, cred.authMethod);
 		if (valid) {
 			return ok(c, { valid: true });
 		}
-		// Mark as invalid
 		await db.query(
 			`UPDATE ai_provider_configs SET status = 'invalid', updated_at = now() WHERE id = $1`,
 			[configId],
@@ -276,9 +242,8 @@ async function verifyProviderKey(
 		},
 	};
 
-	// OAuth tokens can't be verified via API key endpoints
 	if (authMethod === AiAuthMethod.OAuthToken) {
-		return true; // Trust the OAuth flow
+		return true;
 	}
 
 	const config = endpoints[provider];
