@@ -298,9 +298,11 @@ describe('runAgent', () => {
 
 	it('passes correct env vars to docker exec', async () => {
 		let capturedEnv: string[] = [];
+		let capturedUser: string | undefined;
 		const docker = createMockDocker({
 			execCreate: async (_containerId: string, opts: any) => {
 				capturedEnv = opts.Env;
+				capturedUser = opts.User;
 				return 'exec-env';
 			},
 			execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -326,6 +328,8 @@ describe('runAgent', () => {
 		const apiUrl = capturedEnv.find((e: string) => e.startsWith('HEZO_API_URL='));
 		expect(apiUrl).toContain('3100');
 		expect(apiUrl).toContain('host.docker.internal');
+
+		expect(capturedUser).toBe('node');
 	});
 
 	it('handles coach review trigger', async () => {

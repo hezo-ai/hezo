@@ -18,6 +18,7 @@ interface ExecConfig {
 	Cmd: string[];
 	Env?: string[];
 	WorkingDir?: string;
+	User?: string;
 	AttachStdout: boolean;
 	AttachStderr: boolean;
 }

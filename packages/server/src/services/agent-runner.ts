@@ -271,6 +271,7 @@ export async function runAgent(
 			Cmd: execCmd,
 			Env: env,
 			WorkingDir: prep.workingDir,
+			User: 'node',
 			AttachStdout: true,
 			AttachStderr: true,
 		});
