@@ -58,6 +58,7 @@
 			"!.turbo",
 			"!**/migrations-bundle.json",
 			"!**/agents-bundle.json",
+			"!tests/test-run-order.json",
 			"!**/routeTree.gen.ts",
 			"!**/static"
 		]
