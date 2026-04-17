@@ -281,7 +281,7 @@ Current date: {{current_date}}
 			expect(agent.system_prompt).toContain('{{company_mission}}');
 			expect(agent.system_prompt).toContain('{{current_date}}');
 			expect(agent.system_prompt).toContain('{{kb_context}}');
-			expect(agent.system_prompt).toContain('Rules:');
+			expect(agent.system_prompt).toMatch(/##\s*Rules/);
 		}
 	});
 

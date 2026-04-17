@@ -106,7 +106,7 @@ describe('agents CRUD', () => {
 		expect(prompt).toMatch(/read_project_doc/);
 		expect(prompt).toMatch(/prd\.md/);
 		expect(prompt).toMatch(/@-?mention the Product Lead/i);
-		expect(prompt).toMatch(/STAGE 0/);
+		expect(prompt).toMatch(/PRD gate/i);
 	});
 
 	it('no agent system prompt still references a designated repo or filesystem .dev docs', async () => {
