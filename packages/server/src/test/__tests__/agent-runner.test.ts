@@ -6,6 +6,7 @@ import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import { type RunnerDeps, runAgent, shellQuoteArg } from '../../services/agent-runner';
 import type { DockerClient } from '../../services/docker';
+import { LogStreamBroker } from '../../services/log-stream-broker';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
@@ -154,6 +155,8 @@ describe('runAgent', () => {
 			getTotalConnections: () => 0,
 		} as any;
 
+		const logs = new LogStreamBroker();
+		logs.setWsManager(wsManager);
 		const deps: RunnerDeps = {
 			db,
 			docker: createMockDocker(),
@@ -161,6 +164,7 @@ describe('runAgent', () => {
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
 			wsManager,
+			logs,
 		};
 
 		const result = await runAgent(
@@ -195,6 +199,7 @@ describe('runAgent', () => {
 			masterKeyManager,
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
 		};
 
 		const result = await runAgent(
@@ -229,6 +234,7 @@ describe('runAgent', () => {
 			masterKeyManager,
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
 		};
 
 		const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
@@ -260,6 +266,7 @@ describe('runAgent', () => {
 			masterKeyManager,
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
 		};
 
 		const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
@@ -288,6 +295,7 @@ describe('runAgent', () => {
 			masterKeyManager,
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
 		};
 
 		const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
@@ -322,6 +330,7 @@ describe('runAgent', () => {
 			masterKeyManager,
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
 		};
 
 		const issueWithRules = { ...makeIssue(), rules: 'Always write tests' };
@@ -348,6 +357,7 @@ describe('runAgent', () => {
 			masterKeyManager,
 			serverPort: 3100,
 			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
 		};
 
 		await runAgent(deps, makeAgent(), makeIssue(), makeProject());
@@ -382,6 +392,7 @@ describe('runAgent', () => {
 			masterKeyManager,
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
 		};
 
 		const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject(), {
@@ -406,6 +417,7 @@ describe('runAgent', () => {
 			masterKeyManager,
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
 		};
 
 		const ac = new AbortController();
@@ -444,6 +456,7 @@ describe('runAgent', () => {
 				masterKeyManager,
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
 			};
 
 			await runAgent(deps, makeAgent(), makeIssue(), makeProject(), {
@@ -470,6 +483,7 @@ describe('runAgent', () => {
 				masterKeyManager,
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
 			};
 
 			await runAgent(
@@ -499,6 +513,7 @@ describe('runAgent', () => {
 				masterKeyManager,
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
 			};
 
 			await runAgent(deps, makeAgent(), makeIssue(), makeProject(), {
@@ -525,6 +540,7 @@ describe('runAgent', () => {
 				masterKeyManager,
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
 			};
 
 			// Reconfigure the provider so the Codex runtime can resolve a credential.
@@ -570,6 +586,7 @@ describe('runAgent', () => {
 			masterKeyManager,
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
 		};
 
 		const result = await runAgent(
@@ -605,6 +622,7 @@ describe('runAgent', () => {
 				masterKeyManager,
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
 			};
 
 			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
@@ -634,6 +652,7 @@ describe('runAgent', () => {
 				masterKeyManager,
 				serverPort: 3100,
 				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
 			};
 
 			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
@@ -680,6 +699,7 @@ describe('runAgent', () => {
 				masterKeyManager,
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
 			};
 
 			await runAgent(
@@ -705,6 +725,7 @@ describe('runAgent', () => {
 				masterKeyManager,
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
 			};
 
 			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
@@ -730,6 +751,7 @@ describe('runAgent', () => {
 				masterKeyManager,
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
 			};
 
 			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject(), {
@@ -772,6 +794,8 @@ describe('runAgent', () => {
 				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 			});
 
+			const logs = new LogStreamBroker();
+			logs.setWsManager(wsManager);
 			const deps: RunnerDeps = {
 				db,
 				docker,
@@ -779,6 +803,7 @@ describe('runAgent', () => {
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
 				wsManager,
+				logs,
 			};
 
 			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
@@ -813,6 +838,7 @@ describe('runAgent', () => {
 				masterKeyManager,
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
 			};
 
 			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
@@ -836,6 +862,7 @@ describe('runAgent', () => {
 				masterKeyManager,
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
 			};
 
 			await runAgent(
@@ -866,6 +893,7 @@ describe('runAgent', () => {
 				masterKeyManager,
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
 			};
 
 			await runAgent(deps, makeAgent(), makeIssue(), makeProject());

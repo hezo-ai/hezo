@@ -6,6 +6,7 @@ import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import type { DockerClient } from '../../services/docker';
 import { JobManager, type JobManagerDeps } from '../../services/job-manager';
+import { LogStreamBroker } from '../../services/log-stream-broker';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
@@ -47,6 +48,7 @@ function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 		serverPort: 3100,
 		dataDir: '/tmp/test-data',
 		wsManager: { broadcast: () => {} } as any,
+		logs: new LogStreamBroker(),
 		...overrides,
 	});
 }

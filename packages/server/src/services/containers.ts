@@ -2,13 +2,13 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
-import { ContainerStatus } from '@hezo/shared';
+import { ContainerStatus, WsMessageType } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastProjectUpdate } from '../lib/broadcast';
 import { logger } from '../logger';
 import type { DockerClient } from './docker';
 import { ensureImage } from './ensure-image';
-import type { ProvisioningLogBroadcaster } from './provisioning-logs';
+import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
 import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
 import type { WebSocketManager } from './ws';
@@ -31,7 +31,28 @@ export interface ContainerDeps {
 	dataDir: string;
 	wsManager?: WebSocketManager;
 	masterKeyManager?: MasterKeyManager;
-	provisioningLogs?: ProvisioningLogBroadcaster;
+	logs?: LogStreamBroker;
+}
+
+const PROVISION_CAP_BYTES = 64 * 1024;
+
+function provisionStreamId(projectId: string): string {
+	return `provision:${projectId}`;
+}
+
+function beginProvisionStream(logs: LogStreamBroker | undefined, projectId: string): void {
+	if (!logs) return;
+	logs.begin({
+		streamId: provisionStreamId(projectId),
+		room: `container-logs:${projectId}`,
+		buildMessage: (line) => ({
+			type: WsMessageType.ContainerLog,
+			projectId,
+			stream: line.stream,
+			text: line.text,
+		}),
+		capBytes: PROVISION_CAP_BYTES,
+	});
 }
 
 const PORT_POOL_START = 10000;
@@ -42,7 +63,7 @@ export async function provisionContainer(
 	project: ProjectRow,
 	companySlug: string,
 ): Promise<string> {
-	const { db, docker, dataDir, wsManager, masterKeyManager, provisioningLogs } = deps;
+	const { db, docker, dataDir, wsManager, masterKeyManager, logs } = deps;
 	const companyId = project.company_id;
 
 	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
@@ -50,9 +71,9 @@ export async function provisionContainer(
 		project.id,
 	]);
 
-	provisioningLogs?.clear(project.id);
-	const emit = (stream: 'stdout' | 'stderr', text: string) =>
-		provisioningLogs?.emit(project.id, stream, text);
+	beginProvisionStream(logs, project.id);
+	const streamId = provisionStreamId(project.id);
+	const emit = (stream: 'stdout' | 'stderr', text: string) => logs?.emit(streamId, stream, text);
 
 	try {
 		emit('stdout', `→ Preparing workspace for ${companySlug}/${project.slug}`);
@@ -249,12 +270,13 @@ export async function rebuildContainer(
 	project: ProjectRow,
 	companySlug: string,
 ): Promise<string> {
-	const { docker, provisioningLogs } = deps;
-	provisioningLogs?.clear(project.id);
+	const { docker, logs } = deps;
+	beginProvisionStream(logs, project.id);
+	const streamId = provisionStreamId(project.id);
 
 	if (project.container_id) {
-		provisioningLogs?.emit(
-			project.id,
+		logs?.emit(
+			streamId,
 			'stdout',
 			`→ Removing previous container ${project.container_id.slice(0, 12)}`,
 		);

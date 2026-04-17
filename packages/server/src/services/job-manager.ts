@@ -16,6 +16,7 @@ import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
 import { syncAllContainerStatuses } from './containers';
 import type { DockerClient } from './docker';
+import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans } from './orphan-detector';
 import type { WebSocketManager } from './ws';
 
@@ -36,6 +37,7 @@ export interface JobManagerDeps {
 	serverPort: number;
 	dataDir: string;
 	wsManager: WebSocketManager;
+	logs: LogStreamBroker;
 }
 
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
@@ -422,6 +424,7 @@ export class JobManager {
 			serverPort,
 			dataDir: this.deps.dataDir,
 			wsManager: this.deps.wsManager,
+			logs: this.deps.logs,
 		};
 		const timeoutMs = agent.rows[0].heartbeat_interval_min * 60 * 1000;
 

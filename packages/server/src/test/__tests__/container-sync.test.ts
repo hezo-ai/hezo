@@ -11,7 +11,7 @@ import {
 	stopContainerGracefully,
 	syncAllContainerStatuses,
 } from '../../services/containers';
-import { ProvisioningLogBroadcaster } from '../../services/provisioning-logs';
+import { LogStreamBroker } from '../../services/log-stream-broker';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
@@ -331,15 +331,15 @@ describe('provisionContainer broadcasting', () => {
 			removeContainer: vi.fn().mockResolvedValue(undefined),
 		} as any;
 		const mockWsManager = { broadcast: vi.fn() } as any;
-		const provisioningLogs = new ProvisioningLogBroadcaster();
-		provisioningLogs.setWsManager(mockWsManager);
+		const logs = new LogStreamBroker();
+		logs.setWsManager(mockWsManager);
 
 		const project = (
 			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
 		).rows[0];
 
 		await provisionContainer(
-			{ db, docker: mockDocker, dataDir, wsManager: mockWsManager, provisioningLogs },
+			{ db, docker: mockDocker, dataDir, wsManager: mockWsManager, logs },
 			project,
 			'container-sync-co',
 		);
@@ -372,8 +372,8 @@ describe('provisionContainer broadcasting', () => {
 			pullImage: vi.fn().mockRejectedValue(new Error('boom')),
 		} as any;
 		const mockWsManager = { broadcast: vi.fn() } as any;
-		const provisioningLogs = new ProvisioningLogBroadcaster();
-		provisioningLogs.setWsManager(mockWsManager);
+		const logs = new LogStreamBroker();
+		logs.setWsManager(mockWsManager);
 
 		const project = (
 			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
@@ -381,7 +381,7 @@ describe('provisionContainer broadcasting', () => {
 
 		await expect(
 			provisionContainer(
-				{ db, docker: mockDocker, dataDir, wsManager: mockWsManager, provisioningLogs },
+				{ db, docker: mockDocker, dataDir, wsManager: mockWsManager, logs },
 				project,
 				'container-sync-co',
 			),

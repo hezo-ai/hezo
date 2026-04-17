@@ -3,6 +3,7 @@ import { AuthType, WsMessageType } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContainerLogStreamer } from '../../services/container-logs';
 import type { DockerClient } from '../../services/docker';
+import { LogStreamBroker } from '../../services/log-stream-broker';
 import { WebSocketManager, type WsData, type WsSocket } from '../../services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from '../../services/ws-subscribe-handler';
 import { safeClose } from '../helpers';
@@ -73,16 +74,19 @@ describe('handleWsSubscribe', () => {
 	let db: PGlite;
 	let wsManager: WebSocketManager;
 	let containerLogStreamer: ContainerLogStreamer;
+	let logs: LogStreamBroker;
 	const mockDocker = {} as DockerClient;
 
 	beforeEach(async () => {
 		db = await createTestDbWithMigrations();
 		wsManager = new WebSocketManager();
 		containerLogStreamer = new ContainerLogStreamer();
+		logs = new LogStreamBroker();
+		logs.setWsManager(wsManager);
 	});
 
 	afterEach(async () => {
-		containerLogStreamer.stopAll();
+		containerLogStreamer.stopAll(logs);
 		await safeClose(db);
 	});
 
@@ -92,7 +96,7 @@ describe('handleWsSubscribe', () => {
 			wsManager,
 			docker: mockDocker,
 			containerLogStreamer,
-			provisioningLogs: null,
+			logs,
 			canAccessCompany: canAccessCompanyFactory(db),
 			sendToSocket: (_ws: WsSocket, _payload: unknown) => {},
 			...overrides,
@@ -173,29 +177,76 @@ describe('handleWsSubscribe', () => {
 		expect(wsManager.getRoomSize(`company:${companyId}`)).toBe(1);
 	});
 
-	it('subscribes to container-logs and replays provisioning logs', async () => {
+	it('subscribes to container-logs and replays buffered logs for that room', async () => {
 		const { userId, projectId } = await seedCompanyWithProject(db);
 		const ws = createMockWs({ type: AuthType.Board, userId });
 
-		const replay = vi.fn((_pid: string, cb: (payload: unknown) => void) => {
-			cb({ type: 'provisioning_log', text: 'replayed' });
+		logs.begin({
+			streamId: `provision:${projectId}`,
+			room: `container-logs:${projectId}`,
+			buildMessage: (line) => ({
+				type: WsMessageType.ContainerLog,
+				projectId,
+				stream: line.stream,
+				text: line.text,
+			}),
 		});
+		logs.emit(`provision:${projectId}`, 'stdout', 'replayed line\n');
+
 		const sendToSocket = vi.fn((_s: WsSocket, _payload: unknown) => {});
 
-		await handleWsSubscribe(
-			ws,
-			`container-logs:${projectId}`,
-			deps({
-				provisioningLogs: { replay } as unknown as Parameters<
-					typeof handleWsSubscribe
-				>[2]['provisioningLogs'],
-				sendToSocket,
-			}),
-		);
+		await handleWsSubscribe(ws, `container-logs:${projectId}`, deps({ sendToSocket }));
 
 		expect(wsManager.getRoomSize(`container-logs:${projectId}`)).toBe(1);
-		expect(replay).toHaveBeenCalledWith(projectId, expect.any(Function));
-		expect(sendToSocket).toHaveBeenCalledWith(ws, { type: 'provisioning_log', text: 'replayed' });
+		expect(sendToSocket).toHaveBeenCalledWith(ws, {
+			type: WsMessageType.ContainerLog,
+			projectId,
+			stream: 'stdout',
+			text: 'replayed line',
+		});
+	});
+
+	it('replays buffered run logs when subscribing to project-runs', async () => {
+		const { userId, projectId } = await seedCompanyWithProject(db);
+		const ws = createMockWs({ type: AuthType.Board, userId });
+
+		const runId = 'run-abc';
+		logs.begin({
+			streamId: `run:${runId}`,
+			room: `project-runs:${projectId}`,
+			buildMessage: (line) => ({
+				type: WsMessageType.RunLog,
+				projectId,
+				runId,
+				issueId: null,
+				stream: line.stream,
+				text: line.text,
+			}),
+		});
+		logs.emit(`run:${runId}`, 'stdout', 'first\nsecond\n');
+
+		const sendToSocket = vi.fn((_s: WsSocket, _payload: unknown) => {});
+
+		await handleWsSubscribe(ws, `project-runs:${projectId}`, deps({ sendToSocket }));
+
+		expect(wsManager.getRoomSize(`project-runs:${projectId}`)).toBe(1);
+		expect(sendToSocket).toHaveBeenCalledTimes(2);
+		expect(sendToSocket).toHaveBeenNthCalledWith(1, ws, {
+			type: WsMessageType.RunLog,
+			projectId,
+			runId,
+			issueId: null,
+			stream: 'stdout',
+			text: 'first',
+		});
+		expect(sendToSocket).toHaveBeenNthCalledWith(2, ws, {
+			type: WsMessageType.RunLog,
+			projectId,
+			runId,
+			issueId: null,
+			stream: 'stdout',
+			text: 'second',
+		});
 	});
 });
 
@@ -203,10 +254,11 @@ describe('handleWsUnsubscribe', () => {
 	it('unsubscribes from a room', () => {
 		const wsManager = new WebSocketManager();
 		const containerLogStreamer = new ContainerLogStreamer();
+		const logs = new LogStreamBroker();
 		const ws = createMockWs({ type: AuthType.Board, userId: 'u1' });
 
 		wsManager.subscribe(ws, 'company:abc');
-		handleWsUnsubscribe(ws, 'company:abc', { wsManager, containerLogStreamer });
+		handleWsUnsubscribe(ws, 'company:abc', { wsManager, containerLogStreamer, logs });
 
 		expect(wsManager.getRoomSize('company:abc')).toBe(0);
 	});
@@ -214,12 +266,17 @@ describe('handleWsUnsubscribe', () => {
 	it('stops container log streamer when last subscriber leaves container-logs room', () => {
 		const wsManager = new WebSocketManager();
 		const containerLogStreamer = new ContainerLogStreamer();
+		const logs = new LogStreamBroker();
 		const stopSpy = vi.spyOn(containerLogStreamer, 'unsubscribe');
 		const ws = createMockWs({ type: AuthType.Board, userId: 'u1' });
 
 		wsManager.subscribe(ws, 'container-logs:proj-1');
-		handleWsUnsubscribe(ws, 'container-logs:proj-1', { wsManager, containerLogStreamer });
+		handleWsUnsubscribe(ws, 'container-logs:proj-1', {
+			wsManager,
+			containerLogStreamer,
+			logs,
+		});
 
-		expect(stopSpy).toHaveBeenCalledWith('proj-1');
+		expect(stopSpy).toHaveBeenCalledWith('proj-1', logs);
 	});
 });

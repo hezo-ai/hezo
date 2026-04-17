@@ -6,7 +6,7 @@ import type { MasterKeyManager } from './crypto/master-key';
 import { logger } from './logger';
 import { verifyToken } from './middleware/auth';
 import { ContainerLogStreamer } from './services/container-logs';
-import type { ProvisioningLogBroadcaster } from './services/provisioning-logs';
+import type { LogStreamBroker } from './services/log-stream-broker';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
 import { startup } from './startup';
@@ -26,7 +26,7 @@ let wsManager: WebSocketManager | null = null;
 let dbRef: PGlite | null = null;
 let mkmRef: MasterKeyManager | null = null;
 let dockerRef: import('./services/docker').DockerClient | null = null;
-let provisioningLogsRef: ProvisioningLogBroadcaster | null = null;
+let logsRef: LogStreamBroker | null = null;
 const containerLogStreamer = new ContainerLogStreamer();
 
 async function validateToken(token: string): Promise<WsData['auth'] | null> {
@@ -57,7 +57,7 @@ startup(config)
 		dbRef = result.db;
 		mkmRef = result.masterKeyManager;
 		dockerRef = result.docker;
-		provisioningLogsRef = result.provisioningLogs;
+		logsRef = result.logs;
 		const url = `http://localhost:${result.port}`;
 		log.info(`Hezo server running at ${url} [${result.masterKeyState}]`);
 		if (!config.noOpen) {
@@ -113,7 +113,7 @@ export default {
 					if (logsMatch) {
 						wsManager.unsubscribe(ws as unknown as WsSocket, room);
 						if (wsManager.getRoomSize(room) === 0) {
-							containerLogStreamer.unsubscribe(logsMatch[1]);
+							containerLogStreamer.unsubscribe(logsMatch[1], logsRef ?? undefined);
 						}
 					}
 				}
@@ -130,7 +130,7 @@ export default {
 						wsManager,
 						docker: dockerRef,
 						containerLogStreamer,
-						provisioningLogs: provisioningLogsRef,
+						logs: logsRef,
 						canAccessCompany,
 						sendToSocket: (_s, payload) => ws.send(JSON.stringify(payload)),
 					});
@@ -138,6 +138,7 @@ export default {
 					handleWsUnsubscribe(ws as unknown as WsSocket, data.room, {
 						wsManager,
 						containerLogStreamer,
+						logs: logsRef,
 					});
 				}
 			} catch {

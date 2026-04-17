@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { ContainerLogStreamer } from './container-logs';
 import type { DockerClient } from './docker';
-import type { ProvisioningLogBroadcaster } from './provisioning-logs';
+import type { LogStreamBroker } from './log-stream-broker';
 import type { WebSocketManager, WsData, WsSocket } from './ws';
 
 export interface WsSubscribeDeps {
@@ -9,7 +9,7 @@ export interface WsSubscribeDeps {
 	wsManager: WebSocketManager;
 	docker: DockerClient | null;
 	containerLogStreamer: ContainerLogStreamer;
-	provisioningLogs: ProvisioningLogBroadcaster | null;
+	logs: LogStreamBroker | null;
 	canAccessCompany: (auth: WsData['auth'], companyId: string) => Promise<boolean>;
 	sendToSocket: (ws: WsSocket, payload: unknown) => void;
 }
@@ -43,12 +43,12 @@ export async function handleWsSubscribe(
 		if (!allowed) return;
 
 		deps.wsManager.subscribe(ws, room);
-		deps.provisioningLogs?.replay(projectId, (payload) => {
+		if (row.container_id && row.container_status === 'running' && deps.logs) {
+			deps.containerLogStreamer.subscribe(projectId, row.container_id, deps.logs, deps.docker);
+		}
+		deps.logs?.replay(room, (payload) => {
 			deps.sendToSocket(ws, payload);
 		});
-		if (row.container_id && row.container_status === 'running') {
-			deps.containerLogStreamer.subscribe(projectId, row.container_id, deps.wsManager, deps.docker);
-		}
 		return;
 	}
 
@@ -63,6 +63,9 @@ export async function handleWsSubscribe(
 		const allowed = await deps.canAccessCompany(ws.data.auth, project.rows[0].company_id);
 		if (!allowed) return;
 		deps.wsManager.subscribe(ws, room);
+		deps.logs?.replay(room, (payload) => {
+			deps.sendToSocket(ws, payload);
+		});
 		return;
 	}
 }
@@ -70,11 +73,11 @@ export async function handleWsSubscribe(
 export function handleWsUnsubscribe(
 	ws: WsSocket,
 	room: string,
-	deps: Pick<WsSubscribeDeps, 'wsManager' | 'containerLogStreamer'>,
+	deps: Pick<WsSubscribeDeps, 'wsManager' | 'containerLogStreamer' | 'logs'>,
 ): void {
 	deps.wsManager.unsubscribe(ws, room);
 	const logsMatch = room.match(/^container-logs:(.+)$/);
 	if (logsMatch && deps.wsManager.getRoomSize(room) === 0) {
-		deps.containerLogStreamer.unsubscribe(logsMatch[1]);
+		deps.containerLogStreamer.unsubscribe(logsMatch[1], deps.logs ?? undefined);
 	}
 }

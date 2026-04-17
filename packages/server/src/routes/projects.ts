@@ -33,7 +33,7 @@ function buildContainerDeps(c: Context<Env>): ContainerDeps {
 		dataDir: c.get('dataDir'),
 		wsManager: c.get('wsManager'),
 		masterKeyManager: c.get('masterKeyManager'),
-		provisioningLogs: c.get('provisioningLogs'),
+		logs: c.get('logs'),
 	};
 }
 

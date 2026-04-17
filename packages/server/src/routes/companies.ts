@@ -154,7 +154,7 @@ companiesRoutes.post('/companies', async (c) => {
 					dataDir,
 					wsManager: c.get('wsManager'),
 					masterKeyManager: c.get('masterKeyManager'),
-					provisioningLogs: c.get('provisioningLogs'),
+					logs: c.get('logs'),
 				},
 				opsResult.rows[0],
 				slug,

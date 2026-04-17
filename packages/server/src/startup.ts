@@ -45,7 +45,7 @@ import { skillsRoutes } from './routes/skills';
 import { uiStateRoutes } from './routes/ui-state';
 import { DockerClient } from './services/docker';
 import { JobManager } from './services/job-manager';
-import { ProvisioningLogBroadcaster } from './services/provisioning-logs';
+import { LogStreamBroker } from './services/log-stream-broker';
 import { WebSocketManager } from './services/ws';
 
 export type { HezoConfig };
@@ -67,7 +67,7 @@ export interface StartupResult {
 	db: PGlite;
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
-	provisioningLogs: ProvisioningLogBroadcaster;
+	logs: LogStreamBroker;
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
@@ -106,8 +106,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker = new DockerClient();
 	}
 	const wsManager = new WebSocketManager();
-	const provisioningLogs = new ProvisioningLogBroadcaster();
-	provisioningLogs.setWsManager(wsManager);
+	const logs = new LogStreamBroker();
+	logs.setWsManager(wsManager);
 	const jobManager = new JobManager({
 		db,
 		docker,
@@ -115,6 +115,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		serverPort: config.port,
 		dataDir: config.dataDir,
 		wsManager,
+		logs,
 	});
 
 	masterKeyManager.onUnlock(() => {
@@ -139,7 +140,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker,
 		wsManager,
 		jobManager,
-		provisioningLogs,
+		logs,
 	);
 
 	return {
@@ -151,7 +152,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		db,
 		docker,
 		masterKeyManager,
-		provisioningLogs,
+		logs,
 	};
 }
 
@@ -162,10 +163,10 @@ export function buildApp(
 	docker: DockerClient = new DockerClient(),
 	wsManager: WebSocketManager = new WebSocketManager(),
 	jobManager?: JobManager,
-	provisioningLogs: ProvisioningLogBroadcaster = new ProvisioningLogBroadcaster(),
+	logs: LogStreamBroker = new LogStreamBroker(),
 ): Hono<Env> {
 	const app = new Hono<Env>();
-	provisioningLogs.setWsManager(wsManager);
+	logs.setWsManager(wsManager);
 
 	app.use('*', async (c, next) => {
 		c.set('db', db);
@@ -173,7 +174,7 @@ export function buildApp(
 		c.set('docker', docker);
 		c.set('wsManager', wsManager);
 		if (jobManager) c.set('jobManager', jobManager);
-		c.set('provisioningLogs', provisioningLogs);
+		c.set('logs', logs);
 		c.set('dataDir', config.dataDir);
 		c.set('connectUrl', config.connectUrl);
 		c.set('connectPublicKey', config.connectPublicKey);

@@ -20,15 +20,13 @@ import { type AiProviderCredential, getProviderCredential } from './ai-provider-
 import type { DockerClient, ExecLogChunk } from './docker';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import { ensureIssueWorktree, fetchRepo } from './git';
-import { CappedLogBuffer } from './log-buffer';
+import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
 import { resolveRuntimeForIssue } from './runtime-resolver';
 import { getCompanySSHKey } from './ssh-keys';
 import { resolveSystemPrompt } from './template-resolver';
 import { getWorkspacePath, getWorktreesPath } from './workspace';
 import type { WebSocketManager } from './ws';
-
-const LOG_CAP_BYTES = 1_000_000;
 
 export interface AgentInfo {
 	id: string;
@@ -76,6 +74,7 @@ export interface RunnerDeps {
 	serverPort: number;
 	dataDir: string;
 	wsManager?: WebSocketManager;
+	logs: LogStreamBroker;
 }
 
 interface RepoRow {
@@ -213,36 +212,34 @@ export async function runAgent(
 		memberId: agent.id,
 	};
 	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue, runBroadcast);
-	const logBuffer = new CappedLogBuffer(LOG_CAP_BYTES);
+	const streamId = `run:${heartbeatRunId}`;
 
-	let lastFlushTime = Date.now();
-
-	const broadcast = (stream: 'stdout' | 'stderr', text: string) => {
-		logBuffer.append(stream, text);
-		deps.wsManager?.broadcast(`project-runs:${project.id}`, {
+	deps.logs.begin({
+		streamId,
+		room: `project-runs:${project.id}`,
+		buildMessage: (line) => ({
 			type: WsMessageType.RunLog,
 			projectId: project.id,
 			runId: heartbeatRunId,
 			issueId: issue.id,
-			stream,
-			text,
-		});
+			stream: line.stream,
+			text: line.text,
+		}),
+		onFlush: async (text) => {
+			await deps.db.query('UPDATE heartbeat_runs SET log_text = $1 WHERE id = $2', [
+				text,
+				heartbeatRunId,
+			]);
+		},
+	});
 
-		const now = Date.now();
-		if (now - lastFlushTime > 5000) {
-			lastFlushTime = now;
-			deps.db
-				.query('UPDATE heartbeat_runs SET log_text = $1 WHERE id = $2', [
-					logBuffer.toString(),
-					heartbeatRunId,
-				])
-				.catch(() => {});
-		}
-	};
+	const emit = (stream: 'stdout' | 'stderr', text: string) =>
+		deps.logs.emit(streamId, stream, text);
 
 	const finalizeFailure = async (message: string): Promise<RunResult> => {
-		broadcast('stderr', `[runner] ${message}\n`);
+		emit('stderr', `[runner] ${message}\n`);
 		const durationMs = Date.now() - startTime;
+		await deps.logs.end(streamId);
 		await updateHeartbeatRun(
 			deps.db,
 			heartbeatRunId,
@@ -250,7 +247,6 @@ export async function runAgent(
 				status: HeartbeatRunStatus.Failed,
 				exitCode: -1,
 				durationMs,
-				logText: logBuffer.toString(),
 				error: message,
 			},
 			runBroadcast,
@@ -267,6 +263,7 @@ export async function runAgent(
 
 	const finalizeAbort = async (): Promise<RunResult> => {
 		const durationMs = Date.now() - startTime;
+		await deps.logs.end(streamId);
 		await updateHeartbeatRun(
 			deps.db,
 			heartbeatRunId,
@@ -274,7 +271,6 @@ export async function runAgent(
 				status: HeartbeatRunStatus.Cancelled,
 				exitCode: -1,
 				durationMs,
-				logText: logBuffer.toString(),
 			},
 			runBroadcast,
 		);
@@ -324,7 +320,7 @@ export async function runAgent(
 
 	if (signal?.aborted) return finalizeAbort();
 
-	const prep = await prepareWorktrees(deps, project, issue, broadcast, signal);
+	const prep = await prepareWorktrees(deps, project, issue, emit, signal);
 
 	const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
 	const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')}`;
@@ -334,7 +330,7 @@ export async function runAgent(
 		[invocationCommand, prep.workingDir, heartbeatRunId],
 	);
 
-	broadcast('stdout', `${invocationCommand}\n`);
+	emit('stdout', `${invocationCommand}\n`);
 
 	try {
 		if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -349,7 +345,7 @@ export async function runAgent(
 		});
 
 		const onChunk = async (chunk: ExecLogChunk) => {
-			broadcast(chunk.stream, chunk.text);
+			emit(chunk.stream, chunk.text);
 		};
 
 		const { stdout, stderr } = await deps.docker.execStart(execId, { signal, onChunk });
@@ -357,6 +353,7 @@ export async function runAgent(
 		const durationMs = Date.now() - startTime;
 		const success = execInfo.ExitCode === 0;
 
+		await deps.logs.end(streamId);
 		await updateHeartbeatRun(
 			deps.db,
 			heartbeatRunId,
@@ -364,7 +361,6 @@ export async function runAgent(
 				status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
 				exitCode: execInfo.ExitCode,
 				durationMs,
-				logText: logBuffer.toString(),
 			},
 			runBroadcast,
 		);
@@ -375,8 +371,9 @@ export async function runAgent(
 		const isAbort = (error as Error).name === 'AbortError';
 		const errorMessage = (error as Error).message;
 
-		broadcast('stderr', `\n[runner] ${errorMessage}\n`);
+		emit('stderr', `\n[runner] ${errorMessage}\n`);
 
+		await deps.logs.end(streamId);
 		await updateHeartbeatRun(
 			deps.db,
 			heartbeatRunId,
@@ -384,7 +381,6 @@ export async function runAgent(
 				status: isAbort ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
 				exitCode: -1,
 				durationMs,
-				logText: logBuffer.toString(),
 				error: errorMessage,
 			},
 			runBroadcast,
@@ -419,7 +415,7 @@ async function prepareWorktrees(
 	deps: RunnerDeps,
 	project: ProjectInfo,
 	issue: IssueInfo,
-	broadcast: (stream: 'stdout' | 'stderr', text: string) => void,
+	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 	signal?: AbortSignal,
 ): Promise<{ workingDir: string; designatedRepo: RepoRow | null }> {
 	const repos = await deps.db.query<RepoRow>(
@@ -429,11 +425,11 @@ async function prepareWorktrees(
 	);
 
 	if (repos.rows.length === 0) {
-		broadcast('stdout', '(no repos linked to project — running in /workspace)\n');
+		emit('stdout', '(no repos linked to project — running in /workspace)\n');
 		return { workingDir: '/workspace', designatedRepo: null };
 	}
 
-	broadcast('stdout', '(syncing repos...)\n');
+	emit('stdout', '(syncing repos...)\n');
 	const syncRes = await ensureProjectRepos(
 		deps.db,
 		deps.masterKeyManager,
@@ -444,10 +440,10 @@ async function prepareWorktrees(
 			projectSlug: project.slug,
 		},
 		deps.dataDir,
-		(stream, text) => broadcast(stream, `${text}\n`),
+		(stream, text) => emit(stream, `${text}\n`),
 	);
 	if (syncRes.cloned.length > 0) {
-		broadcast('stdout', `(cloned ${syncRes.cloned.length} repo(s) on demand)\n`);
+		emit('stdout', `(cloned ${syncRes.cloned.length} repo(s) on demand)\n`);
 	}
 
 	if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
@@ -467,26 +463,26 @@ async function prepareWorktrees(
 		const worktreePath = join(issueWorktreeRoot, repo.short_name);
 
 		if (!existsSync(join(repoDir, '.git'))) {
-			broadcast('stderr', `(skipping worktree for ${repo.short_name} — not cloned)\n`);
+			emit('stderr', `(skipping worktree for ${repo.short_name} — not cloned)\n`);
 			continue;
 		}
 
 		if (companySshKey) {
-			broadcast('stdout', `git fetch ${repo.short_name}...\n`);
+			emit('stdout', `git fetch ${repo.short_name}...\n`);
 			const fetchRes = await fetchRepo(repoDir, companySshKey.privateKey);
 			if (fetchRes.success) {
-				broadcast('stdout', `git fetch ${repo.short_name} done\n`);
+				emit('stdout', `git fetch ${repo.short_name} done\n`);
 			} else {
-				broadcast('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
+				emit('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
 			}
 		}
 
-		broadcast('stdout', `git worktree ${repo.short_name}...\n`);
+		emit('stdout', `git worktree ${repo.short_name}...\n`);
 		const wt = await ensureIssueWorktree(repoDir, worktreePath, branchName);
 		if (!wt.success) {
-			broadcast('stderr', `git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}\n`);
+			emit('stderr', `git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}\n`);
 		} else if (wt.created) {
-			broadcast('stdout', `git worktree add ${repo.short_name} @ ${branchName}\n`);
+			emit('stdout', `git worktree add ${repo.short_name} @ ${branchName}\n`);
 		}
 	}
 
@@ -699,7 +695,6 @@ async function updateHeartbeatRun(
 		status: string;
 		exitCode: number;
 		durationMs: number;
-		logText?: string;
 		error?: string;
 	},
 	broadcast: HeartbeatRunBroadcast,
@@ -709,10 +704,9 @@ async function updateHeartbeatRun(
 		 SET status = $1::heartbeat_run_status,
 		     finished_at = now(),
 		     exit_code = $2,
-		     log_text = $3,
-		     error = COALESCE($4, error)
-		 WHERE id = $5`,
-		[update.status, update.exitCode, update.logText ?? '', update.error ?? null, runId],
+		     error = COALESCE($3, error)
+		 WHERE id = $4`,
+		[update.status, update.exitCode, update.error ?? null, runId],
 	);
 	broadcastHeartbeatRunChange(broadcast, runId, update.status, 'UPDATE');
 }
