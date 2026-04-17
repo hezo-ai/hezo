@@ -235,10 +235,9 @@ export class JobManager {
 			system_prompt: string;
 			admin_status: string;
 			heartbeat_interval_min: number;
-			runtime_type: string;
 			default_effort: string;
 		}>(
-			`SELECT id, title, slug, system_prompt, admin_status, heartbeat_interval_min, runtime_type, default_effort
+			`SELECT id, title, slug, system_prompt, admin_status, heartbeat_interval_min, default_effort
 			 FROM member_agents WHERE id = $1`,
 			[memberId],
 		);
@@ -263,8 +262,9 @@ export class JobManager {
 			priority: string;
 			project_id: string;
 			rules: string | null;
+			runtime_type: AgentRuntime | null;
 		}>(
-			`SELECT id, identifier, title, description, status, priority, project_id, rules
+			`SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type
 			 FROM issues
 			 WHERE assignee_id = $1 AND company_id = $2
 			   AND status NOT IN ($3, $4, $5)
@@ -292,6 +292,7 @@ export class JobManager {
 			priority: string;
 			project_id: string;
 			rules: string | null;
+			runtime_type: AgentRuntime | null;
 		};
 
 		if (issues.rows.length === 0) {
@@ -306,8 +307,9 @@ export class JobManager {
 					priority: string;
 					project_id: string;
 					rules: string | null;
+					runtime_type: AgentRuntime | null;
 				}>(
-					'SELECT id, identifier, title, description, status, priority, project_id, rules FROM issues WHERE id = $1 AND company_id = $2',
+					'SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type FROM issues WHERE id = $1 AND company_id = $2',
 					[wakeupPayload.issue_id, companyId],
 				);
 				if (payloadIssue.rows.length === 0) {
@@ -434,7 +436,6 @@ export class JobManager {
 						title: agent.rows[0].title,
 						system_prompt: agent.rows[0].system_prompt,
 						company_id: companyId,
-						runtime_type: agent.rows[0].runtime_type as AgentRuntime,
 						default_effort: agent.rows[0].default_effort,
 					},
 					issue,

@@ -45,9 +45,6 @@ export async function resolveSystemPrompt(
 ): Promise<string> {
 	let resolved = template;
 
-	// Cache companySlug for reuse across multiple resolutions
-	let companySlug: string | undefined;
-
 	if (resolved.includes('{{current_date}}')) {
 		resolved = resolved.replace(/\{\{current_date\}\}/g, new Date().toISOString().slice(0, 10));
 	}
@@ -63,7 +60,6 @@ export async function resolveSystemPrompt(
 			[ctx.companyId],
 		);
 		const row = result.rows[0];
-		companySlug = row?.slug;
 		resolved = resolved.replace(/\{\{company_name\}\}/g, row?.name ?? '');
 		resolved = resolved.replace(/\{\{company_description\}\}/g, row?.description ?? '');
 		resolved = resolved.replace(/\{\{company_mission\}\}/g, row?.description ?? '');

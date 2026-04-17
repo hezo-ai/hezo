@@ -215,7 +215,6 @@ CREATE TABLE agents (
     slug                    TEXT NOT NULL,
     role_description        TEXT NOT NULL DEFAULT '',
     system_prompt           TEXT NOT NULL DEFAULT '',
-    runtime_type            agent_runtime NOT NULL DEFAULT 'claude_code',
     heartbeat_interval_min  INTEGER NOT NULL DEFAULT 60,
     monthly_budget_cents    INTEGER NOT NULL DEFAULT 3000,  -- $30 default
     budget_used_cents       INTEGER NOT NULL DEFAULT 0,
@@ -247,7 +246,7 @@ CREATE TABLE projects (
     name                TEXT NOT NULL,
     goal                TEXT NOT NULL DEFAULT '',
     -- Docker container for this project (one container per project)
-    docker_base_image   TEXT NOT NULL DEFAULT 'node:24-slim',
+    docker_base_image   TEXT NOT NULL DEFAULT 'hezo/agent-base:latest',
     container_id        TEXT,          -- Docker container ID
     container_status    container_status,
     -- Dev preview port forwarding: [{"container": 3000, "host": 13000}]
@@ -428,8 +427,8 @@ CREATE TABLE approvals (
     requested_by_agent_id   UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     -- Polymorphic payload depending on type:
     --   secret_access: { "secret_id": "...", "reason": "..." }
-    --   hire:          { "title": "...", "role_description": "...", "system_prompt": "...", 
-    --                    "runtime_type": "...", "reports_to": "...", "budget": 3000 }
+    --   hire:          { "title": "...", "role_description": "...", "system_prompt": "...",
+    --                    "reports_to": "...", "budget": 3000 }
     --   strategy:      { "summary": "...", "details": "..." }
     payload                 JSONB NOT NULL,
     resolved_at             TIMESTAMPTZ,

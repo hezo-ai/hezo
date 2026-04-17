@@ -246,7 +246,6 @@ Response:
       "description": "...",
       "role_description": "...",
       "system_prompt_template": "You are the CEO of {{company_name}}...",
-      "runtime_type": "claude_code",
       "default_effort": "max",
       "heartbeat_interval_min": 120,
       "monthly_budget_cents": 2000,
@@ -269,7 +268,6 @@ Request:
   "description": "ML and data analysis",
   "role_description": "Builds models and analyzes data",
   "system_prompt_template": "You are a data scientist for {{company_name}}.",
-  "runtime_type": "claude_code",
   "default_effort": "medium",
   "heartbeat_interval_min": 60,
   "monthly_budget_cents": 5000
@@ -285,7 +283,7 @@ again via a comment — see [Reasoning effort](#reasoning-effort)).
 Get a single agent type.
 
 #### `PATCH /agent-types/:id`
-Update an agent type. Built-in types cannot have runtime_type, heartbeat_interval_min, or monthly_budget_cents changed.
+Update an agent type. Built-in types cannot have heartbeat_interval_min or monthly_budget_cents changed.
 
 #### `DELETE /agent-types/:id`
 Delete a custom agent type. Built-in types cannot be deleted (returns 403).
@@ -310,7 +308,6 @@ Response:
       "reports_to_title": "CTO",
       "title": "Dev Engineer",
       "role_description": "Senior Engineer",
-      "runtime_type": "claude_code",
       "default_effort": "medium",
       "heartbeat_interval_min": 30,
       "monthly_budget_cents": 3000,
@@ -336,7 +333,6 @@ Request:
   "role_description": "Builds and maintains all user-facing interfaces",
   "system_prompt": "You are the **Frontend Engineer** at {{company_name}}...",
   "reports_to": "uuid",
-  "runtime_type": "claude_code",
   "default_effort": "medium",
   "heartbeat_interval_min": 60,
   "monthly_budget_cents": 3000,
@@ -365,7 +361,6 @@ Request:
   "title": "Data Scientist",
   "role_description": "Analyzes data and builds ML models",
   "system_prompt": "You are the Data Scientist at {{company_name}}...",
-  "runtime_type": "claude_code",
   "default_effort": "medium",
   "heartbeat_interval_min": 60,
   "monthly_budget_cents": 3000
@@ -678,7 +673,8 @@ Request:
   "assignee_id": "uuid",
   "parent_issue_id": "uuid | null",
   "priority": "urgent",
-  "labels": ["backend", "collab"]
+  "labels": ["backend", "collab"],
+  "runtime_type": "claude_code"
 }
 ```
 
@@ -686,6 +682,11 @@ Request:
 `next_issue_number()`. If the assignee is an agent, the agent receives
 an event trigger. If a board member, they are notified via inbox and
 configured messaging channels.
+
+`runtime_type` is optional. It pins this issue to a specific AI adapter
+(`claude_code | codex | gemini | kimi`). When unset, the server picks the
+instance default — the single active AI provider if only one is configured,
+or the oldest/default active provider otherwise.
 
 #### `GET /companies/:companyId/issues/:issueId`
 Full issue detail including description, goal chain, cost.
@@ -717,7 +718,7 @@ Response: full issue object + computed fields:
 ```
 
 #### `PATCH /companies/:companyId/issues/:issueId`
-Update issue fields: title, description, status, priority, assignee_id, labels, rules, progress_summary.
+Update issue fields: title, description, status, priority, assignee_id, labels, rules, progress_summary, runtime_type.
 
 `assignee_id` cannot be set to null — every issue must have an assignee.
 Changing `assignee_id` triggers an event on the newly assigned agent, or a notification to the newly assigned board member.
@@ -1106,7 +1107,7 @@ Response:
       "action": "agent.created",
       "entity_type": "agent",
       "entity_id": "uuid",
-      "details": { "title": "Frontend Engineer", "runtime_type": "claude_code" },
+      "details": { "title": "Frontend Engineer" },
       "created_at": "..."
     }
   ],
@@ -2163,7 +2164,6 @@ Request:
   "role_description": "Automated test coverage",
   "system_prompt": "You are the QA Engineer at {{company_name}}...",
   "reports_to": "self",
-  "runtime_type": "claude_code",
   "heartbeat_interval_min": 120,
   "monthly_budget_cents": 2500,
   "reason": "We need automated test coverage before the collab feature ships."

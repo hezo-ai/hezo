@@ -9,7 +9,6 @@ interface AgentTypeDef {
 	slug: string;
 	reports_to_slug: string | null;
 	sort_order: number;
-	runtime_type: string;
 	default_effort: string;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
@@ -23,7 +22,6 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'ceo',
 			reports_to_slug: null,
 			sort_order: 0,
-			runtime_type: 'claude_code',
 			// Strategy + delegation requires deep reasoning — default to max (ultrathink).
 			default_effort: AgentEffort.Max,
 			heartbeat_interval_min: 120,
@@ -36,7 +34,6 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'architect',
 			reports_to_slug: 'ceo',
 			sort_order: 1,
-			runtime_type: 'claude_code',
 			// Planning is the core job — always ultrathink.
 			default_effort: AgentEffort.Max,
 			heartbeat_interval_min: 60,
@@ -49,7 +46,6 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'product-lead',
 			reports_to_slug: 'ceo',
 			sort_order: 2,
-			runtime_type: 'claude_code',
 			// Scoping/PRD work is planning-heavy.
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 60,
@@ -62,7 +58,6 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'engineer',
 			reports_to_slug: 'architect',
 			sort_order: 3,
-			runtime_type: 'claude_code',
 			// Implementation default — callers/comments can bump to high for tricky work.
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 30,
@@ -75,7 +70,6 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'qa-engineer',
 			reports_to_slug: 'architect',
 			sort_order: 4,
-			runtime_type: 'claude_code',
 			// Review needs careful thought about correctness and coverage.
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 60,
@@ -88,7 +82,6 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'security-engineer',
 			reports_to_slug: 'architect',
 			sort_order: 5,
-			runtime_type: 'claude_code',
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 3000,
@@ -100,7 +93,6 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'ui-designer',
 			reports_to_slug: 'architect',
 			sort_order: 6,
-			runtime_type: 'claude_code',
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 3000,
@@ -112,7 +104,6 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'devops-engineer',
 			reports_to_slug: 'architect',
 			sort_order: 7,
-			runtime_type: 'claude_code',
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 3000,
@@ -124,7 +115,6 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'marketing-lead',
 			reports_to_slug: 'ceo',
 			sort_order: 8,
-			runtime_type: 'claude_code',
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 120,
 			monthly_budget_cents: 2000,
@@ -136,7 +126,6 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'researcher',
 			reports_to_slug: 'ceo',
 			sort_order: 9,
-			runtime_type: 'claude_code',
 			// Research benefits from deep thinking.
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 120,
@@ -149,7 +138,6 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'coach',
 			reports_to_slug: null,
 			sort_order: 10,
-			runtime_type: 'claude_code',
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 120,
 			monthly_budget_cents: 3000,
@@ -167,15 +155,14 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 		await db.query(
 			`INSERT INTO agent_types (name, slug, description, role_description, default_summary,
 			                          system_prompt_template,
-			                          runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents,
+			                          default_effort, heartbeat_interval_min, monthly_budget_cents,
 			                          is_builtin, source)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_runtime, $8::agent_effort, $9, $10, true, 'builtin'::agent_type_source)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, true, 'builtin'::agent_type_source)
 			 ON CONFLICT (slug) DO UPDATE SET
 			     name = EXCLUDED.name,
 			     role_description = EXCLUDED.role_description,
 			     default_summary = EXCLUDED.default_summary,
 			     system_prompt_template = EXCLUDED.system_prompt_template,
-			     runtime_type = EXCLUDED.runtime_type,
 			     default_effort = EXCLUDED.default_effort,
 			     heartbeat_interval_min = EXCLUDED.heartbeat_interval_min,
 			     monthly_budget_cents = EXCLUDED.monthly_budget_cents,
@@ -187,7 +174,6 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 				def.role_description,
 				summaries.agents[def.slug] ?? '',
 				role(def.slug),
-				def.runtime_type,
 				def.default_effort,
 				def.heartbeat_interval_min,
 				def.monthly_budget_cents,

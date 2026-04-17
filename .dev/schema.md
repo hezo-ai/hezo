@@ -63,7 +63,7 @@ Both agents and human users participate in companies as "members." The `members`
 table is the base identity table for all company participants:
 
 - `members(id UUID PK, company_id FK, member_type ENUM('agent','user'), display_name TEXT, created_at)`
-- `member_agents(id PK/FK → members.id, system_prompt, runtime_type, ...)` — agent-specific fields
+- `member_agents(id PK/FK → members.id, system_prompt, default_effort, ...)` — agent-specific fields
 - `member_users(id PK/FK → members.id, user_id FK → users.id, role, role_title, permissions_text, project_ids)` — user-in-company fields
 
 `members.id` is the shared UUID — it IS the agent or user-in-company ID. No

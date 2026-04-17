@@ -20,7 +20,6 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let companyId: string;
-let companySlug: string;
 let tempDataDir: string;
 
 function makeFetchResponse(body: string, status = 200): Response {
@@ -67,7 +66,6 @@ beforeAll(async () => {
 	});
 	const companyBody = await companyRes.json();
 	companyId = companyBody.data.id;
-	companySlug = companyBody.data.slug;
 });
 
 afterAll(async () => {

@@ -290,12 +290,10 @@ interface AgentTypeRow {
 	role_description: string;
 	default_summary: string;
 	system_prompt_template: string;
-	runtime_type: string;
 	default_effort: string;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
 	reports_to_slug: string | null;
-	runtime_type_override: string | null;
 	heartbeat_interval_override: number | null;
 	monthly_budget_override: number | null;
 }
@@ -310,9 +308,9 @@ async function createAgentsFromTeamTypes(
 		const joinRows = await db.query<AgentTypeRow>(
 			`SELECT at.id, at.name, at.slug, at.role_description, at.default_summary,
 			        at.system_prompt_template,
-			        at.runtime_type, at.default_effort, at.heartbeat_interval_min, at.monthly_budget_cents,
+			        at.default_effort, at.heartbeat_interval_min, at.monthly_budget_cents,
 			        ctat.reports_to_slug,
-			        ctat.runtime_type_override, ctat.heartbeat_interval_override, ctat.monthly_budget_override
+			        ctat.heartbeat_interval_override, ctat.monthly_budget_override
 			 FROM company_type_agent_types ctat
 			 JOIN agent_types at ON at.id = ctat.agent_type_id
 			 WHERE ctat.company_type_id = $1
@@ -336,7 +334,6 @@ async function createAgentsFromTeamTypes(
 	const slugToMemberId = new Map<string, string>();
 
 	for (const row of dedupedRows) {
-		const runtimeType = row.runtime_type_override ?? row.runtime_type;
 		const heartbeat = row.heartbeat_interval_override ?? row.heartbeat_interval_min;
 		const budget = row.monthly_budget_override ?? row.monthly_budget_cents;
 
@@ -352,8 +349,8 @@ async function createAgentsFromTeamTypes(
 		await db.query(
 			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
 			                            system_prompt,
-			                            runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_runtime, $9::agent_effort, $10, $11)`,
+			                            default_effort, heartbeat_interval_min, monthly_budget_cents)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10)`,
 			[
 				memberId,
 				row.id,
@@ -362,7 +359,6 @@ async function createAgentsFromTeamTypes(
 				row.role_description,
 				row.default_summary ?? '',
 				row.system_prompt_template,
-				runtimeType,
 				row.default_effort,
 				heartbeat,
 				budget,
@@ -402,13 +398,12 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 		role_description: string;
 		default_summary: string;
 		system_prompt_template: string;
-		runtime_type: string;
 		default_effort: string;
 		heartbeat_interval_min: number;
 		monthly_budget_cents: number;
 	}>(
 		`SELECT id, name, slug, role_description, default_summary, system_prompt_template,
-		        runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents
+		        default_effort, heartbeat_interval_min, monthly_budget_cents
 		 FROM agent_types WHERE slug = ANY($1)`,
 		[missingSlugs],
 	);
@@ -423,8 +418,8 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 		await db.query(
 			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
 			                            system_prompt,
-			                            runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_runtime, $9::agent_effort, $10, $11)`,
+			                            default_effort, heartbeat_interval_min, monthly_budget_cents)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10)`,
 			[
 				memberResult.rows[0].id,
 				at.id,
@@ -433,7 +428,6 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 				at.role_description,
 				at.default_summary ?? '',
 				at.system_prompt_template,
-				at.runtime_type,
 				at.default_effort,
 				at.heartbeat_interval_min,
 				at.monthly_budget_cents,

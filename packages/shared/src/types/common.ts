@@ -356,6 +356,13 @@ export const RUNTIME_TO_PROVIDER: Record<AgentRuntime, AiProvider> = {
 	[AgentRuntime.Kimi]: AiProvider.Moonshot,
 };
 
+export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = {
+	[AiProvider.Anthropic]: AgentRuntime.ClaudeCode,
+	[AiProvider.OpenAI]: AgentRuntime.Codex,
+	[AiProvider.Google]: AgentRuntime.Gemini,
+	[AiProvider.Moonshot]: AgentRuntime.Kimi,
+};
+
 export const PROVIDER_TO_ENV_VAR: Record<AiProvider, Record<string, string>> = {
 	[AiProvider.Anthropic]: {
 		[AiAuthMethod.ApiKey]: 'ANTHROPIC_API_KEY',
@@ -382,7 +389,7 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 };
 
 /**
- * Flags that each CLI needs to run fully non-interactively. Agent runs happen
+ * Flags each CLI needs to run fully non-interactively. Agent runs happen
  * inside locked-down Docker containers driven by `docker exec`, so any prompt
  * for user approval would hang the run indefinitely.
  */

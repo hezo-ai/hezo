@@ -64,29 +64,17 @@ function ExecutionDetailPage() {
 				</div>
 
 				<div className="rounded-lg border border-border-subtle bg-bg p-3">
-					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Started</div>
-					<div className="text-sm">{new Date(run.started_at).toLocaleString()}</div>
+					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">When</div>
+					<div className="text-sm">
+						{new Date(run.started_at).toLocaleString()}
+						{run.finished_at && (
+							<>
+								<span className="text-text-subtle"> → </span>
+								{new Date(run.finished_at).toLocaleString()}
+							</>
+						)}
+					</div>
 				</div>
-
-				{run.finished_at && (
-					<div className="rounded-lg border border-border-subtle bg-bg p-3">
-						<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">
-							Finished
-						</div>
-						<div className="text-sm">{new Date(run.finished_at).toLocaleString()}</div>
-					</div>
-				)}
-
-				{run.exit_code !== null && (
-					<div className="rounded-lg border border-border-subtle bg-bg p-3">
-						<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">
-							Exit Code
-						</div>
-						<div className={`text-sm font-mono ${run.exit_code !== 0 ? 'text-accent-red' : ''}`}>
-							{run.exit_code}
-						</div>
-					</div>
-				)}
 
 				<div className="rounded-lg border border-border-subtle bg-bg p-3">
 					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Tokens</div>

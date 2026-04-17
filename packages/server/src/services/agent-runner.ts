@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	type AgentRuntime,
+	AgentRuntime,
 	type AiProvider,
 	ContainerStatus,
 	HeartbeatRunStatus,
@@ -20,6 +20,7 @@ import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } fr
 import { ensureIssueWorktree, fetchRepo } from './git';
 import { CappedLogBuffer } from './log-buffer';
 import { ensureProjectRepos } from './repo-sync';
+import { resolveRuntimeForIssue } from './runtime-resolver';
 import { getCompanySSHKey } from './ssh-keys';
 import { resolveSystemPrompt } from './template-resolver';
 import { getWorkspacePath, getWorktreesPath } from './workspace';
@@ -32,7 +33,6 @@ interface AgentInfo {
 	title: string;
 	system_prompt: string;
 	company_id: string;
-	runtime_type: AgentRuntime;
 	default_effort?: string | null;
 }
 
@@ -45,6 +45,7 @@ export interface IssueInfo {
 	priority: string;
 	project_id: string;
 	rules: string | null;
+	runtime_type?: AgentRuntime | null;
 }
 
 interface ProjectInfo {
@@ -108,6 +109,7 @@ async function buildRunContext(
 	wakeupPayload: Record<string, unknown> | undefined,
 	credential: AiProviderCredential,
 	provider: AiProvider,
+	runtimeType: AgentRuntime,
 	heartbeatRunId: string,
 ): Promise<RunContext> {
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, agent.system_prompt, {
@@ -138,7 +140,7 @@ async function buildRunContext(
 		heartbeatRunId,
 	);
 	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort);
-	const effortApplication = applyEffortToRuntime(agent.runtime_type, effort);
+	const effortApplication = applyEffortToRuntime(runtimeType, effort);
 
 	const isCoachReview = wakeupPayload?.trigger === 'issue_done';
 	const basePrompt = isCoachReview
@@ -160,10 +162,9 @@ async function buildRunContext(
 		...buildProviderEnv(provider, credential),
 	];
 
-	const runtimeType = agent.runtime_type;
-	const cliCommand = RUNTIME_COMMANDS[runtimeType] || 'claude';
+	const cliCommand = RUNTIME_COMMANDS[runtimeType];
 	const mcpFlags =
-		runtimeType === 'claude_code'
+		runtimeType === AgentRuntime.ClaudeCode
 			? [
 					'--mcp-config',
 					JSON.stringify({
@@ -275,7 +276,13 @@ export async function runAgent(
 		);
 	}
 
-	const provider = RUNTIME_TO_PROVIDER[agent.runtime_type];
+	const runtimeType = await resolveRuntimeForIssue(deps.db, issue.runtime_type ?? null);
+	if (!runtimeType) {
+		return finalizeFailure(
+			'No AI provider credentials configured at the instance level. Add one in Settings > AI Providers.',
+		);
+	}
+	const provider = RUNTIME_TO_PROVIDER[runtimeType];
 	const credential = await getProviderCredential(deps.db, deps.masterKeyManager, provider);
 	if (!credential) {
 		return finalizeFailure(
@@ -293,6 +300,7 @@ export async function runAgent(
 		wakeupPayload,
 		credential,
 		provider,
+		runtimeType,
 		heartbeatRunId,
 	);
 

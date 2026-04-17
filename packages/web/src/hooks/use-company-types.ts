@@ -7,7 +7,6 @@ export interface CompanyTypeAgentType {
 	name: string;
 	slug: string;
 	role_description: string;
-	runtime_type: string;
 	reports_to_slug: string | null;
 	sort_order: number;
 }

@@ -3,7 +3,6 @@ import { FolderKanban, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { CreateProjectDialog } from '../../../../components/create-project-dialog';
 import { Avatar, avatarColorFromString } from '../../../../components/ui/avatar';
-import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Card } from '../../../../components/ui/card';
 import { EmptyState } from '../../../../components/ui/empty-state';
@@ -52,7 +51,14 @@ function ProjectListPage() {
 									<div className="flex flex-col gap-1 min-w-0 flex-1">
 										<div className="flex items-center justify-between gap-2">
 											<h2 className="text-[15px] font-medium text-text truncate">{p.name}</h2>
-											{p.container_status && <ContainerStatusBadge status={p.container_status} />}
+											{p.container_status && p.container_status !== 'running' && (
+												<span
+													role="img"
+													title={`Container ${p.container_status}`}
+													aria-label={`Container ${p.container_status}`}
+													className="w-2 h-2 rounded-full bg-accent-red shrink-0"
+												/>
+											)}
 										</div>
 										{p.description && (
 											<p className="text-xs text-text-muted line-clamp-2">{p.description}</p>
@@ -72,17 +78,6 @@ function ProjectListPage() {
 			<CreateProjectDialog companyId={companyId} open={createOpen} onOpenChange={setCreateOpen} />
 		</div>
 	);
-}
-
-function ContainerStatusBadge({ status }: { status: string }) {
-	const config: Record<string, { color: string; label: string }> = {
-		creating: { color: 'warning', label: 'Provisioning' },
-		running: { color: 'success', label: 'Running' },
-		stopped: { color: 'neutral', label: 'Stopped' },
-		error: { color: 'danger', label: 'Error' },
-	};
-	const { color, label } = config[status] ?? { color: 'neutral', label: status };
-	return <Badge color={color as 'neutral'}>{label}</Badge>;
 }
 
 export const Route = createFileRoute('/companies/$companyId/projects/')({

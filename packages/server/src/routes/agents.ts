@@ -25,7 +25,7 @@ export const agentsRoutes = new Hono<Env>();
  * `assigned_issue_count` requires the caller to bind terminal statuses via `terminalStatusParams`.
  */
 const AGENT_BASE_COLUMNS = `m.id, m.company_id, m.display_name, m.created_at,
-	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary, ma.system_prompt, ma.runtime_type,
+	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary, ma.system_prompt,
 	ma.default_effort,
 	ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
 	ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
@@ -89,7 +89,6 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 		role_description?: string;
 		system_prompt?: string;
 		reports_to?: string;
-		runtime_type?: string;
 		default_effort?: string;
 		heartbeat_interval_min?: number;
 		monthly_budget_cents?: number;
@@ -127,8 +126,8 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 		const memberId = memberResult.rows[0].id;
 
 		await db.query(
-			`INSERT INTO member_agents (id, title, slug, role_description, system_prompt, reports_to, runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents, mcp_servers)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::agent_runtime, $8::agent_effort, $9, $10, $11::jsonb)`,
+			`INSERT INTO member_agents (id, title, slug, role_description, system_prompt, reports_to, default_effort, heartbeat_interval_min, monthly_budget_cents, mcp_servers)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, $10::jsonb)`,
 			[
 				memberId,
 				body.title.trim(),
@@ -136,7 +135,6 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 				body.role_description ?? '',
 				body.system_prompt ?? '',
 				body.reports_to ?? null,
-				body.runtime_type ?? 'claude_code',
 				body.default_effort ?? DEFAULT_EFFORT,
 				body.heartbeat_interval_min ?? 60,
 				body.monthly_budget_cents ?? 3000,
@@ -187,7 +185,6 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 		title: string;
 		role_description?: string;
 		system_prompt?: string;
-		runtime_type?: string;
 		default_effort?: string;
 		heartbeat_interval_min?: number;
 		monthly_budget_cents?: number;
@@ -242,15 +239,14 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 
 		await db.query(
 			`INSERT INTO member_agents (id, title, slug, role_description, system_prompt,
-			                            runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents, admin_status)
-			 VALUES ($1, $2, $3, $4, $5, $6::agent_runtime, $7::agent_effort, $8, $9, $10::agent_admin_status)`,
+			                            default_effort, heartbeat_interval_min, monthly_budget_cents, admin_status)
+			 VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9::agent_admin_status)`,
 			[
 				memberId,
 				body.title.trim(),
 				slug,
 				body.role_description ?? '',
 				body.system_prompt ?? '',
-				body.runtime_type ?? 'claude_code',
 				body.default_effort ?? DEFAULT_EFFORT,
 				body.heartbeat_interval_min ?? 60,
 				body.monthly_budget_cents ?? 3000,

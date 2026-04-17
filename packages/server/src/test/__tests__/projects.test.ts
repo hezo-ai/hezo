@@ -94,6 +94,35 @@ describe('projects CRUD', () => {
 		expect(payload.issue_id).toBe(issue.id);
 	});
 
+	it('defaults docker_base_image to the bundled agent-base image when not supplied', async () => {
+		const res = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Default Image Project',
+				description: VALID_DESCRIPTION,
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.docker_base_image).toBe('hezo/agent-base:latest');
+	});
+
+	it('honors an explicit docker_base_image from the request body', async () => {
+		const res = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Custom Image Project',
+				description: VALID_DESCRIPTION,
+				docker_base_image: 'python:3.12-slim',
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.docker_base_image).toBe('python:3.12-slim');
+	});
+
 	it('rejects a missing description', async () => {
 		const res = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',

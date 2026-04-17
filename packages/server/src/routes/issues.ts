@@ -144,6 +144,7 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 		parent_issue_id?: string;
 		priority?: string;
 		labels?: string[];
+		runtime_type?: string;
 	}>();
 
 	if (!body.project_id || !body.title?.trim()) {
@@ -170,8 +171,8 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 
 	const result = await db.query(
 		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,
-                         number, identifier, title, description, status, priority, labels)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb)
+                         number, identifier, title, description, status, priority, labels, runtime_type)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb, $12::agent_runtime)
      RETURNING *`,
 		[
 			companyId,
@@ -185,6 +186,7 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 			IssueStatus.Backlog,
 			body.priority ?? IssuePriority.Medium,
 			JSON.stringify(body.labels ?? []),
+			body.runtime_type ?? null,
 		],
 	);
 
@@ -305,6 +307,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		progress_summary?: string | null;
 		rules?: string | null;
 		branch_name?: string | null;
+		runtime_type?: string | null;
 	}>();
 
 	const sets: string[] = [];
@@ -363,6 +366,11 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	if (body.branch_name !== undefined) {
 		sets.push(`branch_name = $${idx}`);
 		params.push(body.branch_name);
+		idx++;
+	}
+	if (body.runtime_type !== undefined) {
+		sets.push(`runtime_type = $${idx}::agent_runtime`);
+		params.push(body.runtime_type);
 		idx++;
 	}
 
@@ -478,6 +486,7 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 		assignee_id?: string;
 		priority?: string;
 		labels?: string[];
+		runtime_type?: string;
 	}>();
 
 	if (!body.title?.trim()) {
@@ -500,8 +509,8 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 
 	const result = await db.query(
 		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,
-                         number, identifier, title, description, status, priority, labels)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb)
+                         number, identifier, title, description, status, priority, labels, runtime_type)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb, $12::agent_runtime)
      RETURNING *`,
 		[
 			companyId,
@@ -515,6 +524,7 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 			IssueStatus.Backlog,
 			body.priority ?? IssuePriority.Medium,
 			JSON.stringify(body.labels ?? []),
+			body.runtime_type ?? null,
 		],
 	);
 

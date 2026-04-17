@@ -104,6 +104,4 @@ Rules:
 |-------|-------|
 | Heartbeat interval | 60 min |
 | Monthly budget | $30 |
-| Docker base image | node:24-slim |
-| Runtime type | claude_code |
 | Default effort | high (scoping and PRD work is planning-heavy) |

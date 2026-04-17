@@ -101,6 +101,4 @@ Rules:
 |-------|-------|
 | Heartbeat interval | 120 min |
 | Monthly budget | $30 |
-| Docker base image | node:24-slim |
-| Runtime type | claude_code |
 | Default effort | medium |

@@ -62,6 +62,31 @@ describe('issues CRUD', () => {
 		expect(body.data.number).toBeGreaterThanOrEqual(1);
 		expect(body.data.status).toBe('backlog');
 		expect(body.data.priority).toBe('high');
+		expect(body.data.runtime_type).toBeNull();
+	});
+
+	it('accepts a runtime_type override on create and honors it on update', async () => {
+		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Codex-only task',
+				assignee_id: agentId,
+				runtime_type: 'codex',
+			}),
+		});
+		expect(createRes.status).toBe(201);
+		const created = (await createRes.json()).data;
+		expect(created.runtime_type).toBe('codex');
+
+		const patchRes = await app.request(`/api/companies/${companyId}/issues/${created.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ runtime_type: 'gemini' }),
+		});
+		expect(patchRes.status).toBe(200);
+		expect((await patchRes.json()).data.runtime_type).toBe('gemini');
 	});
 
 	it('creates sequential issue numbers', async () => {

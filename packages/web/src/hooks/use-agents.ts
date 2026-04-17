@@ -11,7 +11,6 @@ export interface Agent {
 	role_description: string | null;
 	summary: string | null;
 	system_prompt: string | null;
-	runtime_type: string;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
 	budget_used_cents: number;
@@ -50,7 +49,6 @@ export function useCreateAgent(companyId: string) {
 			role_description?: string;
 			system_prompt?: string;
 			reports_to?: string;
-			runtime_type?: string;
 			monthly_budget_cents?: number;
 			heartbeat_interval_min?: number;
 		}) => api.post<Agent>(`/api/companies/${companyId}/agents`, data),
@@ -100,7 +98,6 @@ export function useOnboardAgent(companyId: string) {
 			title: string;
 			role_description?: string;
 			system_prompt?: string;
-			runtime_type?: string;
 			monthly_budget_cents?: number;
 			heartbeat_interval_min?: number;
 		}) =>

@@ -22,7 +22,6 @@ function HireAgentPage() {
 	const [title, setTitle] = useState('');
 	const [roleDesc, setRoleDesc] = useState('');
 	const [systemPrompt, setSystemPrompt] = useState('');
-	const [runtime, setRuntime] = useState('claude_code');
 	const [budget, setBudget] = useState('20');
 	const [heartbeat, setHeartbeat] = useState('60');
 
@@ -32,7 +31,6 @@ function HireAgentPage() {
 			title,
 			role_description: roleDesc || undefined,
 			system_prompt: systemPrompt || undefined,
-			runtime_type: runtime,
 			monthly_budget_cents: Math.round(Number.parseFloat(budget) * 100),
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
 		});
@@ -72,38 +70,22 @@ function HireAgentPage() {
 					/>
 				</div>
 
-				<div className="grid grid-cols-2 gap-4 max-w-[400px]">
-					<div className="flex flex-col gap-1.5">
-						<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
-							Runtime
-						</span>
-						<select
-							value={runtime}
-							onChange={(e) => setRuntime(e.target.value)}
-							className="rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-border-hover"
-						>
-							<option value="claude_code">Claude Code</option>
-							<option value="codex">Codex</option>
-							<option value="gemini">Gemini</option>
-						</select>
-					</div>
-					<div className="flex flex-col gap-1.5">
-						<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
-							Heartbeat
-						</span>
-						<select
-							value={heartbeat}
-							onChange={(e) => setHeartbeat(e.target.value)}
-							className="rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-border-hover"
-						>
-							<option value="30">30m</option>
-							<option value="60">60m</option>
-							<option value="120">2h</option>
-							<option value="240">4h</option>
-							<option value="720">12h</option>
-							<option value="1440">24h</option>
-						</select>
-					</div>
+				<div className="flex flex-col gap-1.5 max-w-[190px]">
+					<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
+						Heartbeat
+					</span>
+					<select
+						value={heartbeat}
+						onChange={(e) => setHeartbeat(e.target.value)}
+						className="rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-border-hover"
+					>
+						<option value="30">30m</option>
+						<option value="60">60m</option>
+						<option value="120">2h</option>
+						<option value="240">4h</option>
+						<option value="720">12h</option>
+						<option value="1440">24h</option>
+					</select>
 				</div>
 
 				<Input

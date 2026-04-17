@@ -231,6 +231,12 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				.optional()
 				.describe('Assignee agent slug (alternative to assignee_id)'),
 			parent_issue_id: z.string().optional().describe('Parent issue ID (creates a sub-issue)'),
+			runtime_type: z
+				.string()
+				.optional()
+				.describe(
+					'Pin this issue to a specific AI runtime (claude_code, codex, gemini, kimi). Leave unset to use the instance default.',
+				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -263,8 +269,8 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			const num = numberResult.rows[0].number;
 			const identifier = `${companyResult.rows[0].issue_prefix}-${num}`;
 			const r = await db.query<{ id: string }>(
-				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, number, identifier, title, description, status, priority)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority) RETURNING *`,
+				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, number, identifier, title, description, status, priority, runtime_type)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::agent_runtime) RETURNING *`,
 				[
 					args.company_id,
 					args.project_id,
@@ -276,6 +282,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 					args.description ?? '',
 					IssueStatus.Backlog,
 					args.priority ?? IssuePriority.Medium,
+					args.runtime_type ?? null,
 				],
 			);
 
@@ -312,6 +319,12 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			progress_summary: z.string().optional().describe('Progress summary update'),
 			rules: z.string().optional().describe('Rules/constraints for this issue'),
 			branch_name: z.string().optional().describe('Git branch name for this issue'),
+			runtime_type: z
+				.string()
+				.optional()
+				.describe(
+					'Override the AI runtime for this issue (claude_code, codex, gemini, kimi). Pass an empty string to clear.',
+				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -325,6 +338,11 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 					sets.push(`status = $${idx}::issue_status`);
 				} else if (key === 'priority') {
 					sets.push(`priority = $${idx}::issue_priority`);
+				} else if (key === 'runtime_type') {
+					sets.push(`runtime_type = $${idx}::agent_runtime`);
+					params.push(val === '' ? null : val);
+					idx++;
+					continue;
 				} else if (key === 'progress_summary') {
 					sets.push(`progress_summary = $${idx}`);
 					params.push(val);
@@ -394,7 +412,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 			const r = await db.query(
-				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug, ma.runtime_type,
+				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug,
 				        ma.monthly_budget_cents, ma.budget_used_cents, ma.runtime_status, ma.admin_status
 				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.company_id = $1 ORDER BY ma.title`,
 				[args.company_id],

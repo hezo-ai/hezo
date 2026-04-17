@@ -167,7 +167,13 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 			`INSERT INTO projects (company_id, name, slug, description, docker_base_image)
 			 VALUES ($1, $2, $3, $4, $5)
 			 RETURNING *`,
-			[companyId, projectName, slug, projectDescription, body.docker_base_image ?? 'node:24-slim'],
+			[
+				companyId,
+				projectName,
+				slug,
+				projectDescription,
+				body.docker_base_image ?? 'hezo/agent-base:latest',
+			],
 		);
 		project = projectResult.rows[0] as Record<string, unknown>;
 

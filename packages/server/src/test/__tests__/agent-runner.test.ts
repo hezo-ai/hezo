@@ -111,7 +111,6 @@ function makeAgent() {
 		title: 'Test Agent',
 		system_prompt: 'You are a helpful agent. Today is {{current_date}}.',
 		company_id: companyId,
-		runtime_type: 'claude_code' as const,
 	};
 }
 
@@ -544,8 +543,8 @@ describe('runAgent', () => {
 
 			await runAgent(
 				deps,
-				{ ...makeAgent(), runtime_type: 'codex' as any },
-				makeIssue(),
+				makeAgent(),
+				{ ...makeIssue(), runtime_type: 'codex' as const },
 				makeProject(),
 				{ effort: AgentEffort.High },
 			);
@@ -685,8 +684,8 @@ describe('runAgent', () => {
 
 			await runAgent(
 				deps,
-				{ ...makeAgent(), runtime_type: 'codex' as any },
-				makeIssue(),
+				makeAgent(),
+				{ ...makeIssue(), runtime_type: 'codex' as const },
 				makeProject(),
 			);
 
@@ -841,8 +840,8 @@ describe('runAgent', () => {
 
 			await runAgent(
 				deps,
-				{ ...makeAgent(), runtime_type: 'codex' as any },
-				makeIssue(),
+				makeAgent(),
+				{ ...makeIssue(), runtime_type: 'codex' as const },
 				makeProject(),
 			);
 

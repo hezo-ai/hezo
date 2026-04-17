@@ -773,7 +773,7 @@ If a company has 3 projects, 3 containers run. If a project has multiple repos, 
 
 | Aspect | Configuration |
 |--------|-------------|
-| Base image | Configurable per project (default: `node:24-slim`) |
+| Base image | Configurable per project (default: `hezo/agent-base:latest`, built from `docker/Dockerfile.agent-base` with `claude`, `codex`, `gemini`, and `kimi` CLIs pre-installed) |
 | Project mount | Host `~/.hezo/companies/{company}/projects/{project}/` → Container `/workspace/` (rw) |
 | Worktrees mount | Host `~/.hezo/companies/{company}/projects/{project}/worktrees/` → Container `/worktrees/` (rw) |
 | SSH keys | Company-generated SSH key injected per subprocess (from secrets vault). Host `~/.ssh/` also mounted (ro) for fallback. |

@@ -285,7 +285,7 @@ describe('MCP tool handlers: data queries via DB', () => {
 
 	it('list_agents returns agents for company', async () => {
 		const r = await db.query(
-			`SELECT m.id, ma.title, ma.slug, ma.runtime_type, ma.admin_status
+			`SELECT m.id, ma.title, ma.slug, ma.admin_status
 			 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.company_id = $1 ORDER BY ma.title`,
 			[companyId],
 		);
