@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents } from './helpers';
+import { authenticate, createCompanyWithAgents, createProjectAndClearPlanning } from './helpers';
 
 async function waitForContainer(page: Page, companyId: string, projectId: string, token: string) {
 	const headers = { Authorization: `Bearer ${token}` };
@@ -50,11 +50,10 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
-		headers,
-		data: { name: 'Log Test Project', description: 'Test project.' },
+	const project = await createProjectAndClearPlanning(page, company.id, token, {
+		name: 'Log Test Project',
+		description: 'Test project.',
 	});
-	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
 	await waitForContainer(page, company.id, project.id, token);
 
@@ -123,11 +122,10 @@ test('issue page renders run as an inline comment with live-styled log', async (
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
-		headers,
-		data: { name: 'Run Comment Project', description: 'Test project.' },
+	const project = await createProjectAndClearPlanning(page, company.id, token, {
+		name: 'Run Comment Project',
+		description: 'Test project.',
 	});
-	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
 	await waitForContainer(page, company.id, project.id, token);
 

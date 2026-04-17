@@ -55,6 +55,34 @@ export async function clearAiProviders(page: Page, token: string) {
 	}
 }
 
+/**
+ * Create a project and mark its auto-generated planning issue as done.
+ * Tests that kick off agent runs on the CEO would otherwise race the
+ * CEO's planning wakeup and see runs targeted at the planning issue.
+ */
+export async function createProjectAndClearPlanning(
+	page: Page,
+	companyId: string,
+	token: string,
+	data: { name: string; description?: string },
+) {
+	const headers = { Authorization: `Bearer ${token}` };
+	const res = await page.request.post(`/api/companies/${companyId}/projects`, {
+		headers,
+		data,
+	});
+	const project = (
+		(await res.json()) as {
+			data: { id: string; slug: string; planning_issue_id: string };
+		}
+	).data;
+	await page.request.patch(`/api/companies/${companyId}/issues/${project.planning_issue_id}`, {
+		headers,
+		data: { status: 'done' },
+	});
+	return project;
+}
+
 export async function createCompanyWithAgents(page: Page) {
 	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
