@@ -29,10 +29,14 @@ export function useCreateComment(companyId: string, issueId: string) {
 	return useMutation({
 		mutationFn: (data: { content: string; content_type?: string; effort?: string }) =>
 			api.post<Comment>(`/api/companies/${companyId}/issues/${issueId}/comments`, data),
-		onSuccess: () =>
+		onSuccess: () => {
 			queryClient.invalidateQueries({
 				queryKey: ['companies', companyId, 'issues', issueId, 'comments'],
-			}),
+			});
+			queryClient.invalidateQueries({
+				queryKey: ['companies', companyId, 'issues', issueId, 'latest-run'],
+			});
+		},
 	});
 }
 

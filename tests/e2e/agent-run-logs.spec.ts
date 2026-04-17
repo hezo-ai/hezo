@@ -109,7 +109,9 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	expect(clipboardText).toContain('[synthetic] starting agent run');
 });
 
-test('issue page shows minified log strip for latest run', async ({ page }) => {
+test('issue page hides log strip and shows execution comment after run completes', async ({
+	page,
+}) => {
 	await authenticate(page);
 	const { company, token } = await createCompanyWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
@@ -146,10 +148,11 @@ test('issue page shows minified log strip for latest run', async ({ page }) => {
 
 	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
 
-	const strip = page.getByTestId('issue-run-log-tail');
-	await expect(strip).toBeVisible({ timeout: 10_000 });
-	await expect(strip).toContainText('[synthetic]', { timeout: 10_000 });
-	await expect(page.getByRole('link', { name: /view full run/i })).toBeVisible();
+	const executionCommentLink = page.getByRole('link', { name: /view full log/i });
+	await expect(executionCommentLink).toBeVisible({ timeout: 10_000 });
+
+	await expect(page.getByTestId('issue-run-log-tail')).toHaveCount(0);
+	await expect(page.getByRole('link', { name: /view full run/i })).toHaveCount(0);
 });
 
 test('marking issue done cleans up worktree directory', async ({ page }) => {

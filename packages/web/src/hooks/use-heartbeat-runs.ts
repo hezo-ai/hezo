@@ -22,10 +22,12 @@ export interface HeartbeatRun {
 	working_dir: string | null;
 }
 
+export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
+
 export interface LatestRunForIssue {
 	id: string;
 	member_id: string;
-	status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
+	status: RunStatus;
 	started_at: string;
 	finished_at: string | null;
 	exit_code: number | null;
@@ -35,6 +37,10 @@ export interface LatestRunForIssue {
 	working_dir: string | null;
 	agent_title: string | null;
 	agent_slug: string | null;
+}
+
+export function isActiveRunStatus(status: RunStatus): boolean {
+	return status === 'running' || status === 'queued';
 }
 
 export function useHeartbeatRuns(companyId: string, agentId: string) {
@@ -65,6 +71,9 @@ export function useLatestRunForIssue(companyId: string, issueId: string) {
 		queryKey: ['companies', companyId, 'issues', issueId, 'latest-run'],
 		queryFn: () =>
 			api.get<LatestRunForIssue | null>(`/api/companies/${companyId}/issues/${issueId}/latest-run`),
-		refetchInterval: 10_000,
+		refetchInterval: (query) => {
+			const status = query.state.data?.status;
+			return status && isActiveRunStatus(status) ? 2_000 : 10_000;
+		},
 	});
 }
