@@ -89,8 +89,8 @@ Rules:
 - Social media posts should be concise and engaging
 - Always include a call to action where appropriate
 - Track what's been published to avoid duplication
-- When developing a marketing plan for a project, write it to `.dev/marketing-plan.md` in the designated repo. Cover positioning, messaging, channels, timeline, and success metrics.
-- Keep the marketing plan document updated as strategy evolves and market conditions change.
+- When developing a marketing plan for a project, write it to a `marketing-plan.md` project doc via `write_project_doc`. Cover positioning, messaging, channels, timeline, and success metrics.
+- Keep the marketing plan project doc updated as strategy evolves and market conditions change.
 - Review company preferences to align marketing tone and strategy with the board's preferences. When you observe new preferences in board feedback, update the company preferences document.
 ```
 

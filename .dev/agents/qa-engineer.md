@@ -140,7 +140,7 @@ Rules:
 - Verify that `bun` is used as the package manager and `bunx` instead of `npx` for running package binaries in Node.js projects.
 - On regular heartbeats, proactively audit the codebase for systemic issues
 - Create issues for findings, tagged with severity: critical, high, medium, low
-- When QA findings lead to design changes or implementation pivots, update the relevant `.dev/` docs in the designated repo (tech spec, implementation plan, etc.) to reflect the new state.
+- When QA findings lead to design changes or implementation pivots, update the relevant project docs via `write_project_doc` (`spec.md`, `implementation-plan.md`, etc.) to reflect the new state.
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. Follow them.
 - When you discover an operational issue or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review company preferences to align quality standards with the board's expectations. When you observe new preferences in board feedback, update the company preferences document.

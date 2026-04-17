@@ -294,18 +294,6 @@ export interface SkillRecord {
 	updated_at: string;
 }
 
-export const ExecutionLockType = {
-	Read: 'read',
-	Write: 'write',
-} as const;
-export type ExecutionLockType = (typeof ExecutionLockType)[keyof typeof ExecutionLockType];
-
-export const READER_AGENT_SLUGS: ReadonlySet<string> = new Set([
-	'coach',
-	'qa-engineer',
-	'security-engineer',
-]);
-
 export const AuditAction = {
 	Created: 'created',
 	Updated: 'updated',

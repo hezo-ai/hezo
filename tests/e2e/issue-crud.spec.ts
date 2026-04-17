@@ -111,7 +111,70 @@ test('issue detail shows execution lock banner when locked', async ({ page }) =>
 	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 
-	await expect(page.getByText('is working on this issue')).toBeVisible({ timeout: 15000 });
+	await expect(page.getByText('is running on this issue')).toBeVisible({ timeout: 15000 });
+});
+
+test('issue detail lists every agent running concurrently on a ticket', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const token = await getToken(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const typesRes = await page.request.get('/api/company-types', { headers });
+	const types = (await typesRes.json()).data as { id: string; name: string }[];
+	const typeId = types.find((t) => t.name === 'Startup')?.id;
+
+	const companyRes = await page.request.post('/api/companies', {
+		headers,
+		data: {
+			name: `Concurrent Lock ${Date.now()}`,
+			issue_prefix: `CL${Date.now().toString().slice(-4)}`,
+			template_id: typeId,
+		},
+	});
+	const company = (await companyRes.json()).data;
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Concurrent Project', description: 'Test project.' },
+	});
+	const project = (await projectRes.json()).data;
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
+	expect(agents.length).toBeGreaterThanOrEqual(2);
+	const [firstAgent, secondAgent] = agents;
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: {
+			project_id: project.id,
+			title: 'Concurrently Running Issue',
+			assignee_id: firstAgent.id,
+		},
+	});
+	const issue = (await issueRes.json()).data;
+
+	const firstLockRes = await page.request.post(
+		`/api/companies/${company.id}/issues/${issue.id}/lock`,
+		{ headers, data: { member_id: firstAgent.id } },
+	);
+	expect(firstLockRes.ok()).toBeTruthy();
+
+	const secondLockRes = await page.request.post(
+		`/api/companies/${company.id}/issues/${issue.id}/lock`,
+		{ headers, data: { member_id: secondAgent.id } },
+	);
+	expect(secondLockRes.ok()).toBeTruthy();
+
+	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await waitForPageLoad(page);
+
+	const runningLines = page.getByText('is running on this issue');
+	await expect(runningLines).toHaveCount(2, { timeout: 15000 });
+	await expect(page.getByText(firstAgent.title, { exact: false })).toBeVisible();
+	await expect(page.getByText(secondAgent.title, { exact: false })).toBeVisible();
 });
 
 test('can edit issue rules and progress summary', async ({ page }) => {

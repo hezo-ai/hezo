@@ -151,9 +151,7 @@ function IssueDetailPage() {
 							>
 								<span className="w-2 h-2 rounded-full bg-accent-blue animate-pulse" />
 								<span className="text-accent-blue-text font-medium">{l.member_name}</span>
-								<span className="text-text-muted">
-									{l.lock_type === 'write' ? 'is working on this issue' : 'is reviewing this issue'}
-								</span>
+								<span className="text-text-muted">is running on this issue</span>
 							</div>
 						))}
 					</div>

@@ -94,7 +94,7 @@ Rules:
 - Infrastructure changes must be documented
 - If a deployment fails, roll back first, investigate second
 - Review company preferences to align infrastructure decisions with the board's preferences. When you observe new preferences in board feedback, update the company preferences document.
-- Keep `.dev/` docs in the designated repo updated when infrastructure decisions affect the technical spec or implementation plan.
+- Keep project docs updated via `write_project_doc` when infrastructure decisions affect the technical spec or implementation plan.
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. Follow them.
 - When you discover an operational issue or convention that would prevent future mistakes, update the project's AGENTS.md.
 ```

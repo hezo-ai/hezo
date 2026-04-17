@@ -1252,26 +1252,24 @@ Verify a stored key by making a lightweight call to the provider. Updates config
 ### Execution Locks
 
 #### `GET /companies/:companyId/issues/:issueId/lock`
-Get current locks on an issue.
+Get the list of agents currently running against an issue.
 
 Response:
 ```json
 {
   "data": {
-    "locks": [{ "id": "uuid", "issue_id": "uuid", "member_id": "uuid", "lock_type": "write", "locked_at": "...", "member_name": "..." }],
-    "has_write_lock": true
+    "locks": [{ "id": "uuid", "issue_id": "uuid", "member_id": "uuid", "lock_type": "read", "locked_at": "...", "member_name": "..." }]
   }
 }
 ```
 
 #### `POST /companies/:companyId/issues/:issueId/lock`
-Acquire a lock. Write locks are exclusive; read locks are shared (blocked only by write locks). Returns 409 if already locked.
+Record that a member is running against the issue. Multiple members can hold locks concurrently; returns 409 only if this specific member already holds an active lock on this issue.
 
 Request:
 ```json
 {
-  "member_id": "uuid",
-  "lock_type": "write"
+  "member_id": "uuid"
 }
 ```
 

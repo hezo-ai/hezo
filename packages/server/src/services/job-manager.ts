@@ -3,9 +3,7 @@ import {
 	AgentAdminStatus,
 	type AgentRuntime,
 	AgentRuntimeStatus,
-	ExecutionLockType,
 	IssuePriority,
-	READER_AGENT_SLUGS,
 	TERMINAL_ISSUE_STATUSES,
 	WakeupStatus,
 } from '@hezo/shared';
@@ -254,37 +252,7 @@ export class JobManager {
 			return;
 		}
 
-		const issues = await db.query<{
-			id: string;
-			identifier: string;
-			title: string;
-			description: string;
-			status: string;
-			priority: string;
-			project_id: string;
-			rules: string | null;
-			runtime_type: AgentRuntime | null;
-		}>(
-			`SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type
-			 FROM issues
-			 WHERE assignee_id = $1 AND company_id = $2
-			   AND status NOT IN ($3, $4, $5)
-			 ORDER BY
-			   CASE priority WHEN $6 THEN 0 WHEN $7 THEN 1 WHEN $8 THEN 2 WHEN $9 THEN 3 END,
-			   created_at ASC
-			 LIMIT 1`,
-			[
-				memberId,
-				companyId,
-				...TERMINAL_ISSUE_STATUSES,
-				IssuePriority.Urgent,
-				IssuePriority.High,
-				IssuePriority.Medium,
-				IssuePriority.Low,
-			],
-		);
-
-		let issue: {
+		type IssueRow = {
 			id: string;
 			identifier: string;
 			title: string;
@@ -296,35 +264,49 @@ export class JobManager {
 			runtime_type: AgentRuntime | null;
 		};
 
-		if (issues.rows.length === 0) {
-			// Coach agent may have no assigned issues but is woken by issue_done automation
-			if (wakeupPayload?.trigger === 'issue_done' && wakeupPayload?.issue_id) {
-				const payloadIssue = await db.query<{
-					id: string;
-					identifier: string;
-					title: string;
-					description: string;
-					status: string;
-					priority: string;
-					project_id: string;
-					rules: string | null;
-					runtime_type: AgentRuntime | null;
-				}>(
-					'SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type FROM issues WHERE id = $1 AND company_id = $2',
-					[wakeupPayload.issue_id, companyId],
-				);
-				if (payloadIssue.rows.length === 0) {
-					log.debug(`Payload issue ${wakeupPayload.issue_id} not found for coach trigger`);
-					if (wakeupId) {
-						await db.query(
-							`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
-							[WakeupStatus.Completed, wakeupId],
-						);
-					}
-					return;
+		let issue: IssueRow | undefined;
+
+		// Wakeups with an explicit issue_id (mentions, comments, coach triggers) target
+		// that specific issue — even if the agent isn't the assignee.
+		const payloadIssueId =
+			typeof wakeupPayload?.issue_id === 'string' ? wakeupPayload.issue_id : undefined;
+		if (payloadIssueId) {
+			const payloadIssue = await db.query<IssueRow>(
+				'SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type FROM issues WHERE id = $1 AND company_id = $2',
+				[payloadIssueId, companyId],
+			);
+			if (payloadIssue.rows.length === 0) {
+				log.debug(`Payload issue ${payloadIssueId} not found for agent ${memberId}`);
+				if (wakeupId) {
+					await db.query(
+						`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
+						[WakeupStatus.Completed, wakeupId],
+					);
 				}
-				issue = payloadIssue.rows[0];
-			} else {
+				return;
+			}
+			issue = payloadIssue.rows[0];
+		} else {
+			const issues = await db.query<IssueRow>(
+				`SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type
+				 FROM issues
+				 WHERE assignee_id = $1 AND company_id = $2
+				   AND status NOT IN ($3, $4, $5)
+				 ORDER BY
+				   CASE priority WHEN $6 THEN 0 WHEN $7 THEN 1 WHEN $8 THEN 2 WHEN $9 THEN 3 END,
+				   created_at ASC
+				 LIMIT 1`,
+				[
+					memberId,
+					companyId,
+					...TERMINAL_ISSUE_STATUSES,
+					IssuePriority.Urgent,
+					IssuePriority.High,
+					IssuePriority.Medium,
+					IssuePriority.Low,
+				],
+			);
+			if (issues.rows.length === 0) {
 				log.debug(`No actionable issues for agent ${memberId}`);
 				if (wakeupId) {
 					await db.query(
@@ -334,7 +316,6 @@ export class JobManager {
 				}
 				return;
 			}
-		} else {
 			issue = issues.rows[0];
 		}
 
@@ -366,36 +347,23 @@ export class JobManager {
 			return;
 		}
 
-		// Determine lock type: readers (Coach, QA, Security) get shared locks; others get exclusive
-		const isCoachReview = wakeupPayload?.trigger === 'issue_done';
-		const lockType =
-			isCoachReview || READER_AGENT_SLUGS.has(agent.rows[0].slug)
-				? ExecutionLockType.Read
-				: ExecutionLockType.Write;
-
-		// Acquire lock with proper exclusion semantics
-		const lockQuery =
-			lockType === ExecutionLockType.Write
-				? // Write lock: exclusive — no other locks allowed
-					`INSERT INTO execution_locks (issue_id, member_id, lock_type)
-					 SELECT $1, $2, 'write'
-					 WHERE NOT EXISTS (
-					   SELECT 1 FROM execution_locks WHERE issue_id = $1 AND released_at IS NULL
-					 )
-					 RETURNING id`
-				: // Read lock: shared — blocked only by write locks
-					`INSERT INTO execution_locks (issue_id, member_id, lock_type)
-					 SELECT $1, $2, 'read'
-					 WHERE NOT EXISTS (
-					   SELECT 1 FROM execution_locks WHERE issue_id = $1 AND lock_type = 'write' AND released_at IS NULL
-					 )
-					 RETURNING id`;
-
-		const lockResult = await db.query<{ id: string }>(lockQuery, [issue.id, memberId]);
+		// Execution locks are observational — multiple agents can run concurrently on the
+		// same issue. The only acquisition guard is per-agent-per-issue: if this agent
+		// already holds an active lock on this issue, coalesce the wakeup.
+		const lockResult = await db.query<{ id: string }>(
+			`INSERT INTO execution_locks (issue_id, member_id, lock_type)
+			 SELECT $1, $2, 'read'
+			 WHERE NOT EXISTS (
+			   SELECT 1 FROM execution_locks
+			   WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL
+			 )
+			 RETURNING id`,
+			[issue.id, memberId],
+		);
 
 		if (lockResult.rows.length === 0) {
 			log.debug(
-				`Could not acquire ${lockType} lock on issue ${issue.identifier} — deferring wakeup`,
+				`Agent ${agent.rows[0].slug} already holds a lock on issue ${issue.identifier} — deferring wakeup`,
 			);
 			if (wakeupId) {
 				await db.query(

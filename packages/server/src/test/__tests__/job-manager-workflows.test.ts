@@ -354,6 +354,112 @@ describe('JobManager workflow methods', () => {
 			);
 		});
 
+		it('allows a second agent to acquire an execution lock while another agent is running on the same issue', async () => {
+			const manager = createJobManager();
+
+			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
+			await db.query(
+				"UPDATE projects SET container_id = 'test-container-id', container_status = 'running' WHERE id = $1",
+				[projectId],
+			);
+			await db.query(
+				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
+				[issueId],
+			);
+
+			const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+				headers: authHeader(token),
+			});
+			const agents = (await agentsRes.json()).data;
+			const secondAgentId = agents.find((a: { id: string }) => a.id !== agentId).id;
+
+			const firstWakeup = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
+				 RETURNING id`,
+				[agentId, companyId, JSON.stringify({ issue_id: issueId })],
+			);
+			await (manager as any).activateAgent(agentId, companyId, firstWakeup.rows[0].id, {
+				issue_id: issueId,
+			});
+
+			const secondWakeup = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
+				 RETURNING id`,
+				[secondAgentId, companyId, JSON.stringify({ issue_id: issueId })],
+			);
+			await (manager as any).activateAgent(secondAgentId, companyId, secondWakeup.rows[0].id, {
+				issue_id: issueId,
+			});
+
+			const locks = await db.query<{ member_id: string }>(
+				`SELECT member_id FROM execution_locks
+				 WHERE issue_id = $1 AND released_at IS NULL
+				 ORDER BY locked_at`,
+				[issueId],
+			);
+			const holders = locks.rows.map((r) => r.member_id).sort();
+			expect(holders).toEqual([agentId, secondAgentId].sort());
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE id = ANY($1)', [
+				[firstWakeup.rows[0].id, secondWakeup.rows[0].id],
+			]);
+			await db.query(
+				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
+				[issueId],
+			);
+		});
+
+		it('defers the wakeup when the same agent already holds a lock on the issue', async () => {
+			const manager = createJobManager();
+
+			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
+			await db.query(
+				"UPDATE projects SET container_id = 'test-container-id', container_status = 'running' WHERE id = $1",
+				[projectId],
+			);
+			await db.query(
+				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
+				[issueId],
+			);
+
+			await db.query(
+				"INSERT INTO execution_locks (issue_id, member_id, lock_type) VALUES ($1, $2, 'read')",
+				[issueId, agentId],
+			);
+
+			const wakeupRes = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
+				 RETURNING id`,
+				[agentId, companyId, JSON.stringify({ issue_id: issueId })],
+			);
+			await (manager as any).activateAgent(agentId, companyId, wakeupRes.rows[0].id, {
+				issue_id: issueId,
+			});
+
+			const status = await db.query<{ status: string }>(
+				'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+				[wakeupRes.rows[0].id],
+			);
+			expect(status.rows[0].status).toBe(WakeupStatus.Deferred);
+
+			const locks = await db.query<{ id: string }>(
+				'SELECT id FROM execution_locks WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL',
+				[issueId, agentId],
+			);
+			expect(locks.rows.length).toBe(1);
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupRes.rows[0].id]);
+			await db.query(
+				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
+				[issueId],
+			);
+		});
+
 		it('with issue_done trigger wakeup marks completed when trigger issue is not found', async () => {
 			const manager = createJobManager();
 

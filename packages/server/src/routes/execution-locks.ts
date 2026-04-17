@@ -1,4 +1,3 @@
-import { ExecutionLockType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -33,14 +32,7 @@ executionLocksRoutes.get('/companies/:companyId/issues/:issueId/lock', async (c)
 		[issueId],
 	);
 
-	if (result.rows.length === 0) {
-		return ok(c, { locks: [], has_write_lock: false });
-	}
-
-	const locks = result.rows as Array<Record<string, unknown>>;
-	const hasWriteLock = locks.some((l) => l.lock_type === ExecutionLockType.Write);
-
-	return ok(c, { locks, has_write_lock: hasWriteLock });
+	return ok(c, { locks: result.rows });
 });
 
 executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c) => {
@@ -59,35 +51,24 @@ executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c
 		return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	}
 
-	const body = await c.req.json<{ member_id: string; lock_type?: string }>();
+	const body = await c.req.json<{ member_id: string }>();
 	if (!body.member_id) {
 		return err(c, 'INVALID_REQUEST', 'member_id is required', 400);
 	}
 
-	const lockType =
-		body.lock_type === ExecutionLockType.Read ? ExecutionLockType.Read : ExecutionLockType.Write;
-
-	// Write lock: exclusive — no other locks allowed
-	// Read lock: shared — blocked only by write locks
-	const lockQuery =
-		lockType === ExecutionLockType.Write
-			? `INSERT INTO execution_locks (issue_id, member_id, lock_type)
-			   SELECT $1, $2, 'write'
-			   WHERE NOT EXISTS (
-			     SELECT 1 FROM execution_locks WHERE issue_id = $1 AND released_at IS NULL
-			   )
-			   RETURNING *`
-			: `INSERT INTO execution_locks (issue_id, member_id, lock_type)
-			   SELECT $1, $2, 'read'
-			   WHERE NOT EXISTS (
-			     SELECT 1 FROM execution_locks WHERE issue_id = $1 AND lock_type = 'write' AND released_at IS NULL
-			   )
-			   RETURNING *`;
-
-	const result = await db.query(lockQuery, [issueId, body.member_id]);
+	const result = await db.query(
+		`INSERT INTO execution_locks (issue_id, member_id, lock_type)
+		 SELECT $1, $2, 'read'
+		 WHERE NOT EXISTS (
+		   SELECT 1 FROM execution_locks
+		   WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL
+		 )
+		 RETURNING *`,
+		[issueId, body.member_id],
+	);
 
 	if (result.rows.length === 0) {
-		return err(c, 'CONFLICT', 'Issue is already locked', 409);
+		return err(c, 'CONFLICT', 'Member already holds a lock on this issue', 409);
 	}
 
 	broadcastChange(

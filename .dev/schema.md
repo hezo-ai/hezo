@@ -534,20 +534,16 @@ to another member (human or agent), or @-mention an agent in a comment to
 request specific help. When an agent is assigned, the standard agent execution
 flow applies.
 
-### Execution locks (read/write)
+### Execution locks (observational)
 
-The `execution_locks` table tracks issue work ownership with read/write semantics:
+The `execution_locks` table tracks which agents are currently running against an issue:
 - `issue_id` FK
 - `member_id` FK → members.id
-- `lock_type` TEXT — `'read'` or `'write'`
+- `lock_type` TEXT — retained from an earlier read/write design; every active lock is `'read'` under the current model
 - `locked_at` timestamp
 - `released_at` timestamp (soft delete)
 
-**Write locks** are exclusive — no other locks (read or write) can coexist. Used by agents doing implementation (Engineer, Architect, etc.).
-
-**Read locks** are shared — multiple readers can hold locks simultaneously, blocked only by write locks. Used by agents doing review (QA Engineer, Security Engineer, Coach).
-
-Lock type is determined automatically from agent slug (`READER_AGENT_SLUGS: coach, qa-engineer, security-engineer`) and wakeup context (issue_done trigger → read). If a lock can't be acquired, the wakeup is deferred.
+Locks are observational, not exclusive — multiple agents can run against the same issue concurrently, with one active lock row per agent. The only acquisition guard is per-agent-per-issue: a second wakeup for an agent that already holds an active lock on that issue is coalesced (deferred). This lets a comment that @-mentions several agents trigger concurrent runs while still driving the "currently running" display on the issue page.
 
 ### Issue dependencies
 

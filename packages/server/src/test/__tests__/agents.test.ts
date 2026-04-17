@@ -90,6 +90,43 @@ describe('agents CRUD', () => {
 		expect(body.data).toHaveProperty('admin_status');
 	});
 
+	it('seeds the architect with a PRD gate instruction', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const architect = agents.find((a: Record<string, unknown>) => a.slug === 'architect');
+
+		const res = await app.request(`/api/companies/${companyId}/agents/${architect.id}`, {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		const prompt = body.data.system_prompt as string;
+
+		expect(prompt).toMatch(/read_project_doc/);
+		expect(prompt).toMatch(/prd\.md/);
+		expect(prompt).toMatch(/@-?mention the Product Lead/i);
+		expect(prompt).toMatch(/STAGE 0/);
+	});
+
+	it('no agent system prompt still references a designated repo or filesystem .dev docs', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const filesystemDocRefs =
+			/\.dev\/(prd|research|spec|implementation-plan|implementation-phases|marketing-plan|ui-design-decisions)\.md/;
+		for (const summary of agents) {
+			const res = await app.request(`/api/companies/${companyId}/agents/${summary.id}`, {
+				headers: authHeader(token),
+			});
+			const body = await res.json();
+			const prompt = body.data.system_prompt as string;
+			expect(prompt).not.toMatch(/designated repo/i);
+			expect(prompt).not.toMatch(filesystemDocRefs);
+		}
+	});
+
 	it('creates (hires) a custom agent', async () => {
 		const res = await app.request(`/api/companies/${companyId}/agents`, {
 			method: 'POST',
