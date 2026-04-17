@@ -13,6 +13,7 @@ import {
 	WsMessageType,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { broadcastRowChange } from '../lib/broadcast';
 import { signAgentJwt } from '../middleware/auth';
 import { type AiProviderCredential, getProviderCredential } from './ai-provider-keys';
 import type { DockerClient, ExecLogChunk } from './docker';
@@ -204,7 +205,13 @@ export async function runAgent(
 
 	if (signal?.aborted) return abortedResult(startTime);
 
-	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue);
+	const runBroadcast: HeartbeatRunBroadcast = {
+		wsManager: deps.wsManager,
+		companyId: agent.company_id,
+		issueId: issue.id,
+		memberId: agent.id,
+	};
+	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue, runBroadcast);
 	const logBuffer = new CappedLogBuffer(LOG_CAP_BYTES);
 
 	let lastFlushTime = Date.now();
@@ -235,13 +242,18 @@ export async function runAgent(
 	const finalizeFailure = async (message: string): Promise<RunResult> => {
 		broadcast('stderr', `[runner] ${message}\n`);
 		const durationMs = Date.now() - startTime;
-		await updateHeartbeatRun(deps.db, heartbeatRunId, {
-			status: HeartbeatRunStatus.Failed,
-			exitCode: -1,
-			durationMs,
-			logText: logBuffer.toString(),
-			error: message,
-		});
+		await updateHeartbeatRun(
+			deps.db,
+			heartbeatRunId,
+			{
+				status: HeartbeatRunStatus.Failed,
+				exitCode: -1,
+				durationMs,
+				logText: logBuffer.toString(),
+				error: message,
+			},
+			runBroadcast,
+		);
 		return {
 			success: false,
 			exitCode: -1,
@@ -254,12 +266,17 @@ export async function runAgent(
 
 	const finalizeAbort = async (): Promise<RunResult> => {
 		const durationMs = Date.now() - startTime;
-		await updateHeartbeatRun(deps.db, heartbeatRunId, {
-			status: HeartbeatRunStatus.Cancelled,
-			exitCode: -1,
-			durationMs,
-			logText: logBuffer.toString(),
-		});
+		await updateHeartbeatRun(
+			deps.db,
+			heartbeatRunId,
+			{
+				status: HeartbeatRunStatus.Cancelled,
+				exitCode: -1,
+				durationMs,
+				logText: logBuffer.toString(),
+			},
+			runBroadcast,
+		);
 		return {
 			success: false,
 			exitCode: -1,
@@ -339,12 +356,17 @@ export async function runAgent(
 		const durationMs = Date.now() - startTime;
 		const success = execInfo.ExitCode === 0;
 
-		await updateHeartbeatRun(deps.db, heartbeatRunId, {
-			status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
-			exitCode: execInfo.ExitCode,
-			durationMs,
-			logText: logBuffer.toString(),
-		});
+		await updateHeartbeatRun(
+			deps.db,
+			heartbeatRunId,
+			{
+				status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
+				exitCode: execInfo.ExitCode,
+				durationMs,
+				logText: logBuffer.toString(),
+			},
+			runBroadcast,
+		);
 
 		return { success, exitCode: execInfo.ExitCode, stdout, stderr, durationMs, heartbeatRunId };
 	} catch (error) {
@@ -354,13 +376,18 @@ export async function runAgent(
 
 		broadcast('stderr', `\n[runner] ${errorMessage}\n`);
 
-		await updateHeartbeatRun(deps.db, heartbeatRunId, {
-			status: isAbort ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
-			exitCode: -1,
-			durationMs,
-			logText: logBuffer.toString(),
-			error: errorMessage,
-		});
+		await updateHeartbeatRun(
+			deps.db,
+			heartbeatRunId,
+			{
+				status: isAbort ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
+				exitCode: -1,
+				durationMs,
+				logText: logBuffer.toString(),
+				error: errorMessage,
+			},
+			runBroadcast,
+		);
 
 		return {
 			success: false,
@@ -593,14 +620,44 @@ async function buildCoachReviewPrompt(
 	return parts.join('\n');
 }
 
-async function createHeartbeatRun(db: PGlite, agent: AgentInfo, issue: IssueInfo): Promise<string> {
+interface HeartbeatRunBroadcast {
+	wsManager?: WebSocketManager;
+	companyId: string;
+	issueId: string;
+	memberId: string;
+}
+
+function broadcastHeartbeatRunChange(
+	ctx: HeartbeatRunBroadcast,
+	runId: string,
+	status: string,
+	action: 'INSERT' | 'UPDATE',
+): void {
+	if (!ctx.wsManager) return;
+	broadcastRowChange(ctx.wsManager, `company:${ctx.companyId}`, 'heartbeat_runs', action, {
+		id: runId,
+		issue_id: ctx.issueId,
+		company_id: ctx.companyId,
+		member_id: ctx.memberId,
+		status,
+	});
+}
+
+async function createHeartbeatRun(
+	db: PGlite,
+	agent: AgentInfo,
+	issue: IssueInfo,
+	broadcast: HeartbeatRunBroadcast,
+): Promise<string> {
 	const result = await db.query<{ id: string }>(
 		`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
 		 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())
 		 RETURNING id`,
 		[agent.id, agent.company_id, issue.id, HeartbeatRunStatus.Running],
 	);
-	return result.rows[0].id;
+	const runId = result.rows[0].id;
+	broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Running, 'INSERT');
+	return runId;
 }
 
 async function updateHeartbeatRun(
@@ -613,6 +670,7 @@ async function updateHeartbeatRun(
 		logText?: string;
 		error?: string;
 	},
+	broadcast: HeartbeatRunBroadcast,
 ): Promise<void> {
 	await db.query(
 		`UPDATE heartbeat_runs
@@ -624,4 +682,5 @@ async function updateHeartbeatRun(
 		 WHERE id = $5`,
 		[update.status, update.exitCode, update.logText ?? '', update.error ?? null, runId],
 	);
+	broadcastHeartbeatRunChange(broadcast, runId, update.status, 'UPDATE');
 }

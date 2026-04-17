@@ -107,5 +107,4 @@ Rules:
 | Field | Value |
 |-------|-------|
 | Heartbeat interval | 120 min |
-| Monthly budget | $30 |
 | Default effort | high (deep exploration benefits research) |

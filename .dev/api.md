@@ -643,6 +643,8 @@ Response:
       "project_name": "Backend API",
       "assignee_id": "uuid",
       "assignee_name": "Dev Engineer",
+      "assignee_type": "agent",
+      "has_active_run": true,
       "parent_issue_id": null,
       "number": 47,
       "title": "Implement WebSocket handler for real-time sync",
@@ -660,6 +662,8 @@ Response:
   }
 }
 ```
+
+`assignee_type` is `"agent"` or `"user"` depending on whether the assignee is an agent member or a human board member (matches `members.member_type`). `has_active_run` is `true` when at least one `heartbeat_runs` row exists for the issue in `running` or `queued` status — used by the UI to show a live indicator next to the assignee name.
 
 #### `POST /companies/:companyId/issues`
 Create an issue.
@@ -705,6 +709,7 @@ Response: full issue object + computed fields:
     "company_description": "Build the #1 AI note-taking app",
     "assignee_id": "uuid",
     "assignee_name": "Dev Engineer",
+    "assignee_type": "agent",
     "parent_issue_id": null,
     "status": "in_progress",
     "priority": "urgent",
@@ -2435,6 +2440,8 @@ Note: The `chat` action is defined in the shared types but not currently handled
 ### Cache invalidation
 
 `RowChange` messages trigger TanStack Query cache invalidation on the client. The frontend maps table names to query cache keys and calls `invalidateQueries`, causing affected queries to refetch. This provides real-time UI updates without requiring the server to push full data payloads.
+
+`heartbeat_runs` row-change broadcasts carry a minimal `{ id, issue_id, company_id, member_id, status }` payload — enough to route cache invalidation without leaking per-run logs or shell args. They are emitted on run INSERT (status transitions to `running`) and on the terminal UPDATE only; mid-run log flushes are not broadcast. The client maps `heartbeat_runs` row changes to invalidate the issues list query so the assignee running indicator updates in real time.
 
 ### Server-side broadcasting
 

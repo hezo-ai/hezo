@@ -148,5 +148,4 @@ Rules:
 | Field | Value |
 |-------|-------|
 | Heartbeat interval | 60 min |
-| Monthly budget | $30 |
 | Default effort | high (threat modelling rewards careful reasoning) |

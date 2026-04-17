@@ -118,5 +118,4 @@ Tickets in the Operations project labeled `description-update` are routine inter
 | Field | Value |
 |-------|-------|
 | Heartbeat interval | 120 min |
-| Monthly budget | $20 |
 | Default effort | max (ultrathink — strategy and delegation benefit from deep reasoning) |

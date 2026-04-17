@@ -8,6 +8,7 @@ const TABLE_TO_QUERY_KEY: Record<
 	(companyId: string, row: Record<string, unknown>) => string[][]
 > = {
 	issues: (cid) => [['companies', cid, 'issues']],
+	heartbeat_runs: (cid) => [['companies', cid, 'issues']],
 	issue_comments: (cid, row) => [
 		['companies', cid, 'issues'],
 		...(row.issue_id ? [['companies', cid, 'issues', row.issue_id as string, 'comments']] : []),

@@ -151,5 +151,4 @@ Rules:
 | Field | Value |
 |-------|-------|
 | Heartbeat interval | 60 min |
-| Monthly budget | $40 |
 | Default effort | high (review needs careful thought about correctness and coverage) |

@@ -45,6 +45,8 @@ interface IssueRow {
 	priority: string;
 	project_name: string | null;
 	assignee_name: string | null;
+	assignee_type: 'agent' | 'user' | null;
+	has_active_run: boolean;
 }
 
 interface IssueListProps {
@@ -115,7 +117,17 @@ export function IssueList({ companyId, projectId, issueDetailRoute }: IssueListP
 			key: 'assignee',
 			header: 'Assignee',
 			width: '100px',
-			render: (row) => <span className="text-text-muted">{row.assignee_name || '—'}</span>,
+			render: (row) => (
+				<span className="text-text-muted inline-flex items-center gap-1.5">
+					{row.assignee_type === 'agent' && row.has_active_run && (
+						<span
+							data-testid="assignee-running-dot"
+							className="inline-block w-2 h-2 rounded-full bg-accent-yellow animate-pulse shrink-0"
+						/>
+					)}
+					{row.assignee_name || '—'}
+				</span>
+			),
 		},
 	];
 

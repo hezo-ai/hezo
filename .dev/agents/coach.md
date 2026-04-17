@@ -100,5 +100,4 @@ Rules:
 | Field | Value |
 |-------|-------|
 | Heartbeat interval | 120 min |
-| Monthly budget | $30 |
 | Default effort | medium |

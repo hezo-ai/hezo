@@ -117,5 +117,4 @@ Rules:
 | Field | Value |
 |-------|-------|
 | Heartbeat interval | 60 min |
-| Monthly budget | $40 |
 | Default effort | max (ultrathink — planning is the core job) |

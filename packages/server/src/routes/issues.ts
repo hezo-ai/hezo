@@ -115,7 +115,12 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
             i.number, i.identifier, i.title, i.description, i.status, i.priority,
             i.labels, i.created_at, i.updated_at,
             p.name AS project_name,
-            COALESCE(ma.title, m.display_name) AS assignee_name
+            COALESCE(ma.title, m.display_name) AS assignee_name,
+            m.member_type AS assignee_type,
+            EXISTS (
+              SELECT 1 FROM heartbeat_runs hr
+              WHERE hr.issue_id = i.id AND hr.status IN ('running', 'queued')
+            ) AS has_active_run
      FROM issues i
      JOIN projects p ON p.id = i.project_id
      LEFT JOIN members m ON m.id = i.assignee_id
@@ -232,6 +237,7 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
             p.name AS project_name, p.description AS project_description,
             co.description AS company_description,
             COALESCE(ma.title, m.display_name) AS assignee_name,
+            m.member_type AS assignee_type,
             COALESCE(ma_ps.title, m_ps.display_name) AS progress_summary_updated_by_name,
             (SELECT count(*)::int FROM issue_comments ic WHERE ic.issue_id = i.id) AS comment_count,
             (SELECT COALESCE(sum(ce.amount_cents), 0)::int FROM cost_entries ce WHERE ce.issue_id = i.id) AS cost_cents

@@ -14,6 +14,8 @@ export interface Issue {
 	priority: string;
 	assignee_id: string | null;
 	assignee_name: string | null;
+	assignee_type: 'agent' | 'user' | null;
+	has_active_run: boolean;
 	parent_issue_id: string | null;
 	labels: string[];
 	progress_summary: string | null;

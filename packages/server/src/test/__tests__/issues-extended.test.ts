@@ -458,3 +458,88 @@ describe('issues list — combined filters', () => {
 		expect(body.data.some((i: any) => i.id === issueInProgressUrgent)).toBe(true);
 	});
 });
+
+describe('issues list — assignee_type and has_active_run', () => {
+	const findIssue = (data: any[], id: string) => data.find((i: any) => i.id === id);
+
+	it('returns assignee_type="agent" for an agent member assignee', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues?per_page=50`, {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		const issue = findIssue(body.data, issueInProgressUrgent);
+		expect(issue.assignee_type).toBe('agent');
+	});
+
+	it('returns has_active_run=false when no heartbeat_runs row exists', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues?per_page=50`, {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		const issue = findIssue(body.data, issueInProgressUrgent);
+		expect(issue.has_active_run).toBe(false);
+	});
+
+	it('returns has_active_run=true when a running heartbeat_runs row exists', async () => {
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+			 VALUES ($1, $2, $3, 'running', now()) RETURNING id`,
+			[memberId, companyId, issueInProgressUrgent],
+		);
+		try {
+			const res = await app.request(`/api/companies/${companyId}/issues?per_page=50`, {
+				headers: authHeader(token),
+			});
+			const body = await res.json();
+			const issue = findIssue(body.data, issueInProgressUrgent);
+			expect(issue.has_active_run).toBe(true);
+		} finally {
+			await db.query(`DELETE FROM heartbeat_runs WHERE id = $1`, [run.rows[0].id]);
+		}
+	});
+
+	it('returns has_active_run=true for a queued run', async () => {
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+			 VALUES ($1, $2, $3, 'queued', now()) RETURNING id`,
+			[memberId, companyId, issueInProgressUrgent],
+		);
+		try {
+			const res = await app.request(`/api/companies/${companyId}/issues?per_page=50`, {
+				headers: authHeader(token),
+			});
+			const body = await res.json();
+			const issue = findIssue(body.data, issueInProgressUrgent);
+			expect(issue.has_active_run).toBe(true);
+		} finally {
+			await db.query(`DELETE FROM heartbeat_runs WHERE id = $1`, [run.rows[0].id]);
+		}
+	});
+
+	it('returns has_active_run=false once the run transitions to a terminal status', async () => {
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at, finished_at)
+			 VALUES ($1, $2, $3, 'succeeded', now(), now()) RETURNING id`,
+			[memberId, companyId, issueInProgressUrgent],
+		);
+		try {
+			const res = await app.request(`/api/companies/${companyId}/issues?per_page=50`, {
+				headers: authHeader(token),
+			});
+			const body = await res.json();
+			const issue = findIssue(body.data, issueInProgressUrgent);
+			expect(issue.has_active_run).toBe(false);
+		} finally {
+			await db.query(`DELETE FROM heartbeat_runs WHERE id = $1`, [run.rows[0].id]);
+		}
+	});
+
+	it('single-issue GET returns assignee_type', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues/${issueInProgressUrgent}`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.assignee_type).toBe('agent');
+	});
+});
