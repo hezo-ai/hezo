@@ -1,4 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
+import { useNavigate } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useCreateProject } from '../hooks/use-projects';
@@ -16,17 +17,24 @@ export function CreateProjectDialog({ companyId, open, onOpenChange }: CreatePro
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const createProject = useCreateProject(companyId);
+	const navigate = useNavigate();
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!name.trim() || !description.trim()) return;
-		await createProject.mutateAsync({
+		const project = await createProject.mutateAsync({
 			name: name.trim(),
 			description: description.trim(),
 		});
 		onOpenChange(false);
 		setName('');
 		setDescription('');
+		if (project.planning_issue_id) {
+			navigate({
+				to: '/companies/$companyId/issues/$issueId',
+				params: { companyId, issueId: project.planning_issue_id },
+			});
+		}
 	}
 
 	const canSubmit = name.trim().length > 0 && description.trim().length > 0;

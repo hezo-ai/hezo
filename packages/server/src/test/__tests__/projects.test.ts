@@ -78,6 +78,8 @@ describe('projects CRUD', () => {
 		const labels = typeof issue.labels === 'string' ? JSON.parse(issue.labels) : issue.labels;
 		expect(labels).toContain('planning');
 
+		expect(body.data.planning_issue_id).toBe(issue.id);
+
 		const wakeupResult = await db.query<{
 			source: string;
 			payload: Record<string, unknown> | string;

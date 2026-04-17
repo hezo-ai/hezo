@@ -486,7 +486,8 @@ Response:
       "id": "uuid",
       "company_id": "uuid",
       "name": "Backend API",
-      "goal": "Ship collaboration features",
+      "slug": "backend-api",
+      "description": "Authenticated HTTP API for the main app.",
       "repo_count": 2,
       "open_issue_count": 5,
       "created_at": "...",
@@ -497,14 +498,33 @@ Response:
 ```
 
 #### `POST /companies/:companyId/projects`
-Create a project. Container is auto-provisioned asynchronously.
+Create a project. Container is auto-provisioned asynchronously. A planning issue titled
+`Draft execution plan for "{name}"` is opened and assigned to the company's enabled CEO
+agent — board users are redirected there so the CEO can draft the execution plan.
+Fails with 500 if no enabled CEO agent exists.
 
-Request:
+Request: `name` and `description` are required. `docker_base_image` is optional and
+defaults to `hezo/agent-base:latest`.
 ```json
 {
   "name": "Backend API",
-  "goal": "Ship collaboration features",
+  "description": "Authenticated HTTP API for the main app.",
   "docker_base_image": "node:20"
+}
+```
+
+Response includes the created project plus `planning_issue_id`, the UUID of the
+auto-opened CEO planning issue.
+```json
+{
+  "data": {
+    "id": "uuid",
+    "slug": "backend-api",
+    "name": "Backend API",
+    "description": "Authenticated HTTP API for the main app.",
+    "planning_issue_id": "uuid",
+    "...": "other project fields"
+  }
 }
 ```
 
@@ -514,7 +534,7 @@ Get project detail including repos. Accepts project ID or slug.
 Response: project object + `repos` array.
 
 #### `PATCH /companies/:companyId/projects/:projectId`
-Update name, goal.
+Update name or description.
 
 #### `DELETE /companies/:companyId/projects/:projectId`
 Delete project. Cannot delete internal projects (e.g. Operations). Fails if there are open issues referencing it. Tears down the container asynchronously.

@@ -232,13 +232,10 @@ test.describe('Sidebar Navigation', () => {
 		await nav.getByRole('button', { name: 'New project' }).click();
 
 		await page.getByLabel('Name').fill('Sidebar Created Project');
+		await page.getByLabel('Description').fill('Project for sidebar test.');
 		await page.getByRole('button', { name: 'Create' }).click();
 
-		// Appears in the sidebar
 		await expect(nav.getByText('Sidebar Created Project')).toBeVisible({ timeout: 10000 });
-
-		// Appears in the page grid
-		await expect(page.getByRole('main').getByText('Sidebar Created Project')).toBeVisible();
 	});
 
 	test('clicking a project in sidebar navigates to project detail', async ({ page }) => {
@@ -315,9 +312,9 @@ test.describe('Sidebar Navigation', () => {
 		// Create a project via the page header button
 		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
 		await page.getByLabel('Name').fill('Dynamic Sidebar Project');
+		await page.getByLabel('Description').fill('Dynamic sidebar test project.');
 		await page.getByRole('button', { name: 'Create' }).click();
 
-		// Verify it appears in the sidebar
 		const nav = page.locator('nav');
 		await expect(nav.getByText('Dynamic Sidebar Project')).toBeVisible({ timeout: 10000 });
 	});

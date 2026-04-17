@@ -16,6 +16,7 @@ export interface Project {
 	open_issue_count: number;
 	created_at: string;
 	repos?: Repo[];
+	planning_issue_id?: string;
 }
 
 export interface Repo {

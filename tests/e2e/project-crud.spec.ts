@@ -18,14 +18,9 @@ test.describe('Project CRUD', () => {
 
 		await page.getByRole('button', { name: 'Create' }).click();
 
-		const main = page.getByRole('main');
-		await expect(main.getByText('Marketing Campaign')).toBeVisible({ timeout: 5000 });
-		await expect(
-			main.getByText('Q3 brand push aimed at existing users to drive upsells.'),
-		).toBeVisible();
-
-		await page.goto(`/companies/${company.slug}/projects/marketing-campaign/issues`);
-		await waitForPageLoad(page);
+		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/issues/[0-9a-f-]{36}$`), {
+			timeout: 5000,
+		});
 		await expect(
 			page.getByRole('main').getByText('Draft execution plan for "Marketing Campaign"'),
 		).toBeVisible({ timeout: 5000 });
@@ -55,10 +50,9 @@ test.describe('Project CRUD', () => {
 		await page.goto(`/companies/${company.slug}/projects`);
 		await waitForPageLoad(page);
 
-		// Verify the project card shows counts
 		const card = page.getByRole('main').locator('a', { hasText: 'Count Test' });
 		await expect(card).toBeVisible({ timeout: 5000 });
-		await expect(card.getByText('0 issues')).toBeVisible();
+		await expect(card.getByText('1 issues')).toBeVisible();
 		await expect(card.getByText('0 repos')).toBeVisible();
 	});
 
@@ -76,8 +70,7 @@ test.describe('Project CRUD', () => {
 		await page.goto(`/companies/${company.slug}/projects`);
 		await waitForPageLoad(page);
 
-		// Click on the project card
-		await page.getByRole('main').getByText('Linkable Project').click();
+		await page.getByRole('main').getByRole('heading', { name: 'Linkable Project' }).click();
 
 		// Should navigate to project detail page
 		await expect(page).toHaveURL(
