@@ -139,7 +139,9 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 
 	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
-	await expect(page.getByText('Rules Test Issue')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByRole('heading', { name: 'Rules Test Issue' })).toBeVisible({
+		timeout: 10000,
+	});
 
 	// Edit rules
 	const rulesSection = page.getByText('Rules', { exact: true }).locator('..').locator('..');
