@@ -37,7 +37,16 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.company_id, hr.wakeup_id,
 	hr.invocation_command, hr.log_text, hr.working_dir,
 	hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
 	i.identifier AS issue_identifier, i.title AS issue_title,
-	i.project_id AS project_id`;
+	i.project_id AS project_id,
+	COALESCE(
+		(SELECT jsonb_agg(
+			jsonb_build_object('id', ci.id, 'identifier', ci.identifier, 'title', ci.title)
+			ORDER BY ci.created_at ASC
+		)
+		FROM issues ci
+		WHERE ci.created_by_run_id = hr.id),
+		'[]'::jsonb
+	) AS created_issues`;
 
 agentsRoutes.get('/companies/:companyId/agents', async (c) => {
 	const access = await requireCompanyAccess(c);

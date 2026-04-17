@@ -381,6 +381,7 @@ CREATE TABLE issues (
     assignee_id          UUID REFERENCES members(id) ON DELETE SET NULL,
     parent_issue_id      UUID REFERENCES issues(id) ON DELETE SET NULL,
     created_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
+    created_by_run_id    UUID,
     number               INTEGER NOT NULL,
     identifier           TEXT NOT NULL UNIQUE,
     title                TEXT NOT NULL,
@@ -875,6 +876,12 @@ CREATE INDEX idx_runs_member ON heartbeat_runs(member_id);
 CREATE INDEX idx_runs_status ON heartbeat_runs(status);
 CREATE INDEX idx_runs_company ON heartbeat_runs(company_id);
 CREATE INDEX idx_runs_issue ON heartbeat_runs(issue_id);
+
+ALTER TABLE issues
+    ADD CONSTRAINT issues_created_by_run_fk
+    FOREIGN KEY (created_by_run_id) REFERENCES heartbeat_runs(id) ON DELETE SET NULL;
+
+CREATE INDEX idx_issues_created_by_run ON issues(created_by_run_id) WHERE created_by_run_id IS NOT NULL;
 
 -------------------------------------------------------------------------------
 -- AGENT TASK SESSIONS

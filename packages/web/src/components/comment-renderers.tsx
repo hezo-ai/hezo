@@ -82,6 +82,8 @@ function RunComment({ comment, companyId }: { comment: CommentData; companyId?: 
 		return <p className="text-xs text-text-subtle italic">Run reference missing.</p>;
 	}
 
+	const createdIssues = run?.created_issues ?? [];
+
 	return (
 		<div className="flex flex-col gap-1.5" data-testid="run-comment">
 			<LogViewer
@@ -99,6 +101,21 @@ function RunComment({ comment, companyId }: { comment: CommentData; companyId?: 
 				}
 				emptyState={isActive ? 'Waiting for log output...' : 'No output.'}
 			/>
+			{createdIssues.length > 0 && (
+				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-issues">
+					<span className="text-xs text-text-subtle">Created tickets</span>
+					{createdIssues.map((issue) => (
+						<Link
+							key={issue.id}
+							to="/companies/$companyId/issues/$issueId"
+							params={{ companyId, issueId: issue.id }}
+							className="text-xs text-accent-blue-text hover:underline self-start"
+						>
+							{issue.identifier} — {issue.title}
+						</Link>
+					))}
+				</div>
+			)}
 			<Link
 				to="/companies/$companyId/agents/$agentId/executions/$runId"
 				params={{ companyId, agentId, runId }}

@@ -268,14 +268,16 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			);
 			const num = numberResult.rows[0].number;
 			const identifier = `${companyResult.rows[0].issue_prefix}-${num}`;
+			const createdByRunId = auth.type === AuthType.Agent ? auth.runId : null;
 			const r = await db.query<{ id: string }>(
-				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, number, identifier, title, description, status, priority, runtime_type)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::agent_runtime) RETURNING *`,
+				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, runtime_type)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::issue_status, $11::issue_priority, $12::agent_runtime) RETURNING *`,
 				[
 					args.company_id,
 					args.project_id,
 					assigneeId,
 					args.parent_issue_id ?? null,
+					createdByRunId,
 					num,
 					identifier,
 					args.title,

@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import {
 	type AgentInfo,
@@ -8,11 +9,12 @@ import {
 	type HeartbeatRunBroadcast,
 } from '../../services/agent-runner';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
+let masterKeyManager: MasterKeyManager;
 let companyId: string;
 let agentId: string;
 let projectId: string;
@@ -23,6 +25,7 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;
+	masterKeyManager = ctx.masterKeyManager;
 
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
@@ -242,5 +245,121 @@ describe('run comments', () => {
 			[issueId],
 		);
 		expect(after.rows[0].n).toBe(before.rows[0].n + 1);
+	});
+});
+
+describe('created_issues tracking', () => {
+	it('stamps created_by_run_id when an agent calls create_issue and returns it on the run', async () => {
+		const { token: agentToken, runId } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			companyId,
+			issueId,
+		);
+
+		const mcpRes = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: {
+					name: 'create_issue',
+					arguments: {
+						company_id: companyId,
+						project_id: projectId,
+						title: 'Spawned Issue',
+						description: 'Created by agent during run',
+						assignee_id: agentId,
+					},
+				},
+				id: 1,
+			}),
+		});
+		expect(mcpRes.status).toBe(200);
+		const mcpBody = (await mcpRes.json()) as {
+			result: { content: Array<{ type: string; text: string }> };
+		};
+		const created = JSON.parse(mcpBody.result.content[0].text) as {
+			id: string;
+			identifier: string;
+		};
+
+		const dbRow = await db.query<{ created_by_run_id: string | null }>(
+			'SELECT created_by_run_id FROM issues WHERE id = $1',
+			[created.id],
+		);
+		expect(dbRow.rows[0].created_by_run_id).toBe(runId);
+
+		const runRes = await app.request(
+			`/api/companies/${companyId}/agents/${agentId}/heartbeat-runs/${runId}`,
+			{ headers: authHeader(token) },
+		);
+		expect(runRes.status).toBe(200);
+		const runBody = await runRes.json();
+		const createdIssues = runBody.data.created_issues as Array<{
+			id: string;
+			identifier: string;
+			title: string;
+		}>;
+		expect(createdIssues).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					id: created.id,
+					identifier: created.identifier,
+					title: 'Spawned Issue',
+				}),
+			]),
+		);
+	});
+
+	it('returns empty created_issues when the run has created none', async () => {
+		const result = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status)
+			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status)
+			 RETURNING id`,
+			[agentId, companyId, issueId],
+		);
+		const emptyRunId = result.rows[0].id;
+
+		const res = await app.request(
+			`/api/companies/${companyId}/agents/${agentId}/heartbeat-runs/${emptyRunId}`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.created_issues).toEqual([]);
+	});
+
+	it('leaves created_by_run_id null when a board user creates an issue via MCP', async () => {
+		const mcpRes = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: {
+					name: 'create_issue',
+					arguments: {
+						company_id: companyId,
+						project_id: projectId,
+						title: 'Board-created Issue',
+						assignee_id: agentId,
+					},
+				},
+				id: 2,
+			}),
+		});
+		const mcpBody = (await mcpRes.json()) as {
+			result: { content: Array<{ type: string; text: string }> };
+		};
+		const created = JSON.parse(mcpBody.result.content[0].text) as { id: string };
+
+		const row = await db.query<{ created_by_run_id: string | null }>(
+			'SELECT created_by_run_id FROM issues WHERE id = $1',
+			[created.id],
+		);
+		expect(row.rows[0].created_by_run_id).toBeNull();
 	});
 });

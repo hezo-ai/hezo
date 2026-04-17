@@ -20,6 +20,7 @@ export interface HeartbeatRun {
 	invocation_command: string | null;
 	log_text: string | null;
 	working_dir: string | null;
+	created_issues: { id: string; identifier: string; title: string }[];
 }
 
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
