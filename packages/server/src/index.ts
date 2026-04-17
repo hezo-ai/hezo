@@ -8,6 +8,7 @@ import { verifyToken } from './middleware/auth';
 import { ContainerLogStreamer } from './services/container-logs';
 import type { ProvisioningLogBroadcaster } from './services/provisioning-logs';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
+import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
 import { startup } from './startup';
 
 const log = logger.child('server');
@@ -124,45 +125,20 @@ export default {
 			try {
 				const data = JSON.parse(typeof msg === 'string' ? msg : msg.toString());
 				if (data.action === 'subscribe' && typeof data.room === 'string') {
-					const companyMatch = data.room.match(/^company:(.+)$/);
-					if (companyMatch) {
-						const allowed = await canAccessCompany(ws.data.auth, companyMatch[1]);
-						if (!allowed) return;
-						wsManager.subscribe(ws as unknown as WsSocket, data.room);
-						return;
-					}
-
-					const logsMatch = data.room.match(/^container-logs:(.+)$/);
-					if (logsMatch && dbRef && dockerRef) {
-						const projectId = logsMatch[1];
-						const project = await dbRef.query<{
-							container_id: string | null;
-							company_id: string;
-							container_status: string | null;
-						}>('SELECT container_id, company_id, container_status FROM projects WHERE id = $1', [
-							projectId,
-						]);
-						if (project.rows.length === 0) return;
-						const row = project.rows[0];
-						const allowed = await canAccessCompany(ws.data.auth, row.company_id);
-						if (!allowed) return;
-
-						wsManager.subscribe(ws as unknown as WsSocket, data.room);
-						provisioningLogsRef?.replay(projectId, (payload) => {
-							ws.send(JSON.stringify(payload));
-						});
-						if (row.container_id && row.container_status === 'running') {
-							containerLogStreamer.subscribe(projectId, row.container_id, wsManager, dockerRef);
-						}
-						return;
-					}
+					await handleWsSubscribe(ws as unknown as WsSocket, data.room, {
+						db: dbRef,
+						wsManager,
+						docker: dockerRef,
+						containerLogStreamer,
+						provisioningLogs: provisioningLogsRef,
+						canAccessCompany,
+						sendToSocket: (_s, payload) => ws.send(JSON.stringify(payload)),
+					});
 				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {
-					wsManager.unsubscribe(ws as unknown as WsSocket, data.room);
-
-					const logsMatch = data.room.match(/^container-logs:(.+)$/);
-					if (logsMatch && wsManager.getRoomSize(data.room) === 0) {
-						containerLogStreamer.unsubscribe(logsMatch[1]);
-					}
+					handleWsUnsubscribe(ws as unknown as WsSocket, data.room, {
+						wsManager,
+						containerLogStreamer,
+					});
 				}
 			} catch {
 				// ignore malformed messages

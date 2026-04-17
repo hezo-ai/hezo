@@ -2426,8 +2426,8 @@ After connecting, clients subscribe to rooms:
 
 Room types:
 - `company:<uuid>` — receives row changes, chat messages, and agent lifecycle events for the company. Access is verified (agents/API keys must match company; board users must be members or superusers).
-- `container-logs:<projectId>` — streams Docker container stdout/stderr for a project's main process.
-- `project-runs:<projectId>` — streams `run_log` messages from every agent `docker exec` on that project. Clients filter by `runId` to isolate a specific run.
+- `container-logs:<projectId>` — streams Docker container stdout/stderr for a project's main process. Access is verified: the caller's auth must grant access to the project's owning company.
+- `project-runs:<projectId>` — streams `run_log` messages from every agent `docker exec` on that project. Clients filter by `runId` to isolate a specific run. Access is verified: the caller's auth must grant access to the project's owning company.
 
 Room names always use UUIDs, never slugs. The frontend `useWebSocket` hook takes two params: the UUID for room subscription and the route-param slug for TanStack Query cache invalidation.
 
