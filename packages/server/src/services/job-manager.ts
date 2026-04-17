@@ -39,7 +39,7 @@ export interface JobManagerDeps {
 	wsManager: WebSocketManager;
 }
 
-const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 10_000);
+const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
 
 export class JobManager {
 	private cron: Cron;

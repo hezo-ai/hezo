@@ -164,99 +164,6 @@ function IssueDetailPage() {
 
 				{latestRun && <IssueRunLogStrip companyId={companyId} run={latestRun} />}
 
-				<div className="bg-bg-subtle rounded-radius-md p-3 mb-5 text-[13px] text-text-muted leading-relaxed">
-					<div className="flex items-center justify-between mb-1">
-						<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
-							Progress Summary
-						</span>
-						{!editingSummary && (
-							<button
-								type="button"
-								onClick={() => {
-									setSummaryText(issue.progress_summary ?? '');
-									setEditingSummary(true);
-								}}
-								className="text-[11px] text-text-subtle hover:text-text"
-							>
-								Edit
-							</button>
-						)}
-					</div>
-					{editingSummary ? (
-						<div className="flex flex-col gap-2">
-							<Textarea
-								value={summaryText}
-								onChange={(e) => setSummaryText(e.target.value)}
-								className="min-h-[60px]"
-							/>
-							<div className="flex gap-2 justify-end">
-								<Button size="sm" variant="secondary" onClick={() => setEditingSummary(false)}>
-									Cancel
-								</Button>
-								<Button
-									size="sm"
-									onClick={() => {
-										updateIssue.mutate({
-											progress_summary: summaryText || null,
-										});
-										setEditingSummary(false);
-									}}
-								>
-									Save
-								</Button>
-							</div>
-						</div>
-					) : (
-						<span>{issue.progress_summary || 'No progress summary yet.'}</span>
-					)}
-				</div>
-
-				<div className="bg-bg-subtle rounded-radius-md p-3 mb-5 text-[13px] text-text-muted leading-relaxed border-l-2 border-accent-blue">
-					<div className="flex items-center justify-between mb-1">
-						<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
-							Rules
-						</span>
-						{!editingRules && (
-							<button
-								type="button"
-								onClick={() => {
-									setRulesText(issue.rules ?? '');
-									setEditingRules(true);
-								}}
-								className="text-[11px] text-text-subtle hover:text-text"
-							>
-								Edit
-							</button>
-						)}
-					</div>
-					{editingRules ? (
-						<div className="flex flex-col gap-2">
-							<Textarea
-								value={rulesText}
-								onChange={(e) => setRulesText(e.target.value)}
-								placeholder="e.g., Consult the architect before making changes..."
-								className="min-h-[60px]"
-							/>
-							<div className="flex gap-2 justify-end">
-								<Button size="sm" variant="secondary" onClick={() => setEditingRules(false)}>
-									Cancel
-								</Button>
-								<Button
-									size="sm"
-									onClick={() => {
-										updateIssue.mutate({ rules: rulesText || null });
-										setEditingRules(false);
-									}}
-								>
-									Save
-								</Button>
-							</div>
-						</div>
-					) : (
-						<span>{issue.rules || 'No rules set.'}</span>
-					)}
-				</div>
-
 				{issue.description && (
 					<p className="text-[13px] text-text-muted mb-5 whitespace-pre-wrap leading-relaxed">
 						{issue.description}
@@ -324,6 +231,109 @@ function IssueDetailPage() {
 
 					{activeTab === 'comments' ? (
 						<>
+							<div
+								data-testid="pinned-progress-summary"
+								className="bg-bg-subtle rounded-radius-md p-3 mb-3 text-[13px] text-text-muted leading-relaxed"
+							>
+								<div className="flex items-center justify-between mb-1">
+									<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
+										Progress Summary
+									</span>
+									{!editingSummary && (
+										<button
+											type="button"
+											onClick={() => {
+												setSummaryText(issue.progress_summary ?? '');
+												setEditingSummary(true);
+											}}
+											className="text-[11px] text-text-subtle hover:text-text"
+										>
+											Edit
+										</button>
+									)}
+								</div>
+								{editingSummary ? (
+									<div className="flex flex-col gap-2">
+										<Textarea
+											value={summaryText}
+											onChange={(e) => setSummaryText(e.target.value)}
+											className="min-h-[60px]"
+										/>
+										<div className="flex gap-2 justify-end">
+											<Button
+												size="sm"
+												variant="secondary"
+												onClick={() => setEditingSummary(false)}
+											>
+												Cancel
+											</Button>
+											<Button
+												size="sm"
+												onClick={() => {
+													updateIssue.mutate({
+														progress_summary: summaryText || null,
+													});
+													setEditingSummary(false);
+												}}
+											>
+												Save
+											</Button>
+										</div>
+									</div>
+								) : (
+									<span>{issue.progress_summary || 'No progress summary yet.'}</span>
+								)}
+							</div>
+
+							<div
+								data-testid="pinned-rules"
+								className="bg-bg-subtle rounded-radius-md p-3 mb-5 text-[13px] text-text-muted leading-relaxed border-l-2 border-accent-blue"
+							>
+								<div className="flex items-center justify-between mb-1">
+									<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
+										Rules
+									</span>
+									{!editingRules && (
+										<button
+											type="button"
+											onClick={() => {
+												setRulesText(issue.rules ?? '');
+												setEditingRules(true);
+											}}
+											className="text-[11px] text-text-subtle hover:text-text"
+										>
+											Edit
+										</button>
+									)}
+								</div>
+								{editingRules ? (
+									<div className="flex flex-col gap-2">
+										<Textarea
+											value={rulesText}
+											onChange={(e) => setRulesText(e.target.value)}
+											placeholder="e.g., Consult the architect before making changes..."
+											className="min-h-[60px]"
+										/>
+										<div className="flex gap-2 justify-end">
+											<Button size="sm" variant="secondary" onClick={() => setEditingRules(false)}>
+												Cancel
+											</Button>
+											<Button
+												size="sm"
+												onClick={() => {
+													updateIssue.mutate({ rules: rulesText || null });
+													setEditingRules(false);
+												}}
+											>
+												Save
+											</Button>
+										</div>
+									</div>
+								) : (
+									<span>{issue.rules || 'No rules set.'}</span>
+								)}
+							</div>
+
 							<div className="flex flex-col gap-4 mb-4">
 								{comments?.map((c) => (
 									<div key={c.id} className="flex gap-2.5">

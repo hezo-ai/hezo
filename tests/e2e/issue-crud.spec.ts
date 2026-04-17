@@ -165,6 +165,22 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 	await waitForPageLoad(page);
 	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 15000 });
 	await expect(page.getByText('Implementation started')).toBeVisible({ timeout: 15000 });
+
+	// Pinned cards live inside the Comments tab, not the page body
+	const pinnedSummary = page.getByTestId('pinned-progress-summary');
+	const pinnedRules = page.getByTestId('pinned-rules');
+	await expect(pinnedSummary).toBeVisible();
+	await expect(pinnedRules).toBeVisible();
+
+	// Switch to Live chat — pinned cards must hide
+	await page.getByRole('button', { name: 'Live chat' }).click();
+	await expect(pinnedSummary).toBeHidden();
+	await expect(pinnedRules).toBeHidden();
+
+	// Switch back — they reappear
+	await page.getByRole('button', { name: /^Comments/ }).click();
+	await expect(pinnedSummary).toBeVisible();
+	await expect(pinnedRules).toBeVisible();
 });
 
 test('issue detail shows assignee with status badge', async ({ page }) => {
