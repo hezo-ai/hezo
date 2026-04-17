@@ -91,12 +91,23 @@ function ExecutionDetailPage() {
 				)}
 			</div>
 
-			{run.issue_identifier && (
-				<div className="mb-4 text-xs text-text-muted">
-					Issue: <span className="font-mono text-text">{run.issue_identifier}</span>
-					{run.issue_title && <span className="ml-1">{run.issue_title}</span>}
-				</div>
-			)}
+			{run.issue_identifier &&
+				(run.issue_id ? (
+					<Link
+						to="/companies/$companyId/issues/$issueId"
+						params={{ companyId, issueId: run.issue_id }}
+						className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted hover:text-text"
+					>
+						<span>Issue:</span>
+						<span className="font-mono text-text">{run.issue_identifier}</span>
+						{run.issue_title && <span>{run.issue_title}</span>}
+					</Link>
+				) : (
+					<div className="mb-4 text-xs text-text-muted">
+						Issue: <span className="font-mono text-text">{run.issue_identifier}</span>
+						{run.issue_title && <span className="ml-1">{run.issue_title}</span>}
+					</div>
+				))}
 
 			{displayedCommand && (
 				<div className="mb-3">
