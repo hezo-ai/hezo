@@ -71,7 +71,7 @@ async function createIssue(coId: string): Promise<string> {
 	const projectRes = await app.request(`/api/companies/${coId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Orphan Project' }),
+		body: JSON.stringify({ name: 'Orphan Project', description: 'Test project.' }),
 	});
 	const projectId = (await projectRes.json()).data.id;
 

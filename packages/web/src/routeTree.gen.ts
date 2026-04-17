@@ -21,6 +21,7 @@ import { Route as CompaniesCompanyIdProjectsIndexRouteImport } from './routes/co
 import { Route as CompaniesCompanyIdKbIndexRouteImport } from './routes/companies/$companyId/kb/index'
 import { Route as CompaniesCompanyIdIssuesIndexRouteImport } from './routes/companies/$companyId/issues/index'
 import { Route as CompaniesCompanyIdInboxIndexRouteImport } from './routes/companies/$companyId/inbox/index'
+import { Route as CompaniesCompanyIdGoalsIndexRouteImport } from './routes/companies/$companyId/goals/index'
 import { Route as CompaniesCompanyIdAgentsIndexRouteImport } from './routes/companies/$companyId/agents/index'
 import { Route as CompaniesCompanyIdKbNewRouteImport } from './routes/companies/$companyId/kb/new'
 import { Route as CompaniesCompanyIdKbSlugRouteImport } from './routes/companies/$companyId/kb/$slug'
@@ -103,6 +104,12 @@ const CompaniesCompanyIdInboxIndexRoute =
   CompaniesCompanyIdInboxIndexRouteImport.update({
     id: '/inbox/',
     path: '/inbox/',
+    getParentRoute: () => CompaniesCompanyIdRouteRoute,
+  } as any)
+const CompaniesCompanyIdGoalsIndexRoute =
+  CompaniesCompanyIdGoalsIndexRouteImport.update({
+    id: '/goals/',
+    path: '/goals/',
     getParentRoute: () => CompaniesCompanyIdRouteRoute,
   } as any)
 const CompaniesCompanyIdAgentsIndexRoute =
@@ -222,6 +229,7 @@ export interface FileRoutesByFullPath {
   '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRoute
   '/companies/$companyId/kb/new': typeof CompaniesCompanyIdKbNewRoute
   '/companies/$companyId/agents/': typeof CompaniesCompanyIdAgentsIndexRoute
+  '/companies/$companyId/goals/': typeof CompaniesCompanyIdGoalsIndexRoute
   '/companies/$companyId/inbox/': typeof CompaniesCompanyIdInboxIndexRoute
   '/companies/$companyId/issues/': typeof CompaniesCompanyIdIssuesIndexRoute
   '/companies/$companyId/kb/': typeof CompaniesCompanyIdKbIndexRoute
@@ -250,6 +258,7 @@ export interface FileRoutesByTo {
   '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRoute
   '/companies/$companyId/kb/new': typeof CompaniesCompanyIdKbNewRoute
   '/companies/$companyId/agents': typeof CompaniesCompanyIdAgentsIndexRoute
+  '/companies/$companyId/goals': typeof CompaniesCompanyIdGoalsIndexRoute
   '/companies/$companyId/inbox': typeof CompaniesCompanyIdInboxIndexRoute
   '/companies/$companyId/issues': typeof CompaniesCompanyIdIssuesIndexRoute
   '/companies/$companyId/kb': typeof CompaniesCompanyIdKbIndexRoute
@@ -282,6 +291,7 @@ export interface FileRoutesById {
   '/companies/$companyId/kb/$slug': typeof CompaniesCompanyIdKbSlugRoute
   '/companies/$companyId/kb/new': typeof CompaniesCompanyIdKbNewRoute
   '/companies/$companyId/agents/': typeof CompaniesCompanyIdAgentsIndexRoute
+  '/companies/$companyId/goals/': typeof CompaniesCompanyIdGoalsIndexRoute
   '/companies/$companyId/inbox/': typeof CompaniesCompanyIdInboxIndexRoute
   '/companies/$companyId/issues/': typeof CompaniesCompanyIdIssuesIndexRoute
   '/companies/$companyId/kb/': typeof CompaniesCompanyIdKbIndexRoute
@@ -315,6 +325,7 @@ export interface FileRouteTypes {
     | '/companies/$companyId/kb/$slug'
     | '/companies/$companyId/kb/new'
     | '/companies/$companyId/agents/'
+    | '/companies/$companyId/goals/'
     | '/companies/$companyId/inbox/'
     | '/companies/$companyId/issues/'
     | '/companies/$companyId/kb/'
@@ -343,6 +354,7 @@ export interface FileRouteTypes {
     | '/companies/$companyId/kb/$slug'
     | '/companies/$companyId/kb/new'
     | '/companies/$companyId/agents'
+    | '/companies/$companyId/goals'
     | '/companies/$companyId/inbox'
     | '/companies/$companyId/issues'
     | '/companies/$companyId/kb'
@@ -374,6 +386,7 @@ export interface FileRouteTypes {
     | '/companies/$companyId/kb/$slug'
     | '/companies/$companyId/kb/new'
     | '/companies/$companyId/agents/'
+    | '/companies/$companyId/goals/'
     | '/companies/$companyId/inbox/'
     | '/companies/$companyId/issues/'
     | '/companies/$companyId/kb/'
@@ -483,6 +496,13 @@ declare module '@tanstack/react-router' {
       path: '/inbox'
       fullPath: '/companies/$companyId/inbox/'
       preLoaderRoute: typeof CompaniesCompanyIdInboxIndexRouteImport
+      parentRoute: typeof CompaniesCompanyIdRouteRoute
+    }
+    '/companies/$companyId/goals/': {
+      id: '/companies/$companyId/goals/'
+      path: '/goals'
+      fullPath: '/companies/$companyId/goals/'
+      preLoaderRoute: typeof CompaniesCompanyIdGoalsIndexRouteImport
       parentRoute: typeof CompaniesCompanyIdRouteRoute
     }
     '/companies/$companyId/agents/': {
@@ -668,6 +688,7 @@ interface CompaniesCompanyIdRouteRouteChildren {
   CompaniesCompanyIdKbSlugRoute: typeof CompaniesCompanyIdKbSlugRoute
   CompaniesCompanyIdKbNewRoute: typeof CompaniesCompanyIdKbNewRoute
   CompaniesCompanyIdAgentsIndexRoute: typeof CompaniesCompanyIdAgentsIndexRoute
+  CompaniesCompanyIdGoalsIndexRoute: typeof CompaniesCompanyIdGoalsIndexRoute
   CompaniesCompanyIdInboxIndexRoute: typeof CompaniesCompanyIdInboxIndexRoute
   CompaniesCompanyIdIssuesIndexRoute: typeof CompaniesCompanyIdIssuesIndexRoute
   CompaniesCompanyIdKbIndexRoute: typeof CompaniesCompanyIdKbIndexRoute
@@ -689,6 +710,7 @@ const CompaniesCompanyIdRouteRouteChildren: CompaniesCompanyIdRouteRouteChildren
     CompaniesCompanyIdKbSlugRoute: CompaniesCompanyIdKbSlugRoute,
     CompaniesCompanyIdKbNewRoute: CompaniesCompanyIdKbNewRoute,
     CompaniesCompanyIdAgentsIndexRoute: CompaniesCompanyIdAgentsIndexRoute,
+    CompaniesCompanyIdGoalsIndexRoute: CompaniesCompanyIdGoalsIndexRoute,
     CompaniesCompanyIdInboxIndexRoute: CompaniesCompanyIdInboxIndexRoute,
     CompaniesCompanyIdIssuesIndexRoute: CompaniesCompanyIdIssuesIndexRoute,
     CompaniesCompanyIdKbIndexRoute: CompaniesCompanyIdKbIndexRoute,

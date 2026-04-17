@@ -430,7 +430,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		{
 			company_id: z.string().describe('Company ID'),
 			name: z.string().describe('Project name'),
-			goal: z.string().optional().describe('Project goal'),
+			description: z.string().optional().describe('Project description'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -440,8 +440,8 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/^-|-$/g, '');
 			const r = await db.query(
-				`INSERT INTO projects (company_id, name, slug, goal) VALUES ($1, $2, $3, $4) RETURNING *`,
-				[args.company_id, args.name, slug, args.goal ?? ''],
+				`INSERT INTO projects (company_id, name, slug, description) VALUES ($1, $2, $3, $4) RETURNING *`,
+				[args.company_id, args.name, slug, args.description ?? ''],
 			);
 			return r.rows[0];
 		},

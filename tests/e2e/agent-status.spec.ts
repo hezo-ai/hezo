@@ -46,7 +46,7 @@ test('project detail shows container section with rebuild button', async ({ page
 
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers: { Authorization: `Bearer ${token}` },
-		data: { name: 'Container Test Project' },
+		data: { name: 'Container Test Project', description: 'Test project.' },
 	});
 	const project = await projectRes.json();
 

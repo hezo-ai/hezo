@@ -1,5 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { ContainerStatus, WakeupSource } from '@hezo/shared';
+import {
+	AgentAdminStatus,
+	ContainerStatus,
+	IssuePriority,
+	IssueStatus,
+	WakeupSource,
+} from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { resolveProjectId } from '../lib/resolve';
@@ -103,19 +109,43 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 	const db = c.get('db');
 	const { companyId } = access;
 
-	const companyCheck = await db.query('SELECT id FROM companies WHERE id = $1', [companyId]);
-	if (companyCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Company not found', 404);
-	}
-
 	const body = await c.req.json<{
 		name: string;
-		goal?: string;
+		description?: string;
 		docker_base_image?: string;
 	}>();
 
 	if (!body.name?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'name is required', 400);
+	}
+	if (!body.description?.trim()) {
+		return err(c, 'INVALID_REQUEST', 'description is required', 400);
+	}
+
+	const companyMetaResult = await db.query<{ slug: string; issue_prefix: string }>(
+		'SELECT slug, issue_prefix FROM companies WHERE id = $1',
+		[companyId],
+	);
+	const companyMeta = companyMetaResult.rows[0];
+	if (!companyMeta) {
+		return err(c, 'NOT_FOUND', 'Company not found', 404);
+	}
+
+	const ceoResult = await db.query<{ id: string }>(
+		`SELECT ma.id FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.company_id = $1 AND ma.slug = 'ceo' AND ma.admin_status = $2::agent_admin_status
+		 LIMIT 1`,
+		[companyId, AgentAdminStatus.Enabled],
+	);
+	const ceoMemberId = ceoResult.rows[0]?.id;
+	if (!ceoMemberId) {
+		return err(
+			c,
+			'INTERNAL',
+			'No enabled CEO found for this company. Re-enable the CEO agent before creating projects.',
+			500,
+		);
 	}
 
 	const slug = await uniqueSlug(toSlug(body.name), async (s) => {
@@ -126,29 +156,88 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 		return r.rows.length > 0;
 	});
 
-	const result = await db.query(
-		`INSERT INTO projects (company_id, name, slug, goal, docker_base_image)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING *`,
-		[companyId, body.name.trim(), slug, body.goal ?? '', body.docker_base_image ?? 'node:24-slim'],
-	);
+	const projectName = body.name.trim();
+	const projectDescription = body.description.trim();
 
-	const project = result.rows[0] as Record<string, unknown>;
-	broadcastChange(c, `company:${companyId}`, 'projects', 'INSERT', project);
-
-	const companySlugResult = await db.query<{ slug: string }>(
-		'SELECT slug FROM companies WHERE id = $1',
-		[companyId],
-	);
-	const companySlug = companySlugResult.rows[0]?.slug;
-
-	if (companySlug) {
-		provisionContainer(buildContainerDeps(c), project as unknown as ProjectRow, companySlug).catch(
-			(error) => {
-				log.error(`Failed to provision container for project ${project.slug}:`, error);
-			},
+	await db.query('BEGIN');
+	let project: Record<string, unknown>;
+	let planningIssue: Record<string, unknown>;
+	try {
+		const projectResult = await db.query(
+			`INSERT INTO projects (company_id, name, slug, description, docker_base_image)
+			 VALUES ($1, $2, $3, $4, $5)
+			 RETURNING *`,
+			[companyId, projectName, slug, projectDescription, body.docker_base_image ?? 'node:24-slim'],
 		);
+		project = projectResult.rows[0] as Record<string, unknown>;
+
+		const numberResult = await db.query<{ number: number }>(
+			'SELECT next_issue_number($1) AS number',
+			[companyId],
+		);
+		const issueNumber = numberResult.rows[0].number;
+		const identifier = `${companyMeta.issue_prefix}-${issueNumber}`;
+
+		const issueBody = `## Draft the execution plan for this new project
+
+A new project has just been created. Please read the description below carefully and produce an execution plan.
+
+### Project: ${projectName}
+
+**Description**
+
+${projectDescription}
+
+### Your task
+
+1. Read the description above. If anything is ambiguous, post a clarifying comment on this issue for the board.
+2. Use \`list_agents\` / \`get_agent_system_prompt\` to recall who is on the team.
+3. Break the work into 3-8 top-level milestones. Write a short scope note for each.
+4. Post the plan as a comment on this issue, then create child issues with \`create_issue\` (using \`parent_issue_id\` on this issue) for the first milestone, assigning each to the right agent.
+5. Move this issue to **done** once the first milestone's child issues have been created and assigned.
+
+Container provisioning for this project is in progress. Focus on planning while the environment comes up — implementation agents can start work as soon as their tickets are ready.`;
+
+		const issueResult = await db.query(
+			`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier,
+			                     title, description, status, priority, labels)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
+			 RETURNING *`,
+			[
+				companyId,
+				project.id,
+				ceoMemberId,
+				issueNumber,
+				identifier,
+				`Draft execution plan for "${projectName}"`,
+				issueBody,
+				IssueStatus.Open,
+				IssuePriority.High,
+				JSON.stringify(['planning']),
+			],
+		);
+		planningIssue = issueResult.rows[0] as Record<string, unknown>;
+
+		await db.query('COMMIT');
+	} catch (e) {
+		await db.query('ROLLBACK');
+		throw e;
 	}
+
+	broadcastChange(c, `company:${companyId}`, 'projects', 'INSERT', project);
+	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', planningIssue);
+
+	createWakeup(db, ceoMemberId, companyId, WakeupSource.Assignment, {
+		issue_id: planningIssue.id,
+	}).catch((e) => log.error('Failed to wake CEO for project planning:', e));
+
+	provisionContainer(
+		buildContainerDeps(c),
+		project as unknown as ProjectRow,
+		companyMeta.slug,
+	).catch((error) => {
+		log.error(`Failed to provision container for project ${project.slug}:`, error);
+	});
 
 	return ok(c, project, 201);
 });
@@ -202,7 +291,7 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 
 	const body = await c.req.json<{
 		name?: string;
-		goal?: string;
+		description?: string;
 	}>();
 
 	const sets: string[] = [];
@@ -224,9 +313,9 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 		params.push(newSlug);
 		idx++;
 	}
-	if (body.goal !== undefined) {
-		sets.push(`goal = $${idx}`);
-		params.push(body.goal);
+	if (body.description !== undefined) {
+		sets.push(`description = $${idx}`);
+		params.push(body.description);
 		idx++;
 	}
 

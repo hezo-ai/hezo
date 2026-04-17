@@ -21,7 +21,7 @@ async function createCompanyWithIssue(page: Page) {
 
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers,
-		data: { name: 'Chat Project' },
+		data: { name: 'Chat Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 

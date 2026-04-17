@@ -67,6 +67,7 @@ CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 -- project_doc_type enum removed: project docs now live in the designated repo's .dev/ folder
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
 CREATE TYPE company_type_source AS ENUM ('builtin', 'custom', 'marketplace');
+CREATE TYPE goal_status AS ENUM ('active', 'achieved', 'archived');
 
 -------------------------------------------------------------------------------
 -- AGENT TYPES
@@ -277,7 +278,7 @@ CREATE TABLE projects (
     company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     name                TEXT NOT NULL,
     slug                TEXT NOT NULL,
-    goal                TEXT NOT NULL DEFAULT '',
+    description         TEXT NOT NULL DEFAULT '',
     is_internal         BOOLEAN NOT NULL DEFAULT false,
     docker_base_image   TEXT NOT NULL DEFAULT 'hezo/agent-base:latest',
     container_id        TEXT,
@@ -331,6 +332,26 @@ CREATE TABLE secrets (
 
 CREATE INDEX idx_secrets_company ON secrets(company_id);
 CREATE INDEX idx_secrets_project ON secrets(project_id);
+
+-------------------------------------------------------------------------------
+-- GOALS
+-------------------------------------------------------------------------------
+
+CREATE TABLE goals (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id           UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
+    title                TEXT NOT NULL,
+    description          TEXT NOT NULL DEFAULT '',
+    status               goal_status NOT NULL DEFAULT 'active',
+    created_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_goals_company ON goals(company_id);
+CREATE INDEX idx_goals_project ON goals(project_id);
+CREATE INDEX idx_goals_status  ON goals(status);
 
 -------------------------------------------------------------------------------
 -- COMPANY SSH KEYS

@@ -22,6 +22,7 @@ const TABLE_TO_QUERY_KEY: Record<
 	cost_entries: (cid) => [['companies', cid, 'costs']],
 	execution_locks: (cid) => [['companies', cid, 'execution-locks']],
 	repos: (cid) => [['companies', cid, 'projects']],
+	goals: (cid) => [['companies', cid, 'goals']],
 };
 
 export function useWebSocket(wsCompanyId: string, routeCompanyId: string): void {

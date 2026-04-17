@@ -54,7 +54,9 @@ function ProjectListPage() {
 											<h2 className="text-[15px] font-medium text-text truncate">{p.name}</h2>
 											{p.container_status && <ContainerStatusBadge status={p.container_status} />}
 										</div>
-										{p.goal && <p className="text-xs text-text-muted line-clamp-2">{p.goal}</p>}
+										{p.description && (
+											<p className="text-xs text-text-muted line-clamp-2">{p.description}</p>
+										)}
 										<div className="flex gap-3 text-xs text-text-muted mt-1">
 											<span>{p.open_issue_count} issues</span>
 											<span>{p.repo_count} repos</span>

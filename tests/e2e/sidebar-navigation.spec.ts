@@ -108,11 +108,11 @@ test.describe('Sidebar Navigation', () => {
 		// Create additional projects
 		await page.request.post(`/api/companies/${company.id}/projects`, {
 			headers,
-			data: { name: 'Alpha' },
+			data: { name: 'Alpha', description: 'Test project.' },
 		});
 		await page.request.post(`/api/companies/${company.id}/projects`, {
 			headers,
-			data: { name: 'Beta' },
+			data: { name: 'Beta', description: 'Test project.' },
 		});
 
 		await suppressAiModal(page);
@@ -135,11 +135,11 @@ test.describe('Sidebar Navigation', () => {
 		// Create projects in alphabetical order that would sort before "Operations"
 		await page.request.post(`/api/companies/${company.id}/projects`, {
 			headers,
-			data: { name: 'Aardvark' },
+			data: { name: 'Aardvark', description: 'Test project.' },
 		});
 		await page.request.post(`/api/companies/${company.id}/projects`, {
 			headers,
-			data: { name: 'Zebra' },
+			data: { name: 'Zebra', description: 'Test project.' },
 		});
 
 		await suppressAiModal(page);
@@ -248,7 +248,7 @@ test.describe('Sidebar Navigation', () => {
 
 		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 			headers,
-			data: { name: 'Nav Test Project' },
+			data: { name: 'Nav Test Project', description: 'Test project.' },
 		});
 		const project = ((await projRes.json()) as any).data;
 

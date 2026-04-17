@@ -27,7 +27,7 @@ test('can create an issue with required assignee', async ({ page }) => {
 	// Create a project via API
 	await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers,
-		data: { name: 'Test Project' },
+		data: { name: 'Test Project', description: 'Test project.' },
 	});
 
 	// Navigate to issues
@@ -84,7 +84,7 @@ test('issue detail shows execution lock banner when locked', async ({ page }) =>
 
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers,
-		data: { name: 'Lock Project' },
+		data: { name: 'Lock Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 
@@ -127,7 +127,7 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers,
-		data: { name: 'Rules Project' },
+		data: { name: 'Rules Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 
@@ -199,7 +199,7 @@ test('issue detail shows assignee with status badge', async ({ page }) => {
 	// Create project and issue assigned to agent
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers,
-		data: { name: 'Assignee Project' },
+		data: { name: 'Assignee Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 
@@ -240,7 +240,7 @@ test('can change assignee via popover dropdown', async ({ page }) => {
 
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers,
-		data: { name: 'Change Assignee Project' },
+		data: { name: 'Change Assignee Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 
@@ -285,7 +285,7 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers,
-		data: { name: 'Outside Click Project' },
+		data: { name: 'Outside Click Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 

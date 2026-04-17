@@ -14,36 +14,47 @@ interface CreateProjectDialogProps {
 
 export function CreateProjectDialog({ companyId, open, onOpenChange }: CreateProjectDialogProps) {
 	const [name, setName] = useState('');
-	const [goal, setGoal] = useState('');
+	const [description, setDescription] = useState('');
 	const createProject = useCreateProject(companyId);
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
-		await createProject.mutateAsync({ name, goal: goal || undefined });
+		if (!name.trim() || !description.trim()) return;
+		await createProject.mutateAsync({
+			name: name.trim(),
+			description: description.trim(),
+		});
 		onOpenChange(false);
 		setName('');
-		setGoal('');
+		setDescription('');
 	}
+
+	const canSubmit = name.trim().length > 0 && description.trim().length > 0;
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
-				<Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md rounded-radius-lg border border-border bg-bg-elevated p-6 shadow-2xl">
-					<Dialog.Title className="text-base font-medium mb-4">Create Project</Dialog.Title>
+				<Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg rounded-radius-lg border border-border bg-bg-elevated p-6 shadow-2xl">
+					<Dialog.Title className="text-base font-medium mb-1">Create Project</Dialog.Title>
+					<p className="text-sm text-text-muted mb-4">
+						The CEO will draft an execution plan from your description.
+					</p>
 					<form onSubmit={handleSubmit} className="flex flex-col gap-4">
 						<Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
 						<Textarea
-							label="Goal"
-							value={goal}
-							onChange={(e) => setGoal(e.target.value)}
-							placeholder="Optional"
+							label="Description"
+							value={description}
+							onChange={(e) => setDescription(e.target.value)}
+							required
+							rows={4}
+							placeholder="What is this project? Domain, users, and the core problem it solves."
 						/>
 						<div className="flex justify-end gap-2 mt-2">
 							<Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
 								Cancel
 							</Button>
-							<Button type="submit" disabled={!name.trim() || createProject.isPending}>
+							<Button type="submit" disabled={!canSubmit || createProject.isPending}>
 								{createProject.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 								Create
 							</Button>

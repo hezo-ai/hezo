@@ -8,7 +8,10 @@ test.describe('Container Management', () => {
 
 		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 			headers,
-			data: { name: 'Container Project', goal: 'Test container management' },
+			data: {
+				name: 'Container Project',
+				description: 'Test container management project.',
+			},
 		});
 		const project = ((await projRes.json()) as any).data;
 

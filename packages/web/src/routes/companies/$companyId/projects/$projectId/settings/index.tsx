@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Badge } from '../../../../../../components/ui/badge';
 import { Button } from '../../../../../../components/ui/button';
 import { Input } from '../../../../../../components/ui/input';
+import { Textarea } from '../../../../../../components/ui/textarea';
 import { useProject, useUpdateProject } from '../../../../../../hooks/use-projects';
 import { useCreateRepo, useDeleteRepo, useRepos } from '../../../../../../hooks/use-repos';
 
@@ -19,7 +20,7 @@ function ProjectSettingsPage() {
 	const [repoName, setRepoName] = useState('');
 	const [repoUrl, setRepoUrl] = useState('');
 	const [name, setName] = useState('');
-	const [goal, setGoal] = useState('');
+	const [description, setDescription] = useState('');
 	const [editing, setEditing] = useState(false);
 
 	if (!project) return null;
@@ -35,7 +36,7 @@ function ProjectSettingsPage() {
 	function startEditing() {
 		if (!project) return;
 		setName(project.name);
-		setGoal(project.goal ?? '');
+		setDescription(project.description ?? '');
 		setEditing(true);
 	}
 
@@ -43,7 +44,7 @@ function ProjectSettingsPage() {
 		e.preventDefault();
 		await updateProject.mutateAsync({
 			name: name.trim() || undefined,
-			goal: goal.trim() || undefined,
+			description: description.trim(),
 		});
 		setEditing(false);
 	}
@@ -56,7 +57,12 @@ function ProjectSettingsPage() {
 				{editing ? (
 					<form onSubmit={handleSave} className="space-y-3">
 						<Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
-						<Input label="Goal" value={goal} onChange={(e) => setGoal(e.target.value)} />
+						<Textarea
+							label="Description"
+							value={description}
+							onChange={(e) => setDescription(e.target.value)}
+							rows={4}
+						/>
 						<div className="flex gap-2">
 							<Button type="submit" size="sm" disabled={updateProject.isPending}>
 								{updateProject.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save'}
@@ -71,9 +77,9 @@ function ProjectSettingsPage() {
 						<div>
 							<span className="text-text-muted">Name:</span> {project.name}
 						</div>
-						{project.goal && (
+						{project.description && (
 							<div>
-								<span className="text-text-muted">Goal:</span> {project.goal}
+								<span className="text-text-muted">Description:</span> {project.description}
 							</div>
 						)}
 						<Button variant="ghost" size="sm" onClick={startEditing} className="mt-2">

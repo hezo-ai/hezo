@@ -57,7 +57,7 @@ describe('syncAllContainerStatuses', () => {
 		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Ghost Container Project' }),
+			body: JSON.stringify({ name: 'Ghost Container Project', description: 'Test project.' }),
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -84,7 +84,7 @@ describe('syncAllContainerStatuses', () => {
 		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Stopped Container Project' }),
+			body: JSON.stringify({ name: 'Stopped Container Project', description: 'Test project.' }),
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -112,7 +112,7 @@ describe('syncAllContainerStatuses', () => {
 		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Running Container Project' }),
+			body: JSON.stringify({ name: 'Running Container Project', description: 'Test project.' }),
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -140,7 +140,7 @@ describe('syncAllContainerStatuses', () => {
 		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Broadcast Test Project' }),
+			body: JSON.stringify({ name: 'Broadcast Test Project', description: 'Test project.' }),
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -176,7 +176,7 @@ describe('syncAllContainerStatuses', () => {
 		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No Broadcast Project' }),
+			body: JSON.stringify({ name: 'No Broadcast Project', description: 'Test project.' }),
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -208,7 +208,7 @@ describe('provisionContainer broadcasting', () => {
 		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Provision Broadcast Project' }),
+			body: JSON.stringify({ name: 'Provision Broadcast Project', description: 'Test project.' }),
 		});
 		projectId = (await projectRes.json()).data.id;
 
@@ -405,7 +405,7 @@ describe('stopContainerGracefully', () => {
 		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Stop Test Project' }),
+			body: JSON.stringify({ name: 'Stop Test Project', description: 'Test project.' }),
 		});
 		projectId = (await projectRes.json()).data.id;
 		await new Promise((r) => setTimeout(r, 100));
@@ -504,7 +504,7 @@ describe('syncAllContainerStatuses with stopping status', () => {
 		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Stopping Sync Project' }),
+			body: JSON.stringify({ name: 'Stopping Sync Project', description: 'Test project.' }),
 		});
 		const projectId = (await projectRes.json()).data.id;
 		await new Promise((r) => setTimeout(r, 100));

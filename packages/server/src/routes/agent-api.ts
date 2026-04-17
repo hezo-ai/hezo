@@ -70,7 +70,7 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 
 	const issues = await db.query(
 		`SELECT i.id, i.number, i.identifier, i.title, i.description, i.status, i.priority,
-		        p.name AS project_name, p.goal AS project_goal, p.id AS project_id,
+		        p.name AS project_name, p.description AS project_description, p.id AS project_id,
 		        co.description AS company_description,
 		        (SELECT count(*)::int FROM issue_comments ic
 		         WHERE ic.issue_id = i.id AND ic.created_at > COALESCE(

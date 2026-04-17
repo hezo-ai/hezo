@@ -51,7 +51,7 @@ beforeAll(async () => {
 	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Test Project' }),
+		body: JSON.stringify({ name: 'Test Project', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
@@ -303,7 +303,7 @@ describe('MCP tool handlers: data queries via DB', () => {
 
 	it('create_project inserts correctly', async () => {
 		const r = await db.query(
-			"INSERT INTO projects (company_id, name, slug, goal) VALUES ($1, 'MCP Project', 'mcp-project', 'test') RETURNING *",
+			"INSERT INTO projects (company_id, name, slug, description) VALUES ($1, 'MCP Project', 'mcp-project', 'test') RETURNING *",
 			[companyId],
 		);
 		expect(r.rows.length).toBe(1);

@@ -73,7 +73,7 @@ beforeAll(async () => {
 	const projectRes = await app.request(`/api/companies/${companyAId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Alpha Project' }),
+		body: JSON.stringify({ name: 'Alpha Project', description: 'Test project.' }),
 	});
 	projectAId = (await projectRes.json()).data.id;
 

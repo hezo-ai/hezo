@@ -227,7 +227,7 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
 
 	const result = await db.query(
 		`SELECT i.*,
-            p.name AS project_name, p.goal AS project_goal,
+            p.name AS project_name, p.description AS project_description,
             co.description AS company_description,
             COALESCE(ma.title, m.display_name) AS assignee_name,
             COALESCE(ma_ps.title, m_ps.display_name) AS progress_summary_updated_by_name,

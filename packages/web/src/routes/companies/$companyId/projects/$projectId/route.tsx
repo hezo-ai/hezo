@@ -26,7 +26,7 @@ function ProjectLayout() {
 			/>
 
 			<h1 className="text-lg font-semibold mb-1">{project.name}</h1>
-			{project.goal && <p className="text-sm text-text-muted mb-4">{project.goal}</p>}
+			{project.description && <p className="text-sm text-text-muted mb-4">{project.description}</p>}
 
 			<div className="flex gap-1 border-b border-border mb-6">
 				{tabs.map((tab) => {

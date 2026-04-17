@@ -38,7 +38,7 @@ beforeAll(async () => {
 	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Alpha Project' }),
+		body: JSON.stringify({ name: 'Alpha Project', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
@@ -46,7 +46,7 @@ beforeAll(async () => {
 	const otherProjectRes = await app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Beta Project' }),
+		body: JSON.stringify({ name: 'Beta Project', description: 'Test project.' }),
 	});
 	otherProjectId = (await otherProjectRes.json()).data.id;
 

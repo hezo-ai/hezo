@@ -50,7 +50,7 @@ beforeAll(async () => {
 	const projRes = await ctx.app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Autonomy Project' }),
+		body: JSON.stringify({ name: 'Autonomy Project', description: 'Test project.' }),
 	});
 	projectId = ((await projRes.json()) as any).data.id;
 });

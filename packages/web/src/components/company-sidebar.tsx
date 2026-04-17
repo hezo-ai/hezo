@@ -38,7 +38,10 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 		},
 		{
 			title: 'Work',
-			items: [{ to: '/companies/$companyId/issues', params, label: 'Issues' }],
+			items: [
+				{ to: '/companies/$companyId/issues', params, label: 'Issues' },
+				{ to: '/companies/$companyId/goals', params, label: 'Goals' },
+			],
 		},
 		{
 			title: 'Projects',

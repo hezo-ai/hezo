@@ -52,7 +52,7 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers,
-		data: { name: 'Log Test Project' },
+		data: { name: 'Log Test Project', description: 'Test project.' },
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
@@ -122,7 +122,7 @@ test('issue page hides log strip and shows execution comment after run completes
 
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers,
-		data: { name: 'Strip Test Project' },
+		data: { name: 'Strip Test Project', description: 'Test project.' },
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
@@ -166,7 +166,7 @@ test('marking issue done cleans up worktree directory', async ({ page }) => {
 
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers,
-		data: { name: 'Cleanup Test Project' },
+		data: { name: 'Cleanup Test Project', description: 'Test project.' },
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 

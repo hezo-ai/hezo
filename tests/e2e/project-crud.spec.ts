@@ -2,27 +2,33 @@ import { expect, test } from '@playwright/test';
 import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Project CRUD', () => {
-	test('creates a project via dialog', async ({ page }) => {
+	test('creates a project via dialog and opens a CEO planning ticket', async ({ page }) => {
 		await authenticate(page);
 		const { company } = await createCompanyWithAgents(page);
 
 		await page.goto(`/companies/${company.slug}/projects`);
 		await waitForPageLoad(page);
 
-		// Click "New project" button
 		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
 
-		// Fill in the dialog
 		await page.getByLabel('Name').fill('Marketing Campaign');
-		await page.getByLabel('Goal').fill('Plan Q3 marketing initiatives');
+		await page
+			.getByLabel('Description')
+			.fill('Q3 brand push aimed at existing users to drive upsells.');
 
-		// Submit
 		await page.getByRole('button', { name: 'Create' }).click();
 
-		// Verify project appears in the list
 		const main = page.getByRole('main');
 		await expect(main.getByText('Marketing Campaign')).toBeVisible({ timeout: 5000 });
-		await expect(main.getByText('Plan Q3 marketing initiatives')).toBeVisible();
+		await expect(
+			main.getByText('Q3 brand push aimed at existing users to drive upsells.'),
+		).toBeVisible();
+
+		await page.goto(`/companies/${company.slug}/projects/marketing-campaign/issues`);
+		await waitForPageLoad(page);
+		await expect(
+			page.getByRole('main').getByText('Draft execution plan for "Marketing Campaign"'),
+		).toBeVisible({ timeout: 5000 });
 	});
 
 	test('project list shows default Operations project', async ({ page }) => {
@@ -41,11 +47,10 @@ test.describe('Project CRUD', () => {
 		const headers = { Authorization: `Bearer ${token}` };
 
 		// Create a project via API
-		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		await page.request.post(`/api/companies/${company.id}/projects`, {
 			headers,
-			data: { name: 'Count Test', goal: 'Testing counts' },
+			data: { name: 'Count Test', description: 'Count test project.' },
 		});
-		const project = ((await projRes.json()) as any).data;
 
 		await page.goto(`/companies/${company.slug}/projects`);
 		await waitForPageLoad(page);
@@ -64,7 +69,7 @@ test.describe('Project CRUD', () => {
 
 		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 			headers,
-			data: { name: 'Linkable Project' },
+			data: { name: 'Linkable Project', description: 'Linkable project description.' },
 		});
 		const project = ((await projRes.json()) as any).data;
 
@@ -90,12 +95,16 @@ test.describe('Project CRUD', () => {
 
 		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
 
-		// Create button should be disabled when name is empty
+		// Create button should be disabled when name or description is empty
 		const createBtn = page.getByRole('button', { name: 'Create' });
 		await expect(createBtn).toBeDisabled();
 
-		// Fill name — now it should be enabled
+		// Fill name alone — still disabled because description is required
 		await page.getByLabel('Name').fill('My Project');
+		await expect(createBtn).toBeDisabled();
+
+		// Fill description — now it should be enabled
+		await page.getByLabel('Description').fill('A short project description.');
 		await expect(createBtn).toBeEnabled();
 	});
 });
