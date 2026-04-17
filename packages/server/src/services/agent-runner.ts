@@ -4,6 +4,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentRuntime,
 	type AiProvider,
+	CommentContentType,
 	ContainerStatus,
 	HeartbeatRunStatus,
 	PROVIDER_TO_ENV_VAR,
@@ -29,7 +30,7 @@ import type { WebSocketManager } from './ws';
 
 const LOG_CAP_BYTES = 1_000_000;
 
-interface AgentInfo {
+export interface AgentInfo {
 	id: string;
 	title: string;
 	system_prompt: string;
@@ -620,7 +621,7 @@ async function buildCoachReviewPrompt(
 	return parts.join('\n');
 }
 
-interface HeartbeatRunBroadcast {
+export interface HeartbeatRunBroadcast {
 	wsManager?: WebSocketManager;
 	companyId: string;
 	issueId: string;
@@ -643,20 +644,51 @@ function broadcastHeartbeatRunChange(
 	});
 }
 
-async function createHeartbeatRun(
+export async function createHeartbeatRun(
 	db: PGlite,
 	agent: AgentInfo,
 	issue: IssueInfo,
 	broadcast: HeartbeatRunBroadcast,
 ): Promise<string> {
-	const result = await db.query<{ id: string }>(
-		`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
-		 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())
-		 RETURNING id`,
-		[agent.id, agent.company_id, issue.id, HeartbeatRunStatus.Running],
-	);
-	const runId = result.rows[0].id;
+	await db.query('BEGIN');
+	let runId: string;
+	try {
+		const runResult = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())
+			 RETURNING id`,
+			[agent.id, agent.company_id, issue.id, HeartbeatRunStatus.Running],
+		);
+		runId = runResult.rows[0].id;
+
+		await db.query(
+			`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
+			[
+				issue.id,
+				agent.id,
+				CommentContentType.Run,
+				JSON.stringify({ run_id: runId, agent_id: agent.id, agent_title: agent.title }),
+			],
+		);
+		await db.query('COMMIT');
+	} catch (e) {
+		await db.query('ROLLBACK');
+		throw e;
+	}
+
 	broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Running, 'INSERT');
+	if (broadcast.wsManager) {
+		broadcastRowChange(
+			broadcast.wsManager,
+			`company:${broadcast.companyId}`,
+			'issue_comments',
+			'INSERT',
+			{
+				issue_id: issue.id,
+			},
+		);
+	}
 	return runId;
 }
 

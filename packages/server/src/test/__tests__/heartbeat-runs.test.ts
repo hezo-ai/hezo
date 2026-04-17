@@ -2,6 +2,11 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
+import {
+	type AgentInfo,
+	createHeartbeatRun,
+	type HeartbeatRunBroadcast,
+} from '../../services/agent-runner';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
@@ -145,49 +150,97 @@ describe('heartbeat-runs API', () => {
 	});
 });
 
-describe('execution comments', () => {
-	it('creates an execution-type comment', async () => {
-		const runResult = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at, finished_at, exit_code)
-			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now() - interval '30 seconds', now(), 0)
-			 RETURNING id`,
-			[agentId, companyId, issueId],
-		);
-		const heartbeatRunId = runResult.rows[0].id;
+describe('run comments', () => {
+	it('createHeartbeatRun inserts a run-type comment linked to the run', async () => {
+		const agent: AgentInfo = {
+			id: agentId,
+			title: 'Test Runner',
+			system_prompt: '',
+			company_id: companyId,
+		};
+		const issue = {
+			id: issueId,
+			identifier: 'RT-1',
+			title: 'Test Issue',
+			description: '',
+			status: 'open',
+			priority: 'medium',
+			project_id: projectId,
+			rules: null,
+		};
+		const broadcast: HeartbeatRunBroadcast = {
+			companyId,
+			issueId,
+			memberId: agentId,
+		};
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				content_type: 'execution',
-				content: {
-					heartbeat_run_id: heartbeatRunId,
-					agent_id: agentId,
-					agent_title: 'Test Runner',
-					status: 'succeeded',
-					exit_code: 0,
-					duration_ms: 30000,
-					stdout_preview: 'did some work',
-				},
-			}),
-		});
-		expect(res.status).toBe(201);
-		const body = await res.json();
-		expect(body.data.content_type).toBe('execution');
-		expect(body.data.content.heartbeat_run_id).toBe(heartbeatRunId);
-		expect(body.data.content.agent_title).toBe('Test Runner');
+		const runId = await createHeartbeatRun(db, agent, issue, broadcast);
+		expect(runId).toBeTruthy();
+
+		const runRow = await db.query<{ id: string; status: string }>(
+			'SELECT id, status FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(runRow.rows[0].status).toBe('running');
+
+		const comments = await db.query<{
+			id: string;
+			content_type: string;
+			content: Record<string, unknown>;
+			author_member_id: string | null;
+		}>(
+			`SELECT id, content_type, content, author_member_id
+			 FROM issue_comments
+			 WHERE issue_id = $1 AND content_type = 'run'::comment_content_type
+			   AND content->>'run_id' = $2`,
+			[issueId, runId],
+		);
+		expect(comments.rows.length).toBe(1);
+		expect(comments.rows[0].author_member_id).toBe(agentId);
+		expect(comments.rows[0].content.run_id).toBe(runId);
+		expect(comments.rows[0].content.agent_id).toBe(agentId);
+		expect(comments.rows[0].content.agent_title).toBe('Test Runner');
 	});
 
-	it('execution comments appear in comment list', async () => {
-		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		const execComment = body.data.find(
-			(c: Record<string, unknown>) => c.content_type === 'execution',
+	it('does not insert a second comment when the run finishes', async () => {
+		const agent: AgentInfo = {
+			id: agentId,
+			title: 'Test Runner',
+			system_prompt: '',
+			company_id: companyId,
+		};
+		const issue = {
+			id: issueId,
+			identifier: 'RT-1',
+			title: 'Test Issue',
+			description: '',
+			status: 'open',
+			priority: 'medium',
+			project_id: projectId,
+			rules: null,
+		};
+		const before = await db.query<{ n: number }>(
+			'SELECT COUNT(*)::int AS n FROM issue_comments WHERE issue_id = $1',
+			[issueId],
 		);
-		expect(execComment).toBeTruthy();
-		expect((execComment.content as Record<string, unknown>).status).toBe('succeeded');
+
+		const newRunId = await createHeartbeatRun(db, agent, issue, {
+			companyId,
+			issueId,
+			memberId: agentId,
+		});
+
+		await db.query(
+			`UPDATE heartbeat_runs
+			 SET status = 'succeeded'::heartbeat_run_status, finished_at = now(), exit_code = 0
+			 WHERE id = $1`,
+			[newRunId],
+		);
+
+		const after = await db.query<{ n: number }>(
+			'SELECT COUNT(*)::int AS n FROM issue_comments WHERE issue_id = $1',
+			[issueId],
+		);
+		expect(after.rows[0].n).toBe(before.rows[0].n + 1);
 	});
 });

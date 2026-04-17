@@ -114,9 +114,7 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	await expect(page).toHaveURL(new RegExp(`/issues/${issue.id}$`));
 });
 
-test('issue page hides log strip and shows execution comment after run completes', async ({
-	page,
-}) => {
+test('issue page renders run as an inline comment with live-styled log', async ({ page }) => {
 	await authenticate(page);
 	const { company, token } = await createCompanyWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
@@ -127,7 +125,7 @@ test('issue page hides log strip and shows execution comment after run completes
 
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers,
-		data: { name: 'Strip Test Project', description: 'Test project.' },
+		data: { name: 'Run Comment Project', description: 'Test project.' },
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
@@ -137,7 +135,7 @@ test('issue page hides log strip and shows execution comment after run completes
 		headers,
 		data: {
 			project_id: project.id,
-			title: 'Strip Me',
+			title: 'Inline Run',
 			description: 'Synthetic test task',
 			assignee_id: ceo.id,
 		},
@@ -149,15 +147,27 @@ test('issue page hides log strip and shows execution comment after run completes
 		data: { content_type: 'text', content: { text: 'Begin' } },
 	});
 
-	await waitForRunStatus(page, company.id, issue.id, token, 'succeeded');
+	const run = await waitForRunStatus(page, company.id, issue.id, token, 'succeeded');
 
 	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
 
-	const executionCommentLink = page.getByRole('link', { name: /view full log/i });
-	await expect(executionCommentLink).toBeVisible({ timeout: 10_000 });
+	const runComment = page.getByTestId('run-comment').first();
+	await expect(runComment).toBeVisible({ timeout: 10_000 });
+
+	const runLog = runComment.getByTestId('run-comment-log');
+	await expect(runLog).toBeVisible();
+	await expect(runLog).toContainText('[synthetic]', { timeout: 10_000 });
+
+	const height = await runLog.evaluate((el) => el.getBoundingClientRect().height);
+	expect(height).toBeGreaterThan(150);
+	expect(height).toBeLessThan(220);
 
 	await expect(page.getByTestId('issue-run-log-tail')).toHaveCount(0);
-	await expect(page.getByRole('link', { name: /view full run/i })).toHaveCount(0);
+
+	const runLink = runComment.getByRole('link', { name: /view full run/i });
+	await expect(runLink).toBeVisible();
+	await runLink.click();
+	await expect(page).toHaveURL(new RegExp(`/executions/${run.id}$`));
 });
 
 test('marking issue done cleans up worktree directory', async ({ page }) => {

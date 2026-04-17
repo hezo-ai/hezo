@@ -33,9 +33,6 @@ export function useCreateComment(companyId: string, issueId: string) {
 			queryClient.invalidateQueries({
 				queryKey: ['companies', companyId, 'issues', issueId, 'comments'],
 			});
-			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'issues', issueId, 'latest-run'],
-			});
 		},
 	});
 }

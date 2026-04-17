@@ -8,7 +8,23 @@ const TABLE_TO_QUERY_KEY: Record<
 	(companyId: string, row: Record<string, unknown>) => string[][]
 > = {
 	issues: (cid) => [['companies', cid, 'issues']],
-	heartbeat_runs: (cid) => [['companies', cid, 'issues']],
+	heartbeat_runs: (cid, row) => {
+		const keys: string[][] = [['companies', cid, 'issues']];
+		if (row.member_id) {
+			keys.push(['companies', cid, 'agents', row.member_id as string, 'heartbeat-runs']);
+			if (row.id) {
+				keys.push([
+					'companies',
+					cid,
+					'agents',
+					row.member_id as string,
+					'heartbeat-runs',
+					row.id as string,
+				]);
+			}
+		}
+		return keys;
+	},
 	issue_comments: (cid, row) => [
 		['companies', cid, 'issues'],
 		...(row.issue_id ? [['companies', cid, 'issues', row.issue_id as string, 'comments']] : []),

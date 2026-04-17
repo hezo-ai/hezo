@@ -4,7 +4,6 @@ import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AgentStatusLabel } from '../../../../components/agent-status-label';
 import { type CommentData, CommentRenderer } from '../../../../components/comment-renderers';
-import { IssueRunLogStrip } from '../../../../components/issue-run-log-strip';
 import { LiveChatPanel } from '../../../../components/live-chat-panel';
 import { Avatar, avatarColorFromString } from '../../../../components/ui/avatar';
 import { Badge } from '../../../../components/ui/badge';
@@ -13,7 +12,6 @@ import { Textarea } from '../../../../components/ui/textarea';
 import { useAgents } from '../../../../hooks/use-agents';
 import { useChooseOption, useComments, useCreateComment } from '../../../../hooks/use-comments';
 import { useExecutionLock } from '../../../../hooks/use-execution-locks';
-import { isActiveRunStatus, useLatestRunForIssue } from '../../../../hooks/use-heartbeat-runs';
 import {
 	useCreateSubIssue,
 	useDeleteIssue,
@@ -58,7 +56,6 @@ function IssueDetailPage() {
 	const { data: deps } = useIssueDependencies(companyId, issueId);
 	const { data: agents } = useAgents(companyId);
 	const { data: lock } = useExecutionLock(companyId, issueId);
-	const { data: latestRun } = useLatestRunForIssue(companyId, issueId);
 	const updateIssue = useUpdateIssue(companyId, issueId);
 	const deleteIssue = useDeleteIssue(companyId);
 	const createComment = useCreateComment(companyId, issueId);
@@ -358,12 +355,6 @@ function IssueDetailPage() {
 									</div>
 								))}
 							</div>
-
-							{latestRun && isActiveRunStatus(latestRun.status) && (
-								<div className="mb-4">
-									<IssueRunLogStrip companyId={companyId} run={latestRun} />
-								</div>
-							)}
 
 							<form onSubmit={handleComment} className="flex flex-col gap-2">
 								<Textarea

@@ -1,6 +1,9 @@
 import { Link } from '@tanstack/react-router';
 import { ArrowRight, Check, ChevronDown, ChevronRight, ExternalLink, Terminal } from 'lucide-react';
 import { useState } from 'react';
+import { isActiveRunStatus, useHeartbeatRun } from '../hooks/use-heartbeat-runs';
+import { useRunLogs } from '../hooks/use-run-logs';
+import { LogViewer } from './log-viewer';
 import { Badge } from './ui/badge';
 
 export interface CommentData {
@@ -36,8 +39,8 @@ interface RenderProps {
 
 export function CommentRenderer({ comment, onChooseOption, companyId }: RenderProps) {
 	switch (comment.content_type) {
-		case 'execution':
-			return <ExecutionComment comment={comment} companyId={companyId} />;
+		case 'run':
+			return <RunComment comment={comment} companyId={companyId} />;
 		case 'trace':
 			return <TraceComment comment={comment} />;
 		case 'options':
@@ -51,52 +54,58 @@ export function CommentRenderer({ comment, onChooseOption, companyId }: RenderPr
 	}
 }
 
-function formatDuration(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	const seconds = Math.floor(ms / 1000);
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-	return `${minutes}m ${remainingSeconds}s`;
+function runStatusLabel(status: string): string {
+	if (status === 'timed_out') return 'timed out';
+	return status;
 }
 
-function ExecutionComment({ comment, companyId }: { comment: CommentData; companyId?: string }) {
+function runStatusDotClass(status: string): string {
+	if (status === 'running' || status === 'queued') return 'bg-accent-yellow animate-pulse';
+	if (status === 'succeeded') return 'bg-accent-green';
+	if (status === 'failed' || status === 'timed_out') return 'bg-accent-red';
+	return 'bg-text-subtle';
+}
+
+function RunComment({ comment, companyId }: { comment: CommentData; companyId?: string }) {
 	const content = typeof comment.content === 'object' ? comment.content : {};
-	const status = content.status ?? 'unknown';
-	const statusColor = status === 'succeeded' ? 'green' : status === 'failed' ? 'red' : 'yellow';
-	const durationMs = content.duration_ms;
-	const stdoutPreview = content.stdout_preview ?? '';
+	const runId: string = content.run_id ?? '';
+	const agentId: string = content.agent_id ?? '';
+	const agentTitle: string = content.agent_title ?? 'Agent';
+
+	const runQuery = useHeartbeatRun(companyId ?? '', agentId, runId);
+	const run = runQuery.data;
+	const status = run?.status ?? 'queued';
+	const isActive = isActiveRunStatus(status);
+	const { lines } = useRunLogs(run?.project_id, runId, run?.log_text, isActive);
+
+	if (!companyId || !runId || !agentId) {
+		return <p className="text-xs text-text-subtle italic">Run reference missing.</p>;
+	}
 
 	return (
-		<div className="rounded-lg border border-border-subtle bg-bg-subtle p-3">
-			<div className="flex items-center gap-2 mb-1">
-				<Terminal className="w-3.5 h-3.5 text-text-muted" />
-				<Badge color={statusColor}>{status}</Badge>
-				{durationMs != null && (
-					<span className="text-xs text-text-muted">{formatDuration(durationMs)}</span>
-				)}
-				{content.exit_code != null && content.exit_code !== 0 && (
-					<span className="text-xs text-accent-red">exit: {content.exit_code}</span>
-				)}
-			</div>
-			{stdoutPreview && (
-				<pre className="text-[10px] font-mono text-text-muted bg-bg-muted rounded p-2 mt-2 max-h-16 overflow-hidden whitespace-pre-wrap">
-					{stdoutPreview}
-				</pre>
-			)}
-			{companyId && content.agent_id && content.heartbeat_run_id && (
-				<Link
-					to="/companies/$companyId/agents/$agentId/executions/$runId"
-					params={{
-						companyId,
-						agentId: content.agent_id,
-						runId: content.heartbeat_run_id,
-					}}
-					className="inline-flex items-center gap-1 text-xs text-accent-blue-text hover:underline mt-2"
-				>
-					View full log <ArrowRight className="w-3 h-3" />
-				</Link>
-			)}
+		<div className="flex flex-col gap-1.5" data-testid="run-comment">
+			<LogViewer
+				lines={lines}
+				compact
+				heightClassName="h-[180px]"
+				testId="run-comment-log"
+				liveLabel={
+					<span className="flex items-center gap-1.5">
+						<span className={`inline-block w-2 h-2 rounded-full ${runStatusDotClass(status)}`} />
+						<span>
+							{agentTitle} — {runStatusLabel(status)}
+						</span>
+					</span>
+				}
+				emptyState={isActive ? 'Waiting for log output...' : 'No output.'}
+			/>
+			<Link
+				to="/companies/$companyId/agents/$agentId/executions/$runId"
+				params={{ companyId, agentId, runId }}
+				className="inline-flex items-center gap-1 text-xs text-accent-blue-text hover:underline self-start"
+			>
+				View full run <ArrowRight className="w-3 h-3" />
+			</Link>
 		</div>
 	);
 }

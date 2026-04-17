@@ -15,6 +15,7 @@ interface LogViewerProps {
 	liveLabel?: ReactNode;
 	heightClassName?: string;
 	testId?: string;
+	compact?: boolean;
 }
 
 export function LogViewer({
@@ -24,6 +25,7 @@ export function LogViewer({
 	liveLabel,
 	heightClassName = 'h-[400px]',
 	testId,
+	compact = false,
 }: LogViewerProps) {
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [copied, setCopied] = useState(false);
@@ -70,40 +72,42 @@ export function LogViewer({
 					{liveLabel}
 					<span className="text-text-subtle font-normal">{lines.length} lines</span>
 				</div>
-				<div className="flex items-center gap-2">
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={handleCopy}
-						disabled={lines.length === 0}
-						className="text-xs h-6 px-2"
-						aria-label="Copy logs to clipboard"
-					>
-						{copied ? (
-							<>
-								<Check className="w-3 h-3" /> Copied
-							</>
-						) : (
-							<>
-								<Copy className="w-3 h-3" /> Copy
-							</>
-						)}
-					</Button>
-					<label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
-						<input
-							type="checkbox"
-							checked={autoScroll}
-							onChange={(e) => setAutoScroll(e.target.checked)}
-							className="rounded"
-						/>
-						Auto-scroll
-					</label>
-					{onClear && (
-						<Button variant="ghost" size="sm" onClick={onClear} className="text-xs h-6 px-2">
-							<Trash2 className="w-3 h-3" /> Clear
+				{!compact && (
+					<div className="flex items-center gap-2">
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={handleCopy}
+							disabled={lines.length === 0}
+							className="text-xs h-6 px-2"
+							aria-label="Copy logs to clipboard"
+						>
+							{copied ? (
+								<>
+									<Check className="w-3 h-3" /> Copied
+								</>
+							) : (
+								<>
+									<Copy className="w-3 h-3" /> Copy
+								</>
+							)}
 						</Button>
-					)}
-				</div>
+						<label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
+							<input
+								type="checkbox"
+								checked={autoScroll}
+								onChange={(e) => setAutoScroll(e.target.checked)}
+								className="rounded"
+							/>
+							Auto-scroll
+						</label>
+						{onClear && (
+							<Button variant="ghost" size="sm" onClick={onClear} className="text-xs h-6 px-2">
+								<Trash2 className="w-3 h-3" /> Clear
+							</Button>
+						)}
+					</div>
+				)}
 			</div>
 			<div
 				ref={scrollRef}
