@@ -330,30 +330,39 @@ function IssueDetailPage() {
 							</div>
 
 							<div className="flex flex-col gap-4 mb-4">
-								{comments?.map((c) => (
-									<div key={c.id} className="flex gap-2.5">
-										<Avatar
-											initials={c.author_name?.slice(0, 2) ?? '??'}
-											size="sm"
-											color={avatarColorFromString(c.author_name ?? 'unknown')}
-										/>
-										<div className="flex-1 min-w-0">
-											<div className="flex items-center gap-2 mb-1">
-												<span className="text-xs font-medium">{c.author_name}</span>
-												<span className="text-[11px] text-text-subtle">
-													{new Date(c.created_at).toLocaleString()}
-												</span>
-											</div>
-											<CommentRenderer
-												comment={c as unknown as CommentData}
-												onChooseOption={(commentId, chosenId) =>
-													chooseOption.mutate({ commentId, chosen_id: chosenId })
-												}
-												companyId={companyId}
+								{comments?.map((c) => {
+									const authorName = c.author_name ?? 'Board';
+									const isAgent = c.author_type === 'agent';
+									return (
+										<div key={c.id} className="flex gap-2.5">
+											<Avatar
+												initials={authorName.slice(0, 2)}
+												size="sm"
+												color={avatarColorFromString(authorName)}
 											/>
+											<div className="flex-1 min-w-0">
+												<div className="flex items-center gap-2 mb-1">
+													<span
+														className={`text-xs font-medium ${isAgent ? 'text-text' : 'text-text-muted'}`}
+														data-testid="comment-author"
+													>
+														{authorName}
+													</span>
+													<span className="text-[11px] text-text-subtle">
+														{new Date(c.created_at).toLocaleString()}
+													</span>
+												</div>
+												<CommentRenderer
+													comment={c as unknown as CommentData}
+													onChooseOption={(commentId, chosenId) =>
+														chooseOption.mutate({ commentId, chosen_id: chosenId })
+													}
+													companyId={companyId}
+												/>
+											</div>
 										</div>
-									</div>
-								))}
+									);
+								})}
 							</div>
 
 							<form onSubmit={handleComment} className="flex flex-col gap-2">

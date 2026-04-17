@@ -95,6 +95,31 @@ describe('comments CRUD', () => {
 		expect(body.data[0].content.text).toBe('Hello world');
 	});
 
+	it('labels board-authored comments as "Board" and agent-authored as the agent title', async () => {
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: 'From the agent' },
+			}),
+		});
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		const agentComment = body.data.find(
+			(c: { content: { text?: string } }) => c.content.text === 'From the agent',
+		);
+		const boardComment = body.data.find(
+			(c: { content: { text?: string } }) => c.content.text === 'Hello world',
+		);
+		expect(agentComment.author_name).toBe('Comment Bot');
+		expect(boardComment.author_name).toBe('Board');
+	});
+
 	it('creates an options comment and chooses an option', async () => {
 		const createRes = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
 			method: 'POST',

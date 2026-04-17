@@ -98,4 +98,28 @@ test.describe('Issue Comments', () => {
 		await expect(page.getByText('First comment')).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('Second comment')).toBeVisible();
 	});
+
+	test('renders markdown in comment bodies and shows author label', async ({ page }) => {
+		await authenticate(page);
+		const { company, issue, headers } = await createProjectAndIssue(page);
+
+		const markdownBody = '## Execution Plan\n\n**Objective:** Ship it.\n\n- one\n- two';
+		await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+			headers,
+			data: { content_type: 'text', content: { text: markdownBody } },
+		});
+
+		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await waitForPageLoad(page);
+
+		const body = page.getByTestId('text-comment-body').first();
+		await expect(body).toBeVisible({ timeout: 5000 });
+		await expect(body.locator('h2')).toHaveText('Execution Plan');
+		await expect(body.locator('strong')).toHaveText('Objective:');
+		await expect(body.locator('li')).toHaveCount(2);
+
+		const author = page.getByTestId('comment-author').first();
+		await expect(author).toBeVisible();
+		await expect(author).toHaveText('Board');
+	});
 });

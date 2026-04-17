@@ -487,7 +487,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			]);
 			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
 			const r = await db.query(
-				`SELECT ic.*, COALESCE(ma.title, m.display_name) AS author_name
+				`SELECT ic.*, COALESCE(ma.title, m.display_name, 'Board') AS author_name
 			 FROM issue_comments ic LEFT JOIN members m ON m.id = ic.author_member_id LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
 			 WHERE ic.issue_id = $1 ORDER BY ic.created_at ASC`,
 				[args.issue_id],
@@ -515,9 +515,15 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				args.company_id,
 			]);
 			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
+			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const r = await db.query(
-				`INSERT INTO issue_comments (issue_id, content_type, content) VALUES ($1, $2::comment_content_type, $3::jsonb) RETURNING *`,
-				[args.issue_id, CommentContentType.Text, JSON.stringify({ text: args.content })],
+				`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content) VALUES ($1, $2, $3::comment_content_type, $4::jsonb) RETURNING *`,
+				[
+					args.issue_id,
+					authorMemberId,
+					CommentContentType.Text,
+					JSON.stringify({ text: args.content }),
+				],
 			);
 			return r.rows[0];
 		},

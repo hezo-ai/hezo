@@ -2,13 +2,15 @@ import type { PGlite } from '@electric-sql/pglite';
 import { AuthType } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { MasterKeyManager } from '../../crypto/master-key';
 import type { AuthInfo, Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
+let masterKeyManager: MasterKeyManager;
 
 let companyId: string;
 let agentId: string;
@@ -23,6 +25,7 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;
+	masterKeyManager = ctx.masterKeyManager;
 
 	const typesRes = await app.request('/api/company-types', {
 		headers: authHeader(token),
@@ -395,6 +398,42 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).content).toBe('MCP comment test');
+	});
+
+	it('create_comment via MCP sets author_member_id to calling agent', async () => {
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: {
+					name: 'create_comment',
+					arguments: {
+						company_id: companyId,
+						issue_id: issueId,
+						content: 'Authored via MCP',
+					},
+				},
+				id: 1,
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			result: { content: Array<{ type: string; text: string }> };
+		};
+		const inserted = JSON.parse(body.result.content[0].text) as {
+			id: string;
+			author_member_id: string | null;
+		};
+		expect(inserted.author_member_id).toBe(agentId);
+
+		const fetched = await db.query<{ author_member_id: string | null }>(
+			'SELECT author_member_id FROM issue_comments WHERE id = $1',
+			[inserted.id],
+		);
+		expect(fetched.rows[0].author_member_id).toBe(agentId);
 	});
 
 	it('list_comments query returns comments for issue', async () => {

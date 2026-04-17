@@ -32,7 +32,7 @@ commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) =
 	const result = await db.query(
 		`SELECT ic.id, ic.issue_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
             m.member_type AS author_type,
-            COALESCE(ma.title, m.display_name) AS author_name,
+            COALESCE(ma.title, m.display_name, 'Board') AS author_name,
             ic.author_member_id
      FROM issue_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id
