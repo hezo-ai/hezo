@@ -2,10 +2,11 @@ import { generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { PGlite } from '@electric-sql/pglite';
 import { generateMasterKey, MasterKeyManager } from '../../crypto/master-key';
 import { loadAgentRoles } from '../../db/agent-roles';
 import { seedBuiltins } from '../../db/seed';
-import { signBoardJwt } from '../../middleware/auth';
+import { signAgentJwt, signBoardJwt } from '../../middleware/auth';
 import type { DockerClient } from '../../services/docker';
 import { buildApp } from '../../startup';
 import { createTestDbWithMigrations } from './db';
@@ -70,4 +71,42 @@ export async function createTestApp() {
 
 export function authHeader(token: string) {
 	return { Authorization: `Bearer ${token}` };
+}
+
+export async function createAgentRun(
+	db: PGlite,
+	agentId: string,
+	companyId: string,
+	issueId?: string | null,
+): Promise<string> {
+	const result = await db.query<{ id: string }>(
+		`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+		 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())
+		 RETURNING id`,
+		[agentId, companyId, issueId ?? null],
+	);
+	return result.rows[0].id;
+}
+
+export async function mintAgentToken(
+	db: PGlite,
+	masterKeyManager: MasterKeyManager,
+	agentId: string,
+	companyId: string,
+	issueId?: string | null,
+): Promise<{ token: string; runId: string }> {
+	const runId = await createAgentRun(db, agentId, companyId, issueId);
+	const token = await signAgentJwt(masterKeyManager, agentId, companyId, runId);
+	return { token, runId };
+}
+
+export async function finalizeAgentRun(
+	db: PGlite,
+	runId: string,
+	status: 'succeeded' | 'failed' | 'cancelled' | 'timed_out' = 'succeeded',
+): Promise<void> {
+	await db.query(
+		`UPDATE heartbeat_runs SET status = $1::heartbeat_run_status, finished_at = now() WHERE id = $2`,
+		[status, runId],
+	);
 }

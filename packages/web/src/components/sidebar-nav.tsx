@@ -32,17 +32,17 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 							<button
 								type="button"
 								onClick={section.onToggle}
-								className="flex items-center w-full uppercase text-[11px] text-text-subtle font-medium tracking-wide px-3 pt-3 pb-1 hover:text-text transition-colors"
+								className="flex items-center justify-between w-full uppercase text-[11px] text-text-subtle font-medium tracking-wide px-3 pt-3 pb-1 hover:text-text transition-colors"
 							>
+								<span>{section.title}</span>
 								<svg
 									aria-hidden="true"
-									className={`w-3 h-3 mr-1 transition-transform ${section.collapsed ? '' : 'rotate-90'}`}
+									className={`w-3 h-3 transition-transform ${section.collapsed ? '' : 'rotate-90'}`}
 									viewBox="0 0 16 16"
 									fill="currentColor"
 								>
 									<path d="M6 3l5 5-5 5V3z" />
 								</svg>
-								{section.title}
 							</button>
 						) : (
 							<div className="uppercase text-[11px] text-text-subtle font-medium tracking-wide px-3 pt-3 pb-1">

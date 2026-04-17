@@ -40,7 +40,8 @@ async function waitForRunStatus(
 	throw new Error(`Latest run did not reach status ${target} within ${timeoutMs}ms`);
 }
 
-test('run detail page streams synthetic agent logs', async ({ page }) => {
+test('run detail page streams synthetic agent logs', async ({ page, context }) => {
+	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 	await authenticate(page);
 	const { company, token } = await createCompanyWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
@@ -93,6 +94,19 @@ test('run detail page streams synthetic agent logs', async ({ page }) => {
 	const logPane = page.getByTestId('run-log');
 	await expect(logPane).toContainText('[synthetic] starting agent run', { timeout: 10_000 });
 	await expect(logPane).toContainText('[synthetic] task complete', { timeout: 5000 });
+
+	const durationValue = page
+		.getByText('Duration', { exact: true })
+		.locator('xpath=following-sibling::*[1]');
+	await expect(durationValue).toHaveText(/^\d+(d\d+h\d+m|h\d+m|m)?\d*s$/);
+
+	const copyBtn = page.getByRole('button', { name: /copy logs to clipboard/i });
+	await expect(copyBtn).toBeVisible();
+	await copyBtn.click();
+	await expect(copyBtn).toContainText(/copied/i, { timeout: 2000 });
+
+	const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+	expect(clipboardText).toContain('[synthetic] starting agent run');
 });
 
 test('issue page shows minified log strip for latest run', async ({ page }) => {

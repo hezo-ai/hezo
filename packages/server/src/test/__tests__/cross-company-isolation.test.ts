@@ -3,9 +3,9 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
-import { signAgentJwt, signBoardJwt } from '../../middleware/auth';
+import { signBoardJwt } from '../../middleware/auth';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -61,13 +61,13 @@ beforeAll(async () => {
 		headers: authHeader(superuserToken),
 	});
 	agentAId = (await agentsARes.json()).data[0].id;
-	agentAToken = await signAgentJwt(masterKeyManager, agentAId, companyAId);
+	({ token: agentAToken } = await mintAgentToken(db, masterKeyManager, agentAId, companyAId));
 
 	const agentsBRes = await app.request(`/api/companies/${companyBId}/agents`, {
 		headers: authHeader(superuserToken),
 	});
 	agentBId = (await agentsBRes.json()).data[0].id;
-	agentBToken = await signAgentJwt(masterKeyManager, agentBId, companyBId);
+	({ token: agentBToken } = await mintAgentToken(db, masterKeyManager, agentBId, companyBId));
 
 	// Create project in Company A
 	const projectRes = await app.request(`/api/companies/${companyAId}/projects`, {

@@ -3,19 +3,9 @@ import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { LogViewer } from '../../../../../../components/log-viewer';
 import { Badge } from '../../../../../../components/ui/badge';
+import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
 import { useHeartbeatRun } from '../../../../../../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../../../../../../hooks/use-run-logs';
-
-function formatDuration(startedAt: string, finishedAt: string | null): string {
-	if (!finishedAt) return 'In progress...';
-	const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
-	if (ms < 1000) return `${ms}ms`;
-	const seconds = Math.floor(ms / 1000);
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-	return `${minutes}m ${remainingSeconds}s`;
-}
 
 function statusColor(status: string): string {
 	switch (status) {
@@ -47,6 +37,8 @@ function ExecutionDetailPage() {
 		[run?.invocation_command],
 	);
 
+	const elapsed = useElapsedDuration(run?.started_at ?? '', run?.finished_at ?? null);
+
 	if (isLoading) return <div className="text-text-muted text-sm">Loading...</div>;
 	if (!run) return <div className="text-text-muted text-sm">Run not found.</div>;
 
@@ -68,9 +60,7 @@ function ExecutionDetailPage() {
 			<div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
 				<div className="rounded-lg border border-border-subtle bg-bg p-3">
 					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Duration</div>
-					<div className="text-sm font-medium">
-						{formatDuration(run.started_at, run.finished_at)}
-					</div>
+					<div className="text-sm font-medium">{elapsed}</div>
 				</div>
 
 				<div className="rounded-lg border border-border-subtle bg-bg p-3">

@@ -50,7 +50,9 @@ The `hezo_` prefix distinguishes board API keys from agent JWTs.
 Keys are stored hashed (bcrypt). Shown once at creation, never again.
 
 ### Agent — JWT
-Per-agent bearer token issued at agent creation.
+Per-run bearer token minted each time an agent run starts. The token is bound to
+the specific `heartbeat_runs` row for that run and is accepted only while the run
+is still executing.
 
 ```
 Authorization: Bearer <agent_jwt>
@@ -59,10 +61,22 @@ Authorization: Bearer <agent_jwt>
 Agent tokens are JWTs signed with the master key (held in memory, never on disk),
 containing:
 ```json
-{ "member_id": "...", "company_id": "...", "iat": ..., "exp": ... }
+{ "member_id": "...", "company_id": "...", "run_id": "...", "iat": ..., "exp": ... }
 ```
 
-`member_id` is the agent's ID in the members table (same as agent_id).
+`member_id` is the agent's ID in the members table (same as agent_id). `run_id`
+is the `heartbeat_runs.id` for the run the token was issued for. `exp` is set to
+four hours after issuance.
+
+Validation on every request:
+1. JWT signature verifies against the master key.
+2. `heartbeat_runs` has a row with `id = run_id`, `member_id` matching, `company_id` matching.
+3. That row's status is `running`.
+
+Any failure returns `401`. When the run finalizes (status moves to `succeeded`,
+`failed`, `cancelled`, or `timed_out`), the token is immediately rejected on the
+next call — revocation happens for free via the status check, without a separate
+token store.
 
 ---
 
@@ -2495,7 +2509,7 @@ Hezo exposes an MCP (Model Context Protocol) endpoint for external AI agents to 
 
 Streamable HTTP MCP endpoint. Uses `@modelcontextprotocol/sdk` with the `McpServer` class. Supports bidirectional messaging with optional Server-Sent Events (SSE) for streaming responses.
 
-**Authentication:** Same as REST API — user JWT, or API key (`Authorization: Bearer hezo_<key>`). Agent runs authenticate with a per-run JWT (`signAgentJwt`) that scopes access to the agent's member identity and company.
+**Authentication:** Same as REST API — user JWT, or API key (`Authorization: Bearer hezo_<key>`). Agent runs authenticate with a per-run JWT (`signAgentJwt`) whose `run_id` claim binds it to a single `heartbeat_runs` row. The server rejects the token once that run's status is no longer `running`.
 
 **How agent sessions reach this endpoint:** the runner builds an MCP config
 per run and passes it to Claude Code via the `--mcp-config <json>` flag (plus

@@ -108,6 +108,7 @@ async function buildRunContext(
 	wakeupPayload: Record<string, unknown> | undefined,
 	credential: AiProviderCredential,
 	provider: AiProvider,
+	heartbeatRunId: string,
 ): Promise<RunContext> {
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, agent.system_prompt, {
 		companyId: agent.company_id,
@@ -130,7 +131,12 @@ async function buildRunContext(
 		resolvedPrompt = resolvedPrompt.replace(/\{\{requester_context\}\}/g, requesterText);
 	}
 
-	const agentJwt = await signAgentJwt(deps.masterKeyManager, agent.id, agent.company_id);
+	const agentJwt = await signAgentJwt(
+		deps.masterKeyManager,
+		agent.id,
+		agent.company_id,
+		heartbeatRunId,
+	);
 	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort);
 	const effortApplication = applyEffortToRuntime(agent.runtime_type, effort);
 
@@ -195,33 +201,6 @@ export async function runAgent(
 ): Promise<RunResult> {
 	const startTime = Date.now();
 
-	if (!project.container_id || project.container_status !== ContainerStatus.Running) {
-		return failedResult('Project container is not running', startTime);
-	}
-
-	if (signal?.aborted) return abortedResult(startTime);
-
-	const provider = RUNTIME_TO_PROVIDER[agent.runtime_type];
-	const credential = await getProviderCredential(deps.db, deps.masterKeyManager, provider);
-	if (!credential) {
-		return failedResult(
-			`No ${provider} credential configured. Add one in Settings > AI Providers.`,
-			startTime,
-		);
-	}
-
-	if (signal?.aborted) return abortedResult(startTime);
-
-	const context = await buildRunContext(
-		deps,
-		agent,
-		issue,
-		project,
-		wakeupPayload,
-		credential,
-		provider,
-	);
-
 	if (signal?.aborted) return abortedResult(startTime);
 
 	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue);
@@ -252,12 +231,77 @@ export async function runAgent(
 		}
 	};
 
+	const finalizeFailure = async (message: string): Promise<RunResult> => {
+		broadcast('stderr', `[runner] ${message}\n`);
+		const durationMs = Date.now() - startTime;
+		await updateHeartbeatRun(deps.db, heartbeatRunId, {
+			status: HeartbeatRunStatus.Failed,
+			exitCode: -1,
+			durationMs,
+			logText: logBuffer.toString(),
+			error: message,
+		});
+		return {
+			success: false,
+			exitCode: -1,
+			stdout: '',
+			stderr: message,
+			durationMs,
+			heartbeatRunId,
+		};
+	};
+
+	const finalizeAbort = async (): Promise<RunResult> => {
+		const durationMs = Date.now() - startTime;
+		await updateHeartbeatRun(deps.db, heartbeatRunId, {
+			status: HeartbeatRunStatus.Cancelled,
+			exitCode: -1,
+			durationMs,
+			logText: logBuffer.toString(),
+		});
+		return {
+			success: false,
+			exitCode: -1,
+			stdout: '',
+			stderr: 'Aborted',
+			durationMs,
+			heartbeatRunId,
+		};
+	};
+
+	if (!project.container_id || project.container_status !== ContainerStatus.Running) {
+		return finalizeFailure(
+			'Project container is not running. Start the container from the Project page and retry.',
+		);
+	}
+
+	const provider = RUNTIME_TO_PROVIDER[agent.runtime_type];
+	const credential = await getProviderCredential(deps.db, deps.masterKeyManager, provider);
+	if (!credential) {
+		return finalizeFailure(
+			`No ${provider} credential configured. Add one in Settings > AI Providers.`,
+		);
+	}
+
+	if (signal?.aborted) return finalizeAbort();
+
+	const context = await buildRunContext(
+		deps,
+		agent,
+		issue,
+		project,
+		wakeupPayload,
+		credential,
+		provider,
+		heartbeatRunId,
+	);
+
+	if (signal?.aborted) return finalizeAbort();
+
 	const prep = await prepareWorktrees(deps, project, issue, broadcast, signal);
 
 	const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
-	const invocationCommand = `$ ${redactedCmd
-		.map((a) => (a.includes(' ') || a.includes('"') ? JSON.stringify(a) : a))
-		.join(' ')}`;
+	const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')}`;
 
 	await deps.db.query(
 		`UPDATE heartbeat_runs SET invocation_command = $1, working_dir = $2 WHERE id = $3`,
@@ -327,6 +371,12 @@ function failedResult(stderr: string, startTime: number): RunResult {
 
 function abortedResult(startTime: number): RunResult {
 	return failedResult('Aborted', startTime);
+}
+
+export function shellQuoteArg(arg: string): string {
+	if (arg === '') return "''";
+	if (/^[A-Za-z0-9_\-./=:@%+,]+$/.test(arg)) return arg;
+	return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
 async function prepareWorktrees(

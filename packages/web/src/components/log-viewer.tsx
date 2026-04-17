@@ -1,4 +1,4 @@
-import { Trash2 } from 'lucide-react';
+import { Check, Copy, Trash2 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Button } from './ui/button';
 
@@ -26,8 +26,10 @@ export function LogViewer({
 	testId,
 }: LogViewerProps) {
 	const [autoScroll, setAutoScroll] = useState(true);
+	const [copied, setCopied] = useState(false);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const lastCountRef = useRef(0);
+	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	useEffect(() => {
 		if (!autoScroll) {
@@ -42,6 +44,24 @@ export function LogViewer({
 		}
 	}, [lines, autoScroll]);
 
+	useEffect(() => {
+		return () => {
+			if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+		};
+	}, []);
+
+	const handleCopy = async () => {
+		const text = lines.map((l) => l.text).join('\n');
+		try {
+			await navigator.clipboard.writeText(text);
+			setCopied(true);
+			if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+			copyTimeoutRef.current = setTimeout(() => setCopied(false), 1500);
+		} catch {
+			// clipboard write failed (e.g. insecure context) — leave state unchanged
+		}
+	};
+
 	return (
 		<div className="flex flex-col rounded-lg border border-border-subtle overflow-hidden">
 			<div className="flex items-center justify-between bg-bg-subtle px-3 py-1.5 border-b border-border-subtle">
@@ -51,6 +71,24 @@ export function LogViewer({
 					<span className="text-text-subtle font-normal">{lines.length} lines</span>
 				</div>
 				<div className="flex items-center gap-2">
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={handleCopy}
+						disabled={lines.length === 0}
+						className="text-xs h-6 px-2"
+						aria-label="Copy logs to clipboard"
+					>
+						{copied ? (
+							<>
+								<Check className="w-3 h-3" /> Copied
+							</>
+						) : (
+							<>
+								<Copy className="w-3 h-3" /> Copy
+							</>
+						)}
+					</Button>
 					<label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
 						<input
 							type="checkbox"

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	ApprovalStatus,
@@ -16,6 +17,8 @@ import { triggerStatusAutomations } from '../services/issue-automation';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('mcp');
+
+export const authContext = new AsyncLocalStorage<AuthInfo>();
 
 export interface ToolDef {
 	name: string;
@@ -39,7 +42,7 @@ function tool(
 		schema: Object.fromEntries(Object.entries(schema).map(([k, v]) => [k, v.description ?? k])),
 	});
 	server.tool(name, description, schema, async (args: Record<string, unknown>) => {
-		const auth = args.__auth as AuthInfo | undefined;
+		const auth = authContext.getStore();
 		if (!auth) {
 			return {
 				content: [
@@ -50,10 +53,7 @@ function tool(
 				],
 			};
 		}
-		// Remove internal auth from args before passing to handler
-		const cleanArgs = { ...args };
-		delete cleanArgs.__auth;
-		const result = await handler(cleanArgs, db, auth);
+		const result = await handler(args, db, auth);
 		return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
 	});
 }

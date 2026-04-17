@@ -2196,7 +2196,7 @@ The full API reference is maintained separately. See `api.md` for the complete e
 Three token types:
 - **User JWT** — stateless JWT signed with master key. Set after GitHub/GitLab OAuth login. Contains `user_id`, `member_id`, `company_id`. Always required for human users.
 - **API key (remote orchestrators)** — `Authorization: Bearer hezo_<key>`. Company-scoped, full board access. For OpenClaw, scripts, AI agents controlling Hezo remotely.
-- **Agent JWT** — `Authorization: Bearer <jwt>`. Signed with master key. Contains `agent_id` (= member_id) + `company_id`.
+- **Agent JWT** — `Authorization: Bearer <jwt>`. Signed with master key. Minted per run; claims are `member_id` (= agent_id), `company_id`, `run_id`, with a four-hour `exp`. On every request the server looks up the `heartbeat_runs` row matching `run_id` and rejects unless its status is `running`, so tokens become invalid the moment the run finalizes.
 
 ### API surfaces
 

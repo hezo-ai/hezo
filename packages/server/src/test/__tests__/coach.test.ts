@@ -3,9 +3,8 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
-import { signAgentJwt } from '../../middleware/auth';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -14,7 +13,6 @@ let companyId: string;
 let projectId: string;
 let issueId: string;
 let coachId: string;
-let coachToken: string;
 let engineerId: string;
 let engineerToken: string;
 let architectId: string;
@@ -65,8 +63,7 @@ beforeAll(async () => {
 	engineerId = engineer.id;
 	architectId = architect.id;
 
-	coachToken = await signAgentJwt(masterKeyManager, coachId, companyId);
-	engineerToken = await signAgentJwt(masterKeyManager, engineerId, companyId);
+	({ token: engineerToken } = await mintAgentToken(db, masterKeyManager, engineerId, companyId));
 
 	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
 		method: 'POST',
@@ -189,7 +186,12 @@ describe('System prompt revision tracking', () => {
 			architectId,
 		]);
 
-		const architectToken = await signAgentJwt(masterKeyManager, architectId, companyId);
+		const { token: architectToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			companyId,
+		);
 		const patchRes = await app.request('/agent-api/self/system-prompt', {
 			method: 'PATCH',
 			headers: { ...authHeader(architectToken), 'Content-Type': 'application/json' },

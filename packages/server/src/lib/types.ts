@@ -9,7 +9,7 @@ import type { WebSocketManager } from '../services/ws';
 export type AuthInfo =
 	| { type: typeof AuthType.Board; userId: string; isSuperuser: boolean }
 	| { type: typeof AuthType.ApiKey; companyId: string }
-	| { type: typeof AuthType.Agent; memberId: string; companyId: string };
+	| { type: typeof AuthType.Agent; memberId: string; companyId: string; runId: string };
 
 export type Env = {
 	Variables: {

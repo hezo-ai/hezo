@@ -207,7 +207,10 @@ Backend:
 - Agent subprocess management (`claude_code` adapter: subprocess in project container via `docker exec`)
 - In-container MCP wiring: the runner passes `--mcp-config <json>` and
   `--strict-mcp-config` to Claude Code for each run, pointing at
-  `http://host.docker.internal:<serverPort>/mcp` with the agent's per-run JWT
+  `http://host.docker.internal:<serverPort>/mcp` with a per-run JWT whose
+  `run_id` claim is the `heartbeat_runs.id` for that run. The server validates
+  each request against the run row's status, so the token is automatically
+  rejected once the run finalizes.
 - Git worktrees per issue on every linked repo
   (`/worktrees/<issue-identifier>/<repo-short-name>/` on branch
   `hezo/<issue-identifier>`). The agent's working directory resolves to the

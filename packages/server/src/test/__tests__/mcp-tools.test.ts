@@ -169,6 +169,7 @@ describe('MCP tool: verifyCompanyAccess (direct DB tests)', () => {
 			type: AuthType.Agent,
 			memberId: agentId,
 			companyId,
+			runId: '00000000-0000-0000-0000-000000000001',
 		};
 		expect(agentAuth.companyId).toBe(companyId);
 	});
@@ -178,6 +179,7 @@ describe('MCP tool: verifyCompanyAccess (direct DB tests)', () => {
 			type: AuthType.Agent,
 			memberId: agentBId,
 			companyId: companyBId,
+			runId: '00000000-0000-0000-0000-000000000002',
 		};
 		expect(agentAuth.companyId).not.toBe(companyId);
 	});

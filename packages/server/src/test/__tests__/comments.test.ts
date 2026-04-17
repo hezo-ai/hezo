@@ -3,9 +3,8 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
-import { signAgentJwt } from '../../middleware/auth';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -338,7 +337,7 @@ describe('comment wakeups on assigned issues', () => {
 	it('does not self-notify when assigned agent comments on own issue', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
 
-		const agentToken = await signAgentJwt(masterKeyManager, agentId, companyId);
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
 
 		const res = await app.request(
 			`/api/companies/${companyId}/issues/${assignedIssueId}/comments`,

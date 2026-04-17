@@ -4,7 +4,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
-import { type RunnerDeps, type RunResult, runAgent } from '../../services/agent-runner';
+import { type RunnerDeps, runAgent, shellQuoteArg } from '../../services/agent-runner';
 import type { DockerClient } from '../../services/docker';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
@@ -142,13 +142,26 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 }
 
 describe('runAgent', () => {
-	it('returns failure when container is not running', async () => {
+	it('returns failure when container is not running and records it in the run log', async () => {
+		const broadcasts: Array<{ room: string; event: any }> = [];
+		const wsManager = {
+			broadcast: (room: string, event: any) => {
+				broadcasts.push({ room, event });
+			},
+			subscribe: () => {},
+			unsubscribe: () => {},
+			unsubscribeAll: () => {},
+			getRoomSize: () => 0,
+			getTotalConnections: () => 0,
+		} as any;
+
 		const deps: RunnerDeps = {
 			db,
 			docker: createMockDocker(),
 			masterKeyManager,
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
+			wsManager,
 		};
 
 		const result = await runAgent(
@@ -161,9 +174,22 @@ describe('runAgent', () => {
 		expect(result.success).toBe(false);
 		expect(result.exitCode).toBe(-1);
 		expect(result.stderr).toContain('not running');
+		expect(result.heartbeatRunId).toBeDefined();
+
+		const run = await db.query<{ status: string; log_text: string; error: string | null }>(
+			'SELECT status, log_text, error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		expect(run.rows[0].log_text).toContain('[runner]');
+		expect(run.rows[0].log_text).toContain('not running');
+		expect(run.rows[0].error).toContain('not running');
+
+		const logBroadcasts = broadcasts.filter((b) => b.event.type === 'run_log');
+		expect(logBroadcasts.some((b) => b.event.text.includes('not running'))).toBe(true);
 	});
 
-	it('returns failure when container_id is null', async () => {
+	it('returns failure when container_id is null and records it in the run log', async () => {
 		const deps: RunnerDeps = {
 			db,
 			docker: createMockDocker(),
@@ -181,6 +207,14 @@ describe('runAgent', () => {
 
 		expect(result.success).toBe(false);
 		expect(result.stderr).toContain('not running');
+		expect(result.heartbeatRunId).toBeDefined();
+
+		const run = await db.query<{ status: string; log_text: string }>(
+			'SELECT status, log_text FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		expect(run.rows[0].log_text).toContain('not running');
 	});
 
 	it('runs successfully and creates a heartbeat run', async () => {
@@ -603,7 +637,7 @@ describe('runAgent', () => {
 				dataDir: '/tmp/test-data',
 			};
 
-			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
 
 			expect(capturedCmd).toContain('--mcp-config');
 			expect(capturedCmd).toContain('--strict-mcp-config');
@@ -614,7 +648,21 @@ describe('runAgent', () => {
 			};
 			expect(parsed.mcpServers.hezo.type).toBe('http');
 			expect(parsed.mcpServers.hezo.url).toBe('http://host.docker.internal:3100/mcp');
-			expect(parsed.mcpServers.hezo.headers.Authorization).toMatch(/^Bearer /);
+			const authHeaderValue = parsed.mcpServers.hezo.headers.Authorization;
+			expect(authHeaderValue).toMatch(/^Bearer /);
+
+			const token = authHeaderValue.slice('Bearer '.length);
+			const payloadBase64 = token.split('.')[1];
+			const payload = JSON.parse(Buffer.from(payloadBase64, 'base64url').toString('utf8')) as {
+				member_id: string;
+				company_id: string;
+				run_id: string;
+				exp: number;
+			};
+			expect(payload.run_id).toBe(result.heartbeatRunId);
+			expect(payload.member_id).toBe(makeAgent().id);
+			expect(payload.company_id).toBe(makeAgent().company_id);
+			expect(payload.exp - Math.floor(Date.now() / 1000)).toBeLessThanOrEqual(60 * 60 * 4);
 		});
 
 		it('does not pass --mcp-config for non-claude runtimes', async () => {
@@ -669,6 +717,34 @@ describe('runAgent', () => {
 			expect(row.rows[0].invocation_command).toBeTruthy();
 			expect(row.rows[0].invocation_command!).toMatch(/Bearer \*\*\*/);
 			expect(row.rows[0].invocation_command!).not.toMatch(/Bearer eyJ/);
+		});
+
+		it('preserves real newlines in the invocation_command (no JSON escaping)', async () => {
+			const docker = createMockDocker({
+				execCreate: async () => 'exec-nl',
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+			};
+
+			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject(), {
+				effort: AgentEffort.Max,
+			});
+
+			const row = await db.query<{ invocation_command: string | null }>(
+				'SELECT invocation_command FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			const invocation = row.rows[0].invocation_command!;
+			expect(invocation).toContain('\nultrathink');
+			expect(invocation).not.toContain('\\nultrathink');
+			expect(invocation).not.toContain('\\n');
 		});
 
 		it('streams run log chunks via onChunk and persists log_text', async () => {
@@ -803,5 +879,33 @@ describe('runAgent', () => {
 			);
 			expect(row.rows[0].working_dir).toBe('/workspace');
 		});
+	});
+});
+
+describe('shellQuoteArg', () => {
+	it('leaves simple flags and identifiers unquoted', () => {
+		expect(shellQuoteArg('-p')).toBe('-p');
+		expect(shellQuoteArg('--strict-mcp-config')).toBe('--strict-mcp-config');
+		expect(shellQuoteArg('claude')).toBe('claude');
+		expect(shellQuoteArg('model_reasoning_effort=high')).toBe('model_reasoning_effort=high');
+	});
+
+	it('quotes empty strings', () => {
+		expect(shellQuoteArg('')).toBe("''");
+	});
+
+	it('quotes args containing spaces without escaping newlines', () => {
+		expect(shellQuoteArg('hello world')).toBe("'hello world'");
+		expect(shellQuoteArg('line1\nline2')).toBe("'line1\nline2'");
+	});
+
+	it('escapes single quotes using POSIX-safe sequence', () => {
+		expect(shellQuoteArg("it's")).toBe(`'it'\\''s'`);
+	});
+
+	it('quotes args containing shell metacharacters', () => {
+		expect(shellQuoteArg('$FOO')).toBe(`'$FOO'`);
+		expect(shellQuoteArg('a"b')).toBe(`'a"b'`);
+		expect(shellQuoteArg('a|b')).toBe(`'a|b'`);
 	});
 });
