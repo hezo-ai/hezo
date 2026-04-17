@@ -1,8 +1,10 @@
 import { AgentAdminStatus } from '@hezo/shared';
+import { useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useProjects } from '../hooks/use-projects';
 import { useUiState, useUpdateUiState } from '../hooks/use-ui-state';
 import { AgentStatusLabel } from './agent-status-label';
+import { CreateProjectDialog } from './create-project-dialog';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 
 interface CompanySidebarProps {
@@ -15,6 +17,7 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 	const { data: projects } = useProjects(companyId);
 	const { data: uiState } = useUiState(companyId);
 	const updateUiState = useUpdateUiState(companyId);
+	const [createProjectOpen, setCreateProjectOpen] = useState(false);
 
 	const activeAgents = (agents ?? [])
 		.filter((a) => a.admin_status !== AgentAdminStatus.Disabled)
@@ -39,11 +42,15 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 		},
 		{
 			title: 'Projects',
+			titleTo: '/companies/$companyId/projects',
+			titleParams: params,
 			collapsible: true,
 			collapsed: !projectsExpanded,
 			onToggle: () => {
 				updateUiState.mutate({ sidebar: { projects_expanded: !projectsExpanded } });
 			},
+			onAdd: () => setCreateProjectOpen(true),
+			addLabel: 'New project',
 			items: [],
 			children: sortedProjects.map((project) => ({
 				to: '/companies/$companyId/projects/$projectId',
@@ -75,5 +82,14 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 		},
 	];
 
-	return <SidebarNav sections={sections} />;
+	return (
+		<>
+			<SidebarNav sections={sections} />
+			<CreateProjectDialog
+				companyId={companyId}
+				open={createProjectOpen}
+				onOpenChange={setCreateProjectOpen}
+			/>
+		</>
+	);
 }

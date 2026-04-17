@@ -159,7 +159,7 @@ test.describe('Sidebar Navigation', () => {
 		expect(texts[2]).toBe('Zebra');
 	});
 
-	test('Projects section collapses and expands', async ({ page }) => {
+	test('Projects section collapses and expands via chevron', async ({ page }) => {
 		await authenticate(page);
 		const { company } = await createCompanyWithAgents(page);
 
@@ -168,17 +168,16 @@ test.describe('Sidebar Navigation', () => {
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
-		const projectsHeader = nav.getByText('Projects', { exact: true });
 
 		// Expanded by default — Operations visible
 		await expect(nav.getByText('Operations')).toBeVisible({ timeout: 10000 });
 
-		// Collapse
-		await projectsHeader.click();
+		// Collapse via chevron
+		await nav.getByRole('button', { name: 'Collapse' }).first().click();
 		await expect(nav.getByText('Operations')).not.toBeVisible({ timeout: 5000 });
 
 		// Expand again
-		await projectsHeader.click();
+		await nav.getByRole('button', { name: 'Expand' }).first().click();
 		await expect(nav.getByText('Operations')).toBeVisible({ timeout: 5000 });
 	});
 
@@ -192,8 +191,8 @@ test.describe('Sidebar Navigation', () => {
 
 		const nav = page.locator('nav');
 
-		// Collapse Projects
-		await nav.getByText('Projects', { exact: true }).click();
+		// Collapse Projects via chevron
+		await nav.getByRole('button', { name: 'Collapse' }).first().click();
 		await expect(nav.getByText('Operations')).not.toBeVisible({ timeout: 5000 });
 
 		// Navigate away
@@ -202,6 +201,44 @@ test.describe('Sidebar Navigation', () => {
 
 		// Projects should still be collapsed
 		await expect(nav.getByText('Operations')).not.toBeVisible();
+	});
+
+	test('clicking Projects label navigates to projects list page', async ({ page }) => {
+		await authenticate(page);
+		const { company } = await createCompanyWithAgents(page);
+
+		await suppressAiModal(page);
+		await page.goto(`/companies/${company.slug}/issues`);
+		await waitForPageLoad(page);
+
+		const nav = page.locator('nav');
+		await nav.getByRole('link', { name: 'Projects' }).click();
+
+		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/projects/?$`), {
+			timeout: 5000,
+		});
+		await expect(page.getByRole('heading', { name: 'Projects', level: 1 })).toBeVisible();
+	});
+
+	test('sidebar + button creates a project and it shows in grid and sidebar', async ({ page }) => {
+		await authenticate(page);
+		const { company } = await createCompanyWithAgents(page);
+
+		await suppressAiModal(page);
+		await page.goto(`/companies/${company.slug}/projects`);
+		await waitForPageLoad(page);
+
+		const nav = page.locator('nav');
+		await nav.getByRole('button', { name: 'New project' }).click();
+
+		await page.getByLabel('Name').fill('Sidebar Created Project');
+		await page.getByRole('button', { name: 'Create' }).click();
+
+		// Appears in the sidebar
+		await expect(nav.getByText('Sidebar Created Project')).toBeVisible({ timeout: 10000 });
+
+		// Appears in the page grid
+		await expect(page.getByRole('main').getByText('Sidebar Created Project')).toBeVisible();
 	});
 
 	test('clicking a project in sidebar navigates to project detail', async ({ page }) => {
@@ -250,7 +287,7 @@ test.describe('Sidebar Navigation', () => {
 		});
 	});
 
-	test('Work section contains Issues link but not Projects link', async ({ page }) => {
+	test('Work section contains Issues link and Projects label is a link', async ({ page }) => {
 		await authenticate(page);
 		const { company } = await createCompanyWithAgents(page);
 
@@ -263,21 +300,20 @@ test.describe('Sidebar Navigation', () => {
 		// Issues should be a link under Work
 		await expect(nav.getByRole('link', { name: 'Issues' })).toBeVisible();
 
-		// Projects should be a collapsible section header (button), not a link
-		const projectsButton = nav.locator('button', { hasText: 'Projects' });
-		await expect(projectsButton).toBeVisible();
+		// Projects label is now a link that navigates to the projects page
+		await expect(nav.getByRole('link', { name: 'Projects' })).toBeVisible();
 	});
 
 	test('newly created project appears in sidebar without reload', async ({ page }) => {
 		await authenticate(page);
-		const { company, token } = await createCompanyWithAgents(page);
+		const { company } = await createCompanyWithAgents(page);
 
 		await suppressAiModal(page);
 		await page.goto(`/companies/${company.slug}/projects`);
 		await waitForPageLoad(page);
 
-		// Create a project via the UI
-		await page.getByRole('button', { name: 'New project' }).click();
+		// Create a project via the page header button
+		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
 		await page.getByLabel('Name').fill('Dynamic Sidebar Project');
 		await page.getByRole('button', { name: 'Create' }).click();
 

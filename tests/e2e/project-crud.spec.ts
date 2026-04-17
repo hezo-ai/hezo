@@ -10,7 +10,7 @@ test.describe('Project CRUD', () => {
 		await waitForPageLoad(page);
 
 		// Click "New project" button
-		await page.getByRole('button', { name: 'New project' }).click();
+		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
 
 		// Fill in the dialog
 		await page.getByLabel('Name').fill('Marketing Campaign');
@@ -88,7 +88,7 @@ test.describe('Project CRUD', () => {
 		await page.goto(`/companies/${company.slug}/projects`);
 		await waitForPageLoad(page);
 
-		await page.getByRole('button', { name: 'New project' }).click();
+		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
 
 		// Create button should be disabled when name is empty
 		const createBtn = page.getByRole('button', { name: 'Create' });
