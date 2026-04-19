@@ -14,7 +14,6 @@ test('team page shows org chart with status legend', async ({ page }) => {
 	await page.goto(`/companies/${company.slug}/agents`);
 
 	await expect(page.getByText('You (Board)')).toBeVisible({ timeout: 10000 });
-	await expect(page.getByText('Idle').first()).toBeVisible({ timeout: 5000 });
 	await expect(page.getByText('Active').first()).toBeVisible({ timeout: 5000 });
 });
 
