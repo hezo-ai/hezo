@@ -33,6 +33,7 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 		system_prompt_template?: string;
 		heartbeat_interval_min?: number;
 		monthly_budget_cents?: number;
+		touches_code?: boolean;
 	}>();
 
 	if (!body.name?.trim()) {
@@ -47,9 +48,9 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 	const db = c.get('db');
 	const result = await db.query(
 		`INSERT INTO agent_types (name, slug, description, role_description, system_prompt_template,
-		                          heartbeat_interval_min, monthly_budget_cents,
+		                          heartbeat_interval_min, monthly_budget_cents, touches_code,
 		                          source)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, 'custom'::agent_type_source)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'custom'::agent_type_source)
 		 RETURNING *`,
 		[
 			body.name.trim(),
@@ -59,6 +60,7 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 			body.system_prompt_template ?? '',
 			body.heartbeat_interval_min ?? 60,
 			body.monthly_budget_cents ?? 3000,
+			body.touches_code ?? false,
 		],
 	);
 

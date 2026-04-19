@@ -12,6 +12,7 @@ interface AgentTypeDef {
 	default_effort: string;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
+	touches_code: boolean;
 	role_description: string;
 }
 
@@ -26,6 +27,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.Max,
 			heartbeat_interval_min: 120,
 			monthly_budget_cents: 2000,
+			touches_code: false,
 			role_description:
 				'Translates company mission into actionable strategy, delegates work across leadership, and resolves disputes between agents.',
 		},
@@ -38,6 +40,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.Max,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 4000,
+			touches_code: true,
 			role_description:
 				'Owns technical vision, translates product requirements into technical specifications, and makes architecture decisions.',
 		},
@@ -50,6 +53,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 3000,
+			touches_code: false,
 			role_description:
 				'Owns product requirements, writes PRDs, manages scope, and ensures development aligns with company mission.',
 		},
@@ -62,6 +66,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 30,
 			monthly_budget_cents: 5000,
+			touches_code: true,
 			role_description:
 				"Primary implementer who writes code, tests, and documentation based on the Architect's technical specification.",
 		},
@@ -74,6 +79,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 4000,
+			touches_code: true,
 			role_description:
 				'Final approval gate for every ticket, responsible for test coverage, security audits, and code quality.',
 		},
@@ -85,6 +91,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 3000,
+			touches_code: true,
 			role_description:
 				'Reviews implementation plans and code for security vulnerabilities, threat models new features, and escalates uncertainties to the board.',
 		},
@@ -96,6 +103,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 3000,
+			touches_code: true,
 			role_description:
 				'Owns visual and interaction layer, defines component architecture, and creates HTML preview mockups.',
 		},
@@ -107,6 +115,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 3000,
+			touches_code: true,
 			role_description:
 				'Owns infrastructure and deployment pipeline, manages staging and production environments, and configures CI/CD.',
 		},
@@ -118,6 +127,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 120,
 			monthly_budget_cents: 2000,
+			touches_code: false,
 			role_description:
 				'Owns marketing strategy and content creation including blog posts, social media, and public-facing documentation.',
 		},
@@ -130,6 +140,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 120,
 			monthly_budget_cents: 3000,
+			touches_code: false,
 			role_description:
 				'Conducts competitive analysis, technical research, and feasibility studies to inform strategic decisions.',
 		},
@@ -141,6 +152,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 120,
 			monthly_budget_cents: 3000,
+			touches_code: false,
 			role_description:
 				'Reviews completed tickets to extract lessons and improve agent system prompts over time.',
 		},
@@ -156,8 +168,8 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 			`INSERT INTO agent_types (name, slug, description, role_description, default_summary,
 			                          system_prompt_template,
 			                          default_effort, heartbeat_interval_min, monthly_budget_cents,
-			                          is_builtin, source)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, true, 'builtin'::agent_type_source)
+			                          touches_code, is_builtin, source)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, $10, true, 'builtin'::agent_type_source)
 			 ON CONFLICT (slug) DO UPDATE SET
 			     name = EXCLUDED.name,
 			     role_description = EXCLUDED.role_description,
@@ -166,6 +178,7 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 			     default_effort = EXCLUDED.default_effort,
 			     heartbeat_interval_min = EXCLUDED.heartbeat_interval_min,
 			     monthly_budget_cents = EXCLUDED.monthly_budget_cents,
+			     touches_code = EXCLUDED.touches_code,
 			     updated_at = now()`,
 			[
 				def.name,
@@ -177,6 +190,7 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 				def.default_effort,
 				def.heartbeat_interval_min,
 				def.monthly_budget_cents,
+				def.touches_code,
 			],
 		);
 	}

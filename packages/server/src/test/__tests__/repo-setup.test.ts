@@ -3,7 +3,6 @@ import {
 	ActionCommentKind,
 	ApprovalStatus,
 	ApprovalType,
-	CODE_TOUCHING_AGENT_SLUGS,
 	CommentContentType,
 	OAuthRequestReason,
 	PlatformType,
@@ -159,9 +158,9 @@ afterAll(async () => {
 	else process.env.GITHUB_OAUTH_BASE_URL = originalOauthBase;
 });
 
-describe('CODE_TOUCHING_AGENT_SLUGS', () => {
-	it('includes all builder roles', () => {
-		const expected = [
+describe('agent_types.touches_code seed', () => {
+	it('marks every builder role as touching code', async () => {
+		const builders = [
 			'engineer',
 			'architect',
 			'qa-engineer',
@@ -169,13 +168,41 @@ describe('CODE_TOUCHING_AGENT_SLUGS', () => {
 			'security-engineer',
 			'ui-designer',
 		];
-		for (const slug of expected) expect(CODE_TOUCHING_AGENT_SLUGS.has(slug)).toBe(true);
+		const res = await db.query<{ slug: string; touches_code: boolean }>(
+			`SELECT slug, touches_code FROM agent_types WHERE slug = ANY($1)`,
+			[builders],
+		);
+		expect(res.rows).toHaveLength(builders.length);
+		for (const row of res.rows) {
+			expect(row.touches_code).toBe(true);
+		}
 	});
 
-	it('excludes non-code roles', () => {
-		for (const slug of ['ceo', 'product-lead', 'coach', 'researcher', 'marketing-lead']) {
-			expect(CODE_TOUCHING_AGENT_SLUGS.has(slug)).toBe(false);
+	it('leaves non-code roles with touches_code=false', async () => {
+		const nonBuilders = ['ceo', 'product-lead', 'coach', 'researcher', 'marketing-lead'];
+		const res = await db.query<{ slug: string; touches_code: boolean }>(
+			`SELECT slug, touches_code FROM agent_types WHERE slug = ANY($1)`,
+			[nonBuilders],
+		);
+		expect(res.rows).toHaveLength(nonBuilders.length);
+		for (const row of res.rows) {
+			expect(row.touches_code).toBe(false);
 		}
+	});
+
+	it('propagates touches_code from agent_types onto seeded member_agents', async () => {
+		const res = await db.query<{ slug: string; touches_code: boolean }>(
+			`SELECT ma.slug, ma.touches_code
+			 FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1`,
+			[companyId],
+		);
+		const bySlug = new Map(res.rows.map((r) => [r.slug, r.touches_code]));
+		expect(bySlug.get('engineer')).toBe(true);
+		expect(bySlug.get('architect')).toBe(true);
+		expect(bySlug.get('ceo')).toBe(false);
+		expect(bySlug.get('product-lead')).toBe(false);
 	});
 });
 
@@ -308,8 +335,12 @@ describe('JobManager repo-setup gate', () => {
 		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
 			headers: authHeader(token),
 		});
-		const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
-		const nonCoder = agents.find((a) => !CODE_TOUCHING_AGENT_SLUGS.has(a.slug));
+		const agents = (await agentsRes.json()).data as Array<{
+			id: string;
+			slug: string;
+			touches_code: boolean;
+		}>;
+		const nonCoder = agents.find((a) => !a.touches_code);
 		if (!nonCoder) return; // Only if a non-coder agent exists in the seed
 
 		const issueId = await createIssue(nonCoder.id, 'non-coder');
@@ -345,6 +376,50 @@ describe('JobManager repo-setup gate', () => {
 		// For non-coders, the gate is bypassed. Since project has no container,
 		// the existing logic marks it Failed.
 		expect(wakeup.rows[0].status).toBe(WakeupStatus.Failed);
+
+		manager.shutdown();
+	});
+
+	it('gates a custom agent when touches_code=true, even though its slug is not builtin', async () => {
+		const createRes = await app.request(`/api/companies/${companyId}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				title: 'Custom Coder',
+				role_description: 'Writes code',
+				touches_code: true,
+			}),
+		});
+		const customAgent = (await createRes.json()).data as { id: string; slug: string };
+
+		const issueId = await createIssue(customAgent.id, 'custom coder gate');
+		await db.query('UPDATE projects SET designated_repo_id = NULL WHERE id = $1', [projectId]);
+
+		const manager = createJobManager();
+		const wakeupRes = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+			 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
+			 RETURNING id`,
+			[customAgent.id, companyId, JSON.stringify({ issue_id: issueId })],
+		);
+
+		await (
+			manager as unknown as {
+				activateAgent: (
+					id: string,
+					cid: string,
+					wid: string,
+					p: Record<string, unknown>,
+				) => Promise<void>;
+			}
+		).activateAgent(customAgent.id, companyId, wakeupRes.rows[0].id, { issue_id: issueId });
+
+		const wakeup = await db.query<{ status: string; payload: Record<string, unknown> }>(
+			'SELECT status, payload FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupRes.rows[0].id],
+		);
+		expect(wakeup.rows[0].status).toBe(WakeupStatus.Deferred);
+		expect(wakeup.rows[0].payload.reason).toBe('awaiting_repo_setup');
 
 		manager.shutdown();
 	});

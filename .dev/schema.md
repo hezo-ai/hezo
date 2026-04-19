@@ -8,9 +8,9 @@
 | `users` | Global human identity. Display name, avatar. One per human across all companies. | Standalone (identity). |
 | `user_auth_methods` | OAuth login methods (GitHub, GitLab). Links provider identity to user. | belongs to user |
 | `members` | Base table for all company participants (agents and users). Has `member_type` enum discriminator. Shared UUID used by child tables. | belongs to company |
-| `member_agents` | Agent-specific extension. System prompt, runtime type, `default_effort` (reasoning level applied to runs), budget, heartbeat, org chart, `summary` (auto-generated agent description, ≤5 lines). References agent_type_id for provenance. | extends member (PK = member.id), optionally references agent_type |
+| `member_agents` | Agent-specific extension. System prompt, runtime type, `default_effort` (reasoning level applied to runs), budget, heartbeat, org chart, `summary` (auto-generated agent description, ≤5 lines), `touches_code` (capability flag used by the job manager to gate runs on designated-repo setup). References agent_type_id for provenance. | extends member (PK = member.id), optionally references agent_type |
 | `member_users` | User-in-company extension. Role (board/member), role_title, permissions_text, project_ids. Links to global user. | extends member (PK = member.id), references user |
-| `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget, `default_summary` (pre-generated description loaded from `packages/server/src/db/agent-summaries.json`). Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
+| `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget, `default_summary` (pre-generated description loaded from `packages/server/src/db/agent-summaries.json`), `touches_code` (default capability flag — seeded true for builder roles, copied onto `member_agents` at hire time). Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
 | `company_types` | Company blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers, `default_team_summary` (pre-generated team collaboration description). | Referenced by company_team_types. |
 | `company_type_agent_types` | Join table linking company types to agent types. Stores org chart hierarchy (reports_to_slug) and per-company-type config overrides (runtime type, heartbeat, budget). | belongs to company_type + agent_type |
 | `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), company-level budget, `team_summary` (auto-generated team collaboration description, ≤20 lines). | Parent of everything. |
@@ -180,10 +180,9 @@ repo but have no special protection.
 
 ### Setup-repo approval and action comment
 
-Projects start without a designated repo. When a code-touching agent
-(`engineer`, `architect`, `qa-engineer`, `devops-engineer`, `security-engineer`,
-`ui-designer`) is activated on an issue whose project still has
-`designated_repo_id IS NULL`, the job manager:
+Projects start without a designated repo. When an agent with
+`member_agents.touches_code = true` is activated on an issue whose project
+still has `designated_repo_id IS NULL`, the job manager:
 
 1. Upserts a single pending `oauth_request` approval per `(company_id,
    project_id)` with `payload.reason = 'designated_repo'`. A partial unique

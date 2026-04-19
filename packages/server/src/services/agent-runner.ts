@@ -12,6 +12,7 @@ import {
 	RUNTIME_COMMANDS,
 	RUNTIME_TO_PROVIDER,
 	WsMessageType,
+	wsRoom,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
@@ -631,7 +632,7 @@ function broadcastHeartbeatRunChange(
 	action: 'INSERT' | 'UPDATE',
 ): void {
 	if (!ctx.wsManager) return;
-	broadcastRowChange(ctx.wsManager, `company:${ctx.companyId}`, 'heartbeat_runs', action, {
+	broadcastRowChange(ctx.wsManager, wsRoom.company(ctx.companyId), 'heartbeat_runs', action, {
 		id: runId,
 		issue_id: ctx.issueId,
 		company_id: ctx.companyId,
@@ -677,7 +678,7 @@ export async function createHeartbeatRun(
 	if (broadcast.wsManager) {
 		broadcastRowChange(
 			broadcast.wsManager,
-			`company:${broadcast.companyId}`,
+			wsRoom.company(broadcast.companyId),
 			'issue_comments',
 			'INSERT',
 			{

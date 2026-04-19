@@ -1,11 +1,14 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
+	CEO_AGENT_SLUG,
 	CommentContentType,
 	IssuePriority,
 	IssueStatus,
+	OPERATIONS_PROJECT_SLUG,
 	TERMINAL_ISSUE_STATUSES,
 	WakeupSource,
+	wsRoom,
 } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
@@ -28,15 +31,15 @@ async function loadCompanyContext(db: PGlite, companyId: string): Promise<Compan
 	const ceo = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = 'ceo' AND ma.admin_status = $2::agent_admin_status
+		 WHERE m.company_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[companyId, AgentAdminStatus.Enabled],
+		[companyId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
 	);
 	const ops = await db.query<{ id: string }>(
 		`SELECT id FROM projects
-		 WHERE company_id = $1 AND is_internal = true AND slug = 'operations'
+		 WHERE company_id = $1 AND is_internal = true AND slug = $2
 		 LIMIT 1`,
-		[companyId],
+		[companyId, OPERATIONS_PROJECT_SLUG],
 	);
 	const company = await db.query<{ issue_prefix: string }>(
 		'SELECT issue_prefix FROM companies WHERE id = $1',
@@ -176,7 +179,7 @@ export async function enqueueGoalReviewTask(
 	const issue = issueResult.rows[0];
 
 	if (wsManager) {
-		broadcastRowChange(wsManager, `company:${companyId}`, 'issues', 'INSERT', issue);
+		broadcastRowChange(wsManager, wsRoom.company(companyId), 'issues', 'INSERT', issue);
 	}
 
 	try {

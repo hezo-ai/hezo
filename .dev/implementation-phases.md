@@ -706,7 +706,7 @@ Backend:
 
 **Status:** In progress
 
-**Goal:** Drive the board through a Hezo Connect GitHub OAuth dance when a code-touching agent starts work on a repo-less project. The flow either creates a new GitHub repo under a selected org or links an existing accessible one, and the first repo becomes the designated repo (immutable thereafter).
+**Goal:** Drive the board through a Hezo Connect GitHub OAuth dance when a code-touching agent (`member_agents.touches_code = true`) starts work on a repo-less project. The flow either creates a new GitHub repo under a selected org or links an existing accessible one, and the first repo becomes the designated repo (immutable thereafter).
 
 **What's included:**
 
@@ -718,7 +718,7 @@ Backend:
 - `POST /repos` accepts `mode: 'link' | 'create'`; `mode=create` POSTs to GitHub's `/user/repos` or `/orgs/:owner/repos` after re-validating `owner` against the user's accessible orgs; first-repo-wins designation happens atomically under a `FOR UPDATE` project lock
 - `GET /github/orgs` and `GET /github/repos?owner=&query=` proxy GitHub via the stored OAuth token
 - `packages/server/src/services/repo-setup.ts` — `ensureRepoSetupAction` (approval + action comment upsert) and `finalizePendingRepoSetup` (sweep comments, resolve approval, enqueue resume wakeups)
-- Job manager pre-run gate: code-touching agent + `designated_repo_id IS NULL` → defer wakeup, skip execution lock
+- Job manager pre-run gate: `member_agents.touches_code = true` + `designated_repo_id IS NULL` → defer wakeup, skip execution lock. The flag is seeded from `agent_types.touches_code` (true for engineer / architect / qa-engineer / devops-engineer / security-engineer / ui-designer) and exposed per-agent on the hire form and agent settings so custom agents can declare the capability.
 - OAuth callback idempotency: SSH key regen/upload is skipped when the key is already registered
 - Post-setup: `ensureProjectRepos` + `provisionContainer` run before `Automation` resume wakeups are enqueued
 

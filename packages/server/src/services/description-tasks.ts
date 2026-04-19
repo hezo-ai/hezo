@@ -1,10 +1,13 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
+	CEO_AGENT_SLUG,
 	IssuePriority,
 	IssueStatus,
+	OPERATIONS_PROJECT_SLUG,
 	TERMINAL_ISSUE_STATUSES,
 	WakeupSource,
+	wsRoom,
 } from '@hezo/shared';
 import { logger } from '../logger';
 import { createWakeup } from './wakeup';
@@ -31,16 +34,16 @@ async function loadCompanyContext(db: PGlite, companyId: string): Promise<Compan
 	const ceo = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = 'ceo' AND ma.admin_status = $2::agent_admin_status
+		 WHERE m.company_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[companyId, AgentAdminStatus.Enabled],
+		[companyId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
 	);
 
 	const ops = await db.query<{ id: string }>(
 		`SELECT id FROM projects
-		 WHERE company_id = $1 AND is_internal = true AND slug = 'operations'
+		 WHERE company_id = $1 AND is_internal = true AND slug = $2
 		 LIMIT 1`,
-		[companyId],
+		[companyId, OPERATIONS_PROJECT_SLUG],
 	);
 
 	const company = await db.query<{ issue_prefix: string }>(
@@ -170,7 +173,7 @@ export async function enqueueAgentSummaryTask(
 	if (!ctx) return null;
 	if (!ctx.ceoMemberId || !ctx.operationsProjectId) return null;
 
-	const target = `agent:${agentId}`;
+	const target = wsRoom.agent(agentId);
 	const existing = await findOpenDescriptionIssue(db, companyId, target);
 	if (existing) {
 		log.debug(`Skipping duplicate agent summary task for ${agentId}; open issue ${existing}`);

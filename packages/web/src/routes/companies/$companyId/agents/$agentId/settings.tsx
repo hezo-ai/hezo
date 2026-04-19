@@ -27,6 +27,7 @@ function AgentSettingsPage() {
 	const [reportsTo, setReportsTo] = useState('');
 	const [budget, setBudget] = useState('');
 	const [heartbeat, setHeartbeat] = useState('');
+	const [touchesCode, setTouchesCode] = useState(false);
 
 	useEffect(() => {
 		if (agent) {
@@ -36,6 +37,7 @@ function AgentSettingsPage() {
 			setReportsTo(agent.reports_to ?? '');
 			setBudget(String(agent.monthly_budget_cents / 100));
 			setHeartbeat(String(agent.heartbeat_interval_min));
+			setTouchesCode(agent.touches_code);
 		}
 	}, [agent]);
 
@@ -53,6 +55,7 @@ function AgentSettingsPage() {
 			reports_to: reportsTo || null,
 			monthly_budget_cents: Math.round(Number.parseFloat(budget) * 100),
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
+			touches_code: touchesCode,
 		});
 	}
 
@@ -144,6 +147,22 @@ function AgentSettingsPage() {
 						onChange={(e) => setHeartbeat(e.target.value)}
 					/>
 				</div>
+
+				<label className="flex items-start gap-2 cursor-pointer">
+					<input
+						type="checkbox"
+						checked={touchesCode}
+						onChange={(e) => setTouchesCode(e.target.checked)}
+						className="mt-0.5"
+					/>
+					<span className="flex flex-col gap-0.5">
+						<span className="text-[13px] text-text">Touches code</span>
+						<span className="text-xs text-text-subtle">
+							Enable if this agent reads or writes repository code. Agents that touch code require a
+							designated repo on their project before they can run.
+						</span>
+					</span>
+				</label>
 
 				<div className="flex justify-end gap-2 mt-2">
 					<Button type="submit" disabled={updateAgent.isPending}>

@@ -24,6 +24,7 @@ function HireAgentPage() {
 	const [systemPrompt, setSystemPrompt] = useState('');
 	const [budget, setBudget] = useState('20');
 	const [heartbeat, setHeartbeat] = useState('60');
+	const [touchesCode, setTouchesCode] = useState(false);
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
@@ -33,6 +34,7 @@ function HireAgentPage() {
 			system_prompt: systemPrompt || undefined,
 			monthly_budget_cents: Math.round(Number.parseFloat(budget) * 100),
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
+			touches_code: touchesCode,
 		});
 		if (result.issue) {
 			navigate({
@@ -97,6 +99,22 @@ function HireAgentPage() {
 					onChange={(e) => setBudget(e.target.value)}
 					className="max-w-[140px]"
 				/>
+
+				<label className="flex items-start gap-2 cursor-pointer max-w-[500px]">
+					<input
+						type="checkbox"
+						checked={touchesCode}
+						onChange={(e) => setTouchesCode(e.target.checked)}
+						className="mt-0.5"
+					/>
+					<span className="flex flex-col gap-0.5">
+						<span className="text-[13px] text-text">Touches code</span>
+						<span className="text-xs text-text-subtle">
+							Enable if this agent reads or writes repository code. Agents that touch code require a
+							designated repo on their project before they can run.
+						</span>
+					</span>
+				</label>
 
 				<div>
 					<span className="text-xs font-medium uppercase tracking-wider text-text-muted block mb-1.5">

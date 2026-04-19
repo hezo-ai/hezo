@@ -98,15 +98,6 @@ export const ActionCommentKind = {
 } as const;
 export type ActionCommentKind = (typeof ActionCommentKind)[keyof typeof ActionCommentKind];
 
-export const CODE_TOUCHING_AGENT_SLUGS: ReadonlySet<string> = new Set([
-	'engineer',
-	'architect',
-	'qa-engineer',
-	'devops-engineer',
-	'security-engineer',
-	'ui-designer',
-]);
-
 export const OAuthRequestReason = {
 	DesignatedRepo: 'designated_repo',
 	RepoAdd: 'repo_add',

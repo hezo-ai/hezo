@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { DEFAULT_CONNECT_URL, DEFAULT_DATA_DIR, DEFAULT_PORT } from '@hezo/shared';
 import { Command } from 'commander';
 
 export interface HezoConfig {
@@ -11,10 +12,6 @@ export interface HezoConfig {
 	reset: boolean;
 	noOpen: boolean;
 }
-
-const DEFAULT_PORT = 3100;
-const DEFAULT_DATA_DIR = '~/.hezo';
-const DEFAULT_CONNECT_URL = 'http://localhost:4100';
 
 export function parseArgs(argv: string[] = process.argv): HezoConfig {
 	const program = new Command()

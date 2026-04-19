@@ -5,6 +5,7 @@ import {
 	AuthType,
 	IssuePriority,
 	TERMINAL_ISSUE_STATUSES,
+	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
@@ -272,7 +273,7 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 					[AgentRuntimeStatus.Paused, auth.memberId],
 				);
 				const wsManager = c.get('wsManager');
-				wsManager.broadcast(`company:${auth.companyId}`, {
+				wsManager.broadcast(wsRoom.company(auth.companyId), {
 					type: 'row_change',
 					table: 'member_agents',
 					action: 'UPDATE',

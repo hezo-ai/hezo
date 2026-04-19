@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType, BUILTIN_AGENT_SLUGS, MemberType } from '@hezo/shared';
+import { AuthType, BUILTIN_AGENT_SLUGS, MemberType, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { toIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
@@ -118,8 +118,8 @@ companiesRoutes.post('/companies', async (c) => {
 
 		await db.query(
 			`INSERT INTO projects (company_id, name, slug, description, is_internal)
-			 VALUES ($1, 'Operations', 'operations', 'Administrative workspace for internal operations such as agent onboarding, team coordination, and company-wide tasks.', true)`,
-			[company.id],
+			 VALUES ($1, 'Operations', $2, 'Administrative workspace for internal operations such as agent onboarding, team coordination, and company-wide tasks.', true)`,
+			[company.id, OPERATIONS_PROJECT_SLUG],
 		);
 
 		if (body.template_id) {
@@ -143,8 +143,8 @@ companiesRoutes.post('/companies', async (c) => {
 
 		const opsResult = await db.query<ProjectRow>(
 			`SELECT id, company_id, slug, docker_base_image, container_id, container_status, dev_ports
-			 FROM projects WHERE company_id = $1 AND slug = 'operations'`,
-			[company.id],
+			 FROM projects WHERE company_id = $1 AND slug = $2`,
+			[company.id, OPERATIONS_PROJECT_SLUG],
 		);
 		if (opsResult.rows[0]) {
 			provisionContainer(
@@ -293,6 +293,7 @@ interface AgentTypeRow {
 	default_effort: string;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
+	touches_code: boolean;
 	reports_to_slug: string | null;
 	heartbeat_interval_override: number | null;
 	monthly_budget_override: number | null;
@@ -309,6 +310,7 @@ async function createAgentsFromTeamTypes(
 			`SELECT at.id, at.name, at.slug, at.role_description, at.default_summary,
 			        at.system_prompt_template,
 			        at.default_effort, at.heartbeat_interval_min, at.monthly_budget_cents,
+			        at.touches_code,
 			        ctat.reports_to_slug,
 			        ctat.heartbeat_interval_override, ctat.monthly_budget_override
 			 FROM company_type_agent_types ctat
@@ -349,8 +351,9 @@ async function createAgentsFromTeamTypes(
 		await db.query(
 			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
 			                            system_prompt,
-			                            default_effort, heartbeat_interval_min, monthly_budget_cents)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10)`,
+			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
+			                            touches_code)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11)`,
 			[
 				memberId,
 				row.id,
@@ -362,6 +365,7 @@ async function createAgentsFromTeamTypes(
 				row.default_effort,
 				heartbeat,
 				budget,
+				row.touches_code ?? false,
 			],
 		);
 	}
@@ -415,9 +419,10 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 		default_effort: string;
 		heartbeat_interval_min: number;
 		monthly_budget_cents: number;
+		touches_code: boolean;
 	}>(
 		`SELECT id, name, slug, role_description, default_summary, system_prompt_template,
-		        default_effort, heartbeat_interval_min, monthly_budget_cents
+		        default_effort, heartbeat_interval_min, monthly_budget_cents, touches_code
 		 FROM agent_types WHERE slug = ANY($1)`,
 		[missingSlugs],
 	);
@@ -432,8 +437,9 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 		await db.query(
 			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
 			                            system_prompt,
-			                            default_effort, heartbeat_interval_min, monthly_budget_cents)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10)`,
+			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
+			                            touches_code)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11)`,
 			[
 				memberResult.rows[0].id,
 				at.id,
@@ -445,6 +451,7 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 				at.default_effort,
 				at.heartbeat_interval_min,
 				at.monthly_budget_cents,
+				at.touches_code ?? false,
 			],
 		);
 	}

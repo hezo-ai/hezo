@@ -1,5 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentAdminStatus, AgentRuntimeStatus, IssueStatus, WakeupStatus } from '@hezo/shared';
+import {
+	AgentAdminStatus,
+	AgentRuntimeStatus,
+	IssueStatus,
+	WakeupStatus,
+	wsRoom,
+} from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
@@ -176,7 +182,7 @@ describe('JobManager workflow methods', () => {
 
 			// Simulate a running task for this agent
 			manager.launchTask(
-				`agent:${agentId}`,
+				wsRoom.agent(agentId),
 				async () => {
 					await new Promise((r) => setTimeout(r, 5000));
 				},
@@ -357,7 +363,7 @@ describe('JobManager workflow methods', () => {
 			expect(lockResult.rows[lockResult.rows.length - 1].member_id).toBe(agentId);
 
 			// A task should have been launched for the agent
-			expect(manager.isTaskRunning(`agent:${agentId}`)).toBe(true);
+			expect(manager.isTaskRunning(wsRoom.agent(agentId))).toBe(true);
 
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
@@ -632,7 +638,7 @@ describe('JobManager workflow methods', () => {
 			await (manager as any).processScheduledHeartbeats();
 
 			// Task should NOT be launched for a paused agent
-			expect(manager.isTaskRunning(`agent:${agentId}`)).toBe(false);
+			expect(manager.isTaskRunning(wsRoom.agent(agentId))).toBe(false);
 
 			// Restore runtime status
 			await db.query("UPDATE member_agents SET runtime_status = 'idle' WHERE id = $1", [agentId]);
@@ -669,7 +675,7 @@ describe('JobManager workflow methods', () => {
 
 			// Simulate a running task already
 			manager.launchTask(
-				`agent:${agentId}`,
+				wsRoom.agent(agentId),
 				async () => {
 					await new Promise((r) => setTimeout(r, 5000));
 				},
@@ -680,13 +686,13 @@ describe('JobManager workflow methods', () => {
 			await db.query('UPDATE member_agents SET last_heartbeat_at = NULL WHERE id = $1', [agentId]);
 
 			// Count launches before
-			const taskWasRunning = manager.isTaskRunning(`agent:${agentId}`);
+			const taskWasRunning = manager.isTaskRunning(wsRoom.agent(agentId));
 			expect(taskWasRunning).toBe(true);
 
 			await (manager as any).processScheduledHeartbeats();
 
 			// Task still running (was not restarted — the existing task was skipped)
-			expect(manager.isTaskRunning(`agent:${agentId}`)).toBe(true);
+			expect(manager.isTaskRunning(wsRoom.agent(agentId))).toBe(true);
 
 			manager.shutdown();
 		});

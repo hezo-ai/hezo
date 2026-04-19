@@ -3,10 +3,10 @@ import {
 	AgentAdminStatus,
 	type AgentRuntime,
 	AgentRuntimeStatus,
-	CODE_TOUCHING_AGENT_SLUGS,
 	IssuePriority,
 	TERMINAL_ISSUE_STATUSES,
 	WakeupStatus,
+	wsRoom,
 } from '@hezo/shared';
 import { Cron } from 'cron-async';
 import type { MasterKeyManager } from '../crypto/master-key';
@@ -166,7 +166,7 @@ export class JobManager {
 		}
 
 		for (const wakeup of wakeups.rows) {
-			if (this.isTaskRunning(`agent:${wakeup.member_id}`)) {
+			if (this.isTaskRunning(wsRoom.agent(wakeup.member_id))) {
 				log.debug(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
 				continue;
 			}
@@ -214,7 +214,7 @@ export class JobManager {
 		}
 
 		for (const agent of dueAgents.rows) {
-			if (this.isTaskRunning(`agent:${agent.id}`)) {
+			if (this.isTaskRunning(wsRoom.agent(agent.id))) {
 				continue;
 			}
 			await this.activateAgent(agent.id, agent.company_id);
@@ -237,8 +237,10 @@ export class JobManager {
 			admin_status: string;
 			heartbeat_interval_min: number;
 			default_effort: string;
+			touches_code: boolean;
 		}>(
-			`SELECT id, title, slug, system_prompt, admin_status, heartbeat_interval_min, default_effort
+			`SELECT id, title, slug, system_prompt, admin_status,
+			        heartbeat_interval_min, default_effort, touches_code
 			 FROM member_agents WHERE id = $1`,
 			[memberId],
 		);
@@ -351,8 +353,7 @@ export class JobManager {
 
 		const projectRow = project.rows[0];
 		const agentSlug = agent.rows[0].slug;
-
-		if (!projectRow.designated_repo_id && CODE_TOUCHING_AGENT_SLUGS.has(agentSlug)) {
+		if (!projectRow.designated_repo_id && agent.rows[0].touches_code) {
 			try {
 				const ensured = await ensureRepoSetupAction(db, {
 					companyId,
@@ -362,7 +363,7 @@ export class JobManager {
 				if (ensured.commentRow) {
 					broadcastRowChange(
 						this.deps.wsManager,
-						`company:${companyId}`,
+						wsRoom.company(companyId),
 						'issue_comments',
 						'INSERT',
 						ensured.commentRow,
@@ -371,7 +372,7 @@ export class JobManager {
 				if (ensured.approvalRow) {
 					broadcastRowChange(
 						this.deps.wsManager,
-						`company:${companyId}`,
+						wsRoom.company(companyId),
 						'approvals',
 						'INSERT',
 						ensured.approvalRow,
@@ -446,7 +447,7 @@ export class JobManager {
 			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
 			[AgentRuntimeStatus.Active, memberId],
 		);
-		broadcastRowChange(this.deps.wsManager, `company:${companyId}`, 'member_agents', 'UPDATE', {
+		broadcastRowChange(this.deps.wsManager, wsRoom.company(companyId), 'member_agents', 'UPDATE', {
 			id: memberId,
 			runtime_status: AgentRuntimeStatus.Active,
 		});
@@ -465,7 +466,7 @@ export class JobManager {
 		const timeoutMs = agent.rows[0].heartbeat_interval_min * 60 * 1000;
 
 		this.launchTask(
-			`agent:${memberId}`,
+			wsRoom.agent(memberId),
 			async (signal) => {
 				const result = await runAgent(
 					deps,
@@ -511,7 +512,7 @@ export class JobManager {
 			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status, last_heartbeat_at = now() WHERE id = $2',
 			[AgentRuntimeStatus.Idle, memberId],
 		);
-		broadcastRowChange(this.deps.wsManager, `company:${companyId}`, 'member_agents', 'UPDATE', {
+		broadcastRowChange(this.deps.wsManager, wsRoom.company(companyId), 'member_agents', 'UPDATE', {
 			id: memberId,
 			runtime_status: AgentRuntimeStatus.Idle,
 		});

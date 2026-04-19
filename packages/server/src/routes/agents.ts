@@ -1,10 +1,13 @@
 import {
 	AgentAdminStatus,
+	CEO_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	IssuePriority,
 	IssueStatus,
 	isAgentEffort,
 	MemberType,
+	OPERATIONS_PROJECT_SLUG,
+	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
@@ -28,6 +31,7 @@ const AGENT_BASE_COLUMNS = `m.id, m.company_id, m.display_name, m.created_at,
 	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary, ma.system_prompt,
 	ma.default_effort,
 	ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
+	ma.touches_code,
 	ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
 	ma.mcp_servers, ma.updated_at`;
 
@@ -101,6 +105,7 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 		default_effort?: string;
 		heartbeat_interval_min?: number;
 		monthly_budget_cents?: number;
+		touches_code?: boolean;
 		mcp_servers?: unknown[];
 	}>();
 
@@ -135,8 +140,8 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 		const memberId = memberResult.rows[0].id;
 
 		await db.query(
-			`INSERT INTO member_agents (id, title, slug, role_description, system_prompt, reports_to, default_effort, heartbeat_interval_min, monthly_budget_cents, mcp_servers)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, $10::jsonb)`,
+			`INSERT INTO member_agents (id, title, slug, role_description, system_prompt, reports_to, default_effort, heartbeat_interval_min, monthly_budget_cents, touches_code, mcp_servers)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, $10, $11::jsonb)`,
 			[
 				memberId,
 				body.title.trim(),
@@ -147,6 +152,7 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 				body.default_effort ?? DEFAULT_EFFORT,
 				body.heartbeat_interval_min ?? 60,
 				body.monthly_budget_cents ?? 3000,
+				body.touches_code ?? false,
 				JSON.stringify(body.mcp_servers ?? []),
 			],
 		);
@@ -163,7 +169,7 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 
 		broadcastChange(
 			c,
-			`company:${companyId}`,
+			wsRoom.company(companyId),
 			'member_agents',
 			'INSERT',
 			result.rows[0] as Record<string, unknown>,
@@ -197,6 +203,7 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 		default_effort?: string;
 		heartbeat_interval_min?: number;
 		monthly_budget_cents?: number;
+		touches_code?: boolean;
 	}>();
 
 	if (!body.title?.trim()) {
@@ -221,13 +228,13 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 	const ceoResult = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = 'ceo' AND ma.admin_status = $2::agent_admin_status`,
-		[companyId, AgentAdminStatus.Enabled],
+		 WHERE m.company_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status`,
+		[companyId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
 	);
 
 	const opsProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE company_id = $1 AND is_internal = true AND slug = 'operations'`,
-		[companyId],
+		`SELECT id FROM projects WHERE company_id = $1 AND is_internal = true AND slug = $2`,
+		[companyId, OPERATIONS_PROJECT_SLUG],
 	);
 
 	const hasCeo = ceoResult.rows.length > 0;
@@ -248,8 +255,9 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 
 		await db.query(
 			`INSERT INTO member_agents (id, title, slug, role_description, system_prompt,
-			                            default_effort, heartbeat_interval_min, monthly_budget_cents, admin_status)
-			 VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9::agent_admin_status)`,
+			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
+			                            touches_code, admin_status)
+			 VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10::agent_admin_status)`,
 			[
 				memberId,
 				body.title.trim(),
@@ -259,6 +267,7 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 				body.default_effort ?? DEFAULT_EFFORT,
 				body.heartbeat_interval_min ?? 60,
 				body.monthly_budget_cents ?? 3000,
+				body.touches_code ?? false,
 				adminStatus,
 			],
 		);
@@ -338,7 +347,7 @@ ${teamRoster}`;
 
 		broadcastChange(
 			c,
-			`company:${companyId}`,
+			wsRoom.company(companyId),
 			'member_agents',
 			'INSERT',
 			agentResult.rows[0] as Record<string, unknown>,
@@ -346,7 +355,7 @@ ${teamRoster}`;
 		if (issue) {
 			broadcastChange(
 				c,
-				`company:${companyId}`,
+				wsRoom.company(companyId),
 				'issues',
 				'INSERT',
 				issue as Record<string, unknown>,
@@ -416,6 +425,7 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		default_effort?: string;
 		heartbeat_interval_min?: number;
 		monthly_budget_cents?: number;
+		touches_code?: boolean;
 		mcp_servers?: unknown[];
 	}>();
 
@@ -435,6 +445,7 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		{ column: 'default_effort', value: body.default_effort, cast: 'agent_effort' },
 		{ column: 'heartbeat_interval_min', value: body.heartbeat_interval_min },
 		{ column: 'monthly_budget_cents', value: body.monthly_budget_cents },
+		{ column: 'touches_code', value: body.touches_code },
 		{ column: 'mcp_servers', value: body.mcp_servers, cast: 'jsonb' },
 	]);
 	const idx = nextIdx;
@@ -492,7 +503,7 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'member_agents',
 		'UPDATE',
 		result.rows[0] as Record<string, unknown>,
@@ -539,7 +550,7 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/disable', async (c) => 
 		[agentId, ...ts.values],
 	);
 
-	broadcastChange(c, `company:${companyId}`, 'member_agents', 'UPDATE', {
+	broadcastChange(c, wsRoom.company(companyId), 'member_agents', 'UPDATE', {
 		id: agentId,
 		admin_status: AgentAdminStatus.Disabled,
 	});
@@ -573,7 +584,7 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/enable', async (c) => {
 		agentId,
 	]);
 
-	broadcastChange(c, `company:${companyId}`, 'member_agents', 'UPDATE', {
+	broadcastChange(c, wsRoom.company(companyId), 'member_agents', 'UPDATE', {
 		id: agentId,
 		admin_status: AgentAdminStatus.Enabled,
 	});

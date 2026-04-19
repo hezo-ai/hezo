@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType } from '@hezo/shared';
+import { AuthType, DEFAULT_WEB_PORT } from '@hezo/shared';
 import { app } from './app';
 import { parseArgs } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
@@ -61,7 +61,7 @@ startup(config)
 		const url = `http://localhost:${result.port}`;
 		log.info(`Hezo server running at ${url} [${result.masterKeyState}]`);
 		if (!config.noOpen) {
-			Bun.spawn(['open', 'http://localhost:5173']);
+			Bun.spawn(['open', `http://localhost:${DEFAULT_WEB_PORT}`]);
 		}
 	})
 	.catch((err) => {

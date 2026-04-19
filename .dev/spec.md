@@ -1031,7 +1031,7 @@ Agents don't configure repos directly. They get access to repos through whicheve
 
 ### Designated repo setup (board-driven)
 
-A project starts with no repo. The first time a code-touching agent (`engineer`, `architect`, `qa-engineer`, `devops-engineer`, `security-engineer`, `ui-designer`) is activated on an issue, the runtime pauses the run and surfaces a board-facing action:
+A project starts with no repo. The first time an agent whose `member_agents.touches_code = true` is activated on an issue, the runtime pauses the run and surfaces a board-facing action. The `touches_code` flag is seeded from `agent_types.touches_code` at hire time (builtin coder roles — engineer, architect, qa-engineer, devops-engineer, security-engineer, ui-designer — ship with it set), copied onto `member_agents` so per-agent overrides are possible, and editable from the agent creation and settings forms for any custom or onboarded agent:
 
 1. The job manager upserts a single pending `oauth_request` approval per `(company, project)` with `payload.reason = 'designated_repo'`. Concurrent runs on different issues of the same project share this one approval (partial unique index).
 2. An `action` comment with `content.kind = 'setup_repo'` is posted on the triggering issue. Each issue gets its own comment so the blocker is visible in-thread, but all comments point at the same approval.

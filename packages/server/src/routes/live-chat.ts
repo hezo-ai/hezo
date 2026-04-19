@@ -1,4 +1,4 @@
-import { AuthType, WakeupSource } from '@hezo/shared';
+import { AuthType, WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastEvent } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -94,7 +94,7 @@ liveChatRoutes.post('/companies/:companyId/issues/:issueId/chat/messages', async
 	const message = result.rows[0] as Record<string, unknown>;
 
 	const wsManager = c.get('wsManager');
-	broadcastEvent(wsManager, `company:${companyId}`, 'chat_message', {
+	broadcastEvent(wsManager, wsRoom.company(companyId), 'chat_message', {
 		issueId,
 		message,
 	});

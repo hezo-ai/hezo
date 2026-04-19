@@ -1,3 +1,4 @@
+import { wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -73,7 +74,7 @@ executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'execution_locks',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
@@ -102,6 +103,6 @@ executionLocksRoutes.delete('/companies/:companyId/issues/:issueId/lock', async 
 		[issueId],
 	);
 
-	broadcastChange(c, `company:${companyId}`, 'execution_locks', 'DELETE', { issue_id: issueId });
+	broadcastChange(c, wsRoom.company(companyId), 'execution_locks', 'DELETE', { issue_id: issueId });
 	return ok(c, { released: true });
 });

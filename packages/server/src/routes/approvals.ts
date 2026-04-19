@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
-import { ApprovalStatus, ApprovalType } from '@hezo/shared';
+import { ApprovalStatus, ApprovalType, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -141,7 +141,7 @@ approvalsRoutes.post('/companies/:companyId/approvals', async (c) => {
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'approvals',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
@@ -191,7 +191,7 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 	}
 
 	if (row.company_id) {
-		broadcastChange(c, `company:${row.company_id}`, 'approvals', 'UPDATE', row);
+		broadcastChange(c, wsRoom.company(row.company_id as string), 'approvals', 'UPDATE', row);
 	}
 	return ok(c, row);
 });

@@ -8,6 +8,7 @@ import {
 	IssueStatus,
 	TERMINAL_ISSUE_STATUSES,
 	WakeupSource,
+	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { auditLog } from '../lib/audit';
@@ -214,7 +215,7 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 		}
 	}
 
-	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', issue);
+	broadcastChange(c, wsRoom.company(companyId), 'issues', 'INSERT', issue);
 	auditLog(
 		db,
 		companyId,
@@ -441,7 +442,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'issues',
 		'UPDATE',
 		result.rows[0] as Record<string, unknown>,
@@ -481,7 +482,7 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId', async (c) => {
 	}
 
 	await db.query('DELETE FROM issues WHERE id = $1', [issueId]);
-	broadcastChange(c, `company:${companyId}`, 'issues', 'DELETE', { id: issueId });
+	broadcastChange(c, wsRoom.company(companyId), 'issues', 'DELETE', { id: issueId });
 	return c.json({ data: null }, 200);
 });
 
@@ -560,7 +561,7 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 	);
 
 	const subIssue = result.rows[0] as Record<string, unknown>;
-	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', subIssue);
+	broadcastChange(c, wsRoom.company(companyId), 'issues', 'INSERT', subIssue);
 	wakeAgentIfAssigned(db, body.assignee_id, companyId, subIssue.id as string);
 	return ok(c, subIssue, 201);
 });

@@ -51,6 +51,9 @@ test('can hire agent with full fields', async ({ page }) => {
 	// Set budget
 	await page.getByLabel('Monthly budget').fill('50');
 
+	// Tick the touches-code capability
+	await page.getByLabel('Touches code').check();
+
 	// Type system prompt
 	await page.locator('textarea').fill('You are the Security Auditor.');
 

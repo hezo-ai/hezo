@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { type ChangeAction, WsMessageType } from '@hezo/shared';
+import { type ChangeAction, WsMessageType, wsRoom } from '@hezo/shared';
 import type { Context } from 'hono';
 import type { WebSocketManager } from '../services/ws';
 import type { Env } from './types';
@@ -48,5 +48,5 @@ export async function broadcastProjectUpdate(
 	]);
 	const row = updated.rows[0];
 	if (!row) return;
-	broadcastRowChange(wsManager, `company:${companyId}`, 'projects', 'UPDATE', row);
+	broadcastRowChange(wsManager, wsRoom.company(companyId), 'projects', 'UPDATE', row);
 }

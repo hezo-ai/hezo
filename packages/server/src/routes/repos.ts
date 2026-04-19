@@ -1,4 +1,4 @@
-import { ApprovalType, OAuthRequestReason, PlatformType } from '@hezo/shared';
+import { ApprovalType, OAuthRequestReason, PlatformType, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { getProjectLocator, resolveProjectId } from '../lib/resolve';
@@ -261,13 +261,13 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 		}
 	}
 
-	broadcastChange(c, `company:${companyId}`, 'repos', 'INSERT', {
+	broadcastChange(c, wsRoom.company(companyId), 'repos', 'INSERT', {
 		...insertedRepo,
 		is_designated: becameDesignated,
 	} as Record<string, unknown>);
 
 	if (becameDesignated) {
-		broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+		broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
 			id: projectId,
 			designated_repo_id: insertedRepo.id,
 		});
@@ -330,7 +330,7 @@ reposRoutes.delete('/companies/:companyId/projects/:projectId/repos/:repoId', as
 		}
 	}
 
-	broadcastChange(c, `company:${companyId}`, 'repos', 'DELETE', { id: repoId });
+	broadcastChange(c, wsRoom.company(companyId), 'repos', 'DELETE', { id: repoId });
 	return ok(c, { deleted: true });
 });
 

@@ -1,10 +1,12 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
+	CEO_AGENT_SLUG,
 	ContainerStatus,
 	IssuePriority,
 	IssueStatus,
 	WakeupSource,
+	wsRoom,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
@@ -53,7 +55,7 @@ async function cancelRunningAgentTasks(
 		[projectId, companyId],
 	);
 	for (const row of running.rows) {
-		jobManager.cancelTask(`agent:${row.assignee_id}`);
+		jobManager.cancelTask(wsRoom.agent(row.assignee_id));
 	}
 }
 
@@ -134,9 +136,9 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 	const ceoResult = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = 'ceo' AND ma.admin_status = $2::agent_admin_status
+		 WHERE m.company_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[companyId, AgentAdminStatus.Enabled],
+		[companyId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
 	);
 	const ceoMemberId = ceoResult.rows[0]?.id;
 	if (!ceoMemberId) {
@@ -230,8 +232,8 @@ Container provisioning for this project is in progress. Focus on planning while 
 		throw e;
 	}
 
-	broadcastChange(c, `company:${companyId}`, 'projects', 'INSERT', project);
-	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', planningIssue);
+	broadcastChange(c, wsRoom.company(companyId), 'projects', 'INSERT', project);
+	broadcastChange(c, wsRoom.company(companyId), 'issues', 'INSERT', planningIssue);
 
 	createWakeup(db, ceoMemberId, companyId, WakeupSource.Assignment, {
 		issue_id: planningIssue.id,
@@ -338,7 +340,7 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'projects',
 		'UPDATE',
 		result.rows[0] as Record<string, unknown>,
@@ -393,7 +395,7 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 	}
 
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
-	broadcastChange(c, `company:${companyId}`, 'projects', 'DELETE', { id: projectId });
+	broadcastChange(c, wsRoom.company(companyId), 'projects', 'DELETE', { id: projectId });
 	return c.json({ data: null }, 200);
 });
 
@@ -420,7 +422,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/start',
 			ContainerStatus.Running,
 			projectId,
 		]);
-		broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+		broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
 			id: projectId,
 			container_status: ContainerStatus.Running,
 		});
@@ -454,7 +456,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 			ContainerStatus.Stopped,
 			projectId,
 		]);
-		broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+		broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
 			id: projectId,
 			container_status: ContainerStatus.Stopped,
 		});
@@ -465,7 +467,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 		ContainerStatus.Stopping,
 		projectId,
 	]);
-	broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+	broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
 		id: projectId,
 		container_status: ContainerStatus.Stopping,
 	});
@@ -533,7 +535,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 		projectId,
 	]);
 
-	broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+	broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
 		id: projectId,
 		container_status: ContainerStatus.Creating,
 	});

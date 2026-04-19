@@ -4,6 +4,7 @@ import {
 	type AiProvider,
 	ALL_AI_PROVIDERS,
 	OAUTH_AI_PROVIDERS,
+	OAUTH_CALLBACK_PATH,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { signOAuthState } from '../crypto/state';
@@ -181,7 +182,7 @@ aiProvidersRoutes.post('/ai-providers/:provider/oauth/start', async (c) => {
 	const state = await signOAuthState({ ai_provider: provider }, masterKeyManager);
 
 	const origin = new URL(c.req.url).origin;
-	const callbackUrl = `${origin}/oauth/callback`;
+	const callbackUrl = `${origin}${OAUTH_CALLBACK_PATH}`;
 
 	const authUrl = `${connectUrl}/auth/${provider}/start?callback=${encodeURIComponent(callbackUrl)}&state=${encodeURIComponent(state)}`;
 

@@ -1,4 +1,4 @@
-import { WsMessageType, type WsRowChangeMessage } from '@hezo/shared';
+import { WsMessageType, type WsRowChangeMessage, wsRoom } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useSocket } from '../contexts/socket-context';
@@ -47,7 +47,7 @@ export function useWebSocket(wsCompanyId: string, routeCompanyId: string): void 
 	const { joinRoom, leaveRoom, subscribe } = useSocket();
 
 	useEffect(() => {
-		const room = `company:${wsCompanyId}`;
+		const room = wsRoom.company(wsCompanyId);
 		joinRoom(room);
 
 		const unsubscribe = subscribe(WsMessageType.RowChange, (msg) => {

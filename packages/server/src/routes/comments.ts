@@ -1,4 +1,4 @@
-import { AuthType, CommentContentType, WakeupSource } from '@hezo/shared';
+import { AuthType, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -149,7 +149,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'issue_comments',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
@@ -234,7 +234,7 @@ commentsRoutes.post(
 
 		broadcastChange(
 			c,
-			`company:${companyId}`,
+			wsRoom.company(companyId),
 			'issue_comments',
 			'UPDATE',
 			result.rows[0] as Record<string, unknown>,

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -58,7 +59,13 @@ apiKeysRoutes.post('/companies/:companyId/api-keys', async (c) => {
 	);
 
 	const row = result.rows[0];
-	broadcastChange(c, `company:${companyId}`, 'api_keys', 'INSERT', row as Record<string, unknown>);
+	broadcastChange(
+		c,
+		wsRoom.company(companyId),
+		'api_keys',
+		'INSERT',
+		row as Record<string, unknown>,
+	);
 	return ok(c, { ...row, key: rawKey }, 201);
 });
 
@@ -79,6 +86,6 @@ apiKeysRoutes.delete('/companies/:companyId/api-keys/:apiKeyId', async (c) => {
 	}
 
 	await db.query('DELETE FROM api_keys WHERE id = $1', [apiKeyId]);
-	broadcastChange(c, `company:${companyId}`, 'api_keys', 'DELETE', { id: apiKeyId });
+	broadcastChange(c, wsRoom.company(companyId), 'api_keys', 'DELETE', { id: apiKeyId });
 	return c.json({ data: null }, 200);
 });

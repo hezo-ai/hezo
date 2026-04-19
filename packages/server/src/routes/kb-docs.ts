@@ -1,4 +1,4 @@
-import { ApprovalType, AuthType } from '@hezo/shared';
+import { ApprovalType, AuthType, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -84,7 +84,7 @@ kbDocsRoutes.post('/companies/:companyId/kb-docs', async (c) => {
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'kb_docs',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
@@ -188,7 +188,7 @@ kbDocsRoutes.patch('/companies/:companyId/kb-docs/:slug', async (c) => {
 
 		broadcastChange(
 			c,
-			`company:${companyId}`,
+			wsRoom.company(companyId),
 			'kb_docs',
 			'UPDATE',
 			result.rows[0] as Record<string, unknown>,
@@ -218,7 +218,7 @@ kbDocsRoutes.delete('/companies/:companyId/kb-docs/:slug', async (c) => {
 	}
 
 	await db.query('DELETE FROM kb_docs WHERE company_id = $1 AND slug = $2', [companyId, slug]);
-	broadcastChange(c, `company:${companyId}`, 'kb_docs', 'DELETE', {
+	broadcastChange(c, wsRoom.company(companyId), 'kb_docs', 'DELETE', {
 		id: existing.rows[0].id,
 		slug,
 	});
@@ -283,7 +283,7 @@ kbDocsRoutes.post('/companies/:companyId/kb-docs/:slug/restore', async (c) => {
 
 		broadcastChange(
 			c,
-			`company:${companyId}`,
+			wsRoom.company(companyId),
 			'kb_docs',
 			'UPDATE',
 			result.rows[0] as Record<string, unknown>,

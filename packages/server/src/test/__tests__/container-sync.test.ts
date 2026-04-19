@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
+import { wsRoom } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../lib/types';
@@ -158,7 +159,7 @@ describe('syncAllContainerStatuses', () => {
 
 		expect(mockWsManager.broadcast).toHaveBeenCalled();
 		const [room, event] = mockWsManager.broadcast.mock.calls.find(
-			([r]: [string]) => r === `company:${companyId}`,
+			([r]: [string]) => r === wsRoom.company(companyId),
 		) || [null, null];
 		expect(room).toBeTruthy();
 		expect(event.type).toBe('row_change');
@@ -245,7 +246,7 @@ describe('provisionContainer broadcasting', () => {
 
 		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(1);
 		const [room, event] = mockWsManager.broadcast.mock.calls[0];
-		expect(room).toBe(`company:${companyId}`);
+		expect(room).toBe(wsRoom.company(companyId));
 		expect(event.type).toBe('row_change');
 		expect(event.table).toBe('projects');
 		expect(event.action).toBe('UPDATE');
@@ -281,7 +282,7 @@ describe('provisionContainer broadcasting', () => {
 
 		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(1);
 		const [room, event] = mockWsManager.broadcast.mock.calls[0];
-		expect(room).toBe(`company:${companyId}`);
+		expect(room).toBe(wsRoom.company(companyId));
 		expect(event.type).toBe('row_change');
 		expect(event.table).toBe('projects');
 		expect(event.action).toBe('UPDATE');
@@ -437,7 +438,7 @@ describe('stopContainerGracefully', () => {
 
 		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(1);
 		const [room, event] = mockWsManager.broadcast.mock.calls[0];
-		expect(room).toBe(`company:${companyId}`);
+		expect(room).toBe(wsRoom.company(companyId));
 		expect(event.type).toBe('row_change');
 		expect(event.row.container_status).toBe('stopped');
 	});

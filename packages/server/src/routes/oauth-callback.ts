@@ -4,6 +4,7 @@ import {
 	ALL_AI_PROVIDERS,
 	ApprovalStatus,
 	ApprovalType,
+	OAUTH_CALLBACK_PATH,
 	PlatformType,
 } from '@hezo/shared';
 import { Hono } from 'hono';
@@ -21,7 +22,7 @@ const AI_PROVIDER_PLATFORMS = new Set<string>(ALL_AI_PROVIDERS);
 
 export const oauthCallbackRoutes = new Hono<Env>();
 
-oauthCallbackRoutes.get('/oauth/callback', async (c) => {
+oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const connectUrl = c.get('connectUrl');

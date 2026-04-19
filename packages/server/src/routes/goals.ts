@@ -1,4 +1,4 @@
-import { AuthType, GoalStatus, type GoalStatus as GoalStatusType } from '@hezo/shared';
+import { AuthType, GoalStatus, type GoalStatus as GoalStatusType, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -124,7 +124,7 @@ goalsRoutes.post('/companies/:companyId/goals', async (c) => {
 	);
 	const goal = insertResult.rows[0];
 
-	broadcastChange(c, `company:${companyId}`, 'goals', 'INSERT', goal);
+	broadcastChange(c, wsRoom.company(companyId), 'goals', 'INSERT', goal);
 
 	try {
 		await enqueueGoalReviewTask(db, companyId, goal.id as string, 'created', c.get('wsManager'));
@@ -223,7 +223,7 @@ goalsRoutes.patch('/companies/:companyId/goals/:goalId', async (c) => {
 	);
 	const goal = updateResult.rows[0];
 
-	broadcastChange(c, `company:${companyId}`, 'goals', 'UPDATE', goal);
+	broadcastChange(c, wsRoom.company(companyId), 'goals', 'UPDATE', goal);
 
 	if (contentChanged) {
 		try {
@@ -255,6 +255,6 @@ goalsRoutes.delete('/companies/:companyId/goals/:goalId', async (c) => {
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Goal not found', 404);
 	}
-	broadcastChange(c, `company:${companyId}`, 'goals', 'UPDATE', result.rows[0]);
+	broadcastChange(c, wsRoom.company(companyId), 'goals', 'UPDATE', result.rows[0]);
 	return ok(c, result.rows[0]);
 });

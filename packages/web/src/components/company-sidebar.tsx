@@ -1,4 +1,4 @@
-import { AgentAdminStatus } from '@hezo/shared';
+import { AgentAdminStatus, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useProjects } from '../hooks/use-projects';
@@ -24,8 +24,8 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 		.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
 	const sortedProjects = [...(projects ?? [])].sort((a, b) => {
-		if (a.name.toLowerCase() === 'operations') return -1;
-		if (b.name.toLowerCase() === 'operations') return 1;
+		if (a.slug === OPERATIONS_PROJECT_SLUG) return -1;
+		if (b.slug === OPERATIONS_PROJECT_SLUG) return 1;
 		return a.name.localeCompare(b.name);
 	});
 

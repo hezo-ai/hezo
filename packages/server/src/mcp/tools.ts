@@ -4,6 +4,8 @@ import {
 	ApprovalStatus,
 	ApprovalType,
 	AuthType,
+	CEO_AGENT_SLUG,
+	COACH_AGENT_SLUG,
 	CommentContentType,
 	IssuePriority,
 	IssueStatus,
@@ -1155,7 +1157,7 @@ async function isCoachOrSelf(db: PGlite, auth: AuthInfo, targetAgentId: string):
 		const coach = await db.query<{ slug: string }>('SELECT slug FROM member_agents WHERE id = $1', [
 			auth.memberId,
 		]);
-		return coach.rows[0]?.slug === 'coach';
+		return coach.rows[0]?.slug === COACH_AGENT_SLUG;
 	}
 	return false;
 }
@@ -1168,5 +1170,5 @@ async function isCeoOfCompany(db: PGlite, auth: AuthInfo, companyId: string): Pr
 		 WHERE ma.id = $1 AND m.company_id = $2`,
 		[auth.memberId, companyId],
 	);
-	return r.rows[0]?.slug === 'ceo';
+	return r.rows[0]?.slug === CEO_AGENT_SLUG;
 }

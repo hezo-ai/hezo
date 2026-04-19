@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType, WsMessageType } from '@hezo/shared';
+import { AuthType, WsMessageType, wsRoom } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContainerLogStreamer } from '../../services/container-logs';
 import type { DockerClient } from '../../services/docker';
@@ -172,9 +172,9 @@ describe('handleWsSubscribe', () => {
 		const { userId, companyId } = await seedCompanyWithProject(db);
 		const ws = createMockWs({ type: AuthType.Board, userId });
 
-		await handleWsSubscribe(ws, `company:${companyId}`, deps());
+		await handleWsSubscribe(ws, wsRoom.company(companyId), deps());
 
-		expect(wsManager.getRoomSize(`company:${companyId}`)).toBe(1);
+		expect(wsManager.getRoomSize(wsRoom.company(companyId))).toBe(1);
 	});
 
 	it('subscribes to container-logs and replays buffered logs for that room', async () => {

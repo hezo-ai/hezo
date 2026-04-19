@@ -14,6 +14,7 @@ export interface Agent {
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
 	budget_used_cents: number;
+	touches_code: boolean;
 	budget_reset_at: string | null;
 	runtime_status: string;
 	admin_status: string;
@@ -51,6 +52,7 @@ export function useCreateAgent(companyId: string) {
 			reports_to?: string;
 			monthly_budget_cents?: number;
 			heartbeat_interval_min?: number;
+			touches_code?: boolean;
 		}) => api.post<Agent>(`/api/companies/${companyId}/agents`, data),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] }),
@@ -66,6 +68,7 @@ export function useUpdateAgent(companyId: string, agentId: string) {
 			reports_to?: string | null;
 			monthly_budget_cents?: number;
 			heartbeat_interval_min?: number;
+			touches_code?: boolean;
 		}) => api.patch<Agent>(`/api/companies/${companyId}/agents/${agentId}`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] });
@@ -100,6 +103,7 @@ export function useOnboardAgent(companyId: string) {
 			system_prompt?: string;
 			monthly_budget_cents?: number;
 			heartbeat_interval_min?: number;
+			touches_code?: boolean;
 		}) =>
 			api.post<{ agent: Agent; issue: { id: string; identifier: string } | null }>(
 				`/api/companies/${companyId}/agents/onboard`,
