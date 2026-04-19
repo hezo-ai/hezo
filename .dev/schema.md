@@ -411,19 +411,18 @@ the agent subprocess.
 ### Project documents
 
 Project documents (PRDs, technical specifications, implementation plans, research,
-UI design decisions, marketing plans) are stored as files in the `.dev/` folder
-of the project's designated repo worktree — not in the database. The API reads
-and writes these files directly on the filesystem at
-`~/.hezo/companies/{slug}/projects/{project}/{repo}/.dev/`.
-
-A project must have a `designated_repo_id` set for project docs to work. The API
-resolves the repo's worktree path and operates on `.dev/*.md` files within it.
+UI design decisions, marketing plans) are stored in the `project_docs` table,
+keyed by `(project_id, filename)`. Every write creates a row in
+`project_doc_revisions` for full revision history. Projects do not need a
+designated repo for project docs to work.
 
 PRD updates (`prd.md`) by agents require board approval — the agent's write
-creates an approval request instead of writing the file directly.
+creates an approval request instead of updating the document directly.
 
 The `{{project_docs_context}}` template variable in system prompts auto-injects
-all project documents for the current issue's project.
+all project documents for the current issue's project. Agents read and write
+docs via the `list_project_docs`, `read_project_doc`, and `write_project_doc`
+MCP tools.
 
 ### Knowledge base
 

@@ -2262,7 +2262,7 @@ Response:
       "updated_at": "..."
     },
     "project_docs": [
-      { "filename": "spec.md", "path": ".dev/spec.md" }
+      { "filename": "spec.md", "updated_at": "..." }
     ],
     "peers": [
       { "id": "uuid", "title": "UI Designer", "status": "active" }
@@ -2309,9 +2309,9 @@ Response:
 
 ### Project Documents (agent-side)
 
-Agents access project documents through the same board endpoints (scoped to their company). Project docs are file-based — stored as `.dev/*.md` files in the designated repo worktree. See the board-side Project Documents section for endpoint details.
+Agents access project documents through the same board endpoints (scoped to their company). Project docs are stored in the `project_docs` table. See the board-side Project Documents section for endpoint details.
 
-Agent writes to `prd.md` create an approval request instead of writing the file directly.
+Agent writes to `prd.md` create an approval request instead of updating the document directly.
 
 ---
 

@@ -516,7 +516,7 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **Project-level AGENTS.md** lives at the root of each project's designated repo. This is the primary mechanism for enforcing project-specific engineering standards. Any coding agent (Claude Code, Codex, Gemini) automatically reads it from the repo root — no runtime-specific configuration needed.
 
-Each repo in a project has its own `AGENTS.md` at its root. The designated repo's AGENTS.md is the primary source. Non-designated repos' AGENTS.md files reference the designated repo's `.dev/` docs. A `CLAUDE.md` at the repo root points to AGENTS.md (`@AGENTS.md`).
+Each repo in a project has its own `AGENTS.md` at its root. The designated repo's AGENTS.md is the primary source. Non-designated repos' AGENTS.md files defer to the designated repo's AGENTS.md and reference the project's documents (stored in the DB, surfaced to agents via the `{{project_docs_context}}` template variable). A `CLAUDE.md` at the repo root points to AGENTS.md (`@AGENTS.md`).
 
 ### Designated repo and project documents
 
@@ -717,13 +717,9 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
     │       ├── backend-api/              # Project folder
     │       │   ├── api/                  # Git clone of org/api — DESIGNATED REPO
     │       │   │   ├── AGENTS.md         # Project-level agent rules (repo root)
-    │       │   │   ├── CLAUDE.md         # @AGENTS.md
-    │       │   │   └── .dev/             # Project documents
-    │       │   │       ├── spec.md
-    │       │   │       ├── prd.md
-    │       │   │       └── implementation-phases.md
+    │       │   │   └── CLAUDE.md         # @AGENTS.md
     │       │   ├── shared-lib/           # Git clone of org/shared (non-designated)
-    │       │   │   ├── AGENTS.md         # References designated repo's .dev/ docs
+    │       │   │   ├── AGENTS.md         # Defers to designated repo's AGENTS.md
     │       │   │   └── CLAUDE.md         # @AGENTS.md
     │       │   ├── worktrees/            # Git worktrees for parallel work (project-level)
     │       │   │   ├── api-feat-auth-agent-123/
@@ -734,8 +730,7 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
     │       └── frontend/                 # Another project
     │           ├── web-app/              # Git clone — DESIGNATED REPO
     │           │   ├── AGENTS.md
-    │           │   ├── CLAUDE.md
-    │           │   └── .dev/
+    │           │   └── CLAUDE.md
     │           ├── worktrees/
     │           └── .previews/
     │
@@ -745,12 +740,12 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
 
 **Key design decisions:**
 
-`AGENTS.md` lives at the **repo root** of each project's designated repo. Project documents live in `.dev/` inside the designated repo. This means:
+`AGENTS.md` lives at the **repo root** of each project's designated repo. Project documents live in the `project_docs` DB table, accessible to agents via MCP tools. This means:
 - Each project has its own AGENTS.md with project-specific rules
 - Company-level rules are in the KB docs DB table, injected at runtime
 - Any coding agent (Claude Code, Codex, Gemini) automatically reads AGENTS.md from the repo root
-- Project documents are tracked by git with full revision history
-- Non-designated repos reference the designated repo's `.dev/` docs via their own AGENTS.md
+- Project documents have full revision history in `project_doc_revisions`
+- Non-designated repos defer to the designated repo's AGENTS.md and access shared project docs through the same MCP tools
 
 ### Git worktrees for parallelism
 
@@ -780,7 +775,7 @@ If a company has 3 projects, 3 containers run. If a project has multiple repos, 
 | Git config | Host `~/.gitconfig` → Container `/root/.gitconfig` (ro) |
 | SSH agent | Host `$SSH_AUTH_SOCK` → Container `/tmp/ssh-agent.sock` (if available) |
 | AGENTS.md | Per-repo at repo root. Designated repo's AGENTS.md is the primary source. Non-designated repos reference it. |
-| Project docs | In designated repo's `.dev/` folder, accessible at `/workspace/{repo-short-name}/.dev/` |
+| Project docs | In `project_docs` table, accessed by agents via MCP tools (`list_project_docs`, `read_project_doc`, `write_project_doc`) |
 | Secrets | Injected as environment variables per subprocess (never container-wide, never written to disk) |
 | Connected platforms | All OAuth tokens from all connected platforms injected per subprocess for all agents. Platform MCP servers available. |
 | Previews | Written to `/workspace/.previews/{agent_id}/` — visible on host via the shared volume |
@@ -1623,7 +1618,7 @@ Paginated, filterable by entity type, action, actor, and date range. Read-only.
 
 Each company has a knowledge base — a collection of Markdown documents stored in the `kb_docs` table that define company-wide standards across all projects. These include company-level AGENTS.md. They are living documents that agents reference and update as the company evolves.
 
-Note: project-level documents (tech spec, PRD, implementation plan) are stored in the designated repo's `.dev/` folder, not in the KB. See section 17.
+Note: project-level documents (tech spec, PRD, implementation plan) are stored in the `project_docs` table, not in the KB. See section 17.
 
 ### Purpose
 
@@ -1703,13 +1698,13 @@ Accessible from the company workspace **Settings tab** as a "Preferences" subsec
 
 ---
 
-## 17. Project-level shared documents (file-based, in designated repo)
+## 17. Project-level shared documents
 
-Each project has a set of living documents stored as files in the designated repo's `.dev/` folder. These are tracked by git, giving full revision history for free. They are the authoritative source of truth for the project's current state.
+Each project has a set of living documents stored in the `project_docs` table, keyed by `(project_id, filename)`. They are the authoritative source of truth for the project's current state, with full revision history captured in `project_doc_revisions`.
 
 ### Document types
 
-| File | Created by | Purpose |
+| Name | Created by | Purpose |
 |------|-----------|---------|
 | `prd.md` | Product Lead | Product requirements — user stories, acceptance criteria, scope. **Agent changes require board approval.** |
 | `spec.md` | Architect | Technical specification — architecture, data model, API changes |
@@ -1717,7 +1712,7 @@ Each project has a set of living documents stored as files in the designated rep
 | `research.md` | Researcher | Research findings — competitive analysis, feasibility studies |
 | `ui-design-decisions.md` | UI Designer | Design rationale, component decisions, interaction patterns |
 | `marketing-plan.md` | Marketing Lead | Positioning, messaging, channels, timeline |
-| Other `.md` files | Any agent | Ad-hoc project documents |
+| Other `.md` filenames | Any agent | Ad-hoc project documents |
 
 ### Living documents
 
@@ -1725,15 +1720,15 @@ Project documents must always reflect the current state of decisions and codebas
 
 ### No approval required for updates (except PRD)
 
-Project documents are working documents actively maintained during development. Agents read/write them directly as files. Revision history comes from git. The board can view history via `git log` in the UI.
+Project documents are working documents actively maintained during development. Each write creates a row in `project_doc_revisions` for full history. The board can browse revisions and revert from the UI.
 
 ### PRD changes require board approval
 
-When an agent tries to update `prd.md` via the API, the system creates a pending approval instead of writing directly. Board approves → file is written. Board members can edit `prd.md` directly without approval.
+When an agent tries to update `prd.md`, the system creates a pending approval instead of writing directly. Board approves → the document is updated. Board members can edit `prd.md` directly without approval.
 
 ### How it works
 
-Documents are stored in the `project_docs` table. Agents access them via MCP tools (`list_project_docs`, `read_project_doc`, `write_project_doc`). Documents are also injected into agent prompts via the `{{project_docs_context}}` template variable at activation time. Semantic search via pgvector embeddings is supported.
+Documents live in the `project_docs` table. Agents access them via MCP tools (`list_project_docs`, `read_project_doc`, `write_project_doc`). Documents are also injected into agent prompts via the `{{project_docs_context}}` template variable at activation time. Semantic search via pgvector embeddings is supported.
 
 ### Project documents in the UI
 
@@ -2157,7 +2152,6 @@ audit_actor_type:     board, agent, system
 repo_host_type:       github
 platform_type:        github, gmail, gitlab, stripe, posthog, railway, vercel, digitalocean, x
 connection_status:    active, expired, disconnected
-project_doc_type:     (removed — project docs are files in .dev/)
 auth_provider:        github, gitlab
 ```
 
