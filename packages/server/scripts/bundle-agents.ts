@@ -5,7 +5,7 @@ import { zip } from '@hiddentao/zip-json';
 const agentsDir = join(import.meta.dir, '..', '..', '..', '.dev', 'agents');
 const outputPath = join(import.meta.dir, '..', 'src', 'db', 'agents-bundle.json');
 
-const archive = await zip(['*.md'], {
+const archive = await zip(['**/*.md'], {
 	baseDir: agentsDir,
 });
 

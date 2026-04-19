@@ -21,6 +21,7 @@ export interface Issue {
 	progress_summary: string | null;
 	rules: string | null;
 	project_name: string | null;
+	project_slug: string | null;
 	comment_count: number;
 	cost_cents: number;
 	created_at: string;

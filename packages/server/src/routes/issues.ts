@@ -12,6 +12,7 @@ import {
 import { Hono } from 'hono';
 import { auditLog } from '../lib/audit';
 import { broadcastChange } from '../lib/broadcast';
+import { assertOperationsAssignee } from '../lib/operations-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import { getProjectLocator, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
@@ -159,6 +160,11 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'assignee_id is required', 400);
 	}
 
+	const opsCheck = await assertOperationsAssignee(db, companyId, body.project_id, body.assignee_id);
+	if (!opsCheck.ok) {
+		return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
+	}
+
 	const companyResult = await db.query<{ issue_prefix: string }>(
 		'SELECT issue_prefix FROM companies WHERE id = $1',
 		[companyId],
@@ -234,7 +240,7 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
 
 	const result = await db.query(
 		`SELECT i.*,
-            p.name AS project_name, p.description AS project_description,
+            p.name AS project_name, p.slug AS project_slug, p.description AS project_description,
             co.description AS company_description,
             COALESCE(ma.title, m.display_name) AS assignee_name,
             m.member_type AS assignee_type,
@@ -295,8 +301,8 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	const { companyId } = access;
 	const issueId = c.req.param('issueId');
 
-	const existing = await db.query(
-		'SELECT id, status FROM issues WHERE id = $1 AND company_id = $2',
+	const existing = await db.query<{ id: string; status: string; project_id: string }>(
+		'SELECT id, status, project_id FROM issues WHERE id = $1 AND company_id = $2',
 		[issueId, companyId],
 	);
 	if (existing.rows.length === 0) {
@@ -343,6 +349,15 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	if (body.assignee_id !== undefined) {
 		if (body.assignee_id === null) {
 			return err(c, 'INVALID_REQUEST', 'assignee_id cannot be null', 400);
+		}
+		const opsCheck = await assertOperationsAssignee(
+			db,
+			companyId,
+			existing.rows[0].project_id,
+			body.assignee_id,
+		);
+		if (!opsCheck.ok) {
+			return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
 		}
 		sets.push(`assignee_id = $${idx}`);
 		params.push(body.assignee_id);
@@ -500,6 +515,16 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 	}
 	if (!body.assignee_id) {
 		return err(c, 'INVALID_REQUEST', 'assignee_id is required', 400);
+	}
+
+	const opsCheck = await assertOperationsAssignee(
+		db,
+		companyId,
+		parent.rows[0].project_id,
+		body.assignee_id,
+	);
+	if (!opsCheck.ok) {
+		return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
 	}
 
 	const companyResult = await db.query<{ issue_prefix: string }>(

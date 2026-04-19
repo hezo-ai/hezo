@@ -55,7 +55,7 @@ test.describe('Sidebar Navigation', () => {
 		await expect(nav.getByText('Architect')).toBeVisible();
 	});
 
-	test('Team section collapses and expands', async ({ page }) => {
+	test('Team section collapses and expands via chevron', async ({ page }) => {
 		await authenticate(page);
 		const { company } = await createCompanyWithAgents(page);
 
@@ -64,17 +64,15 @@ test.describe('Sidebar Navigation', () => {
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
-		const teamHeader = nav.getByText('Team', { exact: true });
 
 		// Expanded by default — agents visible
 		await expect(nav.getByText('CEO')).toBeVisible({ timeout: 10000 });
 
-		// Collapse
-		await teamHeader.click();
+		// Team is the second collapsible section (Projects is first)
+		await nav.getByRole('button', { name: 'Collapse' }).nth(1).click();
 		await expect(nav.getByText('CEO')).not.toBeVisible({ timeout: 5000 });
 
-		// Expand again
-		await teamHeader.click();
+		await nav.getByRole('button', { name: 'Expand' }).first().click();
 		await expect(nav.getByText('CEO')).toBeVisible({ timeout: 5000 });
 	});
 
@@ -88,8 +86,8 @@ test.describe('Sidebar Navigation', () => {
 
 		const nav = page.locator('nav');
 
-		// Collapse Team
-		await nav.getByText('Team', { exact: true }).click();
+		// Collapse Team via its chevron (second collapsible — Projects is first)
+		await nav.getByRole('button', { name: 'Collapse' }).nth(1).click();
 		await expect(nav.getByText('CEO')).not.toBeVisible({ timeout: 5000 });
 
 		// Navigate to a different page
@@ -98,6 +96,23 @@ test.describe('Sidebar Navigation', () => {
 
 		// Team should still be collapsed
 		await expect(nav.getByText('CEO')).not.toBeVisible();
+	});
+
+	test('clicking Team label navigates to team org chart page', async ({ page }) => {
+		await authenticate(page);
+		const { company } = await createCompanyWithAgents(page);
+
+		await suppressAiModal(page);
+		await page.goto(`/companies/${company.slug}/issues`);
+		await waitForPageLoad(page);
+
+		const nav = page.locator('nav');
+		await nav.getByRole('link', { name: 'Team' }).click();
+
+		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/agents/?$`), {
+			timeout: 5000,
+		});
+		await expect(page.getByTestId('team-summary')).toBeVisible();
 	});
 
 	test('Projects section is expanded by default and lists project names', async ({ page }) => {
@@ -284,7 +299,7 @@ test.describe('Sidebar Navigation', () => {
 		});
 	});
 
-	test('Work section contains Issues link and Projects label is a link', async ({ page }) => {
+	test('Work section contains Issues link and section labels are links', async ({ page }) => {
 		await authenticate(page);
 		const { company } = await createCompanyWithAgents(page);
 
@@ -297,8 +312,9 @@ test.describe('Sidebar Navigation', () => {
 		// Issues should be a link under Work
 		await expect(nav.getByRole('link', { name: 'Issues' })).toBeVisible();
 
-		// Projects label is now a link that navigates to the projects page
+		// Projects and Team labels are links that navigate to their respective pages
 		await expect(nav.getByRole('link', { name: 'Projects' })).toBeVisible();
+		await expect(nav.getByRole('link', { name: 'Team' })).toBeVisible();
 	});
 
 	test('newly created project appears in sidebar without reload', async ({ page }) => {

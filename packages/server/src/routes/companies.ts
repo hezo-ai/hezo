@@ -391,6 +391,20 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 	const missingSlugs = BUILTIN_AGENT_SLUGS.filter((s) => !existingSlugs.has(s));
 	if (missingSlugs.length === 0) return;
 
+	const overrideResult = await db.query<{ builtin_agent_prompts: Record<string, string> | null }>(
+		`SELECT ct.builtin_agent_prompts
+		 FROM company_team_types ctt
+		 JOIN company_types ct ON ct.id = ctt.company_type_id
+		 WHERE ctt.company_id = $1`,
+		[companyId],
+	);
+	const promptOverrides: Record<string, string> = {};
+	for (const row of overrideResult.rows) {
+		for (const [slug, prompt] of Object.entries(row.builtin_agent_prompts ?? {})) {
+			if (prompt && !promptOverrides[slug]) promptOverrides[slug] = prompt;
+		}
+	}
+
 	const agentTypes = await db.query<{
 		id: string;
 		name: string;
@@ -427,7 +441,7 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 				at.slug,
 				at.role_description,
 				at.default_summary ?? '',
-				at.system_prompt_template,
+				promptOverrides[at.slug] || at.system_prompt_template,
 				at.default_effort,
 				at.heartbeat_interval_min,
 				at.monthly_budget_cents,

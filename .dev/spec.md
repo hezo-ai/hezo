@@ -2042,7 +2042,7 @@ All of this happens within one ticket. The Comments tab shows the conversation f
 | 5 | **Company workspace — Agents tab** | Card grid of agents. Runtime, heartbeat, process status, budget bar per card. |
 | 6 | **New agent / edit agent** | Form with system prompt editor (monospace, variable chips, role templates), reporting line, budget. |
 | 7 | **Board inbox** | Drawer accessible from any screen. Pending approvals, design reviews, escalations, budget alerts, agent errors, QA findings, OAuth requests. One-click actionable. Unread badge. |
-| 8 | **Company workspace — Org chart tab** | Read-only tree with status indicators. Click node to inspect agent. |
+| 8 | **Company workspace — Team page** | Reached via the sidebar "Team" link. Read-only org chart tree with status indicators, team summary, and a "Hire agent" action. Click a node to inspect the agent. |
 | 9 | **Company workspace — Projects tab** | List of projects with goal, repo count, issue count. Click to see filtered issue list + repo management. Project detail includes a Documents tab showing project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan). |
 | 10 | **Company workspace — Knowledge base tab** | List of .md docs with title, last updated, updated by. Click to view/edit. Version history. Board can create docs directly. |
 | 11 | **Company workspace — Settings tab** | Board-only. Company description editor, connected platforms (OAuth), secrets vault, MCP servers, MPP config, budget overview, company preferences, plugin management, Slack integration, member management. |
@@ -2060,12 +2060,15 @@ The UI uses a three-column layout: a narrow company icon rail on the far left, a
 
 **Side Menu** (200px, visible when a company is selected):
 - Inbox (pending approvals — full page)
-- Issues (company-level)
-- Projects
-- Agents
-- Org chart
-- Knowledge base
-- Settings
+- Work
+  - Issues (company-level)
+  - Goals
+- Projects (collapsible section; header links to the projects list, children are per-project links)
+- Team (collapsible section; header links to the team org chart page, children are per-agent links)
+- Resources
+  - Knowledge base
+  - Settings
+  - Audit log
 
 **Project view** uses tabs (Issues, Agents, Container, Settings) instead of a sidebar. Selecting a project adds its slug to the URL.
 
@@ -2075,31 +2078,33 @@ Company Rail → Company List (home)
 
 Company Rail → Company workspace (side menu)
         ├── Inbox (pending approvals)
-        ├── Issues
-        │     └── Issue detail
-        │           ├── Comments tab (default)
-        │           └── Live Chat tab
-        ├── Projects
+        ├── Work
+        │     ├── Issues
+        │     │     └── Issue detail
+        │     │           ├── Comments tab (default)
+        │     │           └── Live Chat tab
+        │     └── Goals
+        ├── Projects (header links to projects list)
         │     └── Project detail (tabs)
         │           ├── Issues tab (filtered)
         │           ├── Agents tab
         │           ├── Container tab
         │           └── Settings tab
-        ├── Agents
-        │     └── Agent detail / edit
+        ├── Team (header links to org chart page)
+        │     ├── Agent detail / edit
         │     └── Hire agent (creates onboarding issue for CEO)
-        ├── Org chart
-        ├── Knowledge base
-        │     └── Document view / edit / version history
-        └── Settings
-              ├── General
-              ├── Connected platforms (OAuth)
-              ├── Secrets vault
-              ├── API keys
-              ├── MCP servers
-              ├── Budget overview
-              ├── Company preferences
-              ├── Skill file
+        └── Resources
+              ├── Knowledge base
+              │     └── Document view / edit / version history
+              ├── Settings
+              │     ├── General
+              │     ├── Connected platforms (OAuth)
+              │     ├── Secrets vault
+              │     ├── API keys
+              │     ├── MCP servers
+              │     ├── Budget overview
+              │     ├── Company preferences
+              │     └── Skill file
               └── Audit log
 ```
 
@@ -2107,7 +2112,7 @@ Company Rail → Company workspace (side menu)
 
 When creating a company, the user selects one or more company templates (default: "Software Development"). A template includes a team of agents with defined roles and reporting hierarchy, plus optional KB docs and preferences.
 
-Every company gets an auto-created **Operations** project (`is_internal = true`) for administrative issues like agent onboarding. Internal projects are visible but not deletable.
+Every company gets an auto-created **Operations** project (`is_internal = true`) for administrative issues like agent onboarding. Internal projects are visible but not deletable. Every issue in the Operations project must be assigned to the CEO — the server rejects any `POST /companies/:companyId/issues`, `PATCH /companies/:companyId/issues/:issueId`, `POST .../sub-issues`, or MCP `create_issue` / `update_issue` call that would leave an Operations-project issue assigned to anyone else. The create-issue dialog and the issue-detail assignee picker reflect this by filtering the agent list to the CEO when Operations is selected.
 
 ### Agent onboarding
 
@@ -2255,7 +2260,7 @@ The following specification details are maintained in separate files:
 - **`api.md`** — Complete API reference with all endpoints, request/response shapes, query parameters, and WebSocket event types
 - **`connect-spec.md`** — Hezo Connect OAuth gateway specification (self-hosted and centrally hosted modes)
 - **`implementation-phases.md`** — 12 implementation phases from Phase 0 (Hezo Connect) through Phase 11 (Deploy + Messaging)
-- **`agents/`** — Full role specifications for each of the 9 built-in agent roles (`ceo.md`, `product-lead.md`, `architect.md`, `engineer.md`, `qa-engineer.md`, `ui-designer.md`, `devops-engineer.md`, `marketing-lead.md`, `researcher.md`)
+- **`agents/<template>/`** — Full role specifications per company template. `software-development/` contains the 11 Software Development roles (`ceo.md`, `product-lead.md`, `architect.md`, `engineer.md`, `qa-engineer.md`, `ui-designer.md`, `devops-engineer.md`, `marketing-lead.md`, `researcher.md`, `security-engineer.md`, `coach.md`); `blank/` contains the pared-down `ceo.md` and `coach.md` used when the Blank template is selected.
 
 ## Appendix B: Endpoint count
 

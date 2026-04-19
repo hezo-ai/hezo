@@ -149,7 +149,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 
 export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>): Promise<void> {
 	const defs = buildAgentTypeDefs();
-	const role = (slug: string) => roleDocs[`${slug}.md`] ?? '';
+	const role = (slug: string) => roleDocs[`software-development/${slug}.md`] ?? '';
 
 	for (const def of defs) {
 		await db.query(
@@ -327,17 +327,25 @@ Significant technical decisions should be documented with:
 		);
 	}
 
+	const blankBuiltinPrompts = {
+		ceo: roleDocs['blank/ceo.md'] ?? '',
+		coach: roleDocs['blank/coach.md'] ?? '',
+	};
+
 	await db.query(
-		`INSERT INTO company_types (name, description, default_team_summary, is_builtin, source)
-		 VALUES ($1, $2, $3, true, 'builtin'::company_type_source)
+		`INSERT INTO company_types (name, description, default_team_summary, is_builtin, source,
+		                            builtin_agent_prompts)
+		 VALUES ($1, $2, $3, true, 'builtin'::company_type_source, $4::jsonb)
 		 ON CONFLICT (name) DO UPDATE SET
 		     description = EXCLUDED.description,
 		     default_team_summary = EXCLUDED.default_team_summary,
-		     source = EXCLUDED.source`,
+		     source = EXCLUDED.source,
+		     builtin_agent_prompts = EXCLUDED.builtin_agent_prompts`,
 		[
 			'Blank',
 			'Start from scratch with only the built-in CEO and Coach agents',
 			summaries.teams.Blank ?? '',
+			JSON.stringify(blankBuiltinPrompts),
 		],
 	);
 }

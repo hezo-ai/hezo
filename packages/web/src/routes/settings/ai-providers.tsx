@@ -1,4 +1,4 @@
-import { AI_PROVIDER_INFO, AiProvider } from '@hezo/shared';
+import { AI_PROVIDER_INFO, AiAuthMethod, AiProvider } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { ArrowLeft, Check, ExternalLink, Key, Loader2, ShieldCheck, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
@@ -6,9 +6,11 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import {
+	type AiProviderConfig,
 	useAiProviders,
 	useCreateAiProvider,
 	useDeleteAiProvider,
+	useSetDefaultAiProvider,
 	useStartAiProviderOAuth,
 	useVerifyAiProvider,
 } from '../../hooks/use-ai-providers';
@@ -25,6 +27,7 @@ function AiProvidersPage() {
 	const createProvider = useCreateAiProvider();
 	const deleteProvider = useDeleteAiProvider();
 	const verifyProvider = useVerifyAiProvider();
+	const setDefaultProvider = useSetDefaultAiProvider();
 	const startOAuth = useStartAiProviderOAuth();
 	const [addingProvider, setAddingProvider] = useState<AiProvider | null>(null);
 	const [apiKey, setApiKey] = useState('');
@@ -69,9 +72,13 @@ function AiProvidersPage() {
 			<div className="flex flex-col gap-2">
 				{AI_PROVIDERS_ORDER.map((provider) => {
 					const info = AI_PROVIDER_INFO[provider];
-					const config = configs?.find((c) => c.provider === provider);
+					const providerConfigs = configs?.filter((c) => c.provider === provider) ?? [];
+					const hasApiKey = providerConfigs.some((c) => c.auth_method === AiAuthMethod.ApiKey);
+					const hasOAuth = providerConfigs.some((c) => c.auth_method === AiAuthMethod.OAuthToken);
+					const canAddOAuth = info.supportsOAuth && !hasOAuth;
+					const canAddApiKey = !hasApiKey;
 					const isAdding = addingProvider === provider;
-					const verify = config ? verifyResult[config.id] : undefined;
+					const showMultipleControls = providerConfigs.length > 1;
 
 					return (
 						<div key={provider} className="border border-border rounded-radius-md p-3 bg-bg">
@@ -80,72 +87,25 @@ function AiProvidersPage() {
 									<span className="text-[13px] font-medium">{info.name}</span>
 									<span className="text-xs text-text-subtle">{info.runtimeLabel}</span>
 								</div>
-								{config && (
-									<div className="flex items-center gap-2">
-										<Badge color="neutral">
-											{config.auth_method === 'oauth_token' ? 'OAuth' : 'API Key'}
-										</Badge>
-										<Badge
-											color={
-												config.status === 'active'
-													? 'success'
-													: config.status === 'invalid'
-														? 'danger'
-														: 'neutral'
-											}
-										>
-											{config.status}
-										</Badge>
-									</div>
-								)}
 							</div>
 
-							{config && (
-								<div className="flex items-center gap-2 mt-2">
-									{config.label && <span className="text-xs text-text-subtle">{config.label}</span>}
-									<div className="flex-1" />
-									<Button
-										variant="secondary"
-										size="sm"
-										onClick={() => handleVerify(config.id)}
-										disabled={verifyProvider.isPending}
-									>
-										{verifyProvider.isPending ? (
-											<Loader2 className="w-3 h-3 animate-spin" />
-										) : (
-											<ShieldCheck className="w-3 h-3" />
-										)}
-										Verify
-									</Button>
-									<Button
-										variant="danger-text"
-										size="sm"
-										onClick={() => deleteProvider.mutate(config.id)}
-									>
-										<Trash2 className="w-3 h-3" /> Remove
-									</Button>
-								</div>
-							)}
+							{providerConfigs.map((config) => (
+								<ConfigRow
+									key={config.id}
+									config={config}
+									showDefaultControls={showMultipleControls}
+									verify={verifyResult[config.id]}
+									onVerify={() => handleVerify(config.id)}
+									onRemove={() => deleteProvider.mutate(config.id)}
+									onSetDefault={() => setDefaultProvider.mutate(config.id)}
+									verifyPending={verifyProvider.isPending}
+									setDefaultPending={setDefaultProvider.isPending}
+								/>
+							))}
 
-							{config && verify && (
-								<div
-									className={`mt-2 flex items-center gap-1.5 text-[13px] ${verify.valid ? 'text-accent-green-text' : 'text-accent-red'}`}
-								>
-									{verify.valid ? (
-										<>
-											<Check className="w-3.5 h-3.5" /> Key is valid
-										</>
-									) : (
-										<>
-											<X className="w-3.5 h-3.5" /> {verify.error || 'Key is invalid'}
-										</>
-									)}
-								</div>
-							)}
-
-							{!config && !isAdding && (
+							{(canAddOAuth || canAddApiKey) && !isAdding && (
 								<div className="flex items-center gap-2 mt-2">
-									{info.supportsOAuth && (
+									{canAddOAuth && (
 										<Button
 											variant="secondary"
 											size="sm"
@@ -156,9 +116,15 @@ function AiProvidersPage() {
 											<ExternalLink className="w-3 h-3" /> Connect via OAuth
 										</Button>
 									)}
-									<Button variant="secondary" size="sm" onClick={() => setAddingProvider(provider)}>
-										<Key className="w-3 h-3" /> Enter API key
-									</Button>
+									{canAddApiKey && (
+										<Button
+											variant="secondary"
+											size="sm"
+											onClick={() => setAddingProvider(provider)}
+										>
+											<Key className="w-3 h-3" /> Enter API key
+										</Button>
+									)}
 								</div>
 							)}
 
@@ -211,6 +177,83 @@ function AiProvidersPage() {
 				<p className="text-[13px] text-accent-red mt-2">
 					{(startOAuth.error as { message: string }).message}
 				</p>
+			)}
+		</div>
+	);
+}
+
+interface ConfigRowProps {
+	config: AiProviderConfig;
+	showDefaultControls: boolean;
+	verify: { valid: boolean; error?: string } | undefined;
+	onVerify: () => void;
+	onRemove: () => void;
+	onSetDefault: () => void;
+	verifyPending: boolean;
+	setDefaultPending: boolean;
+}
+
+function ConfigRow({
+	config,
+	showDefaultControls,
+	verify,
+	onVerify,
+	onRemove,
+	onSetDefault,
+	verifyPending,
+	setDefaultPending,
+}: ConfigRowProps) {
+	return (
+		<div className="mt-2 border-t border-border pt-2">
+			<div className="flex items-center gap-2">
+				<Badge color="neutral">
+					{config.auth_method === AiAuthMethod.OAuthToken ? 'OAuth' : 'API Key'}
+				</Badge>
+				<Badge
+					color={
+						config.status === 'active'
+							? 'success'
+							: config.status === 'invalid'
+								? 'danger'
+								: 'neutral'
+					}
+				>
+					{config.status}
+				</Badge>
+				{showDefaultControls && config.is_default && <Badge color="neutral">Default</Badge>}
+				<span className="text-xs text-text-subtle truncate">{config.label}</span>
+				<div className="flex-1" />
+				{showDefaultControls && !config.is_default && (
+					<Button variant="secondary" size="sm" onClick={onSetDefault} disabled={setDefaultPending}>
+						Set default
+					</Button>
+				)}
+				<Button variant="secondary" size="sm" onClick={onVerify} disabled={verifyPending}>
+					{verifyPending ? (
+						<Loader2 className="w-3 h-3 animate-spin" />
+					) : (
+						<ShieldCheck className="w-3 h-3" />
+					)}
+					Verify
+				</Button>
+				<Button variant="danger-text" size="sm" onClick={onRemove}>
+					<Trash2 className="w-3 h-3" /> Remove
+				</Button>
+			</div>
+			{verify && (
+				<div
+					className={`mt-2 flex items-center gap-1.5 text-[13px] ${verify.valid ? 'text-accent-green-text' : 'text-accent-red'}`}
+				>
+					{verify.valid ? (
+						<>
+							<Check className="w-3.5 h-3.5" /> Key is valid
+						</>
+					) : (
+						<>
+							<X className="w-3.5 h-3.5" /> {verify.error || 'Key is invalid'}
+						</>
+					)}
+				</div>
 			)}
 		</div>
 	);

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, getToken } from './helpers';
+import { authenticate, clearAiProviders, getToken } from './helpers';
 
 test.describe('AI Providers instance settings', () => {
 	test('lists all four provider cards on /settings/ai-providers', async ({ page }) => {
@@ -28,6 +28,74 @@ test.describe('AI Providers instance settings', () => {
 			await moonshotCard.getByRole('button', { name: 'Save' }).click();
 			await expect(moonshotCard.getByText('active')).toBeVisible({ timeout: 10000 });
 		}
+	});
+
+	test('shows Connect via OAuth when API key is already configured', async ({ page }) => {
+		await authenticate(page);
+		await page.goto('/settings/ai-providers');
+
+		const anthropicCard = page
+			.locator('div.border.border-border.rounded-radius-md.p-3', { hasText: 'Anthropic' })
+			.first();
+
+		await expect(anthropicCard.getByText('API Key')).toBeVisible();
+		await expect(anthropicCard.getByRole('button', { name: /Connect via OAuth/i })).toBeVisible();
+		await expect(anthropicCard.getByRole('button', { name: 'Enter API key' })).toHaveCount(0);
+	});
+
+	test('renders API key + OAuth side-by-side and can flip the default', async ({ page }) => {
+		const token = await getToken(page);
+		const headers = { Authorization: `Bearer ${token}` };
+
+		await clearAiProviders(page, token);
+
+		const apiRes = await page.request.post('/api/ai-providers', {
+			headers: { ...headers, 'Content-Type': 'application/json' },
+			data: {
+				provider: 'anthropic',
+				api_key: 'sk-ant-mix-test',
+				label: 'anthropic-mix-api',
+				auth_method: 'api_key',
+			},
+		});
+		expect(apiRes.status()).toBe(201);
+
+		const oauthRes = await page.request.post('/api/ai-providers', {
+			headers: { ...headers, 'Content-Type': 'application/json' },
+			data: {
+				provider: 'anthropic',
+				api_key: 'oauth-mix-token',
+				label: 'anthropic-mix-oauth',
+				auth_method: 'oauth_token',
+			},
+		});
+		expect(oauthRes.status()).toBe(201);
+
+		await authenticate(page);
+		await page.goto('/settings/ai-providers');
+
+		const anthropicCard = page
+			.locator('div.border.border-border.rounded-radius-md.p-3', { hasText: 'Anthropic' })
+			.first();
+
+		await expect(anthropicCard.getByText('API Key', { exact: true })).toBeVisible();
+		await expect(anthropicCard.getByText('OAuth', { exact: true })).toBeVisible();
+		await expect(anthropicCard.getByText('Default', { exact: true })).toBeVisible();
+		await expect(anthropicCard.getByRole('button', { name: /Connect via OAuth/i })).toHaveCount(0);
+		await expect(anthropicCard.getByRole('button', { name: 'Enter API key' })).toHaveCount(0);
+
+		await anthropicCard.getByRole('button', { name: 'Set default' }).click();
+
+		const listAfter = await page.request.get('/api/ai-providers', { headers });
+		const configs = (await listAfter.json()).data as Array<{
+			id: string;
+			auth_method: string;
+			is_default: boolean;
+		}>;
+		const defaultConfig = configs.find((c) => c.is_default);
+		expect(defaultConfig?.auth_method).toBe('oauth_token');
+
+		await clearAiProviders(page, token);
 	});
 });
 
@@ -80,5 +148,45 @@ test.describe('AI Providers API (instance-scoped)', () => {
 		expect(res.status()).toBe(400);
 		const body = await res.json();
 		expect(body.error.code).toBe('INVALID_KEY_FORMAT');
+	});
+
+	test('allows an OAuth token config alongside an existing API key for the same provider', async ({
+		page,
+	}) => {
+		const token = await getToken(page);
+		const headers = { Authorization: `Bearer ${token}` };
+
+		await clearAiProviders(page, token);
+
+		const apiRes = await page.request.post('/api/ai-providers', {
+			headers: { ...headers, 'Content-Type': 'application/json' },
+			data: {
+				provider: 'anthropic',
+				api_key: 'sk-ant-coexist-api',
+				label: 'anthropic-coexist-api',
+				auth_method: 'api_key',
+			},
+		});
+		expect(apiRes.status()).toBe(201);
+
+		const oauthRes = await page.request.post('/api/ai-providers', {
+			headers: { ...headers, 'Content-Type': 'application/json' },
+			data: {
+				provider: 'anthropic',
+				api_key: 'oauth-coexist-token',
+				label: 'anthropic-coexist-oauth',
+				auth_method: 'oauth_token',
+			},
+		});
+		expect(oauthRes.status()).toBe(201);
+
+		const listRes = await page.request.get('/api/ai-providers', { headers });
+		const rows = (await listRes.json()).data as Array<{ provider: string; auth_method: string }>;
+		const anthropic = rows.filter((r) => r.provider === 'anthropic');
+		expect(anthropic.length).toBe(2);
+		expect(anthropic.some((r) => r.auth_method === 'api_key')).toBe(true);
+		expect(anthropic.some((r) => r.auth_method === 'oauth_token')).toBe(true);
+
+		await clearAiProviders(page, token);
 	});
 });

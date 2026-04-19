@@ -53,7 +53,7 @@
 | `company_issue_counters` | Helper for atomic issue numbering. | belongs to company |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
 | `slack_connections` | Per-company Slack app config. Bot token encrypted in secrets. | belongs to company |
-| `ai_provider_configs` | Instance-level AI provider credentials shared across every company in the Hezo instance. Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription OAuth token. A partial unique index on `is_default` enforces one default per provider. Agent runner decrypts at execution time and injects as env var. | instance-scoped |
+| `ai_provider_configs` | Instance-level AI provider credentials shared across every company in the Hezo instance. Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription OAuth token. A partial unique index on `is_default` enforces one default per provider; `(provider, label)` is unique so multiple rows per provider coexist — typically one `api_key` and one `oauth_token` — and `getProviderCredential` / `resolveRuntimeForIssue` pick the `is_default` row at runtime. Agent runner decrypts at execution time and injects as env var. | instance-scoped |
 
 ## Key design decisions
 

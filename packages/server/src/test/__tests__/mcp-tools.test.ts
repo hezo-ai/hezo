@@ -645,3 +645,60 @@ describe('MCP tool: set_agent_summary and set_team_summary', () => {
 		expect(row.rows[0].team_summary).toBe('A team that ships software together.');
 	});
 });
+
+describe('MCP tool: operations project assignee restriction', () => {
+	it('create_issue on Operations project rejects non-CEO assignee_slug', async () => {
+		const ops = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE company_id = $1 AND slug = 'operations'`,
+			[companyId],
+		);
+		const result = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: ops.rows[0].id,
+			title: 'Operations via MCP with non-CEO',
+			assignee_slug: 'engineer',
+		})) as { error?: string };
+		expect(result.error).toContain('CEO');
+	});
+
+	it('create_issue on Operations project accepts CEO assignee_slug', async () => {
+		const ops = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE company_id = $1 AND slug = 'operations'`,
+			[companyId],
+		);
+		const result = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: ops.rows[0].id,
+			title: 'Operations via MCP with CEO',
+			assignee_slug: 'ceo',
+		})) as { error?: string; id?: string; project_id?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.project_id).toBe(ops.rows[0].id);
+	});
+
+	it('update_issue rejects reassigning Operations issue to non-CEO', async () => {
+		const ops = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE company_id = $1 AND slug = 'operations'`,
+			[companyId],
+		);
+		const ceo = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1 AND ma.slug = 'ceo'`,
+			[companyId],
+		);
+
+		const created = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: ops.rows[0].id,
+			title: 'Operations reassign target',
+			assignee_id: ceo.rows[0].id,
+		})) as { id: string };
+
+		const result = (await callToolViaMcp('update_issue', {
+			company_id: companyId,
+			issue_id: created.id,
+			assignee_id: agentId,
+		})) as { error?: string };
+		expect(result.error).toContain('CEO');
+	});
+});

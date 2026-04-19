@@ -194,3 +194,44 @@ describe('getAiProviderStatus', () => {
 		expect(status.providers).toEqual([]);
 	});
 });
+
+describe('API key + OAuth coexistence for a single provider', () => {
+	it('returns the default config regardless of auth method, and tracks it across flips', async () => {
+		await db.query(`DELETE FROM ai_provider_configs`);
+
+		const apiKeyId = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Anthropic,
+			'sk-ant-api-key-value',
+			AiAuthMethod.ApiKey,
+			'anthropic-api',
+		);
+		const oauthId = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Anthropic,
+			'oauth-token-value',
+			AiAuthMethod.OAuthToken,
+			'anthropic-oauth',
+		);
+
+		const configs = await listAiProviders(db);
+		const anthropic = configs.filter((c) => c.provider === AiProvider.Anthropic);
+		expect(anthropic.length).toBe(2);
+		expect(anthropic.filter((c) => c.is_default).length).toBe(1);
+
+		const firstDefault = await getProviderCredential(db, masterKeyManager, AiProvider.Anthropic);
+		expect(firstDefault?.value).toBe('sk-ant-api-key-value');
+		expect(firstDefault?.authMethod).toBe(AiAuthMethod.ApiKey);
+
+		await setDefaultAiProvider(db, oauthId);
+		const oauthDefault = await getProviderCredential(db, masterKeyManager, AiProvider.Anthropic);
+		expect(oauthDefault?.value).toBe('oauth-token-value');
+		expect(oauthDefault?.authMethod).toBe(AiAuthMethod.OAuthToken);
+
+		await setDefaultAiProvider(db, apiKeyId);
+		const apiKeyDefault = await getProviderCredential(db, masterKeyManager, AiProvider.Anthropic);
+		expect(apiKeyDefault?.authMethod).toBe(AiAuthMethod.ApiKey);
+	});
+});

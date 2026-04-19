@@ -111,6 +111,7 @@ CREATE TABLE company_types (
     preferences_config  JSONB NOT NULL DEFAULT '{}'::jsonb,
     mcp_servers         JSONB NOT NULL DEFAULT '[]'::jsonb,
     mpp_config          JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
+    builtin_agent_prompts JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );

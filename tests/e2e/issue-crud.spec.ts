@@ -384,6 +384,43 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 	await expect(dropdown).toBeHidden();
 });
 
+test('operations project restricts assignee dropdown to the CEO', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = (await agentsRes.json()).data as { id: string; title: string; slug: string }[];
+	const ceo = agents.find((a) => a.slug === 'ceo');
+	expect(ceo).toBeDefined();
+	const engineer = agents.find((a) => a.slug === 'engineer');
+	expect(engineer).toBeDefined();
+
+	await suppressAiModal(page);
+	await page.goto(`/companies/${company.slug}/issues`);
+	await waitForPageLoad(page);
+	await expect(page.getByRole('button', { name: 'New Issue' }).first()).toBeVisible({
+		timeout: 10000,
+	});
+	await page.getByRole('button', { name: 'New Issue' }).first().click();
+
+	await page.getByLabel('Title').fill('Operations-only assignee check');
+	await page
+		.locator('select')
+		.filter({ hasText: 'Select project' })
+		.selectOption({ label: 'Operations' });
+
+	const assigneeSelect = page.locator('select').filter({ hasText: /Select assignee|CEO/ });
+	const optionLabels = await assigneeSelect.locator('option').allTextContents();
+	const agentLabels = optionLabels.filter((l) => l !== 'Select assignee');
+
+	expect(agentLabels).toContain(ceo!.title);
+	expect(agentLabels).not.toContain(engineer!.title);
+	expect(agentLabels.length).toBe(1);
+});
+
 test('sidebar shows agent status badges', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);

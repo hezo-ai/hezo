@@ -387,7 +387,7 @@ Backend:
 
 Frontend:
 - Company icon rail (left sidebar) with home, company avatars, theme switcher, inbox badge
-- Unified side menu: Inbox, Issues, Projects, Agents, Org Chart, Knowledge Base, Settings
+- Unified side menu grouping: Inbox, Work (Issues, Goals), Projects (header links to projects list), Team (header links to org chart), Resources (Knowledge base, Settings, Audit log)
 - Removed top header with breadcrumbs
 - Tab-based project view (Issues, Agents, Container, Settings) replacing project sidebar
 - Full-page Inbox route for pending approvals
@@ -491,6 +491,7 @@ UI:
 - Dedicated `/settings/ai-providers` route with per-provider cards
 - Manual API key entry (password input, format validation)
 - OAuth connection for subscription mode (Anthropic, OpenAI, Google)
+- Each provider card renders every stored config row (API key and/or OAuth subscription) and exposes add buttons only for auth methods not yet configured, so an API key and an OAuth subscription can coexist for the same provider. A `Default` badge and `Set default` button let the operator pick which config the agent runner uses.
 - Full-screen setup gate rendered by the root shell immediately after master-key unlock, before the app is interactive. Blocks company creation until at least one provider is active. Re-raises if the last provider is deleted.
 
 **How to test:**

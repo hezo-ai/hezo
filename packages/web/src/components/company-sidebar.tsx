@@ -63,6 +63,8 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 		},
 		{
 			title: 'Team',
+			titleTo: '/companies/$companyId/agents',
+			titleParams: params,
 			collapsible: true,
 			collapsed: !teamExpanded,
 			onToggle: () => {

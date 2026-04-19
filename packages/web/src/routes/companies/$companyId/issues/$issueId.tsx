@@ -1,4 +1,4 @@
-import { AgentEffort } from '@hezo/shared';
+import { AgentEffort, CEO_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
 import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -87,6 +87,10 @@ function IssueDetailPage() {
 	}, [assigneeOpen]);
 
 	const assignedAgent = agents?.find((a) => a.id === issue?.assignee_id);
+	const isOperationsProject = issue?.project_slug === OPERATIONS_PROJECT_SLUG;
+	const assigneeOptions = agents
+		?.filter((a) => a.admin_status !== 'disabled')
+		.filter((a) => !isOperationsProject || a.slug === CEO_AGENT_SLUG);
 
 	if (isLoading || !issue)
 		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;
@@ -475,23 +479,21 @@ function IssueDetailPage() {
 					</button>
 					{assigneeOpen && (
 						<div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-radius-md border border-border bg-bg shadow-md max-h-48 overflow-y-auto">
-							{agents
-								?.filter((a) => a.admin_status !== 'disabled')
-								.map((a) => (
-									<button
-										type="button"
-										key={a.id}
-										onClick={() => {
-											updateIssue.mutate({ assignee_id: a.id });
-											setAssigneeOpen(false);
-										}}
-										className={`flex items-center w-full px-2.5 py-1.5 text-xs text-left hover:bg-bg-subtle transition-colors ${
-											a.id === issue.assignee_id ? 'bg-bg-subtle font-medium' : ''
-										}`}
-									>
-										<AgentStatusLabel name={a.title} runtimeStatus={a.runtime_status} />
-									</button>
-								))}
+							{assigneeOptions?.map((a) => (
+								<button
+									type="button"
+									key={a.id}
+									onClick={() => {
+										updateIssue.mutate({ assignee_id: a.id });
+										setAssigneeOpen(false);
+									}}
+									className={`flex items-center w-full px-2.5 py-1.5 text-xs text-left hover:bg-bg-subtle transition-colors ${
+										a.id === issue.assignee_id ? 'bg-bg-subtle font-medium' : ''
+									}`}
+								>
+									<AgentStatusLabel name={a.title} runtimeStatus={a.runtime_status} />
+								</button>
+							))}
 						</div>
 					)}
 				</div>

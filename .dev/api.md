@@ -777,6 +777,8 @@ Request:
 an event trigger. If a board member, they are notified via inbox and
 configured messaging channels.
 
+Issues in the auto-created Operations project (`slug = 'operations'`, `is_internal = true`) must be assigned to the CEO. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Operations project issues must be assigned to the CEO`.
+
 `runtime_type` is optional. It pins this issue to a specific AI adapter
 (`claude_code | codex | gemini | kimi`). When unset, the server picks the
 instance default — the single active AI provider if only one is configured,
@@ -819,11 +821,13 @@ Update issue fields: title, description, status, priority, assignee_id, labels, 
 Changing `assignee_id` triggers an event on the newly assigned agent, or a notification to the newly assigned board member.
 Changing `status` to `done` or `closed` triggers preview cleanup.
 
+For issues whose project is Operations (`slug = 'operations'`, `is_internal = true`), `assignee_id` must be the CEO; any other value returns `400 INVALID_REQUEST`.
+
 #### `DELETE /companies/:companyId/issues/:issueId`
 Delete an issue. Only allowed if status is `backlog` or `open`, and no comments exist.
 
 #### `POST /companies/:companyId/issues/:issueId/sub-issues`
-Create a sub-issue. `project_id` is inherited from the parent.
+Create a sub-issue. `project_id` is inherited from the parent. When the parent belongs to the Operations project, the sub-issue's `assignee_id` must be the CEO.
 
 Request:
 ```json
@@ -1304,6 +1308,8 @@ Request:
 ```
 
 `provider` is one of: `anthropic`, `openai`, `google`, `moonshot`. `label` is optional; the server auto-derives one from the provider name if omitted. Returns 409 if a `(provider, label)` pair already exists.
+
+Multiple configs per provider are permitted as long as `(provider, label)` stays unique. The typical case is one `api_key` row plus one `oauth_token` row per provider (so a user can keep their Anthropic API key *and* a Claude subscription OAuth token side-by-side). The runtime credential resolver picks whichever row is marked `is_default`; flip via `PATCH /ai-providers/:configId/default`. `auth_method` defaults to `api_key`; send `"oauth_token"` to skip the key-prefix check and live verification (OAuth tokens are written by the `/oauth/callback` flow but the field is accepted here for completeness).
 
 #### `DELETE /ai-providers/:configId`
 Remove a configuration.
@@ -2626,8 +2632,8 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `create_company` | Create a new company (superuser only) | `name`, `description` |
 | `list_issues` | List issues with filtering | `company_id`, `project_id?`, `status?` |
 | `get_issue` | Get issue details | `company_id`, `issue_id` |
-| `create_issue` | Create a new issue | `company_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
-| `update_issue` | Update an issue | `company_id`, `issue_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
+| `create_issue` | Create a new issue. Operations-project issues must be assigned to the CEO (slug `ceo`); otherwise an error is returned. | `company_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
+| `update_issue` | Update an issue. Changing `assignee_id` on an Operations-project issue to anyone other than the CEO returns an error. | `company_id`, `issue_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
 | `list_agents` | List agents in a company | `company_id` |
 | `list_projects` | List projects | `company_id` |
 | `create_project` | Create a project | `company_id`, `name` |

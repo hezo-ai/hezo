@@ -34,12 +34,25 @@ export async function loadBundledAgentRoles(): Promise<Record<string, string>> {
 
 export async function loadFilesystemAgentRoles(agentsDir: string): Promise<Record<string, string>> {
 	const { readdir, readFile } = await import('node:fs/promises');
-	const { join } = await import('node:path');
-	const files = (await readdir(agentsDir)).filter((f) => f.endsWith('.md')).sort();
+	const { join, relative, sep } = await import('node:path');
+
+	async function walk(dir: string): Promise<string[]> {
+		const entries = await readdir(dir, { withFileTypes: true });
+		const results: string[] = [];
+		for (const entry of entries) {
+			const full = join(dir, entry.name);
+			if (entry.isDirectory()) results.push(...(await walk(full)));
+			else if (entry.isFile() && entry.name.endsWith('.md')) results.push(full);
+		}
+		return results;
+	}
+
+	const files = (await walk(agentsDir)).sort();
 	const roles: Record<string, string> = {};
 	await Promise.all(
-		files.map(async (file) => {
-			roles[file] = await readFile(join(agentsDir, file), 'utf-8');
+		files.map(async (full) => {
+			const key = relative(agentsDir, full).split(sep).join('/');
+			roles[key] = await readFile(full, 'utf-8');
 		}),
 	);
 	return roles;

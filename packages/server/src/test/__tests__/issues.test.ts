@@ -418,3 +418,146 @@ describe('issues CRUD', () => {
 		}
 	});
 });
+
+describe('operations project assignee restriction', () => {
+	let operationsProjectId: string;
+	let ceoAgentId: string;
+
+	beforeAll(async () => {
+		const opsResult = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE company_id = $1 AND slug = 'operations'`,
+			[companyId],
+		);
+		operationsProjectId = opsResult.rows[0].id;
+
+		const ceoResult = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1 AND ma.slug = 'ceo'`,
+			[companyId],
+		);
+		ceoAgentId = ceoResult.rows[0].id;
+	});
+
+	it('rejects creating an Operations issue assigned to a non-CEO agent', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: operationsProjectId,
+				title: 'Non-CEO on Operations',
+				assignee_id: agentId,
+			}),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain('CEO');
+	});
+
+	it('accepts creating an Operations issue assigned to the CEO', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: operationsProjectId,
+				title: 'CEO on Operations',
+				assignee_id: ceoAgentId,
+			}),
+		});
+		expect(res.status).toBe(201);
+		expect((await res.json()).data.assignee_id).toBe(ceoAgentId);
+	});
+
+	it('allows non-CEO assignees on non-Operations projects', async () => {
+		const res = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Non-CEO on regular project',
+				assignee_id: agentId,
+			}),
+		});
+		expect(res.status).toBe(201);
+	});
+
+	it('rejects reassigning an Operations issue to a non-CEO agent', async () => {
+		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: operationsProjectId,
+				title: 'Reassignable Operations issue',
+				assignee_id: ceoAgentId,
+			}),
+		});
+		const issue = (await createRes.json()).data;
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ assignee_id: agentId }),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain('CEO');
+	});
+
+	it('allows reassigning an Operations issue back to the CEO', async () => {
+		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: operationsProjectId,
+				title: 'Operations keep-CEO issue',
+				assignee_id: ceoAgentId,
+			}),
+		});
+		const issue = (await createRes.json()).data;
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ assignee_id: ceoAgentId }),
+		});
+		expect(res.status).toBe(200);
+	});
+
+	it('rejects sub-issue of an Operations parent assigned to a non-CEO agent', async () => {
+		const parentRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: operationsProjectId,
+				title: 'Operations parent',
+				assignee_id: ceoAgentId,
+			}),
+		});
+		const parent = (await parentRes.json()).data;
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${parent.id}/sub-issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Sub with non-CEO', assignee_id: agentId }),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain('CEO');
+	});
+
+	it('exposes project_slug on the issue detail response', async () => {
+		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: operationsProjectId,
+				title: 'Operations detail check',
+				assignee_id: ceoAgentId,
+			}),
+		});
+		const issue = (await createRes.json()).data;
+
+		const detailRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			headers: authHeader(token),
+		});
+		const detail = (await detailRes.json()).data;
+		expect(detail.project_slug).toBe('operations');
+	});
+});

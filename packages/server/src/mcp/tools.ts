@@ -11,6 +11,7 @@ import {
 } from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { assertOperationsAssignee } from '../lib/operations-assignee';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import { triggerStatusAutomations } from '../services/issue-automation';
@@ -257,6 +258,14 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			}
 			if (!assigneeId) return { error: 'Either assignee_id or assignee_slug is required' };
 
+			const opsCheck = await assertOperationsAssignee(
+				db,
+				args.company_id as string,
+				args.project_id as string,
+				assigneeId,
+			);
+			if (!opsCheck.ok) return { error: opsCheck.message };
+
 			const companyResult = await db.query<{ issue_prefix: string }>(
 				'SELECT issue_prefix FROM companies WHERE id = $1',
 				[args.company_id],
@@ -331,6 +340,24 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
+
+			if (args.assignee_id) {
+				const issueRow = await db.query<{ project_id: string }>(
+					'SELECT project_id FROM issues WHERE id = $1 AND company_id = $2',
+					[args.issue_id, args.company_id],
+				);
+				const projectId = issueRow.rows[0]?.project_id;
+				if (projectId) {
+					const opsCheck = await assertOperationsAssignee(
+						db,
+						args.company_id as string,
+						projectId,
+						args.assignee_id as string,
+					);
+					if (!opsCheck.ok) return { error: opsCheck.message };
+				}
+			}
+
 			const sets: string[] = [];
 			const params: unknown[] = [];
 			let idx = 1;
