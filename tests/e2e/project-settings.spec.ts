@@ -91,18 +91,17 @@ test.describe('Project Settings', () => {
 		await expect(page.getByRole('button', { name: 'Add Repo' })).toBeVisible();
 	});
 
-	test('can toggle add repo form', async ({ page }) => {
+	test('"Add Repo" opens the setup wizard', async ({ page }) => {
 		await authenticate(page);
 		const { company, project } = await createProject(page);
 
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/settings`);
 		await waitForPageLoad(page);
 
-		// Click "Add Repo" to show form
 		await page.getByRole('button', { name: 'Add Repo' }).click();
 
-		// Form fields should be visible
-		await expect(page.getByPlaceholder('Short name')).toBeVisible();
-		await expect(page.getByPlaceholder('GitHub URL')).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Set up repository' })).toBeVisible({
+			timeout: 5000,
+		});
 	});
 });

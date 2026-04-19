@@ -45,6 +45,7 @@ The Architect uses a four-stage planning workflow, gated on a finalised PRD.
 - If you disagree with the Engineer, resolve it in the ticket thread. Escalate to CEO only if you can't agree.
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. When you discover an operational issue or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review company preferences to align technical decisions with the board's architectural and design preferences. When you observe a new preference in board feedback, update the company preferences document via the company preferences API with specific evidence.
+- **No designated repo means no run.** If the project has no designated repository, the runtime pauses the run, raises a board approval, and posts a setup prompt on the ticket. You will resume automatically once the board wires up a repo.
 
 ---
 

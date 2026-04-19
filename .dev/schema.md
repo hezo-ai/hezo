@@ -100,6 +100,7 @@ The `content_type` enum discriminates the shape:
 - `trace` → `{ "summary": "4 tool calls" }` (detail lives in `tool_calls` table)
 - `system` → `{ "text": "Agent disabled — budget limit reached" }`
 - `execution` → `{ "heartbeat_run_id", "agent_id", "agent_title", "status", "exit_code", "duration_ms", "stdout_preview" }` (auto-created on agent run completion)
+- `action` → `{ "kind": "setup_repo", "approval_id": "..." }` — surfaces a board-required action inline on the ticket. Resolves by setting `chosen_option` to `{ status: 'complete', result: {...} }`. Currently only `setup_repo` is defined, used by the designated-repo gate.
 
 Live chat is displayed in a separate tab on the issue detail view,
 not as comments in the thread.
@@ -163,6 +164,45 @@ The app layer performs a two-step validation before inserting:
 
 Short names are unique within a project and used for @-mentions in issue
 comments (`@frontend`, `@api`).
+
+### Designated repo immutability
+
+The first repo linked to a project is automatically set as
+`projects.designated_repo_id` and cannot be changed thereafter. The FK is
+`ON DELETE RESTRICT`, so deleting the designated repo directly is blocked at
+the DB level; cascade from `projects` still cleans it up cleanly because repos
+are deleted before the parent project row. The `DELETE /repos/:id` route also
+returns 409 `DESIGNATED_REPO_IMMUTABLE` to make the invariant explicit.
+
+Additional (non-designated) repos can be added at any time from project
+settings. They are cloned into the project container alongside the designated
+repo but have no special protection.
+
+### Setup-repo approval and action comment
+
+Projects start without a designated repo. When a code-touching agent
+(`engineer`, `architect`, `qa-engineer`, `devops-engineer`, `security-engineer`,
+`ui-designer`) is activated on an issue whose project still has
+`designated_repo_id IS NULL`, the job manager:
+
+1. Upserts a single pending `oauth_request` approval per `(company_id,
+   project_id)` with `payload.reason = 'designated_repo'`. A partial unique
+   index `idx_one_pending_repo_setup` dedupes concurrent runs.
+2. Inserts a comment of type `action` on the triggering issue with content
+   `{ kind: 'setup_repo', approval_id }`.
+3. Marks the wakeup `Deferred` with `payload.reason = 'awaiting_repo_setup'`.
+
+When the board drives the wizard to completion (via `POST /repos`):
+
+- The repo insert atomically sets `designated_repo_id` under a `FOR UPDATE`
+  lock on the project row.
+- Every pending `action` comment attached to this approval gets its
+  `chosen_option` set to `{ status: 'complete', result: {...} }`, and a
+  `system` comment is appended per affected issue.
+- The approval is resolved to `approved`.
+- The host workspace clone and container provisioning run post-commit.
+- Each deferred wakeup is re-enqueued as a fresh `Automation` wakeup with
+  `payload.reason = 'repo_setup_complete'`.
 
 ### SSH keys per company
 

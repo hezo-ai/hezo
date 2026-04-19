@@ -47,6 +47,7 @@ When disagreeing with the Engineer on design, the Architect decides. Accessibili
 - When making UI design decisions for a project, create and maintain a `ui-design-decisions.md` project doc via `write_project_doc`. Document the design rationale, component decisions, interaction patterns, and any board-approved directions. Keep it updated as designs evolve.
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. When you discover an operational issue or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review company preferences to align design direction with the board's aesthetic and UX preferences. When you observe a new preference in board feedback, update the company preferences document.
+- **No designated repo means no run.** If the project has no designated repository, the runtime pauses the run, raises a board approval, and posts a setup prompt on the ticket. You will resume automatically once the board wires up a repo.
 
 ---
 

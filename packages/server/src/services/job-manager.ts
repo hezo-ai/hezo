@@ -3,6 +3,7 @@ import {
 	AgentAdminStatus,
 	type AgentRuntime,
 	AgentRuntimeStatus,
+	CODE_TOUCHING_AGENT_SLUGS,
 	IssuePriority,
 	TERMINAL_ISSUE_STATUSES,
 	WakeupStatus,
@@ -16,6 +17,7 @@ import { syncAllContainerStatuses } from './containers';
 import type { DockerClient } from './docker';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans } from './orphan-detector';
+import { ensureRepoSetupAction } from './repo-setup';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('job-manager');
@@ -336,7 +338,73 @@ export class JobManager {
 			[issue.project_id],
 		);
 
-		if (project.rows.length === 0 || !project.rows[0].container_id) {
+		if (project.rows.length === 0) {
+			log.debug(`Project ${issue.project_id} not found — wakeup failed`);
+			if (wakeupId) {
+				await db.query(
+					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
+					[WakeupStatus.Failed, wakeupId],
+				);
+			}
+			return;
+		}
+
+		const projectRow = project.rows[0];
+		const agentSlug = agent.rows[0].slug;
+
+		if (!projectRow.designated_repo_id && CODE_TOUCHING_AGENT_SLUGS.has(agentSlug)) {
+			try {
+				const ensured = await ensureRepoSetupAction(db, {
+					companyId,
+					projectId: projectRow.id,
+					issueId: issue.id,
+				});
+				if (ensured.commentRow) {
+					broadcastRowChange(
+						this.deps.wsManager,
+						`company:${companyId}`,
+						'issue_comments',
+						'INSERT',
+						ensured.commentRow,
+					);
+				}
+				if (ensured.approvalRow) {
+					broadcastRowChange(
+						this.deps.wsManager,
+						`company:${companyId}`,
+						'approvals',
+						'INSERT',
+						ensured.approvalRow,
+					);
+				}
+			} catch (e) {
+				log.error(`Failed to ensure repo setup action for agent ${agentSlug}:`, e);
+			}
+
+			if (wakeupId) {
+				await db.query(
+					`UPDATE agent_wakeup_requests
+					 SET status = $1::wakeup_status,
+					     payload = payload || $2::jsonb
+					 WHERE id = $3`,
+					[
+						WakeupStatus.Deferred,
+						JSON.stringify({
+							reason: 'awaiting_repo_setup',
+							project_id: projectRow.id,
+							issue_id: issue.id,
+						}),
+						wakeupId,
+					],
+				);
+			}
+			log.debug(
+				`Agent ${agentSlug} deferred on issue ${issue.identifier} — project has no designated repo`,
+			);
+			return;
+		}
+
+		if (!projectRow.container_id) {
 			log.debug(`No container for project ${issue.project_id} — wakeup failed`);
 			if (wakeupId) {
 				await db.query(

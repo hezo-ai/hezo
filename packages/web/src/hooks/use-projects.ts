@@ -26,6 +26,7 @@ export interface Repo {
 	repo_identifier: string;
 	host_type: string;
 	created_at: string;
+	is_designated?: boolean;
 }
 
 export function useProjects(companyId: string) {

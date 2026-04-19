@@ -701,6 +701,51 @@ Backend:
 
 ---
 
+## Phase 13: Designated Repo Setup via OAuth
+
+**Status:** In progress
+
+**Goal:** Drive the board through a Hezo Connect GitHub OAuth dance when a code-touching agent starts work on a repo-less project. The flow either creates a new GitHub repo under a selected org or links an existing accessible one, and the first repo becomes the designated repo (immutable thereafter).
+
+**What's included:**
+
+Backend:
+- `CommentContentType.Action` + `setup_repo` action comment kind for in-ticket board actions
+- Partial unique index `idx_one_pending_repo_setup` dedupes concurrent pending approvals per `(company, project)`
+- `projects.designated_repo_id` FK switched to `ON DELETE RESTRICT` (designated repo can't be deleted directly)
+- `DELETE /repos/:id` returns 409 `DESIGNATED_REPO_IMMUTABLE` for the designated repo
+- `POST /repos` accepts `mode: 'link' | 'create'`; `mode=create` POSTs to GitHub's `/user/repos` or `/orgs/:owner/repos` after re-validating `owner` against the user's accessible orgs; first-repo-wins designation happens atomically under a `FOR UPDATE` project lock
+- `GET /github/orgs` and `GET /github/repos?owner=&query=` proxy GitHub via the stored OAuth token
+- `packages/server/src/services/repo-setup.ts` — `ensureRepoSetupAction` (approval + action comment upsert) and `finalizePendingRepoSetup` (sweep comments, resolve approval, enqueue resume wakeups)
+- Job manager pre-run gate: code-touching agent + `designated_repo_id IS NULL` → defer wakeup, skip execution lock
+- OAuth callback idempotency: SSH key regen/upload is skipped when the key is already registered
+- Post-setup: `ensureProjectRepos` + `provisionContainer` run before `Automation` resume wakeups are enqueued
+
+Frontend:
+- `RepoSetupWizard` modal: step 1 connects GitHub via existing Connect flow; step 2 org picker + `Create new` (default) / `Select existing` tabs with private/public toggle
+- `ActionComment` renderer for `action` comments (button while pending, ✓ success strip once resolved)
+- Project settings: wizard reused for "Add Repo", "Designated" badge, lock icon replacing trash on the designated repo
+- `useGithubOrgs` / `useGithubRepos` hooks
+
+Tests:
+- Local GitHub simulator in `packages/server/src/test/helpers/github-sim.ts` — Hono app on port 0 implementing the subset of GitHub API we call plus Connect's token-exchange endpoint
+- Integration: gate behavior (approval + comment + deferred wakeup, no execution lock); concurrent runs share one approval; immutability on delete; `mode=create` owner check; first-repo auto-designation race; `finalizePendingRepoSetup` idempotency; OAuth callback SSH-key idempotency; authorization on all new endpoints
+- E2E: full wizard flow end-to-end against the simulator, both `Create new` and `Select existing`, plus the disabled-delete path
+
+Docs:
+- `.dev/spec.md`, `.dev/schema.md`, `.dev/api.md` updated to reflect the new flow and invariants
+- All six code-touching agent role docs note the auto-pause behavior
+
+**How to test:**
+- Create a company + project with no repo, assign an engineer to an issue, see the action comment + inbox approval, drive the wizard with the GitHub simulator (integration) or a real local Connect + GitHub account (manual)
+- Verify the cloned repo appears at `/workspace/{short_name}/` inside the project container and a worktree is created on the engineer's resume
+- Verify `DELETE` on the designated repo returns 409
+- `bun run test` and `bun run test --e2e` pass
+
+**Depends on:** Phase 11.5, Phase 12
+
+---
+
 ## Phase Summary
 
 | Phase | Focus | Key Deliverable |

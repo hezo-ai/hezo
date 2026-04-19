@@ -356,6 +356,7 @@ function IssueDetailPage() {
 														chooseOption.mutate({ commentId, chosen_id: chosenId })
 													}
 													companyId={companyId}
+													projectId={issue?.project_id ?? undefined}
 												/>
 											</div>
 										</div>

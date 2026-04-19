@@ -1,12 +1,22 @@
 import { Link } from '@tanstack/react-router';
-import { ArrowRight, Check, ChevronDown, ChevronRight, ExternalLink, Terminal } from 'lucide-react';
+import {
+	ArrowRight,
+	Check,
+	ChevronDown,
+	ChevronRight,
+	ExternalLink,
+	GitBranch,
+	Terminal,
+} from 'lucide-react';
 import { useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { isActiveRunStatus, useHeartbeatRun } from '../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../hooks/use-run-logs';
 import { LogViewer } from './log-viewer';
+import { RepoSetupWizard } from './repo-setup-wizard';
 import { Badge } from './ui/badge';
+import { Button } from './ui/button';
 
 export interface CommentData {
 	id: string;
@@ -37,9 +47,10 @@ interface RenderProps {
 	comment: CommentData;
 	onChooseOption?: (commentId: string, chosenId: string) => void;
 	companyId?: string;
+	projectId?: string;
 }
 
-export function CommentRenderer({ comment, onChooseOption, companyId }: RenderProps) {
+export function CommentRenderer({ comment, onChooseOption, companyId, projectId }: RenderProps) {
 	switch (comment.content_type) {
 		case 'run':
 			return <RunComment comment={comment} companyId={companyId} />;
@@ -51,9 +62,74 @@ export function CommentRenderer({ comment, onChooseOption, companyId }: RenderPr
 			return <PreviewComment comment={comment} />;
 		case 'system':
 			return <SystemComment comment={comment} />;
+		case 'action':
+			return <ActionComment comment={comment} companyId={companyId} projectId={projectId} />;
 		default:
 			return <TextComment comment={comment} />;
 	}
+}
+
+function ActionComment({
+	comment,
+	companyId,
+	projectId,
+}: {
+	comment: CommentData;
+	companyId?: string;
+	projectId?: string;
+}) {
+	const content = typeof comment.content === 'object' ? comment.content : {};
+	const kind: string = content.kind ?? '';
+	const resolved =
+		typeof comment.chosen_option === 'object' &&
+		comment.chosen_option &&
+		comment.chosen_option.status === 'complete';
+
+	const [wizardOpen, setWizardOpen] = useState(false);
+
+	if (kind !== 'setup_repo') {
+		return <p className="text-xs text-text-subtle italic">Unknown action: {kind}</p>;
+	}
+
+	if (resolved) {
+		const result = comment.chosen_option?.result ?? {};
+		return (
+			<div
+				className="flex items-center gap-2 text-sm text-accent-green-text"
+				data-testid="action-complete"
+			>
+				<Check className="w-4 h-4" />
+				<span>Repository set: {result.repo_identifier ?? '(unknown)'}</span>
+			</div>
+		);
+	}
+
+	if (!companyId || !projectId) {
+		return <p className="text-xs text-text-subtle italic">Repo setup unavailable in this view.</p>;
+	}
+
+	return (
+		<div className="flex flex-col gap-2" data-testid="action-setup-repo">
+			<div className="flex items-center gap-2 text-sm">
+				<GitBranch className="w-4 h-4 text-accent-blue-text" />
+				<span>
+					This project has no designated repository yet. Connect GitHub and pick a repo to unblock
+					work on this ticket.
+				</span>
+			</div>
+			<div>
+				<Button size="sm" onClick={() => setWizardOpen(true)}>
+					Set up repository
+				</Button>
+			</div>
+			<RepoSetupWizard
+				companyId={companyId}
+				projectId={projectId}
+				open={wizardOpen}
+				onOpenChange={setWizardOpen}
+			/>
+		</div>
+	);
 }
 
 function runStatusLabel(status: string): string {

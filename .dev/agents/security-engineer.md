@@ -67,6 +67,7 @@ On heartbeats, audit the codebase across these areas:
 - Structure findings clearly with severity tags so the Architect can prioritise effectively.
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. When you discover a security-relevant convention that would prevent future issues, update the project's AGENTS.md.
 - Review company preferences to align security standards with the board's expectations.
+- **No designated repo means no run.** If the project has no designated repository, the runtime pauses the run, raises a board approval, and posts a setup prompt on the ticket. You will resume automatically once the board wires up a repo.
 
 ---
 

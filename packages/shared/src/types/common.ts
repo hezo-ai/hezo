@@ -89,8 +89,29 @@ export const CommentContentType = {
 	Trace: 'trace',
 	System: 'system',
 	Run: 'run',
+	Action: 'action',
 } as const;
 export type CommentContentType = (typeof CommentContentType)[keyof typeof CommentContentType];
+
+export const ActionCommentKind = {
+	SetupRepo: 'setup_repo',
+} as const;
+export type ActionCommentKind = (typeof ActionCommentKind)[keyof typeof ActionCommentKind];
+
+export const CODE_TOUCHING_AGENT_SLUGS: ReadonlySet<string> = new Set([
+	'engineer',
+	'architect',
+	'qa-engineer',
+	'devops-engineer',
+	'security-engineer',
+	'ui-designer',
+]);
+
+export const OAuthRequestReason = {
+	DesignatedRepo: 'designated_repo',
+	RepoAdd: 'repo_add',
+} as const;
+export type OAuthRequestReason = (typeof OAuthRequestReason)[keyof typeof OAuthRequestReason];
 
 export const ToolCallStatus = { Running: 'running', Success: 'success', Error: 'error' } as const;
 export type ToolCallStatus = (typeof ToolCallStatus)[keyof typeof ToolCallStatus];

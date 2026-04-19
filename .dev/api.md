@@ -575,20 +575,42 @@ Response:
 ```
 
 #### `POST /companies/:companyId/projects/:projectId/repos`
-Add a repo. Server validates the URL pattern (GitHub only) and tests access
-using the company's connected GitHub OAuth token before saving.
+Add a repo — either by linking an existing GitHub repository or creating a new
+one on the user's behalf. Server validates access via the company's connected
+GitHub OAuth token before saving.
 
 Requires: GitHub platform must be connected for this company.
 
-Request:
+**Mode: link** (default) — link an existing repo:
 ```json
 {
   "short_name": "frontend",
+  "mode": "link",
   "url": "https://github.com/org/frontend"
 }
 ```
 
-**Validation flow:**
+**Mode: create** — create a new repo on GitHub and link it:
+```json
+{
+  "short_name": "app",
+  "mode": "create",
+  "owner": "acme-corp",
+  "name": "my-app",
+  "private": true
+}
+```
+The `owner` must appear in the user's accessible GitHub orgs (or match the
+authenticated user's personal namespace). Server re-checks this via
+`GET /user/orgs` before creating. Returns 403 `OWNER_NOT_ACCESSIBLE` otherwise.
+
+**First-repo-wins designation:** if the project has no `designated_repo_id` at
+insert time, the newly inserted repo becomes the designated repo atomically
+(row lock on the project). Any pending `action` setup-repo comments across the
+project are flipped to complete, the pending `oauth_request` approval is
+resolved, and deferred agent wakeups are re-enqueued as `Automation`.
+
+**Validation flow (mode=link):**
 
 1. Parse `owner/repo` from the URL
 2. Check `connected_platforms` for an active GitHub connection for this company
@@ -635,6 +657,54 @@ provision.
 Remove a repo from a project. The server also removes the repo's on-disk
 workspace directory and every per-issue worktree derived from it
 (`<workspace>/<short_name>/` and `<worktrees>/<issue>/<short_name>/`).
+
+Returns 409 `DESIGNATED_REPO_IMMUTABLE` if `repoId` equals the project's
+`designated_repo_id`. The designated repo cannot be removed.
+
+---
+
+### GitHub namespaces
+
+These endpoints proxy GitHub for the connected company token. They exist so
+the repo-setup wizard can populate org selectors and repo pickers without
+leaking tokens to the browser.
+
+#### `GET /companies/:companyId/github/orgs`
+List the authenticated GitHub user's personal namespace plus their orgs.
+
+Response:
+```json
+{
+  "data": [
+    { "login": "ramesh", "avatar_url": "...", "is_personal": true },
+    { "login": "acme-corp", "avatar_url": "...", "is_personal": false }
+  ]
+}
+```
+
+Returns 422 `GITHUB_NOT_CONNECTED` if the company has no active GitHub
+connection.
+
+#### `GET /companies/:companyId/github/repos?owner={login}&query={q}`
+List repos accessible to the authenticated user under `owner` (personal or
+org). `query` is an optional substring filter on repo name. Results capped at
+50.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": 123,
+      "name": "my-app",
+      "full_name": "acme-corp/my-app",
+      "owner": { "login": "acme-corp" },
+      "private": true,
+      "default_branch": "main"
+    }
+  ]
+}
+```
 
 ---
 

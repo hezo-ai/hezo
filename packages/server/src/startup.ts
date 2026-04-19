@@ -28,6 +28,7 @@ import { companyTypesRoutes } from './routes/company-types';
 import { connectionsRoutes } from './routes/connections';
 import { costsRoutes } from './routes/costs';
 import { executionLocksRoutes } from './routes/execution-locks';
+import { githubRoutes } from './routes/github';
 import { goalsRoutes } from './routes/goals';
 import { healthRoutes } from './routes/health';
 import { issuesRoutes } from './routes/issues';
@@ -235,6 +236,7 @@ export function buildApp(
 	app.route('/api', connectionsRoutes);
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', reposRoutes);
+	app.route('/api', githubRoutes);
 	app.route('/api', executionLocksRoutes);
 	app.route('/api', liveChatRoutes);
 	app.route('/api', auditLogRoutes);

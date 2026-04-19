@@ -63,6 +63,10 @@ When reviewing tests, reject if:
 4. `afterAll` is missing `destroyTestContext()` (resource leak)
 5. Tests that need DB or HTTP skip the context pattern
 
+### GitHub simulator
+
+Tests that exercise GitHub OAuth, repo listing, repo creation, or SSH key registration use the local simulator in `packages/server/src/test/helpers/github-sim.ts`. It is a self-contained Hono app on port 0 that mimics the subset of the GitHub REST API and OAuth endpoints the codebase actually calls. Point the server and Connect at it by setting `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the test context boots.
+
 ## E2E Tests
 
 End-to-end tests live in `tests/e2e/` and use Playwright. The Playwright config at root `playwright.config.ts` auto-starts all three services (server on :3100, connect on :4100, web on :5173).

@@ -173,8 +173,14 @@ test('issue detail lists every agent running concurrently on a ticket', async ({
 
 	const runningLines = page.getByText('is running on this issue');
 	await expect(runningLines).toHaveCount(2, { timeout: 15000 });
-	await expect(page.getByText(firstAgent.title, { exact: false })).toBeVisible();
-	await expect(page.getByText(secondAgent.title, { exact: false })).toBeVisible();
+
+	for (const title of [firstAgent.title, secondAgent.title]) {
+		const banner = page
+			.locator('div', { hasText: 'is running on this issue' })
+			.filter({ hasText: title })
+			.first();
+		await expect(banner).toBeVisible();
+	}
 });
 
 test('can edit issue rules and progress summary', async ({ page }) => {

@@ -1029,6 +1029,34 @@ When a repo is added to a project via the API:
 
 Agents don't configure repos directly. They get access to repos through whichever project their assigned issues belong to. When an agent starts work on an issue, a git worktree is created from the relevant repo clone so the agent can work on its own branch without interfering with other agents.
 
+### Designated repo setup (board-driven)
+
+A project starts with no repo. The first time a code-touching agent (`engineer`, `architect`, `qa-engineer`, `devops-engineer`, `security-engineer`, `ui-designer`) is activated on an issue, the runtime pauses the run and surfaces a board-facing action:
+
+1. The job manager upserts a single pending `oauth_request` approval per `(company, project)` with `payload.reason = 'designated_repo'`. Concurrent runs on different issues of the same project share this one approval (partial unique index).
+2. An `action` comment with `content.kind = 'setup_repo'` is posted on the triggering issue. Each issue gets its own comment so the blocker is visible in-thread, but all comments point at the same approval.
+3. The agent's wakeup is marked `Deferred`.
+
+Clicking the comment (or opening the approval from the inbox) launches the repo-setup wizard:
+
+- **Step 1 (skipped if already connected):** "Connect GitHub" redirects through Hezo Connect. On callback, the server auto-generates an Ed25519 SSH key for the company, uploads the public key to GitHub via `POST /user/keys`, and stores the encrypted private key in the secrets vault. This step is idempotent — re-clicking after GitHub is already connected skips the regenerate/upload.
+- **Step 2:** Pick an org (the authenticated user's personal namespace plus every org they belong to) and choose between **Create new** (default — name + private/public toggle) or **Select existing** (typeahead across accessible repos in that owner).
+
+Submitting the wizard calls `POST /repos` which, in one transaction:
+
+1. Locks the project row (`FOR UPDATE`).
+2. Creates the repo on GitHub (if `mode=create`) or validates access (if `mode=link`).
+3. Inserts the `repos` row.
+4. If the project has no designated repo yet, sets `designated_repo_id = new.id`.
+5. Sweeps every pending `action` setup-repo comment for this project, stamps each with `chosen_option = { status: 'complete', result: {...} }`, and appends a `system` confirmation comment per affected issue.
+6. Resolves the pending approval.
+
+Post-commit the server clones the repo into the host workspace (`ensureProjectRepos`), then brings up the project container if it isn't already (`provisionContainer`) so `/workspace/{short_name}/` is live inside the container. Only then are the deferred wakeups re-enqueued as fresh `Automation` wakeups, so agents never wake up against an empty workspace.
+
+### Designated repo is immutable
+
+Once set, `designated_repo_id` cannot be changed and the designated repo cannot be deleted. The FK is `ON DELETE RESTRICT` at the schema level and `DELETE /repos/:id` returns 409 `DESIGNATED_REPO_IMMUTABLE` for the designated repo. Non-designated repos can be added and removed freely from project settings.
+
 ---
 
 ## 7. Goal and project hierarchy

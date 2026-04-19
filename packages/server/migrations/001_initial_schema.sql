@@ -48,7 +48,7 @@ CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopping', 'stopped', 'error');
 CREATE TYPE issue_status AS ENUM ('backlog', 'open', 'in_progress', 'review', 'approved', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');
-CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run');
+CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run', 'action');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'company');
@@ -307,8 +307,10 @@ CREATE TABLE repos (
 CREATE INDEX idx_repos_project ON repos(project_id);
 
 -- Deferred FK: projects.designated_repo_id → repos(id) (repos defined after projects)
+-- RESTRICT: the designated repo cannot be deleted directly; project cascade still
+-- cleans it up because repos is deleted first when the project row is removed.
 ALTER TABLE projects ADD CONSTRAINT fk_projects_designated_repo
-    FOREIGN KEY (designated_repo_id) REFERENCES repos(id) ON DELETE SET NULL;
+    FOREIGN KEY (designated_repo_id) REFERENCES repos(id) ON DELETE RESTRICT;
 
 -------------------------------------------------------------------------------
 -- SECRETS
@@ -514,6 +516,15 @@ CREATE TABLE approvals (
 
 CREATE INDEX idx_approvals_company ON approvals(company_id);
 CREATE INDEX idx_approvals_status ON approvals(company_id, status);
+
+-- One pending designated-repo setup approval per project: allows concurrent
+-- agent runs on the same project to share a single approval while still posting
+-- their own action comments on their respective issues.
+CREATE UNIQUE INDEX idx_one_pending_repo_setup
+    ON approvals (company_id, (payload->>'project_id'))
+    WHERE type = 'oauth_request'
+      AND status = 'pending'
+      AND payload->>'reason' = 'designated_repo';
 
 -------------------------------------------------------------------------------
 -- COST ENTRIES

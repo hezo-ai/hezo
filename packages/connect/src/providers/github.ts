@@ -12,6 +12,14 @@ export interface GitHubUserInfo {
 
 export type FetchFn = typeof globalThis.fetch;
 
+function getOAuthBase(): string {
+	return process.env.GITHUB_OAUTH_BASE_URL || 'https://github.com';
+}
+
+function getApiBase(): string {
+	return process.env.GITHUB_API_BASE_URL || 'https://api.github.com';
+}
+
 export async function exchangeCode(
 	code: string,
 	clientId: string,
@@ -19,7 +27,7 @@ export async function exchangeCode(
 	redirectUri: string,
 	fetchFn: FetchFn = globalThis.fetch,
 ): Promise<GitHubTokenResponse> {
-	const res = await fetchFn('https://github.com/login/oauth/access_token', {
+	const res = await fetchFn(`${getOAuthBase()}/login/oauth/access_token`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',
@@ -43,7 +51,7 @@ export async function fetchUserInfo(
 	accessToken: string,
 	fetchFn: FetchFn = globalThis.fetch,
 ): Promise<GitHubUserInfo> {
-	const res = await fetchFn('https://api.github.com/user', {
+	const res = await fetchFn(`${getApiBase()}/user`, {
 		headers: {
 			Authorization: `Bearer ${accessToken}`,
 			Accept: 'application/vnd.github+json',

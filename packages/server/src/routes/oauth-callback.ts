@@ -150,14 +150,19 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 
 	if (platform === PlatformType.GitHub) {
 		try {
-			let sshKey = await getCompanySSHKey(db, companyId, masterKeyManager);
-			if (!sshKey) {
-				const generated = await generateCompanySSHKey(db, companyId, masterKeyManager);
-				sshKey = { publicKey: generated.publicKey, privateKey: '', githubKeyId: null };
-			}
-			if (!sshKey.githubKeyId) {
+			const existingKey = await getCompanySSHKey(db, companyId, masterKeyManager);
+			if (existingKey?.githubKeyId) {
+				log.debug(`SSH key already registered on GitHub for company ${companyId} — skipping`);
+			} else {
+				let publicKey: string;
+				if (existingKey) {
+					publicKey = existingKey.publicKey;
+				} else {
+					const generated = await generateCompanySSHKey(db, companyId, masterKeyManager);
+					publicKey = generated.publicKey;
+				}
 				const { id: githubKeyId } = await registerSSHKeyOnGitHub(
-					sshKey.publicKey,
+					publicKey,
 					`hezo-${companyId}`,
 					accessToken,
 				);
