@@ -198,6 +198,15 @@ async function buildRunContext(
 	return { cmd, env, taskPrompt, effort, effortApplication, agentJwt };
 }
 
+export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
+
+function exitReasonFromSignal(signal?: AbortSignal): ContainerExitAbortReason | null {
+	if (!signal) return null;
+	const reason = signal.reason as unknown;
+	if (reason === 'container_error' || reason === 'container_stopped') return reason;
+	return null;
+}
+
 export async function runAgent(
 	deps: RunnerDeps,
 	agent: AgentInfo,
@@ -205,6 +214,7 @@ export async function runAgent(
 	project: ProjectInfo,
 	wakeupPayload?: Record<string, unknown>,
 	signal?: AbortSignal,
+	onRunRegistered?: (heartbeatRunId: string) => void,
 ): Promise<RunResult> {
 	const startTime = Date.now();
 
@@ -217,6 +227,7 @@ export async function runAgent(
 		memberId: agent.id,
 	};
 	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue, runBroadcast);
+	onRunRegistered?.(heartbeatRunId);
 	const streamId = `run:${heartbeatRunId}`;
 
 	deps.logs.begin({
@@ -269,13 +280,16 @@ export async function runAgent(
 	const finalizeAbort = async (): Promise<RunResult> => {
 		const durationMs = Date.now() - startTime;
 		await deps.logs.end(streamId);
+		const exitReason = exitReasonFromSignal(signal);
+		const status = exitReason ? HeartbeatRunStatus.Failed : HeartbeatRunStatus.Cancelled;
 		await updateHeartbeatRun(
 			deps.db,
 			heartbeatRunId,
 			{
-				status: HeartbeatRunStatus.Cancelled,
+				status,
 				exitCode: -1,
 				durationMs,
+				error: exitReason ?? undefined,
 			},
 			runBroadcast,
 		);
@@ -283,7 +297,7 @@ export async function runAgent(
 			success: false,
 			exitCode: -1,
 			stdout: '',
-			stderr: 'Aborted',
+			stderr: exitReason ?? 'Aborted',
 			durationMs,
 			heartbeatRunId,
 		};
@@ -381,7 +395,13 @@ export async function runAgent(
 	} catch (error) {
 		const durationMs = Date.now() - startTime;
 		const isAbort = (error as Error).name === 'AbortError';
-		const errorMessage = (error as Error).message;
+		const exitReason = exitReasonFromSignal(signal);
+		const errorMessage = exitReason ?? (error as Error).message;
+		const status = isAbort
+			? exitReason
+				? HeartbeatRunStatus.Failed
+				: HeartbeatRunStatus.Cancelled
+			: HeartbeatRunStatus.Failed;
 
 		emit('stderr', `\n[runner] ${errorMessage}\n`);
 
@@ -390,7 +410,7 @@ export async function runAgent(
 			deps.db,
 			heartbeatRunId,
 			{
-				status: isAbort ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
+				status,
 				exitCode: -1,
 				durationMs,
 				error: errorMessage,

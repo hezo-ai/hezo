@@ -3,8 +3,11 @@ import {
 	AgentAdminStatus,
 	type AgentRuntime,
 	AgentRuntimeStatus,
+	ContainerStatus,
+	HeartbeatRunStatus,
 	IssuePriority,
 	TERMINAL_ISSUE_STATUSES,
+	WakeupSource,
 	WakeupStatus,
 	wsRoom,
 } from '@hezo/shared';
@@ -13,11 +16,18 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
-import { syncAllContainerStatuses } from './containers';
+import {
+	type ContainerDeps,
+	type ContainerExitReason,
+	type ContainerTransition,
+	failProjectRuns,
+	syncAllContainerStatuses,
+} from './containers';
 import type { DockerClient } from './docker';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans } from './orphan-detector';
 import { ensureRepoSetupAction } from './repo-setup';
+import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('job-manager');
@@ -28,6 +38,15 @@ interface RunningTask {
 	promise: Promise<unknown>;
 	startedAt: number;
 	timeoutId: ReturnType<typeof setTimeout>;
+}
+
+export interface LiveRun {
+	runId: string;
+	memberId: string;
+	issueId: string;
+	projectId: string;
+	companyId: string;
+	taskKey: string;
 }
 
 export interface JobManagerDeps {
@@ -45,6 +64,7 @@ const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_0
 export class JobManager {
 	private cron: Cron;
 	private runningTasks = new Map<string, RunningTask>();
+	private liveRuns = new Map<string, LiveRun>();
 	private guards = new Map<string, boolean>();
 	private deps: JobManagerDeps;
 	private started = false;
@@ -52,6 +72,50 @@ export class JobManager {
 	constructor(deps: JobManagerDeps) {
 		this.deps = deps;
 		this.cron = new Cron();
+	}
+
+	registerLiveRun(run: LiveRun): void {
+		this.liveRuns.set(run.runId, run);
+	}
+
+	unregisterLiveRun(runId: string): void {
+		this.liveRuns.delete(runId);
+	}
+
+	getLiveRunIds(): Set<string> {
+		return new Set(this.liveRuns.keys());
+	}
+
+	getLiveRunsForProject(projectId: string): LiveRun[] {
+		return Array.from(this.liveRuns.values()).filter((r) => r.projectId === projectId);
+	}
+
+	cancelLiveRun(runId: string, reason?: ContainerExitReason): boolean {
+		const run = this.liveRuns.get(runId);
+		if (!run) return false;
+		this.cancelTask(run.taskKey, reason);
+		this.liveRuns.delete(runId);
+		return true;
+	}
+
+	cancelLiveRunsForProject(projectId: string, reason: ContainerExitReason): number {
+		const runs = this.getLiveRunsForProject(projectId);
+		for (const run of runs) {
+			this.cancelTask(run.taskKey, reason);
+			this.liveRuns.delete(run.runId);
+		}
+		return runs.length;
+	}
+
+	private buildContainerDeps(): ContainerDeps {
+		return {
+			db: this.deps.db,
+			docker: this.deps.docker,
+			dataDir: this.deps.dataDir,
+			wsManager: this.deps.wsManager,
+			masterKeyManager: this.deps.masterKeyManager,
+			logs: this.deps.logs,
+		};
 	}
 
 	start(): void {
@@ -103,11 +167,11 @@ export class JobManager {
 		});
 	}
 
-	cancelTask(key: string): boolean {
+	cancelTask(key: string, reason?: unknown): boolean {
 		const task = this.runningTasks.get(key);
 		if (!task) return false;
 		clearTimeout(task.timeoutId);
-		task.abortController.abort();
+		task.abortController.abort(reason);
 		return true;
 	}
 
@@ -125,8 +189,136 @@ export class JobManager {
 			task.abortController.abort();
 		}
 		this.runningTasks.clear();
+		this.liveRuns.clear();
 		this.cron.shutdown();
 		log.info('Job manager stopped.');
+	}
+
+	/**
+	 * Reconcile DB state with the (now-empty) in-process run registry. Runs in
+	 * `running` or `queued` state from the previous process were necessarily lost
+	 * with that process — fail them, reset their agents to idle, release locks,
+	 * broadcast, and enqueue recovery wakeups so work resumes.
+	 *
+	 * Also self-heals projects stuck in `error` state whose underlying container
+	 * is actually alive (e.g. from a prior false-positive transport-error trip).
+	 */
+	async reconcileOnStartup(): Promise<void> {
+		const { db, docker, wsManager } = this.deps;
+
+		const stranded = await db.query<{
+			id: string;
+			member_id: string;
+			company_id: string;
+			issue_id: string | null;
+		}>(
+			`UPDATE heartbeat_runs
+			 SET status = $1::heartbeat_run_status,
+			     finished_at = COALESCE(finished_at, now()),
+			     error = COALESCE(error, $2),
+			     exit_code = COALESCE(exit_code, -1)
+			 WHERE status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
+			 RETURNING id, member_id, company_id, issue_id`,
+			[
+				HeartbeatRunStatus.Failed,
+				'Server restarted while run in flight',
+				HeartbeatRunStatus.Running,
+				HeartbeatRunStatus.Queued,
+			],
+		);
+
+		const resetAgents = await db.query<{ id: string; company_id: string }>(
+			`UPDATE member_agents ma
+			 SET runtime_status = $1::agent_runtime_status
+			 FROM members m
+			 WHERE ma.id = m.id
+			   AND ma.runtime_status = $2::agent_runtime_status
+			 RETURNING ma.id, m.company_id`,
+			[AgentRuntimeStatus.Idle, AgentRuntimeStatus.Active],
+		);
+
+		await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
+
+		for (const run of stranded.rows) {
+			broadcastRowChange(wsManager, wsRoom.company(run.company_id), 'heartbeat_runs', 'UPDATE', {
+				id: run.id,
+				member_id: run.member_id,
+				issue_id: run.issue_id,
+				status: HeartbeatRunStatus.Failed,
+				error: 'Server restarted while run in flight',
+			});
+		}
+
+		for (const agent of resetAgents.rows) {
+			broadcastRowChange(wsManager, wsRoom.company(agent.company_id), 'member_agents', 'UPDATE', {
+				id: agent.id,
+				runtime_status: AgentRuntimeStatus.Idle,
+			});
+		}
+
+		for (const run of stranded.rows) {
+			if (!run.issue_id) continue;
+			await createWakeup(db, run.member_id, run.company_id, WakeupSource.Timer, {
+				reason: 'startup_recovery',
+				issue_id: run.issue_id,
+				previous_run_id: run.id,
+			}).catch((e) => log.error('Failed to enqueue startup recovery wakeup:', e));
+		}
+
+		if (stranded.rows.length > 0 || resetAgents.rows.length > 0) {
+			log.info(
+				`Startup reconciliation: failed ${stranded.rows.length} stranded run(s), reset ${resetAgents.rows.length} agent(s) to idle`,
+			);
+		}
+
+		await this.selfHealErroredContainers(docker);
+	}
+
+	private async selfHealErroredContainers(docker: DockerClient): Promise<void> {
+		const { db, wsManager } = this.deps;
+
+		const reachable = await docker.ping();
+		if (!reachable) {
+			log.warn('Docker not reachable at startup; skipping container self-heal');
+			return;
+		}
+
+		const candidates = await db.query<{
+			id: string;
+			company_id: string;
+			slug: string;
+			company_slug: string;
+		}>(
+			`SELECT p.id, p.company_id, p.slug, c.slug AS company_slug
+			 FROM projects p
+			 JOIN companies c ON c.id = p.company_id
+			 WHERE p.container_status = $1::container_status
+			    OR (p.container_status IS NULL AND p.container_id IS NULL)`,
+			[ContainerStatus.Error],
+		);
+
+		for (const project of candidates.rows) {
+			const name = `hezo-${project.company_slug}-${project.slug}`;
+			let info: Awaited<ReturnType<DockerClient['inspectContainerByName']>>;
+			try {
+				info = await docker.inspectContainerByName(name);
+			} catch (err) {
+				log.warn(`Self-heal inspect failed for ${name}:`, err);
+				continue;
+			}
+			if (info === null || !info.State.Running) continue;
+
+			await db.query(
+				`UPDATE projects SET container_id = $1, container_status = $2::container_status WHERE id = $3`,
+				[info.Id, ContainerStatus.Running, project.id],
+			);
+			broadcastRowChange(wsManager, wsRoom.company(project.company_id), 'projects', 'UPDATE', {
+				id: project.id,
+				container_id: info.Id,
+				container_status: ContainerStatus.Running,
+			});
+			log.info(`Self-healed project ${project.id} — re-attached to live container ${name}`);
+		}
 	}
 
 	private async guarded(name: string, fn: () => Promise<void>): Promise<void> {
@@ -465,9 +657,13 @@ export class JobManager {
 		};
 		const timeoutMs = agent.rows[0].heartbeat_interval_min * 60 * 1000;
 
+		const projectId = project.rows[0].id;
+		const taskKey = wsRoom.agent(memberId);
+
 		this.launchTask(
-			wsRoom.agent(memberId),
+			taskKey,
 			async (signal) => {
+				let registeredRunId: string | undefined;
 				const result = await runAgent(
 					deps,
 					{
@@ -482,8 +678,20 @@ export class JobManager {
 					project.rows[0],
 					wakeupPayload,
 					signal,
+					(runId) => {
+						registeredRunId = runId;
+						this.registerLiveRun({
+							runId,
+							memberId,
+							issueId: issue.id,
+							projectId,
+							companyId,
+							taskKey,
+						});
+					},
 				);
 
+				if (registeredRunId) this.unregisterLiveRun(registeredRunId);
 				await this.onAgentComplete(memberId, issue.id, companyId, wakeupId, result);
 				return result;
 			},
@@ -527,12 +735,38 @@ export class JobManager {
 	}
 
 	private async detectOrphanedRuns(): Promise<void> {
-		const runningPids = new Set<number>();
-		await detectOrphans(this.deps.db, runningPids);
+		await detectOrphans(this.deps.db, this.getLiveRunIds(), this.deps.wsManager);
 	}
 
 	private async syncContainerStatuses(): Promise<void> {
-		await syncAllContainerStatuses(this.deps.db, this.deps.docker, this.deps.wsManager);
+		const reachable = await this.deps.docker.ping();
+		if (!reachable) {
+			return;
+		}
+
+		const transitions = await syncAllContainerStatuses(
+			this.deps.db,
+			this.deps.docker,
+			this.deps.wsManager,
+		);
+
+		for (const transition of transitions) {
+			await this.handleContainerTransition(transition);
+		}
+	}
+
+	private async handleContainerTransition(transition: ContainerTransition): Promise<void> {
+		const { projectId, companyId, oldStatus, newStatus } = transition;
+
+		if (
+			oldStatus === ContainerStatus.Running &&
+			(newStatus === ContainerStatus.Error || newStatus === ContainerStatus.Stopped)
+		) {
+			const reason: ContainerExitReason =
+				newStatus === ContainerStatus.Error ? 'container_error' : 'container_stopped';
+			this.cancelLiveRunsForProject(projectId, reason);
+			await failProjectRuns(this.buildContainerDeps(), projectId, companyId, reason);
+		}
 	}
 
 	private async processEmbeddingQueue(): Promise<void> {

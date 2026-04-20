@@ -11,6 +11,8 @@ export interface Project {
 	docker_base_image: string | null;
 	container_id: string | null;
 	container_status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error' | null;
+	container_error: string | null;
+	container_last_logs: string | null;
 	dev_ports: Array<{ container: number; host: number }>;
 	repo_count: number;
 	open_issue_count: number;

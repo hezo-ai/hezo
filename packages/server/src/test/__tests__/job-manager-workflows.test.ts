@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	AgentRuntimeStatus,
+	HeartbeatRunStatus,
 	IssueStatus,
 	WakeupStatus,
 	wsRoom,
@@ -693,6 +694,123 @@ describe('JobManager workflow methods', () => {
 
 			// Task still running (was not restarted — the existing task was skipped)
 			expect(manager.isTaskRunning(wsRoom.agent(agentId))).toBe(true);
+
+			manager.shutdown();
+		});
+	});
+
+	describe('reconcileOnStartup', () => {
+		it('fails stranded running heartbeat_runs and resets agent to idle', async () => {
+			await db.query('DELETE FROM heartbeat_runs WHERE company_id = $1', [companyId]);
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+			await db.query(
+				`INSERT INTO heartbeat_runs (company_id, member_id, issue_id, status, started_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
+				[companyId, agentId, issueId, HeartbeatRunStatus.Running],
+			);
+			await db.query(
+				'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
+				[AgentRuntimeStatus.Active, agentId],
+			);
+
+			const broadcasts: Array<{ table: string }> = [];
+			const manager = createJobManager({
+				wsManager: {
+					broadcast: (_room: string, msg: { table: string }) => {
+						broadcasts.push({ table: msg.table });
+					},
+				} as any,
+			});
+
+			await manager.reconcileOnStartup();
+
+			const run = await db.query<{ status: string; error: string }>(
+				`SELECT status, error FROM heartbeat_runs WHERE company_id = $1 ORDER BY started_at DESC LIMIT 1`,
+				[companyId],
+			);
+			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+			expect(run.rows[0].error).toContain('Server restarted');
+
+			const agent = await db.query<{ runtime_status: string }>(
+				'SELECT runtime_status FROM member_agents WHERE id = $1',
+				[agentId],
+			);
+			expect(agent.rows[0].runtime_status).toBe(AgentRuntimeStatus.Idle);
+
+			const wakeups = await db.query<{ payload: Record<string, unknown> }>(
+				`SELECT payload FROM agent_wakeup_requests
+				 WHERE member_id = $1 AND status = $2::wakeup_status
+				 ORDER BY created_at DESC LIMIT 1`,
+				[agentId, WakeupStatus.Queued],
+			);
+			expect((wakeups.rows[0]?.payload as Record<string, unknown>)?.reason).toBe(
+				'startup_recovery',
+			);
+
+			expect(broadcasts.some((b) => b.table === 'heartbeat_runs')).toBe(true);
+			expect(broadcasts.some((b) => b.table === 'member_agents')).toBe(true);
+
+			manager.shutdown();
+		});
+
+		it('releases all open execution_locks on startup', async () => {
+			await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
+			await db.query(`INSERT INTO execution_locks (issue_id, member_id) VALUES ($1, $2)`, [
+				issueId,
+				agentId,
+			]);
+
+			const manager = createJobManager();
+			await manager.reconcileOnStartup();
+
+			const locks = await db.query<{ released_at: string | null }>(
+				`SELECT released_at FROM execution_locks WHERE released_at IS NULL`,
+			);
+			expect(locks.rows.length).toBe(0);
+
+			manager.shutdown();
+		});
+	});
+
+	describe('live-run registry', () => {
+		it('register / unregister updates getLiveRunIds and getLiveRunsForProject', () => {
+			const manager = createJobManager();
+			manager.registerLiveRun({
+				runId: 'run-1',
+				memberId: 'm-1',
+				issueId: 'i-1',
+				projectId: 'p-1',
+				companyId: 'c-1',
+				taskKey: 'agent:m-1',
+			});
+			manager.registerLiveRun({
+				runId: 'run-2',
+				memberId: 'm-2',
+				issueId: 'i-2',
+				projectId: 'p-1',
+				companyId: 'c-1',
+				taskKey: 'agent:m-2',
+			});
+			manager.registerLiveRun({
+				runId: 'run-3',
+				memberId: 'm-3',
+				issueId: 'i-3',
+				projectId: 'p-2',
+				companyId: 'c-1',
+				taskKey: 'agent:m-3',
+			});
+
+			expect(manager.getLiveRunIds()).toEqual(new Set(['run-1', 'run-2', 'run-3']));
+			expect(
+				manager
+					.getLiveRunsForProject('p-1')
+					.map((r) => r.runId)
+					.sort(),
+			).toEqual(['run-1', 'run-2']);
+
+			manager.unregisterLiveRun('run-2');
+			expect(manager.getLiveRunIds()).toEqual(new Set(['run-1', 'run-3']));
 
 			manager.shutdown();
 		});

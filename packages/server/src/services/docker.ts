@@ -138,13 +138,21 @@ export class DockerClient {
 		}
 	}
 
-	async inspectContainer(containerId: string): Promise<ContainerInfo> {
+	async inspectContainer(containerId: string): Promise<ContainerInfo | null> {
 		const res = await this.request('GET', `/containers/${containerId}/json`);
+		if (res.status === 404) {
+			await res.text();
+			return null;
+		}
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker inspectContainer failed (${res.status}): ${text}`);
 		}
 		return res.json();
+	}
+
+	async inspectContainerByName(name: string): Promise<ContainerInfo | null> {
+		return this.inspectContainer(name);
 	}
 
 	async containerLogs(

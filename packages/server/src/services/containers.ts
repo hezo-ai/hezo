@@ -2,16 +2,33 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
-import { ContainerStatus, WsMessageType } from '@hezo/shared';
+import {
+	AgentRuntimeStatus,
+	ContainerStatus,
+	HeartbeatRunStatus,
+	WakeupSource,
+	WsMessageType,
+	wsRoom,
+} from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
-import { broadcastProjectUpdate } from '../lib/broadcast';
+import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import type { DockerClient } from './docker';
 import { ensureImage } from './ensure-image';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
+import { createWakeup } from './wakeup';
 import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
 import type { WebSocketManager } from './ws';
+
+export type ContainerExitReason = 'container_error' | 'container_stopped';
+
+export interface ContainerTransition {
+	projectId: string;
+	companyId: string;
+	oldStatus: string | null;
+	newStatus: string | null;
+}
 
 const log = logger.child('containers');
 
@@ -57,6 +74,50 @@ function beginProvisionStream(logs: LogStreamBroker | undefined, projectId: stri
 
 const PORT_POOL_START = 10000;
 const PORT_POOL_END = 19999;
+
+const LAST_LOGS_CAP_BYTES = 32 * 1024;
+
+/**
+ * Pull a one-shot tail of the container's stdout+stderr log buffer. Used to
+ * snapshot the last-known console output when a container exits or errors so
+ * the user can see what happened without a live stream.
+ */
+export async function captureContainerLogs(
+	docker: DockerClient,
+	containerId: string,
+): Promise<string | null> {
+	try {
+		const res = await docker.containerLogs(containerId, {
+			follow: false,
+			tail: 500,
+			stdout: true,
+			stderr: true,
+		});
+		const raw = new Uint8Array(await res.arrayBuffer());
+		const decoder = new TextDecoder();
+		const chunks: string[] = [];
+		let offset = 0;
+		while (offset + 8 <= raw.length) {
+			const frameSize =
+				(raw[offset + 4] << 24) |
+				(raw[offset + 5] << 16) |
+				(raw[offset + 6] << 8) |
+				raw[offset + 7];
+			offset += 8;
+			if (offset + frameSize > raw.length) break;
+			chunks.push(decoder.decode(raw.slice(offset, offset + frameSize)));
+			offset += frameSize;
+		}
+		let combined = chunks.join('');
+		if (combined.length > LAST_LOGS_CAP_BYTES) {
+			combined = combined.slice(-LAST_LOGS_CAP_BYTES);
+		}
+		return combined || null;
+	} catch (err) {
+		log.warn(`Failed to capture logs for container ${containerId}:`, err);
+		return null;
+	}
+}
 
 export async function provisionContainer(
 	deps: ContainerDeps,
@@ -154,7 +215,7 @@ export async function provisionContainer(
 		await docker.startContainer(Id);
 
 		await db.query(
-			'UPDATE projects SET container_id = $1, container_status = $2::container_status WHERE id = $3',
+			'UPDATE projects SET container_id = $1, container_status = $2::container_status, container_error = NULL WHERE id = $3',
 			[Id, ContainerStatus.Running, project.id],
 		);
 
@@ -183,16 +244,18 @@ export async function provisionContainer(
 		emit('stdout', '✓ Container ready');
 		await broadcastProjectUpdate(db, wsManager, companyId, project.id);
 
+		await requeueContainerKilledRuns(deps, project.id, companyId).catch((e) =>
+			log.error('Failed to requeue container-killed runs after provision:', e),
+		);
+
 		return Id;
 	} catch (error) {
-		emit(
-			'stderr',
-			`✗ Provisioning failed: ${error instanceof Error ? error.message : String(error)}`,
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		emit('stderr', `✗ Provisioning failed: ${errorMessage}`);
+		await db.query(
+			'UPDATE projects SET container_status = $1::container_status, container_error = $2 WHERE id = $3',
+			[ContainerStatus.Error, errorMessage, project.id],
 		);
-		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
-			ContainerStatus.Error,
-			project.id,
-		]);
 		await broadcastProjectUpdate(db, wsManager, companyId, project.id);
 		throw error;
 	}
@@ -239,28 +302,35 @@ export async function stopContainerGracefully(
 ): Promise<void> {
 	const { db, docker, wsManager } = deps;
 
+	const lastLogs = await captureContainerLogs(docker, containerId);
+
+	let exitReason: ContainerExitReason = 'container_stopped';
 	try {
 		await docker.stopContainer(containerId);
-		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
-			ContainerStatus.Stopped,
-			projectId,
-		]);
-	} catch {
-		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
-			ContainerStatus.Error,
-			projectId,
-		]);
+		await db.query(
+			`UPDATE projects
+			 SET container_status = $1::container_status,
+			     container_last_logs = COALESCE($2, container_last_logs),
+			     container_error = NULL
+			 WHERE id = $3`,
+			[ContainerStatus.Stopped, lastLogs, projectId],
+		);
+	} catch (err) {
+		const errorMessage = err instanceof Error ? err.message : String(err);
+		await db.query(
+			`UPDATE projects
+			 SET container_status = $1::container_status,
+			     container_last_logs = COALESCE($2, container_last_logs),
+			     container_error = $3
+			 WHERE id = $4`,
+			[ContainerStatus.Error, lastLogs, errorMessage, projectId],
+		);
+		exitReason = 'container_error';
 	}
 
-	// Release stale execution locks for issues in this project
-	await db
-		.query(
-			`UPDATE execution_locks SET released_at = now()
-		 WHERE released_at IS NULL
-		   AND issue_id IN (SELECT id FROM issues WHERE project_id = $1)`,
-			[projectId],
-		)
-		.catch((e) => log.error('Failed to release execution locks on stop:', e));
+	await failProjectRuns(deps, projectId, companyId, exitReason).catch((e) =>
+		log.error('Failed to fail project runs on stop:', e),
+	);
 
 	await broadcastProjectUpdate(db, wsManager, companyId, projectId);
 }
@@ -270,7 +340,7 @@ export async function rebuildContainer(
 	project: ProjectRow,
 	companySlug: string,
 ): Promise<string> {
-	const { docker, logs } = deps;
+	const { db, docker, logs } = deps;
 	beginProvisionStream(logs, project.id);
 	const streamId = provisionStreamId(project.id);
 
@@ -280,6 +350,13 @@ export async function rebuildContainer(
 			'stdout',
 			`→ Removing previous container ${project.container_id.slice(0, 12)}`,
 		);
+		const lastLogs = await captureContainerLogs(docker, project.container_id);
+		if (lastLogs) {
+			await db.query('UPDATE projects SET container_last_logs = $1 WHERE id = $2', [
+				lastLogs,
+				project.id,
+			]);
+		}
 		try {
 			await docker.stopContainer(project.container_id);
 		} catch {
@@ -300,46 +377,213 @@ export async function syncContainerStatus(
 	docker: DockerClient,
 	projectId: string,
 	containerId: string,
-): Promise<string> {
+	previousStatus?: string | null,
+): Promise<string | null> {
+	let info: Awaited<ReturnType<DockerClient['inspectContainer']>>;
 	try {
-		const info = await docker.inspectContainer(containerId);
-		const status = info.State.Running ? ContainerStatus.Running : ContainerStatus.Stopped;
+		info = await docker.inspectContainer(containerId);
+	} catch (err) {
+		log.warn(`Container sync transport error for project ${projectId}; will retry`, err);
+		return null;
+	}
+
+	if (info === null) {
+		await db.query(
+			`UPDATE projects SET container_status = $1::container_status, container_id = NULL,
+			     container_error = COALESCE(container_error, $2)
+			 WHERE id = $3`,
+			[
+				ContainerStatus.Error,
+				'Container no longer exists in Docker (removed externally).',
+				projectId,
+			],
+		);
+		return ContainerStatus.Error;
+	}
+
+	const status = info.State.Running ? ContainerStatus.Running : ContainerStatus.Stopped;
+
+	if (previousStatus === ContainerStatus.Running && status !== ContainerStatus.Running) {
+		const lastLogs = await captureContainerLogs(docker, containerId);
+		const exitCode = info.State.ExitCode;
+		const exitStatus = info.State.Status;
+		const errorMessage =
+			exitCode && exitCode !== 0
+				? `Container exited with code ${exitCode} (${exitStatus}).`
+				: `Container stopped (${exitStatus}).`;
+		await db.query(
+			`UPDATE projects
+			 SET container_status = $1::container_status,
+			     container_last_logs = COALESCE($2, container_last_logs),
+			     container_error = $3
+			 WHERE id = $4`,
+			[status, lastLogs, errorMessage, projectId],
+		);
+	} else {
 		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 			status,
 			projectId,
 		]);
-		return status;
-	} catch {
-		await db.query(
-			'UPDATE projects SET container_status = $1::container_status, container_id = NULL WHERE id = $2',
-			[ContainerStatus.Error, projectId],
-		);
-		return ContainerStatus.Error;
 	}
+
+	return status;
 }
 
 export async function syncAllContainerStatuses(
 	db: PGlite,
 	docker: DockerClient,
 	wsManager?: WebSocketManager,
-): Promise<void> {
+): Promise<ContainerTransition[]> {
 	const projects = await db.query<{
 		id: string;
 		company_id: string;
 		container_id: string;
-		container_status: string;
+		container_status: string | null;
 	}>(
 		'SELECT id, company_id, container_id, container_status FROM projects WHERE container_id IS NOT NULL',
 	);
 
+	const transitions: ContainerTransition[] = [];
 	for (const project of projects.rows) {
 		const oldStatus = project.container_status;
-		const newStatus = await syncContainerStatus(db, docker, project.id, project.container_id);
+		const newStatus = await syncContainerStatus(
+			db,
+			docker,
+			project.id,
+			project.container_id,
+			oldStatus,
+		);
 
-		if (newStatus !== oldStatus) {
+		if (newStatus !== null && newStatus !== oldStatus) {
+			transitions.push({
+				projectId: project.id,
+				companyId: project.company_id,
+				oldStatus,
+				newStatus,
+			});
 			await broadcastProjectUpdate(db, wsManager, project.company_id, project.id);
 		}
 	}
+
+	return transitions;
+}
+
+/**
+ * Mark all in-flight heartbeat_runs for a project's issues as failed with the
+ * given reason, reset affected agents' runtime_status to idle, release execution
+ * locks, and broadcast row changes. Caller is responsible for first aborting any
+ * live in-process runs via the JobManager registry.
+ */
+export async function failProjectRuns(
+	deps: ContainerDeps,
+	projectId: string,
+	companyId: string,
+	reason: ContainerExitReason,
+): Promise<void> {
+	const { db, wsManager } = deps;
+
+	const failedRuns = await db.query<{ id: string; member_id: string; issue_id: string | null }>(
+		`UPDATE heartbeat_runs
+		 SET status = $1::heartbeat_run_status,
+		     finished_at = now(),
+		     error = $2,
+		     exit_code = -1
+		 WHERE status = $3::heartbeat_run_status
+		   AND issue_id IN (SELECT id FROM issues WHERE project_id = $4)
+		 RETURNING id, member_id, issue_id`,
+		[HeartbeatRunStatus.Failed, reason, HeartbeatRunStatus.Running, projectId],
+	);
+
+	if (failedRuns.rows.length === 0) return;
+
+	const memberIds = Array.from(new Set(failedRuns.rows.map((r) => r.member_id)));
+
+	await db.query(
+		`UPDATE member_agents SET runtime_status = $1::agent_runtime_status
+		 WHERE id = ANY($2::uuid[]) AND runtime_status = $3::agent_runtime_status`,
+		[AgentRuntimeStatus.Idle, memberIds, AgentRuntimeStatus.Active],
+	);
+
+	await db.query(
+		`UPDATE execution_locks SET released_at = now()
+		 WHERE released_at IS NULL
+		   AND issue_id IN (SELECT id FROM issues WHERE project_id = $1)`,
+		[projectId],
+	);
+
+	for (const run of failedRuns.rows) {
+		broadcastRowChange(wsManager, wsRoom.company(companyId), 'heartbeat_runs', 'UPDATE', {
+			id: run.id,
+			member_id: run.member_id,
+			issue_id: run.issue_id,
+			status: HeartbeatRunStatus.Failed,
+			error: reason,
+		});
+	}
+
+	for (const memberId of memberIds) {
+		broadcastRowChange(wsManager, wsRoom.company(companyId), 'member_agents', 'UPDATE', {
+			id: memberId,
+			runtime_status: AgentRuntimeStatus.Idle,
+		});
+	}
+
+	log.info(
+		`Failed ${failedRuns.rows.length} run(s) in project ${projectId} due to ${reason}; ${memberIds.length} agent(s) marked idle`,
+	);
+}
+
+const REQUEUE_LIMIT = 50;
+const REQUEUE_LOOKBACK_HOURS = 24;
+
+/**
+ * After a container is brought back to running, enqueue wakeups for any runs
+ * that were killed by a `container_error` and have not been retried since.
+ * Runs killed via a graceful `container_stopped` are intentionally skipped.
+ */
+export async function requeueContainerKilledRuns(
+	deps: ContainerDeps,
+	projectId: string,
+	companyId: string,
+): Promise<number> {
+	const { db } = deps;
+
+	const killed = await db.query<{
+		id: string;
+		member_id: string;
+		issue_id: string;
+	}>(
+		`SELECT DISTINCT ON (member_id, issue_id) id, member_id, issue_id
+		 FROM heartbeat_runs
+		 WHERE issue_id IN (SELECT id FROM issues WHERE project_id = $1)
+		   AND error = $2
+		   AND finished_at > now() - ($3 || ' hours')::interval
+		   AND NOT EXISTS (
+		     SELECT 1 FROM heartbeat_runs h2
+		     WHERE h2.member_id = heartbeat_runs.member_id
+		       AND h2.issue_id = heartbeat_runs.issue_id
+		       AND h2.started_at > heartbeat_runs.finished_at
+		   )
+		 ORDER BY member_id, issue_id, finished_at DESC
+		 LIMIT $4`,
+		[projectId, 'container_error', String(REQUEUE_LOOKBACK_HOURS), REQUEUE_LIMIT],
+	);
+
+	for (const run of killed.rows) {
+		await createWakeup(db, run.member_id, companyId, WakeupSource.Timer, {
+			reason: 'container_recovery',
+			issue_id: run.issue_id,
+			previous_run_id: run.id,
+		});
+	}
+
+	if (killed.rows.length > 0) {
+		log.info(
+			`Re-queued ${killed.rows.length} container-killed run(s) in project ${projectId} after container recovery`,
+		);
+	}
+
+	return killed.rows.length;
 }
 
 async function allocateHostPorts(

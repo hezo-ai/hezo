@@ -283,6 +283,8 @@ CREATE TABLE projects (
     docker_base_image   TEXT NOT NULL DEFAULT 'hezo/agent-base:latest',
     container_id        TEXT,
     container_status    container_status,
+    container_error     TEXT,
+    container_last_logs TEXT,
     designated_repo_id  UUID,
     dev_ports           JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),

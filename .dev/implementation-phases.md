@@ -744,6 +744,20 @@ Docs:
 
 ---
 
+## Phase 13 — Orphan Recovery & Container State Propagation
+
+**Status:** Done — 2026-04-20
+
+In-process **live-run registry** keyed by `heartbeat_runs.id` becomes the single source of truth for "this run is alive." Three reconciliation paths converge on one outcome (run failed, agent reset to idle, locks released, broadcasts emitted, retry wakeup created): startup reconciliation (all DB `running`/`queued` rows are necessarily orphaned), the orphan-detection cron (DB rows whose id isn't in the live registry, after a 30s safety window), and container-state transitions (any project leaving `running` fans out to fail every in-flight run for that project's issues).
+
+`syncContainerStatus` now distinguishes a real terminal signal (HTTP 404 from `docker inspect` → `error` + `container_id` cleared) from a transport error (daemon unreachable / EPIPE → status untouched, retry next tick). The container-sync cron defers its first tick until `docker.ping()` succeeds, killing the startup-race that previously soft-bricked projects on every dev-server restart. Startup reconciliation also self-heals projects already stuck in `error` whose canonical container `hezo-<companySlug>-<projectSlug>` is alive in Docker, by re-attaching to it.
+
+After successful container provisioning or rebuild, runs that died with `error='container_error'` are automatically re-queued via `container_recovery` wakeups (capped at 50 per project, 24h lookback). Runs that died with `error='container_stopped'` are intentionally left alone — those came from a user-initiated stop where surprise auto-resume would be worse than a missed retry. Sentinel error strings: `container_error`, `container_stopped`, `Orphaned: process no longer running`, `Server restarted while run in flight`.
+
+**Verification:** `bun run typecheck` passes; full `bun run test --skip-e2e` passes (87/87 test files); manual cycle of `ctrl-c` / `bun run dev` no longer produces error banners or stuck "Running" sidebar badges.
+
+---
+
 ## Phase Summary
 
 | Phase | Focus | Key Deliverable |

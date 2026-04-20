@@ -119,7 +119,10 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	});
 
 	masterKeyManager.onUnlock(() => {
-		jobManager.start();
+		jobManager
+			.reconcileOnStartup()
+			.catch((err) => log.error('Startup reconciliation failed:', err))
+			.finally(() => jobManager.start());
 		// Initialize embedding model in background (downloads on first use)
 		import('./services/embeddings').then(({ initializeEmbeddingModel }) => {
 			const { join } = require('node:path') as typeof import('node:path');

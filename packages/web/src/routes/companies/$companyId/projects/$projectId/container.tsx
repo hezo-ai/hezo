@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ExternalLink, Loader2, Play, RefreshCw, Square } from 'lucide-react';
-import { LogViewer } from '../../../../../components/log-viewer';
+import { AlertTriangle, ExternalLink, Loader2, Play, RefreshCw, Square } from 'lucide-react';
+import { useMemo } from 'react';
+import { LogViewer, type LogViewerLine } from '../../../../../components/log-viewer';
 import { Badge } from '../../../../../components/ui/badge';
 import { Button } from '../../../../../components/ui/button';
 import {
@@ -27,7 +28,20 @@ function ContainerPage() {
 	const isActive = isRunning || isCreating || isStopping;
 
 	const logPhase = isCreating ? 'creating' : isRunning ? 'running' : isError ? 'error' : null;
-	const { lines: logs, clear } = useContainerLogs(project?.id ?? '', project?.id ? logPhase : null);
+	const { lines: liveLogs, clear } = useContainerLogs(
+		project?.id ?? '',
+		project?.id ? logPhase : null,
+	);
+
+	const snapshotLines = useMemo<LogViewerLine[]>(() => {
+		const raw = project?.container_last_logs;
+		if (!raw) return [];
+		return raw.split('\n').map((text, idx) => ({ id: idx, stream: 'stdout', text }));
+	}, [project?.container_last_logs]);
+
+	const showSnapshot =
+		!isRunning && !isCreating && liveLogs.length === 0 && snapshotLines.length > 0;
+	const logs = showSnapshot ? snapshotLines : liveLogs;
 
 	if (!project) return null;
 
@@ -102,6 +116,19 @@ function ContainerPage() {
 				</div>
 			</div>
 
+			{/* Error banner */}
+			{isError && project.container_error && (
+				<div className="flex gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
+					<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+					<div className="flex flex-col gap-1">
+						<span className="font-medium text-red-400">Container error</span>
+						<span className="whitespace-pre-wrap font-mono text-xs text-red-200/90">
+							{project.container_error}
+						</span>
+					</div>
+				</div>
+			)}
+
 			{/* Info */}
 			<div className="grid grid-cols-2 gap-4 text-sm">
 				<div>
@@ -131,7 +158,14 @@ function ContainerPage() {
 
 			<LogViewer
 				lines={logs}
-				onClear={clear}
+				onClear={showSnapshot ? undefined : clear}
+				liveLabel={
+					showSnapshot ? (
+						<Badge color="neutral">Last known logs</Badge>
+					) : isRunning || isCreating ? (
+						<Badge color="success">Live</Badge>
+					) : null
+				}
 				emptyState={
 					isCreating ? (
 						<span className="inline-flex items-center gap-2">
@@ -144,7 +178,7 @@ function ContainerPage() {
 							Stopping container…
 						</span>
 					) : hasContainer ? (
-						'Container is not running.'
+						'Container is not running and no logs were captured.'
 					) : (
 						'No container provisioned.'
 					)

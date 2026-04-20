@@ -869,7 +869,7 @@ Each heartbeat spawns a **fresh subprocess** inside the project's container via 
 
 All template variables (`{{kb_context}}`, `{{project_docs_context}}`, `{{company_preferences_context}}`, etc.) are pre-resolved by the orchestrator before spawning. All KB docs and project docs are included for MVP.
 
-Agents can be killed and restarted independently without affecting the container or other agents. When budget is exceeded, the subprocess is terminated immediately. If a project container crashes, all running agent subprocesses for that project are lost — orphan detection handles this by marking all active heartbeat runs as failed and re-queuing them.
+Agents can be killed and restarted independently without affecting the container or other agents. When budget is exceeded, the subprocess is terminated immediately. If a project container leaves the `running` state — whether through removal (`error`) or stop (`stopped`) — the container-sync loop synchronously fails every in-flight heartbeat run for that project's issues with an `error` of `container_error` or `container_stopped` respectively, resets the affected agents' `runtime_status` to `idle`, releases their execution locks, and broadcasts the row changes. When the container is later rebuilt or re-provisioned, runs that died with `container_error` are auto-re-queued via fresh wakeups; runs that died with `container_stopped` are intentionally left alone (the user paused work; they restart it manually).
 
 ### Subagents (built-in parallelism)
 
@@ -1557,12 +1557,13 @@ The `lock_type` column is retained (`read` / `write`) for future use but is not 
 
 ### Orphan detection and auto-retry
 
-The system monitors for orphaned work — agents that started working on an issue but whose subprocess died:
+The orchestrator keeps an in-process **live-run registry** keyed by `heartbeat_runs.id` for every run it has launched. Three reconciliation paths converge on the same outcome (run flipped to `failed`, agent reset to `idle`, locks released, broadcasts emitted, retry wakeup created if applicable):
 
-- If an agent's subprocess crashes while an issue is owned, the ownership is preserved but the issue is flagged for attention in the board inbox
-- If a subprocess crashes or the project container crashes mid-work, the system detects the failure and re-queues the issue for the agent's next heartbeat
-- Repeated failures (3+ consecutive) escalate to the board inbox as an agent error
-- The system tracks consecutive failure counts per agent per issue
+- **Startup reconciliation.** Every run in the DB whose status is `running` or `queued` at boot is necessarily orphaned (the previous process owned the only reference to it). The reconciler fails them with `error='Server restarted while run in flight'`, resets every `member_agents.runtime_status='active'` to `idle`, releases all open execution locks, broadcasts `heartbeat_runs` and `member_agents` UPDATEs, and enqueues a `startup_recovery` wakeup per run so work resumes immediately. The same pass also self-heals projects that are stuck in `container_status='error'` whose canonical container `hezo-<companySlug>-<projectSlug>` is actually alive in Docker — it re-attaches the project to the live container.
+- **Cron orphan detector.** Every 30s the detector scans for `status='running'` rows older than 30 seconds whose id is NOT in the live registry, fails them with `error='Orphaned: process no longer running'`, resets the agent to idle if it has no other live run, and either creates an `orphan_retry` wakeup (when `process_loss_retry_count + 1 < 3`) or escalates to a board approval as `agent_error` (at the cap).
+- **Container-state transition.** The container-sync cron tick (1s) only runs after `docker.ping()` succeeds; it returns the set of `(projectId, oldStatus, newStatus)` transitions and the JobManager fans `running → error/stopped` transitions out to the per-project run failure path described in §13 above.
+
+The `heartbeat_runs.error` column records the cause as a stable sentinel: `'container_error'`, `'container_stopped'`, `'Orphaned: process no longer running'`, or `'Server restarted while run in flight'`. Container recovery (project re-provisioning) replays only `container_error` runs.
 
 ### Persistent state
 
@@ -2167,7 +2168,7 @@ agent_runtime:        claude_code, codex, gemini
 agent_runtime_status: active, idle
 agent_admin_status:   enabled, disabled, terminated
 member_role:          board, member
-container_status:     creating, running, stopped, error    (tracks project container status)
+container_status:     creating, running, stopping, stopped, error    (tracks project container status; `error` only fires on a verified terminal signal — HTTP 404 from `docker inspect` or a provisioning failure — never on transport errors like daemon unreachable / EPIPE, which leave the previous status untouched and retry next tick)
 issue_status:         backlog, open, in_progress, review, blocked, done, closed, cancelled
 issue_priority:       urgent, high, medium, low
 comment_author_type:  board, agent, system

@@ -68,7 +68,7 @@ describe('syncAllContainerStatuses', () => {
 		);
 
 		const mockDocker = {
-			inspectContainer: vi.fn().mockRejectedValue(new Error('No such container')),
+			inspectContainer: vi.fn().mockResolvedValue(null),
 		} as any;
 
 		await syncAllContainerStatuses(db, mockDocker);
@@ -79,6 +79,116 @@ describe('syncAllContainerStatuses', () => {
 		);
 		expect(result.rows[0].container_status).toBe('error');
 		expect(result.rows[0].container_id).toBeNull();
+	});
+
+	it('sets container_error with a helpful message when container is removed', async () => {
+		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Removed Container Project', description: 'Test project.' }),
+		});
+		const projectId = (await projectRes.json()).data.id;
+
+		await new Promise((r) => setTimeout(r, 100));
+		await db.query(
+			"UPDATE projects SET container_id = 'gone', container_status = 'running'::container_status, container_error = NULL WHERE id = $1",
+			[projectId],
+		);
+
+		const mockDocker = {
+			inspectContainer: vi.fn().mockResolvedValue(null),
+		} as any;
+
+		await syncAllContainerStatuses(db, mockDocker);
+
+		const result = await db.query<{ container_error: string | null }>(
+			'SELECT container_error FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(result.rows[0].container_error).toContain('no longer exists');
+	});
+
+	it('captures container_last_logs and records container_error when transitioning from running to stopped', async () => {
+		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Exit Capture Project', description: 'Test project.' }),
+		});
+		const projectId = (await projectRes.json()).data.id;
+
+		await new Promise((r) => setTimeout(r, 100));
+		await db.query(
+			"UPDATE projects SET container_id = 'capture-1', container_status = 'running'::container_status, container_last_logs = NULL WHERE id = $1",
+			[projectId],
+		);
+
+		// Encode a Docker multiplexed log frame containing "crash stack trace line"
+		const body = 'crash stack trace line\n';
+		const payload = new TextEncoder().encode(body);
+		const frame = new Uint8Array(8 + payload.length);
+		frame[0] = 1; // stdout
+		frame[4] = (payload.length >> 24) & 0xff;
+		frame[5] = (payload.length >> 16) & 0xff;
+		frame[6] = (payload.length >> 8) & 0xff;
+		frame[7] = payload.length & 0xff;
+		frame.set(payload, 8);
+
+		const mockDocker = {
+			inspectContainer: vi.fn().mockResolvedValue({
+				Id: 'capture-1',
+				State: { Running: false, Status: 'exited', ExitCode: 137 },
+			}),
+			containerLogs: vi.fn().mockResolvedValue({
+				arrayBuffer: async () => frame.buffer,
+			}),
+		} as any;
+
+		await syncAllContainerStatuses(db, mockDocker);
+
+		const result = await db.query<{
+			container_status: string;
+			container_error: string | null;
+			container_last_logs: string | null;
+		}>(
+			'SELECT container_status, container_error, container_last_logs FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(result.rows[0].container_status).toBe('stopped');
+		expect(result.rows[0].container_error).toContain('exited with code 137');
+		expect(result.rows[0].container_last_logs).toContain('crash stack trace line');
+		expect(mockDocker.containerLogs).toHaveBeenCalledTimes(1);
+	});
+
+	it('leaves container_status untouched on transport errors', async () => {
+		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Transport Err Project',
+				description: 'Test project.',
+			}),
+		});
+		const projectId = (await projectRes.json()).data.id;
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		await db.query(
+			"UPDATE projects SET container_id = 'transient', container_status = 'running'::container_status WHERE id = $1",
+			[projectId],
+		);
+
+		const mockDocker = {
+			inspectContainer: vi.fn().mockRejectedValue(new Error('EPIPE')),
+		} as any;
+
+		await syncAllContainerStatuses(db, mockDocker);
+
+		const result = await db.query<{ container_status: string; container_id: string | null }>(
+			'SELECT container_status, container_id FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(result.rows[0].container_status).toBe('running');
+		expect(result.rows[0].container_id).toBe('transient');
 	});
 
 	it('updates status to stopped when container exists but is not running', async () => {
@@ -151,7 +261,7 @@ describe('syncAllContainerStatuses', () => {
 		);
 
 		const mockDocker = {
-			inspectContainer: vi.fn().mockRejectedValue(new Error('No such container')),
+			inspectContainer: vi.fn().mockResolvedValue(null),
 		} as any;
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
@@ -287,6 +397,12 @@ describe('provisionContainer broadcasting', () => {
 		expect(event.table).toBe('projects');
 		expect(event.action).toBe('UPDATE');
 		expect(event.row.container_status).toBe('error');
+
+		const stored = await db.query<{ container_error: string | null }>(
+			'SELECT container_error FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(stored.rows[0].container_error).toContain('Image not found');
 	});
 
 	it('does not broadcast when wsManager is not provided', async () => {

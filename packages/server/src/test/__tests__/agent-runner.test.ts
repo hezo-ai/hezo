@@ -609,6 +609,74 @@ describe('runAgent', () => {
 		expect(run.rows[0].status).toBe('cancelled');
 	});
 
+	it('records failed status with error=container_error when aborted with that reason', async () => {
+		const ac = new AbortController();
+		const docker = createMockDocker({
+			execCreate: async () => {
+				ac.abort('container_error');
+				throw new DOMException('Aborted', 'AbortError');
+			},
+		});
+
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeIssue(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.success).toBe(false);
+		const run = await db.query<{ status: string; error: string | null }>(
+			'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe('failed');
+		expect(run.rows[0].error).toBe('container_error');
+	});
+
+	it('invokes onRunRegistered with the heartbeat run id before exec begins', async () => {
+		let registered: string | undefined;
+		const docker = createMockDocker({
+			execCreate: async () => 'exec-1',
+			execStart: async () => ({ stdout: '', stderr: '' }),
+			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		});
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeIssue(),
+			makeProject(),
+			undefined,
+			undefined,
+			(runId) => {
+				registered = runId;
+			},
+		);
+
+		expect(registered).toBeDefined();
+		expect(registered).toBe(result.heartbeatRunId);
+	});
+
 	describe('MCP config + logs + worktree', () => {
 		it('sets started_at to a real timestamp', async () => {
 			const docker = createMockDocker({

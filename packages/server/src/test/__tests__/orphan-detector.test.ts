@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { ApprovalType, HeartbeatRunStatus, WakeupSource } from '@hezo/shared';
+import { AgentRuntimeStatus, ApprovalType, HeartbeatRunStatus, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
@@ -46,17 +46,24 @@ afterAll(async () => {
 async function insertOrphanRun(
 	memberId: string,
 	coId: string,
-	opts: { pid?: number | null; retryCount?: number } = {},
+	opts: { retryCount?: number } = {},
 ): Promise<string> {
-	const { pid = null, retryCount = 0 } = opts;
+	const { retryCount = 0 } = opts;
 	const result = await db.query<{ id: string }>(
 		`INSERT INTO heartbeat_runs
-		   (company_id, member_id, status, started_at, process_pid, process_loss_retry_count)
-		 VALUES ($1, $2, $3::heartbeat_run_status, now() - interval '10 minutes', $4, $5)
+		   (company_id, member_id, status, started_at, process_loss_retry_count)
+		 VALUES ($1, $2, $3::heartbeat_run_status, now() - interval '10 minutes', $4)
 		 RETURNING id`,
-		[coId, memberId, HeartbeatRunStatus.Running, pid, retryCount],
+		[coId, memberId, HeartbeatRunStatus.Running, retryCount],
 	);
 	return result.rows[0].id;
+}
+
+async function setAgentActive(memberId: string): Promise<void> {
+	await db.query(
+		`UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2`,
+		[AgentRuntimeStatus.Active, memberId],
+	);
 }
 
 async function insertLock(memberId: string, issueId: string): Promise<string> {
@@ -110,21 +117,35 @@ describe('detectOrphans', () => {
 		expect(run.rows[0].finished_at).not.toBeNull();
 	});
 
-	it('skips runs whose PID is still in the runningPids set', async () => {
-		const activePid = 99999;
-		const runId = await insertOrphanRun(agentId, companyId, { pid: activePid });
+	it('skips runs whose id is in the live-run registry', async () => {
+		const runId = await insertOrphanRun(agentId, companyId);
 
-		const countBefore = await detectOrphans(db, new Set([activePid]));
+		await detectOrphans(db, new Set([runId]));
 
 		const run = await db.query<{ status: string }>(
 			'SELECT status FROM heartbeat_runs WHERE id = $1',
 			[runId],
 		);
-		// The run we inserted should still be running (skipped by detector)
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Running);
 
-		// Clean up
 		await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [runId]);
+	});
+
+	it('resets member_agents.runtime_status from active to idle when no other live run remains', async () => {
+		await db.query(
+			`DELETE FROM heartbeat_runs WHERE company_id = $1 AND status = $2::heartbeat_run_status`,
+			[companyId, HeartbeatRunStatus.Running],
+		);
+		await setAgentActive(agentId);
+		await insertOrphanRun(agentId, companyId);
+
+		await detectOrphans(db, new Set());
+
+		const agent = await db.query<{ runtime_status: string }>(
+			'SELECT runtime_status FROM member_agents WHERE id = $1',
+			[agentId],
+		);
+		expect(agent.rows[0].runtime_status).toBe(AgentRuntimeStatus.Idle);
 	});
 
 	it('releases execution locks for orphaned agents', async () => {
