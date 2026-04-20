@@ -4,6 +4,7 @@ import { useProject } from '../../../../../hooks/use-projects';
 
 const tabs = [
 	{ label: 'Issues', to: '/companies/$companyId/projects/$projectId/issues' as const },
+	{ label: 'Documents', to: '/companies/$companyId/projects/$projectId/documents' as const },
 	{ label: 'Container', to: '/companies/$companyId/projects/$projectId/container' as const },
 	{ label: 'Settings', to: '/companies/$companyId/projects/$projectId/settings' as const },
 ];

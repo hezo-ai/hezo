@@ -5,6 +5,7 @@ import { queryClient } from '../lib/query-client';
 interface SidebarState {
 	team_expanded?: boolean;
 	projects_expanded?: boolean;
+	collapsed?: boolean;
 }
 
 export interface UiState {
@@ -16,12 +17,21 @@ export function useUiState(companyId: string) {
 		queryKey: ['companies', companyId, 'ui-state'],
 		queryFn: () => api.get<UiState>(`/api/companies/${companyId}/ui-state`),
 		staleTime: Number.POSITIVE_INFINITY,
+		enabled: !!companyId,
 	});
 }
 
 export function useUpdateUiState(companyId: string) {
 	return useMutation({
-		mutationFn: (data: UiState) => api.patch<UiState>(`/api/companies/${companyId}/ui-state`, data),
+		mutationFn: (data: UiState) => {
+			const current = queryClient.getQueryData<UiState>(['companies', companyId, 'ui-state']);
+			const merged: UiState = {
+				...current,
+				...data,
+				sidebar: { ...current?.sidebar, ...data.sidebar },
+			};
+			return api.patch<UiState>(`/api/companies/${companyId}/ui-state`, merged);
+		},
 		onMutate: async (data) => {
 			await queryClient.cancelQueries({ queryKey: ['companies', companyId, 'ui-state'] });
 			const previous = queryClient.getQueryData<UiState>(['companies', companyId, 'ui-state']);
