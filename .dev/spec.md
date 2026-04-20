@@ -472,6 +472,25 @@ Users can also create **entirely new custom agent types** with arbitrary titles,
 
 Agents can request updates to their own system prompts via `PATCH /agent-api/self/system-prompt`, subject to board approval. This allows agents to evolve their behavior when directed by a human member.
 
+### Role-doc partials
+
+Role docs for different company templates frequently share boilerplate — the same "no designated repo means no run" rule appears in every code-touching role, the same hire workflow belongs on every CEO prompt regardless of template. To avoid drift we resolve **section-level partials** at bundle time.
+
+- Partials live under `.dev/agents/_partials/**/*.md`. They are plain Markdown with no frontmatter and are not seeded as role docs themselves.
+- A role doc pulls one in with a **whole-line** directive: `{{> partials/<name>}}` (leading whitespace tolerated; anything else on the line makes it literal text). The name mirrors the path under `_partials/` without the `.md` suffix.
+- Resolution runs in `scripts/bundle-agents.ts` before the bundle is zipped into `packages/server/src/db/agents-bundle.json`, and in the filesystem fallback (`loadAgentRoles` in `packages/server/src/db/agent-roles.ts`) used by tests and dev mode. The DB still stores fully expanded prompts; nothing reads partials at runtime.
+- Partials may include other partials; cycles and unknown refs hard-fail the bundler. Runtime variable substitutions (`{{company_name}}`, `{{kb_context}}`, …) are untouched — those happen later in `template-resolver.ts` per-run.
+
+Scope note: partials are strictly an **authoring-time convenience inside the Hezo repo**. Bundle-time resolution means the on-disk contract with the seed system is unchanged (flat Markdown). Future downloadable team bundles from a marketplace are expected to ship pre-expanded prompts; we do not plan to treat platform partials as a live dependency of third-party bundles, because that would force a compat contract across Hezo versions that we are not ready to make.
+
+Current partials:
+
+| Partial | Used by |
+|---------|---------|
+| `ceo/always-max-effort` | `blank/ceo.md`, `software-development/ceo.md` |
+| `ceo/hire-workflow` | `blank/ceo.md`, `software-development/ceo.md` |
+| `common/no-designated-repo` | all `touches_code: true` roles in `software-development/` |
+
 ### Agent and team auto-descriptions
 
 Every agent carries a short summary (≤5 lines) describing its role and capabilities. Every company carries a team summary (≤20 lines) describing how the agents collaborate. Built-in agent types ship with pre-baked defaults from `packages/server/src/db/agent-summaries.json`, copied to each agent and company during provisioning. At runtime the CEO can regenerate descriptions via `description-update` issues in Operations, calling the `set_agent_summary` and `set_team_summary` MCP tools.
