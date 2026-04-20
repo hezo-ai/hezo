@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, clearAiProviders, getToken } from './helpers';
+import { authenticate, clearAiProviders, getToken, waitForPageLoad } from './helpers';
 
 test.describe('AI Providers instance settings', () => {
 	test('lists all four provider cards on /settings/ai-providers', async ({ page }) => {
@@ -11,6 +11,18 @@ test.describe('AI Providers instance settings', () => {
 		await expect(page.getByText('OpenAI')).toBeVisible();
 		await expect(page.getByText('Google')).toBeVisible();
 		await expect(page.getByText('Moonshot')).toBeVisible();
+	});
+
+	test('rail Settings icon opens global settings with AI providers section', async ({ page }) => {
+		await authenticate(page);
+		await page.goto('/companies');
+		await waitForPageLoad(page);
+
+		await page.getByTitle('Settings').click();
+		await expect(page).toHaveURL(/\/settings\/?$/);
+		await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'AI providers' })).toBeVisible();
+		await expect(page.getByText('Anthropic')).toBeVisible();
 	});
 
 	test('can add a new provider key via the settings UI', async ({ page }) => {

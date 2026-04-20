@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { Copy, ExternalLink, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Badge } from '../../../../components/ui/badge';
@@ -176,17 +176,6 @@ function ConnectionsSection({ companyId }: { companyId: string }) {
 					{(startConn.error as { message: string }).message}
 				</p>
 			)}
-			<div className="mt-4 border-t border-border pt-4">
-				<p className="text-[13px] text-text-muted mb-2">
-					AI provider credentials (Anthropic, OpenAI, Google, Kimi) are shared across every company.
-				</p>
-				<Link
-					to="/settings/ai-providers"
-					className="inline-flex items-center gap-1 text-[13px] text-accent-blue-text hover:underline"
-				>
-					Manage AI providers <ExternalLink className="w-3.5 h-3.5" />
-				</Link>
-			</div>
 		</section>
 	);
 }

@@ -10,6 +10,8 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SettingsIndexRouteImport } from './routes/settings/index'
+import { Route as InboxIndexRouteImport } from './routes/inbox/index'
 import { Route as CompaniesIndexRouteImport } from './routes/companies/index'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as CompaniesNewRouteImport } from './routes/companies/new'
@@ -41,6 +43,16 @@ import { Route as CompaniesCompanyIdAgentsAgentIdExecutionsRunIdRouteImport } fr
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/settings/',
+  path: '/settings/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InboxIndexRoute = InboxIndexRouteImport.update({
+  id: '/inbox/',
+  path: '/inbox/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CompaniesIndexRoute = CompaniesIndexRouteImport.update({
@@ -207,6 +219,8 @@ export interface FileRoutesByFullPath {
   '/companies/new': typeof CompaniesNewRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/companies/': typeof CompaniesIndexRoute
+  '/inbox/': typeof InboxIndexRoute
+  '/settings/': typeof SettingsIndexRoute
   '/companies/$companyId/audit-log': typeof CompaniesCompanyIdAuditLogRoute
   '/companies/$companyId/': typeof CompaniesCompanyIdIndexRoute
   '/companies/$companyId/agents/$agentId': typeof CompaniesCompanyIdAgentsAgentIdRouteRouteWithChildren
@@ -236,6 +250,8 @@ export interface FileRoutesByTo {
   '/companies/new': typeof CompaniesNewRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/companies': typeof CompaniesIndexRoute
+  '/inbox': typeof InboxIndexRoute
+  '/settings': typeof SettingsIndexRoute
   '/companies/$companyId/audit-log': typeof CompaniesCompanyIdAuditLogRoute
   '/companies/$companyId': typeof CompaniesCompanyIdIndexRoute
   '/companies/$companyId/agents/hire': typeof CompaniesCompanyIdAgentsHireRoute
@@ -265,6 +281,8 @@ export interface FileRoutesById {
   '/companies/new': typeof CompaniesNewRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/companies/': typeof CompaniesIndexRoute
+  '/inbox/': typeof InboxIndexRoute
+  '/settings/': typeof SettingsIndexRoute
   '/companies/$companyId/audit-log': typeof CompaniesCompanyIdAuditLogRoute
   '/companies/$companyId/': typeof CompaniesCompanyIdIndexRoute
   '/companies/$companyId/agents/$agentId': typeof CompaniesCompanyIdAgentsAgentIdRouteRouteWithChildren
@@ -297,6 +315,8 @@ export interface FileRouteTypes {
     | '/companies/new'
     | '/settings/ai-providers'
     | '/companies/'
+    | '/inbox/'
+    | '/settings/'
     | '/companies/$companyId/audit-log'
     | '/companies/$companyId/'
     | '/companies/$companyId/agents/$agentId'
@@ -326,6 +346,8 @@ export interface FileRouteTypes {
     | '/companies/new'
     | '/settings/ai-providers'
     | '/companies'
+    | '/inbox'
+    | '/settings'
     | '/companies/$companyId/audit-log'
     | '/companies/$companyId'
     | '/companies/$companyId/agents/hire'
@@ -354,6 +376,8 @@ export interface FileRouteTypes {
     | '/companies/new'
     | '/settings/ai-providers'
     | '/companies/'
+    | '/inbox/'
+    | '/settings/'
     | '/companies/$companyId/audit-log'
     | '/companies/$companyId/'
     | '/companies/$companyId/agents/$agentId'
@@ -385,6 +409,8 @@ export interface RootRouteChildren {
   CompaniesNewRoute: typeof CompaniesNewRoute
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
   CompaniesIndexRoute: typeof CompaniesIndexRoute
+  InboxIndexRoute: typeof InboxIndexRoute
+  SettingsIndexRoute: typeof SettingsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -394,6 +420,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/': {
+      id: '/settings/'
+      path: '/settings'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/inbox/': {
+      id: '/inbox/'
+      path: '/inbox'
+      fullPath: '/inbox/'
+      preLoaderRoute: typeof InboxIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/companies/': {
@@ -688,6 +728,8 @@ const rootRouteChildren: RootRouteChildren = {
   CompaniesNewRoute: CompaniesNewRoute,
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
   CompaniesIndexRoute: CompaniesIndexRoute,
+  InboxIndexRoute: InboxIndexRoute,
+  SettingsIndexRoute: SettingsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -104,4 +104,44 @@ test.describe('Inbox / Approvals', () => {
 		// Sidebar should contain Inbox link
 		await expect(page.getByText('Inbox', { exact: true })).toBeVisible({ timeout: 5000 });
 	});
+
+	test('global inbox aggregates approvals from every company', async ({ page }) => {
+		await authenticate(page);
+		const first = await createCompanyWithAgents(page);
+		const second = await createCompanyWithAgents(page);
+		const headers = {
+			Authorization: `Bearer ${first.token}`,
+			'Content-Type': 'application/json',
+		};
+
+		await page.request.post(`/api/companies/${first.company.id}/approvals`, {
+			headers,
+			data: { type: 'strategy', payload: { plan: 'First company strategy' } },
+		});
+		await page.request.post(`/api/companies/${second.company.id}/approvals`, {
+			headers,
+			data: { type: 'plan_review', payload: { plan: 'Second company plan' } },
+		});
+
+		await page.goto('/inbox');
+		await waitForPageLoad(page);
+
+		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('First company strategy')).toBeVisible();
+		await expect(page.getByText('Second company plan')).toBeVisible();
+		await expect(page.getByText(first.company.name)).toBeVisible();
+		await expect(page.getByText(second.company.name)).toBeVisible();
+	});
+
+	test('rail inbox icon navigates to global inbox', async ({ page }) => {
+		await authenticate(page);
+		await createCompanyWithAgents(page);
+
+		await page.goto('/companies');
+		await waitForPageLoad(page);
+
+		await page.getByTitle('Inbox').click();
+		await expect(page).toHaveURL(/\/inbox$/);
+		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 5000 });
+	});
 });
