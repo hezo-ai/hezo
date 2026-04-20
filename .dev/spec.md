@@ -446,6 +446,24 @@ The system prompt editor supports variables that are resolved at runtime:
 
 On agent creation, the UI provides a monospace editor with a toolbar for inserting variables, loading role templates, and Markdown preview support.
 
+### Hire workflow (CEO-mediated)
+
+New agents are not created by the board directly. When a board member submits the hire form (`POST /api/companies/:companyId/agents/onboard`), the server:
+
+1. Validates the proposed title, slug uniqueness, and effort value.
+2. Inserts an `approvals` row of type `hire` whose payload holds the full draft spec (`title`, `slug`, `role_description`, `system_prompt`, `default_effort`, `heartbeat_interval_min`, `monthly_budget_cents`, `touches_code`).
+3. Opens an issue in the Operations project, assigned to the CEO, titled `Onboard new agent: {title}`, labelled `onboarding,hire`, with the approval ID and the current draft in the body.
+4. Wakes the CEO to process the ticket. **No `member_agents` row is created yet.**
+
+The CEO picks up the ticket and refines the draft via the `update_hire_proposal(approval_id, ...)` MCP tool — CEO-only. Other agents (including the Architect) are rejected with `Only the CEO can revise hire proposals`. Revisions mutate the approval payload in place and do not reset the `status`. The CEO @-mentions the board via `create_comment` when the draft is ready for review.
+
+The board reviews the draft in the approvals inbox and either approves or denies the pending `hire` approval.
+
+- **Approved** → the `applyApprovalSideEffect` hook in `packages/server/src/routes/approvals.ts` inserts the `members` and `member_agents` rows from the latest payload, marks the agent as `enabled`, transitions the onboarding issue to `done`, and broadcasts both row changes so the UI and org chart update live. Agent and team description refresh tasks are enqueued.
+- **Denied** → no agent is created; the CEO is expected to close the onboarding issue as `cancelled` with a brief note.
+
+Bootstrap exception: if the company has no enabled CEO or no Operations project (e.g., the CEO itself is being hired first), the endpoint falls back to creating the agent directly as `enabled` without an approval or ticket. This is the only way to create an agent without the CEO-mediated flow and is intended solely for early setup.
+
 ### Built-in role templates
 
 Hezo ships with 11 built-in agent types that form the default team for the "Software Development" company type. Full specifications for each role are in `agents/{slug}.md`. Role-specific instructions are embedded directly in the system prompt template — no separate skill files. Users can customize every field. All agent types are starting points, not fixed — agents can be added, removed, or reconfigured per-company.
@@ -1352,8 +1370,8 @@ Board members (human users) collectively act as the board of directors. All boar
 
 | Action | Requires approval? |
 |--------|-------------------|
-| Board hires an agent | No — direct action |
-| Agent requests to hire | Yes — pending approval |
+| Board hires an agent | Yes — CEO refines a draft via `update_hire_proposal` MCP tool, then the board approves the pending `hire` approval to materialise the agent. Bypassed only in the bootstrap case where the company has no enabled CEO or no Operations project (the agent is then created directly as enabled). |
+| Agent requests to hire | Yes — same `hire` approval type, routed through the CEO for refinement first. |
 | Board grants secret access | No — direct action |
 | Agent requests secret access | Yes — pending approval |
 | Agent submits strategy | Yes — pending approval |

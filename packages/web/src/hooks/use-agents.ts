@@ -43,22 +43,6 @@ export function useAgent(companyId: string, agentId: string) {
 	});
 }
 
-export function useCreateAgent(companyId: string) {
-	return useMutation({
-		mutationFn: (data: {
-			title: string;
-			role_description?: string;
-			system_prompt?: string;
-			reports_to?: string;
-			monthly_budget_cents?: number;
-			heartbeat_interval_min?: number;
-			touches_code?: boolean;
-		}) => api.post<Agent>(`/api/companies/${companyId}/agents`, data),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] }),
-	});
-}
-
 export function useUpdateAgent(companyId: string, agentId: string) {
 	return useMutation({
 		mutationFn: (data: {
@@ -105,13 +89,16 @@ export function useOnboardAgent(companyId: string) {
 			heartbeat_interval_min?: number;
 			touches_code?: boolean;
 		}) =>
-			api.post<{ agent: Agent; issue: { id: string; identifier: string } | null }>(
-				`/api/companies/${companyId}/agents/onboard`,
-				data,
-			),
+			api.post<{
+				agent: Agent | null;
+				issue: { id: string; identifier: string } | null;
+				approval: { id: string } | null;
+				bootstrap: boolean;
+			}>(`/api/companies/${companyId}/agents/onboard`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] });
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'issues'] });
+			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'approvals'] });
 		},
 	});
 }

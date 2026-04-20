@@ -1,5 +1,8 @@
 import {
 	AgentAdminStatus,
+	ApprovalStatus,
+	ApprovalType,
+	AuthType,
 	CEO_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	IssuePriority,
@@ -7,6 +10,7 @@ import {
 	isAgentEffort,
 	MemberType,
 	OPERATIONS_PROJECT_SLUG,
+	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
@@ -18,6 +22,7 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { enqueueAgentSummaryTask, enqueueTeamSummaryTask } from '../services/description-tasks';
+import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
 
@@ -225,6 +230,16 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 		return err(c, 'CONFLICT', `Agent with slug '${slug}' already exists in this company`, 409);
 	}
 
+	const pendingCheck = await db.query(
+		`SELECT id FROM approvals
+		 WHERE company_id = $1 AND type = $2::approval_type AND status = $3::approval_status
+		   AND payload->>'slug' = $4`,
+		[companyId, ApprovalType.Hire, ApprovalStatus.Pending, slug],
+	);
+	if (pendingCheck.rows.length > 0) {
+		return err(c, 'CONFLICT', `A pending hire proposal for slug '${slug}' already exists`, 409);
+	}
+
 	const ceoResult = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
@@ -240,136 +255,181 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 	const hasCeo = ceoResult.rows.length > 0;
 	const hasOpsProject = opsProject.rows.length > 0;
 
-	await db.query('BEGIN');
-	try {
-		const memberResult = await db.query<{ id: string }>(
-			`INSERT INTO members (company_id, member_type, display_name)
-			 VALUES ($1, $2, $3)
-			 RETURNING id`,
-			[companyId, MemberType.Agent, body.title.trim()],
-		);
-		const memberId = memberResult.rows[0].id;
+	const proposal = {
+		title: body.title.trim(),
+		slug,
+		role_description: body.role_description ?? '',
+		system_prompt: body.system_prompt ?? '',
+		default_effort: body.default_effort ?? DEFAULT_EFFORT,
+		heartbeat_interval_min: body.heartbeat_interval_min ?? 60,
+		monthly_budget_cents: body.monthly_budget_cents ?? 3000,
+		touches_code: body.touches_code ?? false,
+	};
 
-		const adminStatus =
-			hasCeo && hasOpsProject ? AgentAdminStatus.Disabled : AgentAdminStatus.Enabled;
-
-		await db.query(
-			`INSERT INTO member_agents (id, title, slug, role_description, system_prompt,
-			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
-			                            touches_code, admin_status)
-			 VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10::agent_admin_status)`,
-			[
-				memberId,
-				body.title.trim(),
-				slug,
-				body.role_description ?? '',
-				body.system_prompt ?? '',
-				body.default_effort ?? DEFAULT_EFFORT,
-				body.heartbeat_interval_min ?? 60,
-				body.monthly_budget_cents ?? 3000,
-				body.touches_code ?? false,
-				adminStatus,
-			],
-		);
-
-		let issue = null;
-
-		if (hasCeo && hasOpsProject) {
-			const ceoId = ceoResult.rows[0].id;
-			const projectId = opsProject.rows[0].id;
-
-			const existingAgents = await db.query<{ title: string; role_description: string }>(
-				`SELECT ma.title, ma.role_description
-				 FROM member_agents ma JOIN members m ON m.id = ma.id
-				 WHERE m.company_id = $1 AND ma.admin_status = $2::agent_admin_status AND ma.id != $3`,
-				[companyId, AgentAdminStatus.Enabled, memberId],
+	if (!hasCeo || !hasOpsProject) {
+		await db.query('BEGIN');
+		try {
+			const memberResult = await db.query<{ id: string }>(
+				`INSERT INTO members (company_id, member_type, display_name)
+				 VALUES ($1, $2, $3)
+				 RETURNING id`,
+				[companyId, MemberType.Agent, proposal.title],
 			);
+			const memberId = memberResult.rows[0].id;
 
-			const teamRoster = existingAgents.rows
-				.map((a) => `- **${a.title}**: ${a.role_description || 'No description'}`)
-				.join('\n');
-
-			const description = `## New Agent Onboarding Request
-
-**Role**: ${body.title.trim()}
-**Role Description**: ${body.role_description || 'Not provided'}
-
-### Task
-Review this new hire against the existing team. Consider:
-1. Reporting structure — who should this agent report to?
-2. Responsibility overlap with existing agents
-3. Any adjustments needed to existing agents' responsibilities
-
-### Existing Team
-${teamRoster}`;
-
-			const companyResult = await db.query<{ issue_prefix: string }>(
-				'SELECT issue_prefix FROM companies WHERE id = $1',
-				[companyId],
-			);
-			const numberResult = await db.query<{ number: number }>(
-				'SELECT next_issue_number($1) AS number',
-				[companyId],
-			);
-			const issueNumber = numberResult.rows[0].number;
-			const identifier = `${companyResult.rows[0].issue_prefix}-${issueNumber}`;
-
-			const issueResult = await db.query(
-				`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier,
-				                     title, description, status, priority, labels)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
-				 RETURNING *`,
+			await db.query(
+				`INSERT INTO member_agents (id, title, slug, role_description, system_prompt,
+				                            default_effort, heartbeat_interval_min, monthly_budget_cents,
+				                            touches_code, admin_status)
+				 VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10::agent_admin_status)`,
 				[
-					companyId,
-					projectId,
-					ceoId,
-					issueNumber,
-					identifier,
-					`Onboard new agent: ${body.title.trim()}`,
-					description,
-					IssueStatus.Open,
-					IssuePriority.High,
-					JSON.stringify(['onboarding']),
+					memberId,
+					proposal.title,
+					proposal.slug,
+					proposal.role_description,
+					proposal.system_prompt,
+					proposal.default_effort,
+					proposal.heartbeat_interval_min,
+					proposal.monthly_budget_cents,
+					proposal.touches_code,
+					AgentAdminStatus.Enabled,
 				],
 			);
-			issue = issueResult.rows[0];
-		}
 
-		await db.query('COMMIT');
+			await db.query('COMMIT');
+		} catch (e) {
+			await db.query('ROLLBACK');
+			throw e;
+		}
 
 		const agentResult = await db.query(
 			`SELECT ${AGENT_BASE_COLUMNS}
 			 FROM members m
 			 JOIN member_agents ma ON ma.id = m.id
-			 WHERE m.id = $1`,
-			[memberId],
+			 WHERE ma.slug = $1 AND m.company_id = $2`,
+			[slug, companyId],
 		);
+		const agentRow = agentResult.rows[0] as Record<string, unknown>;
 
-		broadcastChange(
-			c,
-			wsRoom.company(companyId),
-			'member_agents',
-			'INSERT',
-			agentResult.rows[0] as Record<string, unknown>,
-		);
-		if (issue) {
-			broadcastChange(
-				c,
-				wsRoom.company(companyId),
-				'issues',
-				'INSERT',
-				issue as Record<string, unknown>,
-			);
-		}
-
-		enqueueAgentSummaryTask(db, companyId, memberId, 'created').catch((e) =>
+		broadcastChange(c, wsRoom.company(companyId), 'member_agents', 'INSERT', agentRow);
+		enqueueAgentSummaryTask(db, companyId, agentRow.id as string, 'created').catch((e) =>
 			log.error('Failed to enqueue agent summary task:', e),
 		);
 		enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
 			log.error('Failed to enqueue team summary task:', e),
 		);
 
-		return ok(c, { agent: agentResult.rows[0], issue }, 201);
+		return ok(c, { agent: agentRow, issue: null, approval: null, bootstrap: true }, 201);
+	}
+
+	const ceoId = ceoResult.rows[0].id;
+	const projectId = opsProject.rows[0].id;
+
+	const auth = c.get('auth');
+	let requestedByMemberId: string | null = null;
+	if (auth.type === AuthType.Board && !auth.isSuperuser) {
+		const me = await db.query<{ id: string }>(
+			`SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id
+			 WHERE mu.user_id = $1 AND m.company_id = $2`,
+			[auth.userId, companyId],
+		);
+		requestedByMemberId = me.rows[0]?.id ?? null;
+	}
+
+	await db.query('BEGIN');
+	try {
+		const approvalResult = await db.query<Record<string, unknown>>(
+			`INSERT INTO approvals (company_id, type, requested_by_member_id, payload, status)
+			 VALUES ($1, $2::approval_type, $3, $4::jsonb, $5::approval_status)
+			 RETURNING *`,
+			[
+				companyId,
+				ApprovalType.Hire,
+				requestedByMemberId,
+				JSON.stringify(proposal),
+				ApprovalStatus.Pending,
+			],
+		);
+		const approvalId = approvalResult.rows[0].id as string;
+
+		const existingAgents = await db.query<{ title: string; role_description: string }>(
+			`SELECT ma.title, ma.role_description
+			 FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1 AND ma.admin_status = $2::agent_admin_status`,
+			[companyId, AgentAdminStatus.Enabled],
+		);
+		const teamRoster = existingAgents.rows
+			.map((a) => `- **${a.title}**: ${a.role_description || 'No description'}`)
+			.join('\n');
+
+		const description = `## New Agent Hire Request
+
+The board has requested a new agent. Expand the draft prompt if needed, post the revised prompt as a comment, and @-mention the board for review. Iterate until the board approves the linked hire approval. The agent will be created automatically on approval.
+
+**Draft title**: ${proposal.title}
+**Draft slug**: \`${proposal.slug}\`
+**Role description**: ${proposal.role_description || 'Not provided'}
+**Heartbeat**: every ${proposal.heartbeat_interval_min} min — **Budget**: $${(proposal.monthly_budget_cents / 100).toFixed(2)}/mo — **Touches code**: ${proposal.touches_code ? 'yes' : 'no'}
+
+**Approval ID**: \`${approvalId}\`
+Use \`update_hire_proposal\` to revise the draft.
+
+### Draft system prompt
+${proposal.system_prompt ? `\n\`\`\`\n${proposal.system_prompt}\n\`\`\`\n` : '_(empty — write one from the role description)_'}
+
+### Existing team
+${teamRoster}`;
+
+		const companyResult = await db.query<{ issue_prefix: string }>(
+			'SELECT issue_prefix FROM companies WHERE id = $1',
+			[companyId],
+		);
+		const numberResult = await db.query<{ number: number }>(
+			'SELECT next_issue_number($1) AS number',
+			[companyId],
+		);
+		const issueNumber = numberResult.rows[0].number;
+		const identifier = `${companyResult.rows[0].issue_prefix}-${issueNumber}`;
+
+		const issueResult = await db.query<Record<string, unknown>>(
+			`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier,
+			                     title, description, status, priority, labels)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
+			 RETURNING *`,
+			[
+				companyId,
+				projectId,
+				ceoId,
+				issueNumber,
+				identifier,
+				`Onboard new agent: ${proposal.title}`,
+				description,
+				IssueStatus.Open,
+				IssuePriority.High,
+				JSON.stringify(['onboarding', 'hire']),
+			],
+		);
+		const issue = issueResult.rows[0];
+
+		await db.query(
+			`UPDATE approvals SET payload = payload || jsonb_build_object('issue_id', $1::text) WHERE id = $2`,
+			[issue.id, approvalId],
+		);
+		const finalApproval = await db.query<Record<string, unknown>>(
+			'SELECT * FROM approvals WHERE id = $1',
+			[approvalId],
+		);
+
+		await db.query('COMMIT');
+
+		broadcastChange(c, wsRoom.company(companyId), 'approvals', 'INSERT', finalApproval.rows[0]);
+		broadcastChange(c, wsRoom.company(companyId), 'issues', 'INSERT', issue);
+
+		createWakeup(db, ceoId, companyId, WakeupSource.Assignment, { issue_id: issue.id }).catch((e) =>
+			log.error('Failed to wake CEO for hire request:', e),
+		);
+
+		return ok(c, { agent: null, issue, approval: finalApproval.rows[0], bootstrap: false }, 201);
 	} catch (e) {
 		await db.query('ROLLBACK');
 		throw e;

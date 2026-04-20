@@ -32,6 +32,7 @@ import type { WebSocketManager } from './ws';
 export interface AgentInfo {
 	id: string;
 	title: string;
+	slug?: string | null;
 	system_prompt: string;
 	company_id: string;
 	default_effort?: string | null;
@@ -141,7 +142,7 @@ async function buildRunContext(
 		agent.company_id,
 		heartbeatRunId,
 	);
-	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort);
+	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort, agent.slug);
 	const effortApplication = applyEffortToRuntime(runtimeType, effort);
 
 	const isCoachReview = wakeupPayload?.trigger === 'issue_done';

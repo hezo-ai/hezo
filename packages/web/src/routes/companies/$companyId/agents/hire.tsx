@@ -41,11 +41,13 @@ function HireAgentPage() {
 				to: '/companies/$companyId/issues/$issueId',
 				params: { companyId, issueId: result.issue.id },
 			});
-		} else {
+		} else if (result.agent) {
 			navigate({
 				to: '/companies/$companyId/agents/$agentId',
 				params: { companyId, agentId: result.agent.id },
 			});
+		} else {
+			navigate({ to: '/companies/$companyId/agents', params: { companyId } });
 		}
 	}
 

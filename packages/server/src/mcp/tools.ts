@@ -453,6 +453,82 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		db,
 	);
 
+	tool(
+		server,
+		'update_hire_proposal',
+		'Revise the draft of a pending hire approval. CEO-only. Use this to expand or rewrite the system prompt, adjust role description, budget, heartbeat, or touches_code before board review. All fields are optional — pass only what you want to change.',
+		{
+			approval_id: z.string().describe('Hire approval ID'),
+			title: z.string().optional().describe('Updated role title'),
+			role_description: z.string().optional().describe('Updated short role description'),
+			system_prompt: z.string().optional().describe('Updated system prompt'),
+			default_effort: z
+				.string()
+				.optional()
+				.describe('Updated default effort: minimal, low, medium, high, max'),
+			heartbeat_interval_min: z.number().optional().describe('Updated heartbeat interval (min)'),
+			monthly_budget_cents: z.number().optional().describe('Updated monthly budget in cents'),
+			touches_code: z.boolean().optional().describe('Whether this agent reads/writes repo code'),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent) {
+				return { error: 'update_hire_proposal is only callable by agents' };
+			}
+			const caller = await db.query<{ slug: string }>(
+				'SELECT slug FROM member_agents WHERE id = $1',
+				[auth.memberId],
+			);
+			if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
+				return { error: 'Only the CEO can revise hire proposals' };
+			}
+
+			const approval = await db.query<{
+				id: string;
+				company_id: string;
+				type: string;
+				status: string;
+				payload: Record<string, unknown>;
+			}>('SELECT id, company_id, type, status, payload FROM approvals WHERE id = $1', [
+				args.approval_id,
+			]);
+			if (approval.rows.length === 0) return { error: 'Approval not found' };
+
+			const row = approval.rows[0];
+			if (row.company_id !== auth.companyId) {
+				return { error: 'Access denied: company mismatch' };
+			}
+			if (row.type !== ApprovalType.Hire) {
+				return { error: 'Approval is not a hire request' };
+			}
+			if (row.status !== ApprovalStatus.Pending) {
+				return { error: 'Hire approval is already resolved' };
+			}
+
+			const patch: Record<string, unknown> = {};
+			if (args.title !== undefined) patch.title = (args.title as string).trim();
+			if (args.role_description !== undefined) patch.role_description = args.role_description;
+			if (args.system_prompt !== undefined) patch.system_prompt = args.system_prompt;
+			if (args.default_effort !== undefined) patch.default_effort = args.default_effort;
+			if (args.heartbeat_interval_min !== undefined)
+				patch.heartbeat_interval_min = args.heartbeat_interval_min;
+			if (args.monthly_budget_cents !== undefined)
+				patch.monthly_budget_cents = args.monthly_budget_cents;
+			if (args.touches_code !== undefined) patch.touches_code = args.touches_code;
+
+			if (Object.keys(patch).length === 0) {
+				return { error: 'no fields to update' };
+			}
+
+			const updated = await db.query<Record<string, unknown>>(
+				`UPDATE approvals SET payload = payload || $1::jsonb
+				 WHERE id = $2 RETURNING *`,
+				[JSON.stringify(patch), args.approval_id],
+			);
+			return updated.rows[0] ?? null;
+		},
+		db,
+	);
+
 	// Projects
 	tool(
 		server,

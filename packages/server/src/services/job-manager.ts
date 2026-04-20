@@ -473,6 +473,7 @@ export class JobManager {
 					{
 						id: memberId,
 						title: agent.rows[0].title,
+						slug: agent.rows[0].slug,
 						system_prompt: agent.rows[0].system_prompt,
 						company_id: companyId,
 						default_effort: agent.rows[0].default_effort,

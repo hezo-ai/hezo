@@ -323,59 +323,59 @@ Response:
 ```
 
 #### `POST /companies/:companyId/agents`
-Create (hire) an agent. If requested by the board directly, no approval needed.
-If requested by another agent, creates a pending approval instead.
+Internal direct-create endpoint used by company provisioning (seeding the template team). Board-initiated hires must go through `POST /companies/:companyId/agents/onboard` instead — this endpoint is not wired to the hire form and skips the CEO/board review cycle. Tests and bootstrap paths are the only expected callers.
 
-Request:
-```json
-{
-  "title": "Frontend Engineer",
-  "role_description": "Builds and maintains all user-facing interfaces",
-  "system_prompt": "You are the **Frontend Engineer** at {{company_name}}...",
-  "reports_to": "uuid",
-  "default_effort": "medium",
-  "heartbeat_interval_min": 60,
-  "monthly_budget_cents": 3000,
-  "mcp_servers": [
-    { "name": "postgres", "url": "stdio://npx -y @modelcontextprotocol/server-postgres", "description": "Project database" }
-  ]
-}
-```
-
-`mcp_servers` is optional. Agent-level MCP servers are merged with company-level
-MCP servers at runtime (agent-level takes precedence on name conflicts).
+Request fields: `title` (required), `role_description`, `system_prompt`, `reports_to`, `default_effort`, `heartbeat_interval_min`, `monthly_budget_cents`, `touches_code`, `mcp_servers`.
 
 Response: full agent object.
 
 #### `POST /companies/:companyId/agents/onboard`
-Create an agent through the onboarding flow. The agent starts in `disabled` state.
-An onboarding issue is created in the Operations project, assigned to the CEO agent.
-The CEO reviews the new hire against the existing team and negotiates reporting
-structure and responsibilities with the board via issue comments.
+Starts the CEO-mediated hire workflow. The board submits a draft spec; the server creates a pending `hire` approval holding the draft in its payload, opens an onboarding issue in the Operations project assigned to the CEO, and wakes the CEO to refine the draft. **No `member_agents` row is created yet.**
 
-If no CEO agent exists, falls back to creating the agent directly in `enabled` state.
+The CEO revises the draft via the `update_hire_proposal` MCP tool, @-mentions the board for review, and iterates until the board resolves the pending approval. Approving the approval materialises the agent (see `POST /approvals/:approvalId/resolve`); denying leaves nothing behind.
+
+If the company has no enabled CEO or no Operations project (bootstrap case), the endpoint creates the agent directly as `enabled` and returns it with `bootstrap: true`. No approval or ticket is created in that case.
 
 Request:
 ```json
 {
   "title": "Data Scientist",
   "role_description": "Analyzes data and builds ML models",
-  "system_prompt": "You are the Data Scientist at {{company_name}}...",
+  "system_prompt": "Draft prompt — CEO will expand",
   "default_effort": "medium",
   "heartbeat_interval_min": 60,
-  "monthly_budget_cents": 3000
+  "monthly_budget_cents": 3000,
+  "touches_code": false
 }
 ```
 
-Response:
+Response (normal path):
 ```json
 {
   "data": {
-    "agent": { ... },
-    "issue": { "id": "uuid", "identifier": "ACME-12", ... }
+    "agent": null,
+    "issue": { "id": "uuid", "identifier": "ACME-12", "title": "Onboard new agent: Data Scientist", "labels": ["onboarding", "hire"] },
+    "approval": { "id": "uuid", "type": "hire", "status": "pending", "payload": { "title": "Data Scientist", "slug": "data-scientist", "system_prompt": "...", "issue_id": "uuid" } },
+    "bootstrap": false
   }
 }
 ```
+
+Response (bootstrap):
+```json
+{
+  "data": {
+    "agent": { "id": "uuid", "slug": "ceo", "admin_status": "enabled", ... },
+    "issue": null,
+    "approval": null,
+    "bootstrap": true
+  }
+}
+```
+
+Error responses:
+- `400 INVALID_REQUEST` — `title` is missing, or `default_effort` is not a valid enum value.
+- `409 CONFLICT` — an enabled or disabled agent with the same slug already exists, or another pending `hire` approval already claims the same slug.
 
 #### `GET /companies/:companyId/agents/:agentId`
 Get agent detail including system prompt.
@@ -1137,7 +1137,10 @@ Request:
 
 `status` must be `"approved"` or `"denied"`.
 
-When approved, side effects depend on approval type: `SystemPromptUpdate` approvals update the agent's system prompt and record a revision; `SkillProposal` approvals write the skill to the database.
+When approved, side effects depend on approval type:
+- `SystemPromptUpdate` — updates the agent's system prompt and records a revision.
+- `SkillProposal` — writes the skill to the database.
+- `Hire` — materialises the draft in the payload into a new enabled `member_agents` row, transitions the linked onboarding issue to `done`, and broadcasts the new agent row so the UI/org chart update live. Failure modes: if the slug has been taken by a directly-created agent since the approval was filed, the hook raises and the resolution fails (operator must resolve the slug collision manually).
 ```
 
 ---
@@ -2557,7 +2560,7 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `connection.refreshed` | connected_platform | System or board refreshes token |
 | `connection.expired` | connected_platform | System detects expired token |
 | `connection.disconnected` | connected_platform | Board disconnects platform |
-| `agent.created` | agent | Board hires or approval resolved |
+| `agent.created` | agent | Board-approved `hire` approval materialises, or bootstrap direct-create when no CEO exists |
 | `agent.updated` | agent | Board edits agent config |
 | `agent.disabled` | agent | Board disables agent |
 | `agent.resumed` | agent | Board resumes |
@@ -2635,6 +2638,7 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `create_issue` | Create a new issue. Operations-project issues must be assigned to the CEO (slug `ceo`); otherwise an error is returned. | `company_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
 | `update_issue` | Update an issue. Changing `assignee_id` on an Operations-project issue to anyone other than the CEO returns an error. | `company_id`, `issue_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
 | `list_agents` | List agents in a company | `company_id` |
+| `update_hire_proposal` | Revise the draft of a pending `hire` approval. **CEO-only.** Rejects non-CEO agents with `Only the CEO can revise hire proposals`. Rejects already-resolved approvals. All draft fields optional — pass only what changes. | `approval_id`, `title?`, `role_description?`, `system_prompt?`, `default_effort?`, `heartbeat_interval_min?`, `monthly_budget_cents?`, `touches_code?` |
 | `list_projects` | List projects | `company_id` |
 | `create_project` | Create a project | `company_id`, `name` |
 | `list_comments` | List issue comments | `company_id`, `issue_id` |
