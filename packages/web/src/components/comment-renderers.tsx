@@ -9,11 +9,10 @@ import {
 	Terminal,
 } from 'lucide-react';
 import { useState } from 'react';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { isActiveRunStatus, useHeartbeatRun } from '../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../hooks/use-run-logs';
 import { LogViewer } from './log-viewer';
+import { MarkdownProse } from './markdown-prose';
 import { RepoSetupWizard } from './repo-setup-wizard';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -210,14 +209,7 @@ function TextComment({ comment }: { comment: CommentData }) {
 		typeof comment.content === 'object'
 			? comment.content.text || JSON.stringify(comment.content)
 			: String(comment.content);
-	return (
-		<div
-			className="prose prose-sm max-w-none text-sm text-text [&_a]:text-accent-blue-text [&_h1]:text-text [&_h2]:text-text [&_h3]:text-text [&_h4]:text-text [&_strong]:text-text [&_code]:text-accent-blue-text [&_code]:bg-bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-bg-muted [&_pre]:border [&_pre]:border-border [&_p:last-child]:mb-0 [&_p:first-child]:mt-0"
-			data-testid="text-comment-body"
-		>
-			<Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
-		</div>
-	);
+	return <MarkdownProse testId="text-comment-body">{content}</MarkdownProse>;
 }
 
 function SystemComment({ comment }: { comment: CommentData }) {

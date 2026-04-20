@@ -49,7 +49,11 @@ test.describe('Inbox / Approvals', () => {
 			headers,
 			data: {
 				type: 'hire',
-				payload: { agent_name: 'New Designer' },
+				payload: {
+					title: 'New Designer',
+					slug: `new-designer-${Date.now()}`,
+					system_prompt: 'You are a designer.',
+				},
 			},
 		});
 

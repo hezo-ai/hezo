@@ -1,10 +1,1 @@
-{
-  "packages/server/src/test/__tests__/agent-stream-parser.test.ts": 2622,
-  "packages/server/src/test/__tests__/agent-types.test.ts": 4000,
-  "packages/server/src/test/__tests__/agents.test.ts": 4070,
-  "packages/server/src/test/__tests__/agent-api.test.ts": 4109,
-  "packages/server/src/test/__tests__/agents-extended.test.ts": 4110,
-  "packages/server/src/test/__tests__/agent-runner.test.ts": 4156,
-  "packages/server/src/test/__tests__/agent-triggering.test.ts": 4219,
-  "packages/server/src/test/__tests__/agent-autonomy.test.ts": 4259
-}
+{}

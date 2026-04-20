@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AgentStatusLabel } from '../../../../components/agent-status-label';
 import { type CommentData, CommentRenderer } from '../../../../components/comment-renderers';
 import { LiveChatPanel } from '../../../../components/live-chat-panel';
+import { MarkdownProse } from '../../../../components/markdown-prose';
 import { Avatar, avatarColorFromString } from '../../../../components/ui/avatar';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
@@ -162,9 +163,9 @@ function IssueDetailPage() {
 				)}
 
 				{issue.description && (
-					<p className="text-[13px] text-text-muted mb-5 whitespace-pre-wrap leading-relaxed">
-						{issue.description}
-					</p>
+					<div className="mb-5">
+						<MarkdownProse testId="issue-description">{issue.description}</MarkdownProse>
+					</div>
 				)}
 
 				{/* Blocked by */}

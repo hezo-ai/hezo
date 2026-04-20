@@ -421,6 +421,60 @@ test('operations project restricts assignee dropdown to the CEO', async ({ page 
 	expect(agentLabels.length).toBe(1);
 });
 
+test('issue description renders markdown', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = (await agentsRes.json()).data as { id: string }[];
+	const agent = agents[0];
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Markdown Project', description: 'Test project.' },
+	});
+	const project = (await projectRes.json()).data;
+
+	const description = [
+		'# Heading One',
+		'',
+		'- bullet item',
+		'',
+		'[a link](https://example.com)',
+		'',
+		'```',
+		'const x = 1;',
+		'```',
+	].join('\n');
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: {
+			project_id: project.id,
+			title: 'Markdown Description Issue',
+			assignee_id: agent.id,
+			description,
+		},
+	});
+	const issue = (await issueRes.json()).data;
+
+	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await waitForPageLoad(page);
+
+	const desc = page.getByTestId('issue-description');
+	await expect(desc).toBeVisible({ timeout: 10000 });
+	await expect(desc.getByRole('heading', { level: 1, name: 'Heading One' })).toBeVisible();
+	await expect(desc.getByRole('listitem').filter({ hasText: 'bullet item' })).toBeVisible();
+	const link = desc.getByRole('link', { name: 'a link' });
+	await expect(link).toHaveAttribute('href', 'https://example.com');
+	await expect(desc.locator('pre code')).toContainText('const x = 1;');
+
+	await expect(desc.locator('p', { hasText: '# Heading One' })).toHaveCount(0);
+});
+
 test('sidebar shows agent status badges', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
