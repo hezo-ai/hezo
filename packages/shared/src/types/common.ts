@@ -400,6 +400,20 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	[AgentRuntime.Kimi]: [],
 };
 
+/**
+ * Flags that make each CLI emit structured per-turn events to stdout while
+ * the run is in flight, so the run log shows tool calls, thinking, and
+ * partial assistant text live instead of silence until the final result.
+ * Runtimes without a documented stream mode default to [] and stream their
+ * native text output.
+ */
+export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
+	[AgentRuntime.ClaudeCode]: ['--output-format', 'stream-json', '--verbose'],
+	[AgentRuntime.Codex]: [],
+	[AgentRuntime.Gemini]: [],
+	[AgentRuntime.Kimi]: [],
+};
+
 export interface AiProviderVerifyEndpoint {
 	url: string | ((apiKey: string) => string);
 	headers: Record<string, string> | ((apiKey: string) => Record<string, string>);

@@ -876,6 +876,154 @@ describe('runAgent', () => {
 			expect(capturedCmd).toContain('--dangerously-bypass-approvals-and-sandbox');
 		});
 
+		it('passes --output-format stream-json --verbose for claude_code runtime', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-claude-stream';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+
+			expect(capturedCmd).toContain('--output-format');
+			const idx = capturedCmd.indexOf('--output-format');
+			expect(capturedCmd[idx + 1]).toBe('stream-json');
+			expect(capturedCmd).toContain('--verbose');
+		});
+
+		it('does not pass --output-format for non-claude runtimes', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-codex-stream';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			await runAgent(
+				deps,
+				makeAgent(),
+				{ ...makeIssue(), runtime_type: 'codex' as const },
+				makeProject(),
+			);
+
+			expect(capturedCmd).not.toContain('--output-format');
+			expect(capturedCmd).not.toContain('stream-json');
+		});
+
+		it('parses stream-json events and persists usage from result event', async () => {
+			const events = [
+				{
+					type: 'system',
+					subtype: 'init',
+					model: 'claude-opus-4-7',
+					tools: ['Read', 'Edit'],
+				},
+				{
+					type: 'assistant',
+					message: {
+						role: 'assistant',
+						content: [
+							{ type: 'thinking', thinking: 'Let me think about this carefully.' },
+							{
+								type: 'tool_use',
+								id: 't1',
+								name: 'Read',
+								input: { file_path: '/worktrees/RT-1/main/src/x.ts' },
+							},
+						],
+					},
+				},
+				{
+					type: 'user',
+					message: {
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 't1', content: 'file contents ok' }],
+					},
+				},
+				{
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'All done.' }] },
+				},
+				{
+					type: 'result',
+					subtype: 'success',
+					duration_ms: 1234,
+					num_turns: 2,
+					is_error: false,
+					total_cost_usd: 0.1234,
+					usage: { input_tokens: 1200, output_tokens: 350 },
+				},
+			];
+			const payload = `${events.map((e) => JSON.stringify(e)).join('\n')}\n`;
+
+			const docker = createMockDocker({
+				execCreate: async () => 'exec-claude-parse',
+				execStart: async (_id: string, opts: any) => {
+					if (opts?.onChunk) {
+						const mid = Math.floor(payload.length / 2);
+						await opts.onChunk({ stream: 'stdout', text: payload.slice(0, mid) });
+						await opts.onChunk({ stream: 'stdout', text: payload.slice(mid) });
+					}
+					return { stdout: payload, stderr: '' };
+				},
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+
+			const row = await db.query<{
+				log_text: string;
+				input_tokens: number;
+				output_tokens: number;
+				cost_cents: number;
+			}>(
+				'SELECT log_text, input_tokens::int AS input_tokens, output_tokens::int AS output_tokens, cost_cents FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			const log = row.rows[0].log_text;
+			expect(log).toContain('[session] model=claude-opus-4-7');
+			expect(log).toContain('[thinking] Let me think about this carefully.');
+			expect(log).toContain('[tool] Read(file_path=/worktrees/RT-1/main/src/x.ts)');
+			expect(log).toContain('[tool-result] file contents ok');
+			expect(log).toContain('All done.');
+			expect(log).toContain('[done] success turns=2');
+
+			expect(row.rows[0].input_tokens).toBe(1200);
+			expect(row.rows[0].output_tokens).toBe(350);
+			expect(row.rows[0].cost_cents).toBe(12);
+		});
+
 		it('falls back to /workspace when no repos are linked', async () => {
 			let capturedWorkingDir = '';
 			const docker = createMockDocker({

@@ -10,6 +10,7 @@ import {
 	PROVIDER_TO_ENV_VAR,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
+	RUNTIME_STREAM_ARGS,
 	RUNTIME_TO_PROVIDER,
 	WsMessageType,
 	wsRoom,
@@ -17,6 +18,7 @@ import {
 import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
 import { signAgentJwt } from '../middleware/auth';
+import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
 import { type AiProviderCredential, getProviderCredential } from './ai-provider-keys';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -186,6 +188,7 @@ async function buildRunContext(
 	const cmd = [
 		cliCommand,
 		...mcpFlags,
+		...RUNTIME_STREAM_ARGS[runtimeType],
 		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
 		...effortApplication.extraArgs,
 		'-p',
@@ -334,6 +337,8 @@ export async function runAgent(
 
 	emit('stdout', `${invocationCommand}\n`);
 
+	const parser = createAgentStreamParser(runtimeType);
+
 	try {
 		if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
@@ -347,10 +352,14 @@ export async function runAgent(
 		});
 
 		const onChunk = async (chunk: ExecLogChunk) => {
-			emit(chunk.stream, chunk.text);
+			const rendered =
+				chunk.stream === 'stdout' ? parser.onStdout(chunk.text) : parser.onStderr(chunk.text);
+			if (rendered) emit(chunk.stream, rendered);
 		};
 
 		const { stdout, stderr } = await deps.docker.execStart(execId, { signal, onChunk });
+		const tail = parser.flush();
+		if (tail) emit('stdout', tail);
 		const execInfo = await deps.docker.execInspect(execId);
 		const durationMs = Date.now() - startTime;
 		const success = execInfo.ExitCode === 0;
@@ -363,6 +372,7 @@ export async function runAgent(
 				status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
 				exitCode: execInfo.ExitCode,
 				durationMs,
+				usage: parser.getUsage(),
 			},
 			runBroadcast,
 		);
@@ -698,6 +708,7 @@ async function updateHeartbeatRun(
 		exitCode: number;
 		durationMs: number;
 		error?: string;
+		usage?: AgentRunUsage | null;
 	},
 	broadcast: HeartbeatRunBroadcast,
 ): Promise<void> {
@@ -706,9 +717,20 @@ async function updateHeartbeatRun(
 		 SET status = $1::heartbeat_run_status,
 		     finished_at = now(),
 		     exit_code = $2,
-		     error = COALESCE($3, error)
-		 WHERE id = $4`,
-		[update.status, update.exitCode, update.error ?? null, runId],
+		     error = COALESCE($3, error),
+		     input_tokens = COALESCE($4, input_tokens),
+		     output_tokens = COALESCE($5, output_tokens),
+		     cost_cents = COALESCE($6, cost_cents)
+		 WHERE id = $7`,
+		[
+			update.status,
+			update.exitCode,
+			update.error ?? null,
+			update.usage?.inputTokens ?? null,
+			update.usage?.outputTokens ?? null,
+			update.usage?.costCents ?? null,
+			runId,
+		],
 	);
 	broadcastHeartbeatRunChange(broadcast, runId, update.status, 'UPDATE');
 }
