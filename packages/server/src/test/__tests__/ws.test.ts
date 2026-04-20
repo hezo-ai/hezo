@@ -114,12 +114,12 @@ describe('broadcastEvent helper', () => {
 		const ws = createMockWs();
 		mgr.subscribe(ws, 'company:abc');
 
-		broadcastEvent(mgr, 'company:abc', 'chat_message', { issueId: '123', content: 'hi' });
+		broadcastEvent(mgr, 'company:abc', 'agent_lifecycle', { memberId: '123', status: 'idle' });
 
 		expect(ws._sent).toHaveLength(1);
 		const parsed = JSON.parse(ws._sent[0]);
-		expect(parsed.type).toBe('chat_message');
-		expect(parsed.issueId).toBe('123');
-		expect(parsed.content).toBe('hi');
+		expect(parsed.type).toBe('agent_lifecycle');
+		expect(parsed.memberId).toBe('123');
+		expect(parsed.status).toBe('idle');
 	});
 });

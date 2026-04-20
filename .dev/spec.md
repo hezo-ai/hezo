@@ -142,7 +142,7 @@ const db = new PGlite({
 
 **Frontend sync:** The browser uses **TanStack DB** for client-side querying over a locally synced dataset. The server pushes **row-level diffs** (inserts, updates, deletes) over WebSocket. The client applies diffs to TanStack DB, which re-renders React components reactively. This approach gives the frontend a local query engine without needing PGlite in the browser.
 
-**WebSocket** carries both row-level diffs for data sync and system events (agent subprocess lifecycle, container status, live chat messages, notifications).
+**WebSocket** carries both row-level diffs for data sync and system events (agent subprocess lifecycle, container status, notifications).
 
 **Future sync:** Electric-SQL sync (`@electric-sql/pglite-sync`) can enable multi-instance scenarios (e.g. read replicas, multi-device access). Not required for Phase 1.
 
@@ -501,7 +501,7 @@ Every feature ticket follows this flow:
 
 ```
 1. Researcher → conducts research (competitive analysis, technical feasibility, market research)
-2. Product Lead → writes PRD (stored as project doc, doc_type: prd), iterates with board via live chat until requirements are finalised
+2. Product Lead → writes PRD (stored as project doc, doc_type: prd), iterates with board via ticket comments until requirements are finalised
 3. Architect → writes technical specification → board approves
 4. UI Designer → creates design mockups → board approves (for UI-related tickets; skipped for non-UI work)
 5. Engineer → implements, writes tests, updates docs. Can consult Architect during implementation.
@@ -509,7 +509,7 @@ Every feature ticket follows this flow:
 7. QA Engineer → reviews and approves (final gate) OR sends back to Engineer
 ```
 
-The research and product requirements phases happen in a dedicated issue before implementation begins. The Researcher produces a research document (stored as a project doc), the Product Lead then uses it to write the PRD. The board engages in back-and-forth with the Product Lead via live chat and comments until the product requirements are finalised and approved. Only then does the Architect proceed with the technical specification.
+The research and product requirements phases happen in a dedicated issue before implementation begins. The Researcher produces a research document (stored as a project doc), the Product Lead then uses it to write the PRD. The board engages in back-and-forth with the Product Lead via ticket comments until the product requirements are finalised and approved. Only then does the Architect proceed with the technical specification.
 
 The board must approve the technical specification before implementation begins. For UI-related tickets, the board must also approve the UI Designer's mockups.
 
@@ -527,11 +527,11 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **CEO** — strategic direction, delegation, dispute resolution, escalation to board. Reports to board.
 
-**Product Lead** — owns product requirements. Writes PRDs with acceptance criteria. Opens live chats with the board to clarify ambiguous requirements. Ensures development aligns with company goals. Reports to CEO.
+**Product Lead** — owns product requirements. Writes PRDs with acceptance criteria. Posts clarifying ticket comments (and structured-option cards when helpful) to resolve ambiguous requirements with the board. Ensures development aligns with company goals. Reports to CEO.
 
 **Architect** — owns technical vision. Adds technical specs, architecture decisions, and implementation phases to tickets after the Product Lead's PRD. Reviews and approves the Engineer's implementation plans. Has technical authority — decides HOW to build things. Reports to CEO. Direct reports: Engineer, QA Engineer, UI Designer, DevOps Engineer.
 
-**Engineer** — primary implementer. Writes code, tests, and documentation based on the Architect's spec. Can live-chat with Product Lead, Architect, or UI Designer during implementation. Reports to Architect.
+**Engineer** — primary implementer. Writes code, tests, and documentation based on the Architect's spec. Can @-mention Product Lead, Architect, or UI Designer in ticket comments during implementation. Reports to Architect.
 
 **QA Engineer** — final approval gate. Reviews every ticket for test coverage (90%+), security, performance, and correctness. Uses Playwright for E2E testing of UI. Sends tickets back to the Engineer if issues are found. Proactively audits the codebase on regular heartbeats. Reports to Architect.
 
@@ -726,7 +726,7 @@ This file evolves over time as agents propose updates through the KB approval fl
 ### Role-specific instructions (in system prompts)
 
 Role-specific instructions are embedded directly in each agent's system prompt template — not in separate files. Each role's system prompt includes the relevant rules and methodologies:
-- **Product Lead:** PRD writing methodology, acceptance criteria standards, requirements gathering via live chat, scope management rules
+- **Product Lead:** PRD writing methodology, acceptance criteria standards, requirements gathering via ticket comments and structured-option cards, scope management rules
 - **Architect:** Technical spec templates, architecture decision records, implementation phase planning, code review authority
 - **Engineer:** Parallelization rules, testing philosophy, template database patterns, port allocation, pre-push verification steps
 - **QA Engineer:** Audit checklist (security, performance, correctness, maintainability, coverage), Playwright E2E testing, severity classification, flaky test detection
@@ -1177,16 +1177,10 @@ The primary work surface. Contains two tabs:
 - Cost for this issue
 - Process status of the assigned agent
 
-**Comments tab (default):**
-- Threaded conversation between board and agents
+**Comments:**
+- Threaded conversation between board and agents — the single conversation surface on each ticket
 - Collapsible trace logs per agent message (tool calls, decisions)
 - **Progress summary** — appears after the latest comment, collapsed by default. Shows the current state of work: requirements, what's done, what's next. Updated by agents when they start/finish work. Expandable to view full markdown content. When an agent operates on an issue, a `trace`-type comment is posted capturing the agent run (progress summary changes, link to run output, sub-operations).
-
-**Live Chat tab:**
-- List of all live chat sessions for this issue
-- Each session shows: participants, start time, duration, message count, summary
-- Click a session to expand the full transcript inline
-- "Start live chat" button to open a new session
 
 ### Threaded conversation
 
@@ -1258,37 +1252,6 @@ OAuth tokens for connected platforms (GitHub, Gmail, Stripe, etc.) are stored as
 ## 10. Agent → user interaction
 
 Three mechanisms for agents and the board to interact within issue threads.
-
-### Live chat mode
-
-Every issue has a **persistent live chat** in its Live Chat tab. This is a single, ongoing group conversation — not a series of separate sessions. The assigned agent is always a participant. Board members can @-mention any other agent in the company to pull them into the conversation.
-
-**How it works:**
-1. Board member opens the Live Chat tab on any issue
-2. The chat is always there — persistent, auto-created with the issue, no "start session" step needed
-3. The assigned agent is always a participant and responds in real time (no heartbeat delay)
-4. Board member can @-mention any other agent (e.g. `@architect`, `@qa-engineer`) to bring them into the conversation. The mentioned agent receives the message and responds in real time.
-5. Multiple agents can be active in the same chat simultaneously
-6. The full transcript is always visible, scrollable, and searchable
-
-**@-mentioning agents in live chat:**
-- `@architect` — pulls the Architect into the conversation
-- `@qa-engineer` — pulls the QA Engineer in
-- Any agent slug works — same @-mention system as issue comments
-- The mentioned agent wakes up immediately (not on next heartbeat) and joins the chat
-- An agent stays in the chat until the conversation moves on — no explicit "leave"
-
-**Q&A pattern:** Agents should use live chat for structured Q&A with the board — asking clarifying questions with multiple-choice options when requirements are ambiguous. After the Q&A is resolved, the agent posts a summary of the outcomes as a comment on the issue for the permanent record.
-
-**Storage:**
-- Full transcript stored as JSONB array of `{ "author": "board:alice|agent:architect", "text": "...", "timestamp": "..." }` in a `live_chats` table
-- One chat per issue (persistent, auto-created)
-- The assigned agent's member ID is always linked
-
-**Constraints:**
-- An agent can only be active in one live chat at a time (if @-mentioned in a second issue's chat while already in one, the second request queues until the first conversation pauses)
-- Live chat costs count against each participating agent's budget
-- Tool calls during live chat are captured in the transcript
 
 ### Structured options
 
@@ -1426,7 +1389,7 @@ For secret access requests, the board can choose the grant scope (single / proje
 ### Member capabilities (member role)
 
 Members can participate in the day-to-day work within their project scope:
-- Create issues, post comments, participate in live chat
+- Create issues, post comments
 - Be assigned issues and work on them
 - Direct agents (except CEO by default) — subject to `permissions_text` boundaries
 - Read knowledge base and project documents
@@ -1486,8 +1449,6 @@ Full action reference:
 | `plan_review.submitted` | approval | Agent |
 | `plan_review.approved` | approval | Board or Product Lead |
 | `plan_review.denied` | approval | Board or Product Lead |
-| `live_chat.started` | live_chat_session | Board |
-| `live_chat.ended` | live_chat_session | Board or agent |
 | `company.created_from_type` | company | Board creates company from company type |
 | `connection.created` | connected_platform | Board connects via OAuth |
 | `connection.refreshed` | connected_platform | System or board |
@@ -1536,7 +1497,7 @@ Every agent has a heartbeat interval. Default is **60 minutes**. Configurable pe
 
 In addition to scheduled heartbeats, agents are triggered **immediately** by:
 - Task assignment — issue assigned to them (on creation, update, or sub-issue creation)
-- @-mention in an issue comment or live chat
+- @-mention in an issue comment
 - Option chosen by the board on one of their option cards
 - Approval resolved for one of their requests
 - Container start — when a project container starts, all enabled agents with non-terminal assigned issues in that project are woken
@@ -1895,7 +1856,7 @@ Users are linked to companies through the `members` + `member_users` tables with
 | Role | Authority |
 |------|-----------|
 | **Board** | Full authority. Can direct all agents including CEO. Access all projects, settings, budgets, audit log. Hire/fire agents. Approve all requests. Invite new members. |
-| **Member** | Scoped authority. Can create issues, post comments, participate in live chat, be assigned issues. Can direct agents (except CEO by default). Cannot modify company settings, budgets, secrets, or agent configurations. Can be restricted to specific projects. |
+| **Member** | Scoped authority. Can create issues, post comments, be assigned issues. Can direct agents (except CEO by default). Cannot modify company settings, budgets, secrets, or agent configurations. Can be restricted to specific projects. |
 
 Both roles sign in via GitHub or GitLab OAuth. All board members have **equal authority** — any board member can take any board action. Board member conflicts are resolved first-come-first-served (first to approve/deny locks the decision). A user can belong to multiple companies with different roles in each.
 
@@ -2061,14 +2022,14 @@ Each item is actionable with inline buttons. Items are marked read/unread. Unrea
 For tickets with UI work, the flow within a single ticket is:
 
 1. Researcher conducts research → findings stored as project doc
-2. Product Lead writes PRD based on research → iterates with board via live chat until requirements finalised
+2. Product Lead writes PRD based on research → iterates with board via ticket comments until requirements finalised
 3. Architect adds technical spec → board approves the spec
 4. UI Designer creates HTML preview mockups → preview appears in board inbox → board approves
 5. Engineer implements based on approved spec + design
 6. UI Designer reviews implementation against design specs
 7. QA Engineer reviews and approves → ticket status: `done`
 
-All of this happens within one ticket. The Comments tab shows the conversation flow. The Live Chat tab shows any real-time sessions that occurred during the process. Project documents (tech spec, implementation plan, research, UI decisions) are accessible from the project's Documents tab and are kept up-to-date by all agents as work progresses.
+All of this happens within one ticket. The Comments thread is the single conversation surface and shows the full flow end-to-end. Project documents (tech spec, implementation plan, research, UI decisions) are accessible from the project's Documents tab and are kept up-to-date by all agents as work progresses.
 
 ### Screen inventory
 
@@ -2076,9 +2037,8 @@ All of this happens within one ticket. The Comments tab shows the conversation f
 |---|--------|---------|
 | 1 | **Home — Company list** | Card grid of all companies. Stats + budget bar per card. "New company" (select company type). Board inbox badge. |
 | 2 | **Company workspace — Issues tab** | Default view. Filterable issue list. Every row shows identifier, project tag, assignee, status, priority. |
-| 3 | **Issue detail** | Primary work surface. Two tabs: Comments (threaded conversation, traces, goal chain sidebar, quick actions) and Live Chat (session list, inline transcripts). |
-| 4 | **Live chat panel** | Side panel or modal. Real-time back-and-forth with assigned agent. On close, session appears in Live Chat tab. |
-| 5 | **Company workspace — Agents tab** | Card grid of agents. Runtime, heartbeat, process status, budget bar per card. |
+| 3 | **Issue detail** | Primary work surface. Single Comments view (threaded conversation, traces, goal chain sidebar, quick actions). |
+| 4 | **Company workspace — Agents tab** | Card grid of agents. Runtime, heartbeat, process status, budget bar per card. |
 | 6 | **New agent / edit agent** | Form with system prompt editor (monospace, variable chips, role templates), reporting line, budget. |
 | 7 | **Board inbox** | Drawer accessible from any screen. Pending approvals, design reviews, escalations, budget alerts, agent errors, QA findings, OAuth requests. One-click actionable. Unread badge. |
 | 8 | **Company workspace — Team page** | Reached via the sidebar "Team" link. Read-only org chart tree with status indicators, team summary, and a "Hire agent" action. Click a node to inspect the agent. |
@@ -2119,9 +2079,7 @@ Company Rail → Company workspace (side menu)
         ├── Inbox (pending approvals)
         ├── Work
         │     ├── Issues
-        │     │     └── Issue detail
-        │     │           ├── Comments tab (default)
-        │     │           └── Live Chat tab
+        │     │     └── Issue detail (Comments)
         │     └── Goals
         ├── Projects (header links to projects list)
         │     └── Project detail (tabs)
@@ -2193,7 +2151,6 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `cost_entries` | Immutable spend records. Includes `provider` and `model` fields. |
 | `audit_log` | Append-only. Never updated or deleted. |
 | `kb_docs` | Knowledge base documents. AGENTS.md is a special KB doc written to disk. |
-| `live_chats` | Persistent live chat per issue. One ongoing conversation. |
 | `project_docs` | Project documentation (PRD, spec, implementation plan, etc.) — DB-backed, company-scoped, with embeddings. |
 | `skills` | Reusable instruction documents — DB-backed, company-scoped, with tags, revisions, and embeddings. |
 | `skill_revisions` | Version history for skills. |
@@ -2272,7 +2229,7 @@ Three token types:
 | Agent API | Heartbeat, context, comments, tool calls, delegation, secret requests, KB proposals, deploy requests. |
 | MCP Endpoint | Streamable HTTP at `/mcp`. Mirrors Board API as MCP tools for external AI agents. |
 | Skill File | `GET /skill.md`. Dynamically generated documentation for AI agent onboarding. |
-| WebSocket | Row-level diffs for TanStack DB sync + system events (agent lifecycle, container status, live chat). |
+| WebSocket | Row-level diffs for TanStack DB sync + system events (agent lifecycle, container status). |
 
 ---
 

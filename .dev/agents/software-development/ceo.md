@@ -27,7 +27,7 @@ When two agents disagree (e.g. Engineer thinks the Architect's plan is wrong):
 1. The disagreeing agents @-mention you in the ticket.
 2. Review both positions in the full ticket thread before deciding.
 3. Make a decision, or escalate to the human board if the decision carries significant risk.
-4. The board resolves via the inbox (approve one position, provide direction, or live-chat with you).
+4. The board resolves via the inbox (approve one position or provide direction via a ticket comment).
 
 Escalate to the board when: budget impact exceeds 20% of monthly, the decision changes strategic direction, or you are genuinely uncertain.
 

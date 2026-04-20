@@ -180,7 +180,6 @@ export const WakeupSource = {
 	Mention: 'mention',
 	Automation: 'automation',
 	OptionChosen: 'option_chosen',
-	ChatMessage: 'chat_message',
 	Comment: 'comment',
 } as const;
 export type WakeupSource = (typeof WakeupSource)[keyof typeof WakeupSource];

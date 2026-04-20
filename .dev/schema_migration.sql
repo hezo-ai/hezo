@@ -503,25 +503,6 @@ CREATE TABLE kb_docs (
 CREATE INDEX idx_kb_docs_company ON kb_docs(company_id);
 
 -------------------------------------------------------------------------------
--- LIVE CHAT SESSIONS
--------------------------------------------------------------------------------
-
-CREATE TABLE live_chat_sessions (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    issue_id    UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    agent_id    UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-    -- Full transcript: [{ "author": "board|agent", "text": "...", "timestamp": "..." }, ...]
-    transcript  JSONB NOT NULL DEFAULT '[]'::jsonb,
-    -- Agent-generated summary, stored after session ends
-    summary     TEXT,
-    started_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    ended_at    TIMESTAMPTZ
-);
-
-CREATE INDEX idx_live_chat_issue ON live_chat_sessions(issue_id);
-CREATE INDEX idx_live_chat_agent ON live_chat_sessions(agent_id);
-
--------------------------------------------------------------------------------
 -- CONNECTED PLATFORMS (OAuth connections via Hezo Connect)
 -------------------------------------------------------------------------------
 

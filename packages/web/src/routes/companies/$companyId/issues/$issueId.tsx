@@ -4,7 +4,6 @@ import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AgentStatusLabel } from '../../../../components/agent-status-label';
 import { type CommentData, CommentRenderer } from '../../../../components/comment-renderers';
-import { LiveChatPanel } from '../../../../components/live-chat-panel';
 import { MarkdownProse } from '../../../../components/markdown-prose';
 import { Avatar, avatarColorFromString } from '../../../../components/ui/avatar';
 import { Badge } from '../../../../components/ui/badge';
@@ -68,7 +67,6 @@ function IssueDetailPage() {
 	const [commentEffort, setCommentEffort] = useState<'' | AgentEffort>('');
 	const [subIssueTitle, setSubIssueTitle] = useState('');
 	const [showSubForm, setShowSubForm] = useState(false);
-	const [activeTab, setActiveTab] = useState<'comments' | 'chat'>('comments');
 	const [editingSummary, setEditingSummary] = useState(false);
 	const [summaryText, setSummaryText] = useState('');
 	const [editingRules, setEditingRules] = useState(false);
@@ -197,222 +195,185 @@ function IssueDetailPage() {
 					</div>
 				)}
 
-				{/* Comments / Chat tabs */}
+				{/* Comments */}
 				<div className="border-t border-border pt-4">
-					<div className="flex border-b border-border mb-4">
-						<button
-							type="button"
-							onClick={() => setActiveTab('comments')}
-							className={`px-4 py-2 text-[13px] border-b-2 transition-colors ${
-								activeTab === 'comments'
-									? 'text-text font-medium border-text'
-									: 'text-text-muted border-transparent hover:text-text'
-							}`}
-						>
-							Comments
-							<span className="ml-1.5 bg-bg-subtle px-[7px] py-px rounded-full text-[11px] font-normal">
-								{comments?.length ?? 0}
-							</span>
-						</button>
-						<button
-							type="button"
-							onClick={() => setActiveTab('chat')}
-							className={`px-4 py-2 text-[13px] border-b-2 transition-colors ${
-								activeTab === 'chat'
-									? 'text-text font-medium border-text'
-									: 'text-text-muted border-transparent hover:text-text'
-							}`}
-						>
-							Live chat
-						</button>
+					<div className="flex items-center gap-1.5 mb-4">
+						<h3 className="text-[13px] text-text font-medium">Comments</h3>
+						<span className="bg-bg-subtle px-[7px] py-px rounded-full text-[11px] text-text-muted">
+							{comments?.length ?? 0}
+						</span>
 					</div>
 
-					{activeTab === 'comments' ? (
-						<>
-							<div
-								data-testid="pinned-progress-summary"
-								className="bg-bg-subtle rounded-radius-md p-3 mb-3 text-[13px] text-text-muted leading-relaxed"
-							>
-								<div className="flex items-center justify-between mb-1">
-									<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
-										Progress Summary
-									</span>
-									{!editingSummary && (
-										<button
-											type="button"
-											onClick={() => {
-												setSummaryText(issue.progress_summary ?? '');
-												setEditingSummary(true);
-											}}
-											className="text-[11px] text-text-subtle hover:text-text"
-										>
-											Edit
-										</button>
-									)}
-								</div>
-								{editingSummary ? (
-									<div className="flex flex-col gap-2">
-										<Textarea
-											value={summaryText}
-											onChange={(e) => setSummaryText(e.target.value)}
-											className="min-h-[60px]"
-										/>
-										<div className="flex gap-2 justify-end">
-											<Button
-												size="sm"
-												variant="secondary"
-												onClick={() => setEditingSummary(false)}
-											>
-												Cancel
-											</Button>
-											<Button
-												size="sm"
-												onClick={() => {
-													updateIssue.mutate({
-														progress_summary: summaryText || null,
-													});
-													setEditingSummary(false);
-												}}
-											>
-												Save
-											</Button>
-										</div>
-									</div>
-								) : (
-									<span>{issue.progress_summary || 'No progress summary yet.'}</span>
-								)}
-							</div>
-
-							<div
-								data-testid="pinned-rules"
-								className="bg-bg-subtle rounded-radius-md p-3 mb-5 text-[13px] text-text-muted leading-relaxed border-l-2 border-accent-blue"
-							>
-								<div className="flex items-center justify-between mb-1">
-									<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
-										Rules
-									</span>
-									{!editingRules && (
-										<button
-											type="button"
-											onClick={() => {
-												setRulesText(issue.rules ?? '');
-												setEditingRules(true);
-											}}
-											className="text-[11px] text-text-subtle hover:text-text"
-										>
-											Edit
-										</button>
-									)}
-								</div>
-								{editingRules ? (
-									<div className="flex flex-col gap-2">
-										<Textarea
-											value={rulesText}
-											onChange={(e) => setRulesText(e.target.value)}
-											placeholder="e.g., Consult the architect before making changes..."
-											className="min-h-[60px]"
-										/>
-										<div className="flex gap-2 justify-end">
-											<Button size="sm" variant="secondary" onClick={() => setEditingRules(false)}>
-												Cancel
-											</Button>
-											<Button
-												size="sm"
-												onClick={() => {
-													updateIssue.mutate({ rules: rulesText || null });
-													setEditingRules(false);
-												}}
-											>
-												Save
-											</Button>
-										</div>
-									</div>
-								) : (
-									<span>{issue.rules || 'No rules set.'}</span>
-								)}
-							</div>
-
-							<div className="flex flex-col gap-4 mb-4">
-								{comments?.map((c) => {
-									const authorName = c.author_name ?? 'Board';
-									const isAgent = c.author_type === 'agent';
-									return (
-										<div key={c.id} className="flex gap-2.5">
-											<Avatar
-												initials={authorName.slice(0, 2)}
-												size="sm"
-												color={avatarColorFromString(authorName)}
-											/>
-											<div className="flex-1 min-w-0">
-												<div className="flex items-center gap-2 mb-1">
-													<span
-														className={`text-xs font-medium ${isAgent ? 'text-text' : 'text-text-muted'}`}
-														data-testid="comment-author"
-													>
-														{authorName}
-													</span>
-													<span className="text-[11px] text-text-subtle">
-														{new Date(c.created_at).toLocaleString()}
-													</span>
-												</div>
-												<CommentRenderer
-													comment={c as unknown as CommentData}
-													onChooseOption={(commentId, chosenId) =>
-														chooseOption.mutate({ commentId, chosen_id: chosenId })
-													}
-													companyId={companyId}
-													projectId={issue?.project_id ?? undefined}
-												/>
-											</div>
-										</div>
-									);
-								})}
-							</div>
-
-							<form onSubmit={handleComment} className="flex flex-col gap-2">
+					<div
+						data-testid="pinned-progress-summary"
+						className="bg-bg-subtle rounded-radius-md p-3 mb-3 text-[13px] text-text-muted leading-relaxed"
+					>
+						<div className="flex items-center justify-between mb-1">
+							<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
+								Progress Summary
+							</span>
+							{!editingSummary && (
+								<button
+									type="button"
+									onClick={() => {
+										setSummaryText(issue.progress_summary ?? '');
+										setEditingSummary(true);
+									}}
+									className="text-[11px] text-text-subtle hover:text-text"
+								>
+									Edit
+								</button>
+							)}
+						</div>
+						{editingSummary ? (
+							<div className="flex flex-col gap-2">
 								<Textarea
-									value={commentText}
-									onChange={(e) => setCommentText(e.target.value)}
-									placeholder="Add a comment..."
+									value={summaryText}
+									onChange={(e) => setSummaryText(e.target.value)}
 									className="min-h-[60px]"
 								/>
-								<div className="flex items-center justify-between gap-2">
-									<label className="flex items-center gap-2 text-[11px] text-text-muted">
-										<span>Effort</span>
-										<select
-											value={commentEffort}
-											onChange={(e) => setCommentEffort(e.target.value as '' | AgentEffort)}
-											className="bg-background border border-border rounded-radius-md px-2 py-1 text-[11px]"
-											aria-label="Reasoning effort for the agent run triggered by this comment"
-										>
-											<option value="">Default</option>
-											<option value={AgentEffort.Minimal}>Minimal</option>
-											<option value={AgentEffort.Low}>Low</option>
-											<option value={AgentEffort.Medium}>Medium</option>
-											<option value={AgentEffort.High}>High</option>
-											<option value={AgentEffort.Max}>Max (ultrathink)</option>
-										</select>
-									</label>
+								<div className="flex gap-2 justify-end">
+									<Button size="sm" variant="secondary" onClick={() => setEditingSummary(false)}>
+										Cancel
+									</Button>
 									<Button
-										type="submit"
 										size="sm"
-										disabled={!commentText.trim() || createComment.isPending}
+										onClick={() => {
+											updateIssue.mutate({
+												progress_summary: summaryText || null,
+											});
+											setEditingSummary(false);
+										}}
 									>
-										{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-										Comment
+										Save
 									</Button>
 								</div>
-							</form>
-						</>
-					) : (
-						<div className="h-80 border border-border rounded-radius-lg overflow-hidden">
-							<LiveChatPanel
-								companyId={companyId}
-								issueId={issueId}
-								agents={agents?.map((a) => ({ slug: a.slug, title: a.title })) ?? []}
-							/>
+							</div>
+						) : (
+							<span>{issue.progress_summary || 'No progress summary yet.'}</span>
+						)}
+					</div>
+
+					<div
+						data-testid="pinned-rules"
+						className="bg-bg-subtle rounded-radius-md p-3 mb-5 text-[13px] text-text-muted leading-relaxed border-l-2 border-accent-blue"
+					>
+						<div className="flex items-center justify-between mb-1">
+							<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
+								Rules
+							</span>
+							{!editingRules && (
+								<button
+									type="button"
+									onClick={() => {
+										setRulesText(issue.rules ?? '');
+										setEditingRules(true);
+									}}
+									className="text-[11px] text-text-subtle hover:text-text"
+								>
+									Edit
+								</button>
+							)}
 						</div>
-					)}
+						{editingRules ? (
+							<div className="flex flex-col gap-2">
+								<Textarea
+									value={rulesText}
+									onChange={(e) => setRulesText(e.target.value)}
+									placeholder="e.g., Consult the architect before making changes..."
+									className="min-h-[60px]"
+								/>
+								<div className="flex gap-2 justify-end">
+									<Button size="sm" variant="secondary" onClick={() => setEditingRules(false)}>
+										Cancel
+									</Button>
+									<Button
+										size="sm"
+										onClick={() => {
+											updateIssue.mutate({ rules: rulesText || null });
+											setEditingRules(false);
+										}}
+									>
+										Save
+									</Button>
+								</div>
+							</div>
+						) : (
+							<span>{issue.rules || 'No rules set.'}</span>
+						)}
+					</div>
+
+					<div className="flex flex-col gap-4 mb-4">
+						{comments?.map((c) => {
+							const authorName = c.author_name ?? 'Board';
+							const isAgent = c.author_type === 'agent';
+							return (
+								<div key={c.id} className="flex gap-2.5">
+									<Avatar
+										initials={authorName.slice(0, 2)}
+										size="sm"
+										color={avatarColorFromString(authorName)}
+									/>
+									<div className="flex-1 min-w-0">
+										<div className="flex items-center gap-2 mb-1">
+											<span
+												className={`text-xs font-medium ${isAgent ? 'text-text' : 'text-text-muted'}`}
+												data-testid="comment-author"
+											>
+												{authorName}
+											</span>
+											<span className="text-[11px] text-text-subtle">
+												{new Date(c.created_at).toLocaleString()}
+											</span>
+										</div>
+										<CommentRenderer
+											comment={c as unknown as CommentData}
+											onChooseOption={(commentId, chosenId) =>
+												chooseOption.mutate({ commentId, chosen_id: chosenId })
+											}
+											companyId={companyId}
+											projectId={issue?.project_id ?? undefined}
+										/>
+									</div>
+								</div>
+							);
+						})}
+					</div>
+
+					<form onSubmit={handleComment} className="flex flex-col gap-2">
+						<Textarea
+							value={commentText}
+							onChange={(e) => setCommentText(e.target.value)}
+							placeholder="Add a comment..."
+							className="min-h-[60px]"
+						/>
+						<div className="flex items-center justify-between gap-2">
+							<label className="flex items-center gap-2 text-[11px] text-text-muted">
+								<span>Effort</span>
+								<select
+									value={commentEffort}
+									onChange={(e) => setCommentEffort(e.target.value as '' | AgentEffort)}
+									className="bg-background border border-border rounded-radius-md px-2 py-1 text-[11px]"
+									aria-label="Reasoning effort for the agent run triggered by this comment"
+								>
+									<option value="">Default</option>
+									<option value={AgentEffort.Minimal}>Minimal</option>
+									<option value={AgentEffort.Low}>Low</option>
+									<option value={AgentEffort.Medium}>Medium</option>
+									<option value={AgentEffort.High}>High</option>
+									<option value={AgentEffort.Max}>Max (ultrathink)</option>
+								</select>
+							</label>
+							<Button
+								type="submit"
+								size="sm"
+								disabled={!commentText.trim() || createComment.isPending}
+							>
+								{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+								Comment
+							</Button>
+						</div>
+					</form>
 				</div>
 
 				{/* Sub-issues */}

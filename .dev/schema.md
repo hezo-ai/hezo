@@ -31,8 +31,6 @@
 | `audit_log` | Append-only. Never updated or deleted. | belongs to company |
 | `kb_docs` | Knowledge base documents. Markdown, company-scoped, slug-addressable. AGENTS.md is a special KB doc written to disk. | belongs to company |
 | `kb_doc_revisions` | Version history for KB documents. | belongs to kb_doc |
-| `live_chats` | Persistent live chat per issue. One ongoing conversation. | belongs to issue |
-| `live_chat_messages` | Individual messages in a live chat. Author, content, metadata. | belongs to live_chat |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to company |
 | `company_ssh_keys` | Generated SSH key pairs per company. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to company |
 | `execution_locks` | Issue work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to issue + member_agent |
@@ -101,9 +99,6 @@ The `content_type` enum discriminates the shape:
 - `system` → `{ "text": "Agent disabled — budget limit reached" }`
 - `execution` → `{ "heartbeat_run_id", "agent_id", "agent_title", "status", "exit_code", "duration_ms", "stdout_preview" }` (auto-created on agent run completion)
 - `action` → `{ "kind": "setup_repo", "approval_id": "..." }` — surfaces a board-required action inline on the ticket. Resolves by setting `chosen_option` to `{ status: 'complete', result: {...} }`. Currently only `setup_repo` is defined, used by the designated-repo gate.
-
-Live chat is displayed in a separate tab on the issue detail view,
-not as comments in the thread.
 
 ### Atomic budget enforcement
 
@@ -483,26 +478,6 @@ and agent conventions. It is stored in the database like any other KB doc but
 also written to the project root filesystem (`AGENTS.md`) so that any coding
 agent (Claude Code, Codex, Gemini) automatically reads it. On every update to
 this KB doc, the file on disk is re-written.
-
-### Live chat (persistent per issue)
-
-`live_chats` stores a single persistent conversation per issue. There are no
-discrete "sessions" — each issue has one ongoing live chat from creation.
-Messages are stored in the `live_chat_messages` table, each with an author
-(`author_member_id` + `author_type`), text content, and optional metadata JSONB.
-
-Live chat is displayed in a dedicated **Live Chat tab** on the issue detail
-view — messages do not appear as comments in the Comments tab.
-
-The assigned agent is always a participant. Board members can @-mention any
-other agent to pull them into the conversation. Mentioned agents wake
-immediately (not on next heartbeat).
-
-Constraints:
-- One live chat per issue (auto-created with the issue)
-- An agent can only be active in one live chat at a time
-- Tool calls during live chat are captured in the transcript
-- Agents should post a summary of Q&A outcomes as a comment on the issue for the permanent record
 
 ### Connected platforms (Hezo Connect)
 

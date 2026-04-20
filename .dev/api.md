@@ -89,7 +89,7 @@ All Board API endpoints check the caller's membership role:
 | Access Level | Endpoints |
 |-------------|-----------|
 | **Board-only** (member_users with role='board') | Company settings, agent management (hire/fire/pause/resume/terminate), budget adjustments, secrets vault, API keys, connected platforms, audit log, plugin management, invites, member management |
-| **All members** (agents and users, scoped by `project_ids`) | Issues, comments, live chat, KB (read), project docs (file-based, read/write), inbox (filtered), notification preferences |
+| **All members** (agents and users, scoped by `project_ids`) | Issues, comments, KB (read), project docs (file-based, read/write), inbox (filtered), notification preferences |
 
 Members (both agents and users) with role='member' are restricted by `project_ids` — they can only access issues, comments, and documents within their allowed projects. Requests outside their scope return 403.
 
@@ -1614,43 +1614,6 @@ Request:
 
 ---
 
-### Live Chat
-
-Each issue has a **persistent live chat** — one ongoing conversation per issue, always
-available. The chat is auto-created with the issue, no sessions or setup required. The assigned agent is always a participant. Board members can @-mention any other agent to pull them in.
-
-#### `GET /companies/:companyId/issues/:issueId/chat/messages`
-Get chat messages for this issue.
-
-Query params:
-- `?after=<timestamp>` — only messages after this timestamp (for polling/pagination)
-- `?limit=50` — max messages to return (default 50, from most recent)
-
-Response:
-```json
-{
-  "data": [
-    { "id": "uuid", "author": "board:alice", "content": "What auth strategy do you recommend?", "created_at": "..." },
-    { "id": "uuid", "author": "agent:architect", "content": "For this API-first product, I'd suggest JWT...", "created_at": "..." }
-  ]
-}
-```
-
-#### `POST /companies/:companyId/issues/:issueId/chat/messages`
-Post a chat message. The server detects @-mentions in the content text, wakes
-the mentioned agent immediately, and adds them to the chat.
-
-Request:
-```json
-{
-  "content": "What auth strategy do you recommend? @architect"
-}
-```
-
-Mentions are parsed from the content text (e.g. `@architect`). The server creates wakeups for mentioned agents.
-
----
-
 ### File Attachments
 
 **Not yet implemented — planned for Phase 7+.**
@@ -2502,7 +2465,7 @@ After connecting, clients subscribe to rooms:
 ```
 
 Room types:
-- `company:<uuid>` — receives row changes, chat messages, and agent lifecycle events for the company. Access is verified (agents/API keys must match company; board users must be members or superusers).
+- `company:<uuid>` — receives row changes and agent lifecycle events for the company. Access is verified (agents/API keys must match company; board users must be members or superusers).
 - `container-logs:<projectId>` — streams Docker container stdout/stderr for a project's main process. Access is verified: the caller's auth must grant access to the project's owning company.
 - `project-runs:<projectId>` — streams `run_log` messages from every agent `docker exec` on that project. Clients filter by `runId` to isolate a specific run. Access is verified: the caller's auth must grant access to the project's owning company.
 
@@ -2516,7 +2479,6 @@ Defined in `@hezo/shared` as the `WsMessageType` enum:
 |------|-------------|---------|
 | `connected` | Sent on initial connection | — |
 | `row_change` | Database row changed | `{ type, table, action, row }` where `action` is `INSERT`, `UPDATE`, or `DELETE` |
-| `chat_message` | Live chat message | `{ type, issueId, message: { id, chatId, authorMemberId, authorType, content, createdAt } }` |
 | `agent_lifecycle` | Agent status change | `{ type, memberId, status }` |
 | `container_log` | Container stdout/stderr stream | `{ type, projectId, stream, text }` where `stream` is `stdout` or `stderr` |
 | `run_log` | Agent run stdout/stderr (streaming `docker exec` output plus worktree-prep steps and the invocation line) | `{ type, projectId, runId, issueId, stream, text }` |
@@ -2530,9 +2492,6 @@ Defined in `@hezo/shared` as the `WsClientAction` enum:
 |--------|-------------|---------|
 | `subscribe` | Subscribe to a room | `{ action, room }` |
 | `unsubscribe` | Unsubscribe from a room | `{ action, room }` |
-| `chat` | Send a chat message | `{ action, issueId, content, mentions? }` |
-
-Note: The `chat` action is defined in the shared types but not currently handled by the WebSocket server. Chat messages are sent via the REST endpoint `POST /companies/:companyId/issues/:issueId/chat/messages` and broadcast to subscribers via `chat_message` events.
 
 ### Cache invalidation
 
@@ -2598,7 +2557,6 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `project_doc.created` | project_doc | Board or agent creates project doc |
 | `project_doc.updated` | project_doc | Board or agent updates project doc |
 | `project_doc.deleted` | project_doc | Board deletes project doc |
-| `live_chat.message` | live_chat | Message sent in persistent live chat |
 | `budget.warning` | agent | Agent hits 80% budget |
 | `budget.exceeded` | agent | Agent hits 100% budget |
 | `budget.reset` | agent | Monthly budget reset |

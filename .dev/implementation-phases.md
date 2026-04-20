@@ -259,7 +259,7 @@ UI:
 
 **Status:** Done (2026-04)
 
-**Goal:** KB revisions, audit log, live queries, WebSocket events, live chat, previews. Migrate frontend from polling to real-time.
+**Goal:** KB revisions, audit log, live queries, WebSocket events, previews. Migrate frontend from polling to real-time.
 
 **What's included:**
 
@@ -269,15 +269,13 @@ Backend:
 - Project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan)
 - Audit log (append-only, never updated/deleted)
 - PGlite live queries for frontend data reactivity (`live.query()`, `live.changes()`)
-- WebSocket real-time events (agent lifecycle, container status, live chat)
-- Persistent live chat (per-issue, @-mention agents)
+- WebSocket real-time events (agent lifecycle, container status)
 - HTML previews (agent writes to workspace volume, served via proxy)
 - Structured options (clickable choice cards)
 
 UI:
 - WebSocket connection from browser to server
 - WebSocket real-time migration — replace TanStack Query polling with WebSocket-triggered cache invalidation for all entity types
-- Live Chat panel on issue detail — real-time agent conversation, session persistence across reloads
 - Tool call trace rendering — expandable trace blocks in issue comments
 - HTML preview rendering — iframe or proxy route for agent-generated previews
 - Audit log viewer in Settings
@@ -291,7 +289,6 @@ UI:
 - Audit log entries viewable for all significant actions
 - Tool call traces render inline in issue comments
 - WebSocket events fire on agent status changes — UI updates in real-time
-- Live chat session with an agent works in real-time, persists across page reloads
 - Preview URL serves agent-generated HTML, accessible from project detail
 - Structured options render as clickable choice cards
 
@@ -757,7 +754,7 @@ Docs:
 | 3 | GitHub Integration | OAuth flow, token storage, repo validation and cloning |
 | 3.5 | UI Foundation + Core Screens | React app with all CRUD screens for Phases 0–3 APIs, master key gate, board inbox |
 | 4 | Agent Execution + UI | Docker per project, subprocesses, heartbeats, budgets + agent status UI, cost views |
-| 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack Query, live chat, real-time updates |
+| 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack Query, real-time updates |
 | 6 | MCP + Skill File + Binary Build | MCP endpoint, skill file + `bun build --compile` single binary, Playwright E2E |
 | 6.5 | Auth + Session Compaction | Custom OAuth auth (board members only), session compaction + login page, account settings |
 | 6.6 | UI Redesign + Agent Onboarding | Company icon rail, unified side menu, tab-based project view, agent onboarding via CEO |
