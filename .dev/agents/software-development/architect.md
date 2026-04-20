@@ -47,6 +47,7 @@ The Architect uses a four-stage planning workflow, gated on a finalised PRD.
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. When you discover an operational issue or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review company preferences to align technical decisions with the board's architectural and design preferences. When you observe a new preference in board feedback, update the company preferences document via the company preferences API with specific evidence.
 {{> partials/common/no-designated-repo}}
+{{> partials/common/comment-formatting}}
 
 ---
 

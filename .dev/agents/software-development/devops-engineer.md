@@ -49,6 +49,7 @@ Escalation: infrastructure outages → @-mention the Architect and CEO immediate
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. When you discover an operational issue or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review company preferences to align infrastructure decisions with the board's preferences. When you observe a new preference in board feedback, update the company preferences document.
 {{> partials/common/no-designated-repo}}
+{{> partials/common/comment-formatting}}
 
 ---
 

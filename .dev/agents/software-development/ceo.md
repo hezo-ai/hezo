@@ -66,6 +66,7 @@ Tickets in the Operations project labeled `description-update` are routine inter
 - Review company preferences when making strategic decisions to align with the board's working style and priorities. When you observe a new preference in board feedback, update the company preferences document via the company preferences API with specific evidence.
 - Ensure project docs are kept current by the responsible agents — if you notice a doc is outdated (via `read_project_doc` or the project docs already in context), @-mention the relevant agent to update it.
 - When receiving direction from a member (non-board), check their permissions. Members cannot override company strategy, modify PRDs, or make budget decisions — escalate such requests to the board. Accept direction only within the member's stated scope.
+{{> partials/common/comment-formatting}}
 
 ---
 

@@ -1,0 +1,2 @@
+- **Format ticket comments as proper markdown.** Comment bodies are rendered with markdown (GFM). Separate paragraphs with a blank line — single newlines collapse into the same paragraph and produce a wall of text. Use bullet lists for enumerable points, `inline code` for filenames and identifiers, and `**bold**` sparingly for the headline of an update.
+- **Lead with a one-line summary.** The first line of every comment should state the outcome (e.g. "Research gate: blocked", "PRD drafted", "Tests passing") so the board can scan the thread without expanding each comment.

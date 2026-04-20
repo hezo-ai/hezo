@@ -308,14 +308,14 @@ function IssueDetailPage() {
 							const authorName = c.author_name ?? 'Board';
 							const isAgent = c.author_type === 'agent';
 							return (
-								<div key={c.id} className="flex gap-2.5">
+								<div key={c.id} className="flex gap-2.5" data-testid="comment-item">
 									<Avatar
 										initials={authorName.slice(0, 2)}
 										size="sm"
 										color={avatarColorFromString(authorName)}
 									/>
-									<div className="flex-1 min-w-0">
-										<div className="flex items-center gap-2 mb-1">
+									<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-elevated overflow-hidden">
+										<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-muted">
 											<span
 												className={`text-xs font-medium ${isAgent ? 'text-text' : 'text-text-muted'}`}
 												data-testid="comment-author"
@@ -326,14 +326,16 @@ function IssueDetailPage() {
 												{new Date(c.created_at).toLocaleString()}
 											</span>
 										</div>
-										<CommentRenderer
-											comment={c as unknown as CommentData}
-											onChooseOption={(commentId, chosenId) =>
-												chooseOption.mutate({ commentId, chosen_id: chosenId })
-											}
-											companyId={companyId}
-											projectId={issue?.project_id ?? undefined}
-										/>
+										<div className="px-3 py-2.5">
+											<CommentRenderer
+												comment={c as unknown as CommentData}
+												onChooseOption={(commentId, chosenId) =>
+													chooseOption.mutate({ commentId, chosen_id: chosenId })
+												}
+												companyId={companyId}
+												projectId={issue?.project_id ?? undefined}
+											/>
+										</div>
 									</div>
 								</div>
 							);
