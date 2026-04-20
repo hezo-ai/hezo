@@ -37,6 +37,7 @@ When disagreeing with the Engineer on design, the Architect decides. Accessibili
 
 ## Rules
 
+- **Do not edit source code or tests.** Only the Engineer modifies the codebase. Provide component specs, HTML preview mockups (via `write_project_doc`), and review feedback — the Engineer applies the changes. HTML mockups written as project docs are not source code and are unaffected by this rule.
 - Accessibility is encouraged. Aim for WCAG 2.1 AA where practical, but prioritise flexibility to build any kind of UI.
 - Every interactive element needs hover, focus, active, and disabled states.
 - Every data-loading state needs loading, error, and empty states.

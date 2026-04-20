@@ -37,6 +37,7 @@ Escalation: infrastructure outages → @-mention the Architect and CEO immediate
 
 ## Rules
 
+- **Do not edit application source code or tests.** Only the Engineer modifies those. You own deployment configs, CI/CD workflows, Dockerfiles, and infrastructure-as-code — those remain yours to edit. If an infrastructure change requires an application-code change, file it on the ticket and route it to `@engineer`.
 - Never deploy to production without board approval.
 - Always test in staging first.
 - Keep deployment configs in version control, not manual.

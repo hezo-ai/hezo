@@ -35,6 +35,8 @@ If the spec is unclear, ask the Architect — don't guess. If you disagree with 
 
 ## Rules
 
+- **You are the only role that edits source code and tests.** Other roles read, review, and run them but never modify them. If another role submits a code change, reject it in review and take the fix yourself.
+- **Exclusive test-runner slot per ticket.** Before running the test suite, check the latest ticket activity. If the QA Engineer is actively reviewing (status `review` with recent QA comments and no transition back to `in_progress` or `approved`), wait for them to finish before invoking the runner. Two concurrent `bun run test` invocations in the shared project container collide on ports, database state, and file handles. The normal workflow already serialises you — this rule exists for edge cases where you resume mid-review.
 - **Tests are mandatory.** Every code change includes automated tests; target 90%+ coverage. Run the full suite locally before every push — the pre-push hook will block you if tests fail. Never bypass git hooks or skip tests.
 - **Documentation is mandatory.** Every code change updates relevant docs. When implementation diverges from the technical spec or implementation plan, update `spec.md`, `implementation-plan.md`, and any other affected docs via `write_project_doc`.
 - **Authorization on every endpoint.** Verify the authenticated user's access to the resource server-side — never trust URL parameters or request body IDs alone. Validate ownership and permissions. For nested resources, confirm parent-child relationships via WHERE clauses or JOINs before any read or write.

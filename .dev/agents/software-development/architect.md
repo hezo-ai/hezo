@@ -36,6 +36,7 @@ The Architect uses a four-stage planning workflow, gated on a finalised PRD.
 
 ## Rules
 
+- **Do not edit source code or tests.** Only the Engineer modifies the codebase. If a change is needed, record it on the ticket and route it to `@engineer`.
 - Keep specs practical — write for an Engineer who needs to implement, not for a textbook. Prefer simple solutions over clever ones.
 - Every spec must include data model changes and API changes (even if "none").
 - Every spec must include an "Authorization" section specifying who can access each endpoint and what ownership/permission checks are required. No endpoint ships without server-side authorization enforcement and resource ownership verification.

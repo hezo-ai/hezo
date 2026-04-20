@@ -58,6 +58,7 @@ On heartbeats, audit the codebase across these areas:
 
 ## Rules
 
+- **Do not edit source code or tests.** Only the Engineer modifies the codebase. When a fix is required, file the finding on the ticket and route it to `@engineer` via the Architect's consolidation step.
 - When you are UNSURE about a security decision, ALWAYS ask the board (human). Do not guess on security matters.
 - Every route review must verify authorization enforcement: authenticated user's access validated server-side, nested resources have ownership checks, no cross-tenant data leakage. Authorization gaps are critical severity.
 - Verify `timingSafeEqual` is used for all hash, token, and secret comparisons — never `===` for security-sensitive comparisons.

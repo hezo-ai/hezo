@@ -1538,22 +1538,24 @@ Agents execute inside project containers. Container state changes directly affec
 
 Agent runtime status (`active` / `idle` / `paused`) is updated in the database and broadcast via WebSocket when an agent is activated and when it completes.
 
-### Issue work ownership (read/write locks)
+### Issue work ownership (observational execution locks)
 
-Execution locks support two modes: **write locks** (exclusive) and **read locks** (shared).
+Execution locks are **observational**, not mutex. The `execution_locks` row an agent inserts when it starts a run records *who is working on what* — it is surfaced in the UI and used by orphan detection and container-stop cleanup — but it does not block other agents from taking their own lock on the same issue. Acquisition has one guard: an agent cannot double-hold a lock on the same issue (a second wakeup for the same agent on the same issue coalesces to a no-op).
 
-- **Write lock**: Only one agent at a time. Used by agents doing implementation work (Engineer, Architect, etc.). Prevents conflicting codebase changes.
-- **Read lock**: Multiple agents simultaneously. Used by agents doing review work (QA Engineer, Security Engineer, Coach). Multiple reviewers can review the same issue in parallel, but a write lock blocks all read locks and vice versa.
+Mutual exclusion between roles is enforced via **system prompts**, not the lock table:
 
-Lock type is determined automatically: Coach (issue_done trigger), QA Engineer, and Security Engineer get read locks; all others get write locks. The REST API also accepts an explicit `lock_type` parameter.
+- **Only the Engineer edits source code and tests.** The QA Engineer, Architect, Security Engineer, UI Designer, and DevOps Engineer prompts forbid source edits and direct changes to the `@engineer`. The DevOps Engineer retains the right to edit deployment configs, CI/CD workflows, and infrastructure-as-code; the UI Designer retains the right to write HTML preview mockups via `write_project_doc` (those are project docs, not source).
+- **Engineer and QA Engineer do not run the test suite concurrently on the same ticket.** The shared per-project container cannot safely host two parallel `bun run test` invocations — they collide on ports, database state, and file handles. The normal ticket workflow already serialises them (Engineer implements → status `review` → QA reviews). Both role prompts add an explicit "exclusive test-runner slot per ticket" rule for edge cases where the two roles could otherwise overlap.
 
-Work on an issue can span **hours or days** — this is not a short-lived database lock. The agent retains ownership until:
+Work on an issue can span **hours or days**. The lock row is retained until:
 - The issue is reassigned to a different agent or board member
 - The issue status moves to `done`, `closed`, or `cancelled`
 - The agent is disabled or terminated
 - The board manually releases the assignment
+- The project container stops (stale locks are released on container-stop)
+- Orphan detection marks the run as failed
 
-There is no automatic timeout. If an agent appears stuck, the board can manually reassign the issue.
+The `lock_type` column is retained (`read` / `write`) for future use but is not currently enforced. There is no automatic timeout. If an agent appears stuck, the board can manually reassign the issue.
 
 ### Orphan detection and auto-retry
 

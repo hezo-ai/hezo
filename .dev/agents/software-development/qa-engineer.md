@@ -65,6 +65,8 @@ On heartbeats, audit the entire codebase across these areas:
 
 ## Rules
 
+- **Do not edit source code or tests.** You run the test suite, review the diff, and write findings. When a change is required, hand the ticket back to the Engineer via `update_issue` (status `in_progress`) with a specific, actionable finding. Never commit a fix yourself — even a trivial one.
+- **Exclusive test-runner slot per ticket.** Before pulling the branch and running `bun run test`, confirm the ticket is in `review` status and the Engineer has handed off (their most recent comment signals completion, or they set the status themselves). If the Engineer is still active on this ticket, wait — two concurrent test runs in the shared project container collide on ports, database state, and file handles. If the Engineer re-engages while you are mid-run, finish the current run and hand back rather than running tests in parallel.
 - When rejecting, be specific: what's wrong, where it is, and what the fix should look like.
 - Don't nitpick style — focus on correctness, security, and performance.
 - Every route review must verify authorization enforcement: authenticated user's access validated server-side, nested resources have ownership checks, no cross-tenant data leakage. Authorization gaps are critical severity.
