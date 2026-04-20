@@ -1,0 +1,102 @@
+import { describe, expect, it } from 'vitest';
+import { loadAgentRoles } from '../../db/agent-roles';
+import { PartialResolutionError, resolvePartials } from '../../db/resolve-partials';
+
+describe('resolvePartials', () => {
+	it('inlines a top-level partial into a role doc', () => {
+		const out = resolvePartials({
+			'_partials/greet.md': 'Hello.',
+			'blank/ceo.md': 'Intro.\n{{> partials/greet}}\nOutro.',
+		});
+		expect(out['blank/ceo.md']).toBe('Intro.\nHello.\nOutro.');
+		expect(out['_partials/greet.md']).toBeUndefined();
+	});
+
+	it('resolves partials nested inside other partials', () => {
+		const out = resolvePartials({
+			'_partials/inner.md': 'inner',
+			'_partials/outer.md': 'A\n{{> partials/inner}}\nB',
+			'blank/ceo.md': '{{> partials/outer}}',
+		});
+		expect(out['blank/ceo.md']).toBe('A\ninner\nB');
+	});
+
+	it('tolerates leading and trailing whitespace around the directive', () => {
+		const out = resolvePartials({
+			'_partials/x.md': 'BODY',
+			'blank/ceo.md': '  {{> partials/x}}  ',
+		});
+		expect(out['blank/ceo.md']).toBe('BODY');
+	});
+
+	it('does not expand directives embedded mid-line (treats them as literal)', () => {
+		const out = resolvePartials({
+			'_partials/x.md': 'BODY',
+			'blank/ceo.md': 'prefix {{> partials/x}} suffix',
+		});
+		expect(out['blank/ceo.md']).toBe('prefix {{> partials/x}} suffix');
+	});
+
+	it('throws on an unknown partial reference', () => {
+		expect(() =>
+			resolvePartials({
+				'blank/ceo.md': '{{> partials/missing}}',
+			}),
+		).toThrow(PartialResolutionError);
+	});
+
+	it('throws on a partial cycle', () => {
+		expect(() =>
+			resolvePartials({
+				'_partials/a.md': '{{> partials/b}}',
+				'_partials/b.md': '{{> partials/a}}',
+				'blank/ceo.md': '{{> partials/a}}',
+			}),
+		).toThrow(/cycle/);
+	});
+
+	it('leaves role docs without directives unchanged', () => {
+		const untouched = 'Plain doc with no partials.';
+		const out = resolvePartials({ 'blank/ceo.md': untouched });
+		expect(out['blank/ceo.md']).toBe(untouched);
+	});
+});
+
+describe('loadAgentRoles integrates resolvePartials', () => {
+	it('seeds CEO prompts from both templates with the shared partials expanded', async () => {
+		const docs = await loadAgentRoles();
+
+		const sdCeo = docs['software-development/ceo.md'];
+		expect(sdCeo).toBeDefined();
+		expect(sdCeo).toContain('Every run you take is at **max effort**');
+		expect(sdCeo).toContain('## Hire workflow');
+		expect(sdCeo).toContain('Ask before you write.');
+		expect(sdCeo).not.toContain('{{> partials/');
+
+		const blankCeo = docs['blank/ceo.md'];
+		expect(blankCeo).toBeDefined();
+		expect(blankCeo).toContain('Every run you take is at **max effort**');
+		expect(blankCeo).toContain('## Hire workflow');
+		expect(blankCeo).toContain('Ask before you write.');
+		expect(blankCeo).not.toContain('{{> partials/');
+
+		for (const slug of [
+			'engineer',
+			'qa-engineer',
+			'architect',
+			'security-engineer',
+			'ui-designer',
+			'devops-engineer',
+		]) {
+			const doc = docs[`software-development/${slug}.md`];
+			expect(doc, `${slug} should be loaded`).toBeDefined();
+			expect(doc, `${slug} should include no-designated-repo rule`).toContain(
+				'No designated repo means no run.',
+			);
+			expect(doc, `${slug} should have no unresolved directives`).not.toContain('{{> partials/');
+		}
+
+		// Partial files themselves are stripped from the returned map
+		expect(Object.keys(docs).some((k) => k.startsWith('_partials/'))).toBe(false);
+	});
+});
