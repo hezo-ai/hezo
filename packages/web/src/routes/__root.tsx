@@ -1,6 +1,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { createRootRoute, Outlet, useParams } from '@tanstack/react-router';
+import { createRootRoute, Outlet, useNavigate, useParams } from '@tanstack/react-router';
 import { ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { useEffect } from 'react';
 import { AiProviderSetupModal } from '../components/ai-provider-setup-modal';
 import { CompanyRail } from '../components/company-rail';
 import { CompanySidebar } from '../components/company-sidebar';
@@ -30,6 +31,7 @@ function Spinner() {
 
 function AppShell() {
 	const { data: status, isLoading } = useStatus();
+	const navigate = useNavigate();
 	const params = useParams({ strict: false }) as Record<string, string>;
 	const companyId = params.companyId;
 	const unlocked = status?.masterKeyState === 'unlocked';
@@ -38,6 +40,12 @@ function AppShell() {
 	const { data: providerStatus, isLoading: providersLoading } = useAiProviderStatus({
 		enabled: unlocked && hasToken,
 	});
+
+	useEffect(() => {
+		if (status?.masterKeyState === 'unset' && window.location.pathname !== '/') {
+			navigate({ to: '/', replace: true });
+		}
+	}, [status?.masterKeyState, navigate]);
 
 	if (isLoading) return <Spinner />;
 
