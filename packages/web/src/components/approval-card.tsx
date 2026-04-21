@@ -1,6 +1,6 @@
-import { ApprovalStatus, ApprovalType } from '@hezo/shared';
-import { Link } from '@tanstack/react-router';
-import { Check, Loader2, X } from 'lucide-react';
+import { ApprovalStatus, ApprovalType, OAuthRequestReason } from '@hezo/shared';
+import { Link, useNavigate } from '@tanstack/react-router';
+import { ArrowRight, Check, GitBranch, Loader2, X } from 'lucide-react';
 import type { Approval } from '../hooks/use-approvals';
 import { useResolveApproval } from '../hooks/use-approvals';
 import { Badge } from './ui/badge';
@@ -235,39 +235,82 @@ export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProp
 				<ApprovalMessage approval={approval} />
 			</div>
 			<div className="flex gap-2">
-				<Button
-					size="sm"
-					variant="secondary"
-					disabled={resolveApproval.isPending}
-					onClick={() =>
-						resolveApproval.mutate({
-							approvalId: approval.id,
-							status: ApprovalStatus.Approved,
-						})
-					}
-				>
-					{resolveApproval.isPending ? (
-						<Loader2 className="w-3 h-3 animate-spin" />
-					) : (
-						<Check className="w-3 h-3" />
-					)}
-					Approve
-				</Button>
-				<Button
-					size="sm"
-					variant="ghost"
-					className="text-accent-red"
-					disabled={resolveApproval.isPending}
-					onClick={() =>
-						resolveApproval.mutate({
-							approvalId: approval.id,
-							status: ApprovalStatus.Denied,
-						})
-					}
-				>
-					<X className="w-3 h-3" /> Deny
-				</Button>
+				{approval.type === ApprovalType.OauthRequest ? (
+					<OauthNavigateButton approval={approval} />
+				) : (
+					<>
+						<Button
+							size="sm"
+							variant="secondary"
+							disabled={resolveApproval.isPending}
+							onClick={() =>
+								resolveApproval.mutate({
+									approvalId: approval.id,
+									status: ApprovalStatus.Approved,
+								})
+							}
+						>
+							{resolveApproval.isPending ? (
+								<Loader2 className="w-3 h-3 animate-spin" />
+							) : (
+								<Check className="w-3 h-3" />
+							)}
+							Approve
+						</Button>
+						<Button
+							size="sm"
+							variant="ghost"
+							className="text-accent-red"
+							disabled={resolveApproval.isPending}
+							onClick={() =>
+								resolveApproval.mutate({
+									approvalId: approval.id,
+									status: ApprovalStatus.Denied,
+								})
+							}
+						>
+							<X className="w-3 h-3" /> Deny
+						</Button>
+					</>
+				)}
 			</div>
 		</div>
+	);
+}
+
+function OauthNavigateButton({ approval }: { approval: Approval }) {
+	const navigate = useNavigate();
+	const reason = approval.payload.reason as string | undefined;
+	const companySlug = approval.company_slug;
+
+	let label = 'Connect GitHub';
+	let onClick = () =>
+		navigate({ to: '/companies/$companyId/settings', params: { companyId: companySlug } });
+
+	if (reason === OAuthRequestReason.DesignatedRepo && approval.payload_issue_identifier) {
+		const issueId = approval.payload_issue_identifier.toLowerCase();
+		label = 'Set up repository';
+		onClick = () =>
+			navigate({
+				to: '/companies/$companyId/issues/$issueId',
+				params: { companyId: companySlug, issueId },
+				hash: 'setup-repo',
+			});
+	} else if (reason === OAuthRequestReason.RepoAdd && approval.payload_project_slug) {
+		const projectSlug = approval.payload_project_slug;
+		label = 'Open project settings';
+		onClick = () =>
+			navigate({
+				to: '/companies/$companyId/projects/$projectId/settings',
+				params: { companyId: companySlug, projectId: projectSlug },
+			});
+	}
+
+	return (
+		<Button size="sm" onClick={onClick} data-testid="approval-oauth-cta">
+			<GitBranch className="w-3 h-3" />
+			{label}
+			<ArrowRight className="w-3 h-3" />
+		</Button>
 	);
 }

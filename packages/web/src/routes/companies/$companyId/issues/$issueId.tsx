@@ -117,6 +117,16 @@ function IssueDetailPage() {
 		return () => document.removeEventListener('pointerdown', onPointerDown);
 	}, [assigneeOpen]);
 
+	useEffect(() => {
+		if (!comments || comments.length === 0) return;
+		if (typeof window === 'undefined') return;
+		if (window.location.hash !== '#setup-repo') return;
+		const target = document.querySelector('[data-setup-repo-anchor]');
+		if (!target) return;
+		target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		window.history.replaceState(null, '', window.location.pathname + window.location.search);
+	}, [comments]);
+
 	const assignedAgent = agents?.find((a) => a.id === issue?.assignee_id);
 	const effectiveDefaultEffort: AgentEffort =
 		assignedAgent?.slug === CEO_AGENT_SLUG
@@ -441,8 +451,17 @@ function IssueDetailPage() {
 						{comments?.map((c) => {
 							const authorName = c.author_name ?? 'Board';
 							const isAgent = c.author_type === 'agent';
+							const content =
+								typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
+							const isPendingSetupRepo =
+								c.content_type === 'action' && content?.kind === 'setup_repo' && !c.chosen_option;
 							return (
-								<div key={c.id} className="flex gap-2.5" data-testid="comment-item">
+								<div
+									key={c.id}
+									className="flex gap-2.5"
+									data-testid="comment-item"
+									{...(isPendingSetupRepo ? { 'data-setup-repo-anchor': '' } : {})}
+								>
 									<Avatar
 										initials={authorName.slice(0, 2)}
 										size="sm"
