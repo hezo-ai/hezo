@@ -384,13 +384,23 @@ Response: full agent object (same as list item + `system_prompt` + `mcp_servers`
 
 #### `PATCH /companies/:companyId/agents/:agentId`
 Update agent config: title, role_description, system_prompt, default_effort,
-heartbeat_interval_min, monthly_budget_cents, reports_to, mcp_servers.
+heartbeat_interval_min, monthly_budget_cents, reports_to, mcp_servers,
+model_override_provider, model_override_model.
 
 Cannot update: status (use lifecycle endpoints), budget_used_cents (system-managed).
 
 `default_effort` accepts `minimal | low | medium | high | max`. It sets the
 baseline reasoning level applied to every run of this agent; comments posted
 on the issue can override it per-run — see [Reasoning effort](#reasoning-effort).
+
+`model_override_provider` (one of `anthropic | openai | google | moonshot`, or
+`null`) and `model_override_model` (free-form model id, e.g. `claude-opus-4-7`,
+or `null`) let this agent target a specific provider + model. When the
+provider is set, the runner uses this provider's credential instead of the
+instance default; when the model is set, it's passed to the CLI as `--model`,
+taking precedence over the provider config's `default_model`. Clearing the
+provider also clears the model. Setting the model alone requires that a
+provider is already stored on the agent.
 
 #### `POST /companies/:companyId/agents/:agentId/disable`
 Disable an agent. Stops heartbeats, kills subprocess if running. Does not affect the project container.
@@ -1325,6 +1335,12 @@ Initiate OAuth flow for a provider (`anthropic`, `openai`, `google`). Returns `a
 
 #### `POST /ai-providers/:configId/verify`
 Verify a stored key by making a lightweight call to the provider. Updates config status to `invalid` if the key is bad.
+
+#### `PATCH /ai-providers/:configId`
+Update a config. Currently accepts `{ default_model: string | null }`. When set, the agent runner appends `--model <default_model>` to the CLI invocation for every run that resolves to this config (unless the agent has its own override). Pass `null` to clear.
+
+#### `GET /ai-providers/:configId/models`
+Return the models this provider offers for the stored credential. Calls the provider's `/v1/models` endpoint live (same URL + auth headers used by `verify`) and normalises the response into `{ id, label }[]`. Chat models only — embeddings / audio / image / moderation endpoints are filtered out. Superuser only; surfaces 401 if the provider rejects the credential and 503 if the provider is unreachable.
 
 ---
 

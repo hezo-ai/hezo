@@ -503,6 +503,36 @@ UI:
 
 ---
 
+## Phase 7.5.1: Model selection
+
+**Status:** Done (2026-04-21)
+
+**Goal:** Let operators pick a specific model per provider config and per agent, instead of always using each CLI's built-in default.
+
+**What's included:**
+
+Backend:
+- `ai_provider_configs.default_model` column (nullable TEXT) — the model passed to `--model` when this config is the one the runner selects.
+- `member_agents.model_override_provider` + `member_agents.model_override_model` columns with a `CHECK` ensuring the model isn't set without a provider.
+- `GET /api/ai-providers/:configId/models` — superuser only; fetches models live from the provider (reusing the URL + headers from `AI_PROVIDER_INFO.verifyEndpoint`), filters to chat models, normalises to `{ id, label }[]`. No server cache — TanStack Query caches on the client.
+- `PATCH /api/ai-providers/:configId` — superuser only; accepts `{ default_model: string | null }`.
+- `PATCH /api/companies/:companyId/agents/:agentId` accepts `model_override_provider` + `model_override_model` alongside existing fields; clearing the provider also clears the model.
+- `getProviderCredentialAndModel` returns config + credential + default model together so the runner does it in one query.
+- Runner precedence: `agent.model_override_provider` wins over `resolveRuntimeForIssue`; `agent.model_override_model` wins over `config.default_model`; when nothing is set, no `--model` flag is added (matching prior behaviour).
+
+UI:
+- On `/settings/ai-providers`, each config row has a "Default model" dropdown that lazy-loads the provider's catalog on focus and persists the choice.
+- Agent settings page has a "Model override" section with provider + model selects. The provider select lists only providers with an active config; the model select populates from that provider's active config. "Use instance default" clears both.
+
+**How to test:**
+- Set a default model on a provider config in `/settings/ai-providers`, reload, confirm persistence.
+- On an agent settings page pick a provider + model, save, reload; the selects show the stored values.
+- Trigger an agent run — the `heartbeat_runs.invocation_command` row contains `--model <resolved>` (or no `--model` when neither is set).
+
+**Depends on:** Phase 7.5
+
+---
+
 ## Phase 8: Adapters + Plugins
 
 **Goal:** Non-Claude-Code agent runtimes and the plugin system.

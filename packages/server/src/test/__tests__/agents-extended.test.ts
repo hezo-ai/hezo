@@ -405,6 +405,72 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 		});
 		expect(res.status).toBe(404);
 	});
+
+	it('sets and clears model_override_provider + model_override_model', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const agent = agents.find((a: Record<string, unknown>) => a.slug === 'architect');
+
+		const set = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model_override_provider: 'openai',
+				model_override_model: 'gpt-5-mini',
+			}),
+		});
+		expect(set.status).toBe(200);
+		const setBody = await set.json();
+		expect(setBody.data.model_override_provider).toBe('openai');
+		expect(setBody.data.model_override_model).toBe('gpt-5-mini');
+
+		const clear = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ model_override_provider: null }),
+		});
+		expect(clear.status).toBe(200);
+		const clearBody = await clear.json();
+		expect(clearBody.data.model_override_provider).toBeNull();
+		expect(clearBody.data.model_override_model).toBeNull();
+	});
+
+	it('rejects an unknown provider in model_override_provider', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agent = (await listRes.json()).data[0];
+
+		const res = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ model_override_provider: 'nope' }),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it('rejects a model without an existing or new provider', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		// Pick an agent with no override set; ensure cleared first.
+		const agent = agents[0];
+		await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ model_override_provider: null }),
+		});
+
+		const res = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ model_override_model: 'gpt-5' }),
+		});
+		expect(res.status).toBe(400);
+	});
 });
 
 describe('invalid reports_to reference', () => {

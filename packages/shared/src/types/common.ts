@@ -477,3 +477,56 @@ export const ALL_AI_PROVIDERS: ReadonlyArray<AiProvider> = Object.values(AiProvi
 export const OAUTH_AI_PROVIDERS: ReadonlyArray<AiProvider> = ALL_AI_PROVIDERS.filter(
 	(p) => AI_PROVIDER_INFO[p].supportsOAuth,
 );
+
+export interface AiProviderModel {
+	id: string;
+	label: string;
+}
+
+/**
+ * Normalise the response from a provider's `/v1/models` (or equivalent)
+ * endpoint into a uniform list. Each provider returns its catalog in a slightly
+ * different shape and surfaces models unrelated to chat (embeddings, moderation,
+ * TTS, image generation). This filters to the models an agent CLI can actually
+ * be pointed at.
+ */
+export function parseProviderModels(provider: AiProvider, json: unknown): AiProviderModel[] {
+	if (!json || typeof json !== 'object') return [];
+	const body = json as Record<string, unknown>;
+
+	if (provider === AiProvider.Google) {
+		const models = Array.isArray(body.models) ? (body.models as Record<string, unknown>[]) : [];
+		return models
+			.filter((m) => {
+				const methods = m.supportedGenerationMethods;
+				if (!Array.isArray(methods)) return true;
+				return methods.includes('generateContent');
+			})
+			.map((m) => {
+				const raw = typeof m.name === 'string' ? m.name : '';
+				const id = raw.startsWith('models/') ? raw.slice('models/'.length) : raw;
+				const label = typeof m.displayName === 'string' && m.displayName ? m.displayName : id;
+				return { id, label };
+			})
+			.filter((m) => m.id);
+	}
+
+	const data = Array.isArray(body.data) ? (body.data as Record<string, unknown>[]) : [];
+	return data
+		.map((m) => {
+			const id = typeof m.id === 'string' ? m.id : '';
+			const displayName = typeof m.display_name === 'string' ? m.display_name : '';
+			return { id, label: displayName || id };
+		})
+		.filter((m) => m.id && isChatModelId(provider, m.id));
+}
+
+function isChatModelId(provider: AiProvider, id: string): boolean {
+	const lower = id.toLowerCase();
+	if (provider === AiProvider.OpenAI) {
+		if (/(embedding|whisper|tts|audio|dall-e|image|moderation|omni-moderation)/.test(lower)) {
+			return false;
+		}
+	}
+	return true;
+}

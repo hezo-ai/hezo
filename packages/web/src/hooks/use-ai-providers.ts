@@ -1,3 +1,4 @@
+import type { AiProviderModel } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -9,6 +10,7 @@ export interface AiProviderConfig {
 	label: string;
 	is_default: boolean;
 	status: string;
+	default_model: string | null;
 	metadata: Record<string, unknown>;
 	created_at: string;
 }
@@ -79,5 +81,25 @@ export function useStartAiProviderOAuth() {
 	return useMutation({
 		mutationFn: (provider: string) =>
 			api.post<{ auth_url: string; state: string }>(`/api/ai-providers/${provider}/oauth/start`),
+	});
+}
+
+export function useAiProviderModels(configId: string, options: { enabled?: boolean } = {}) {
+	return useQuery({
+		queryKey: ['ai-providers', configId, 'models'] as const,
+		queryFn: () => api.get<AiProviderModel[]>(`/api/ai-providers/${configId}/models`),
+		enabled: options.enabled ?? true,
+		staleTime: 5 * 60 * 1000,
+	});
+}
+
+export function useUpdateAiProviderConfig(configId: string) {
+	return useMutation({
+		mutationFn: (data: { default_model: string | null }) =>
+			api.patch<{ updated: boolean; default_model: string | null }>(
+				`/api/ai-providers/${configId}`,
+				data,
+			),
+		onSuccess: invalidateAll,
 	});
 }

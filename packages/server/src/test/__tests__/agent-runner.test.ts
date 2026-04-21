@@ -1151,6 +1151,160 @@ describe('runAgent', () => {
 			expect(row.rows[0].working_dir).toBe('/workspace');
 		});
 	});
+
+	describe('--model flag resolution', () => {
+		it('omits --model when neither override nor default_model is set', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-no-model';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			// Clear any default_model state on all configs.
+			await db.query('UPDATE ai_provider_configs SET default_model = NULL');
+
+			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+
+			expect(capturedCmd).not.toContain('--model');
+		});
+
+		it('passes --model when the active config has default_model', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-default-model';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			await db.query(
+				`UPDATE ai_provider_configs SET default_model = 'claude-opus-4-7' WHERE provider = 'anthropic'`,
+			);
+
+			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+
+			expect(capturedCmd).toContain('--model');
+			const idx = capturedCmd.indexOf('--model');
+			expect(capturedCmd[idx + 1]).toBe('claude-opus-4-7');
+		});
+
+		it('agent.model_override_model takes precedence over default_model', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-override';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			await db.query(
+				`UPDATE ai_provider_configs SET default_model = 'claude-opus-4-7' WHERE provider = 'anthropic'`,
+			);
+
+			await runAgent(
+				deps,
+				{
+					...makeAgent(),
+					model_override_provider: 'anthropic',
+					model_override_model: 'claude-haiku-4-5',
+				},
+				makeIssue(),
+				makeProject(),
+			);
+
+			expect(capturedCmd).toContain('--model');
+			const idx = capturedCmd.indexOf('--model');
+			expect(capturedCmd[idx + 1]).toBe('claude-haiku-4-5');
+		});
+
+		it('routes to the override provider regardless of instance default', async () => {
+			let capturedCmd: string[] = [];
+			let capturedEnv: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					capturedEnv = opts.Env;
+					return 'exec-cross';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			// Ensure an openai config exists so the override provider can resolve.
+			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+			await app.request('/api/ai-providers', {
+				method: 'POST',
+				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					provider: 'openai',
+					api_key: 'sk-cross-provider-test',
+					label: 'openai-cross',
+				}),
+			});
+			globalThis.fetch = originalFetch;
+
+			await runAgent(
+				deps,
+				{
+					...makeAgent(),
+					model_override_provider: 'openai',
+					model_override_model: 'gpt-5-mini',
+				},
+				makeIssue(),
+				makeProject(),
+			);
+
+			expect(capturedCmd[0]).toBe('codex');
+			expect(capturedCmd).toContain('--model');
+			const idx = capturedCmd.indexOf('--model');
+			expect(capturedCmd[idx + 1]).toBe('gpt-5-mini');
+			expect(capturedEnv.some((e) => e.startsWith('OPENAI_API_KEY='))).toBe(true);
+		});
+	});
 });
 
 describe('shellQuoteArg', () => {

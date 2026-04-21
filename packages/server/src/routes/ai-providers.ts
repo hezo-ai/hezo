@@ -5,6 +5,7 @@ import {
 	ALL_AI_PROVIDERS,
 	OAUTH_AI_PROVIDERS,
 	OAUTH_CALLBACK_PATH,
+	parseProviderModels,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { signOAuthState } from '../crypto/state';
@@ -17,6 +18,7 @@ import {
 	getProviderConfigCredential,
 	listAiProviders,
 	setDefaultAiProvider,
+	setProviderDefaultModel,
 	storeAiProviderKey,
 } from '../services/ai-provider-keys';
 
@@ -220,6 +222,91 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 	} catch {
 		return ok(c, { valid: false, message: 'Could not reach provider to verify key' });
 	}
+});
+
+// Update a provider config — currently only `default_model`
+aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const db = c.get('db');
+	const configId = c.req.param('configId');
+
+	const body = await c.req.json<{ default_model?: string | null }>();
+	if (!('default_model' in body)) {
+		return err(c, 'INVALID_REQUEST', 'Nothing to update', 400);
+	}
+
+	const model =
+		body.default_model === null || body.default_model === undefined
+			? null
+			: typeof body.default_model === 'string'
+				? body.default_model.trim() || null
+				: null;
+
+	const updated = await setProviderDefaultModel(db, configId, model);
+	if (!updated) {
+		return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
+	}
+
+	return ok(c, { updated: true, default_model: model });
+});
+
+// List models available for this provider config, fetched live from the provider
+aiProvidersRoutes.get('/ai-providers/:configId/models', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const db = c.get('db');
+	const masterKeyManager = c.get('masterKeyManager');
+	const configId = c.req.param('configId');
+
+	if (!masterKeyManager.getKey()) {
+		return err(c, 'LOCKED', 'Server must be unlocked', 401);
+	}
+
+	const cred = await getProviderConfigCredential(db, masterKeyManager, configId);
+	if (!cred) {
+		return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
+	}
+
+	const provider = cred.provider as AiProvider;
+	const endpoint = AI_PROVIDER_INFO[provider]?.verifyEndpoint;
+	if (!endpoint) {
+		return err(c, 'UNSUPPORTED', `No models endpoint for provider "${provider}"`, 400);
+	}
+
+	const url = typeof endpoint.url === 'function' ? endpoint.url(cred.value) : endpoint.url;
+	const headers =
+		typeof endpoint.headers === 'function' ? endpoint.headers(cred.value) : endpoint.headers;
+
+	let res: Response;
+	try {
+		res = await fetch(url, {
+			method: 'GET',
+			headers,
+			signal: AbortSignal.timeout(10000),
+		});
+	} catch {
+		return err(c, 'PROVIDER_UNREACHABLE', 'Could not reach provider to list models', 503);
+	}
+
+	if (!res.ok) {
+		if (res.status === 401 || res.status === 403) {
+			return err(c, 'INVALID_KEY', 'Provider rejected the stored credential', 401);
+		}
+		return err(c, 'PROVIDER_ERROR', `Provider returned status ${res.status}`, 503);
+	}
+
+	let json: unknown;
+	try {
+		json = await res.json();
+	} catch {
+		return err(c, 'PROVIDER_ERROR', 'Provider returned unparseable response', 503);
+	}
+
+	const models = parseProviderModels(provider, json);
+	return ok(c, models);
 });
 
 async function verifyProviderKey(

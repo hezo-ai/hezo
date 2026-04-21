@@ -15,6 +15,7 @@ export interface AiProviderConfig {
 	label: string;
 	is_default: boolean;
 	status: string;
+	default_model: string | null;
 	metadata: Record<string, unknown>;
 	created_at: string;
 }
@@ -59,11 +60,31 @@ export async function getProviderCredential(
 	masterKeyManager: MasterKeyManager,
 	provider: AiProvider,
 ): Promise<AiProviderCredential | null> {
+	const result = await getProviderCredentialAndModel(db, masterKeyManager, provider);
+	if (!result) return null;
+	return { value: result.value, authMethod: result.authMethod };
+}
+
+export interface AiProviderCredentialAndModel extends AiProviderCredential {
+	configId: string;
+	defaultModel: string | null;
+}
+
+export async function getProviderCredentialAndModel(
+	db: PGlite,
+	masterKeyManager: MasterKeyManager,
+	provider: AiProvider,
+): Promise<AiProviderCredentialAndModel | null> {
 	const encryptionKey = masterKeyManager.getKey();
 	if (!encryptionKey) throw new Error('Master key not available');
 
-	const result = await db.query<{ auth_method: AiAuthMethod; encrypted_credential: string }>(
-		`SELECT auth_method, encrypted_credential
+	const result = await db.query<{
+		id: string;
+		auth_method: AiAuthMethod;
+		encrypted_credential: string;
+		default_model: string | null;
+	}>(
+		`SELECT id, auth_method, encrypted_credential, default_model
 		 FROM ai_provider_configs
 		 WHERE provider = $1::ai_provider AND status = $2
 		 ORDER BY is_default DESC, created_at ASC
@@ -75,18 +96,35 @@ export async function getProviderCredential(
 
 	const row = result.rows[0];
 	return {
+		configId: row.id,
 		value: decrypt(row.encrypted_credential, encryptionKey),
 		authMethod: row.auth_method,
+		defaultModel: row.default_model,
 	};
 }
 
 export async function listAiProviders(db: PGlite): Promise<AiProviderConfig[]> {
 	const result = await db.query<AiProviderConfig>(
-		`SELECT id, provider, auth_method, label, is_default, status, metadata, created_at::text
+		`SELECT id, provider, auth_method, label, is_default, status, default_model, metadata, created_at::text
 		 FROM ai_provider_configs
 		 ORDER BY provider ASC, is_default DESC, created_at ASC`,
 	);
 	return result.rows;
+}
+
+export async function setProviderDefaultModel(
+	db: PGlite,
+	configId: string,
+	model: string | null,
+): Promise<boolean> {
+	const result = await db.query<{ id: string }>(
+		`UPDATE ai_provider_configs
+		 SET default_model = $1, updated_at = now()
+		 WHERE id = $2
+		 RETURNING id`,
+		[model, configId],
+	);
+	return result.rows.length > 0;
 }
 
 export async function deleteAiProviderConfig(db: PGlite, configId: string): Promise<boolean> {

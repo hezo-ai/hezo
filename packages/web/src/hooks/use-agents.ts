@@ -22,6 +22,8 @@ export interface Agent {
 	reports_to: string | null;
 	reports_to_title: string | null;
 	assigned_issue_count: number;
+	model_override_provider: string | null;
+	model_override_model: string | null;
 	created_at: string;
 }
 
@@ -53,6 +55,8 @@ export function useUpdateAgent(companyId: string, agentId: string) {
 			monthly_budget_cents?: number;
 			heartbeat_interval_min?: number;
 			touches_code?: boolean;
+			model_override_provider?: string | null;
+			model_override_model?: string | null;
 		}) => api.patch<Agent>(`/api/companies/${companyId}/agents/${agentId}`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] });

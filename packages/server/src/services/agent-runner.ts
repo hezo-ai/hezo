@@ -8,6 +8,7 @@ import {
 	ContainerStatus,
 	HeartbeatRunStatus,
 	PROVIDER_TO_ENV_VAR,
+	PROVIDER_TO_RUNTIME,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
 	RUNTIME_STREAM_ARGS,
@@ -19,7 +20,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
 import { signAgentJwt } from '../middleware/auth';
 import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
-import { type AiProviderCredential, getProviderCredential } from './ai-provider-keys';
+import { type AiProviderCredential, getProviderCredentialAndModel } from './ai-provider-keys';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import { ensureIssueWorktree, fetchRepo } from './git';
@@ -38,6 +39,8 @@ export interface AgentInfo {
 	system_prompt: string;
 	company_id: string;
 	default_effort?: string | null;
+	model_override_provider?: AiProvider | null;
+	model_override_model?: string | null;
 }
 
 export interface IssueInfo {
@@ -116,6 +119,7 @@ async function buildRunContext(
 	provider: AiProvider,
 	runtimeType: AgentRuntime,
 	heartbeatRunId: string,
+	modelOverride: string | null,
 ): Promise<RunContext> {
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, agent.system_prompt, {
 		companyId: agent.company_id,
@@ -186,12 +190,15 @@ async function buildRunContext(
 				]
 			: [];
 
+	const modelArgs = modelOverride ? ['--model', modelOverride] : [];
+
 	const cmd = [
 		cliCommand,
 		...mcpFlags,
 		...RUNTIME_STREAM_ARGS[runtimeType],
 		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
 		...effortApplication.extraArgs,
+		...modelArgs,
 		'-p',
 		taskPrompt,
 	];
@@ -310,19 +317,30 @@ export async function runAgent(
 		);
 	}
 
-	const runtimeType = await resolveRuntimeForIssue(deps.db, issue.runtime_type ?? null);
-	if (!runtimeType) {
-		return finalizeFailure(
-			'No AI provider credentials configured at the instance level. Add one in Settings > AI Providers.',
-		);
+	let provider: AiProvider;
+	let runtimeType: AgentRuntime;
+	if (agent.model_override_provider) {
+		provider = agent.model_override_provider;
+		runtimeType = PROVIDER_TO_RUNTIME[provider];
+	} else {
+		const resolved = await resolveRuntimeForIssue(deps.db, issue.runtime_type ?? null);
+		if (!resolved) {
+			return finalizeFailure(
+				'No AI provider credentials configured at the instance level. Add one in Settings > AI Providers.',
+			);
+		}
+		runtimeType = resolved;
+		provider = RUNTIME_TO_PROVIDER[runtimeType];
 	}
-	const provider = RUNTIME_TO_PROVIDER[runtimeType];
-	const credential = await getProviderCredential(deps.db, deps.masterKeyManager, provider);
+
+	const credential = await getProviderCredentialAndModel(deps.db, deps.masterKeyManager, provider);
 	if (!credential) {
 		return finalizeFailure(
 			`No ${provider} credential configured. Add one in Settings > AI Providers.`,
 		);
 	}
+
+	const modelOverride = agent.model_override_model ?? credential.defaultModel ?? null;
 
 	if (signal?.aborted) return finalizeAbort();
 
@@ -336,6 +354,7 @@ export async function runAgent(
 		provider,
 		runtimeType,
 		heartbeatRunId,
+		modelOverride,
 	);
 
 	if (signal?.aborted) return finalizeAbort();

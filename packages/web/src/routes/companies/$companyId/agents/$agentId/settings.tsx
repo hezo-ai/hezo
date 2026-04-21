@@ -1,7 +1,7 @@
-import { AgentAdminStatus } from '@hezo/shared';
+import { AgentAdminStatus, AI_PROVIDER_INFO, type AiProvider } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
 import { Loader2, Power, PowerOff } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '../../../../../components/ui/button';
 import { Input } from '../../../../../components/ui/input';
 import { Textarea } from '../../../../../components/ui/textarea';
@@ -12,6 +12,7 @@ import {
 	useEnableAgent,
 	useUpdateAgent,
 } from '../../../../../hooks/use-agents';
+import { useAiProviderModels, useAiProviders } from '../../../../../hooks/use-ai-providers';
 
 function AgentSettingsPage() {
 	const { companyId, agentId } = Route.useParams();
@@ -28,6 +29,8 @@ function AgentSettingsPage() {
 	const [budget, setBudget] = useState('');
 	const [heartbeat, setHeartbeat] = useState('');
 	const [touchesCode, setTouchesCode] = useState(false);
+	const [modelProvider, setModelProvider] = useState<AiProvider | ''>('');
+	const [modelId, setModelId] = useState('');
 
 	useEffect(() => {
 		if (agent) {
@@ -38,6 +41,8 @@ function AgentSettingsPage() {
 			setBudget(String(agent.monthly_budget_cents / 100));
 			setHeartbeat(String(agent.heartbeat_interval_min));
 			setTouchesCode(agent.touches_code);
+			setModelProvider((agent.model_override_provider ?? '') as AiProvider | '');
+			setModelId(agent.model_override_model ?? '');
 		}
 	}, [agent]);
 
@@ -56,6 +61,8 @@ function AgentSettingsPage() {
 			monthly_budget_cents: Math.round(Number.parseFloat(budget) * 100),
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
 			touches_code: touchesCode,
+			model_override_provider: modelProvider || null,
+			model_override_model: modelProvider ? modelId || null : null,
 		});
 	}
 
@@ -164,6 +171,16 @@ function AgentSettingsPage() {
 					</span>
 				</label>
 
+				<ModelOverride
+					provider={modelProvider}
+					model={modelId}
+					onProviderChange={(p) => {
+						setModelProvider(p);
+						setModelId('');
+					}}
+					onModelChange={setModelId}
+				/>
+
 				<div className="flex justify-end gap-2 mt-2">
 					<Button type="submit" disabled={updateAgent.isPending}>
 						{updateAgent.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -199,6 +216,94 @@ function AgentSettingsPage() {
 						<Power className="w-3 h-3" /> Enable agent
 					</Button>
 				)}
+			</div>
+		</div>
+	);
+}
+
+interface ModelOverrideProps {
+	provider: AiProvider | '';
+	model: string;
+	onProviderChange: (provider: AiProvider | '') => void;
+	onModelChange: (model: string) => void;
+}
+
+function ModelOverride({ provider, model, onProviderChange, onModelChange }: ModelOverrideProps) {
+	const { data: configs } = useAiProviders();
+
+	const configByProvider = useMemo(() => {
+		const map = new Map<string, { id: string; default_model: string | null }>();
+		for (const c of configs ?? []) {
+			if (c.status !== 'active') continue;
+			if (!map.has(c.provider)) {
+				map.set(c.provider, { id: c.id, default_model: c.default_model });
+			}
+		}
+		return map;
+	}, [configs]);
+
+	const activeConfig = provider ? configByProvider.get(provider) : undefined;
+	const models = useAiProviderModels(activeConfig?.id ?? '', {
+		enabled: Boolean(activeConfig?.id),
+	});
+
+	const availableProviders = Array.from(configByProvider.keys()) as AiProvider[];
+
+	return (
+		<div className="rounded-lg border border-border-subtle bg-bg p-4 flex flex-col gap-3">
+			<div>
+				<div className="text-sm font-medium">Model override</div>
+				<div className="text-xs text-text-muted mt-0.5">
+					Override the model this agent runs on. When cleared, the agent uses the instance-default
+					provider and its configured default model.
+				</div>
+			</div>
+			<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+				<label className="flex flex-col gap-1">
+					<span className="text-xs text-text-muted">Provider</span>
+					<select
+						aria-label="Model override provider"
+						value={provider}
+						onChange={(e) => onProviderChange((e.target.value as AiProvider) || '')}
+						className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
+					>
+						<option value="">Use instance default</option>
+						{availableProviders.map((p) => (
+							<option key={p} value={p}>
+								{AI_PROVIDER_INFO[p].name}
+							</option>
+						))}
+					</select>
+				</label>
+				<label className="flex flex-col gap-1">
+					<span className="text-xs text-text-muted">Model</span>
+					<select
+						aria-label="Model override model"
+						value={model}
+						onChange={(e) => onModelChange(e.target.value)}
+						disabled={!provider || models.isLoading}
+						className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover disabled:opacity-60"
+					>
+						<option value="">
+							{activeConfig?.default_model
+								? `Provider default (${activeConfig.default_model})`
+								: 'Provider default'}
+						</option>
+						{model && !models.data?.some((m) => m.id === model) && (
+							<option value={model}>{model}</option>
+						)}
+						{models.data?.map((m) => (
+							<option key={m.id} value={m.id}>
+								{m.label}
+							</option>
+						))}
+					</select>
+					{models.error && (
+						<span className="text-xs text-accent-red">
+							{(models.error as { message?: string }).message || 'Failed to load models'}
+						</span>
+					)}
+				</label>
 			</div>
 		</div>
 	);

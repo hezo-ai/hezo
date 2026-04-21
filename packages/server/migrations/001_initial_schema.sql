@@ -68,6 +68,8 @@ CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
 CREATE TYPE company_type_source AS ENUM ('builtin', 'custom', 'marketplace');
 CREATE TYPE goal_status AS ENUM ('active', 'achieved', 'archived');
+CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'moonshot');
+CREATE TYPE ai_auth_method AS ENUM ('api_key', 'oauth_token');
 
 -------------------------------------------------------------------------------
 -- AGENT TYPES
@@ -204,9 +206,13 @@ CREATE TABLE member_agents (
     runtime_status          agent_runtime_status NOT NULL DEFAULT 'idle',
     admin_status            agent_admin_status NOT NULL DEFAULT 'enabled',
     mcp_servers             JSONB NOT NULL DEFAULT '[]'::jsonb,
+    model_override_provider ai_provider,
+    model_override_model    TEXT,
     last_heartbeat_at       TIMESTAMPTZ,
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (id, slug)
+    UNIQUE (id, slug),
+    CONSTRAINT model_override_requires_provider
+        CHECK (model_override_model IS NULL OR model_override_provider IS NOT NULL)
 );
 
 -- Slug uniqueness within a company enforced at the app layer
@@ -619,9 +625,6 @@ CREATE INDEX idx_connected_platforms_company ON connected_platforms(company_id);
 -- AI PROVIDER CONFIGS
 -------------------------------------------------------------------------------
 
-CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'moonshot');
-CREATE TYPE ai_auth_method AS ENUM ('api_key', 'oauth_token');
-
 CREATE TABLE ai_provider_configs (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     provider             ai_provider NOT NULL,
@@ -630,6 +633,7 @@ CREATE TABLE ai_provider_configs (
     encrypted_credential TEXT NOT NULL,
     is_default           BOOLEAN NOT NULL DEFAULT false,
     status               TEXT NOT NULL DEFAULT 'active',
+    default_model        TEXT,
     metadata             JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),

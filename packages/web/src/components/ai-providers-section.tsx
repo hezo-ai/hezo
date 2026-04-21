@@ -3,11 +3,13 @@ import { Check, ExternalLink, Key, Loader2, ShieldCheck, Trash2, X } from 'lucid
 import { useState } from 'react';
 import {
 	type AiProviderConfig,
+	useAiProviderModels,
 	useAiProviders,
 	useCreateAiProvider,
 	useDeleteAiProvider,
 	useSetDefaultAiProvider,
 	useStartAiProviderOAuth,
+	useUpdateAiProviderConfig,
 	useVerifyAiProvider,
 } from '../hooks/use-ai-providers';
 import { Badge } from './ui/badge';
@@ -196,7 +198,7 @@ function ConfigRow({
 }: ConfigRowProps) {
 	return (
 		<div className="mt-2 border-t border-border pt-2">
-			<div className="flex items-center gap-2">
+			<div className="flex items-center gap-2 flex-wrap">
 				<Badge color="neutral">
 					{config.auth_method === AiAuthMethod.OAuthToken ? 'OAuth' : 'API Key'}
 				</Badge>
@@ -231,6 +233,7 @@ function ConfigRow({
 					<Trash2 className="w-3 h-3" /> Remove
 				</Button>
 			</div>
+			<DefaultModelSelector config={config} />
 			{verify && (
 				<div
 					className={`mt-2 flex items-center gap-1.5 text-[13px] ${verify.valid ? 'text-accent-green-text' : 'text-accent-red'}`}
@@ -245,6 +248,50 @@ function ConfigRow({
 						</>
 					)}
 				</div>
+			)}
+		</div>
+	);
+}
+
+function DefaultModelSelector({ config }: { config: AiProviderConfig }) {
+	const [open, setOpen] = useState(false);
+	const models = useAiProviderModels(config.id, { enabled: open });
+	const update = useUpdateAiProviderConfig(config.id);
+
+	async function handleChange(value: string) {
+		await update.mutateAsync({ default_model: value || null });
+	}
+
+	return (
+		<div className="mt-2 flex items-center gap-2 text-[13px]">
+			<label className="flex items-center gap-2">
+				<span className="text-text-muted text-xs">Default model</span>
+				<select
+					aria-label={`Default model for ${config.label}`}
+					value={config.default_model ?? ''}
+					onFocus={() => setOpen(true)}
+					onChange={(e) => handleChange(e.target.value)}
+					className="rounded-md border border-border bg-bg-subtle px-2 py-1 text-xs text-text outline-none focus:border-border-hover"
+					disabled={update.isPending}
+				>
+					<option value="">Use CLI default</option>
+					{config.default_model && !models.data?.some((m) => m.id === config.default_model) && (
+						<option value={config.default_model}>{config.default_model}</option>
+					)}
+					{models.data?.map((m) => (
+						<option key={m.id} value={m.id}>
+							{m.label}
+						</option>
+					))}
+				</select>
+			</label>
+			{(models.isFetching || update.isPending) && (
+				<Loader2 className="w-3 h-3 animate-spin text-text-subtle" />
+			)}
+			{models.error && (
+				<span className="text-accent-red text-xs">
+					{(models.error as { message?: string }).message || 'Failed to load models'}
+				</span>
 			)}
 		</div>
 	);

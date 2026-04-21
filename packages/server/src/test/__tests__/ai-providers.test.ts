@@ -258,6 +258,163 @@ describe('AI providers key validation against provider API', () => {
 	});
 });
 
+describe('AI providers default model', () => {
+	beforeAll(async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+	});
+
+	it('returns default_model null on list when not set', async () => {
+		const create = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'anthropic',
+				api_key: 'sk-ant-default-model',
+				label: 'anthropic-dm',
+			}),
+		});
+		expect(create.status).toBe(201);
+
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const body = await list.json();
+		const row = (body.data as Array<{ provider: string; default_model: string | null }>).find(
+			(r) => r.provider === 'anthropic',
+		);
+		expect(row?.default_model).toBeNull();
+	});
+
+	it('PATCH /ai-providers/:configId sets and clears default_model', async () => {
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const listBody = await list.json();
+		const configId = (listBody.data as Array<{ id: string; provider: string }>).find(
+			(r) => r.provider === 'anthropic',
+		)?.id;
+		expect(configId).toBeDefined();
+
+		const patch = await app.request(`/api/ai-providers/${configId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ default_model: 'claude-opus-4-7' }),
+		});
+		expect(patch.status).toBe(200);
+		expect((await patch.json()).data.default_model).toBe('claude-opus-4-7');
+
+		const list2 = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const row2 = ((await list2.json()).data as Array<{ id: string; default_model: string }>).find(
+			(r) => r.id === configId,
+		);
+		expect(row2?.default_model).toBe('claude-opus-4-7');
+
+		const clear = await app.request(`/api/ai-providers/${configId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ default_model: null }),
+		});
+		expect(clear.status).toBe(200);
+		expect((await clear.json()).data.default_model).toBeNull();
+	});
+
+	it('PATCH rejects non-superuser', async () => {
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const configId = ((await list.json()).data as Array<{ id: string }>)[0].id;
+
+		const res = await app.request(`/api/ai-providers/${configId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(nonSuperuserToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ default_model: 'anything' }),
+		});
+		expect(res.status).toBe(403);
+	});
+
+	it('PATCH returns 404 for unknown config', async () => {
+		const res = await app.request('/api/ai-providers/00000000-0000-0000-0000-000000000000', {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ default_model: 'foo' }),
+		});
+		expect(res.status).toBe(404);
+	});
+});
+
+describe('AI providers models endpoint', () => {
+	let configId: string;
+
+	beforeAll(async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+		await db.query('DELETE FROM ai_provider_configs');
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openai',
+				api_key: 'sk-openai-models-list',
+				label: 'openai-models',
+			}),
+		});
+		configId = (await res.json()).data.id;
+	});
+
+	it('returns normalized models for openai', async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				data: [
+					{ id: 'gpt-5' },
+					{ id: 'gpt-5-mini' },
+					{ id: 'text-embedding-3-small' },
+					{ id: 'whisper-1' },
+				],
+			}),
+		}) as unknown as typeof fetch;
+
+		const res = await app.request(`/api/ai-providers/${configId}/models`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		const ids = (body.data as Array<{ id: string }>).map((m) => m.id);
+		expect(ids).toContain('gpt-5');
+		expect(ids).toContain('gpt-5-mini');
+		expect(ids).not.toContain('text-embedding-3-small');
+		expect(ids).not.toContain('whisper-1');
+	});
+
+	it('rejects non-superusers', async () => {
+		const res = await app.request(`/api/ai-providers/${configId}/models`, {
+			headers: authHeader(nonSuperuserToken),
+		});
+		expect(res.status).toBe(403);
+	});
+
+	it('returns 404 for unknown configId', async () => {
+		const res = await app.request('/api/ai-providers/00000000-0000-0000-0000-000000000000/models', {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(404);
+	});
+
+	it('surfaces provider errors', async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 401,
+		}) as unknown as typeof fetch;
+
+		const res = await app.request(`/api/ai-providers/${configId}/models`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(401);
+	});
+
+	it('surfaces unreachable provider', async () => {
+		globalThis.fetch = vi.fn().mockRejectedValue(new Error('net')) as unknown as typeof fetch;
+
+		const res = await app.request(`/api/ai-providers/${configId}/models`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(503);
+	});
+});
+
 describe('AI providers default-per-provider invariant', () => {
 	it('enforces exactly one default per provider after setting a new default', async () => {
 		await db.query('DELETE FROM ai_provider_configs');

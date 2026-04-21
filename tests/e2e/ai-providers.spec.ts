@@ -201,4 +201,32 @@ test.describe('AI Providers API (instance-scoped)', () => {
 
 		await clearAiProviders(page, token);
 	});
+
+	test('PATCH default_model round-trip', async ({ page }) => {
+		const token = await getToken(page);
+		const headers = { Authorization: `Bearer ${token}` };
+
+		await clearAiProviders(page, token);
+
+		const create = await page.request.post('/api/ai-providers', {
+			headers: { ...headers, 'Content-Type': 'application/json' },
+			data: { provider: 'anthropic', api_key: 'sk-ant-dm-e2e', label: 'dm-e2e' },
+		});
+		expect(create.status()).toBe(201);
+		const configId = (await create.json()).data.id;
+
+		const patch = await page.request.patch(`/api/ai-providers/${configId}`, {
+			headers: { ...headers, 'Content-Type': 'application/json' },
+			data: { default_model: 'claude-opus-4-7' },
+		});
+		expect(patch.status()).toBe(200);
+
+		const list = await page.request.get('/api/ai-providers', { headers });
+		const row = (
+			(await list.json()).data as Array<{ id: string; default_model: string | null }>
+		).find((r) => r.id === configId);
+		expect(row?.default_model).toBe('claude-opus-4-7');
+
+		await clearAiProviders(page, token);
+	});
 });

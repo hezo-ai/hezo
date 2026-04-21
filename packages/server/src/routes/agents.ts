@@ -1,5 +1,7 @@
 import {
 	AgentAdminStatus,
+	type AiProvider,
+	ALL_AI_PROVIDERS,
 	ApprovalStatus,
 	ApprovalType,
 	AuthType,
@@ -38,7 +40,7 @@ const AGENT_BASE_COLUMNS = `m.id, m.company_id, m.display_name, m.created_at,
 	ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
 	ma.touches_code,
 	ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
-	ma.mcp_servers, ma.updated_at`;
+	ma.mcp_servers, ma.model_override_provider, ma.model_override_model, ma.updated_at`;
 
 const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.company_id, hr.wakeup_id, hr.issue_id,
 	hr.status, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
@@ -487,10 +489,60 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		monthly_budget_cents?: number;
 		touches_code?: boolean;
 		mcp_servers?: unknown[];
+		model_override_provider?: string | null;
+		model_override_model?: string | null;
 	}>();
 
 	if (body.default_effort !== undefined && !isAgentEffort(body.default_effort)) {
 		return err(c, 'INVALID_REQUEST', `Invalid default_effort: ${body.default_effort}`, 400);
+	}
+
+	const providerSet = Object.hasOwn(body, 'model_override_provider');
+	const modelSet = Object.hasOwn(body, 'model_override_model');
+	let overrideProvider: AiProvider | null | undefined;
+	let overrideModel: string | null | undefined;
+
+	if (providerSet) {
+		const raw = body.model_override_provider;
+		if (raw === null || raw === '' || raw === undefined) {
+			overrideProvider = null;
+		} else if (typeof raw === 'string' && (ALL_AI_PROVIDERS as readonly string[]).includes(raw)) {
+			overrideProvider = raw as AiProvider;
+		} else {
+			return err(c, 'INVALID_REQUEST', `Invalid model_override_provider: ${String(raw)}`, 400);
+		}
+	}
+
+	if (modelSet) {
+		const raw = body.model_override_model;
+		if (raw === null || raw === '' || raw === undefined) {
+			overrideModel = null;
+		} else if (typeof raw === 'string') {
+			overrideModel = raw.trim() || null;
+		} else {
+			return err(c, 'INVALID_REQUEST', 'Invalid model_override_model', 400);
+		}
+	}
+
+	// Clearing the provider must also clear the model, matching the DB CHECK constraint.
+	if (providerSet && overrideProvider === null) {
+		overrideModel = null;
+	}
+	// Setting a model without a provider in the same request is only valid if a
+	// provider is already stored; otherwise the CHECK constraint would fail.
+	if (overrideModel && overrideProvider === undefined) {
+		const existingProvider = await db.query<{ model_override_provider: AiProvider | null }>(
+			'SELECT model_override_provider FROM member_agents WHERE id = $1',
+			[agentId],
+		);
+		if (!existingProvider.rows[0]?.model_override_provider) {
+			return err(
+				c,
+				'INVALID_REQUEST',
+				'model_override_model requires model_override_provider',
+				400,
+			);
+		}
 	}
 
 	const {
@@ -507,6 +559,8 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		{ column: 'monthly_budget_cents', value: body.monthly_budget_cents },
 		{ column: 'touches_code', value: body.touches_code },
 		{ column: 'mcp_servers', value: body.mcp_servers, cast: 'jsonb' },
+		{ column: 'model_override_provider', value: overrideProvider, cast: 'ai_provider' },
+		{ column: 'model_override_model', value: overrideModel },
 	]);
 	const idx = nextIdx;
 
