@@ -726,6 +726,7 @@ List issues. Supports filtering and pagination.
 Query params:
 - `?project_id=uuid` — filter by project
 - `?assignee_id=uuid` — filter by assignee (references members.id)
+- `?parent_issue_id=uuid` — filter to children of a specific parent issue (used by the sub-issues panel on the issue detail page)
 - `?status=open,in_progress` — comma-separated status filter
 - `?priority=urgent,high` — comma-separated priority filter
 - `?search=websocket` — full-text search on title + description

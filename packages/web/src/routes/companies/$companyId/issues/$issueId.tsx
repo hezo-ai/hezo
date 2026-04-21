@@ -20,6 +20,7 @@ import {
 	useDeleteIssue,
 	useIssue,
 	useIssueDependencies,
+	useIssues,
 	useRemoveDependency,
 	useUpdateIssue,
 } from '../../../../hooks/use-issues';
@@ -70,6 +71,11 @@ function IssueDetailPage() {
 	}, [issue?.identifier, issueId, companyId, navigate]);
 	const { data: comments } = useComments(companyId, issueId);
 	const { data: deps } = useIssueDependencies(companyId, issueId);
+	const { data: subIssues } = useIssues(
+		companyId,
+		issue?.id ? { parent_issue_id: issue.id } : undefined,
+		{ enabled: !!issue?.id },
+	);
 	const { data: agents } = useAgents(companyId);
 	const { data: lock } = useExecutionLock(companyId, issueId);
 	const updateIssue = useUpdateIssue(companyId, issueId);
@@ -83,6 +89,7 @@ function IssueDetailPage() {
 	const [commentEffort, setCommentEffort] = useState<'' | AgentEffort>('');
 	const [subIssueTitle, setSubIssueTitle] = useState('');
 	const [showSubForm, setShowSubForm] = useState(false);
+	const [subIssuesOpen, setSubIssuesOpen] = useState(false);
 	const [editingSummary, setEditingSummary] = useState(false);
 	const [summaryText, setSummaryText] = useState('');
 	const [editingRules, setEditingRules] = useState(false);
@@ -185,10 +192,94 @@ function IssueDetailPage() {
 				)}
 
 				{issue.description && (
-					<div className="mb-5">
-						<MarkdownProse testId="issue-description">{issue.description}</MarkdownProse>
+					<div
+						className="mb-5 rounded-md border border-border bg-bg-elevated overflow-hidden"
+						data-testid="issue-description-card"
+					>
+						<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-muted">
+							<span className="text-xs font-medium text-text-muted">Description</span>
+						</div>
+						<div className="px-3 py-2.5">
+							<MarkdownProse testId="issue-description">{issue.description}</MarkdownProse>
+						</div>
 					</div>
 				)}
+
+				{/* Sub-issues */}
+				<div
+					className="mb-5 rounded-md border border-border overflow-hidden"
+					data-testid="sub-issues-card"
+				>
+					<div className="flex items-center px-3 py-2 bg-bg-muted">
+						<button
+							type="button"
+							onClick={() => setSubIssuesOpen((o) => !o)}
+							className="flex items-center gap-2 flex-1 text-left cursor-pointer"
+							data-testid="sub-issues-toggle"
+							aria-expanded={subIssuesOpen}
+						>
+							<ChevronDown
+								className={`w-3.5 h-3.5 text-text-subtle transition-transform ${
+									subIssuesOpen ? '' : '-rotate-90'
+								}`}
+							/>
+							<span className="text-xs font-medium text-text-muted">Sub-issues</span>
+							<span className="bg-bg-subtle px-[7px] py-px rounded-full text-[11px] text-text-muted">
+								{subIssues?.data.length ?? 0}
+							</span>
+						</button>
+						<button
+							type="button"
+							onClick={() => {
+								setSubIssuesOpen(true);
+								setShowSubForm((s) => !s);
+							}}
+							className="text-[11px] text-text-subtle hover:text-text flex items-center gap-1 cursor-pointer"
+							data-testid="sub-issues-add"
+						>
+							<Plus className="w-3 h-3" /> Add
+						</button>
+					</div>
+					{subIssuesOpen && (
+						<div
+							className="px-3 py-2.5 flex flex-col gap-1.5 border-t border-border"
+							data-testid="sub-issues-list"
+						>
+							{showSubForm && (
+								<form onSubmit={handleSubIssue} className="flex gap-2 mb-1">
+									<input
+										value={subIssueTitle}
+										onChange={(e) => setSubIssueTitle(e.target.value)}
+										placeholder="Sub-issue title"
+										className="flex-1 rounded-radius-md border border-border bg-bg px-3 py-1.5 text-[13px] text-text outline-none focus:border-border-hover"
+										data-testid="sub-issue-title-input"
+									/>
+									<Button type="submit" size="sm" disabled={!subIssueTitle.trim()}>
+										Create
+									</Button>
+								</form>
+							)}
+							{(subIssues?.data.length ?? 0) === 0 && !showSubForm && (
+								<span className="text-[13px] text-text-muted">No sub-issues.</span>
+							)}
+							{subIssues?.data.map((s) => (
+								<Link
+									key={s.id}
+									to="/companies/$companyId/issues/$issueId"
+									params={{ companyId, issueId: s.identifier.toLowerCase() }}
+									className="flex items-center gap-2 text-[13px] hover:bg-bg-subtle rounded px-2 py-1"
+									data-testid="sub-issue-item"
+								>
+									<Badge color={statusColors[s.status] as 'neutral'}>
+										{s.status.replace('_', ' ')}
+									</Badge>
+									<span className="font-mono text-xs text-text-muted">{s.identifier}</span>
+									<span className="truncate">{s.title}</span>
+								</Link>
+							))}
+						</div>
+					)}
+				</div>
 
 				{/* Blocked by */}
 				{(deps?.length || 0) > 0 && (
@@ -400,31 +491,6 @@ function IssueDetailPage() {
 							</Button>
 						</div>
 					</form>
-				</div>
-
-				{/* Sub-issues */}
-				<div className="border-t border-border pt-4 mt-4">
-					<div className="flex items-center justify-between mb-2">
-						<h3 className="text-xs font-medium uppercase tracking-wider text-text-muted">
-							Sub-issues
-						</h3>
-						<Button variant="secondary" size="sm" onClick={() => setShowSubForm(!showSubForm)}>
-							<Plus className="w-3 h-3" /> Add
-						</Button>
-					</div>
-					{showSubForm && (
-						<form onSubmit={handleSubIssue} className="flex gap-2 mb-3">
-							<input
-								value={subIssueTitle}
-								onChange={(e) => setSubIssueTitle(e.target.value)}
-								placeholder="Sub-issue title"
-								className="flex-1 rounded-radius-md border border-border bg-bg px-3 py-1.5 text-[13px] text-text outline-none focus:border-border-hover"
-							/>
-							<Button type="submit" size="sm" disabled={!subIssueTitle.trim()}>
-								Create
-							</Button>
-						</form>
-					)}
 				</div>
 			</div>
 

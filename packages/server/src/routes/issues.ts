@@ -72,6 +72,13 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
 		idx++;
 	}
 
+	const parentIssueId = c.req.query('parent_issue_id');
+	if (parentIssueId) {
+		conditions.push(`i.parent_issue_id = $${idx}`);
+		params.push(parentIssueId);
+		idx++;
+	}
+
 	const statusFilter = c.req.query('status');
 	if (statusFilter) {
 		const statuses = statusFilter.split(',').map((s) => s.trim());
