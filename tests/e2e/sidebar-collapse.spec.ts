@@ -15,7 +15,11 @@ test('sidebar can be collapsed and the state persists across reload', async ({ p
 	await expect(toggle).toBeVisible();
 	await expect(toggle).toHaveAccessibleName('Collapse sidebar');
 
-	await toggle.click();
+	const [uiStateResponse] = await Promise.all([
+		page.waitForResponse((r) => r.url().includes('/ui-state') && r.request().method() === 'PATCH'),
+		toggle.click(),
+	]);
+	expect(uiStateResponse.ok()).toBe(true);
 	await expect(toggle).toHaveAccessibleName('Expand sidebar', { timeout: 5000 });
 	await expect(page.getByText('Resources').first()).toBeHidden({ timeout: 5000 });
 

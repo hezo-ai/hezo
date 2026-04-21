@@ -513,13 +513,17 @@ Create a project. Container is auto-provisioned asynchronously. A planning issue
 agent — board users are redirected there so the CEO can draft the execution plan.
 Fails with 500 if no enabled CEO agent exists.
 
-Request: `name` and `description` are required. `docker_base_image` is optional and
-defaults to `hezo/agent-base:latest`.
+Request: `name` and `description` are required. `docker_base_image` and `initial_prd`
+are optional. `docker_base_image` defaults to `hezo/agent-base:latest`. When
+`initial_prd` is provided (markdown string), it is saved as the `initial-prd.md`
+project doc and the CEO's planning issue directs the Researcher and Product Lead to
+consult it as a starting point.
 ```json
 {
   "name": "Backend API",
   "description": "Authenticated HTTP API for the main app.",
-  "docker_base_image": "node:20"
+  "docker_base_image": "node:20",
+  "initial_prd": "# Product Requirements\n\n## Overview\n..."
 }
 ```
 
