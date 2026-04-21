@@ -226,6 +226,83 @@ describe('projects CRUD', () => {
 	});
 });
 
+describe('initial PRD upload', () => {
+	it('saves initial_prd as a project doc and references it in the planning issue', async () => {
+		const prdContent = '# My Product\n\n## Overview\nA tool for managing widgets.';
+		const res = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'PRD Upload Project',
+				description: VALID_DESCRIPTION,
+				initial_prd: prdContent,
+			}),
+		});
+		expect(res.status).toBe(201);
+		const project = (await res.json()).data;
+
+		const docResult = await db.query<{ filename: string; content: string }>(
+			'SELECT filename, content FROM project_docs WHERE project_id = $1 AND filename = $2',
+			[project.id, 'initial-prd.md'],
+		);
+		expect(docResult.rows.length).toBe(1);
+		expect(docResult.rows[0].content).toBe(prdContent);
+
+		const issueResult = await db.query<{ description: string }>(
+			'SELECT description FROM issues WHERE project_id = $1',
+			[project.id],
+		);
+		expect(issueResult.rows[0].description).toContain('initial-prd.md');
+		expect(issueResult.rows[0].description).toContain('Researcher');
+		expect(issueResult.rows[0].description).toContain('Product Lead');
+	});
+
+	it('does not create initial-prd.md when initial_prd is not provided', async () => {
+		const res = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'No PRD Project',
+				description: VALID_DESCRIPTION,
+			}),
+		});
+		expect(res.status).toBe(201);
+		const project = (await res.json()).data;
+
+		const docResult = await db.query(
+			'SELECT 1 FROM project_docs WHERE project_id = $1 AND filename = $2',
+			[project.id, 'initial-prd.md'],
+		);
+		expect(docResult.rows.length).toBe(0);
+
+		const issueResult = await db.query<{ description: string }>(
+			'SELECT description FROM issues WHERE project_id = $1',
+			[project.id],
+		);
+		expect(issueResult.rows[0].description).not.toContain('initial-prd.md');
+	});
+
+	it('ignores empty/whitespace-only initial_prd', async () => {
+		const res = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Empty PRD Project',
+				description: VALID_DESCRIPTION,
+				initial_prd: '   ',
+			}),
+		});
+		expect(res.status).toBe(201);
+		const project = (await res.json()).data;
+
+		const docResult = await db.query(
+			'SELECT 1 FROM project_docs WHERE project_id = $1 AND filename = $2',
+			[project.id, 'initial-prd.md'],
+		);
+		expect(docResult.rows.length).toBe(0);
+	});
+});
+
 describe('slug-based project access', () => {
 	it('gets a project by slug', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/projects`, {

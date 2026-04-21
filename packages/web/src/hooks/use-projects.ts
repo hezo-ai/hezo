@@ -49,7 +49,7 @@ export function useProject(companyId: string, projectId: string, options?: { ena
 
 export function useCreateProject(companyId: string) {
 	return useMutation({
-		mutationFn: (data: { name: string; description: string }) =>
+		mutationFn: (data: { name: string; description: string; initial_prd?: string }) =>
 			api.post<Project>(`/api/companies/${companyId}/projects`, data),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] }),

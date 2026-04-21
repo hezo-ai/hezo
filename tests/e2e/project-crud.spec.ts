@@ -97,6 +97,34 @@ test.describe('Project CRUD', () => {
 		);
 	});
 
+	test('creates a project with initial PRD and saves it as project doc', async ({ page }) => {
+		await authenticate(page);
+		const { company, token } = await createCompanyWithAgents(page);
+		const headers = { Authorization: `Bearer ${token}` };
+
+		const prdContent = '# Widget App\n\nA tool for managing widgets efficiently.';
+
+		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+			headers,
+			data: {
+				name: 'PRD Test Project',
+				description: 'Testing initial PRD upload.',
+				initial_prd: prdContent,
+			},
+		});
+		expect(projRes.ok()).toBe(true);
+		const project = ((await projRes.json()) as any).data;
+
+		const docRes = await page.request.get(
+			`/api/companies/${company.id}/projects/${project.id}/docs/initial-prd.md`,
+			{ headers },
+		);
+		expect(docRes.ok()).toBe(true);
+		const doc = ((await docRes.json()) as any).data;
+		expect(doc.content).toBe(prdContent);
+		expect(doc.filename).toBe('initial-prd.md');
+	});
+
 	test('create button is disabled without name', async ({ page }) => {
 		await authenticate(page);
 		const { company } = await createCompanyWithAgents(page);

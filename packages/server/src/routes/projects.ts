@@ -115,6 +115,7 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 		name: string;
 		description?: string;
 		docker_base_image?: string;
+		initial_prd?: string;
 	}>();
 
 	if (!body.name?.trim()) {
@@ -160,6 +161,7 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 
 	const projectName = body.name.trim();
 	const projectDescription = body.description.trim();
+	const initialPrd = body.initial_prd?.trim() || null;
 
 	await db.query('BEGIN');
 	let project: Record<string, unknown>;
@@ -179,12 +181,24 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 		);
 		project = projectResult.rows[0] as Record<string, unknown>;
 
+		if (initialPrd) {
+			await db.query(
+				`INSERT INTO project_docs (project_id, company_id, filename, content)
+				 VALUES ($1, $2, 'initial-prd.md', $3)`,
+				[project.id, companyId, initialPrd],
+			);
+		}
+
 		const numberResult = await db.query<{ number: number }>(
 			'SELECT next_issue_number($1) AS number',
 			[companyId],
 		);
 		const issueNumber = numberResult.rows[0].number;
 		const identifier = `${companyMeta.issue_prefix}-${issueNumber}`;
+
+		const initialPrdNote = initialPrd
+			? `\n\n> **Note:** The board has provided an initial requirements document saved as \`initial-prd.md\` in this project's docs. Direct the Researcher and Product Lead to consult this document as a starting point for research and the formal PRD.`
+			: '';
 
 		const issueBody = `## Draft the execution plan for this new project
 
@@ -194,7 +208,7 @@ A new project has just been created. Please read the description below carefully
 
 **Description**
 
-${projectDescription}
+${projectDescription}${initialPrdNote}
 
 ### Your task
 
