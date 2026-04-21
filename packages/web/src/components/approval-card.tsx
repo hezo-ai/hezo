@@ -185,6 +185,28 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 				</>
 			);
 		}
+		case ApprovalType.Strategy: {
+			const plan = p.plan as string | undefined;
+			return (
+				<>
+					<span>Proposing strategy</span>
+					{plan && <span className="block text-xs text-text-muted mt-1">{plan}</span>}
+				</>
+			);
+		}
+		case ApprovalType.DeployProduction: {
+			const target = (p.target as string) ?? (p.environment as string) ?? 'production';
+			return (
+				<>
+					<span>
+						Requesting deploy to <span className="font-medium">{target}</span>
+					</span>
+					{p.reason && (
+						<span className="block text-xs text-text-muted mt-1">{p.reason as string}</span>
+					)}
+				</>
+			);
+		}
 		default:
 			return <span>{approval.type.replace(/_/g, ' ')}</span>;
 	}
@@ -199,7 +221,7 @@ export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProp
 	const resolveApproval = useResolveApproval();
 
 	return (
-		<div className="p-4 border border-border rounded-radius-md">
+		<div className="p-4 border border-border rounded-radius-md" data-testid="approval-card">
 			<div className="flex items-center gap-2 mb-1.5 flex-wrap">
 				<Badge color={typeColors[approval.type] as 'gray'}>{approval.type.replace('_', ' ')}</Badge>
 				{showCompany && approval.company_name && (

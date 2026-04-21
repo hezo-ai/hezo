@@ -32,7 +32,8 @@ test.describe('Inbox / Approvals', () => {
 
 		// Verify approval card is visible with friendly message
 		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('strategy')).toBeVisible();
+		await expect(page.getByText('Proposing strategy')).toBeVisible();
+		await expect(page.getByText('Launch new product line')).toBeVisible();
 
 		// Verify approve/deny buttons
 		await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible();
@@ -126,11 +127,17 @@ test.describe('Inbox / Approvals', () => {
 		await waitForPageLoad(page);
 
 		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 5000 });
-		// Both approval types render friendly messages; verify badges and company names
-		await expect(page.getByText('strategy')).toBeVisible();
-		await expect(page.getByText('Requesting plan review')).toBeVisible();
-		await expect(page.getByText(first.company.name)).toBeVisible();
-		await expect(page.getByText(second.company.name)).toBeVisible();
+		// Both approval types render friendly messages scoped to their company card.
+		// Other tests can leave pending approvals in unrelated companies, so scope
+		// the assertions to the specific approval cards for the companies we created.
+		const firstCard = page
+			.locator('[data-testid="approval-card"]')
+			.filter({ hasText: first.company.name });
+		const secondCard = page
+			.locator('[data-testid="approval-card"]')
+			.filter({ hasText: second.company.name });
+		await expect(firstCard.getByText('Proposing strategy')).toBeVisible();
+		await expect(secondCard.getByText('Requesting plan review')).toBeVisible();
 	});
 
 	test('rail inbox icon navigates to global inbox', async ({ page }) => {
