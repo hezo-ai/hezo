@@ -125,6 +125,53 @@ test.describe('Issue Comments', () => {
 		await expect(author).toHaveText('Board');
 	});
 
+	test('effort dropdown marks the agent default and omits it from the submit body', async ({
+		page,
+	}) => {
+		await authenticate(page);
+		const { company, issue, agent } = await createProjectAndIssue(page);
+
+		const expectedDefault =
+			agent.slug === 'ceo'
+				? 'Max (ultrathink)'
+				: {
+						minimal: 'Minimal',
+						low: 'Low',
+						medium: 'Medium',
+						high: 'High',
+						max: 'Max (ultrathink)',
+					}[agent.default_effort as 'minimal' | 'low' | 'medium' | 'high' | 'max'];
+
+		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await waitForPageLoad(page);
+
+		const select = page.getByLabel('Reasoning effort for the agent run triggered by this comment');
+		await expect(select).toBeVisible({ timeout: 10000 });
+
+		const labels = await select.locator('option').allTextContents();
+		const withSuffix = labels.filter((l) => l.endsWith(' (default)'));
+		expect(withSuffix).toHaveLength(1);
+		expect(withSuffix[0]).toBe(`${expectedDefault} (default)`);
+		expect(labels).not.toContain('Default');
+
+		const postBodies: Array<Record<string, unknown>> = [];
+		page.on('request', (req) => {
+			if (
+				req.method() === 'POST' &&
+				/\/api\/companies\/[^/]+\/issues\/[^/]+\/comments$/.test(req.url())
+			) {
+				postBodies.push(req.postDataJSON());
+			}
+		});
+
+		await page.getByPlaceholder('Add a comment...').fill('default-effort test');
+		await page.getByRole('button', { name: 'Comment', exact: true }).click();
+		await expect(page.getByText('default-effort test')).toBeVisible({ timeout: 5000 });
+
+		expect(postBodies).toHaveLength(1);
+		expect(postBodies[0]).not.toHaveProperty('effort');
+	});
+
 	test('comment items render as bordered cards with a tinted header', async ({ page }) => {
 		await authenticate(page);
 		const { company, issue, headers } = await createProjectAndIssue(page);

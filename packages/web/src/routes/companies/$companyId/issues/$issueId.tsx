@@ -1,4 +1,4 @@
-import { AgentEffort, CEO_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { AgentEffort, CEO_AGENT_SLUG, DEFAULT_EFFORT, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -53,6 +53,14 @@ const priorityColors: Record<string, string> = {
 	low: 'neutral',
 };
 
+const EFFORT_LEVELS: { value: AgentEffort; label: string }[] = [
+	{ value: AgentEffort.Minimal, label: 'Minimal' },
+	{ value: AgentEffort.Low, label: 'Low' },
+	{ value: AgentEffort.Medium, label: 'Medium' },
+	{ value: AgentEffort.High, label: 'High' },
+	{ value: AgentEffort.Max, label: 'Max (ultrathink)' },
+];
+
 function IssueDetailPage() {
 	const { companyId, issueId } = Route.useParams();
 	const navigate = useNavigate();
@@ -85,8 +93,9 @@ function IssueDetailPage() {
 	const createSubIssue = useCreateSubIssue(companyId, issueId);
 	const removeDep = useRemoveDependency(companyId, issueId);
 	const [commentText, setCommentText] = useState('');
-	// Per-comment reasoning effort. Empty string = use the agent's default effort.
-	const [commentEffort, setCommentEffort] = useState<'' | AgentEffort>('');
+	// Per-comment reasoning effort. `null` = user hasn't touched the dropdown, so
+	// leave effort unset on submit and let the server resolve the agent default.
+	const [commentEffort, setCommentEffort] = useState<AgentEffort | null>(null);
 	const [subIssueTitle, setSubIssueTitle] = useState('');
 	const [showSubForm, setShowSubForm] = useState(false);
 	const [subIssuesOpen, setSubIssuesOpen] = useState(false);
@@ -109,6 +118,10 @@ function IssueDetailPage() {
 	}, [assigneeOpen]);
 
 	const assignedAgent = agents?.find((a) => a.id === issue?.assignee_id);
+	const effectiveDefaultEffort: AgentEffort =
+		assignedAgent?.slug === CEO_AGENT_SLUG
+			? AgentEffort.Max
+			: (assignedAgent?.default_effort ?? DEFAULT_EFFORT);
 	const isOperationsProject = issue?.project_slug === OPERATIONS_PROJECT_SLUG;
 	const assigneeOptions = agents
 		?.filter((a) => a.admin_status !== 'disabled')
@@ -125,7 +138,7 @@ function IssueDetailPage() {
 			...(commentEffort ? { effort: commentEffort } : {}),
 		});
 		setCommentText('');
-		setCommentEffort('');
+		setCommentEffort(null);
 	}
 
 	async function handleSubIssue(e: React.FormEvent) {
@@ -468,17 +481,17 @@ function IssueDetailPage() {
 							<label className="flex items-center gap-2 text-[11px] text-text-muted">
 								<span>Effort</span>
 								<select
-									value={commentEffort}
-									onChange={(e) => setCommentEffort(e.target.value as '' | AgentEffort)}
+									value={commentEffort ?? effectiveDefaultEffort}
+									onChange={(e) => setCommentEffort(e.target.value as AgentEffort)}
 									className="bg-background border border-border rounded-radius-md px-2 py-1 text-[11px]"
 									aria-label="Reasoning effort for the agent run triggered by this comment"
 								>
-									<option value="">Default</option>
-									<option value={AgentEffort.Minimal}>Minimal</option>
-									<option value={AgentEffort.Low}>Low</option>
-									<option value={AgentEffort.Medium}>Medium</option>
-									<option value={AgentEffort.High}>High</option>
-									<option value={AgentEffort.Max}>Max (ultrathink)</option>
+									{EFFORT_LEVELS.map(({ value, label }) => (
+										<option key={value} value={value}>
+											{label}
+											{value === effectiveDefaultEffort ? ' (default)' : ''}
+										</option>
+									))}
 								</select>
 							</label>
 							<Button
