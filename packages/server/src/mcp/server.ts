@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Context } from 'hono';
 import type { AuthInfo, Env } from '../lib/types';
 import { verifyToken } from '../middleware/auth';
-import { registerTools, type ToolDef } from './tools';
+import { authContext, registerTools, type ToolDef } from './tools';
 
 let mcpServer: McpServer | null = null;
 let toolDefs: ToolDef[] = [];
@@ -62,11 +62,7 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 		if (body.method === 'tools/list') {
 			result = await client.listTools();
 		} else if (body.method === 'tools/call') {
-			// Inject auth into tool call arguments so tool handlers can enforce authorization
-			if (body.params?.arguments) {
-				body.params.arguments.__auth = auth;
-			}
-			result = await client.callTool(body.params);
+			result = await authContext.run(auth, () => client.callTool(body.params));
 		} else if (body.method === 'initialize') {
 			// Already initialized via connect, return server info
 			result = {

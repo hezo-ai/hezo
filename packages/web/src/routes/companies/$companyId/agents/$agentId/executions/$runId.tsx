@@ -1,18 +1,11 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { LogViewer } from '../../../../../../components/log-viewer';
 import { Badge } from '../../../../../../components/ui/badge';
+import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
 import { useHeartbeatRun } from '../../../../../../hooks/use-heartbeat-runs';
-
-function formatDuration(startedAt: string, finishedAt: string | null): string {
-	if (!finishedAt) return 'In progress...';
-	const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
-	if (ms < 1000) return `${ms}ms`;
-	const seconds = Math.floor(ms / 1000);
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-	return `${minutes}m ${remainingSeconds}s`;
-}
+import { useRunLogs } from '../../../../../../hooks/use-run-logs';
 
 function statusColor(status: string): string {
 	switch (status) {
@@ -34,6 +27,18 @@ function ExecutionDetailPage() {
 	const { companyId, agentId, runId } = Route.useParams();
 	const { data: run, isLoading } = useHeartbeatRun(companyId, agentId, runId);
 
+	const isActive = run?.status === 'running' || run?.status === 'queued';
+	const { lines } = useRunLogs(run?.project_id ?? null, run?.id ?? null, run?.log_text, isActive);
+
+	const [invocationExpanded, setInvocationExpanded] = useState(false);
+
+	const displayedCommand = useMemo(
+		() => run?.invocation_command ?? null,
+		[run?.invocation_command],
+	);
+
+	const elapsed = useElapsedDuration(run?.started_at ?? '', run?.finished_at ?? null);
+
 	if (isLoading) return <div className="text-text-muted text-sm">Loading...</div>;
 	if (!run) return <div className="text-text-muted text-sm">Run not found.</div>;
 
@@ -52,39 +57,24 @@ function ExecutionDetailPage() {
 				<Badge color={statusColor(run.status) as 'green'}>{run.status}</Badge>
 			</div>
 
-			{/* Metadata grid */}
 			<div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
 				<div className="rounded-lg border border-border-subtle bg-bg p-3">
 					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Duration</div>
-					<div className="text-sm font-medium">
-						{formatDuration(run.started_at, run.finished_at)}
-					</div>
+					<div className="text-sm font-medium">{elapsed}</div>
 				</div>
 
 				<div className="rounded-lg border border-border-subtle bg-bg p-3">
-					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Started</div>
-					<div className="text-sm">{new Date(run.started_at).toLocaleString()}</div>
+					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">When</div>
+					<div className="text-sm">
+						{new Date(run.started_at).toLocaleString()}
+						{run.finished_at && (
+							<>
+								<span className="text-text-subtle"> → </span>
+								{new Date(run.finished_at).toLocaleString()}
+							</>
+						)}
+					</div>
 				</div>
-
-				{run.finished_at && (
-					<div className="rounded-lg border border-border-subtle bg-bg p-3">
-						<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">
-							Finished
-						</div>
-						<div className="text-sm">{new Date(run.finished_at).toLocaleString()}</div>
-					</div>
-				)}
-
-				{run.exit_code !== null && (
-					<div className="rounded-lg border border-border-subtle bg-bg p-3">
-						<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">
-							Exit Code
-						</div>
-						<div className={`text-sm font-mono ${run.exit_code !== 0 ? 'text-accent-red' : ''}`}>
-							{run.exit_code}
-						</div>
-					</div>
-				)}
 
 				<div className="rounded-lg border border-border-subtle bg-bg p-3">
 					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Tokens</div>
@@ -101,15 +91,56 @@ function ExecutionDetailPage() {
 				)}
 			</div>
 
-			{/* Issue link */}
-			{run.issue_identifier && (
-				<div className="mb-4 text-xs text-text-muted">
-					Issue: <span className="font-mono text-text">{run.issue_identifier}</span>
-					{run.issue_title && <span className="ml-1">{run.issue_title}</span>}
+			{run.issue_identifier &&
+				(run.issue_id ? (
+					<Link
+						to="/companies/$companyId/issues/$issueId"
+						params={{ companyId, issueId: run.issue_identifier.toLowerCase() }}
+						className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted hover:text-text"
+					>
+						<span>Issue:</span>
+						<span className="font-mono text-text">{run.issue_identifier}</span>
+						{run.issue_title && <span>{run.issue_title}</span>}
+					</Link>
+				) : (
+					<div className="mb-4 text-xs text-text-muted">
+						Issue: <span className="font-mono text-text">{run.issue_identifier}</span>
+						{run.issue_title && <span className="ml-1">{run.issue_title}</span>}
+					</div>
+				))}
+
+			{displayedCommand && (
+				<div className="mb-3">
+					<button
+						type="button"
+						onClick={() => setInvocationExpanded(!invocationExpanded)}
+						className="flex items-center gap-1.5 text-[11px] text-text-subtle uppercase tracking-wider hover:text-text-muted mb-1"
+					>
+						{invocationExpanded ? (
+							<ChevronDown className="w-3 h-3" />
+						) : (
+							<ChevronRight className="w-3 h-3" />
+						)}
+						Invocation
+					</button>
+					{invocationExpanded && (
+						<>
+							<pre
+								data-testid="run-invocation-body"
+								className="text-xs font-mono bg-bg-muted rounded-lg p-3 overflow-x-auto whitespace-pre-wrap text-text-muted"
+							>
+								{displayedCommand}
+							</pre>
+							{run.working_dir && (
+								<div className="mt-1 text-[11px] text-text-subtle">
+									cwd: <span className="font-mono">{run.working_dir}</span>
+								</div>
+							)}
+						</>
+					)}
 				</div>
 			)}
 
-			{/* Error */}
 			{run.error && (
 				<div className="mb-4">
 					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Error</div>
@@ -119,25 +150,15 @@ function ExecutionDetailPage() {
 				</div>
 			)}
 
-			{/* Stdout */}
-			{run.stdout_excerpt && (
-				<div className="mb-4">
-					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Stdout</div>
-					<pre className="text-xs font-mono bg-bg-muted rounded-lg p-3 max-h-96 overflow-auto whitespace-pre-wrap text-text-muted">
-						{run.stdout_excerpt}
-					</pre>
-				</div>
-			)}
-
-			{/* Stderr */}
-			{run.stderr_excerpt && (
-				<div className="mb-4">
-					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Stderr</div>
-					<pre className="text-xs font-mono bg-accent-red-bg/30 rounded-lg p-3 max-h-96 overflow-auto whitespace-pre-wrap text-accent-red-text">
-						{run.stderr_excerpt}
-					</pre>
-				</div>
-			)}
+			<div className="mb-4">
+				<LogViewer
+					lines={lines}
+					emptyState={isActive ? 'Waiting for log output...' : 'No output captured.'}
+					liveLabel={isActive ? <span className="text-accent-yellow">(live)</span> : null}
+					heightClassName="max-h-[60vh]"
+					testId="run-log"
+				/>
+			</div>
 		</div>
 	);
 }

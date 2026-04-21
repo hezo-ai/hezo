@@ -2,26 +2,46 @@ import { expect, test } from '@playwright/test';
 import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Project CRUD', () => {
-	test('creates a project via dialog', async ({ page }) => {
+	test('creates a project via dialog and opens a CEO planning ticket', async ({ page }) => {
 		await authenticate(page);
 		const { company } = await createCompanyWithAgents(page);
 
 		await page.goto(`/companies/${company.slug}/projects`);
 		await waitForPageLoad(page);
 
-		// Click "New project" button
-		await page.getByRole('button', { name: 'New project' }).click();
+		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
 
-		// Fill in the dialog
 		await page.getByLabel('Name').fill('Marketing Campaign');
-		await page.getByLabel('Goal').fill('Plan Q3 marketing initiatives');
+		await page
+			.getByLabel('Description')
+			.fill('Q3 brand push aimed at existing users to drive upsells.');
 
-		// Submit
 		await page.getByRole('button', { name: 'Create' }).click();
 
-		// Verify project appears in the list
-		await expect(page.getByText('Marketing Campaign')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('Plan Q3 marketing initiatives')).toBeVisible();
+		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/issues/[a-z0-9-]+$`), {
+			timeout: 5000,
+		});
+		await expect(
+			page.getByRole('main').getByText('Draft execution plan for "Marketing Campaign"'),
+		).toBeVisible({ timeout: 5000 });
+
+		const description = page.getByTestId('issue-description');
+		await expect(description).toBeVisible({ timeout: 5000 });
+		const paragraphMarginBottom = await description
+			.locator('p')
+			.first()
+			.evaluate((el) => Number.parseFloat(getComputedStyle(el).marginBottom));
+		expect(paragraphMarginBottom).toBeGreaterThan(0);
+		const headingFontWeight = await description
+			.locator('h2')
+			.first()
+			.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontWeight));
+		expect(headingFontWeight).toBeGreaterThanOrEqual(600);
+		const listStyle = await description
+			.locator('ol')
+			.first()
+			.evaluate((el) => getComputedStyle(el).listStyleType);
+		expect(listStyle).not.toBe('none');
 	});
 
 	test('project list shows default Operations project', async ({ page }) => {
@@ -40,19 +60,17 @@ test.describe('Project CRUD', () => {
 		const headers = { Authorization: `Bearer ${token}` };
 
 		// Create a project via API
-		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		await page.request.post(`/api/companies/${company.id}/projects`, {
 			headers,
-			data: { name: 'Count Test', goal: 'Testing counts' },
+			data: { name: 'Count Test', description: 'Count test project.' },
 		});
-		const project = ((await projRes.json()) as any).data;
 
 		await page.goto(`/companies/${company.slug}/projects`);
 		await waitForPageLoad(page);
 
-		// Verify the project card shows counts
-		const card = page.locator('a', { hasText: 'Count Test' });
+		const card = page.getByRole('main').locator('a', { hasText: 'Count Test' });
 		await expect(card).toBeVisible({ timeout: 5000 });
-		await expect(card.getByText('0 issues')).toBeVisible();
+		await expect(card.getByText('1 issues')).toBeVisible();
 		await expect(card.getByText('0 repos')).toBeVisible();
 	});
 
@@ -63,15 +81,14 @@ test.describe('Project CRUD', () => {
 
 		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 			headers,
-			data: { name: 'Linkable Project' },
+			data: { name: 'Linkable Project', description: 'Linkable project description.' },
 		});
 		const project = ((await projRes.json()) as any).data;
 
 		await page.goto(`/companies/${company.slug}/projects`);
 		await waitForPageLoad(page);
 
-		// Click on the project card
-		await page.getByText('Linkable Project').click();
+		await page.getByRole('main').getByRole('heading', { name: 'Linkable Project' }).click();
 
 		// Should navigate to project detail page
 		await expect(page).toHaveURL(
@@ -87,14 +104,18 @@ test.describe('Project CRUD', () => {
 		await page.goto(`/companies/${company.slug}/projects`);
 		await waitForPageLoad(page);
 
-		await page.getByRole('button', { name: 'New project' }).click();
+		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
 
-		// Create button should be disabled when name is empty
+		// Create button should be disabled when name or description is empty
 		const createBtn = page.getByRole('button', { name: 'Create' });
 		await expect(createBtn).toBeDisabled();
 
-		// Fill name — now it should be enabled
+		// Fill name alone — still disabled because description is required
 		await page.getByLabel('Name').fill('My Project');
+		await expect(createBtn).toBeDisabled();
+
+		// Fill description — now it should be enabled
+		await page.getByLabel('Description').fill('A short project description.');
 		await expect(createBtn).toBeEnabled();
 	});
 });

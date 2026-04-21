@@ -1,11 +1,15 @@
-import { AuthType, CommentContentType, WakeupSource } from '@hezo/shared';
+import { AuthType, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { parseEffortFromCommentBody } from '../services/effort';
 import { createWakeup } from '../services/wakeup';
+
+const log = logger.child('routes');
 
 export const commentsRoutes = new Hono<Env>();
 
@@ -15,21 +19,14 @@ commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) =
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const includeToolCalls = c.req.query('include_tool_calls') === 'true';
-
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
 
 	const result = await db.query(
 		`SELECT ic.id, ic.issue_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
             m.member_type AS author_type,
-            COALESCE(ma.title, m.display_name) AS author_name,
+            COALESCE(ma.title, m.display_name, 'Board') AS author_name,
             ic.author_member_id
      FROM issue_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id
@@ -62,7 +59,8 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const auth = c.get('auth');
 
 	const issueCheck = await db.query<{ id: string; assignee_id: string | null }>(
@@ -124,7 +122,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 					issue_id: issueId,
 					comment_id: result.rows[0].id,
 					...(commentEffort ? { effort: commentEffort } : {}),
-				}).catch((e) => console.error('Failed to create mention wakeup:', e));
+				}).catch((e) => log.error('Failed to create mention wakeup:', e));
 			}
 		}
 	}
@@ -139,14 +137,14 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 					issue_id: issueId,
 					comment_id: result.rows[0].id,
 					...(commentEffort ? { effort: commentEffort } : {}),
-				}).catch((e) => console.error('Failed to create comment wakeup:', e));
+				}).catch((e) => log.error('Failed to create comment wakeup:', e));
 			}
 		}
 	}
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'issue_comments',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
@@ -162,17 +160,9 @@ commentsRoutes.post(
 
 		const db = c.get('db');
 		const { companyId } = access;
-		const issueId = c.req.param('issueId');
+		const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+		if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 		const commentId = c.req.param('commentId');
-
-		// Verify issue belongs to company
-		const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-			issueId,
-			companyId,
-		]);
-		if (issueCheck.rows.length === 0) {
-			return err(c, 'NOT_FOUND', 'Issue not found', 404);
-		}
 
 		const body = await c.req.json<{ chosen_id: string }>();
 		if (!body.chosen_id) {
@@ -225,13 +215,13 @@ commentsRoutes.post(
 				createWakeup(db, assigneeId, companyId, WakeupSource.OptionChosen, {
 					issue_id: existing.rows[0].issue_id,
 					chosen_id: body.chosen_id,
-				}).catch((e) => console.error('Failed to create option_chosen wakeup:', e));
+				}).catch((e) => log.error('Failed to create option_chosen wakeup:', e));
 			}
 		}
 
 		broadcastChange(
 			c,
-			`company:${companyId}`,
+			wsRoom.company(companyId),
 			'issue_comments',
 			'UPDATE',
 			result.rows[0] as Record<string, unknown>,

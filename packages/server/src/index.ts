@@ -1,12 +1,17 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType } from '@hezo/shared';
+import { AuthType, DEFAULT_WEB_PORT } from '@hezo/shared';
 import { app } from './app';
 import { parseArgs } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
+import { logger } from './logger';
 import { verifyToken } from './middleware/auth';
 import { ContainerLogStreamer } from './services/container-logs';
+import type { LogStreamBroker } from './services/log-stream-broker';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
+import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
 import { startup } from './startup';
+
+const log = logger.child('server');
 
 interface WsConnectionData extends WsData {
 	_token?: string;
@@ -21,6 +26,7 @@ let wsManager: WebSocketManager | null = null;
 let dbRef: PGlite | null = null;
 let mkmRef: MasterKeyManager | null = null;
 let dockerRef: import('./services/docker').DockerClient | null = null;
+let logsRef: LogStreamBroker | null = null;
 const containerLogStreamer = new ContainerLogStreamer();
 
 async function validateToken(token: string): Promise<WsData['auth'] | null> {
@@ -51,15 +57,16 @@ startup(config)
 		dbRef = result.db;
 		mkmRef = result.masterKeyManager;
 		dockerRef = result.docker;
+		logsRef = result.logs;
 		const url = `http://localhost:${result.port}`;
-		console.log(`Hezo server running at ${url} [${result.masterKeyState}]`);
-		if (!config.noOpen) {
-			Bun.spawn(['open', 'http://localhost:5173']);
+		log.info(`Hezo server running at ${url} [${result.masterKeyState}]`);
+		if (config.open) {
+			Bun.spawn(['open', `http://localhost:${DEFAULT_WEB_PORT}`]);
 		}
 	})
 	.catch((err) => {
-		console.error('Startup failed, serving minimal app:', err);
-		console.log(`Hezo server (minimal) starting on port ${config.port}...`);
+		log.error('Startup failed, serving minimal app:', err);
+		log.info(`Hezo server (minimal) starting on port ${config.port}...`);
 	});
 
 export default {
@@ -106,7 +113,7 @@ export default {
 					if (logsMatch) {
 						wsManager.unsubscribe(ws as unknown as WsSocket, room);
 						if (wsManager.getRoomSize(room) === 0) {
-							containerLogStreamer.unsubscribe(logsMatch[1]);
+							containerLogStreamer.unsubscribe(logsMatch[1], logsRef ?? undefined);
 						}
 					}
 				}
@@ -118,41 +125,21 @@ export default {
 			try {
 				const data = JSON.parse(typeof msg === 'string' ? msg : msg.toString());
 				if (data.action === 'subscribe' && typeof data.room === 'string') {
-					const companyMatch = data.room.match(/^company:(.+)$/);
-					if (companyMatch) {
-						const allowed = await canAccessCompany(ws.data.auth, companyMatch[1]);
-						if (!allowed) return;
-						wsManager.subscribe(ws as unknown as WsSocket, data.room);
-						return;
-					}
-
-					const logsMatch = data.room.match(/^container-logs:(.+)$/);
-					if (logsMatch && dbRef && dockerRef) {
-						const projectId = logsMatch[1];
-						const project = await dbRef.query<{
-							container_id: string | null;
-							company_id: string;
-							container_status: string | null;
-						}>('SELECT container_id, company_id, container_status FROM projects WHERE id = $1', [
-							projectId,
-						]);
-						if (project.rows.length === 0) return;
-						const row = project.rows[0];
-						const allowed = await canAccessCompany(ws.data.auth, row.company_id);
-						if (!allowed) return;
-						if (!row.container_id || row.container_status !== 'running') return;
-
-						wsManager.subscribe(ws as unknown as WsSocket, data.room);
-						containerLogStreamer.subscribe(projectId, row.container_id, wsManager, dockerRef);
-						return;
-					}
+					await handleWsSubscribe(ws as unknown as WsSocket, data.room, {
+						db: dbRef,
+						wsManager,
+						docker: dockerRef,
+						containerLogStreamer,
+						logs: logsRef,
+						canAccessCompany,
+						sendToSocket: (_s, payload) => ws.send(JSON.stringify(payload)),
+					});
 				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {
-					wsManager.unsubscribe(ws as unknown as WsSocket, data.room);
-
-					const logsMatch = data.room.match(/^container-logs:(.+)$/);
-					if (logsMatch && wsManager.getRoomSize(data.room) === 0) {
-						containerLogStreamer.unsubscribe(logsMatch[1]);
-					}
+					handleWsUnsubscribe(ws as unknown as WsSocket, data.room, {
+						wsManager,
+						containerLogStreamer,
+						logs: logsRef,
+					});
 				}
 			} catch {
 				// ignore malformed messages

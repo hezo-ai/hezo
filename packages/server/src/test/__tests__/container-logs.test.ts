@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContainerLogStreamer } from '../../services/container-logs';
 import type { DockerClient } from '../../services/docker';
-import type { WebSocketManager } from '../../services/ws';
+import { LogStreamBroker } from '../../services/log-stream-broker';
+import { WebSocketManager } from '../../services/ws';
 
 const mockDocker = {
 	containerLogs: async () =>
@@ -14,25 +15,24 @@ const mockDocker = {
 		),
 } as unknown as DockerClient;
 
-const mockWsManager = {
-	broadcast: vi.fn(),
-} as unknown as WebSocketManager;
-
 describe('ContainerLogStreamer', () => {
 	let streamer: ContainerLogStreamer;
+	let logs: LogStreamBroker;
 
 	beforeEach(() => {
 		streamer = new ContainerLogStreamer();
+		logs = new LogStreamBroker();
+		logs.setWsManager(new WebSocketManager());
 		vi.clearAllMocks();
 	});
 
 	afterEach(() => {
-		streamer.stopAll();
+		streamer.stopAll(logs);
 	});
 
 	it('increments refCount for the same projectId on subsequent subscribes', () => {
-		streamer.subscribe('proj-1', 'ctr-1', mockWsManager, mockDocker);
-		streamer.subscribe('proj-1', 'ctr-1', mockWsManager, mockDocker);
+		streamer.subscribe('proj-1', 'ctr-1', logs, mockDocker);
+		streamer.subscribe('proj-1', 'ctr-1', logs, mockDocker);
 
 		// refCount is now 2. First unsubscribe drops to 1 — stream should still exist.
 		streamer.unsubscribe('proj-1');
@@ -47,7 +47,7 @@ describe('ContainerLogStreamer', () => {
 	});
 
 	it('creates a new stream entry for a new projectId', () => {
-		streamer.subscribe('proj-2', 'ctr-2', mockWsManager, mockDocker);
+		streamer.subscribe('proj-2', 'ctr-2', logs, mockDocker);
 
 		// Stream was registered at refCount 1. A single unsubscribe removes it.
 		streamer.unsubscribe('proj-2');
@@ -73,8 +73,8 @@ describe('ContainerLogStreamer', () => {
 			},
 		} as unknown as DockerClient;
 
-		streamer.subscribe('proj-3', 'ctr-3', mockWsManager, trackingDocker);
-		streamer.subscribe('proj-3', 'ctr-3', mockWsManager, trackingDocker);
+		streamer.subscribe('proj-3', 'ctr-3', logs, trackingDocker);
+		streamer.subscribe('proj-3', 'ctr-3', logs, trackingDocker);
 
 		// First unsubscribe: refCount 2 → 1, no abort yet.
 		streamer.unsubscribe('proj-3');
@@ -101,7 +101,7 @@ describe('ContainerLogStreamer', () => {
 			},
 		} as unknown as DockerClient;
 
-		streamer.subscribe('proj-4', 'ctr-4', mockWsManager, trackingDocker);
+		streamer.subscribe('proj-4', 'ctr-4', logs, trackingDocker);
 
 		// refCount 1 → 0: should abort and remove the entry.
 		streamer.unsubscribe('proj-4');
@@ -135,11 +135,11 @@ describe('ContainerLogStreamer', () => {
 				},
 			}) as unknown as DockerClient;
 
-		streamer.subscribe('proj-a', 'ctr-a', mockWsManager, makeTracking('a'));
-		streamer.subscribe('proj-b', 'ctr-b', mockWsManager, makeTracking('b'));
-		streamer.subscribe('proj-c', 'ctr-c', mockWsManager, makeTracking('c'));
+		streamer.subscribe('proj-a', 'ctr-a', logs, makeTracking('a'));
+		streamer.subscribe('proj-b', 'ctr-b', logs, makeTracking('b'));
+		streamer.subscribe('proj-c', 'ctr-c', logs, makeTracking('c'));
 
-		streamer.stopAll();
+		streamer.stopAll(logs);
 
 		expect(aborted['a']).toBe(true);
 		expect(aborted['b']).toBe(true);

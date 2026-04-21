@@ -1,30 +1,41 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { ApprovalType, HeartbeatRunStatus, WakeupSource } from '@hezo/shared';
+import {
+	AgentRuntimeStatus,
+	ApprovalType,
+	HeartbeatRunStatus,
+	WakeupSource,
+	wsRoom,
+} from '@hezo/shared';
+import { broadcastRowChange } from '../lib/broadcast';
 import { createWakeup } from './wakeup';
+import type { WebSocketManager } from './ws';
 
 const MAX_RETRIES = 3;
+const SAFETY_WINDOW_SECONDS = 30;
 
-export async function detectOrphans(db: PGlite, runningPids: Set<number>): Promise<number> {
+export async function detectOrphans(
+	db: PGlite,
+	liveRunIds: Set<string>,
+	wsManager?: WebSocketManager,
+): Promise<number> {
 	const orphans = await db.query<{
 		id: string;
 		member_id: string;
 		company_id: string;
-		process_pid: number | null;
+		issue_id: string | null;
 		process_loss_retry_count: number;
 	}>(
-		`SELECT id, member_id, company_id, process_pid, process_loss_retry_count
+		`SELECT id, member_id, company_id, issue_id, process_loss_retry_count
 		 FROM heartbeat_runs
 		 WHERE status = $1::heartbeat_run_status
-		   AND started_at < now() - interval '5 minutes'`,
-		[HeartbeatRunStatus.Running],
+		   AND started_at < now() - ($2 || ' seconds')::interval`,
+		[HeartbeatRunStatus.Running, String(SAFETY_WINDOW_SECONDS)],
 	);
 
 	let orphanCount = 0;
 
 	for (const run of orphans.rows) {
-		if (run.process_pid && runningPids.has(run.process_pid)) {
-			continue;
-		}
+		if (liveRunIds.has(run.id)) continue;
 
 		orphanCount++;
 
@@ -43,15 +54,42 @@ export async function detectOrphans(db: PGlite, runningPids: Set<number>): Promi
 			[run.member_id],
 		);
 
+		const remaining = await db.query<{ id: string }>(
+			`SELECT id FROM heartbeat_runs
+			 WHERE member_id = $1 AND status = $2::heartbeat_run_status AND id != $3
+			 LIMIT 1`,
+			[run.member_id, HeartbeatRunStatus.Running, run.id],
+		);
+
+		if (remaining.rows.length === 0) {
+			const reset = await db.query<{ id: string }>(
+				`UPDATE member_agents
+				 SET runtime_status = $1::agent_runtime_status
+				 WHERE id = $2 AND runtime_status = $3::agent_runtime_status
+				 RETURNING id`,
+				[AgentRuntimeStatus.Idle, run.member_id, AgentRuntimeStatus.Active],
+			);
+			if (reset.rows.length > 0) {
+				broadcastRowChange(wsManager, wsRoom.company(run.company_id), 'member_agents', 'UPDATE', {
+					id: run.member_id,
+					runtime_status: AgentRuntimeStatus.Idle,
+				});
+			}
+		}
+
+		broadcastRowChange(wsManager, wsRoom.company(run.company_id), 'heartbeat_runs', 'UPDATE', {
+			id: run.id,
+			member_id: run.member_id,
+			issue_id: run.issue_id,
+			status: HeartbeatRunStatus.Failed,
+			error: 'Orphaned: process no longer running',
+		});
+
 		if (run.process_loss_retry_count + 1 < MAX_RETRIES) {
-			// Fetch failure context from the run to enrich the retry payload
 			const failedRun = await db.query<{
 				exit_code: number | null;
-				stdout_excerpt: string | null;
-				stderr_excerpt: string | null;
-			}>('SELECT exit_code, stdout_excerpt, stderr_excerpt FROM heartbeat_runs WHERE id = $1', [
-				run.id,
-			]);
+				log_text: string | null;
+			}>('SELECT exit_code, log_text FROM heartbeat_runs WHERE id = $1', [run.id]);
 			const fr = failedRun.rows[0];
 
 			await createWakeup(db, run.member_id, run.company_id, WakeupSource.Timer, {
@@ -61,8 +99,7 @@ export async function detectOrphans(db: PGlite, runningPids: Set<number>): Promi
 				previous_failure: {
 					run_id: run.id,
 					exit_code: fr?.exit_code ?? null,
-					stdout_tail: fr?.stdout_excerpt?.slice(-500) ?? null,
-					stderr_tail: fr?.stderr_excerpt?.slice(-500) ?? null,
+					log_tail: fr?.log_text?.slice(-1000) ?? null,
 				},
 			});
 		} else {

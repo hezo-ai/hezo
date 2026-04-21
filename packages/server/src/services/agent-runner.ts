@@ -1,30 +1,46 @@
+import { existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	type AgentRuntime,
+	AgentRuntime,
+	type AiProvider,
+	CommentContentType,
 	ContainerStatus,
 	HeartbeatRunStatus,
 	PROVIDER_TO_ENV_VAR,
+	PROVIDER_TO_RUNTIME,
+	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
+	RUNTIME_STREAM_ARGS,
 	RUNTIME_TO_PROVIDER,
+	WsMessageType,
+	wsRoom,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { broadcastRowChange } from '../lib/broadcast';
 import { signAgentJwt } from '../middleware/auth';
-import { getProviderCredential } from './ai-provider-keys';
-import type { DockerClient } from './docker';
-import { applyEffortToRuntime, resolveEffort } from './effort';
+import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
+import { type AiProviderCredential, getProviderCredentialAndModel } from './ai-provider-keys';
+import type { DockerClient, ExecLogChunk } from './docker';
+import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
+import { ensureIssueWorktree, fetchRepo } from './git';
+import type { LogStreamBroker } from './log-stream-broker';
+import { ensureProjectRepos } from './repo-sync';
+import { resolveRuntimeForIssue } from './runtime-resolver';
+import { getCompanySSHKey } from './ssh-keys';
 import { resolveSystemPrompt } from './template-resolver';
+import { getWorkspacePath, getWorktreesPath } from './workspace';
+import type { WebSocketManager } from './ws';
 
-interface AgentInfo {
+export interface AgentInfo {
 	id: string;
 	title: string;
+	slug?: string | null;
 	system_prompt: string;
 	company_id: string;
-	runtime_type: AgentRuntime;
-	/**
-	 * Baseline effort for this agent. Overridden by `effort` on the wakeup
-	 * payload when present.
-	 */
 	default_effort?: string | null;
+	model_override_provider?: AiProvider | null;
+	model_override_model?: string | null;
 }
 
 export interface IssueInfo {
@@ -36,13 +52,17 @@ export interface IssueInfo {
 	priority: string;
 	project_id: string;
 	rules: string | null;
+	runtime_type?: AgentRuntime | null;
 }
 
 interface ProjectInfo {
 	id: string;
 	slug: string;
+	company_id: string;
+	company_slug: string;
 	container_id: string;
 	container_status: string;
+	designated_repo_id: string | null;
 }
 
 export interface RunResult {
@@ -60,42 +80,54 @@ export interface RunnerDeps {
 	masterKeyManager: MasterKeyManager;
 	serverPort: number;
 	dataDir: string;
+	wsManager?: WebSocketManager;
+	logs: LogStreamBroker;
 }
 
-export async function runAgent(
+interface RepoRow {
+	id: string;
+	short_name: string;
+	repo_identifier: string;
+}
+
+/**
+ * Build the env-var entries for a given provider/auth method. Only the matching
+ * env var is set; agents that read a different var won't see the credential.
+ */
+export function buildProviderEnv(provider: AiProvider, credential: AiProviderCredential): string[] {
+	const envVarName = PROVIDER_TO_ENV_VAR[provider]?.[credential.authMethod];
+	if (!envVarName) return [];
+	return [`${envVarName}=${credential.value}`];
+}
+
+interface RunContext {
+	cmd: string[];
+	env: string[];
+	taskPrompt: string;
+	effort: string;
+	effortApplication: EffortRuntimeApplication;
+	agentJwt: string;
+}
+
+async function buildRunContext(
 	deps: RunnerDeps,
 	agent: AgentInfo,
 	issue: IssueInfo,
 	project: ProjectInfo,
-	wakeupPayload?: Record<string, unknown>,
-	signal?: AbortSignal,
-): Promise<RunResult> {
-	const startTime = Date.now();
-
-	if (!project.container_id || project.container_status !== ContainerStatus.Running) {
-		return {
-			success: false,
-			exitCode: -1,
-			stdout: '',
-			stderr: 'Project container is not running',
-			durationMs: Date.now() - startTime,
-		};
-	}
-
-	if (signal?.aborted) {
-		return abortedResult(startTime);
-	}
-
+	wakeupPayload: Record<string, unknown> | undefined,
+	credential: AiProviderCredential,
+	provider: AiProvider,
+	runtimeType: AgentRuntime,
+	heartbeatRunId: string,
+	modelOverride: string | null,
+): Promise<RunContext> {
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, agent.system_prompt, {
 		companyId: agent.company_id,
 		projectId: project.id,
+		issueId: issue.id,
 		agentId: agent.id,
 		dataDir: deps.dataDir,
 	});
-
-	if (signal?.aborted) {
-		return abortedResult(startTime);
-	}
 
 	if (resolvedPrompt.includes('{{requester_context}}')) {
 		const creator = await deps.db.query<{ display_name: string; member_type: string }>(
@@ -111,18 +143,14 @@ export async function runAgent(
 		resolvedPrompt = resolvedPrompt.replace(/\{\{requester_context\}\}/g, requesterText);
 	}
 
-	if (signal?.aborted) {
-		return abortedResult(startTime);
-	}
-
-	const agentJwt = await signAgentJwt(deps.masterKeyManager, agent.id, agent.company_id);
-
-	// Resolve the effort level for this run. A comment-supplied override (on the
-	// wakeup payload) trumps the agent's configured default; both fall back to
-	// the global default. The result is then translated into runtime-specific
-	// CLI args / env vars / prompt directives.
-	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort);
-	const effortApplication = applyEffortToRuntime(agent.runtime_type, effort);
+	const agentJwt = await signAgentJwt(
+		deps.masterKeyManager,
+		agent.id,
+		agent.company_id,
+		heartbeatRunId,
+	);
+	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort, agent.slug);
+	const effortApplication = applyEffortToRuntime(runtimeType, effort);
 
 	const isCoachReview = wakeupPayload?.trigger === 'issue_done';
 	const basePrompt = isCoachReview
@@ -141,120 +169,382 @@ export async function runAgent(
 		`HEZO_ISSUE_IDENTIFIER=${issue.identifier}`,
 		`HEZO_AGENT_EFFORT=${effort}`,
 		...effortApplication.extraEnv,
+		...buildProviderEnv(provider, credential),
 	];
 
-	// Inject all AI provider env vars as empty defaults
-	const allEnvVars = new Set<string>();
-	for (const methods of Object.values(PROVIDER_TO_ENV_VAR)) {
-		for (const envVar of Object.values(methods)) {
-			allEnvVars.add(envVar);
-		}
-	}
-	for (const envVar of allEnvVars) {
-		env.push(`${envVar}=`);
-	}
+	const cliCommand = RUNTIME_COMMANDS[runtimeType];
+	const mcpFlags =
+		runtimeType === AgentRuntime.ClaudeCode
+			? [
+					'--mcp-config',
+					JSON.stringify({
+						mcpServers: {
+							hezo: {
+								type: 'http',
+								url: `http://host.docker.internal:${deps.serverPort}/mcp`,
+								headers: { Authorization: `Bearer ${agentJwt}` },
+							},
+						},
+					}),
+					'--strict-mcp-config',
+				]
+			: [];
 
-	// Resolve the agent's specific credential and override the relevant env var
-	const runtimeType = agent.runtime_type;
-	const provider = RUNTIME_TO_PROVIDER[runtimeType];
-	const credential = await getProviderCredential(
-		deps.db,
-		deps.masterKeyManager,
-		agent.company_id,
-		provider,
-	);
+	const modelArgs = modelOverride ? ['--model', modelOverride] : [];
 
-	if (!credential) {
+	const cmd = [
+		cliCommand,
+		...mcpFlags,
+		...RUNTIME_STREAM_ARGS[runtimeType],
+		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
+		...effortApplication.extraArgs,
+		...modelArgs,
+		'-p',
+		taskPrompt,
+	];
+
+	return { cmd, env, taskPrompt, effort, effortApplication, agentJwt };
+}
+
+export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
+
+function exitReasonFromSignal(signal?: AbortSignal): ContainerExitAbortReason | null {
+	if (!signal) return null;
+	const reason = signal.reason as unknown;
+	if (reason === 'container_error' || reason === 'container_stopped') return reason;
+	return null;
+}
+
+export async function runAgent(
+	deps: RunnerDeps,
+	agent: AgentInfo,
+	issue: IssueInfo,
+	project: ProjectInfo,
+	wakeupPayload?: Record<string, unknown>,
+	signal?: AbortSignal,
+	onRunRegistered?: (heartbeatRunId: string) => void,
+): Promise<RunResult> {
+	const startTime = Date.now();
+
+	if (signal?.aborted) return abortedResult(startTime);
+
+	const runBroadcast: HeartbeatRunBroadcast = {
+		wsManager: deps.wsManager,
+		companyId: agent.company_id,
+		issueId: issue.id,
+		memberId: agent.id,
+	};
+	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue, runBroadcast);
+	onRunRegistered?.(heartbeatRunId);
+	const streamId = `run:${heartbeatRunId}`;
+
+	deps.logs.begin({
+		streamId,
+		room: `project-runs:${project.id}`,
+		buildMessage: (line) => ({
+			type: WsMessageType.RunLog,
+			projectId: project.id,
+			runId: heartbeatRunId,
+			issueId: issue.id,
+			stream: line.stream,
+			text: line.text,
+		}),
+		onFlush: async (text) => {
+			await deps.db.query('UPDATE heartbeat_runs SET log_text = $1 WHERE id = $2', [
+				text,
+				heartbeatRunId,
+			]);
+		},
+	});
+
+	const emit = (stream: 'stdout' | 'stderr', text: string) =>
+		deps.logs.emit(streamId, stream, text);
+
+	const finalizeFailure = async (message: string): Promise<RunResult> => {
+		emit('stderr', `[runner] ${message}\n`);
+		const durationMs = Date.now() - startTime;
+		await deps.logs.end(streamId);
+		await updateHeartbeatRun(
+			deps.db,
+			heartbeatRunId,
+			{
+				status: HeartbeatRunStatus.Failed,
+				exitCode: -1,
+				durationMs,
+				error: message,
+			},
+			runBroadcast,
+		);
 		return {
 			success: false,
 			exitCode: -1,
 			stdout: '',
-			stderr: `No ${provider} credential configured. Add one in Settings > AI Providers.`,
-			durationMs: Date.now() - startTime,
+			stderr: message,
+			durationMs,
+			heartbeatRunId,
 		};
+	};
+
+	const finalizeAbort = async (): Promise<RunResult> => {
+		const durationMs = Date.now() - startTime;
+		await deps.logs.end(streamId);
+		const exitReason = exitReasonFromSignal(signal);
+		const status = exitReason ? HeartbeatRunStatus.Failed : HeartbeatRunStatus.Cancelled;
+		await updateHeartbeatRun(
+			deps.db,
+			heartbeatRunId,
+			{
+				status,
+				exitCode: -1,
+				durationMs,
+				error: exitReason ?? undefined,
+			},
+			runBroadcast,
+		);
+		return {
+			success: false,
+			exitCode: -1,
+			stdout: '',
+			stderr: exitReason ?? 'Aborted',
+			durationMs,
+			heartbeatRunId,
+		};
+	};
+
+	if (!project.container_id || project.container_status !== ContainerStatus.Running) {
+		return finalizeFailure(
+			'Project container is not running. Start the container from the Project page and retry.',
+		);
 	}
 
-	const envVarName = PROVIDER_TO_ENV_VAR[provider]?.[credential.authMethod];
-	if (envVarName) {
-		const idx = env.findIndex((e) => e.startsWith(`${envVarName}=`));
-		if (idx >= 0) env[idx] = `${envVarName}=${credential.value}`;
+	let provider: AiProvider;
+	let runtimeType: AgentRuntime;
+	if (agent.model_override_provider) {
+		provider = agent.model_override_provider;
+		runtimeType = PROVIDER_TO_RUNTIME[provider];
+	} else {
+		const resolved = await resolveRuntimeForIssue(deps.db, issue.runtime_type ?? null);
+		if (!resolved) {
+			return finalizeFailure(
+				'No AI provider credentials configured at the instance level. Add one in Settings > AI Providers.',
+			);
+		}
+		runtimeType = resolved;
+		provider = RUNTIME_TO_PROVIDER[runtimeType];
 	}
 
-	const cliCommand = RUNTIME_COMMANDS[runtimeType] || 'claude';
-
-	const workingDir = '/workspace';
-
-	if (signal?.aborted) {
-		return abortedResult(startTime);
+	const credential = await getProviderCredentialAndModel(deps.db, deps.masterKeyManager, provider);
+	if (!credential) {
+		return finalizeFailure(
+			`No ${provider} credential configured. Add one in Settings > AI Providers.`,
+		);
 	}
 
-	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue);
+	const modelOverride = agent.model_override_model ?? credential.defaultModel ?? null;
+
+	if (signal?.aborted) return finalizeAbort();
+
+	const context = await buildRunContext(
+		deps,
+		agent,
+		issue,
+		project,
+		wakeupPayload,
+		credential,
+		provider,
+		runtimeType,
+		heartbeatRunId,
+		modelOverride,
+	);
+
+	if (signal?.aborted) return finalizeAbort();
+
+	const prep = await prepareWorktrees(deps, project, issue, emit, signal);
+
+	const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
+	const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')}`;
+
+	await deps.db.query(
+		`UPDATE heartbeat_runs SET invocation_command = $1, working_dir = $2 WHERE id = $3`,
+		[invocationCommand, prep.workingDir, heartbeatRunId],
+	);
+
+	emit('stdout', `${invocationCommand}\n`);
+
+	const parser = createAgentStreamParser(runtimeType);
 
 	try {
-		if (signal?.aborted) {
-			throw new DOMException('Aborted', 'AbortError');
-		}
+		if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
 		const execId = await deps.docker.execCreate(project.container_id, {
-			Cmd: [cliCommand, ...effortApplication.extraArgs, '-p', taskPrompt],
-			Env: env,
-			WorkingDir: workingDir,
+			Cmd: context.cmd,
+			Env: context.env,
+			WorkingDir: prep.workingDir,
+			User: 'node',
 			AttachStdout: true,
 			AttachStderr: true,
 		});
 
-		const { stdout, stderr } = await deps.docker.execStart(execId, signal);
+		const onChunk = async (chunk: ExecLogChunk) => {
+			const rendered =
+				chunk.stream === 'stdout' ? parser.onStdout(chunk.text) : parser.onStderr(chunk.text);
+			if (rendered) emit(chunk.stream, rendered);
+		};
+
+		const { stdout, stderr } = await deps.docker.execStart(execId, { signal, onChunk });
+		const tail = parser.flush();
+		if (tail) emit('stdout', tail);
 		const execInfo = await deps.docker.execInspect(execId);
 		const durationMs = Date.now() - startTime;
-
 		const success = execInfo.ExitCode === 0;
 
-		await updateHeartbeatRun(deps.db, heartbeatRunId, {
-			status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
-			exitCode: execInfo.ExitCode,
-			durationMs,
-			stdout: stdout.slice(0, 10000),
-			stderr: stderr.slice(0, 10000),
-		});
-
-		return {
-			success,
-			exitCode: execInfo.ExitCode,
-			stdout,
-			stderr,
-			durationMs,
+		await deps.logs.end(streamId);
+		await updateHeartbeatRun(
+			deps.db,
 			heartbeatRunId,
-		};
+			{
+				status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
+				exitCode: execInfo.ExitCode,
+				durationMs,
+				usage: parser.getUsage(),
+			},
+			runBroadcast,
+		);
+
+		return { success, exitCode: execInfo.ExitCode, stdout, stderr, durationMs, heartbeatRunId };
 	} catch (error) {
 		const durationMs = Date.now() - startTime;
 		const isAbort = (error as Error).name === 'AbortError';
+		const exitReason = exitReasonFromSignal(signal);
+		const errorMessage = exitReason ?? (error as Error).message;
+		const status = isAbort
+			? exitReason
+				? HeartbeatRunStatus.Failed
+				: HeartbeatRunStatus.Cancelled
+			: HeartbeatRunStatus.Failed;
 
-		await updateHeartbeatRun(deps.db, heartbeatRunId, {
-			status: isAbort ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
-			exitCode: -1,
-			durationMs,
-			stderr: (error as Error).message,
-		});
+		emit('stderr', `\n[runner] ${errorMessage}\n`);
+
+		await deps.logs.end(streamId);
+		await updateHeartbeatRun(
+			deps.db,
+			heartbeatRunId,
+			{
+				status,
+				exitCode: -1,
+				durationMs,
+				error: errorMessage,
+			},
+			runBroadcast,
+		);
 
 		return {
 			success: false,
 			exitCode: -1,
 			stdout: '',
-			stderr: (error as Error).message,
+			stderr: errorMessage,
 			durationMs,
 			heartbeatRunId,
 		};
 	}
 }
 
+function failedResult(stderr: string, startTime: number): RunResult {
+	return { success: false, exitCode: -1, stdout: '', stderr, durationMs: Date.now() - startTime };
+}
+
 function abortedResult(startTime: number): RunResult {
-	return {
-		success: false,
-		exitCode: -1,
-		stdout: '',
-		stderr: 'Aborted',
-		durationMs: Date.now() - startTime,
-	};
+	return failedResult('Aborted', startTime);
+}
+
+export function shellQuoteArg(arg: string): string {
+	if (arg === '') return "''";
+	if (/^[A-Za-z0-9_\-./=:@%+,]+$/.test(arg)) return arg;
+	return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+async function prepareWorktrees(
+	deps: RunnerDeps,
+	project: ProjectInfo,
+	issue: IssueInfo,
+	emit: (stream: 'stdout' | 'stderr', text: string) => void,
+	signal?: AbortSignal,
+): Promise<{ workingDir: string; designatedRepo: RepoRow | null }> {
+	const repos = await deps.db.query<RepoRow>(
+		`SELECT id, short_name, repo_identifier FROM repos
+		 WHERE project_id = $1 ORDER BY created_at ASC`,
+		[project.id],
+	);
+
+	if (repos.rows.length === 0) {
+		emit('stdout', '(no repos linked to project — running in /workspace)\n');
+		return { workingDir: '/workspace', designatedRepo: null };
+	}
+
+	emit('stdout', '(syncing repos...)\n');
+	const syncRes = await ensureProjectRepos(
+		deps.db,
+		deps.masterKeyManager,
+		{
+			id: project.id,
+			company_id: project.company_id,
+			companySlug: project.company_slug,
+			projectSlug: project.slug,
+		},
+		deps.dataDir,
+		(stream, text) => emit(stream, `${text}\n`),
+	);
+	if (syncRes.cloned.length > 0) {
+		emit('stdout', `(cloned ${syncRes.cloned.length} repo(s) on demand)\n`);
+	}
+
+	if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
+
+	const companySshKey = await getCompanySSHKey(deps.db, project.company_id, deps.masterKeyManager);
+
+	const workspaceRoot = getWorkspacePath(deps.dataDir, project.company_slug, project.slug);
+	const worktreesRoot = getWorktreesPath(deps.dataDir, project.company_slug, project.slug);
+	const issueWorktreeRoot = join(worktreesRoot, issue.identifier);
+	mkdirSync(issueWorktreeRoot, { recursive: true });
+
+	const branchName = `hezo/${issue.identifier}`;
+
+	for (const repo of repos.rows) {
+		if (signal?.aborted) break;
+		const repoDir = join(workspaceRoot, repo.short_name);
+		const worktreePath = join(issueWorktreeRoot, repo.short_name);
+
+		if (!existsSync(join(repoDir, '.git'))) {
+			emit('stderr', `(skipping worktree for ${repo.short_name} — not cloned)\n`);
+			continue;
+		}
+
+		if (companySshKey) {
+			emit('stdout', `git fetch ${repo.short_name}...\n`);
+			const fetchRes = await fetchRepo(repoDir, companySshKey.privateKey);
+			if (fetchRes.success) {
+				emit('stdout', `git fetch ${repo.short_name} done\n`);
+			} else {
+				emit('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
+			}
+		}
+
+		emit('stdout', `git worktree ${repo.short_name}...\n`);
+		const wt = await ensureIssueWorktree(repoDir, worktreePath, branchName);
+		if (!wt.success) {
+			emit('stderr', `git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}\n`);
+		} else if (wt.created) {
+			emit('stdout', `git worktree add ${repo.short_name} @ ${branchName}\n`);
+		}
+	}
+
+	const designated = project.designated_repo_id
+		? repos.rows.find((r) => r.id === project.designated_repo_id)
+		: null;
+	const primary = designated ?? repos.rows[0];
+	const workingDir = `/worktrees/${issue.identifier}/${primary.short_name}`;
+
+	return { workingDir, designatedRepo: primary ?? null };
 }
 
 export function buildTaskPrompt(
@@ -281,7 +571,6 @@ export function buildTaskPrompt(
 
 	parts.push(issue.description || 'No description provided.');
 
-	// Inject retry context when this is an orphan retry
 	if (wakeupPayload?.previous_failure) {
 		const pf = wakeupPayload.previous_failure as Record<string, unknown>;
 		parts.push('');
@@ -305,7 +594,6 @@ async function buildCoachReviewPrompt(
 	issue: IssueInfo,
 	companyId: string,
 ): Promise<string> {
-	// Fetch full comment history for the completed issue
 	const comments = await db.query<{
 		content_type: string;
 		content: Record<string, unknown>;
@@ -323,7 +611,6 @@ async function buildCoachReviewPrompt(
 		[issue.id],
 	);
 
-	// Fetch agents involved in this issue (assignee + commenters)
 	const involvedAgents = await db.query<{
 		id: string;
 		title: string;
@@ -382,14 +669,75 @@ async function buildCoachReviewPrompt(
 	return parts.join('\n');
 }
 
-async function createHeartbeatRun(db: PGlite, agent: AgentInfo, issue: IssueInfo): Promise<string> {
-	const result = await db.query<{ id: string }>(
-		`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status)
-		 VALUES ($1, $2, $3, $4::heartbeat_run_status)
-		 RETURNING id`,
-		[agent.id, agent.company_id, issue.id, HeartbeatRunStatus.Running],
-	);
-	return result.rows[0].id;
+export interface HeartbeatRunBroadcast {
+	wsManager?: WebSocketManager;
+	companyId: string;
+	issueId: string;
+	memberId: string;
+}
+
+function broadcastHeartbeatRunChange(
+	ctx: HeartbeatRunBroadcast,
+	runId: string,
+	status: string,
+	action: 'INSERT' | 'UPDATE',
+): void {
+	if (!ctx.wsManager) return;
+	broadcastRowChange(ctx.wsManager, wsRoom.company(ctx.companyId), 'heartbeat_runs', action, {
+		id: runId,
+		issue_id: ctx.issueId,
+		company_id: ctx.companyId,
+		member_id: ctx.memberId,
+		status,
+	});
+}
+
+export async function createHeartbeatRun(
+	db: PGlite,
+	agent: AgentInfo,
+	issue: IssueInfo,
+	broadcast: HeartbeatRunBroadcast,
+): Promise<string> {
+	await db.query('BEGIN');
+	let runId: string;
+	try {
+		const runResult = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())
+			 RETURNING id`,
+			[agent.id, agent.company_id, issue.id, HeartbeatRunStatus.Running],
+		);
+		runId = runResult.rows[0].id;
+
+		await db.query(
+			`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
+			[
+				issue.id,
+				agent.id,
+				CommentContentType.Run,
+				JSON.stringify({ run_id: runId, agent_id: agent.id, agent_title: agent.title }),
+			],
+		);
+		await db.query('COMMIT');
+	} catch (e) {
+		await db.query('ROLLBACK');
+		throw e;
+	}
+
+	broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Running, 'INSERT');
+	if (broadcast.wsManager) {
+		broadcastRowChange(
+			broadcast.wsManager,
+			wsRoom.company(broadcast.companyId),
+			'issue_comments',
+			'INSERT',
+			{
+				issue_id: issue.id,
+			},
+		);
+	}
+	return runId;
 }
 
 async function updateHeartbeatRun(
@@ -399,24 +747,30 @@ async function updateHeartbeatRun(
 		status: string;
 		exitCode: number;
 		durationMs: number;
-		stdout?: string;
-		stderr?: string;
+		error?: string;
+		usage?: AgentRunUsage | null;
 	},
+	broadcast: HeartbeatRunBroadcast,
 ): Promise<void> {
 	await db.query(
 		`UPDATE heartbeat_runs
 		 SET status = $1::heartbeat_run_status,
 		     finished_at = now(),
 		     exit_code = $2,
-		     stdout_excerpt = $3,
-		     stderr_excerpt = $4
-		 WHERE id = $5`,
+		     error = COALESCE($3, error),
+		     input_tokens = COALESCE($4, input_tokens),
+		     output_tokens = COALESCE($5, output_tokens),
+		     cost_cents = COALESCE($6, cost_cents)
+		 WHERE id = $7`,
 		[
 			update.status,
 			update.exitCode,
-			update.stdout?.slice(0, 2000) ?? '',
-			update.stderr?.slice(0, 2000) ?? '',
+			update.error ?? null,
+			update.usage?.inputTokens ?? null,
+			update.usage?.outputTokens ?? null,
+			update.usage?.costCents ?? null,
 			runId,
 		],
 	);
+	broadcastHeartbeatRunChange(broadcast, runId, update.status, 'UPDATE');
 }

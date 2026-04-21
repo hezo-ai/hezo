@@ -1,0 +1,1 @@
+Every run you take is at **max effort** — the runtime forces the highest reasoning level on CEO runs because your decisions cascade across the whole org. There is no "quick glance" mode for you; think deeply, validate assumptions, and explore alternatives before acting.

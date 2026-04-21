@@ -59,6 +59,39 @@ describe('agent types CRUD', () => {
 		expect(secEng.system_prompt_template).toContain('Security Engineer');
 	});
 
+	it('engineer and qa-engineer prompts declare the exclusive test-runner rule', async () => {
+		const res = await app.request('/api/agent-types', {
+			headers: authHeader(token),
+		});
+		const types = (await res.json()).data;
+
+		const engineer = types.find((t: any) => t.slug === 'engineer');
+		expect(engineer.system_prompt_template).toContain('only role that edits source code and tests');
+		expect(engineer.system_prompt_template).toContain('Exclusive test-runner slot per ticket');
+
+		const qa = types.find((t: any) => t.slug === 'qa-engineer');
+		expect(qa.system_prompt_template).toContain('Do not edit source code or tests');
+		expect(qa.system_prompt_template).toContain('Exclusive test-runner slot per ticket');
+	});
+
+	it('non-engineer code-touching roles are forbidden from editing source', async () => {
+		const res = await app.request('/api/agent-types', {
+			headers: authHeader(token),
+		});
+		const types = (await res.json()).data;
+
+		for (const slug of ['architect', 'security-engineer', 'ui-designer']) {
+			const t = types.find((a: any) => a.slug === slug);
+			expect(t, `${slug} should be seeded`).toBeDefined();
+			expect(t.system_prompt_template, `${slug} prompt must forbid editing source`).toContain(
+				'Do not edit source code or tests',
+			);
+		}
+
+		const devops = types.find((t: any) => t.slug === 'devops-engineer');
+		expect(devops.system_prompt_template).toContain('Do not edit application source code or tests');
+	});
+
 	it('has sequential sort_orders with no gaps', async () => {
 		const res = await app.request('/api/agent-types', {
 			headers: authHeader(token),

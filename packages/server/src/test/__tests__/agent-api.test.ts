@@ -3,9 +3,8 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
-import { signAgentJwt } from '../../middleware/auth';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -40,7 +39,7 @@ beforeAll(async () => {
 	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Agent API Project' }),
+		body: JSON.stringify({ name: 'Agent API Project', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
@@ -61,7 +60,7 @@ beforeAll(async () => {
 	issueId = (await issueRes.json()).data.id;
 
 	masterKeyManager = ctx.masterKeyManager;
-	agentToken = await signAgentJwt(masterKeyManager, agentId, companyId);
+	({ token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId, issueId));
 });
 
 afterAll(async () => {
@@ -306,7 +305,12 @@ describe('agent API - budget enforcement', () => {
 			body: JSON.stringify({ title: 'Budget Test Agent', monthly_budget_cents: 10 }),
 		});
 		const cheapAgent = (await agentRes.json()).data;
-		const cheapToken = await signAgentJwt(masterKeyManager, cheapAgent.id, companyId);
+		const { token: cheapToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			cheapAgent.id,
+			companyId,
+		);
 
 		await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
 			method: 'PATCH',

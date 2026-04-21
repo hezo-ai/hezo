@@ -45,14 +45,14 @@ test('can hire agent with full fields', async ({ page }) => {
 	await page.getByLabel('Role title').fill('Security Auditor');
 	await page.getByLabel('Role description').fill('Audits code for security vulnerabilities');
 
-	// Select runtime
-	await page.locator('select').filter({ hasText: 'Claude Code' }).selectOption('codex');
-
 	// Set heartbeat
-	await page.locator('select').filter({ hasText: '60m' }).selectOption('120');
+	await page.locator('select').selectOption('120');
 
 	// Set budget
 	await page.getByLabel('Monthly budget').fill('50');
+
+	// Tick the touches-code capability
+	await page.getByLabel('Touches code').check();
 
 	// Type system prompt
 	await page.locator('textarea').fill('You are the Security Auditor.');

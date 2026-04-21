@@ -1,18 +1,36 @@
 import { createHash } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
-import { ApprovalStatus, ApprovalType } from '@hezo/shared';
+import {
+	AgentAdminStatus,
+	ApprovalStatus,
+	ApprovalType,
+	IssueStatus,
+	MemberType,
+	wsRoom,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess, requireCompanyAccessForResource } from '../middleware/auth';
+import { enqueueAgentSummaryTask, enqueueTeamSummaryTask } from '../services/description-tasks';
+
+const log = logger.child('approvals');
+
+interface SideEffectBroadcast {
+	table: string;
+	op: 'INSERT' | 'UPDATE';
+	row: Record<string, unknown>;
+}
 
 async function applyApprovalSideEffect(
 	db: PGlite,
 	approval: Record<string, unknown>,
-	dataDir: string,
-): Promise<void> {
+	_dataDir: string,
+): Promise<SideEffectBroadcast[]> {
 	const payload = approval.payload as Record<string, unknown>;
+	const broadcasts: SideEffectBroadcast[] = [];
 	switch (approval.type) {
 		case ApprovalType.SystemPromptUpdate: {
 			const old = await db.query<{ system_prompt: string }>(
@@ -40,6 +58,83 @@ async function applyApprovalSideEffect(
 					(payload.requested_by as string) ?? (approval.requested_by_member_id as string) ?? null,
 					approval.id,
 				],
+			);
+			break;
+		}
+		case ApprovalType.Hire: {
+			const companyId = approval.company_id as string;
+			const title = (payload.title as string)?.trim();
+			const slug = payload.slug as string;
+			if (!title || !slug) {
+				throw new Error('hire approval payload missing title/slug');
+			}
+
+			const slugCheck = await db.query(
+				`SELECT ma.id FROM member_agents ma
+				 JOIN members m ON m.id = ma.id
+				 WHERE m.company_id = $1 AND ma.slug = $2`,
+				[companyId, slug],
+			);
+			if (slugCheck.rows.length > 0) {
+				throw new Error(`cannot materialise hire: slug '${slug}' already exists in this company`);
+			}
+
+			const memberResult = await db.query<{ id: string }>(
+				`INSERT INTO members (company_id, member_type, display_name)
+				 VALUES ($1, $2, $3) RETURNING id`,
+				[companyId, MemberType.Agent, title],
+			);
+			const memberId = memberResult.rows[0].id;
+
+			await db.query(
+				`INSERT INTO member_agents (id, title, slug, role_description, system_prompt,
+				                            default_effort, heartbeat_interval_min,
+				                            monthly_budget_cents, touches_code, admin_status)
+				 VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10::agent_admin_status)`,
+				[
+					memberId,
+					title,
+					slug,
+					(payload.role_description as string) ?? '',
+					(payload.system_prompt as string) ?? '',
+					(payload.default_effort as string) ?? 'medium',
+					(payload.heartbeat_interval_min as number) ?? 60,
+					(payload.monthly_budget_cents as number) ?? 3000,
+					(payload.touches_code as boolean) ?? false,
+					AgentAdminStatus.Enabled,
+				],
+			);
+
+			if (payload.issue_id) {
+				const issueUpdate = await db.query<Record<string, unknown>>(
+					`UPDATE issues SET status = $1::issue_status, updated_at = now()
+					 WHERE id = $2 RETURNING *`,
+					[IssueStatus.Done, payload.issue_id as string],
+				);
+				if (issueUpdate.rows[0]) {
+					broadcasts.push({ table: 'issues', op: 'UPDATE', row: issueUpdate.rows[0] });
+				}
+			}
+
+			const newAgent = await db.query<Record<string, unknown>>(
+				`SELECT m.id, m.company_id, m.display_name, m.created_at,
+				        ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
+				        ma.system_prompt, ma.default_effort, ma.heartbeat_interval_min,
+				        ma.monthly_budget_cents, ma.budget_used_cents, ma.touches_code,
+				        ma.budget_reset_at, ma.runtime_status, ma.admin_status,
+				        ma.last_heartbeat_at, ma.reports_to, ma.mcp_servers, ma.updated_at
+				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1`,
+				[memberId],
+			);
+			if (newAgent.rows[0]) {
+				broadcasts.push({ table: 'member_agents', op: 'INSERT', row: newAgent.rows[0] });
+			}
+
+			enqueueAgentSummaryTask(db, companyId, memberId, 'created').catch((e) =>
+				log.error('Failed to enqueue agent summary task:', e),
+			);
+			enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
+				log.error('Failed to enqueue team summary task:', e),
 			);
 			break;
 		}
@@ -82,6 +177,7 @@ async function applyApprovalSideEffect(
 			break;
 		}
 	}
+	return broadcasts;
 }
 
 export const approvalsRoutes = new Hono<Env>();
@@ -141,7 +237,7 @@ approvalsRoutes.post('/companies/:companyId/approvals', async (c) => {
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'approvals',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
@@ -184,14 +280,19 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 	);
 
 	const row = result.rows[0] as Record<string, unknown>;
+	let sideEffects: SideEffectBroadcast[] = [];
 
 	if (body.status === ApprovalStatus.Approved) {
 		const dataDir = c.get('dataDir');
-		await applyApprovalSideEffect(db, row, dataDir);
+		sideEffects = await applyApprovalSideEffect(db, row, dataDir);
 	}
 
 	if (row.company_id) {
-		broadcastChange(c, `company:${row.company_id}`, 'approvals', 'UPDATE', row);
+		const room = wsRoom.company(row.company_id as string);
+		broadcastChange(c, room, 'approvals', 'UPDATE', row);
+		for (const effect of sideEffects) {
+			broadcastChange(c, room, effect.table, effect.op, effect.row);
+		}
 	}
 	return ok(c, row);
 });

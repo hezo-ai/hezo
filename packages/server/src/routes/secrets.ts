@@ -1,4 +1,4 @@
-import { SecretCategory } from '@hezo/shared';
+import { SecretCategory, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -21,8 +21,7 @@ secretsRoutes.get('/companies/:companyId/secrets', async (c) => {
            (SELECT count(*) FROM secret_grants sg WHERE sg.secret_id = s.id AND sg.revoked_at IS NULL)::int AS grant_count
     FROM secrets s
     LEFT JOIN projects p ON p.id = s.project_id
-    WHERE s.company_id = $1
-      AND s.id NOT IN (SELECT api_key_secret_id FROM ai_provider_configs WHERE company_id = $1)`;
+    WHERE s.company_id = $1`;
 	const params: unknown[] = [companyId];
 
 	if (projectId) {
@@ -77,7 +76,7 @@ secretsRoutes.post('/companies/:companyId/secrets', async (c) => {
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'secrets',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
@@ -159,7 +158,7 @@ secretsRoutes.delete('/companies/:companyId/secrets/:secretId', async (c) => {
 	}
 
 	await db.query('DELETE FROM secrets WHERE id = $1', [secretId]);
-	broadcastChange(c, `company:${companyId}`, 'secrets', 'DELETE', { id: secretId });
+	broadcastChange(c, wsRoom.company(companyId), 'secrets', 'DELETE', { id: secretId });
 	return c.json({ data: null }, 200);
 });
 

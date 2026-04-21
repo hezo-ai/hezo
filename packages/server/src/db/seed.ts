@@ -1,15 +1,18 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { AgentEffort } from '@hezo/shared';
+import agentSummaries from './agent-summaries.json' with { type: 'json' };
+
+const summaries: { agents: Record<string, string>; teams: Record<string, string> } = agentSummaries;
 
 interface AgentTypeDef {
 	name: string;
 	slug: string;
 	reports_to_slug: string | null;
 	sort_order: number;
-	runtime_type: string;
 	default_effort: string;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
+	touches_code: boolean;
 	role_description: string;
 }
 
@@ -20,11 +23,11 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'ceo',
 			reports_to_slug: null,
 			sort_order: 0,
-			runtime_type: 'claude_code',
 			// Strategy + delegation requires deep reasoning — default to max (ultrathink).
 			default_effort: AgentEffort.Max,
 			heartbeat_interval_min: 120,
 			monthly_budget_cents: 2000,
+			touches_code: false,
 			role_description:
 				'Translates company mission into actionable strategy, delegates work across leadership, and resolves disputes between agents.',
 		},
@@ -33,11 +36,11 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'architect',
 			reports_to_slug: 'ceo',
 			sort_order: 1,
-			runtime_type: 'claude_code',
 			// Planning is the core job — always ultrathink.
 			default_effort: AgentEffort.Max,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 4000,
+			touches_code: true,
 			role_description:
 				'Owns technical vision, translates product requirements into technical specifications, and makes architecture decisions.',
 		},
@@ -46,11 +49,11 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'product-lead',
 			reports_to_slug: 'ceo',
 			sort_order: 2,
-			runtime_type: 'claude_code',
 			// Scoping/PRD work is planning-heavy.
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 3000,
+			touches_code: false,
 			role_description:
 				'Owns product requirements, writes PRDs, manages scope, and ensures development aligns with company mission.',
 		},
@@ -59,11 +62,11 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'engineer',
 			reports_to_slug: 'architect',
 			sort_order: 3,
-			runtime_type: 'claude_code',
 			// Implementation default — callers/comments can bump to high for tricky work.
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 30,
 			monthly_budget_cents: 5000,
+			touches_code: true,
 			role_description:
 				"Primary implementer who writes code, tests, and documentation based on the Architect's technical specification.",
 		},
@@ -72,11 +75,11 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'qa-engineer',
 			reports_to_slug: 'architect',
 			sort_order: 4,
-			runtime_type: 'claude_code',
 			// Review needs careful thought about correctness and coverage.
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 4000,
+			touches_code: true,
 			role_description:
 				'Final approval gate for every ticket, responsible for test coverage, security audits, and code quality.',
 		},
@@ -85,10 +88,10 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'security-engineer',
 			reports_to_slug: 'architect',
 			sort_order: 5,
-			runtime_type: 'claude_code',
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 3000,
+			touches_code: true,
 			role_description:
 				'Reviews implementation plans and code for security vulnerabilities, threat models new features, and escalates uncertainties to the board.',
 		},
@@ -97,10 +100,10 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'ui-designer',
 			reports_to_slug: 'architect',
 			sort_order: 6,
-			runtime_type: 'claude_code',
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 3000,
+			touches_code: true,
 			role_description:
 				'Owns visual and interaction layer, defines component architecture, and creates HTML preview mockups.',
 		},
@@ -109,10 +112,10 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'devops-engineer',
 			reports_to_slug: 'architect',
 			sort_order: 7,
-			runtime_type: 'claude_code',
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 3000,
+			touches_code: true,
 			role_description:
 				'Owns infrastructure and deployment pipeline, manages staging and production environments, and configures CI/CD.',
 		},
@@ -121,10 +124,10 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'marketing-lead',
 			reports_to_slug: 'ceo',
 			sort_order: 8,
-			runtime_type: 'claude_code',
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 120,
 			monthly_budget_cents: 2000,
+			touches_code: false,
 			role_description:
 				'Owns marketing strategy and content creation including blog posts, social media, and public-facing documentation.',
 		},
@@ -133,11 +136,11 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'researcher',
 			reports_to_slug: 'ceo',
 			sort_order: 9,
-			runtime_type: 'claude_code',
 			// Research benefits from deep thinking.
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 120,
 			monthly_budget_cents: 3000,
+			touches_code: false,
 			role_description:
 				'Conducts competitive analysis, technical research, and feasibility studies to inform strategic decisions.',
 		},
@@ -146,10 +149,10 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			slug: 'coach',
 			reports_to_slug: null,
 			sort_order: 10,
-			runtime_type: 'claude_code',
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 120,
 			monthly_budget_cents: 3000,
+			touches_code: false,
 			role_description:
 				'Reviews completed tickets to extract lessons and improve agent system prompts over time.',
 		},
@@ -158,33 +161,36 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 
 export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>): Promise<void> {
 	const defs = buildAgentTypeDefs();
-	const role = (slug: string) => roleDocs[`${slug}.md`] ?? '';
+	const role = (slug: string) => roleDocs[`software-development/${slug}.md`] ?? '';
 
 	for (const def of defs) {
 		await db.query(
-			`INSERT INTO agent_types (name, slug, description, role_description, system_prompt_template,
-			                          runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents,
-			                          is_builtin, source)
-			 VALUES ($1, $2, $3, $4, $5, $6::agent_runtime, $7::agent_effort, $8, $9, true, 'builtin'::agent_type_source)
+			`INSERT INTO agent_types (name, slug, description, role_description, default_summary,
+			                          system_prompt_template,
+			                          default_effort, heartbeat_interval_min, monthly_budget_cents,
+			                          touches_code, is_builtin, source)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, $10, true, 'builtin'::agent_type_source)
 			 ON CONFLICT (slug) DO UPDATE SET
 			     name = EXCLUDED.name,
 			     role_description = EXCLUDED.role_description,
+			     default_summary = EXCLUDED.default_summary,
 			     system_prompt_template = EXCLUDED.system_prompt_template,
-			     runtime_type = EXCLUDED.runtime_type,
 			     default_effort = EXCLUDED.default_effort,
 			     heartbeat_interval_min = EXCLUDED.heartbeat_interval_min,
 			     monthly_budget_cents = EXCLUDED.monthly_budget_cents,
+			     touches_code = EXCLUDED.touches_code,
 			     updated_at = now()`,
 			[
 				def.name,
 				def.slug,
 				def.role_description,
 				def.role_description,
+				summaries.agents[def.slug] ?? '',
 				role(def.slug),
-				def.runtime_type,
 				def.default_effort,
 				def.heartbeat_interval_min,
 				def.monthly_budget_cents,
+				def.touches_code,
 			],
 		);
 	}
@@ -304,10 +310,12 @@ Significant technical decisions should be documented with:
 	const skillsConfig: Array<{ name: string; source_url: string; description?: string }> = [];
 
 	const startupResult = await db.query<{ id: string }>(
-		`INSERT INTO company_types (name, description, is_builtin, source, kb_docs_config, skills_config)
-		 VALUES ($1, $2, true, 'builtin'::company_type_source, $3::jsonb, $4::jsonb)
+		`INSERT INTO company_types (name, description, default_team_summary, is_builtin, source,
+		                            kb_docs_config, skills_config)
+		 VALUES ($1, $2, $3, true, 'builtin'::company_type_source, $4::jsonb, $5::jsonb)
 		 ON CONFLICT (name) DO UPDATE SET
 		     description = EXCLUDED.description,
+		     default_team_summary = EXCLUDED.default_team_summary,
 		     kb_docs_config = EXCLUDED.kb_docs_config,
 		     skills_config = EXCLUDED.skills_config,
 		     source = EXCLUDED.source
@@ -315,6 +323,7 @@ Significant technical decisions should be documented with:
 		[
 			'Startup',
 			'Full-stack software development team with 10 specialized agents and starter knowledge base',
+			summaries.teams.Startup ?? '',
 			JSON.stringify(kbDocsConfig),
 			JSON.stringify(skillsConfig),
 		],
@@ -332,12 +341,25 @@ Significant technical decisions should be documented with:
 		);
 	}
 
+	const blankBuiltinPrompts = {
+		ceo: roleDocs['blank/ceo.md'] ?? '',
+		coach: roleDocs['blank/coach.md'] ?? '',
+	};
+
 	await db.query(
-		`INSERT INTO company_types (name, description, is_builtin, source)
-		 VALUES ($1, $2, true, 'builtin'::company_type_source)
+		`INSERT INTO company_types (name, description, default_team_summary, is_builtin, source,
+		                            builtin_agent_prompts)
+		 VALUES ($1, $2, $3, true, 'builtin'::company_type_source, $4::jsonb)
 		 ON CONFLICT (name) DO UPDATE SET
 		     description = EXCLUDED.description,
-		     source = EXCLUDED.source`,
-		['Blank', 'Start from scratch with only the built-in CEO and Coach agents'],
+		     default_team_summary = EXCLUDED.default_team_summary,
+		     source = EXCLUDED.source,
+		     builtin_agent_prompts = EXCLUDED.builtin_agent_prompts`,
+		[
+			'Blank',
+			'Start from scratch with only the built-in CEO and Coach agents',
+			summaries.teams.Blank ?? '',
+			JSON.stringify(blankBuiltinPrompts),
+		],
 	);
 }

@@ -50,7 +50,9 @@ The `hezo_` prefix distinguishes board API keys from agent JWTs.
 Keys are stored hashed (bcrypt). Shown once at creation, never again.
 
 ### Agent — JWT
-Per-agent bearer token issued at agent creation.
+Per-run bearer token minted each time an agent run starts. The token is bound to
+the specific `heartbeat_runs` row for that run and is accepted only while the run
+is still executing.
 
 ```
 Authorization: Bearer <agent_jwt>
@@ -59,10 +61,22 @@ Authorization: Bearer <agent_jwt>
 Agent tokens are JWTs signed with the master key (held in memory, never on disk),
 containing:
 ```json
-{ "member_id": "...", "company_id": "...", "iat": ..., "exp": ... }
+{ "member_id": "...", "company_id": "...", "run_id": "...", "iat": ..., "exp": ... }
 ```
 
-`member_id` is the agent's ID in the members table (same as agent_id).
+`member_id` is the agent's ID in the members table (same as agent_id). `run_id`
+is the `heartbeat_runs.id` for the run the token was issued for. `exp` is set to
+four hours after issuance.
+
+Validation on every request:
+1. JWT signature verifies against the master key.
+2. `heartbeat_runs` has a row with `id = run_id`, `member_id` matching, `company_id` matching.
+3. That row's status is `running`.
+
+Any failure returns `401`. When the run finalizes (status moves to `succeeded`,
+`failed`, `cancelled`, or `timed_out`), the token is immediately rejected on the
+next call — revocation happens for free via the status check, without a separate
+token store.
 
 ---
 
@@ -75,7 +89,7 @@ All Board API endpoints check the caller's membership role:
 | Access Level | Endpoints |
 |-------------|-----------|
 | **Board-only** (member_users with role='board') | Company settings, agent management (hire/fire/pause/resume/terminate), budget adjustments, secrets vault, API keys, connected platforms, audit log, plugin management, invites, member management |
-| **All members** (agents and users, scoped by `project_ids`) | Issues, comments, live chat, KB (read), project docs (file-based, read/write), inbox (filtered), notification preferences |
+| **All members** (agents and users, scoped by `project_ids`) | Issues, comments, KB (read), project docs (file-based, read/write), inbox (filtered), notification preferences |
 
 Members (both agents and users) with role='member' are restricted by `project_ids` — they can only access issues, comments, and documents within their allowed projects. Requests outside their scope return 403.
 
@@ -232,7 +246,6 @@ Response:
       "description": "...",
       "role_description": "...",
       "system_prompt_template": "You are the CEO of {{company_name}}...",
-      "runtime_type": "claude_code",
       "default_effort": "max",
       "heartbeat_interval_min": 120,
       "monthly_budget_cents": 2000,
@@ -255,7 +268,6 @@ Request:
   "description": "ML and data analysis",
   "role_description": "Builds models and analyzes data",
   "system_prompt_template": "You are a data scientist for {{company_name}}.",
-  "runtime_type": "claude_code",
   "default_effort": "medium",
   "heartbeat_interval_min": 60,
   "monthly_budget_cents": 5000
@@ -271,7 +283,7 @@ again via a comment — see [Reasoning effort](#reasoning-effort)).
 Get a single agent type.
 
 #### `PATCH /agent-types/:id`
-Update an agent type. Built-in types cannot have runtime_type, heartbeat_interval_min, or monthly_budget_cents changed.
+Update an agent type. Built-in types cannot have heartbeat_interval_min or monthly_budget_cents changed.
 
 #### `DELETE /agent-types/:id`
 Delete a custom agent type. Built-in types cannot be deleted (returns 403).
@@ -296,7 +308,6 @@ Response:
       "reports_to_title": "CTO",
       "title": "Dev Engineer",
       "role_description": "Senior Engineer",
-      "runtime_type": "claude_code",
       "default_effort": "medium",
       "heartbeat_interval_min": 30,
       "monthly_budget_cents": 3000,
@@ -312,61 +323,59 @@ Response:
 ```
 
 #### `POST /companies/:companyId/agents`
-Create (hire) an agent. If requested by the board directly, no approval needed.
-If requested by another agent, creates a pending approval instead.
+Internal direct-create endpoint used by company provisioning (seeding the template team). Board-initiated hires must go through `POST /companies/:companyId/agents/onboard` instead — this endpoint is not wired to the hire form and skips the CEO/board review cycle. Tests and bootstrap paths are the only expected callers.
 
-Request:
-```json
-{
-  "title": "Frontend Engineer",
-  "role_description": "Builds and maintains all user-facing interfaces",
-  "system_prompt": "You are the **Frontend Engineer** at {{company_name}}...",
-  "reports_to": "uuid",
-  "runtime_type": "claude_code",
-  "default_effort": "medium",
-  "heartbeat_interval_min": 60,
-  "monthly_budget_cents": 3000,
-  "mcp_servers": [
-    { "name": "postgres", "url": "stdio://npx -y @modelcontextprotocol/server-postgres", "description": "Project database" }
-  ]
-}
-```
-
-`mcp_servers` is optional. Agent-level MCP servers are merged with company-level
-MCP servers at runtime (agent-level takes precedence on name conflicts).
+Request fields: `title` (required), `role_description`, `system_prompt`, `reports_to`, `default_effort`, `heartbeat_interval_min`, `monthly_budget_cents`, `touches_code`, `mcp_servers`.
 
 Response: full agent object.
 
 #### `POST /companies/:companyId/agents/onboard`
-Create an agent through the onboarding flow. The agent starts in `disabled` state.
-An onboarding issue is created in the Operations project, assigned to the CEO agent.
-The CEO reviews the new hire against the existing team and negotiates reporting
-structure and responsibilities with the board via issue comments.
+Starts the CEO-mediated hire workflow. The board submits a draft spec; the server creates a pending `hire` approval holding the draft in its payload, opens an onboarding issue in the Operations project assigned to the CEO, and wakes the CEO to refine the draft. **No `member_agents` row is created yet.**
 
-If no CEO agent exists, falls back to creating the agent directly in `enabled` state.
+The CEO revises the draft via the `update_hire_proposal` MCP tool, @-mentions the board for review, and iterates until the board resolves the pending approval. Approving the approval materialises the agent (see `POST /approvals/:approvalId/resolve`); denying leaves nothing behind.
+
+If the company has no enabled CEO or no Operations project (bootstrap case), the endpoint creates the agent directly as `enabled` and returns it with `bootstrap: true`. No approval or ticket is created in that case.
 
 Request:
 ```json
 {
   "title": "Data Scientist",
   "role_description": "Analyzes data and builds ML models",
-  "system_prompt": "You are the Data Scientist at {{company_name}}...",
-  "runtime_type": "claude_code",
+  "system_prompt": "Draft prompt — CEO will expand",
   "default_effort": "medium",
   "heartbeat_interval_min": 60,
-  "monthly_budget_cents": 3000
+  "monthly_budget_cents": 3000,
+  "touches_code": false
 }
 ```
 
-Response:
+Response (normal path):
 ```json
 {
   "data": {
-    "agent": { ... },
-    "issue": { "id": "uuid", "identifier": "ACME-12", ... }
+    "agent": null,
+    "issue": { "id": "uuid", "identifier": "ACME-12", "title": "Onboard new agent: Data Scientist", "labels": ["onboarding", "hire"] },
+    "approval": { "id": "uuid", "type": "hire", "status": "pending", "payload": { "title": "Data Scientist", "slug": "data-scientist", "system_prompt": "...", "issue_id": "uuid" } },
+    "bootstrap": false
   }
 }
 ```
+
+Response (bootstrap):
+```json
+{
+  "data": {
+    "agent": { "id": "uuid", "slug": "ceo", "admin_status": "enabled", ... },
+    "issue": null,
+    "approval": null,
+    "bootstrap": true
+  }
+}
+```
+
+Error responses:
+- `400 INVALID_REQUEST` — `title` is missing, or `default_effort` is not a valid enum value.
+- `409 CONFLICT` — an enabled or disabled agent with the same slug already exists, or another pending `hire` approval already claims the same slug.
 
 #### `GET /companies/:companyId/agents/:agentId`
 Get agent detail including system prompt.
@@ -375,13 +384,23 @@ Response: full agent object (same as list item + `system_prompt` + `mcp_servers`
 
 #### `PATCH /companies/:companyId/agents/:agentId`
 Update agent config: title, role_description, system_prompt, default_effort,
-heartbeat_interval_min, monthly_budget_cents, reports_to, mcp_servers.
+heartbeat_interval_min, monthly_budget_cents, reports_to, mcp_servers,
+model_override_provider, model_override_model.
 
 Cannot update: status (use lifecycle endpoints), budget_used_cents (system-managed).
 
 `default_effort` accepts `minimal | low | medium | high | max`. It sets the
 baseline reasoning level applied to every run of this agent; comments posted
 on the issue can override it per-run — see [Reasoning effort](#reasoning-effort).
+
+`model_override_provider` (one of `anthropic | openai | google | moonshot`, or
+`null`) and `model_override_model` (free-form model id, e.g. `claude-opus-4-7`,
+or `null`) let this agent target a specific provider + model. When the
+provider is set, the runner uses this provider's credential instead of the
+instance default; when the model is set, it's passed to the CLI as `--model`,
+taking precedence over the provider config's `default_model`. Clearing the
+provider also clears the model. Setting the model alone requires that a
+provider is already stored on the agent.
 
 #### `POST /companies/:companyId/agents/:agentId/disable`
 Disable an agent. Stops heartbeats, kills subprocess if running. Does not affect the project container.
@@ -394,10 +413,26 @@ Terminate an agent. Kills the agent's subprocess. Unassigns all issues.
 Agent record is kept for audit trail (admin_status = `terminated`).
 
 #### `GET /companies/:companyId/agents/:agentId/heartbeat-runs`
-Get agent execution history (last 50 runs). Returns recent heartbeat invocations with timing and status.
+Get agent execution history (last 50 runs). Each row includes timing
+(`started_at`, `finished_at`, `status`, `exit_code`), usage (`input_tokens`,
+`output_tokens`, `cost_cents`), and the new log fields:
+
+- `invocation_command` — the exact CLI passed to `docker exec` with the JWT
+  redacted.
+- `log_text` — interleaved stdout/stderr captured from the streaming exec,
+  capped at 1 MB. Stderr lines are prefixed `[stderr] `.
+- `working_dir` — the container path the exec was rooted at (per-issue worktree
+  or `/workspace`).
+- `project_id` — project the run belongs to, used by the UI to subscribe to
+  the corresponding `project-runs:<projectId>` WebSocket room.
 
 #### `GET /companies/:companyId/agents/:agentId/heartbeat-runs/:runId`
-Get a single heartbeat run with issue metadata.
+Get a single heartbeat run with issue metadata and the full fields listed above.
+
+#### `GET /companies/:companyId/issues/:issueId/latest-run`
+Returns the most recent `heartbeat_run` for the issue (or `null` if none).
+Powers the minified log strip on the issue detail page so it can subscribe to
+the run's live stream and link to the full run page.
 
 ---
 
@@ -461,7 +496,8 @@ Response:
       "id": "uuid",
       "company_id": "uuid",
       "name": "Backend API",
-      "goal": "Ship collaboration features",
+      "slug": "backend-api",
+      "description": "Authenticated HTTP API for the main app.",
       "repo_count": 2,
       "open_issue_count": 5,
       "created_at": "...",
@@ -472,14 +508,33 @@ Response:
 ```
 
 #### `POST /companies/:companyId/projects`
-Create a project. Container is auto-provisioned asynchronously.
+Create a project. Container is auto-provisioned asynchronously. A planning issue titled
+`Draft execution plan for "{name}"` is opened and assigned to the company's enabled CEO
+agent — board users are redirected there so the CEO can draft the execution plan.
+Fails with 500 if no enabled CEO agent exists.
 
-Request:
+Request: `name` and `description` are required. `docker_base_image` is optional and
+defaults to `hezo/agent-base:latest`.
 ```json
 {
   "name": "Backend API",
-  "goal": "Ship collaboration features",
+  "description": "Authenticated HTTP API for the main app.",
   "docker_base_image": "node:20"
+}
+```
+
+Response includes the created project plus `planning_issue_id`, the UUID of the
+auto-opened CEO planning issue.
+```json
+{
+  "data": {
+    "id": "uuid",
+    "slug": "backend-api",
+    "name": "Backend API",
+    "description": "Authenticated HTTP API for the main app.",
+    "planning_issue_id": "uuid",
+    "...": "other project fields"
+  }
 }
 ```
 
@@ -489,7 +544,7 @@ Get project detail including repos. Accepts project ID or slug.
 Response: project object + `repos` array.
 
 #### `PATCH /companies/:companyId/projects/:projectId`
-Update name, goal.
+Update name or description.
 
 #### `DELETE /companies/:companyId/projects/:projectId`
 Delete project. Cannot delete internal projects (e.g. Operations). Fails if there are open issues referencing it. Tears down the container asynchronously.
@@ -530,20 +585,42 @@ Response:
 ```
 
 #### `POST /companies/:companyId/projects/:projectId/repos`
-Add a repo. Server validates the URL pattern (GitHub only) and tests access
-using the company's connected GitHub OAuth token before saving.
+Add a repo — either by linking an existing GitHub repository or creating a new
+one on the user's behalf. Server validates access via the company's connected
+GitHub OAuth token before saving.
 
 Requires: GitHub platform must be connected for this company.
 
-Request:
+**Mode: link** (default) — link an existing repo:
 ```json
 {
   "short_name": "frontend",
+  "mode": "link",
   "url": "https://github.com/org/frontend"
 }
 ```
 
-**Validation flow:**
+**Mode: create** — create a new repo on GitHub and link it:
+```json
+{
+  "short_name": "app",
+  "mode": "create",
+  "owner": "acme-corp",
+  "name": "my-app",
+  "private": true
+}
+```
+The `owner` must appear in the user's accessible GitHub orgs (or match the
+authenticated user's personal namespace). Server re-checks this via
+`GET /user/orgs` before creating. Returns 403 `OWNER_NOT_ACCESSIBLE` otherwise.
+
+**First-repo-wins designation:** if the project has no `designated_repo_id` at
+insert time, the newly inserted repo becomes the designated repo atomically
+(row lock on the project). Any pending `action` setup-repo comments across the
+project are flipped to complete, the pending `oauth_request` approval is
+resolved, and deferred agent wakeups are re-enqueued as `Automation`.
+
+**Validation flow (mode=link):**
 
 1. Parse `owner/repo` from the URL
 2. Check `connected_platforms` for an active GitHub connection for this company
@@ -577,8 +654,67 @@ The `REPO_ACCESS_FAILED` message includes the connected GitHub username (from
 `connected_platforms.metadata.username`) so the board knows which account needs
 access to the repository.
 
+**Synchronous clone:** on a successful insert the server clones the repo via
+SSH into `<dataDir>/companies/<company-slug>/projects/<project-slug>/workspace/<short_name>/`
+(bind-mounted as `/workspace/<short_name>/` inside the project container) and
+returns the result in the response body as `clone_status` (`"cloned"`,
+`"skipped"`, or `"failed"`) and `clone_error` (string or `null`). Clone
+failures do not fail the request — the repo record is still created, and
+`ensureProjectRepos` will retry on the next agent run or the next container
+provision.
+
 #### `DELETE /companies/:companyId/projects/:projectId/repos/:repoId`
-Remove a repo from a project.
+Remove a repo from a project. The server also removes the repo's on-disk
+workspace directory and every per-issue worktree derived from it
+(`<workspace>/<short_name>/` and `<worktrees>/<issue>/<short_name>/`).
+
+Returns 409 `DESIGNATED_REPO_IMMUTABLE` if `repoId` equals the project's
+`designated_repo_id`. The designated repo cannot be removed.
+
+---
+
+### GitHub namespaces
+
+These endpoints proxy GitHub for the connected company token. They exist so
+the repo-setup wizard can populate org selectors and repo pickers without
+leaking tokens to the browser.
+
+#### `GET /companies/:companyId/github/orgs`
+List the authenticated GitHub user's personal namespace plus their orgs.
+
+Response:
+```json
+{
+  "data": [
+    { "login": "ramesh", "avatar_url": "...", "is_personal": true },
+    { "login": "acme-corp", "avatar_url": "...", "is_personal": false }
+  ]
+}
+```
+
+Returns 422 `GITHUB_NOT_CONNECTED` if the company has no active GitHub
+connection.
+
+#### `GET /companies/:companyId/github/repos?owner={login}&query={q}`
+List repos accessible to the authenticated user under `owner` (personal or
+org). `query` is an optional substring filter on repo name. Results capped at
+50.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": 123,
+      "name": "my-app",
+      "full_name": "acme-corp/my-app",
+      "owner": { "login": "acme-corp" },
+      "private": true,
+      "default_branch": "main"
+    }
+  ]
+}
+```
 
 ---
 
@@ -590,6 +726,7 @@ List issues. Supports filtering and pagination.
 Query params:
 - `?project_id=uuid` — filter by project
 - `?assignee_id=uuid` — filter by assignee (references members.id)
+- `?parent_issue_id=uuid` — filter to children of a specific parent issue (used by the sub-issues panel on the issue detail page)
 - `?status=open,in_progress` — comma-separated status filter
 - `?priority=urgent,high` — comma-separated priority filter
 - `?search=websocket` — full-text search on title + description
@@ -607,6 +744,8 @@ Response:
       "project_name": "Backend API",
       "assignee_id": "uuid",
       "assignee_name": "Dev Engineer",
+      "assignee_type": "agent",
+      "has_active_run": true,
       "parent_issue_id": null,
       "number": 47,
       "title": "Implement WebSocket handler for real-time sync",
@@ -625,6 +764,8 @@ Response:
 }
 ```
 
+`assignee_type` is `"agent"` or `"user"` depending on whether the assignee is an agent member or a human board member (matches `members.member_type`). `has_active_run` is `true` when at least one `heartbeat_runs` row exists for the issue in `running` or `queued` status — used by the UI to show a live indicator next to the assignee name.
+
 #### `POST /companies/:companyId/issues`
 Create an issue.
 
@@ -637,7 +778,8 @@ Request:
   "assignee_id": "uuid",
   "parent_issue_id": "uuid | null",
   "priority": "urgent",
-  "labels": ["backend", "collab"]
+  "labels": ["backend", "collab"],
+  "runtime_type": "claude_code"
 }
 ```
 
@@ -645,6 +787,13 @@ Request:
 `next_issue_number()`. If the assignee is an agent, the agent receives
 an event trigger. If a board member, they are notified via inbox and
 configured messaging channels.
+
+Issues in the auto-created Operations project (`slug = 'operations'`, `is_internal = true`) must be assigned to the CEO. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Operations project issues must be assigned to the CEO`.
+
+`runtime_type` is optional. It pins this issue to a specific AI adapter
+(`claude_code | codex | gemini | kimi`). When unset, the server picks the
+instance default — the single active AI provider if only one is configured,
+or the oldest/default active provider otherwise.
 
 #### `GET /companies/:companyId/issues/:issueId`
 Full issue detail including description, goal chain, cost.
@@ -663,6 +812,7 @@ Response: full issue object + computed fields:
     "company_description": "Build the #1 AI note-taking app",
     "assignee_id": "uuid",
     "assignee_name": "Dev Engineer",
+    "assignee_type": "agent",
     "parent_issue_id": null,
     "status": "in_progress",
     "priority": "urgent",
@@ -676,17 +826,19 @@ Response: full issue object + computed fields:
 ```
 
 #### `PATCH /companies/:companyId/issues/:issueId`
-Update issue fields: title, description, status, priority, assignee_id, labels, rules, progress_summary.
+Update issue fields: title, description, status, priority, assignee_id, labels, rules, progress_summary, runtime_type.
 
 `assignee_id` cannot be set to null — every issue must have an assignee.
 Changing `assignee_id` triggers an event on the newly assigned agent, or a notification to the newly assigned board member.
 Changing `status` to `done` or `closed` triggers preview cleanup.
 
+For issues whose project is Operations (`slug = 'operations'`, `is_internal = true`), `assignee_id` must be the CEO; any other value returns `400 INVALID_REQUEST`.
+
 #### `DELETE /companies/:companyId/issues/:issueId`
 Delete an issue. Only allowed if status is `backlog` or `open`, and no comments exist.
 
 #### `POST /companies/:companyId/issues/:issueId/sub-issues`
-Create a sub-issue. `project_id` is inherited from the parent.
+Create a sub-issue. `project_id` is inherited from the parent. When the parent belongs to the Operations project, the sub-issue's `assignee_id` must be the CEO.
 
 Request:
 ```json
@@ -996,7 +1148,10 @@ Request:
 
 `status` must be `"approved"` or `"denied"`.
 
-When approved, side effects depend on approval type: `SystemPromptUpdate` approvals update the agent's system prompt and record a revision; `SkillProposal` approvals write the skill to the database.
+When approved, side effects depend on approval type:
+- `SystemPromptUpdate` — updates the agent's system prompt and records a revision.
+- `SkillProposal` — writes the skill to the database.
+- `Hire` — materialises the draft in the payload into a new enabled `member_agents` row, transitions the linked onboarding issue to `done`, and broadcasts the new agent row so the UI/org chart update live. Failure modes: if the slug has been taken by a directly-created agent since the approval was filed, the hook raises and the resolution fails (operator must resolve the slug collision manually).
 ```
 
 ---
@@ -1065,7 +1220,7 @@ Response:
       "action": "agent.created",
       "entity_type": "agent",
       "entity_id": "uuid",
-      "details": { "title": "Frontend Engineer", "runtime_type": "claude_code" },
+      "details": { "title": "Frontend Engineer" },
       "created_at": "..."
     }
   ],
@@ -1143,64 +1298,74 @@ Response:
 
 ### AI Providers
 
-#### `GET /companies/:companyId/ai-providers`
-List all AI provider configurations for a company.
+AI provider credentials are **instance-level**: a single set of configs is shared across every company in the Hezo instance. Keys are encrypted with the master key. The web shell blocks the app with a full-screen setup gate until at least one provider is configured; it re-appears if the last active provider is deleted.
 
-#### `GET /companies/:companyId/ai-providers/status`
-Get lightweight status indicating whether any provider is configured.
+Authentication: read endpoints require a board-role token. Mutation endpoints (`POST`, `DELETE`, `PATCH`, OAuth start, verify) additionally require superuser.
 
-#### `POST /companies/:companyId/ai-providers`
-Add an AI provider configuration.
+#### `GET /ai-providers`
+List all configured AI providers.
+
+#### `GET /ai-providers/status`
+Lightweight status check. Returns `{ configured: boolean, providers: string[] }`.
+
+#### `POST /ai-providers`
+Add an AI provider configuration. Validates key format and (unless `SKIP_AI_KEY_VALIDATION` is set) makes a live call to the provider to confirm the key works before storing.
 
 Request:
 ```json
 {
   "provider": "anthropic",
   "api_key": "sk-ant-...",
-  "label": "Main Anthropic account",
+  "label": "anthropic-primary",
   "auth_method": "api_key"
 }
 ```
 
-`provider` is one of: `anthropic`, `openai`, `google`, `moonshot`. Returns 409 if a duplicate configuration exists.
+`provider` is one of: `anthropic`, `openai`, `google`, `moonshot`. `label` is optional; the server auto-derives one from the provider name if omitted. Returns 409 if a `(provider, label)` pair already exists.
 
-#### `DELETE /companies/:companyId/ai-providers/:configId`
-Remove an AI provider configuration.
+Multiple configs per provider are permitted as long as `(provider, label)` stays unique. The typical case is one `api_key` row plus one `oauth_token` row per provider (so a user can keep their Anthropic API key *and* a Claude subscription OAuth token side-by-side). The runtime credential resolver picks whichever row is marked `is_default`; flip via `PATCH /ai-providers/:configId/default`. `auth_method` defaults to `api_key`; send `"oauth_token"` to skip the key-prefix check and live verification (OAuth tokens are written by the `/oauth/callback` flow but the field is accepted here for completeness).
 
-#### `PATCH /companies/:companyId/ai-providers/:configId/default`
-Set a configuration as the default for its provider type.
+#### `DELETE /ai-providers/:configId`
+Remove a configuration.
 
-#### `POST /companies/:companyId/ai-providers/:provider/oauth/start`
-Initiate OAuth flow for a provider (`anthropic`, `openai`, `google`). Returns `auth_url` and `state`.
+#### `PATCH /ai-providers/:configId/default`
+Mark a config as the default for its provider (exactly one default per provider is enforced by a partial unique index).
 
-#### `POST /companies/:companyId/ai-providers/:configId/verify`
-Verify an API key by making a lightweight call to the provider. Updates config status to `invalid` if the key is bad.
+#### `POST /ai-providers/:provider/oauth/start`
+Initiate OAuth flow for a provider (`anthropic`, `openai`, `google`). Returns `auth_url` and `state`. State carries `ai_provider` only — no company context.
+
+#### `POST /ai-providers/:configId/verify`
+Verify a stored key by making a lightweight call to the provider. Updates config status to `invalid` if the key is bad.
+
+#### `PATCH /ai-providers/:configId`
+Update a config. Currently accepts `{ default_model: string | null }`. When set, the agent runner appends `--model <default_model>` to the CLI invocation for every run that resolves to this config (unless the agent has its own override). Pass `null` to clear.
+
+#### `GET /ai-providers/:configId/models`
+Return the models this provider offers for the stored credential. Calls the provider's `/v1/models` endpoint live (same URL + auth headers used by `verify`) and normalises the response into `{ id, label }[]`. Chat models only — embeddings / audio / image / moderation endpoints are filtered out. Superuser only; surfaces 401 if the provider rejects the credential and 503 if the provider is unreachable.
 
 ---
 
 ### Execution Locks
 
 #### `GET /companies/:companyId/issues/:issueId/lock`
-Get current locks on an issue.
+Get the list of agents currently running against an issue.
 
 Response:
 ```json
 {
   "data": {
-    "locks": [{ "id": "uuid", "issue_id": "uuid", "member_id": "uuid", "lock_type": "write", "locked_at": "...", "member_name": "..." }],
-    "has_write_lock": true
+    "locks": [{ "id": "uuid", "issue_id": "uuid", "member_id": "uuid", "lock_type": "read", "locked_at": "...", "member_name": "..." }]
   }
 }
 ```
 
 #### `POST /companies/:companyId/issues/:issueId/lock`
-Acquire a lock. Write locks are exclusive; read locks are shared (blocked only by write locks). Returns 409 if already locked.
+Record that a member is running against the issue. Multiple members can hold locks concurrently; returns 409 only if this specific member already holds an active lock on this issue.
 
 Request:
 ```json
 {
-  "member_id": "uuid",
-  "lock_type": "write"
+  "member_id": "uuid"
 }
 ```
 
@@ -1463,43 +1628,6 @@ Request:
   "content": "# Agent Guidelines\n..."
 }
 ```
-
----
-
-### Live Chat
-
-Each issue has a **persistent live chat** — one ongoing conversation per issue, always
-available. The chat is auto-created with the issue, no sessions or setup required. The assigned agent is always a participant. Board members can @-mention any other agent to pull them in.
-
-#### `GET /companies/:companyId/issues/:issueId/chat/messages`
-Get chat messages for this issue.
-
-Query params:
-- `?after=<timestamp>` — only messages after this timestamp (for polling/pagination)
-- `?limit=50` — max messages to return (default 50, from most recent)
-
-Response:
-```json
-{
-  "data": [
-    { "id": "uuid", "author": "board:alice", "content": "What auth strategy do you recommend?", "created_at": "..." },
-    { "id": "uuid", "author": "agent:architect", "content": "For this API-first product, I'd suggest JWT...", "created_at": "..." }
-  ]
-}
-```
-
-#### `POST /companies/:companyId/issues/:issueId/chat/messages`
-Post a chat message. The server detects @-mentions in the content text, wakes
-the mentioned agent immediately, and adds them to the chat.
-
-Request:
-```json
-{
-  "content": "What auth strategy do you recommend? @architect"
-}
-```
-
-Mentions are parsed from the content text (e.g. `@architect`). The server creates wakeups for mentioned agents.
 
 ---
 
@@ -2118,7 +2246,6 @@ Request:
   "role_description": "Automated test coverage",
   "system_prompt": "You are the QA Engineer at {{company_name}}...",
   "reports_to": "self",
-  "runtime_type": "claude_code",
   "heartbeat_interval_min": 120,
   "monthly_budget_cents": 2500,
   "reason": "We need automated test coverage before the collab feature ships."
@@ -2194,7 +2321,7 @@ Response:
       "updated_at": "..."
     },
     "project_docs": [
-      { "filename": "spec.md", "path": ".dev/spec.md" }
+      { "filename": "spec.md", "updated_at": "..." }
     ],
     "peers": [
       { "id": "uuid", "title": "UI Designer", "status": "active" }
@@ -2241,9 +2368,9 @@ Response:
 
 ### Project Documents (agent-side)
 
-Agents access project documents through the same board endpoints (scoped to their company). Project docs are file-based — stored as `.dev/*.md` files in the designated repo worktree. See the board-side Project Documents section for endpoint details.
+Agents access project documents through the same board endpoints (scoped to their company). Project docs are stored in the `project_docs` table. See the board-side Project Documents section for endpoint details.
 
-Agent writes to `prd.md` create an approval request instead of writing the file directly.
+Agent writes to `prd.md` create an approval request instead of updating the document directly.
 
 ---
 
@@ -2350,12 +2477,14 @@ After connecting, clients subscribe to rooms:
 ```json
 { "action": "subscribe", "room": "company:<uuid>" }
 { "action": "subscribe", "room": "container-logs:<projectId>" }
+{ "action": "subscribe", "room": "project-runs:<projectId>" }
 { "action": "unsubscribe", "room": "company:<uuid>" }
 ```
 
-Two room types are supported:
-- `company:<uuid>` — receives row changes, chat messages, and agent lifecycle events for the company. Access is verified (agents/API keys must match company; board users must be members or superusers).
-- `container-logs:<projectId>` — streams Docker container stdout/stderr for a project.
+Room types:
+- `company:<uuid>` — receives row changes and agent lifecycle events for the company. Access is verified (agents/API keys must match company; board users must be members or superusers).
+- `container-logs:<projectId>` — streams Docker container stdout/stderr for a project's main process. Access is verified: the caller's auth must grant access to the project's owning company.
+- `project-runs:<projectId>` — streams `run_log` messages from every agent `docker exec` on that project. Clients filter by `runId` to isolate a specific run. Access is verified: the caller's auth must grant access to the project's owning company.
 
 Room names always use UUIDs, never slugs. The frontend `useWebSocket` hook takes two params: the UUID for room subscription and the route-param slug for TanStack Query cache invalidation.
 
@@ -2367,9 +2496,9 @@ Defined in `@hezo/shared` as the `WsMessageType` enum:
 |------|-------------|---------|
 | `connected` | Sent on initial connection | — |
 | `row_change` | Database row changed | `{ type, table, action, row }` where `action` is `INSERT`, `UPDATE`, or `DELETE` |
-| `chat_message` | Live chat message | `{ type, issueId, message: { id, chatId, authorMemberId, authorType, content, createdAt } }` |
 | `agent_lifecycle` | Agent status change | `{ type, memberId, status }` |
 | `container_log` | Container stdout/stderr stream | `{ type, projectId, stream, text }` where `stream` is `stdout` or `stderr` |
+| `run_log` | Agent run stdout/stderr (streaming `docker exec` output plus worktree-prep steps and the invocation line) | `{ type, projectId, runId, issueId, stream, text }` |
 | `error` | Error message | `{ type, code, message }` |
 
 ### Client action types
@@ -2380,13 +2509,12 @@ Defined in `@hezo/shared` as the `WsClientAction` enum:
 |--------|-------------|---------|
 | `subscribe` | Subscribe to a room | `{ action, room }` |
 | `unsubscribe` | Unsubscribe from a room | `{ action, room }` |
-| `chat` | Send a chat message | `{ action, issueId, content, mentions? }` |
-
-Note: The `chat` action is defined in the shared types but not currently handled by the WebSocket server. Chat messages are sent via the REST endpoint `POST /companies/:companyId/issues/:issueId/chat/messages` and broadcast to subscribers via `chat_message` events.
 
 ### Cache invalidation
 
 `RowChange` messages trigger TanStack Query cache invalidation on the client. The frontend maps table names to query cache keys and calls `invalidateQueries`, causing affected queries to refetch. This provides real-time UI updates without requiring the server to push full data payloads.
+
+`heartbeat_runs` row-change broadcasts carry a minimal `{ id, issue_id, company_id, member_id, status }` payload — enough to route cache invalidation without leaking per-run logs or shell args. They are emitted on run INSERT (status transitions to `running`) and on the terminal UPDATE only; mid-run log flushes are not broadcast. The client maps `heartbeat_runs` row changes to invalidate the issues list query so the assignee running indicator updates in real time.
 
 ### Server-side broadcasting
 
@@ -2408,7 +2536,7 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `connection.refreshed` | connected_platform | System or board refreshes token |
 | `connection.expired` | connected_platform | System detects expired token |
 | `connection.disconnected` | connected_platform | Board disconnects platform |
-| `agent.created` | agent | Board hires or approval resolved |
+| `agent.created` | agent | Board-approved `hire` approval materialises, or bootstrap direct-create when no CEO exists |
 | `agent.updated` | agent | Board edits agent config |
 | `agent.disabled` | agent | Board disables agent |
 | `agent.resumed` | agent | Board resumes |
@@ -2446,7 +2574,6 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `project_doc.created` | project_doc | Board or agent creates project doc |
 | `project_doc.updated` | project_doc | Board or agent updates project doc |
 | `project_doc.deleted` | project_doc | Board deletes project doc |
-| `live_chat.message` | live_chat | Message sent in persistent live chat |
 | `budget.warning` | agent | Agent hits 80% budget |
 | `budget.exceeded` | agent | Agent hits 100% budget |
 | `budget.reset` | agent | Monthly budget reset |
@@ -2461,7 +2588,14 @@ Hezo exposes an MCP (Model Context Protocol) endpoint for external AI agents to 
 
 Streamable HTTP MCP endpoint. Uses `@modelcontextprotocol/sdk` with the `McpServer` class. Supports bidirectional messaging with optional Server-Sent Events (SSE) for streaming responses.
 
-**Authentication:** Same as REST API — user JWT, or API key (`Authorization: Bearer hezo_<key>`).
+**Authentication:** Same as REST API — user JWT, or API key (`Authorization: Bearer hezo_<key>`). Agent runs authenticate with a per-run JWT (`signAgentJwt`) whose `run_id` claim binds it to a single `heartbeat_runs` row. The server rejects the token once that run's status is no longer `running`.
+
+**How agent sessions reach this endpoint:** the runner builds an MCP config
+per run and passes it to Claude Code via the `--mcp-config <json>` flag (plus
+`--strict-mcp-config` so no ambient `~/.claude.json` leaks). The config points
+at `http://host.docker.internal:<serverPort>/mcp` and carries
+`Authorization: Bearer <agent-jwt>` as a header. The flag is only set for the
+`claude_code` runtime; other runtimes keep their current non-MCP behaviour.
 
 **Capabilities:**
 - `tools` — Hezo registers all operations as MCP tools
@@ -2476,9 +2610,10 @@ Streamable HTTP MCP endpoint. Uses `@modelcontextprotocol/sdk` with the `McpServ
 | `create_company` | Create a new company (superuser only) | `name`, `description` |
 | `list_issues` | List issues with filtering | `company_id`, `project_id?`, `status?` |
 | `get_issue` | Get issue details | `company_id`, `issue_id` |
-| `create_issue` | Create a new issue | `company_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
-| `update_issue` | Update an issue | `company_id`, `issue_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
+| `create_issue` | Create a new issue. Operations-project issues must be assigned to the CEO (slug `ceo`); otherwise an error is returned. | `company_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
+| `update_issue` | Update an issue. Changing `assignee_id` on an Operations-project issue to anyone other than the CEO returns an error. | `company_id`, `issue_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
 | `list_agents` | List agents in a company | `company_id` |
+| `update_hire_proposal` | Revise the draft of a pending `hire` approval. **CEO-only.** Rejects non-CEO agents with `Only the CEO can revise hire proposals`. Rejects already-resolved approvals. All draft fields optional — pass only what changes. | `approval_id`, `title?`, `role_description?`, `system_prompt?`, `default_effort?`, `heartbeat_interval_min?`, `monthly_budget_cents?`, `touches_code?` |
 | `list_projects` | List projects | `company_id` |
 | `create_project` | Create a project | `company_id`, `name` |
 | `list_comments` | List issue comments | `company_id`, `issue_id` |
@@ -2499,8 +2634,18 @@ Streamable HTTP MCP endpoint. Uses `@modelcontextprotocol/sdk` with the `McpServ
 | `list_skills` | List active skills | `company_id`, `tags?` |
 | `get_skill` | Get skill by slug | `company_id`, `slug` |
 | `create_skill` | Create skill directly | `company_id`, `name`, `content`, `description?` |
+| `set_agent_summary` | Set an agent's auto-generated description | `company_id`, `agent_id`, `summary` (≤1000 chars) |
+| `set_team_summary` | Set the team collaboration description (CEO only) | `company_id`, `summary` (≤4000 chars) |
 
 MCP tools call the same business logic layer as REST endpoints.
+
+### Description-update issue convention
+
+To trigger runtime regeneration of agent and team descriptions, the system
+creates an issue with the `description-update` label in the Operations project,
+assigned to the CEO agent. The CEO processes this issue by calling
+`set_agent_summary` for each agent and `set_team_summary` for the company,
+then marks the issue done.
 
 ---
 

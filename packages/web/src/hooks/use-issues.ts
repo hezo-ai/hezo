@@ -14,11 +14,14 @@ export interface Issue {
 	priority: string;
 	assignee_id: string | null;
 	assignee_name: string | null;
+	assignee_type: 'agent' | 'user' | null;
+	has_active_run: boolean;
 	parent_issue_id: string | null;
 	labels: string[];
 	progress_summary: string | null;
 	rules: string | null;
 	project_name: string | null;
+	project_slug: string | null;
 	comment_count: number;
 	cost_cents: number;
 	created_at: string;
@@ -30,6 +33,7 @@ export interface IssueFilters {
 	priority?: string;
 	project_id?: string;
 	assignee_id?: string;
+	parent_issue_id?: string;
 	search?: string;
 	sort?: string;
 	page?: string;
@@ -41,7 +45,11 @@ interface IssueListResponse {
 	meta: { page: number; per_page: number; total: number };
 }
 
-export function useIssues(companyId: string, filters?: IssueFilters) {
+export function useIssues(
+	companyId: string,
+	filters?: IssueFilters,
+	options?: { enabled?: boolean },
+) {
 	return useQuery({
 		queryKey: ['companies', companyId, 'issues', filters],
 		queryFn: async () => {
@@ -54,6 +62,7 @@ export function useIssues(companyId: string, filters?: IssueFilters) {
 				return { data: res, meta: { page: 1, per_page: 50, total: res.length } };
 			return res;
 		},
+		enabled: options?.enabled ?? true,
 	});
 }
 

@@ -1,4 +1,4 @@
-import { AuthType } from '@hezo/shared';
+import { AuthType, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -63,7 +63,7 @@ preferencesRoutes.patch('/companies/:companyId/preferences', async (c) => {
 		);
 		broadcastChange(
 			c,
-			`company:${companyId}`,
+			wsRoom.company(companyId),
 			'company_preferences',
 			'INSERT',
 			result.rows[0] as Record<string, unknown>,
@@ -94,7 +94,7 @@ preferencesRoutes.patch('/companies/:companyId/preferences', async (c) => {
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'company_preferences',
 		'UPDATE',
 		result.rows[0] as Record<string, unknown>,

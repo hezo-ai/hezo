@@ -15,7 +15,7 @@ describe('parseArgs', () => {
 		expect(config.masterKey).toBeUndefined();
 		expect(config.connectApiKey).toBeUndefined();
 		expect(config.reset).toBe(false);
-		expect(config.noOpen).toBe(false);
+		expect(config.open).toBe(false);
 	});
 
 	it('parses --port', () => {
@@ -65,9 +65,9 @@ describe('parseArgs', () => {
 		expect(config.reset).toBe(true);
 	});
 
-	it('parses --no-open', () => {
-		const config = parseArgs(argv('--no-open'));
-		expect(config.noOpen).toBe(true);
+	it('parses --open', () => {
+		const config = parseArgs(argv('--open'));
+		expect(config.open).toBe(true);
 	});
 
 	it('handles multiple flags combined', () => {
@@ -84,7 +84,7 @@ describe('parseArgs', () => {
 				'--connect-api-key',
 				'hc_xyz',
 				'--reset',
-				'--no-open',
+				'--open',
 			),
 		);
 		expect(config.port).toBe(9000);
@@ -93,6 +93,6 @@ describe('parseArgs', () => {
 		expect(config.connectUrl).toBe('https://connect.hezo.dev');
 		expect(config.connectApiKey).toBe('hc_xyz');
 		expect(config.reset).toBe(true);
-		expect(config.noOpen).toBe(true);
+		expect(config.open).toBe(true);
 	});
 });

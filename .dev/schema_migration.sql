@@ -64,7 +64,7 @@ CREATE INDEX idx_sessions_token ON sessions(token);
 
 CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini', 'bash', 'http');
 CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
-CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled', 'terminated');
+CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopped', 'error');
 CREATE TYPE issue_status AS ENUM ('backlog', 'open', 'in_progress', 'review', 'approved', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');
@@ -215,7 +215,6 @@ CREATE TABLE agents (
     slug                    TEXT NOT NULL,
     role_description        TEXT NOT NULL DEFAULT '',
     system_prompt           TEXT NOT NULL DEFAULT '',
-    runtime_type            agent_runtime NOT NULL DEFAULT 'claude_code',
     heartbeat_interval_min  INTEGER NOT NULL DEFAULT 60,
     monthly_budget_cents    INTEGER NOT NULL DEFAULT 3000,  -- $30 default
     budget_used_cents       INTEGER NOT NULL DEFAULT 0,
@@ -247,7 +246,7 @@ CREATE TABLE projects (
     name                TEXT NOT NULL,
     goal                TEXT NOT NULL DEFAULT '',
     -- Docker container for this project (one container per project)
-    docker_base_image   TEXT NOT NULL DEFAULT 'node:24-slim',
+    docker_base_image   TEXT NOT NULL DEFAULT 'hezo/agent-base:latest',
     container_id        TEXT,          -- Docker container ID
     container_status    container_status,
     -- Dev preview port forwarding: [{"container": 3000, "host": 13000}]
@@ -428,8 +427,8 @@ CREATE TABLE approvals (
     requested_by_agent_id   UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     -- Polymorphic payload depending on type:
     --   secret_access: { "secret_id": "...", "reason": "..." }
-    --   hire:          { "title": "...", "role_description": "...", "system_prompt": "...", 
-    --                    "runtime_type": "...", "reports_to": "...", "budget": 3000 }
+    --   hire:          { "title": "...", "role_description": "...", "system_prompt": "...",
+    --                    "reports_to": "...", "budget": 3000 }
     --   strategy:      { "summary": "...", "details": "..." }
     payload                 JSONB NOT NULL,
     resolved_at             TIMESTAMPTZ,
@@ -502,25 +501,6 @@ CREATE TABLE kb_docs (
 );
 
 CREATE INDEX idx_kb_docs_company ON kb_docs(company_id);
-
--------------------------------------------------------------------------------
--- LIVE CHAT SESSIONS
--------------------------------------------------------------------------------
-
-CREATE TABLE live_chat_sessions (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    issue_id    UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    agent_id    UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-    -- Full transcript: [{ "author": "board|agent", "text": "...", "timestamp": "..." }, ...]
-    transcript  JSONB NOT NULL DEFAULT '[]'::jsonb,
-    -- Agent-generated summary, stored after session ends
-    summary     TEXT,
-    started_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    ended_at    TIMESTAMPTZ
-);
-
-CREATE INDEX idx_live_chat_issue ON live_chat_sessions(issue_id);
-CREATE INDEX idx_live_chat_agent ON live_chat_sessions(agent_id);
 
 -------------------------------------------------------------------------------
 -- CONNECTED PLATFORMS (OAuth connections via Hezo Connect)

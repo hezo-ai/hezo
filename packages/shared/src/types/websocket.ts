@@ -1,16 +1,15 @@
 export enum WsMessageType {
 	Connected = 'connected',
 	RowChange = 'row_change',
-	ChatMessage = 'chat_message',
 	AgentLifecycle = 'agent_lifecycle',
 	ContainerLog = 'container_log',
+	RunLog = 'run_log',
 	Error = 'error',
 }
 
 export enum WsClientAction {
 	Subscribe = 'subscribe',
 	Unsubscribe = 'unsubscribe',
-	Chat = 'chat',
 }
 
 export type ChangeAction = 'INSERT' | 'UPDATE' | 'DELETE';
@@ -20,19 +19,6 @@ export interface WsRowChangeMessage {
 	table: string;
 	action: ChangeAction;
 	row: Record<string, unknown>;
-}
-
-export interface WsChatMessage {
-	type: WsMessageType.ChatMessage;
-	issueId: string;
-	message: {
-		id: string;
-		chatId: string;
-		authorMemberId: string | null;
-		authorType: string;
-		content: string;
-		createdAt: string;
-	};
 }
 
 export interface WsAgentLifecycleMessage {
@@ -52,6 +38,15 @@ export interface WsContainerLogMessage {
 	text: string;
 }
 
+export interface WsRunLogMessage {
+	type: WsMessageType.RunLog;
+	projectId: string;
+	runId: string;
+	issueId: string | null;
+	stream: 'stdout' | 'stderr';
+	text: string;
+}
+
 export interface WsErrorMessage {
 	type: WsMessageType.Error;
 	code: string;
@@ -60,9 +55,9 @@ export interface WsErrorMessage {
 
 export type WsServerMessage =
 	| WsRowChangeMessage
-	| WsChatMessage
 	| WsAgentLifecycleMessage
 	| WsContainerLogMessage
+	| WsRunLogMessage
 	| WsConnectedMessage
 	| WsErrorMessage;
 
@@ -76,11 +71,4 @@ export interface WsUnsubscribeAction {
 	room: string;
 }
 
-export interface WsChatAction {
-	action: WsClientAction.Chat;
-	issueId: string;
-	content: string;
-	mentions?: string[];
-}
-
-export type WsClientMessage = WsSubscribeAction | WsUnsubscribeAction | WsChatAction;
+export type WsClientMessage = WsSubscribeAction | WsUnsubscribeAction;

@@ -1,6 +1,7 @@
-import { ExecutionLockType } from '@hezo/shared';
+import { wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess } from '../middleware/auth';
@@ -13,15 +14,8 @@ executionLocksRoutes.get('/companies/:companyId/issues/:issueId/lock', async (c)
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
-
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const result = await db.query(
 		`SELECT el.id, el.issue_id, el.member_id, el.lock_type, el.locked_at,
@@ -33,14 +27,7 @@ executionLocksRoutes.get('/companies/:companyId/issues/:issueId/lock', async (c)
 		[issueId],
 	);
 
-	if (result.rows.length === 0) {
-		return ok(c, { locks: [], has_write_lock: false });
-	}
-
-	const locks = result.rows as Array<Record<string, unknown>>;
-	const hasWriteLock = locks.some((l) => l.lock_type === ExecutionLockType.Write);
-
-	return ok(c, { locks, has_write_lock: hasWriteLock });
+	return ok(c, { locks: result.rows });
 });
 
 executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c) => {
@@ -49,50 +36,32 @@ executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
-
-	const body = await c.req.json<{ member_id: string; lock_type?: string }>();
+	const body = await c.req.json<{ member_id: string }>();
 	if (!body.member_id) {
 		return err(c, 'INVALID_REQUEST', 'member_id is required', 400);
 	}
 
-	const lockType =
-		body.lock_type === ExecutionLockType.Read ? ExecutionLockType.Read : ExecutionLockType.Write;
-
-	// Write lock: exclusive — no other locks allowed
-	// Read lock: shared — blocked only by write locks
-	const lockQuery =
-		lockType === ExecutionLockType.Write
-			? `INSERT INTO execution_locks (issue_id, member_id, lock_type)
-			   SELECT $1, $2, 'write'
-			   WHERE NOT EXISTS (
-			     SELECT 1 FROM execution_locks WHERE issue_id = $1 AND released_at IS NULL
-			   )
-			   RETURNING *`
-			: `INSERT INTO execution_locks (issue_id, member_id, lock_type)
-			   SELECT $1, $2, 'read'
-			   WHERE NOT EXISTS (
-			     SELECT 1 FROM execution_locks WHERE issue_id = $1 AND lock_type = 'write' AND released_at IS NULL
-			   )
-			   RETURNING *`;
-
-	const result = await db.query(lockQuery, [issueId, body.member_id]);
+	const result = await db.query(
+		`INSERT INTO execution_locks (issue_id, member_id, lock_type)
+		 SELECT $1, $2, 'read'
+		 WHERE NOT EXISTS (
+		   SELECT 1 FROM execution_locks
+		   WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL
+		 )
+		 RETURNING *`,
+		[issueId, body.member_id],
+	);
 
 	if (result.rows.length === 0) {
-		return err(c, 'CONFLICT', 'Issue is already locked', 409);
+		return err(c, 'CONFLICT', 'Member already holds a lock on this issue', 409);
 	}
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'execution_locks',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
@@ -106,21 +75,14 @@ executionLocksRoutes.delete('/companies/:companyId/issues/:issueId/lock', async 
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
-
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	await db.query(
 		'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
 		[issueId],
 	);
 
-	broadcastChange(c, `company:${companyId}`, 'execution_locks', 'DELETE', { issue_id: issueId });
+	broadcastChange(c, wsRoom.company(companyId), 'execution_locks', 'DELETE', { issue_id: issueId });
 	return ok(c, { released: true });
 });

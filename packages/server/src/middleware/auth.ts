@@ -1,12 +1,14 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType } from '@hezo/shared';
+import { AuthType, HeartbeatRunStatus } from '@hezo/shared';
 import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { sign, verify } from 'hono/jwt';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { resolveCompanyId } from '../lib/resolve';
 import type { AuthInfo, Env } from '../lib/types';
+
+const AGENT_JWT_TTL_SECONDS = 60 * 60 * 4;
 
 const PUBLIC_PATHS = ['/health', '/api/status', '/api/auth/token', '/'];
 
@@ -47,10 +49,21 @@ export async function verifyToken(
 		const payload = await verify(token, secret, 'HS256');
 
 		if (payload.member_id && payload.company_id) {
+			if (!payload.run_id) return null;
+			const memberId = payload.member_id as string;
+			const companyId = payload.company_id as string;
+			const runId = payload.run_id as string;
+			const runResult = await db.query<{ status: string }>(
+				'SELECT status FROM heartbeat_runs WHERE id = $1 AND member_id = $2 AND company_id = $3',
+				[runId, memberId, companyId],
+			);
+			const status = runResult.rows[0]?.status;
+			if (status !== HeartbeatRunStatus.Running) return null;
 			return {
 				type: AuthType.Agent,
-				memberId: payload.member_id as string,
-				companyId: payload.company_id as string,
+				memberId,
+				companyId,
+				runId,
 			};
 		}
 		if (payload.user_id) {
@@ -114,12 +127,19 @@ export async function signAgentJwt(
 	masterKeyManager: { getJwtKey: () => Promise<Buffer> },
 	memberId: string,
 	companyId: string,
+	runId: string,
 ): Promise<string> {
 	const jwtKey = await masterKeyManager.getJwtKey();
 	const secret = jwtKey.toString('base64');
 	const now = Math.floor(Date.now() / 1000);
 	return sign(
-		{ member_id: memberId, company_id: companyId, iat: now, exp: now + 86400 * 30 },
+		{
+			member_id: memberId,
+			company_id: companyId,
+			run_id: runId,
+			iat: now,
+			exp: now + AGENT_JWT_TTL_SECONDS,
+		},
 		secret,
 		'HS256',
 	);

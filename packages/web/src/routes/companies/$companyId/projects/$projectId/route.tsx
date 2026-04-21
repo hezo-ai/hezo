@@ -4,6 +4,7 @@ import { useProject } from '../../../../../hooks/use-projects';
 
 const tabs = [
 	{ label: 'Issues', to: '/companies/$companyId/projects/$projectId/issues' as const },
+	{ label: 'Documents', to: '/companies/$companyId/projects/$projectId/documents' as const },
 	{ label: 'Container', to: '/companies/$companyId/projects/$projectId/container' as const },
 	{ label: 'Settings', to: '/companies/$companyId/projects/$projectId/settings' as const },
 ];
@@ -26,7 +27,7 @@ function ProjectLayout() {
 			/>
 
 			<h1 className="text-lg font-semibold mb-1">{project.name}</h1>
-			{project.goal && <p className="text-sm text-text-muted mb-4">{project.goal}</p>}
+			{project.description && <p className="text-sm text-text-muted mb-4">{project.description}</p>}
 
 			<div className="flex gap-1 border-b border-border mb-6">
 				{tabs.map((tab) => {

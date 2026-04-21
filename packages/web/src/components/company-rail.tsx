@@ -1,6 +1,6 @@
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { Home, Inbox, Plus } from 'lucide-react';
-import { useApprovals } from '../hooks/use-approvals';
+import { Home, Inbox, Plus, Settings } from 'lucide-react';
+import { useAllPendingApprovals } from '../hooks/use-approvals';
 import { useCompanies } from '../hooks/use-companies';
 import { Avatar, avatarColorFromString } from './ui/avatar';
 import { ThemeSwitcher } from './ui/theme-switcher';
@@ -16,7 +16,7 @@ export function CompanyRail() {
 	const params = useParams({ strict: false });
 	const activeCompanyId = (params as Record<string, string>).companyId;
 	const navigate = useNavigate();
-	const approvalsQuery = useApprovals(activeCompanyId ?? '', undefined, !!activeCompanyId);
+	const approvalsQuery = useAllPendingApprovals(companies?.map((c) => c.slug) ?? []);
 	const pendingCount = approvalsQuery.data?.length ?? 0;
 
 	return (
@@ -65,21 +65,25 @@ export function CompanyRail() {
 
 			<div className="mt-auto flex flex-col items-center gap-1 pt-2">
 				<ThemeSwitcher />
-				{activeCompanyId && (
-					<Link
-						to="/companies/$companyId/inbox"
-						params={{ companyId: activeCompanyId }}
-						className="relative inline-flex items-center justify-center w-8 h-8 rounded-radius-md text-text-muted hover:text-text hover:bg-bg-muted transition-colors"
-						title="Inbox"
-					>
-						<Inbox className="w-4 h-4" />
-						{pendingCount > 0 && (
-							<span className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 rounded-full bg-accent-red text-white text-[10px] font-bold">
-								{pendingCount}
-							</span>
-						)}
-					</Link>
-				)}
+				<Link
+					to="/settings"
+					className="inline-flex items-center justify-center w-8 h-8 rounded-radius-md text-text-muted hover:text-text hover:bg-bg-muted transition-colors"
+					title="Settings"
+				>
+					<Settings className="w-4 h-4" />
+				</Link>
+				<Link
+					to="/inbox"
+					className="relative inline-flex items-center justify-center w-8 h-8 rounded-radius-md text-text-muted hover:text-text hover:bg-bg-muted transition-colors"
+					title="Inbox"
+				>
+					<Inbox className="w-4 h-4" />
+					{pendingCount > 0 && (
+						<span className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 rounded-full bg-accent-red text-white text-[10px] font-bold">
+							{pendingCount}
+						</span>
+					)}
+				</Link>
 			</div>
 		</aside>
 	);

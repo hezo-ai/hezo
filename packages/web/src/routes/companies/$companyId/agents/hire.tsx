@@ -22,9 +22,9 @@ function HireAgentPage() {
 	const [title, setTitle] = useState('');
 	const [roleDesc, setRoleDesc] = useState('');
 	const [systemPrompt, setSystemPrompt] = useState('');
-	const [runtime, setRuntime] = useState('claude_code');
 	const [budget, setBudget] = useState('20');
 	const [heartbeat, setHeartbeat] = useState('60');
+	const [touchesCode, setTouchesCode] = useState(false);
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
@@ -32,20 +32,22 @@ function HireAgentPage() {
 			title,
 			role_description: roleDesc || undefined,
 			system_prompt: systemPrompt || undefined,
-			runtime_type: runtime,
 			monthly_budget_cents: Math.round(Number.parseFloat(budget) * 100),
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
+			touches_code: touchesCode,
 		});
 		if (result.issue) {
 			navigate({
 				to: '/companies/$companyId/issues/$issueId',
-				params: { companyId, issueId: result.issue.id },
+				params: { companyId, issueId: result.issue.identifier.toLowerCase() },
 			});
-		} else {
+		} else if (result.agent) {
 			navigate({
 				to: '/companies/$companyId/agents/$agentId',
 				params: { companyId, agentId: result.agent.id },
 			});
+		} else {
+			navigate({ to: '/companies/$companyId/agents', params: { companyId } });
 		}
 	}
 
@@ -72,38 +74,22 @@ function HireAgentPage() {
 					/>
 				</div>
 
-				<div className="grid grid-cols-2 gap-4 max-w-[400px]">
-					<div className="flex flex-col gap-1.5">
-						<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
-							Runtime
-						</span>
-						<select
-							value={runtime}
-							onChange={(e) => setRuntime(e.target.value)}
-							className="rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-border-hover"
-						>
-							<option value="claude_code">Claude Code</option>
-							<option value="codex">Codex</option>
-							<option value="gemini">Gemini</option>
-						</select>
-					</div>
-					<div className="flex flex-col gap-1.5">
-						<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
-							Heartbeat
-						</span>
-						<select
-							value={heartbeat}
-							onChange={(e) => setHeartbeat(e.target.value)}
-							className="rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-border-hover"
-						>
-							<option value="30">30m</option>
-							<option value="60">60m</option>
-							<option value="120">2h</option>
-							<option value="240">4h</option>
-							<option value="720">12h</option>
-							<option value="1440">24h</option>
-						</select>
-					</div>
+				<div className="flex flex-col gap-1.5 max-w-[190px]">
+					<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
+						Heartbeat
+					</span>
+					<select
+						value={heartbeat}
+						onChange={(e) => setHeartbeat(e.target.value)}
+						className="rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-border-hover"
+					>
+						<option value="30">30m</option>
+						<option value="60">60m</option>
+						<option value="120">2h</option>
+						<option value="240">4h</option>
+						<option value="720">12h</option>
+						<option value="1440">24h</option>
+					</select>
 				</div>
 
 				<Input
@@ -115,6 +101,22 @@ function HireAgentPage() {
 					onChange={(e) => setBudget(e.target.value)}
 					className="max-w-[140px]"
 				/>
+
+				<label className="flex items-start gap-2 cursor-pointer max-w-[500px]">
+					<input
+						type="checkbox"
+						checked={touchesCode}
+						onChange={(e) => setTouchesCode(e.target.checked)}
+						className="mt-0.5"
+					/>
+					<span className="flex flex-col gap-0.5">
+						<span className="text-[13px] text-text">Touches code</span>
+						<span className="text-xs text-text-subtle">
+							Enable if this agent reads or writes repository code. Agents that touch code require a
+							designated repo on their project before they can run.
+						</span>
+					</span>
+				</label>
 
 				<div>
 					<span className="text-xs font-medium uppercase tracking-wider text-text-muted block mb-1.5">

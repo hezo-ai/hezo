@@ -142,7 +142,7 @@ const db = new PGlite({
 
 **Frontend sync:** The browser uses **TanStack DB** for client-side querying over a locally synced dataset. The server pushes **row-level diffs** (inserts, updates, deletes) over WebSocket. The client applies diffs to TanStack DB, which re-renders React components reactively. This approach gives the frontend a local query engine without needing PGlite in the browser.
 
-**WebSocket** carries both row-level diffs for data sync and system events (agent subprocess lifecycle, container status, live chat messages, notifications).
+**WebSocket** carries both row-level diffs for data sync and system events (agent subprocess lifecycle, container status, notifications).
 
 **Future sync:** Electric-SQL sync (`@electric-sql/pglite-sync`) can enable multi-instance scenarios (e.g. read replicas, multi-device access). Not required for Phase 1.
 
@@ -446,6 +446,24 @@ The system prompt editor supports variables that are resolved at runtime:
 
 On agent creation, the UI provides a monospace editor with a toolbar for inserting variables, loading role templates, and Markdown preview support.
 
+### Hire workflow (CEO-mediated)
+
+New agents are not created by the board directly. When a board member submits the hire form (`POST /api/companies/:companyId/agents/onboard`), the server:
+
+1. Validates the proposed title, slug uniqueness, and effort value.
+2. Inserts an `approvals` row of type `hire` whose payload holds the full draft spec (`title`, `slug`, `role_description`, `system_prompt`, `default_effort`, `heartbeat_interval_min`, `monthly_budget_cents`, `touches_code`).
+3. Opens an issue in the Operations project, assigned to the CEO, titled `Onboard new agent: {title}`, labelled `onboarding,hire`, with the approval ID and the current draft in the body.
+4. Wakes the CEO to process the ticket. **No `member_agents` row is created yet.**
+
+The CEO picks up the ticket and refines the draft via the `update_hire_proposal(approval_id, ...)` MCP tool — CEO-only. Other agents (including the Architect) are rejected with `Only the CEO can revise hire proposals`. Revisions mutate the approval payload in place and do not reset the `status`. The CEO @-mentions the board via `create_comment` when the draft is ready for review.
+
+The board reviews the draft in the approvals inbox and either approves or denies the pending `hire` approval.
+
+- **Approved** → the `applyApprovalSideEffect` hook in `packages/server/src/routes/approvals.ts` inserts the `members` and `member_agents` rows from the latest payload, marks the agent as `enabled`, transitions the onboarding issue to `done`, and broadcasts both row changes so the UI and org chart update live. Agent and team description refresh tasks are enqueued.
+- **Denied** → no agent is created; the CEO is expected to close the onboarding issue as `cancelled` with a brief note.
+
+Bootstrap exception: if the company has no enabled CEO or no Operations project (e.g., the CEO itself is being hired first), the endpoint falls back to creating the agent directly as `enabled` without an approval or ticket. This is the only way to create an agent without the CEO-mediated flow and is intended solely for early setup.
+
 ### Built-in role templates
 
 Hezo ships with 11 built-in agent types that form the default team for the "Software Development" company type. Full specifications for each role are in `agents/{slug}.md`. Role-specific instructions are embedded directly in the system prompt template — no separate skill files. Users can customize every field. All agent types are starting points, not fixed — agents can be added, removed, or reconfigured per-company.
@@ -454,13 +472,36 @@ Users can also create **entirely new custom agent types** with arbitrary titles,
 
 Agents can request updates to their own system prompts via `PATCH /agent-api/self/system-prompt`, subject to board approval. This allows agents to evolve their behavior when directed by a human member.
 
+### Role-doc partials
+
+Role docs for different company templates frequently share boilerplate — the same "no designated repo means no run" rule appears in every code-touching role, the same hire workflow belongs on every CEO prompt regardless of template. To avoid drift we resolve **section-level partials** at bundle time.
+
+- Partials live under `.dev/agents/_partials/**/*.md`. They are plain Markdown with no frontmatter and are not seeded as role docs themselves.
+- A role doc pulls one in with a **whole-line** directive: `{{> partials/<name>}}` (leading whitespace tolerated; anything else on the line makes it literal text). The name mirrors the path under `_partials/` without the `.md` suffix.
+- Resolution runs in `scripts/bundle-agents.ts` before the bundle is zipped into `packages/server/src/db/agents-bundle.json`, and in the filesystem fallback (`loadAgentRoles` in `packages/server/src/db/agent-roles.ts`) used by tests and dev mode. The DB still stores fully expanded prompts; nothing reads partials at runtime.
+- Partials may include other partials; cycles and unknown refs hard-fail the bundler. Runtime variable substitutions (`{{company_name}}`, `{{kb_context}}`, …) are untouched — those happen later in `template-resolver.ts` per-run.
+
+Scope note: partials are strictly an **authoring-time convenience inside the Hezo repo**. Bundle-time resolution means the on-disk contract with the seed system is unchanged (flat Markdown). Future downloadable team bundles from a marketplace are expected to ship pre-expanded prompts; we do not plan to treat platform partials as a live dependency of third-party bundles, because that would force a compat contract across Hezo versions that we are not ready to make.
+
+Current partials:
+
+| Partial | Used by |
+|---------|---------|
+| `ceo/always-max-effort` | `blank/ceo.md`, `software-development/ceo.md` |
+| `ceo/hire-workflow` | `blank/ceo.md`, `software-development/ceo.md` |
+| `common/no-designated-repo` | all `touches_code: true` roles in `software-development/` |
+
+### Agent and team auto-descriptions
+
+Every agent carries a short summary (≤5 lines) describing its role and capabilities. Every company carries a team summary (≤20 lines) describing how the agents collaborate. Built-in agent types ship with pre-baked defaults from `packages/server/src/db/agent-summaries.json`, copied to each agent and company during provisioning. At runtime the CEO can regenerate descriptions via `description-update` issues in Operations, calling the `set_agent_summary` and `set_team_summary` MCP tools.
+
 ### Ticket workflow
 
 Every feature ticket follows this flow:
 
 ```
 1. Researcher → conducts research (competitive analysis, technical feasibility, market research)
-2. Product Lead → writes PRD (stored as project doc, doc_type: prd), iterates with board via live chat until requirements are finalised
+2. Product Lead → writes PRD (stored as project doc, doc_type: prd), iterates with board via ticket comments until requirements are finalised
 3. Architect → writes technical specification → board approves
 4. UI Designer → creates design mockups → board approves (for UI-related tickets; skipped for non-UI work)
 5. Engineer → implements, writes tests, updates docs. Can consult Architect during implementation.
@@ -468,7 +509,7 @@ Every feature ticket follows this flow:
 7. QA Engineer → reviews and approves (final gate) OR sends back to Engineer
 ```
 
-The research and product requirements phases happen in a dedicated issue before implementation begins. The Researcher produces a research document (stored as a project doc), the Product Lead then uses it to write the PRD. The board engages in back-and-forth with the Product Lead via live chat and comments until the product requirements are finalised and approved. Only then does the Architect proceed with the technical specification.
+The research and product requirements phases happen in a dedicated issue before implementation begins. The Researcher produces a research document (stored as a project doc), the Product Lead then uses it to write the PRD. The board engages in back-and-forth with the Product Lead via ticket comments until the product requirements are finalised and approved. Only then does the Architect proceed with the technical specification.
 
 The board must approve the technical specification before implementation begins. For UI-related tickets, the board must also approve the UI Designer's mockups.
 
@@ -486,11 +527,11 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **CEO** — strategic direction, delegation, dispute resolution, escalation to board. Reports to board.
 
-**Product Lead** — owns product requirements. Writes PRDs with acceptance criteria. Opens live chats with the board to clarify ambiguous requirements. Ensures development aligns with company goals. Reports to CEO.
+**Product Lead** — owns product requirements. Writes PRDs with acceptance criteria. Posts clarifying ticket comments (and structured-option cards when helpful) to resolve ambiguous requirements with the board. Ensures development aligns with company goals. Reports to CEO.
 
 **Architect** — owns technical vision. Adds technical specs, architecture decisions, and implementation phases to tickets after the Product Lead's PRD. Reviews and approves the Engineer's implementation plans. Has technical authority — decides HOW to build things. Reports to CEO. Direct reports: Engineer, QA Engineer, UI Designer, DevOps Engineer.
 
-**Engineer** — primary implementer. Writes code, tests, and documentation based on the Architect's spec. Can live-chat with Product Lead, Architect, or UI Designer during implementation. Reports to Architect.
+**Engineer** — primary implementer. Writes code, tests, and documentation based on the Architect's spec. Can @-mention Product Lead, Architect, or UI Designer in ticket comments during implementation. Reports to Architect.
 
 **QA Engineer** — final approval gate. Reviews every ticket for test coverage (90%+), security, performance, and correctness. Uses Playwright for E2E testing of UI. Sends tickets back to the Engineer if issues are found. Proactively audits the codebase on regular heartbeats. Reports to Architect.
 
@@ -512,7 +553,7 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **Project-level AGENTS.md** lives at the root of each project's designated repo. This is the primary mechanism for enforcing project-specific engineering standards. Any coding agent (Claude Code, Codex, Gemini) automatically reads it from the repo root — no runtime-specific configuration needed.
 
-Each repo in a project has its own `AGENTS.md` at its root. The designated repo's AGENTS.md is the primary source. Non-designated repos' AGENTS.md files reference the designated repo's `.dev/` docs. A `CLAUDE.md` at the repo root points to AGENTS.md (`@AGENTS.md`).
+Each repo in a project has its own `AGENTS.md` at its root. The designated repo's AGENTS.md is the primary source. Non-designated repos' AGENTS.md files defer to the designated repo's AGENTS.md and reference the project's documents (stored in the DB, surfaced to agents via the `{{project_docs_context}}` template variable). A `CLAUDE.md` at the repo root points to AGENTS.md (`@AGENTS.md`).
 
 ### Designated repo and project documents
 
@@ -685,7 +726,7 @@ This file evolves over time as agents propose updates through the KB approval fl
 ### Role-specific instructions (in system prompts)
 
 Role-specific instructions are embedded directly in each agent's system prompt template — not in separate files. Each role's system prompt includes the relevant rules and methodologies:
-- **Product Lead:** PRD writing methodology, acceptance criteria standards, requirements gathering via live chat, scope management rules
+- **Product Lead:** PRD writing methodology, acceptance criteria standards, requirements gathering via ticket comments and structured-option cards, scope management rules
 - **Architect:** Technical spec templates, architecture decision records, implementation phase planning, code review authority
 - **Engineer:** Parallelization rules, testing philosophy, template database patterns, port allocation, pre-push verification steps
 - **QA Engineer:** Audit checklist (security, performance, correctness, maintainability, coverage), Playwright E2E testing, severity classification, flaky test detection
@@ -713,13 +754,9 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
     │       ├── backend-api/              # Project folder
     │       │   ├── api/                  # Git clone of org/api — DESIGNATED REPO
     │       │   │   ├── AGENTS.md         # Project-level agent rules (repo root)
-    │       │   │   ├── CLAUDE.md         # @AGENTS.md
-    │       │   │   └── .dev/             # Project documents
-    │       │   │       ├── spec.md
-    │       │   │       ├── prd.md
-    │       │   │       └── implementation-phases.md
+    │       │   │   └── CLAUDE.md         # @AGENTS.md
     │       │   ├── shared-lib/           # Git clone of org/shared (non-designated)
-    │       │   │   ├── AGENTS.md         # References designated repo's .dev/ docs
+    │       │   │   ├── AGENTS.md         # Defers to designated repo's AGENTS.md
     │       │   │   └── CLAUDE.md         # @AGENTS.md
     │       │   ├── worktrees/            # Git worktrees for parallel work (project-level)
     │       │   │   ├── api-feat-auth-agent-123/
@@ -730,8 +767,7 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
     │       └── frontend/                 # Another project
     │           ├── web-app/              # Git clone — DESIGNATED REPO
     │           │   ├── AGENTS.md
-    │           │   ├── CLAUDE.md
-    │           │   └── .dev/
+    │           │   └── CLAUDE.md
     │           ├── worktrees/
     │           └── .previews/
     │
@@ -741,25 +777,25 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
 
 **Key design decisions:**
 
-`AGENTS.md` lives at the **repo root** of each project's designated repo. Project documents live in `.dev/` inside the designated repo. This means:
+`AGENTS.md` lives at the **repo root** of each project's designated repo. Project documents live in the `project_docs` DB table, accessible to agents via MCP tools. This means:
 - Each project has its own AGENTS.md with project-specific rules
 - Company-level rules are in the KB docs DB table, injected at runtime
 - Any coding agent (Claude Code, Codex, Gemini) automatically reads AGENTS.md from the repo root
-- Project documents are tracked by git with full revision history
-- Non-designated repos reference the designated repo's `.dev/` docs via their own AGENTS.md
+- Project documents have full revision history in `project_doc_revisions`
+- Non-designated repos defer to the designated repo's AGENTS.md and access shared project docs through the same MCP tools
 
 ### Git worktrees for parallelism
 
-Repos are cloned once (via SSH) in the project folder. When an agent needs to work on a repo, a **git worktree** is created in the project's `worktrees/` folder. This enables:
+Repos are cloned once (via SSH) into the project's `workspace/<repo-short-name>/` directory. When an agent starts a run on an issue, the runner lazily creates a **git worktree per (issue × repo)** so iterative work across runs on the same issue persists and concurrent issues cannot collide.
 
-- Multiple agents working on the same repo simultaneously (different branches)
-- The same agent working on multiple branches in parallel via subagents
-- No conflicts between concurrent operations on the same repository
+- Multiple agents working on different issues use different worktrees — no conflicts.
+- Repeated runs on the same issue reuse the existing worktree, pulling latest changes via `git fetch` + fast-forward merge.
+- The agent's working directory is the **designated repo's worktree**; other repos sit alongside and the agent can `cd` into them.
 
-Worktree naming convention: `{repo-short-name}-{branch-slug}-agent-{agent-id}`
-Worktree location: `~/.hezo/companies/{company}/projects/{project}/worktrees/`
+Worktree layout: `~/.hezo/companies/{company}/projects/{project}/worktrees/{issue-identifier}/{repo-short-name}/`
+Branch name: `hezo/{issue-identifier}`
 
-Worktrees are created on demand when an agent starts work on an issue, and cleaned up when the issue is closed or the agent is reassigned.
+Worktrees are created on first run of an issue and removed when the issue transitions to a terminal status (done/cancelled) or its repo is detached.
 
 ### Docker container configuration
 
@@ -769,14 +805,14 @@ If a company has 3 projects, 3 containers run. If a project has multiple repos, 
 
 | Aspect | Configuration |
 |--------|-------------|
-| Base image | Configurable per project (default: `node:24-slim`) |
+| Base image | Configurable per project (default: `hezo/agent-base:latest`, built from `docker/Dockerfile.agent-base` with `claude`, `codex`, `gemini`, and `kimi` CLIs pre-installed) |
 | Project mount | Host `~/.hezo/companies/{company}/projects/{project}/` → Container `/workspace/` (rw) |
 | Worktrees mount | Host `~/.hezo/companies/{company}/projects/{project}/worktrees/` → Container `/worktrees/` (rw) |
 | SSH keys | Company-generated SSH key injected per subprocess (from secrets vault). Host `~/.ssh/` also mounted (ro) for fallback. |
 | Git config | Host `~/.gitconfig` → Container `/root/.gitconfig` (ro) |
 | SSH agent | Host `$SSH_AUTH_SOCK` → Container `/tmp/ssh-agent.sock` (if available) |
 | AGENTS.md | Per-repo at repo root. Designated repo's AGENTS.md is the primary source. Non-designated repos reference it. |
-| Project docs | In designated repo's `.dev/` folder, accessible at `/workspace/{repo-short-name}/.dev/` |
+| Project docs | In `project_docs` table, accessed by agents via MCP tools (`list_project_docs`, `read_project_doc`, `write_project_doc`) |
 | Secrets | Injected as environment variables per subprocess (never container-wide, never written to disk) |
 | Connected platforms | All OAuth tokens from all connected platforms injected per subprocess for all agents. Platform MCP servers available. |
 | Previews | Written to `/workspace/.previews/{agent_id}/` — visible on host via the shared volume |
@@ -818,8 +854,9 @@ At runtime, the company's SSH private key is injected into agent subprocesses fo
 | Project deleted | Container destroyed. All associated worktrees cleaned up. |
 | Company deleted | All project containers destroyed. |
 | Server startup / every 5s | Container status sync — DB state reconciled with Docker. Stale "running" status corrected to "stopped" or "error". Changes broadcast via WebSocket. |
-| Issue assigned | Worktree created for the repo + branch. Available inside container via `/worktrees/`. |
-| Issue closed | Worktree cleaned up (merged branch deleted, worktree pruned). |
+| Issue assigned | No-op until the first run. Worktrees are created lazily when an agent starts executing against the issue. |
+| Issue first run | Runner creates `/worktrees/{issue-identifier}/{repo-short-name}/` on branch `hezo/{issue-identifier}` for every linked repo, then runs the agent with the designated repo's worktree as its working directory. |
+| Issue closed | Per-issue worktree directory `/worktrees/{issue-identifier}/` is removed (all per-repo worktrees under it). |
 
 ### Agent subprocess model
 
@@ -832,7 +869,7 @@ Each heartbeat spawns a **fresh subprocess** inside the project's container via 
 
 All template variables (`{{kb_context}}`, `{{project_docs_context}}`, `{{company_preferences_context}}`, etc.) are pre-resolved by the orchestrator before spawning. All KB docs and project docs are included for MVP.
 
-Agents can be killed and restarted independently without affecting the container or other agents. When budget is exceeded, the subprocess is terminated immediately. If a project container crashes, all running agent subprocesses for that project are lost — orphan detection handles this by marking all active heartbeat runs as failed and re-queuing them.
+Agents can be killed and restarted independently without affecting the container or other agents. When budget is exceeded, the subprocess is terminated immediately. If a project container leaves the `running` state — whether through removal (`error`) or stop (`stopped`) — the container-sync loop synchronously fails every in-flight heartbeat run for that project's issues with an `error` of `container_error` or `container_stopped` respectively, resets the affected agents' `runtime_status` to `idle`, releases their execution locks, and broadcasts the row changes. When the container is later rebuilt or re-provisioned, runs that died with `container_error` are auto-re-queued via fresh wakeups; runs that died with `container_stopped` are intentionally left alone (the user paused work; they restart it manually).
 
 ### Subagents (built-in parallelism)
 
@@ -1029,6 +1066,34 @@ When a repo is added to a project via the API:
 
 Agents don't configure repos directly. They get access to repos through whichever project their assigned issues belong to. When an agent starts work on an issue, a git worktree is created from the relevant repo clone so the agent can work on its own branch without interfering with other agents.
 
+### Designated repo setup (board-driven)
+
+A project starts with no repo. The first time an agent whose `member_agents.touches_code = true` is activated on an issue, the runtime pauses the run and surfaces a board-facing action. The `touches_code` flag is seeded from `agent_types.touches_code` at hire time (builtin coder roles — engineer, architect, qa-engineer, devops-engineer, security-engineer, ui-designer — ship with it set), copied onto `member_agents` so per-agent overrides are possible, and editable from the agent creation and settings forms for any custom or onboarded agent:
+
+1. The job manager upserts a single pending `oauth_request` approval per `(company, project)` with `payload.reason = 'designated_repo'`. Concurrent runs on different issues of the same project share this one approval (partial unique index).
+2. An `action` comment with `content.kind = 'setup_repo'` is posted on the triggering issue. Each issue gets its own comment so the blocker is visible in-thread, but all comments point at the same approval.
+3. The agent's wakeup is marked `Deferred`.
+
+Clicking the comment (or opening the approval from the inbox) launches the repo-setup wizard:
+
+- **Step 1 (skipped if already connected):** "Connect GitHub" redirects through Hezo Connect. On callback, the server auto-generates an Ed25519 SSH key for the company, uploads the public key to GitHub via `POST /user/keys`, and stores the encrypted private key in the secrets vault. This step is idempotent — re-clicking after GitHub is already connected skips the regenerate/upload.
+- **Step 2:** Pick an org (the authenticated user's personal namespace plus every org they belong to) and choose between **Create new** (default — name + private/public toggle) or **Select existing** (typeahead across accessible repos in that owner).
+
+Submitting the wizard calls `POST /repos` which, in one transaction:
+
+1. Locks the project row (`FOR UPDATE`).
+2. Creates the repo on GitHub (if `mode=create`) or validates access (if `mode=link`).
+3. Inserts the `repos` row.
+4. If the project has no designated repo yet, sets `designated_repo_id = new.id`.
+5. Sweeps every pending `action` setup-repo comment for this project, stamps each with `chosen_option = { status: 'complete', result: {...} }`, and appends a `system` confirmation comment per affected issue.
+6. Resolves the pending approval.
+
+Post-commit the server clones the repo into the host workspace (`ensureProjectRepos`), then brings up the project container if it isn't already (`provisionContainer`) so `/workspace/{short_name}/` is live inside the container. Only then are the deferred wakeups re-enqueued as fresh `Automation` wakeups, so agents never wake up against an empty workspace.
+
+### Designated repo is immutable
+
+Once set, `designated_repo_id` cannot be changed and the designated repo cannot be deleted. The FK is `ON DELETE RESTRICT` at the schema level and `DELETE /repos/:id` returns 409 `DESIGNATED_REPO_IMMUTABLE` for the designated repo. Non-designated repos can be added and removed freely from project settings.
+
 ---
 
 ## 7. Goal and project hierarchy
@@ -1112,16 +1177,10 @@ The primary work surface. Contains two tabs:
 - Cost for this issue
 - Process status of the assigned agent
 
-**Comments tab (default):**
-- Threaded conversation between board and agents
+**Comments:**
+- Threaded conversation between board and agents — the single conversation surface on each ticket
 - Collapsible trace logs per agent message (tool calls, decisions)
 - **Progress summary** — appears after the latest comment, collapsed by default. Shows the current state of work: requirements, what's done, what's next. Updated by agents when they start/finish work. Expandable to view full markdown content. When an agent operates on an issue, a `trace`-type comment is posted capturing the agent run (progress summary changes, link to run output, sub-operations).
-
-**Live Chat tab:**
-- List of all live chat sessions for this issue
-- Each session shows: participants, start time, duration, message count, summary
-- Click a session to expand the full transcript inline
-- "Start live chat" button to open a new session
 
 ### Threaded conversation
 
@@ -1193,37 +1252,6 @@ OAuth tokens for connected platforms (GitHub, Gmail, Stripe, etc.) are stored as
 ## 10. Agent → user interaction
 
 Three mechanisms for agents and the board to interact within issue threads.
-
-### Live chat mode
-
-Every issue has a **persistent live chat** in its Live Chat tab. This is a single, ongoing group conversation — not a series of separate sessions. The assigned agent is always a participant. Board members can @-mention any other agent in the company to pull them into the conversation.
-
-**How it works:**
-1. Board member opens the Live Chat tab on any issue
-2. The chat is always there — persistent, auto-created with the issue, no "start session" step needed
-3. The assigned agent is always a participant and responds in real time (no heartbeat delay)
-4. Board member can @-mention any other agent (e.g. `@architect`, `@qa-engineer`) to bring them into the conversation. The mentioned agent receives the message and responds in real time.
-5. Multiple agents can be active in the same chat simultaneously
-6. The full transcript is always visible, scrollable, and searchable
-
-**@-mentioning agents in live chat:**
-- `@architect` — pulls the Architect into the conversation
-- `@qa-engineer` — pulls the QA Engineer in
-- Any agent slug works — same @-mention system as issue comments
-- The mentioned agent wakes up immediately (not on next heartbeat) and joins the chat
-- An agent stays in the chat until the conversation moves on — no explicit "leave"
-
-**Q&A pattern:** Agents should use live chat for structured Q&A with the board — asking clarifying questions with multiple-choice options when requirements are ambiguous. After the Q&A is resolved, the agent posts a summary of the outcomes as a comment on the issue for the permanent record.
-
-**Storage:**
-- Full transcript stored as JSONB array of `{ "author": "board:alice|agent:architect", "text": "...", "timestamp": "..." }` in a `live_chats` table
-- One chat per issue (persistent, auto-created)
-- The assigned agent's member ID is always linked
-
-**Constraints:**
-- An agent can only be active in one live chat at a time (if @-mentioned in a second issue's chat while already in one, the second request queues until the first conversation pauses)
-- Live chat costs count against each participating agent's budget
-- Tool calls during live chat are captured in the transcript
 
 ### Structured options
 
@@ -1324,8 +1352,8 @@ Board members (human users) collectively act as the board of directors. All boar
 
 | Action | Requires approval? |
 |--------|-------------------|
-| Board hires an agent | No — direct action |
-| Agent requests to hire | Yes — pending approval |
+| Board hires an agent | Yes — CEO refines a draft via `update_hire_proposal` MCP tool, then the board approves the pending `hire` approval to materialise the agent. Bypassed only in the bootstrap case where the company has no enabled CEO or no Operations project (the agent is then created directly as enabled). |
+| Agent requests to hire | Yes — same `hire` approval type, routed through the CEO for refinement first. |
 | Board grants secret access | No — direct action |
 | Agent requests secret access | Yes — pending approval |
 | Agent submits strategy | Yes — pending approval |
@@ -1361,7 +1389,7 @@ For secret access requests, the board can choose the grant scope (single / proje
 ### Member capabilities (member role)
 
 Members can participate in the day-to-day work within their project scope:
-- Create issues, post comments, participate in live chat
+- Create issues, post comments
 - Be assigned issues and work on them
 - Direct agents (except CEO by default) — subject to `permissions_text` boundaries
 - Read knowledge base and project documents
@@ -1421,8 +1449,6 @@ Full action reference:
 | `plan_review.submitted` | approval | Agent |
 | `plan_review.approved` | approval | Board or Product Lead |
 | `plan_review.denied` | approval | Board or Product Lead |
-| `live_chat.started` | live_chat_session | Board |
-| `live_chat.ended` | live_chat_session | Board or agent |
 | `company.created_from_type` | company | Board creates company from company type |
 | `connection.created` | connected_platform | Board connects via OAuth |
 | `connection.refreshed` | connected_platform | System or board |
@@ -1471,7 +1497,7 @@ Every agent has a heartbeat interval. Default is **60 minutes**. Configurable pe
 
 In addition to scheduled heartbeats, agents are triggered **immediately** by:
 - Task assignment — issue assigned to them (on creation, update, or sub-issue creation)
-- @-mention in an issue comment or live chat
+- @-mention in an issue comment
 - Option chosen by the board on one of their option cards
 - Approval resolved for one of their requests
 - Container start — when a project container starts, all enabled agents with non-terminal assigned issues in that project are woken
@@ -1510,31 +1536,34 @@ Agents execute inside project containers. Container state changes directly affec
 
 Agent runtime status (`active` / `idle` / `paused`) is updated in the database and broadcast via WebSocket when an agent is activated and when it completes.
 
-### Issue work ownership (read/write locks)
+### Issue work ownership (observational execution locks)
 
-Execution locks support two modes: **write locks** (exclusive) and **read locks** (shared).
+Execution locks are **observational**, not mutex. The `execution_locks` row an agent inserts when it starts a run records *who is working on what* — it is surfaced in the UI and used by orphan detection and container-stop cleanup — but it does not block other agents from taking their own lock on the same issue. Acquisition has one guard: an agent cannot double-hold a lock on the same issue (a second wakeup for the same agent on the same issue coalesces to a no-op).
 
-- **Write lock**: Only one agent at a time. Used by agents doing implementation work (Engineer, Architect, etc.). Prevents conflicting codebase changes.
-- **Read lock**: Multiple agents simultaneously. Used by agents doing review work (QA Engineer, Security Engineer, Coach). Multiple reviewers can review the same issue in parallel, but a write lock blocks all read locks and vice versa.
+Mutual exclusion between roles is enforced via **system prompts**, not the lock table:
 
-Lock type is determined automatically: Coach (issue_done trigger), QA Engineer, and Security Engineer get read locks; all others get write locks. The REST API also accepts an explicit `lock_type` parameter.
+- **Only the Engineer edits source code and tests.** The QA Engineer, Architect, Security Engineer, UI Designer, and DevOps Engineer prompts forbid source edits and direct changes to the `@engineer`. The DevOps Engineer retains the right to edit deployment configs, CI/CD workflows, and infrastructure-as-code; the UI Designer retains the right to write HTML preview mockups via `write_project_doc` (those are project docs, not source).
+- **Engineer and QA Engineer do not run the test suite concurrently on the same ticket.** The shared per-project container cannot safely host two parallel `bun run test` invocations — they collide on ports, database state, and file handles. The normal ticket workflow already serialises them (Engineer implements → status `review` → QA reviews). Both role prompts add an explicit "exclusive test-runner slot per ticket" rule for edge cases where the two roles could otherwise overlap.
 
-Work on an issue can span **hours or days** — this is not a short-lived database lock. The agent retains ownership until:
+Work on an issue can span **hours or days**. The lock row is retained until:
 - The issue is reassigned to a different agent or board member
 - The issue status moves to `done`, `closed`, or `cancelled`
 - The agent is disabled or terminated
 - The board manually releases the assignment
+- The project container stops (stale locks are released on container-stop)
+- Orphan detection marks the run as failed
 
-There is no automatic timeout. If an agent appears stuck, the board can manually reassign the issue.
+The `lock_type` column is retained (`read` / `write`) for future use but is not currently enforced. There is no automatic timeout. If an agent appears stuck, the board can manually reassign the issue.
 
 ### Orphan detection and auto-retry
 
-The system monitors for orphaned work — agents that started working on an issue but whose subprocess died:
+The orchestrator keeps an in-process **live-run registry** keyed by `heartbeat_runs.id` for every run it has launched. Three reconciliation paths converge on the same outcome (run flipped to `failed`, agent reset to `idle`, locks released, broadcasts emitted, retry wakeup created if applicable):
 
-- If an agent's subprocess crashes while an issue is owned, the ownership is preserved but the issue is flagged for attention in the board inbox
-- If a subprocess crashes or the project container crashes mid-work, the system detects the failure and re-queues the issue for the agent's next heartbeat
-- Repeated failures (3+ consecutive) escalate to the board inbox as an agent error
-- The system tracks consecutive failure counts per agent per issue
+- **Startup reconciliation.** Every run in the DB whose status is `running` or `queued` at boot is necessarily orphaned (the previous process owned the only reference to it). The reconciler fails them with `error='Server restarted while run in flight'`, resets every `member_agents.runtime_status='active'` to `idle`, releases all open execution locks, broadcasts `heartbeat_runs` and `member_agents` UPDATEs, and enqueues a `startup_recovery` wakeup per run so work resumes immediately. The same pass also self-heals projects that are stuck in `container_status='error'` whose canonical container `hezo-<companySlug>-<projectSlug>` is actually alive in Docker — it re-attaches the project to the live container.
+- **Cron orphan detector.** Every 30s the detector scans for `status='running'` rows older than 30 seconds whose id is NOT in the live registry, fails them with `error='Orphaned: process no longer running'`, resets the agent to idle if it has no other live run, and either creates an `orphan_retry` wakeup (when `process_loss_retry_count + 1 < 3`) or escalates to a board approval as `agent_error` (at the cap).
+- **Container-state transition.** The container-sync cron tick (1s) only runs after `docker.ping()` succeeds; it returns the set of `(projectId, oldStatus, newStatus)` transitions and the JobManager fans `running → error/stopped` transitions out to the per-project run failure path described in §13 above.
+
+The `heartbeat_runs.error` column records the cause as a stable sentinel: `'container_error'`, `'container_stopped'`, `'Orphaned: process no longer running'`, or `'Server restarted while run in flight'`. Container recovery (project re-provisioning) replays only `container_error` runs.
 
 ### Persistent state
 
@@ -1618,7 +1647,7 @@ Paginated, filterable by entity type, action, actor, and date range. Read-only.
 
 Each company has a knowledge base — a collection of Markdown documents stored in the `kb_docs` table that define company-wide standards across all projects. These include company-level AGENTS.md. They are living documents that agents reference and update as the company evolves.
 
-Note: project-level documents (tech spec, PRD, implementation plan) are stored in the designated repo's `.dev/` folder, not in the KB. See section 17.
+Note: project-level documents (tech spec, PRD, implementation plan) are stored in the `project_docs` table, not in the KB. See section 17.
 
 ### Purpose
 
@@ -1698,13 +1727,13 @@ Accessible from the company workspace **Settings tab** as a "Preferences" subsec
 
 ---
 
-## 17. Project-level shared documents (file-based, in designated repo)
+## 17. Project-level shared documents
 
-Each project has a set of living documents stored as files in the designated repo's `.dev/` folder. These are tracked by git, giving full revision history for free. They are the authoritative source of truth for the project's current state.
+Each project has a set of living documents stored in the `project_docs` table, keyed by `(project_id, filename)`. They are the authoritative source of truth for the project's current state, with full revision history captured in `project_doc_revisions`.
 
 ### Document types
 
-| File | Created by | Purpose |
+| Name | Created by | Purpose |
 |------|-----------|---------|
 | `prd.md` | Product Lead | Product requirements — user stories, acceptance criteria, scope. **Agent changes require board approval.** |
 | `spec.md` | Architect | Technical specification — architecture, data model, API changes |
@@ -1712,7 +1741,7 @@ Each project has a set of living documents stored as files in the designated rep
 | `research.md` | Researcher | Research findings — competitive analysis, feasibility studies |
 | `ui-design-decisions.md` | UI Designer | Design rationale, component decisions, interaction patterns |
 | `marketing-plan.md` | Marketing Lead | Positioning, messaging, channels, timeline |
-| Other `.md` files | Any agent | Ad-hoc project documents |
+| Other `.md` filenames | Any agent | Ad-hoc project documents |
 
 ### Living documents
 
@@ -1720,15 +1749,15 @@ Project documents must always reflect the current state of decisions and codebas
 
 ### No approval required for updates (except PRD)
 
-Project documents are working documents actively maintained during development. Agents read/write them directly as files. Revision history comes from git. The board can view history via `git log` in the UI.
+Project documents are working documents actively maintained during development. Each write creates a row in `project_doc_revisions` for full history. The board can browse revisions and revert from the UI.
 
 ### PRD changes require board approval
 
-When an agent tries to update `prd.md` via the API, the system creates a pending approval instead of writing directly. Board approves → file is written. Board members can edit `prd.md` directly without approval.
+When an agent tries to update `prd.md`, the system creates a pending approval instead of writing directly. Board approves → the document is updated. Board members can edit `prd.md` directly without approval.
 
 ### How it works
 
-Documents are stored in the `project_docs` table. Agents access them via MCP tools (`list_project_docs`, `read_project_doc`, `write_project_doc`). Documents are also injected into agent prompts via the `{{project_docs_context}}` template variable at activation time. Semantic search via pgvector embeddings is supported.
+Documents live in the `project_docs` table. Agents access them via MCP tools (`list_project_docs`, `read_project_doc`, `write_project_doc`). Documents are also injected into agent prompts via the `{{project_docs_context}}` template variable at activation time. Semantic search via pgvector embeddings is supported.
 
 ### Project documents in the UI
 
@@ -1828,7 +1857,7 @@ Users are linked to companies through the `members` + `member_users` tables with
 | Role | Authority |
 |------|-----------|
 | **Board** | Full authority. Can direct all agents including CEO. Access all projects, settings, budgets, audit log. Hire/fire agents. Approve all requests. Invite new members. |
-| **Member** | Scoped authority. Can create issues, post comments, participate in live chat, be assigned issues. Can direct agents (except CEO by default). Cannot modify company settings, budgets, secrets, or agent configurations. Can be restricted to specific projects. |
+| **Member** | Scoped authority. Can create issues, post comments, be assigned issues. Can direct agents (except CEO by default). Cannot modify company settings, budgets, secrets, or agent configurations. Can be restricted to specific projects. |
 
 Both roles sign in via GitHub or GitLab OAuth. All board members have **equal authority** — any board member can take any board action. Board member conflicts are resolved first-come-first-served (first to approve/deny locks the decision). A user can belong to multiple companies with different roles in each.
 
@@ -1994,14 +2023,14 @@ Each item is actionable with inline buttons. Items are marked read/unread. Unrea
 For tickets with UI work, the flow within a single ticket is:
 
 1. Researcher conducts research → findings stored as project doc
-2. Product Lead writes PRD based on research → iterates with board via live chat until requirements finalised
+2. Product Lead writes PRD based on research → iterates with board via ticket comments until requirements finalised
 3. Architect adds technical spec → board approves the spec
 4. UI Designer creates HTML preview mockups → preview appears in board inbox → board approves
 5. Engineer implements based on approved spec + design
 6. UI Designer reviews implementation against design specs
 7. QA Engineer reviews and approves → ticket status: `done`
 
-All of this happens within one ticket. The Comments tab shows the conversation flow. The Live Chat tab shows any real-time sessions that occurred during the process. Project documents (tech spec, implementation plan, research, UI decisions) are accessible from the project's Documents tab and are kept up-to-date by all agents as work progresses.
+All of this happens within one ticket. The Comments thread is the single conversation surface and shows the full flow end-to-end. Project documents (tech spec, implementation plan, research, UI decisions) are accessible from the project's Documents tab and are kept up-to-date by all agents as work progresses.
 
 ### Screen inventory
 
@@ -2009,12 +2038,11 @@ All of this happens within one ticket. The Comments tab shows the conversation f
 |---|--------|---------|
 | 1 | **Home — Company list** | Card grid of all companies. Stats + budget bar per card. "New company" (select company type). Board inbox badge. |
 | 2 | **Company workspace — Issues tab** | Default view. Filterable issue list. Every row shows identifier, project tag, assignee, status, priority. |
-| 3 | **Issue detail** | Primary work surface. Two tabs: Comments (threaded conversation, traces, goal chain sidebar, quick actions) and Live Chat (session list, inline transcripts). |
-| 4 | **Live chat panel** | Side panel or modal. Real-time back-and-forth with assigned agent. On close, session appears in Live Chat tab. |
-| 5 | **Company workspace — Agents tab** | Card grid of agents. Runtime, heartbeat, process status, budget bar per card. |
+| 3 | **Issue detail** | Primary work surface. Single Comments view (threaded conversation, traces, goal chain sidebar, quick actions). |
+| 4 | **Company workspace — Agents tab** | Card grid of agents. Runtime, heartbeat, process status, budget bar per card. |
 | 6 | **New agent / edit agent** | Form with system prompt editor (monospace, variable chips, role templates), reporting line, budget. |
 | 7 | **Board inbox** | Drawer accessible from any screen. Pending approvals, design reviews, escalations, budget alerts, agent errors, QA findings, OAuth requests. One-click actionable. Unread badge. |
-| 8 | **Company workspace — Org chart tab** | Read-only tree with status indicators. Click node to inspect agent. |
+| 8 | **Company workspace — Team page** | Reached via the sidebar "Team" link. Read-only org chart tree with status indicators, team summary, and a "Hire agent" action. Click a node to inspect the agent. |
 | 9 | **Company workspace — Projects tab** | List of projects with goal, repo count, issue count. Click to see filtered issue list + repo management. Project detail includes a Documents tab showing project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan). |
 | 10 | **Company workspace — Knowledge base tab** | List of .md docs with title, last updated, updated by. Click to view/edit. Version history. Board can create docs directly. |
 | 11 | **Company workspace — Settings tab** | Board-only. Company description editor, connected platforms (OAuth), secrets vault, MCP servers, MPP config, budget overview, company preferences, plugin management, Slack integration, member management. |
@@ -2032,12 +2060,15 @@ The UI uses a three-column layout: a narrow company icon rail on the far left, a
 
 **Side Menu** (200px, visible when a company is selected):
 - Inbox (pending approvals — full page)
-- Issues (company-level)
-- Projects
-- Agents
-- Org chart
-- Knowledge base
-- Settings
+- Work
+  - Issues (company-level)
+  - Goals
+- Projects (collapsible section; header links to the projects list, children are per-project links)
+- Team (collapsible section; header links to the team org chart page, children are per-agent links)
+- Resources
+  - Knowledge base
+  - Settings
+  - Audit log
 
 **Project view** uses tabs (Issues, Agents, Container, Settings) instead of a sidebar. Selecting a project adds its slug to the URL.
 
@@ -2047,31 +2078,31 @@ Company Rail → Company List (home)
 
 Company Rail → Company workspace (side menu)
         ├── Inbox (pending approvals)
-        ├── Issues
-        │     └── Issue detail
-        │           ├── Comments tab (default)
-        │           └── Live Chat tab
-        ├── Projects
+        ├── Work
+        │     ├── Issues
+        │     │     └── Issue detail (Comments)
+        │     └── Goals
+        ├── Projects (header links to projects list)
         │     └── Project detail (tabs)
         │           ├── Issues tab (filtered)
         │           ├── Agents tab
         │           ├── Container tab
         │           └── Settings tab
-        ├── Agents
-        │     └── Agent detail / edit
+        ├── Team (header links to org chart page)
+        │     ├── Agent detail / edit
         │     └── Hire agent (creates onboarding issue for CEO)
-        ├── Org chart
-        ├── Knowledge base
-        │     └── Document view / edit / version history
-        └── Settings
-              ├── General
-              ├── Connected platforms (OAuth)
-              ├── Secrets vault
-              ├── API keys
-              ├── MCP servers
-              ├── Budget overview
-              ├── Company preferences
-              ├── Skill file
+        └── Resources
+              ├── Knowledge base
+              │     └── Document view / edit / version history
+              ├── Settings
+              │     ├── General
+              │     ├── Connected platforms (OAuth)
+              │     ├── Secrets vault
+              │     ├── API keys
+              │     ├── MCP servers
+              │     ├── Budget overview
+              │     ├── Company preferences
+              │     └── Skill file
               └── Audit log
 ```
 
@@ -2079,7 +2110,7 @@ Company Rail → Company workspace (side menu)
 
 When creating a company, the user selects one or more company templates (default: "Software Development"). A template includes a team of agents with defined roles and reporting hierarchy, plus optional KB docs and preferences.
 
-Every company gets an auto-created **Operations** project (`is_internal = true`) for administrative issues like agent onboarding. Internal projects are visible but not deletable.
+Every company gets an auto-created **Operations** project (`is_internal = true`) for administrative issues like agent onboarding. Internal projects are visible but not deletable. Every issue in the Operations project must be assigned to the CEO — the server rejects any `POST /companies/:companyId/issues`, `PATCH /companies/:companyId/issues/:issueId`, `POST .../sub-issues`, or MCP `create_issue` / `update_issue` call that would leave an Operations-project issue assigned to anyone else. The create-issue dialog and the issue-detail assignee picker reflect this by filtering the agent list to the CEO when Operations is selected.
 
 ### Agent onboarding
 
@@ -2121,7 +2152,6 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `cost_entries` | Immutable spend records. Includes `provider` and `model` fields. |
 | `audit_log` | Append-only. Never updated or deleted. |
 | `kb_docs` | Knowledge base documents. AGENTS.md is a special KB doc written to disk. |
-| `live_chats` | Persistent live chat per issue. One ongoing conversation. |
 | `project_docs` | Project documentation (PRD, spec, implementation plan, etc.) — DB-backed, company-scoped, with embeddings. |
 | `skills` | Reusable instruction documents — DB-backed, company-scoped, with tags, revisions, and embeddings. |
 | `skill_revisions` | Version history for skills. |
@@ -2138,7 +2168,7 @@ agent_runtime:        claude_code, codex, gemini
 agent_runtime_status: active, idle
 agent_admin_status:   enabled, disabled, terminated
 member_role:          board, member
-container_status:     creating, running, stopped, error    (tracks project container status)
+container_status:     creating, running, stopping, stopped, error    (tracks project container status; `error` only fires on a verified terminal signal — HTTP 404 from `docker inspect` or a provisioning failure — never on transport errors like daemon unreachable / EPIPE, which leave the previous status untouched and retry next tick)
 issue_status:         backlog, open, in_progress, review, blocked, done, closed, cancelled
 issue_priority:       urgent, high, medium, low
 comment_author_type:  board, agent, system
@@ -2152,7 +2182,6 @@ audit_actor_type:     board, agent, system
 repo_host_type:       github
 platform_type:        github, gmail, gitlab, stripe, posthog, railway, vercel, digitalocean, x
 connection_status:    active, expired, disconnected
-project_doc_type:     (removed — project docs are files in .dev/)
 auth_provider:        github, gitlab
 ```
 
@@ -2191,7 +2220,7 @@ The full API reference is maintained separately. See `api.md` for the complete e
 Three token types:
 - **User JWT** — stateless JWT signed with master key. Set after GitHub/GitLab OAuth login. Contains `user_id`, `member_id`, `company_id`. Always required for human users.
 - **API key (remote orchestrators)** — `Authorization: Bearer hezo_<key>`. Company-scoped, full board access. For OpenClaw, scripts, AI agents controlling Hezo remotely.
-- **Agent JWT** — `Authorization: Bearer <jwt>`. Signed with master key. Contains `agent_id` (= member_id) + `company_id`.
+- **Agent JWT** — `Authorization: Bearer <jwt>`. Signed with master key. Minted per run; claims are `member_id` (= agent_id), `company_id`, `run_id`, with a four-hour `exp`. On every request the server looks up the `heartbeat_runs` row matching `run_id` and rejects unless its status is `running`, so tokens become invalid the moment the run finalizes.
 
 ### API surfaces
 
@@ -2201,7 +2230,7 @@ Three token types:
 | Agent API | Heartbeat, context, comments, tool calls, delegation, secret requests, KB proposals, deploy requests. |
 | MCP Endpoint | Streamable HTTP at `/mcp`. Mirrors Board API as MCP tools for external AI agents. |
 | Skill File | `GET /skill.md`. Dynamically generated documentation for AI agent onboarding. |
-| WebSocket | Row-level diffs for TanStack DB sync + system events (agent lifecycle, container status, live chat). |
+| WebSocket | Row-level diffs for TanStack DB sync + system events (agent lifecycle, container status). |
 
 ---
 
@@ -2228,7 +2257,7 @@ The following specification details are maintained in separate files:
 - **`api.md`** — Complete API reference with all endpoints, request/response shapes, query parameters, and WebSocket event types
 - **`connect-spec.md`** — Hezo Connect OAuth gateway specification (self-hosted and centrally hosted modes)
 - **`implementation-phases.md`** — 12 implementation phases from Phase 0 (Hezo Connect) through Phase 11 (Deploy + Messaging)
-- **`agents/`** — Full role specifications for each of the 9 built-in agent roles (`ceo.md`, `product-lead.md`, `architect.md`, `engineer.md`, `qa-engineer.md`, `ui-designer.md`, `devops-engineer.md`, `marketing-lead.md`, `researcher.md`)
+- **`agents/<template>/`** — Full role specifications per company template. `software-development/` contains the 11 Software Development roles (`ceo.md`, `product-lead.md`, `architect.md`, `engineer.md`, `qa-engineer.md`, `ui-designer.md`, `devops-engineer.md`, `marketing-lead.md`, `researcher.md`, `security-engineer.md`, `coach.md`); `blank/` contains the pared-down `ceo.md` and `coach.md` used when the Blank template is selected.
 
 ## Appendix B: Endpoint count
 

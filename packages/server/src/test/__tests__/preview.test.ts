@@ -11,6 +11,7 @@ import type { Env } from '../../lib/types';
 import { signBoardJwt } from '../../middleware/auth';
 import { buildApp } from '../../startup';
 import { safeClose } from '../helpers';
+import { createStubDocker } from '../helpers/app';
 import { createTestDbWithMigrations } from '../helpers/db';
 
 let app: Hono<Env>;
@@ -29,11 +30,12 @@ beforeAll(async () => {
 	const masterKeyHex = generateMasterKey();
 	await masterKeyManager.initialize(db, masterKeyHex);
 	await seedBuiltins(db, await loadAgentRoles());
-	app = buildApp(db, masterKeyManager, {
-		dataDir,
-		connectUrl: 'http://localhost:4100',
-		connectPublicKey: '',
-	});
+	app = buildApp(
+		db,
+		masterKeyManager,
+		{ dataDir, connectUrl: 'http://localhost:4100', connectPublicKey: '' },
+		createStubDocker(),
+	);
 	const userResult = await db.query<{ id: string }>(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('Test Admin', true) RETURNING id",
 	);
@@ -51,7 +53,7 @@ beforeAll(async () => {
 	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Preview Project' }),
+		body: JSON.stringify({ name: 'Preview Project', description: 'Test project.' }),
 	});
 	const project = (await projectRes.json()).data;
 	projectId = project.id;

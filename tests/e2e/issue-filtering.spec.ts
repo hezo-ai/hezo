@@ -9,7 +9,7 @@ test.describe('Issue Filtering', () => {
 		// Create project
 		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 			headers,
-			data: { name: 'Filter Project' },
+			data: { name: 'Filter Project', description: 'Test project.' },
 		});
 		const project = ((await projRes.json()) as any).data;
 

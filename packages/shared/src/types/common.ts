@@ -49,7 +49,6 @@ export type AgentRuntimeStatus = (typeof AgentRuntimeStatus)[keyof typeof AgentR
 export const AgentAdminStatus = {
 	Enabled: 'enabled',
 	Disabled: 'disabled',
-	Terminated: 'terminated',
 } as const;
 export type AgentAdminStatus = (typeof AgentAdminStatus)[keyof typeof AgentAdminStatus];
 
@@ -89,9 +88,21 @@ export const CommentContentType = {
 	Preview: 'preview',
 	Trace: 'trace',
 	System: 'system',
-	Execution: 'execution',
+	Run: 'run',
+	Action: 'action',
 } as const;
 export type CommentContentType = (typeof CommentContentType)[keyof typeof CommentContentType];
+
+export const ActionCommentKind = {
+	SetupRepo: 'setup_repo',
+} as const;
+export type ActionCommentKind = (typeof ActionCommentKind)[keyof typeof ActionCommentKind];
+
+export const OAuthRequestReason = {
+	DesignatedRepo: 'designated_repo',
+	RepoAdd: 'repo_add',
+} as const;
+export type OAuthRequestReason = (typeof OAuthRequestReason)[keyof typeof OAuthRequestReason];
 
 export const ToolCallStatus = { Running: 'running', Success: 'success', Error: 'error' } as const;
 export type ToolCallStatus = (typeof ToolCallStatus)[keyof typeof ToolCallStatus];
@@ -169,7 +180,6 @@ export const WakeupSource = {
 	Mention: 'mention',
 	Automation: 'automation',
 	OptionChosen: 'option_chosen',
-	ChatMessage: 'chat_message',
 	Comment: 'comment',
 } as const;
 export type WakeupSource = (typeof WakeupSource)[keyof typeof WakeupSource];
@@ -247,6 +257,32 @@ export const CompanyTypeSource = {
 } as const;
 export type CompanyTypeSource = (typeof CompanyTypeSource)[keyof typeof CompanyTypeSource];
 
+export const GoalStatus = {
+	Active: 'active',
+	Achieved: 'achieved',
+	Archived: 'archived',
+} as const;
+export type GoalStatus = (typeof GoalStatus)[keyof typeof GoalStatus];
+
+export const TERMINAL_GOAL_STATUSES = [GoalStatus.Achieved, GoalStatus.Archived] as const;
+
+export interface Goal {
+	id: string;
+	company_id: string;
+	project_id: string | null;
+	title: string;
+	description: string;
+	status: GoalStatus;
+	created_by_member_id: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface GoalWithProject extends Goal {
+	project_name: string | null;
+	project_slug: string | null;
+}
+
 export interface SkillTemplateConfig {
 	name: string;
 	source_url: string;
@@ -268,18 +304,6 @@ export interface SkillRecord {
 	created_at: string;
 	updated_at: string;
 }
-
-export const ExecutionLockType = {
-	Read: 'read',
-	Write: 'write',
-} as const;
-export type ExecutionLockType = (typeof ExecutionLockType)[keyof typeof ExecutionLockType];
-
-export const READER_AGENT_SLUGS: ReadonlySet<string> = new Set([
-	'coach',
-	'qa-engineer',
-	'security-engineer',
-]);
 
 export const AuditAction = {
 	Created: 'created',
@@ -331,6 +355,13 @@ export const RUNTIME_TO_PROVIDER: Record<AgentRuntime, AiProvider> = {
 	[AgentRuntime.Kimi]: AiProvider.Moonshot,
 };
 
+export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = {
+	[AiProvider.Anthropic]: AgentRuntime.ClaudeCode,
+	[AiProvider.OpenAI]: AgentRuntime.Codex,
+	[AiProvider.Google]: AgentRuntime.Gemini,
+	[AiProvider.Moonshot]: AgentRuntime.Kimi,
+};
+
 export const PROVIDER_TO_ENV_VAR: Record<AiProvider, Record<string, string>> = {
 	[AiProvider.Anthropic]: {
 		[AiAuthMethod.ApiKey]: 'ANTHROPIC_API_KEY',
@@ -356,22 +387,57 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.Kimi]: 'kimi',
 };
 
-export const AI_PROVIDER_INFO: Record<
-	AiProvider,
-	{
-		name: string;
-		runtimeLabel: string;
-		supportsOAuth: boolean;
-		keyPrefix?: string;
-		keyPlaceholder: string;
-	}
-> = {
+/**
+ * Flags each CLI needs to run fully non-interactively. Agent runs happen
+ * inside locked-down Docker containers driven by `docker exec`, so any prompt
+ * for user approval would hang the run indefinitely.
+ */
+export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> = {
+	[AgentRuntime.ClaudeCode]: ['--dangerously-skip-permissions'],
+	[AgentRuntime.Codex]: ['--dangerously-bypass-approvals-and-sandbox'],
+	[AgentRuntime.Gemini]: ['--yolo'],
+	[AgentRuntime.Kimi]: [],
+};
+
+/**
+ * Flags that make each CLI emit structured per-turn events to stdout while
+ * the run is in flight, so the run log shows tool calls, thinking, and
+ * partial assistant text live instead of silence until the final result.
+ * Runtimes without a documented stream mode default to [] and stream their
+ * native text output.
+ */
+export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
+	[AgentRuntime.ClaudeCode]: ['--output-format', 'stream-json', '--verbose'],
+	[AgentRuntime.Codex]: [],
+	[AgentRuntime.Gemini]: [],
+	[AgentRuntime.Kimi]: [],
+};
+
+export interface AiProviderVerifyEndpoint {
+	url: string | ((apiKey: string) => string);
+	headers: Record<string, string> | ((apiKey: string) => Record<string, string>);
+}
+
+export interface AiProviderInfo {
+	name: string;
+	runtimeLabel: string;
+	supportsOAuth: boolean;
+	keyPrefix?: string;
+	keyPlaceholder: string;
+	verifyEndpoint: AiProviderVerifyEndpoint;
+}
+
+export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	[AiProvider.Anthropic]: {
 		name: 'Anthropic',
 		runtimeLabel: 'Claude Code',
 		supportsOAuth: true,
 		keyPrefix: 'sk-ant-',
 		keyPlaceholder: 'sk-ant-...',
+		verifyEndpoint: {
+			url: 'https://api.anthropic.com/v1/models',
+			headers: (apiKey) => ({ 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }),
+		},
 	},
 	[AiProvider.OpenAI]: {
 		name: 'OpenAI',
@@ -379,17 +445,88 @@ export const AI_PROVIDER_INFO: Record<
 		supportsOAuth: true,
 		keyPrefix: 'sk-',
 		keyPlaceholder: 'sk-...',
+		verifyEndpoint: {
+			url: 'https://api.openai.com/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
 	},
 	[AiProvider.Google]: {
 		name: 'Google',
 		runtimeLabel: 'Gemini',
 		supportsOAuth: true,
 		keyPlaceholder: 'AIza...',
+		verifyEndpoint: {
+			url: (apiKey) => `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`,
+			headers: {},
+		},
 	},
 	[AiProvider.Moonshot]: {
 		name: 'Moonshot',
 		runtimeLabel: 'Kimi',
 		supportsOAuth: false,
 		keyPlaceholder: 'sk-...',
+		verifyEndpoint: {
+			url: 'https://api.moonshot.cn/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
 	},
 };
+
+export const ALL_AI_PROVIDERS: ReadonlyArray<AiProvider> = Object.values(AiProvider);
+
+export const OAUTH_AI_PROVIDERS: ReadonlyArray<AiProvider> = ALL_AI_PROVIDERS.filter(
+	(p) => AI_PROVIDER_INFO[p].supportsOAuth,
+);
+
+export interface AiProviderModel {
+	id: string;
+	label: string;
+}
+
+/**
+ * Normalise the response from a provider's `/v1/models` (or equivalent)
+ * endpoint into a uniform list. Each provider returns its catalog in a slightly
+ * different shape and surfaces models unrelated to chat (embeddings, moderation,
+ * TTS, image generation). This filters to the models an agent CLI can actually
+ * be pointed at.
+ */
+export function parseProviderModels(provider: AiProvider, json: unknown): AiProviderModel[] {
+	if (!json || typeof json !== 'object') return [];
+	const body = json as Record<string, unknown>;
+
+	if (provider === AiProvider.Google) {
+		const models = Array.isArray(body.models) ? (body.models as Record<string, unknown>[]) : [];
+		return models
+			.filter((m) => {
+				const methods = m.supportedGenerationMethods;
+				if (!Array.isArray(methods)) return true;
+				return methods.includes('generateContent');
+			})
+			.map((m) => {
+				const raw = typeof m.name === 'string' ? m.name : '';
+				const id = raw.startsWith('models/') ? raw.slice('models/'.length) : raw;
+				const label = typeof m.displayName === 'string' && m.displayName ? m.displayName : id;
+				return { id, label };
+			})
+			.filter((m) => m.id);
+	}
+
+	const data = Array.isArray(body.data) ? (body.data as Record<string, unknown>[]) : [];
+	return data
+		.map((m) => {
+			const id = typeof m.id === 'string' ? m.id : '';
+			const displayName = typeof m.display_name === 'string' ? m.display_name : '';
+			return { id, label: displayName || id };
+		})
+		.filter((m) => m.id && isChatModelId(provider, m.id));
+}
+
+function isChatModelId(provider: AiProvider, id: string): boolean {
+	const lower = id.toLowerCase();
+	if (provider === AiProvider.OpenAI) {
+		if (/(embedding|whisper|tts|audio|dall-e|image|moderation|omni-moderation)/.test(lower)) {
+			return false;
+		}
+	}
+	return true;
+}

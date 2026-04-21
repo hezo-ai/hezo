@@ -3,9 +3,8 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
-import { signAgentJwt } from '../../middleware/auth';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -34,7 +33,7 @@ beforeAll(async () => {
 	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Main' }),
+		body: JSON.stringify({ name: 'Main', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
@@ -94,6 +93,31 @@ describe('comments CRUD', () => {
 		expect(body.data.length).toBeGreaterThanOrEqual(2);
 		// Ordered by created_at ASC
 		expect(body.data[0].content.text).toBe('Hello world');
+	});
+
+	it('labels board-authored comments as "Board" and agent-authored as the agent title', async () => {
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: 'From the agent' },
+			}),
+		});
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		const agentComment = body.data.find(
+			(c: { content: { text?: string } }) => c.content.text === 'From the agent',
+		);
+		const boardComment = body.data.find(
+			(c: { content: { text?: string } }) => c.content.text === 'Hello world',
+		);
+		expect(agentComment.author_name).toBe('Comment Bot');
+		expect(boardComment.author_name).toBe('Board');
 	});
 
 	it('creates an options comment and chooses an option', async () => {
@@ -338,7 +362,7 @@ describe('comment wakeups on assigned issues', () => {
 	it('does not self-notify when assigned agent comments on own issue', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
 
-		const agentToken = await signAgentJwt(masterKeyManager, agentId, companyId);
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
 
 		const res = await app.request(
 			`/api/companies/${companyId}/issues/${assignedIssueId}/comments`,

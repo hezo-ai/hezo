@@ -1,3 +1,4 @@
+import type { AiProviderModel } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -9,6 +10,7 @@ export interface AiProviderConfig {
 	label: string;
 	is_default: boolean;
 	status: string;
+	default_model: string | null;
 	metadata: Record<string, unknown>;
 	created_at: string;
 }
@@ -18,67 +20,86 @@ export interface AiProviderStatus {
 	providers: string[];
 }
 
-export function useAiProviders(companyId: string) {
+const providersKey = ['ai-providers'] as const;
+const statusKey = ['ai-providers', 'status'] as const;
+
+function invalidateAll() {
+	queryClient.invalidateQueries({ queryKey: providersKey });
+	queryClient.invalidateQueries({ queryKey: statusKey });
+}
+
+export function useAiProviders() {
 	return useQuery({
-		queryKey: ['companies', companyId, 'ai-providers'],
-		queryFn: () => api.get<AiProviderConfig[]>(`/api/companies/${companyId}/ai-providers`),
+		queryKey: providersKey,
+		queryFn: () => api.get<AiProviderConfig[]>('/api/ai-providers'),
 	});
 }
 
-export function useAiProviderStatus(companyId: string) {
+export function useAiProviderStatus(options: { enabled?: boolean } = {}) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'ai-providers', 'status'],
-		queryFn: () => api.get<AiProviderStatus>(`/api/companies/${companyId}/ai-providers/status`),
+		queryKey: statusKey,
+		queryFn: () => api.get<AiProviderStatus>('/api/ai-providers/status'),
+		enabled: options.enabled ?? true,
 	});
 }
 
-export function useCreateAiProvider(companyId: string) {
+export function useCreateAiProvider() {
 	return useMutation({
 		mutationFn: (data: {
 			provider: string;
 			api_key: string;
 			label?: string;
 			auth_method?: string;
-		}) => api.post<AiProviderConfig>(`/api/companies/${companyId}/ai-providers`, data),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'ai-providers'] }),
+		}) => api.post<AiProviderConfig>('/api/ai-providers', data),
+		onSuccess: invalidateAll,
 	});
 }
 
-export function useDeleteAiProvider(companyId: string) {
+export function useDeleteAiProvider() {
+	return useMutation({
+		mutationFn: (configId: string) => api.delete(`/api/ai-providers/${configId}`),
+		onSuccess: invalidateAll,
+	});
+}
+
+export function useSetDefaultAiProvider() {
+	return useMutation({
+		mutationFn: (configId: string) => api.patch(`/api/ai-providers/${configId}/default`, {}),
+		onSuccess: invalidateAll,
+	});
+}
+
+export function useVerifyAiProvider() {
 	return useMutation({
 		mutationFn: (configId: string) =>
-			api.delete(`/api/companies/${companyId}/ai-providers/${configId}`),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'ai-providers'] }),
+			api.post<{ valid: boolean; error?: string }>(`/api/ai-providers/${configId}/verify`),
+		onSuccess: invalidateAll,
 	});
 }
 
-export function useSetDefaultAiProvider(companyId: string) {
-	return useMutation({
-		mutationFn: (configId: string) =>
-			api.patch(`/api/companies/${companyId}/ai-providers/${configId}/default`, {}),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'ai-providers'] }),
-	});
-}
-
-export function useVerifyAiProvider(companyId: string) {
-	return useMutation({
-		mutationFn: (configId: string) =>
-			api.post<{ valid: boolean; error?: string }>(
-				`/api/companies/${companyId}/ai-providers/${configId}/verify`,
-			),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'ai-providers'] }),
-	});
-}
-
-export function useStartAiProviderOAuth(companyId: string) {
+export function useStartAiProviderOAuth() {
 	return useMutation({
 		mutationFn: (provider: string) =>
-			api.post<{ auth_url: string; state: string }>(
-				`/api/companies/${companyId}/ai-providers/${provider}/oauth/start`,
+			api.post<{ auth_url: string; state: string }>(`/api/ai-providers/${provider}/oauth/start`),
+	});
+}
+
+export function useAiProviderModels(configId: string, options: { enabled?: boolean } = {}) {
+	return useQuery({
+		queryKey: ['ai-providers', configId, 'models'] as const,
+		queryFn: () => api.get<AiProviderModel[]>(`/api/ai-providers/${configId}/models`),
+		enabled: options.enabled ?? true,
+		staleTime: 5 * 60 * 1000,
+	});
+}
+
+export function useUpdateAiProviderConfig(configId: string) {
+	return useMutation({
+		mutationFn: (data: { default_model: string | null }) =>
+			api.patch<{ updated: boolean; default_model: string | null }>(
+				`/api/ai-providers/${configId}`,
+				data,
 			),
+		onSuccess: invalidateAll,
 	});
 }

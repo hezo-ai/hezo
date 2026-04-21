@@ -5,9 +5,12 @@ import {
 	AuthType,
 	IssuePriority,
 	TERMINAL_ISSUE_STATUSES,
+	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import { resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
+import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 
 export const agentApiRoutes = new Hono<Env>();
@@ -49,7 +52,6 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 
 	if (
 		agentRow.admin_status === AgentAdminStatus.Disabled ||
-		agentRow.admin_status === AgentAdminStatus.Terminated ||
 		agentRow.runtime_status === AgentRuntimeStatus.Paused
 	) {
 		return ok(c, {
@@ -65,11 +67,12 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 		});
 	}
 
-	const terminalPlaceholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${i + 3}`).join(', ');
+	const ts = terminalStatusParams(3, false);
+	const terminalPlaceholders = ts.placeholders;
 
 	const issues = await db.query(
 		`SELECT i.id, i.number, i.identifier, i.title, i.description, i.status, i.priority,
-		        p.name AS project_name, p.goal AS project_goal, p.id AS project_id,
+		        p.name AS project_name, p.description AS project_description, p.id AS project_id,
 		        co.description AS company_description,
 		        (SELECT count(*)::int FROM issue_comments ic
 		         WHERE ic.issue_id = i.id AND ic.created_at > COALESCE(
@@ -151,15 +154,8 @@ agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
-	const issueId = c.req.param('issueId');
-
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		auth.companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
+	const issueId = await resolveIssueId(db, auth.companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const body = await c.req.json<{
 		content_type: string;
@@ -188,16 +184,9 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, auth.companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const commentId = c.req.param('commentId');
-
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		auth.companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
 
 	const commentCheck = await db.query(
 		'SELECT id FROM issue_comments WHERE id = $1 AND issue_id = $2',
@@ -271,7 +260,7 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 					[AgentRuntimeStatus.Paused, auth.memberId],
 				);
 				const wsManager = c.get('wsManager');
-				wsManager.broadcast(`company:${auth.companyId}`, {
+				wsManager.broadcast(wsRoom.company(auth.companyId), {
 					type: 'row_change',
 					table: 'member_agents',
 					action: 'UPDATE',

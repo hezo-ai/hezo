@@ -13,6 +13,7 @@
 	"dependencies": {
 		"@electric-sql/pglite": "^0.2",
 		"@hezo/shared": "workspace:*",
+		"@hiddentao/logger": "^1.3.3",
 		"@hiddentao/zip-json": "^1",
 		"@huggingface/transformers": "^4.0.1",
 		"@modelcontextprotocol/sdk": "^1.29.0",

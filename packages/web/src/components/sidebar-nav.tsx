@@ -1,4 +1,5 @@
 import { Link, useMatchRoute } from '@tanstack/react-router';
+import { Plus } from 'lucide-react';
 
 interface SidebarNavItem {
 	to: string;
@@ -9,16 +10,22 @@ interface SidebarNavItem {
 
 export interface SidebarNavSection {
 	title?: string;
+	titleTo?: string;
+	titleParams?: Record<string, string>;
 	items: SidebarNavItem[];
 	collapsible?: boolean;
 	collapsed?: boolean;
 	onToggle?: () => void;
 	children?: SidebarNavItem[];
+	onAdd?: () => void;
+	addLabel?: string;
 }
 
 interface SidebarNavProps {
 	sections: SidebarNavSection[];
 }
+
+const TITLE_TEXT_CLASSES = 'uppercase text-[11px] text-text-subtle font-medium tracking-wide';
 
 export function SidebarNav({ sections }: SidebarNavProps) {
 	const matchRoute = useMatchRoute();
@@ -27,28 +34,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 		<nav className="flex flex-col gap-0.5 sticky top-0">
 			{sections.map((section) => (
 				<div key={section.title ?? `section-${sections.indexOf(section)}`}>
-					{section.title &&
-						(section.collapsible ? (
-							<button
-								type="button"
-								onClick={section.onToggle}
-								className="flex items-center w-full uppercase text-[11px] text-text-subtle font-medium tracking-wide px-3 pt-3 pb-1 hover:text-text transition-colors"
-							>
-								<svg
-									aria-hidden="true"
-									className={`w-3 h-3 mr-1 transition-transform ${section.collapsed ? '' : 'rotate-90'}`}
-									viewBox="0 0 16 16"
-									fill="currentColor"
-								>
-									<path d="M6 3l5 5-5 5V3z" />
-								</svg>
-								{section.title}
-							</button>
-						) : (
-							<div className="uppercase text-[11px] text-text-subtle font-medium tracking-wide px-3 pt-3 pb-1">
-								{section.title}
-							</div>
-						))}
+					{section.title && <SectionHeader section={section} />}
 					{section.items.map((item) => {
 						const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
 						return (
@@ -93,5 +79,78 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 				</div>
 			))}
 		</nav>
+	);
+}
+
+function SectionHeader({ section }: { section: SidebarNavSection }) {
+	if (!section.collapsible && !section.onAdd && !section.titleTo) {
+		return <div className={`${TITLE_TEXT_CLASSES} px-3 pt-3 pb-1`}>{section.title}</div>;
+	}
+
+	const chevron = section.collapsible && (
+		<svg
+			aria-hidden="true"
+			className={`w-3 h-3 transition-transform shrink-0 ${section.collapsed ? '' : 'rotate-90'}`}
+			viewBox="0 0 16 16"
+			fill="currentColor"
+		>
+			<path d="M6 3l5 5-5 5V3z" />
+		</svg>
+	);
+
+	const addButton = section.onAdd && (
+		<button
+			type="button"
+			onClick={section.onAdd}
+			className="text-text-subtle hover:text-text transition-colors p-0.5 -m-0.5 cursor-pointer shrink-0"
+			title={section.addLabel ?? 'Add'}
+			aria-label={section.addLabel ?? 'Add'}
+		>
+			<Plus className="w-3.5 h-3.5" />
+		</button>
+	);
+
+	const titleNode = section.titleTo ? (
+		<Link
+			to={section.titleTo}
+			params={section.titleParams ?? {}}
+			className={`${TITLE_TEXT_CLASSES} flex-1 text-left hover:text-text transition-colors`}
+		>
+			{section.title}
+		</Link>
+	) : section.collapsible ? (
+		<button
+			type="button"
+			onClick={section.onToggle}
+			className={`${TITLE_TEXT_CLASSES} flex items-center justify-between flex-1 text-left hover:text-text transition-colors cursor-pointer gap-2`}
+		>
+			<span>{section.title}</span>
+			{chevron}
+		</button>
+	) : (
+		<span className={`${TITLE_TEXT_CLASSES} flex-1`}>{section.title}</span>
+	);
+
+	const trailingChevron = section.titleTo && section.collapsible && (
+		<button
+			type="button"
+			onClick={section.onToggle}
+			className="text-text-subtle hover:text-text transition-colors p-0.5 -m-0.5 cursor-pointer"
+			aria-label={section.collapsed ? 'Expand' : 'Collapse'}
+		>
+			{chevron}
+		</button>
+	);
+
+	return (
+		<div className="flex items-center justify-between px-3 pt-3 pb-1 gap-2">
+			{titleNode}
+			{(addButton || trailingChevron) && (
+				<div className="flex items-center gap-1.5">
+					{addButton}
+					{trailingChevron}
+				</div>
+			)}
+		</div>
 	);
 }

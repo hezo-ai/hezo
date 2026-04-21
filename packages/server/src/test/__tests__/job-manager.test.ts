@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { JobManager, type JobManagerDeps } from '../../services/job-manager';
+import { LogStreamBroker } from '../../services/log-stream-broker';
 
 function createMockDeps(): JobManagerDeps {
 	return {
@@ -9,6 +10,7 @@ function createMockDeps(): JobManagerDeps {
 		serverPort: 3100,
 		dataDir: '',
 		wsManager: { broadcast: vi.fn() } as any,
+		logs: new LogStreamBroker(),
 	};
 }
 

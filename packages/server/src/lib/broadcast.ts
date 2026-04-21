@@ -1,8 +1,21 @@
+import type { PGlite } from '@electric-sql/pglite';
+import { type ChangeAction, WsMessageType, wsRoom } from '@hezo/shared';
 import type { Context } from 'hono';
 import type { WebSocketManager } from '../services/ws';
 import type { Env } from './types';
 
-export type ChangeAction = 'INSERT' | 'UPDATE' | 'DELETE';
+export type { ChangeAction };
+
+export function broadcastRowChange(
+	wsManager: WebSocketManager | undefined,
+	room: string,
+	table: string,
+	action: ChangeAction,
+	row: Record<string, unknown>,
+): void {
+	if (!wsManager) return;
+	wsManager.broadcast(room, { type: WsMessageType.RowChange, table, action, row });
+}
 
 export function broadcastChange(
 	c: Context<Env>,
@@ -11,8 +24,7 @@ export function broadcastChange(
 	action: ChangeAction,
 	row: Record<string, unknown>,
 ): void {
-	const ws = c.get('wsManager');
-	ws.broadcast(room, { type: 'row_change', table, action, row });
+	broadcastRowChange(c.get('wsManager'), room, table, action, row);
 }
 
 export function broadcastEvent(
@@ -22,4 +34,19 @@ export function broadcastEvent(
 	data: Record<string, unknown>,
 ): void {
 	wsManager.broadcast(room, { type, ...data });
+}
+
+export async function broadcastProjectUpdate(
+	db: PGlite,
+	wsManager: WebSocketManager | undefined,
+	companyId: string,
+	projectId: string,
+): Promise<void> {
+	if (!wsManager) return;
+	const updated = await db.query<Record<string, unknown>>('SELECT * FROM projects WHERE id = $1', [
+		projectId,
+	]);
+	const row = updated.rows[0];
+	if (!row) return;
+	broadcastRowChange(wsManager, wsRoom.company(companyId), 'projects', 'UPDATE', row);
 }

@@ -7,15 +7,19 @@ export interface Project {
 	company_id: string;
 	name: string;
 	slug: string;
-	goal: string | null;
+	description: string;
 	docker_base_image: string | null;
 	container_id: string | null;
 	container_status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error' | null;
+	container_error: string | null;
+	container_last_logs: string | null;
 	dev_ports: Array<{ container: number; host: number }>;
 	repo_count: number;
 	open_issue_count: number;
 	created_at: string;
 	repos?: Repo[];
+	planning_issue_id?: string;
+	planning_issue_identifier?: string;
 }
 
 export interface Repo {
@@ -25,6 +29,7 @@ export interface Repo {
 	repo_identifier: string;
 	host_type: string;
 	created_at: string;
+	is_designated?: boolean;
 }
 
 export function useProjects(companyId: string) {
@@ -44,7 +49,7 @@ export function useProject(companyId: string, projectId: string, options?: { ena
 
 export function useCreateProject(companyId: string) {
 	return useMutation({
-		mutationFn: (data: { name: string; goal?: string }) =>
+		mutationFn: (data: { name: string; description: string }) =>
 			api.post<Project>(`/api/companies/${companyId}/projects`, data),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] }),
@@ -53,7 +58,7 @@ export function useCreateProject(companyId: string) {
 
 export function useUpdateProject(companyId: string, projectId: string) {
 	return useMutation({
-		mutationFn: (data: { name?: string; goal?: string }) =>
+		mutationFn: (data: { name?: string; description?: string }) =>
 			api.patch<Project>(`/api/companies/${companyId}/projects/${projectId}`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] });

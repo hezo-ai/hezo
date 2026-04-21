@@ -8,6 +8,7 @@ export interface HeartbeatRun {
 	issue_id: string | null;
 	issue_identifier: string | null;
 	issue_title: string | null;
+	project_id: string | null;
 	status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
 	started_at: string;
 	finished_at: string | null;
@@ -16,8 +17,16 @@ export interface HeartbeatRun {
 	input_tokens: number;
 	output_tokens: number;
 	cost_cents: number | null;
-	stdout_excerpt: string | null;
-	stderr_excerpt: string | null;
+	invocation_command: string | null;
+	log_text: string | null;
+	working_dir: string | null;
+	created_issues: { id: string; identifier: string; title: string }[];
+}
+
+export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
+
+export function isActiveRunStatus(status: RunStatus): boolean {
+	return status === 'running' || status === 'queued';
 }
 
 export function useHeartbeatRuns(companyId: string, agentId: string) {
@@ -30,11 +39,18 @@ export function useHeartbeatRuns(companyId: string, agentId: string) {
 }
 
 export function useHeartbeatRun(companyId: string, agentId: string, runId: string) {
+	const enabled = Boolean(companyId && agentId && runId);
 	return useQuery({
 		queryKey: ['companies', companyId, 'agents', agentId, 'heartbeat-runs', runId],
 		queryFn: () =>
 			api.get<HeartbeatRun>(
 				`/api/companies/${companyId}/agents/${agentId}/heartbeat-runs/${runId}`,
 			),
+		enabled,
+		refetchInterval: (query) => {
+			if (!enabled) return false;
+			const status = query.state.data?.status;
+			return status === 'running' || status === 'queued' ? 2_000 : false;
+		},
 	});
 }

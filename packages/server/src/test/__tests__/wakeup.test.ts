@@ -82,7 +82,7 @@ describe('wakeup service', () => {
 		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Wakeup Project' }),
+			body: JSON.stringify({ name: 'Wakeup Project', description: 'Test project.' }),
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -122,7 +122,7 @@ describe('wakeup service', () => {
 		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Create Wakeup Project' }),
+			body: JSON.stringify({ name: 'Create Wakeup Project', description: 'Test project.' }),
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -152,7 +152,7 @@ describe('wakeup service', () => {
 		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No Wakeup Project' }),
+			body: JSON.stringify({ name: 'No Wakeup Project', description: 'Test project.' }),
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -171,7 +171,7 @@ describe('wakeup service', () => {
 		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Sub-issue Wakeup Project' }),
+			body: JSON.stringify({ name: 'Sub-issue Wakeup Project', description: 'Test project.' }),
 		});
 		const projectId = (await projectRes.json()).data.id;
 

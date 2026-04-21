@@ -3,6 +3,15 @@ import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import type { Repo } from './use-projects';
 
+export interface CreateRepoPayload {
+	short_name: string;
+	mode?: 'link' | 'create';
+	url?: string;
+	owner?: string;
+	name?: string;
+	private?: boolean;
+}
+
 export function useRepos(companyId: string, projectId: string) {
 	return useQuery({
 		queryKey: ['companies', companyId, 'projects', projectId, 'repos'],
@@ -12,7 +21,7 @@ export function useRepos(companyId: string, projectId: string) {
 
 export function useCreateRepo(companyId: string, projectId: string) {
 	return useMutation({
-		mutationFn: (data: { short_name: string; url: string }) =>
+		mutationFn: (data: CreateRepoPayload) =>
 			api.post<Repo>(`/api/companies/${companyId}/projects/${projectId}/repos`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects', projectId] });

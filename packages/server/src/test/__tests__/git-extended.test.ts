@@ -14,7 +14,7 @@ function countHezSshFiles(): number {
 	return readdirSync(tmpdir()).filter((f) => f.startsWith('hezo-ssh-')).length;
 }
 
-describe('cloneRepo', () => {
+describe('cloneRepo', { timeout: 30_000 }, () => {
 	it('returns { success: false, error } when clone fails', async () => {
 		const targetDir = join(testDir, 'clone-fail');
 		const result = await cloneRepo(

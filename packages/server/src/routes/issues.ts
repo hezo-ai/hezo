@@ -6,18 +6,25 @@ import {
 	AuthType,
 	IssuePriority,
 	IssueStatus,
+	TERMINAL_ISSUE_STATUSES,
 	WakeupSource,
+	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { auditLog } from '../lib/audit';
 import { broadcastChange } from '../lib/broadcast';
+import { assertOperationsAssignee } from '../lib/operations-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
-import { resolveProjectId } from '../lib/resolve';
+import { getProjectLocator, resolveIssueId, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { triggerStatusAutomations } from '../services/issue-automation';
+import { removeIssueWorktrees } from '../services/repo-sync';
 import { createWakeup } from '../services/wakeup';
+
+const log = logger.child('routes');
 
 async function wakeAgentIfAssigned(
 	db: PGlite,
@@ -30,7 +37,7 @@ async function wakeAgentIfAssigned(
 	if (isAgent.rows.length > 0) {
 		createWakeup(db, assigneeId, companyId, WakeupSource.Assignment, {
 			issue_id: issueId,
-		}).catch((e) => console.error('[wakeup] Failed to create wakeup for assignment:', e));
+		}).catch((e) => log.error('Failed to create wakeup for assignment:', e));
 	}
 }
 
@@ -62,6 +69,13 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
 	if (assigneeId) {
 		conditions.push(`i.assignee_id = $${idx}`);
 		params.push(assigneeId);
+		idx++;
+	}
+
+	const parentIssueId = c.req.query('parent_issue_id');
+	if (parentIssueId) {
+		conditions.push(`i.parent_issue_id = $${idx}`);
+		params.push(parentIssueId);
 		idx++;
 	}
 
@@ -110,7 +124,12 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
             i.number, i.identifier, i.title, i.description, i.status, i.priority,
             i.labels, i.created_at, i.updated_at,
             p.name AS project_name,
-            COALESCE(ma.title, m.display_name) AS assignee_name
+            COALESCE(ma.title, m.display_name) AS assignee_name,
+            m.member_type AS assignee_type,
+            EXISTS (
+              SELECT 1 FROM heartbeat_runs hr
+              WHERE hr.issue_id = i.id AND hr.status IN ('running', 'queued')
+            ) AS has_active_run
      FROM issues i
      JOIN projects p ON p.id = i.project_id
      LEFT JOIN members m ON m.id = i.assignee_id
@@ -139,6 +158,7 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 		parent_issue_id?: string;
 		priority?: string;
 		labels?: string[];
+		runtime_type?: string;
 	}>();
 
 	if (!body.project_id || !body.title?.trim()) {
@@ -146,6 +166,11 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 	}
 	if (!body.assignee_id) {
 		return err(c, 'INVALID_REQUEST', 'assignee_id is required', 400);
+	}
+
+	const opsCheck = await assertOperationsAssignee(db, companyId, body.project_id, body.assignee_id);
+	if (!opsCheck.ok) {
+		return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
 	}
 
 	const companyResult = await db.query<{ issue_prefix: string }>(
@@ -165,8 +190,8 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 
 	const result = await db.query(
 		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,
-                         number, identifier, title, description, status, priority, labels)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb)
+                         number, identifier, title, description, status, priority, labels, runtime_type)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb, $12::agent_runtime)
      RETURNING *`,
 		[
 			companyId,
@@ -180,6 +205,7 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 			IssueStatus.Backlog,
 			body.priority ?? IssuePriority.Medium,
 			JSON.stringify(body.labels ?? []),
+			body.runtime_type ?? null,
 		],
 	);
 
@@ -192,11 +218,11 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 		if (isAgent.rows.length > 0) {
 			createWakeup(db, body.assignee_id, companyId, WakeupSource.Assignment, {
 				issue_id: issue.id as string,
-			}).catch((e) => console.error('Failed to create wakeup:', e));
+			}).catch((e) => log.error('Failed to create wakeup:', e));
 		}
 	}
 
-	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', issue);
+	broadcastChange(c, wsRoom.company(companyId), 'issues', 'INSERT', issue);
 	auditLog(
 		db,
 		companyId,
@@ -219,12 +245,15 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
 
 	const db = c.get('db');
 	const { companyId } = access;
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const result = await db.query(
 		`SELECT i.*,
-            p.name AS project_name, p.goal AS project_goal,
+            p.name AS project_name, p.slug AS project_slug, p.description AS project_description,
             co.description AS company_description,
             COALESCE(ma.title, m.display_name) AS assignee_name,
+            m.member_type AS assignee_type,
             COALESCE(ma_ps.title, m_ps.display_name) AS progress_summary_updated_by_name,
             (SELECT count(*)::int FROM issue_comments ic WHERE ic.issue_id = i.id) AS comment_count,
             (SELECT COALESCE(sum(ce.amount_cents), 0)::int FROM cost_entries ce WHERE ce.issue_id = i.id) AS cost_cents
@@ -236,7 +265,7 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
      LEFT JOIN members m_ps ON m_ps.id = i.progress_summary_updated_by
      LEFT JOIN member_agents ma_ps ON ma_ps.id = i.progress_summary_updated_by
      WHERE i.id = $1 AND i.company_id = $2`,
-		[c.req.param('issueId'), companyId],
+		[issueId, companyId],
 	);
 
 	if (result.rows.length === 0) {
@@ -246,16 +275,46 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
+issuesRoutes.get('/companies/:companyId/issues/:issueId/latest-run', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+
+	const result = await db.query(
+		`SELECT hr.id, hr.member_id, hr.status, hr.started_at, hr.finished_at,
+		        hr.exit_code, hr.log_text, hr.invocation_command, hr.working_dir,
+		        i.project_id AS project_id,
+		        ma.title AS agent_title, ma.slug AS agent_slug
+		 FROM heartbeat_runs hr
+		 JOIN issues i ON i.id = hr.issue_id
+		 LEFT JOIN member_agents ma ON ma.id = hr.member_id
+		 WHERE hr.issue_id = $1 AND hr.company_id = $2
+		 ORDER BY hr.started_at DESC
+		 LIMIT 1`,
+		[issueId, companyId],
+	);
+
+	if (result.rows.length === 0) {
+		return ok(c, null);
+	}
+	return ok(c, result.rows[0]);
+});
+
 issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	const access = await requireCompanyAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
-	const existing = await db.query(
-		'SELECT id, status FROM issues WHERE id = $1 AND company_id = $2',
+	const existing = await db.query<{ id: string; status: string; project_id: string }>(
+		'SELECT id, status, project_id FROM issues WHERE id = $1 AND company_id = $2',
 		[issueId, companyId],
 	);
 	if (existing.rows.length === 0) {
@@ -272,6 +331,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		progress_summary?: string | null;
 		rules?: string | null;
 		branch_name?: string | null;
+		runtime_type?: string | null;
 	}>();
 
 	const sets: string[] = [];
@@ -301,6 +361,15 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	if (body.assignee_id !== undefined) {
 		if (body.assignee_id === null) {
 			return err(c, 'INVALID_REQUEST', 'assignee_id cannot be null', 400);
+		}
+		const opsCheck = await assertOperationsAssignee(
+			db,
+			companyId,
+			existing.rows[0].project_id,
+			body.assignee_id,
+		);
+		if (!opsCheck.ok) {
+			return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
 		}
 		sets.push(`assignee_id = $${idx}`);
 		params.push(body.assignee_id);
@@ -332,6 +401,11 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		params.push(body.branch_name);
 		idx++;
 	}
+	if (body.runtime_type !== undefined) {
+		sets.push(`runtime_type = $${idx}::agent_runtime`);
+		params.push(body.runtime_type);
+		idx++;
+	}
 
 	if (sets.length === 0) {
 		return ok(c, existing.rows[0]);
@@ -347,13 +421,39 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 
 	if (body.status) {
 		triggerStatusAutomations(db, companyId, issueId, body.status).catch((e) =>
-			console.error('Failed to trigger status automations:', e),
+			log.error('Failed to trigger status automations:', e),
 		);
+
+		if ((TERMINAL_ISSUE_STATUSES as readonly string[]).includes(body.status)) {
+			const dataDir = c.get('dataDir');
+			if (dataDir) {
+				const issueRow = await db.query<{ identifier: string; project_id: string }>(
+					'SELECT identifier, project_id FROM issues WHERE id = $1',
+					[issueId],
+				);
+				const issueInfo = issueRow.rows[0];
+				if (issueInfo) {
+					const locator = await getProjectLocator(db, issueInfo.project_id);
+					if (locator) {
+						try {
+							removeIssueWorktrees(
+								dataDir,
+								locator.companySlug,
+								locator.slug,
+								issueInfo.identifier,
+							);
+						} catch (error) {
+							log.error(`Failed to clean up worktrees for issue ${issueInfo.identifier}:`, error);
+						}
+					}
+				}
+			}
+		}
 	}
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'issues',
 		'UPDATE',
 		result.rows[0] as Record<string, unknown>,
@@ -367,7 +467,8 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId', async (c) => {
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const existing = await db.query<{ status: string }>(
 		'SELECT status FROM issues WHERE id = $1 AND company_id = $2',
@@ -393,7 +494,7 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId', async (c) => {
 	}
 
 	await db.query('DELETE FROM issues WHERE id = $1', [issueId]);
-	broadcastChange(c, `company:${companyId}`, 'issues', 'DELETE', { id: issueId });
+	broadcastChange(c, wsRoom.company(companyId), 'issues', 'DELETE', { id: issueId });
 	return c.json({ data: null }, 200);
 });
 
@@ -403,7 +504,8 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const parentIssueId = c.req.param('issueId');
+	const parentIssueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!parentIssueId) return err(c, 'NOT_FOUND', 'Parent issue not found', 404);
 
 	const parent = await db.query<{ project_id: string }>(
 		'SELECT project_id FROM issues WHERE id = $1 AND company_id = $2',
@@ -419,6 +521,7 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 		assignee_id?: string;
 		priority?: string;
 		labels?: string[];
+		runtime_type?: string;
 	}>();
 
 	if (!body.title?.trim()) {
@@ -426,6 +529,16 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 	}
 	if (!body.assignee_id) {
 		return err(c, 'INVALID_REQUEST', 'assignee_id is required', 400);
+	}
+
+	const opsCheck = await assertOperationsAssignee(
+		db,
+		companyId,
+		parent.rows[0].project_id,
+		body.assignee_id,
+	);
+	if (!opsCheck.ok) {
+		return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
 	}
 
 	const companyResult = await db.query<{ issue_prefix: string }>(
@@ -441,8 +554,8 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 
 	const result = await db.query(
 		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,
-                         number, identifier, title, description, status, priority, labels)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb)
+                         number, identifier, title, description, status, priority, labels, runtime_type)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb, $12::agent_runtime)
      RETURNING *`,
 		[
 			companyId,
@@ -456,11 +569,12 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 			IssueStatus.Backlog,
 			body.priority ?? IssuePriority.Medium,
 			JSON.stringify(body.labels ?? []),
+			body.runtime_type ?? null,
 		],
 	);
 
 	const subIssue = result.rows[0] as Record<string, unknown>;
-	broadcastChange(c, `company:${companyId}`, 'issues', 'INSERT', subIssue);
+	broadcastChange(c, wsRoom.company(companyId), 'issues', 'INSERT', subIssue);
 	wakeAgentIfAssigned(db, body.assignee_id, companyId, subIssue.id as string);
 	return ok(c, subIssue, 201);
 });
@@ -471,16 +585,8 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId/dependencies', async (c)
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
-
-	// Verify issue belongs to company
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const result = await db.query(
 		`SELECT d.id, d.issue_id, d.blocked_by_issue_id, d.created_at,
@@ -499,32 +605,21 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const body = await c.req.json<{ blocked_by_issue_id: string }>();
 
 	if (!body.blocked_by_issue_id) {
 		return err(c, 'INVALID_REQUEST', 'blocked_by_issue_id is required', 400);
 	}
 
-	if (body.blocked_by_issue_id === issueId) {
-		return err(c, 'INVALID_REQUEST', 'An issue cannot block itself', 400);
-	}
-
-	// Verify both issues belong to the same company
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
-
-	const blockerCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		body.blocked_by_issue_id,
-		companyId,
-	]);
-	if (blockerCheck.rows.length === 0) {
+	const blockerId = await resolveIssueId(db, companyId, body.blocked_by_issue_id);
+	if (!blockerId) {
 		return err(c, 'NOT_FOUND', 'Blocking issue not found in this company', 404);
+	}
+
+	if (blockerId === issueId) {
+		return err(c, 'INVALID_REQUEST', 'An issue cannot block itself', 400);
 	}
 
 	const result = await db.query(
@@ -532,7 +627,7 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
      VALUES ($1, $2)
      ON CONFLICT DO NOTHING
      RETURNING *`,
-		[issueId, body.blocked_by_issue_id],
+		[issueId, blockerId],
 	);
 
 	if (result.rows.length === 0) {
@@ -548,7 +643,8 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId/dependencies/:depId',
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const depId = c.req.param('depId');
 
 	// Verify issue belongs to company and dependency belongs to issue

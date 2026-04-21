@@ -9,11 +9,12 @@ export interface Agent {
 	title: string;
 	slug: string;
 	role_description: string | null;
+	summary: string | null;
 	system_prompt: string | null;
-	runtime_type: string;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
 	budget_used_cents: number;
+	touches_code: boolean;
 	budget_reset_at: string | null;
 	runtime_status: string;
 	admin_status: string;
@@ -21,6 +22,8 @@ export interface Agent {
 	reports_to: string | null;
 	reports_to_title: string | null;
 	assigned_issue_count: number;
+	model_override_provider: string | null;
+	model_override_model: string | null;
 	created_at: string;
 }
 
@@ -42,22 +45,6 @@ export function useAgent(companyId: string, agentId: string) {
 	});
 }
 
-export function useCreateAgent(companyId: string) {
-	return useMutation({
-		mutationFn: (data: {
-			title: string;
-			role_description?: string;
-			system_prompt?: string;
-			reports_to?: string;
-			runtime_type?: string;
-			monthly_budget_cents?: number;
-			heartbeat_interval_min?: number;
-		}) => api.post<Agent>(`/api/companies/${companyId}/agents`, data),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] }),
-	});
-}
-
 export function useUpdateAgent(companyId: string, agentId: string) {
 	return useMutation({
 		mutationFn: (data: {
@@ -67,6 +54,9 @@ export function useUpdateAgent(companyId: string, agentId: string) {
 			reports_to?: string | null;
 			monthly_budget_cents?: number;
 			heartbeat_interval_min?: number;
+			touches_code?: boolean;
+			model_override_provider?: string | null;
+			model_override_model?: string | null;
 		}) => api.patch<Agent>(`/api/companies/${companyId}/agents/${agentId}`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] });
@@ -99,26 +89,20 @@ export function useOnboardAgent(companyId: string) {
 			title: string;
 			role_description?: string;
 			system_prompt?: string;
-			runtime_type?: string;
 			monthly_budget_cents?: number;
 			heartbeat_interval_min?: number;
+			touches_code?: boolean;
 		}) =>
-			api.post<{ agent: Agent; issue: { id: string; identifier: string } | null }>(
-				`/api/companies/${companyId}/agents/onboard`,
-				data,
-			),
+			api.post<{
+				agent: Agent | null;
+				issue: { id: string; identifier: string } | null;
+				approval: { id: string } | null;
+				bootstrap: boolean;
+			}>(`/api/companies/${companyId}/agents/onboard`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] });
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'issues'] });
+			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'approvals'] });
 		},
-	});
-}
-
-export function useTerminateAgent(companyId: string) {
-	return useMutation({
-		mutationFn: (agentId: string) =>
-			api.post(`/api/companies/${companyId}/agents/${agentId}/terminate`),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] }),
 	});
 }

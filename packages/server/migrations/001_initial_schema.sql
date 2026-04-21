@@ -44,11 +44,11 @@ CREATE TYPE member_type AS ENUM ('agent', 'user');
 CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini', 'kimi');
 CREATE TYPE agent_effort AS ENUM ('minimal', 'low', 'medium', 'high', 'max');
 CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
-CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled', 'terminated');
+CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopping', 'stopped', 'error');
 CREATE TYPE issue_status AS ENUM ('backlog', 'open', 'in_progress', 'review', 'approved', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');
-CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'execution');
+CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run', 'action');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'company');
@@ -58,7 +58,7 @@ CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
 CREATE TYPE platform_type AS ENUM ('github', 'gmail', 'gitlab', 'stripe', 'posthog', 'railway', 'vercel', 'digitalocean', 'x', 'anthropic', 'openai', 'google');
 CREATE TYPE connection_status AS ENUM ('active', 'expired', 'disconnected');
-CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'chat_message', 'comment');
+CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'comment');
 CREATE TYPE wakeup_status AS ENUM ('queued', 'claimed', 'completed', 'failed', 'skipped', 'coalesced', 'deferred', 'cancelled');
 CREATE TYPE heartbeat_run_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'timed_out');
 CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
@@ -67,6 +67,9 @@ CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 -- project_doc_type enum removed: project docs now live in the designated repo's .dev/ folder
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
 CREATE TYPE company_type_source AS ENUM ('builtin', 'custom', 'marketplace');
+CREATE TYPE goal_status AS ENUM ('active', 'achieved', 'archived');
+CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'moonshot');
+CREATE TYPE ai_auth_method AS ENUM ('api_key', 'oauth_token');
 
 -------------------------------------------------------------------------------
 -- AGENT TYPES
@@ -78,11 +81,12 @@ CREATE TABLE agent_types (
     slug                   TEXT NOT NULL UNIQUE,
     description            TEXT NOT NULL DEFAULT '',
     role_description       TEXT NOT NULL DEFAULT '',
+    default_summary        TEXT NOT NULL DEFAULT '',
     system_prompt_template TEXT NOT NULL DEFAULT '',
-    runtime_type           agent_runtime NOT NULL DEFAULT 'claude_code',
     default_effort         agent_effort NOT NULL DEFAULT 'medium',
     heartbeat_interval_min INTEGER NOT NULL DEFAULT 60,
     monthly_budget_cents   INTEGER NOT NULL DEFAULT 3000,
+    touches_code           BOOLEAN NOT NULL DEFAULT false,
     is_builtin             BOOLEAN NOT NULL DEFAULT false,
     source                 agent_type_source NOT NULL DEFAULT 'custom',
     source_url             TEXT,
@@ -96,10 +100,11 @@ CREATE TABLE agent_types (
 -------------------------------------------------------------------------------
 
 CREATE TABLE company_types (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name                TEXT NOT NULL UNIQUE,
-    description         TEXT NOT NULL DEFAULT '',
-    is_builtin          BOOLEAN NOT NULL DEFAULT false,
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                  TEXT NOT NULL UNIQUE,
+    description           TEXT NOT NULL DEFAULT '',
+    default_team_summary  TEXT NOT NULL DEFAULT '',
+    is_builtin            BOOLEAN NOT NULL DEFAULT false,
     source              company_type_source NOT NULL DEFAULT 'custom',
     source_url          TEXT,
     source_version      TEXT,
@@ -109,6 +114,7 @@ CREATE TABLE company_types (
     preferences_config  JSONB NOT NULL DEFAULT '{}'::jsonb,
     mcp_servers         JSONB NOT NULL DEFAULT '[]'::jsonb,
     mpp_config          JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
+    builtin_agent_prompts JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -122,7 +128,6 @@ CREATE TABLE company_type_agent_types (
     company_type_id             UUID NOT NULL REFERENCES company_types(id) ON DELETE CASCADE,
     agent_type_id               UUID NOT NULL REFERENCES agent_types(id) ON DELETE CASCADE,
     reports_to_slug             TEXT,
-    runtime_type_override       agent_runtime,
     heartbeat_interval_override INTEGER,
     monthly_budget_override     INTEGER,
     sort_order                  INTEGER NOT NULL DEFAULT 0,
@@ -142,6 +147,7 @@ CREATE TABLE companies (
     name                 TEXT NOT NULL,
     slug                 TEXT NOT NULL UNIQUE,
     description          TEXT NOT NULL DEFAULT '',
+    team_summary         TEXT NOT NULL DEFAULT '',
     issue_prefix         TEXT NOT NULL UNIQUE,
     budget_monthly_cents INTEGER NOT NULL DEFAULT 50000,
     budget_used_cents    INTEGER NOT NULL DEFAULT 0,
@@ -189,19 +195,24 @@ CREATE TABLE member_agents (
     title                   TEXT NOT NULL,
     slug                    TEXT NOT NULL,
     role_description        TEXT NOT NULL DEFAULT '',
+    summary                 TEXT NOT NULL DEFAULT '',
     system_prompt           TEXT NOT NULL DEFAULT '',
-    runtime_type            agent_runtime NOT NULL DEFAULT 'claude_code',
     default_effort          agent_effort NOT NULL DEFAULT 'medium',
     heartbeat_interval_min  INTEGER NOT NULL DEFAULT 60,
     monthly_budget_cents    INTEGER NOT NULL DEFAULT 3000,
+    touches_code            BOOLEAN NOT NULL DEFAULT false,
     budget_used_cents       INTEGER NOT NULL DEFAULT 0,
     budget_reset_at         TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
     runtime_status          agent_runtime_status NOT NULL DEFAULT 'idle',
     admin_status            agent_admin_status NOT NULL DEFAULT 'enabled',
     mcp_servers             JSONB NOT NULL DEFAULT '[]'::jsonb,
+    model_override_provider ai_provider,
+    model_override_model    TEXT,
     last_heartbeat_at       TIMESTAMPTZ,
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (id, slug)
+    UNIQUE (id, slug),
+    CONSTRAINT model_override_requires_provider
+        CHECK (model_override_model IS NULL OR model_override_provider IS NOT NULL)
 );
 
 -- Slug uniqueness within a company enforced at the app layer
@@ -273,11 +284,13 @@ CREATE TABLE projects (
     company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     name                TEXT NOT NULL,
     slug                TEXT NOT NULL,
-    goal                TEXT NOT NULL DEFAULT '',
+    description         TEXT NOT NULL DEFAULT '',
     is_internal         BOOLEAN NOT NULL DEFAULT false,
     docker_base_image   TEXT NOT NULL DEFAULT 'hezo/agent-base:latest',
     container_id        TEXT,
     container_status    container_status,
+    container_error     TEXT,
+    container_last_logs TEXT,
     designated_repo_id  UUID,
     dev_ports           JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -305,8 +318,10 @@ CREATE TABLE repos (
 CREATE INDEX idx_repos_project ON repos(project_id);
 
 -- Deferred FK: projects.designated_repo_id → repos(id) (repos defined after projects)
+-- RESTRICT: the designated repo cannot be deleted directly; project cascade still
+-- cleans it up because repos is deleted first when the project row is removed.
 ALTER TABLE projects ADD CONSTRAINT fk_projects_designated_repo
-    FOREIGN KEY (designated_repo_id) REFERENCES repos(id) ON DELETE SET NULL;
+    FOREIGN KEY (designated_repo_id) REFERENCES repos(id) ON DELETE RESTRICT;
 
 -------------------------------------------------------------------------------
 -- SECRETS
@@ -327,6 +342,26 @@ CREATE TABLE secrets (
 
 CREATE INDEX idx_secrets_company ON secrets(company_id);
 CREATE INDEX idx_secrets_project ON secrets(project_id);
+
+-------------------------------------------------------------------------------
+-- GOALS
+-------------------------------------------------------------------------------
+
+CREATE TABLE goals (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id           UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
+    title                TEXT NOT NULL,
+    description          TEXT NOT NULL DEFAULT '',
+    status               goal_status NOT NULL DEFAULT 'active',
+    created_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_goals_company ON goals(company_id);
+CREATE INDEX idx_goals_project ON goals(project_id);
+CREATE INDEX idx_goals_status  ON goals(status);
 
 -------------------------------------------------------------------------------
 -- COMPANY SSH KEYS
@@ -359,6 +394,7 @@ CREATE TABLE issues (
     assignee_id          UUID REFERENCES members(id) ON DELETE SET NULL,
     parent_issue_id      UUID REFERENCES issues(id) ON DELETE SET NULL,
     created_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
+    created_by_run_id    UUID,
     number               INTEGER NOT NULL,
     identifier           TEXT NOT NULL UNIQUE,
     title                TEXT NOT NULL,
@@ -371,6 +407,7 @@ CREATE TABLE issues (
     progress_summary_updated_by  UUID REFERENCES members(id) ON DELETE SET NULL,
     rules                TEXT,
     branch_name          TEXT,
+    runtime_type         agent_runtime,
     embedding            vector(384),
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -491,6 +528,15 @@ CREATE TABLE approvals (
 CREATE INDEX idx_approvals_company ON approvals(company_id);
 CREATE INDEX idx_approvals_status ON approvals(company_id, status);
 
+-- One pending designated-repo setup approval per project: allows concurrent
+-- agent runs on the same project to share a single approval while still posting
+-- their own action comments on their respective issues.
+CREATE UNIQUE INDEX idx_one_pending_repo_setup
+    ON approvals (company_id, (payload->>'project_id'))
+    WHERE type = 'oauth_request'
+      AND status = 'pending'
+      AND payload->>'reason' = 'designated_repo';
+
 -------------------------------------------------------------------------------
 -- COST ENTRIES
 -------------------------------------------------------------------------------
@@ -554,33 +600,6 @@ CREATE INDEX idx_kb_docs_company ON kb_docs(company_id);
 CREATE INDEX idx_kb_docs_embedding ON kb_docs USING hnsw (embedding vector_cosine_ops);
 
 -------------------------------------------------------------------------------
--- LIVE CHATS
--------------------------------------------------------------------------------
-
-CREATE TABLE live_chats (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    issue_id   UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    status     TEXT NOT NULL DEFAULT 'active',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (issue_id)
-);
-
-CREATE INDEX idx_live_chats_issue ON live_chats(issue_id);
-
-CREATE TABLE live_chat_messages (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    chat_id          UUID NOT NULL REFERENCES live_chats(id) ON DELETE CASCADE,
-    author_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    author_type      TEXT NOT NULL DEFAULT 'board',
-    content          TEXT NOT NULL,
-    metadata         JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX idx_chat_messages_chat ON live_chat_messages(chat_id, created_at);
-
--------------------------------------------------------------------------------
 -- CONNECTED PLATFORMS
 -------------------------------------------------------------------------------
 
@@ -606,26 +625,24 @@ CREATE INDEX idx_connected_platforms_company ON connected_platforms(company_id);
 -- AI PROVIDER CONFIGS
 -------------------------------------------------------------------------------
 
-CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'moonshot');
-CREATE TYPE ai_auth_method AS ENUM ('api_key', 'oauth_token');
-
 CREATE TABLE ai_provider_configs (
-    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    provider          ai_provider NOT NULL,
-    auth_method       ai_auth_method NOT NULL DEFAULT 'api_key',
-    label             TEXT NOT NULL DEFAULT '',
-    api_key_secret_id UUID NOT NULL REFERENCES secrets(id) ON DELETE CASCADE,
-    is_default        BOOLEAN NOT NULL DEFAULT false,
-    status            TEXT NOT NULL DEFAULT 'active',
-    metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider             ai_provider NOT NULL,
+    auth_method          ai_auth_method NOT NULL DEFAULT 'api_key',
+    label                TEXT NOT NULL,
+    encrypted_credential TEXT NOT NULL,
+    is_default           BOOLEAN NOT NULL DEFAULT false,
+    status               TEXT NOT NULL DEFAULT 'active',
+    default_model        TEXT,
+    metadata             JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE (company_id, provider, api_key_secret_id)
+    UNIQUE (provider, label)
 );
 
-CREATE INDEX idx_ai_provider_configs_company ON ai_provider_configs(company_id);
+CREATE UNIQUE INDEX ai_provider_configs_default_per_provider
+    ON ai_provider_configs(provider) WHERE is_default;
 
 -------------------------------------------------------------------------------
 -- ASSETS & ATTACHMENTS
@@ -832,15 +849,16 @@ CREATE TABLE heartbeat_runs (
     wakeup_id                UUID REFERENCES agent_wakeup_requests(id) ON DELETE SET NULL,
     issue_id                 UUID REFERENCES issues(id) ON DELETE SET NULL,
     status                   heartbeat_run_status NOT NULL DEFAULT 'queued',
-    started_at               TIMESTAMPTZ,
+    started_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at              TIMESTAMPTZ,
     exit_code                INTEGER,
     error                    TEXT,
     input_tokens             BIGINT NOT NULL DEFAULT 0,
     output_tokens            BIGINT NOT NULL DEFAULT 0,
     cost_cents               INTEGER NOT NULL DEFAULT 0,
-    stdout_excerpt           TEXT,
-    stderr_excerpt           TEXT,
+    invocation_command       TEXT,
+    log_text                 TEXT NOT NULL DEFAULT '',
+    working_dir              TEXT,
     process_pid              INTEGER,
     retry_of_run_id          UUID REFERENCES heartbeat_runs(id),
     process_loss_retry_count INTEGER NOT NULL DEFAULT 0,
@@ -851,6 +869,12 @@ CREATE INDEX idx_runs_member ON heartbeat_runs(member_id);
 CREATE INDEX idx_runs_status ON heartbeat_runs(status);
 CREATE INDEX idx_runs_company ON heartbeat_runs(company_id);
 CREATE INDEX idx_runs_issue ON heartbeat_runs(issue_id);
+
+ALTER TABLE issues
+    ADD CONSTRAINT issues_created_by_run_fk
+    FOREIGN KEY (created_by_run_id) REFERENCES heartbeat_runs(id) ON DELETE SET NULL;
+
+CREATE INDEX idx_issues_created_by_run ON issues(created_by_run_id) WHERE created_by_run_id IS NOT NULL;
 
 -------------------------------------------------------------------------------
 -- AGENT TASK SESSIONS
@@ -1017,9 +1041,6 @@ CREATE TRIGGER trg_connected_platforms_updated BEFORE UPDATE ON connected_platfo
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_users_updated BEFORE UPDATE ON users
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TRIGGER trg_live_chats_updated BEFORE UPDATE ON live_chats
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_task_sessions_updated BEFORE UPDATE ON agent_task_sessions

@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ExternalLink, Loader2, Play, RefreshCw, Square, Trash2 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { AlertTriangle, ExternalLink, Loader2, Play, RefreshCw, Square } from 'lucide-react';
+import { useMemo } from 'react';
+import { LogViewer, type LogViewerLine } from '../../../../../components/log-viewer';
 import { Badge } from '../../../../../components/ui/badge';
 import { Button } from '../../../../../components/ui/button';
 import {
@@ -22,22 +23,25 @@ function ContainerPage() {
 	const isRunning = status === 'running';
 	const isCreating = status === 'creating';
 	const isStopping = status === 'stopping';
+	const isError = status === 'error';
 	const hasContainer = !!project?.container_id;
 	const isActive = isRunning || isCreating || isStopping;
 
-	const { logs, clear } = useContainerLogs(
+	const logPhase = isCreating ? 'creating' : isRunning ? 'running' : isError ? 'error' : null;
+	const { lines: liveLogs, clear } = useContainerLogs(
 		project?.id ?? '',
-		isRunning && hasContainer && !!project?.id,
+		project?.id ? logPhase : null,
 	);
 
-	const [autoScroll, setAutoScroll] = useState(true);
-	const logEndRef = useRef<HTMLDivElement>(null);
-	const prevLogCount = useRef(0);
+	const snapshotLines = useMemo<LogViewerLine[]>(() => {
+		const raw = project?.container_last_logs;
+		if (!raw) return [];
+		return raw.split('\n').map((text, idx) => ({ id: idx, stream: 'stdout', text }));
+	}, [project?.container_last_logs]);
 
-	if (autoScroll && logs.length !== prevLogCount.current) {
-		prevLogCount.current = logs.length;
-		queueMicrotask(() => logEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
-	}
+	const showSnapshot =
+		!isRunning && !isCreating && liveLogs.length === 0 && snapshotLines.length > 0;
+	const logs = showSnapshot ? snapshotLines : liveLogs;
 
 	if (!project) return null;
 
@@ -112,6 +116,19 @@ function ContainerPage() {
 				</div>
 			</div>
 
+			{/* Error banner */}
+			{isError && project.container_error && (
+				<div className="flex gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
+					<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+					<div className="flex flex-col gap-1">
+						<span className="font-medium text-red-400">Container error</span>
+						<span className="whitespace-pre-wrap font-mono text-xs text-red-200/90">
+							{project.container_error}
+						</span>
+					</div>
+				</div>
+			)}
+
 			{/* Info */}
 			<div className="grid grid-cols-2 gap-4 text-sm">
 				<div>
@@ -139,56 +156,34 @@ function ContainerPage() {
 				)}
 			</div>
 
-			{/* Log Viewer */}
-			<div className="flex flex-col rounded-lg border border-border-subtle overflow-hidden">
-				<div className="flex items-center justify-between bg-bg-subtle px-3 py-1.5 border-b border-border-subtle">
-					<span className="text-xs text-text-muted font-medium">Logs</span>
-					<div className="flex items-center gap-2">
-						<label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
-							<input
-								type="checkbox"
-								checked={autoScroll}
-								onChange={(e) => setAutoScroll(e.target.checked)}
-								className="rounded"
-							/>
-							Auto-scroll
-						</label>
-						<Button variant="ghost" size="sm" onClick={clear} className="text-xs h-6 px-2">
-							<Trash2 className="w-3 h-3" /> Clear
-						</Button>
-					</div>
-				</div>
-				<div className="bg-[#0d1117] h-[400px] overflow-y-auto p-3 font-mono text-xs leading-relaxed">
-					{!isRunning && logs.length === 0 && (
-						<span className="text-text-subtle">
-							{isCreating ? (
-								<span className="inline-flex items-center gap-2">
-									<Loader2 className="w-3 h-3 animate-spin" />
-									Provisioning container…
-								</span>
-							) : isStopping ? (
-								<span className="inline-flex items-center gap-2">
-									<Loader2 className="w-3 h-3 animate-spin" />
-									Stopping container…
-								</span>
-							) : hasContainer ? (
-								'Container is not running.'
-							) : (
-								'No container provisioned.'
-							)}
+			<LogViewer
+				lines={logs}
+				onClear={showSnapshot ? undefined : clear}
+				liveLabel={
+					showSnapshot ? (
+						<Badge color="neutral">Last known logs</Badge>
+					) : isRunning || isCreating ? (
+						<Badge color="success">Live</Badge>
+					) : null
+				}
+				emptyState={
+					isCreating ? (
+						<span className="inline-flex items-center gap-2">
+							<Loader2 className="w-3 h-3 animate-spin" />
+							Provisioning container…
 						</span>
-					)}
-					{logs.map((line) => (
-						<div
-							key={line.id}
-							className={line.stream === 'stderr' ? 'text-red-400' : 'text-gray-300'}
-						>
-							{line.text}
-						</div>
-					))}
-					<div ref={logEndRef} />
-				</div>
-			</div>
+					) : isStopping ? (
+						<span className="inline-flex items-center gap-2">
+							<Loader2 className="w-3 h-3 animate-spin" />
+							Stopping container…
+						</span>
+					) : hasContainer ? (
+						'Container is not running and no logs were captured.'
+					) : (
+						'No container provisioned.'
+					)
+				}
+			/>
 		</div>
 	);
 }

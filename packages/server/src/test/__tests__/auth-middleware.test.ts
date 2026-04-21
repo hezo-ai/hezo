@@ -1,13 +1,19 @@
 import { createHash } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType } from '@hezo/shared';
+import { AuthType, HeartbeatRunStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import { safeCompareHex, signAgentJwt, signBoardJwt, verifyToken } from '../../middleware/auth';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import {
+	authHeader,
+	createAgentRun,
+	createTestApp,
+	finalizeAgentRun,
+	mintAgentToken,
+} from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -98,8 +104,8 @@ describe('signBoardJwt + verifyToken', () => {
 });
 
 describe('signAgentJwt + verifyToken', () => {
-	it('signs and verifies an agent JWT', async () => {
-		const token = await signAgentJwt(masterKeyManager, agentId, companyId);
+	it('signs and verifies an agent JWT bound to an active run', async () => {
+		const { token, runId } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
 		const auth = await verifyToken(token, db, masterKeyManager);
 
 		expect(auth).not.toBeNull();
@@ -107,7 +113,61 @@ describe('signAgentJwt + verifyToken', () => {
 		if (auth!.type === AuthType.Agent) {
 			expect(auth!.memberId).toBe(agentId);
 			expect(auth!.companyId).toBe(companyId);
+			expect(auth!.runId).toBe(runId);
 		}
+	});
+
+	it('rejects an agent JWT with no run_id claim', async () => {
+		const runId = await createAgentRun(db, agentId, companyId);
+		const token = await signAgentJwt(masterKeyManager, agentId, companyId, runId);
+		// Sanity: the valid token works
+		expect(await verifyToken(token, db, masterKeyManager)).not.toBeNull();
+
+		// Forge a token missing run_id by signing a payload directly
+		const { sign } = await import('hono/jwt');
+		const jwtKey = await masterKeyManager.getJwtKey();
+		const noRunIdToken = await sign(
+			{
+				member_id: agentId,
+				company_id: companyId,
+				iat: Math.floor(Date.now() / 1000),
+				exp: Math.floor(Date.now() / 1000) + 3600,
+			},
+			jwtKey.toString('base64'),
+			'HS256',
+		);
+		expect(await verifyToken(noRunIdToken, db, masterKeyManager)).toBeNull();
+	});
+
+	it('rejects an agent JWT pointing at a nonexistent run', async () => {
+		const fakeRunId = '00000000-0000-0000-0000-000000000000';
+		const token = await signAgentJwt(masterKeyManager, agentId, companyId, fakeRunId);
+		expect(await verifyToken(token, db, masterKeyManager)).toBeNull();
+	});
+
+	it.each([
+		HeartbeatRunStatus.Succeeded,
+		HeartbeatRunStatus.Failed,
+		HeartbeatRunStatus.Cancelled,
+		HeartbeatRunStatus.TimedOut,
+	])('rejects agent JWT once its run has status=%s', async (terminalStatus) => {
+		const { token, runId } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		await finalizeAgentRun(db, runId, terminalStatus);
+		expect(await verifyToken(token, db, masterKeyManager)).toBeNull();
+	});
+
+	it('rejects an agent JWT whose run belongs to a different member', async () => {
+		// Create a run for one member, sign a token claiming a different member
+		const runId = await createAgentRun(db, agentId, companyId);
+		// Create a second agent
+		const otherAgentRes = await db.query<{ id: string }>(
+			`SELECT id FROM members WHERE company_id = $1 AND id != $2 LIMIT 1`,
+			[companyId, agentId],
+		);
+		const otherAgentId = otherAgentRes.rows[0]?.id;
+		if (!otherAgentId) return; // only one seeded agent — skip
+		const spoofed = await signAgentJwt(masterKeyManager, otherAgentId, companyId, runId);
+		expect(await verifyToken(spoofed, db, masterKeyManager)).toBeNull();
 	});
 });
 
@@ -206,7 +266,7 @@ describe('authMiddleware (via HTTP)', () => {
 	});
 
 	it('allows API requests with valid agent token', async () => {
-		const agentToken = await signAgentJwt(masterKeyManager, agentId, companyId);
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
 		const res = await app.request('/agent-api/self/system-prompt', {
 			headers: authHeader(agentToken),
 		});

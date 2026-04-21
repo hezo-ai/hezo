@@ -59,7 +59,7 @@ test('execution list shows runs and links to detail page', async ({ page }) => {
 	// Create a project and issue for the run
 	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
 		headers: { Authorization: `Bearer ${token}` },
-		data: { name: 'Exec Test' },
+		data: { name: 'Exec Test', description: 'Test project.' },
 	});
 	const project = ((await projectRes.json()) as any).data;
 

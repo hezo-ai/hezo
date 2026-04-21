@@ -31,9 +31,9 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 		description?: string;
 		role_description?: string;
 		system_prompt_template?: string;
-		runtime_type?: string;
 		heartbeat_interval_min?: number;
 		monthly_budget_cents?: number;
+		touches_code?: boolean;
 	}>();
 
 	if (!body.name?.trim()) {
@@ -48,9 +48,9 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 	const db = c.get('db');
 	const result = await db.query(
 		`INSERT INTO agent_types (name, slug, description, role_description, system_prompt_template,
-		                          runtime_type, heartbeat_interval_min, monthly_budget_cents,
+		                          heartbeat_interval_min, monthly_budget_cents, touches_code,
 		                          source)
-		 VALUES ($1, $2, $3, $4, $5, $6::agent_runtime, $7, $8, 'custom'::agent_type_source)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'custom'::agent_type_source)
 		 RETURNING *`,
 		[
 			body.name.trim(),
@@ -58,9 +58,9 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 			body.description ?? '',
 			body.role_description ?? '',
 			body.system_prompt_template ?? '',
-			body.runtime_type ?? 'claude_code',
 			body.heartbeat_interval_min ?? 60,
 			body.monthly_budget_cents ?? 3000,
+			body.touches_code ?? false,
 		],
 	);
 
@@ -95,7 +95,6 @@ agentTypesRoutes.patch('/agent-types/:id', async (c) => {
 		description?: string;
 		role_description?: string;
 		system_prompt_template?: string;
-		runtime_type?: string;
 		heartbeat_interval_min?: number;
 		monthly_budget_cents?: number;
 	}>();
@@ -119,7 +118,6 @@ agentTypesRoutes.patch('/agent-types/:id', async (c) => {
 	addField('role_description', body.role_description);
 	addField('system_prompt_template', body.system_prompt_template);
 	if (!isBuiltin) {
-		addField('runtime_type', body.runtime_type, 'agent_runtime');
 		addField('heartbeat_interval_min', body.heartbeat_interval_min);
 		addField('monthly_budget_cents', body.monthly_budget_cents);
 	}

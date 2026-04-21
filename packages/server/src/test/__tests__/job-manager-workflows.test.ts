@@ -1,11 +1,19 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentAdminStatus, AgentRuntimeStatus, IssueStatus, WakeupStatus } from '@hezo/shared';
+import {
+	AgentAdminStatus,
+	AgentRuntimeStatus,
+	HeartbeatRunStatus,
+	IssueStatus,
+	WakeupStatus,
+	wsRoom,
+} from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import type { DockerClient } from '../../services/docker';
 import { JobManager, type JobManagerDeps } from '../../services/job-manager';
+import { LogStreamBroker } from '../../services/log-stream-broker';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
@@ -21,6 +29,7 @@ let agentId: string;
 function createMockDocker(): DockerClient {
 	return {
 		ping: async () => true,
+		imageExists: async () => true,
 		pullImage: async () => {},
 		createContainer: async () => ({ Id: 'container-123', Warnings: [] }),
 		startContainer: async () => {},
@@ -46,6 +55,7 @@ function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 		serverPort: 3100,
 		dataDir: '/tmp/test-data',
 		wsManager: { broadcast: () => {} } as any,
+		logs: new LogStreamBroker(),
 		...overrides,
 	});
 }
@@ -70,7 +80,7 @@ beforeAll(async () => {
 	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Workflow Test Project' }),
+		body: JSON.stringify({ name: 'Workflow Test Project', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
@@ -90,6 +100,19 @@ beforeAll(async () => {
 		}),
 	});
 	issueId = (await issueRes.json()).data.id;
+
+	// These tests focus on wakeup/lock lifecycle, not the designated-repo gate.
+	// Seed a designated repo on the project so the gate short-circuit is bypassed.
+	const repoRes = await db.query<{ id: string }>(
+		`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
+		 VALUES ($1, 'test', 'test-org/test-repo', 'github'::repo_host_type)
+		 RETURNING id`,
+		[projectId],
+	);
+	await db.query('UPDATE projects SET designated_repo_id = $1 WHERE id = $2', [
+		repoRes.rows[0].id,
+		projectId,
+	]);
 });
 
 afterAll(async () => {
@@ -160,7 +183,7 @@ describe('JobManager workflow methods', () => {
 
 			// Simulate a running task for this agent
 			manager.launchTask(
-				`agent:${agentId}`,
+				wsRoom.agent(agentId),
 				async () => {
 					await new Promise((r) => setTimeout(r, 5000));
 				},
@@ -341,13 +364,119 @@ describe('JobManager workflow methods', () => {
 			expect(lockResult.rows[lockResult.rows.length - 1].member_id).toBe(agentId);
 
 			// A task should have been launched for the agent
-			expect(manager.isTaskRunning(`agent:${agentId}`)).toBe(true);
+			expect(manager.isTaskRunning(wsRoom.agent(agentId))).toBe(true);
 
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 			await db.query(
 				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL',
 				[issueId, agentId],
+			);
+		});
+
+		it('allows a second agent to acquire an execution lock while another agent is running on the same issue', async () => {
+			const manager = createJobManager();
+
+			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
+			await db.query(
+				"UPDATE projects SET container_id = 'test-container-id', container_status = 'running' WHERE id = $1",
+				[projectId],
+			);
+			await db.query(
+				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
+				[issueId],
+			);
+
+			const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+				headers: authHeader(token),
+			});
+			const agents = (await agentsRes.json()).data;
+			const secondAgentId = agents.find((a: { id: string }) => a.id !== agentId).id;
+
+			const firstWakeup = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
+				 RETURNING id`,
+				[agentId, companyId, JSON.stringify({ issue_id: issueId })],
+			);
+			await (manager as any).activateAgent(agentId, companyId, firstWakeup.rows[0].id, {
+				issue_id: issueId,
+			});
+
+			const secondWakeup = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
+				 RETURNING id`,
+				[secondAgentId, companyId, JSON.stringify({ issue_id: issueId })],
+			);
+			await (manager as any).activateAgent(secondAgentId, companyId, secondWakeup.rows[0].id, {
+				issue_id: issueId,
+			});
+
+			const locks = await db.query<{ member_id: string }>(
+				`SELECT member_id FROM execution_locks
+				 WHERE issue_id = $1 AND released_at IS NULL
+				 ORDER BY locked_at`,
+				[issueId],
+			);
+			const holders = locks.rows.map((r) => r.member_id).sort();
+			expect(holders).toEqual([agentId, secondAgentId].sort());
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE id = ANY($1)', [
+				[firstWakeup.rows[0].id, secondWakeup.rows[0].id],
+			]);
+			await db.query(
+				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
+				[issueId],
+			);
+		});
+
+		it('defers the wakeup when the same agent already holds a lock on the issue', async () => {
+			const manager = createJobManager();
+
+			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
+			await db.query(
+				"UPDATE projects SET container_id = 'test-container-id', container_status = 'running' WHERE id = $1",
+				[projectId],
+			);
+			await db.query(
+				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
+				[issueId],
+			);
+
+			await db.query(
+				"INSERT INTO execution_locks (issue_id, member_id, lock_type) VALUES ($1, $2, 'read')",
+				[issueId, agentId],
+			);
+
+			const wakeupRes = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
+				 RETURNING id`,
+				[agentId, companyId, JSON.stringify({ issue_id: issueId })],
+			);
+			await (manager as any).activateAgent(agentId, companyId, wakeupRes.rows[0].id, {
+				issue_id: issueId,
+			});
+
+			const status = await db.query<{ status: string }>(
+				'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+				[wakeupRes.rows[0].id],
+			);
+			expect(status.rows[0].status).toBe(WakeupStatus.Deferred);
+
+			const locks = await db.query<{ id: string }>(
+				'SELECT id FROM execution_locks WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL',
+				[issueId, agentId],
+			);
+			expect(locks.rows.length).toBe(1);
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupRes.rows[0].id]);
+			await db.query(
+				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
+				[issueId],
 			);
 		});
 
@@ -403,7 +532,7 @@ describe('JobManager workflow methods', () => {
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).onAgentComplete(agentId, 'Test Agent', issueId, companyId, wakeupId, {
+			await (manager as any).onAgentComplete(agentId, issueId, companyId, wakeupId, {
 				success: true,
 				exitCode: 0,
 				stdout: '',
@@ -448,7 +577,7 @@ describe('JobManager workflow methods', () => {
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).onAgentComplete(agentId, 'Test Agent', issueId, companyId, wakeupId, {
+			await (manager as any).onAgentComplete(agentId, issueId, companyId, wakeupId, {
 				success: false,
 				exitCode: 1,
 				stdout: '',
@@ -479,7 +608,7 @@ describe('JobManager workflow methods', () => {
 			);
 
 			// Call without a wakeupId (heartbeat-triggered run scenario)
-			await (manager as any).onAgentComplete(agentId, 'Test Agent', issueId, companyId, undefined, {
+			await (manager as any).onAgentComplete(agentId, issueId, companyId, undefined, {
 				success: true,
 				exitCode: 0,
 				stdout: '',
@@ -510,7 +639,7 @@ describe('JobManager workflow methods', () => {
 			await (manager as any).processScheduledHeartbeats();
 
 			// Task should NOT be launched for a paused agent
-			expect(manager.isTaskRunning(`agent:${agentId}`)).toBe(false);
+			expect(manager.isTaskRunning(wsRoom.agent(agentId))).toBe(false);
 
 			// Restore runtime status
 			await db.query("UPDATE member_agents SET runtime_status = 'idle' WHERE id = $1", [agentId]);
@@ -547,7 +676,7 @@ describe('JobManager workflow methods', () => {
 
 			// Simulate a running task already
 			manager.launchTask(
-				`agent:${agentId}`,
+				wsRoom.agent(agentId),
 				async () => {
 					await new Promise((r) => setTimeout(r, 5000));
 				},
@@ -558,13 +687,130 @@ describe('JobManager workflow methods', () => {
 			await db.query('UPDATE member_agents SET last_heartbeat_at = NULL WHERE id = $1', [agentId]);
 
 			// Count launches before
-			const taskWasRunning = manager.isTaskRunning(`agent:${agentId}`);
+			const taskWasRunning = manager.isTaskRunning(wsRoom.agent(agentId));
 			expect(taskWasRunning).toBe(true);
 
 			await (manager as any).processScheduledHeartbeats();
 
 			// Task still running (was not restarted — the existing task was skipped)
-			expect(manager.isTaskRunning(`agent:${agentId}`)).toBe(true);
+			expect(manager.isTaskRunning(wsRoom.agent(agentId))).toBe(true);
+
+			manager.shutdown();
+		});
+	});
+
+	describe('reconcileOnStartup', () => {
+		it('fails stranded running heartbeat_runs and resets agent to idle', async () => {
+			await db.query('DELETE FROM heartbeat_runs WHERE company_id = $1', [companyId]);
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+			await db.query(
+				`INSERT INTO heartbeat_runs (company_id, member_id, issue_id, status, started_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
+				[companyId, agentId, issueId, HeartbeatRunStatus.Running],
+			);
+			await db.query(
+				'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
+				[AgentRuntimeStatus.Active, agentId],
+			);
+
+			const broadcasts: Array<{ table: string }> = [];
+			const manager = createJobManager({
+				wsManager: {
+					broadcast: (_room: string, msg: { table: string }) => {
+						broadcasts.push({ table: msg.table });
+					},
+				} as any,
+			});
+
+			await manager.reconcileOnStartup();
+
+			const run = await db.query<{ status: string; error: string }>(
+				`SELECT status, error FROM heartbeat_runs WHERE company_id = $1 ORDER BY started_at DESC LIMIT 1`,
+				[companyId],
+			);
+			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+			expect(run.rows[0].error).toContain('Server restarted');
+
+			const agent = await db.query<{ runtime_status: string }>(
+				'SELECT runtime_status FROM member_agents WHERE id = $1',
+				[agentId],
+			);
+			expect(agent.rows[0].runtime_status).toBe(AgentRuntimeStatus.Idle);
+
+			const wakeups = await db.query<{ payload: Record<string, unknown> }>(
+				`SELECT payload FROM agent_wakeup_requests
+				 WHERE member_id = $1 AND status = $2::wakeup_status
+				 ORDER BY created_at DESC LIMIT 1`,
+				[agentId, WakeupStatus.Queued],
+			);
+			expect((wakeups.rows[0]?.payload as Record<string, unknown>)?.reason).toBe(
+				'startup_recovery',
+			);
+
+			expect(broadcasts.some((b) => b.table === 'heartbeat_runs')).toBe(true);
+			expect(broadcasts.some((b) => b.table === 'member_agents')).toBe(true);
+
+			manager.shutdown();
+		});
+
+		it('releases all open execution_locks on startup', async () => {
+			await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
+			await db.query(`INSERT INTO execution_locks (issue_id, member_id) VALUES ($1, $2)`, [
+				issueId,
+				agentId,
+			]);
+
+			const manager = createJobManager();
+			await manager.reconcileOnStartup();
+
+			const locks = await db.query<{ released_at: string | null }>(
+				`SELECT released_at FROM execution_locks WHERE released_at IS NULL`,
+			);
+			expect(locks.rows.length).toBe(0);
+
+			manager.shutdown();
+		});
+	});
+
+	describe('live-run registry', () => {
+		it('register / unregister updates getLiveRunIds and getLiveRunsForProject', () => {
+			const manager = createJobManager();
+			manager.registerLiveRun({
+				runId: 'run-1',
+				memberId: 'm-1',
+				issueId: 'i-1',
+				projectId: 'p-1',
+				companyId: 'c-1',
+				taskKey: 'agent:m-1',
+			});
+			manager.registerLiveRun({
+				runId: 'run-2',
+				memberId: 'm-2',
+				issueId: 'i-2',
+				projectId: 'p-1',
+				companyId: 'c-1',
+				taskKey: 'agent:m-2',
+			});
+			manager.registerLiveRun({
+				runId: 'run-3',
+				memberId: 'm-3',
+				issueId: 'i-3',
+				projectId: 'p-2',
+				companyId: 'c-1',
+				taskKey: 'agent:m-3',
+			});
+
+			expect(manager.getLiveRunIds()).toEqual(new Set(['run-1', 'run-2', 'run-3']));
+			expect(
+				manager
+					.getLiveRunsForProject('p-1')
+					.map((r) => r.runId)
+					.sort(),
+			).toEqual(['run-1', 'run-2']);
+
+			manager.unregisterLiveRun('run-2');
+			expect(manager.getLiveRunIds()).toEqual(new Set(['run-1', 'run-3']));
 
 			manager.shutdown();
 		});

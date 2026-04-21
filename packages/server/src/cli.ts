@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { DEFAULT_CONNECT_URL, DEFAULT_DATA_DIR, DEFAULT_PORT } from '@hezo/shared';
 import { Command } from 'commander';
 
 export interface HezoConfig {
@@ -9,12 +10,8 @@ export interface HezoConfig {
 	connectUrl: string;
 	connectApiKey?: string;
 	reset: boolean;
-	noOpen: boolean;
+	open: boolean;
 }
-
-const DEFAULT_PORT = 3100;
-const DEFAULT_DATA_DIR = '~/.hezo';
-const DEFAULT_CONNECT_URL = 'http://localhost:4100';
 
 export function parseArgs(argv: string[] = process.argv): HezoConfig {
 	const program = new Command()
@@ -26,7 +23,7 @@ export function parseArgs(argv: string[] = process.argv): HezoConfig {
 		.option('--connect-url <url>', 'Hezo Connect URL', DEFAULT_CONNECT_URL)
 		.option('--connect-api-key <key>', 'Hezo Connect API key')
 		.option('--reset', 'Reset database and start fresh')
-		.option('--no-open', 'Do not auto-open the browser')
+		.option('--open', 'Auto-open the browser')
 		.parse(argv);
 
 	const opts = program.opts();
@@ -50,6 +47,6 @@ export function parseArgs(argv: string[] = process.argv): HezoConfig {
 		connectUrl: opts.connectUrl,
 		connectApiKey: opts.connectApiKey,
 		reset: opts.reset ?? false,
-		noOpen: opts.open === false,
+		open: opts.open ?? false,
 	};
 }

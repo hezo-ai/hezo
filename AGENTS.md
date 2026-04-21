@@ -15,7 +15,7 @@ Note that dev docs (prd, schema, impl phases, etc) are in `.dev` folder. Consult
 
 ## Agent Role Docs
 
-Agent role definitions in `.dev/agents/` are the single source of truth for agent system prompts. The seed data in `packages/server/src/db/seed.ts` reads these files at startup and stores their contents as each agent's `system_prompt` in the database. Never duplicate role doc content elsewhere — edit the `.dev/agents/*.md` files directly and the seed will pick up the changes on next DB reset.
+Agent role definitions in `.dev/agents/<template>/` are the single source of truth for agent system prompts. Each company template (e.g. `software-development/`, `blank/`) owns its own set of role docs, so the CEO prompt for a Software Development company differs from the CEO prompt for a Blank company. The seed data in `packages/server/src/db/seed.ts` reads these files at startup: Software Development docs populate `agent_types.system_prompt_template` (the universal default per agent type), while template-specific variants are stored in `company_types.builtin_agent_prompts` and applied when the matching template is selected. Never duplicate role doc content elsewhere — edit the `.dev/agents/<template>/*.md` files directly and the seed will pick up the changes on next DB reset.
 
 When updating agent role docs, write rules and system prompts that apply to any codebase. Hezo-specific tooling, file paths, and conventions belong here in AGENTS.md.
 
@@ -62,6 +62,10 @@ When reviewing tests, reject if:
 3. Tests share mutable state between files (each file must be independently runnable)
 4. `afterAll` is missing `destroyTestContext()` (resource leak)
 5. Tests that need DB or HTTP skip the context pattern
+
+### GitHub simulator
+
+Tests that exercise GitHub OAuth, repo listing, repo creation, or SSH key registration use the local simulator in `packages/server/src/test/helpers/github-sim.ts`. It is a self-contained Hono app on port 0 that mimics the subset of the GitHub REST API and OAuth endpoints the codebase actually calls. Point the server and Connect at it by setting `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the test context boots.
 
 ## E2E Tests
 

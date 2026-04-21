@@ -1,23 +1,28 @@
 import {
 	AiAuthMethod,
 	type AiProvider,
+	ALL_AI_PROVIDERS,
 	ApprovalStatus,
 	ApprovalType,
+	OAUTH_CALLBACK_PATH,
 	PlatformType,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { verifyOAuthState } from '../crypto/state';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { storeAiProviderKey } from '../services/ai-provider-keys';
 import { registerSSHKeyOnGitHub } from '../services/github';
 import { generateCompanySSHKey, getCompanySSHKey, updateGitHubKeyId } from '../services/ssh-keys';
 import { storeOAuthToken } from '../services/token-store';
 
-const AI_PROVIDER_PLATFORMS = new Set(['anthropic', 'openai', 'google']);
+const log = logger.child('routes');
+
+const AI_PROVIDER_PLATFORMS = new Set<string>(ALL_AI_PROVIDERS);
 
 export const oauthCallbackRoutes = new Hono<Env>();
 
-oauthCallbackRoutes.get('/oauth/callback', async (c) => {
+oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const connectUrl = c.get('connectUrl');
@@ -47,6 +52,14 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 	}
 
 	const companyId = statePayload.company_id;
+	const isAiProvider = AI_PROVIDER_PLATFORMS.has(platform);
+
+	if (!isAiProvider && !companyId) {
+		return c.json(
+			{ error: { code: 'BAD_REQUEST', message: 'State missing company_id for platform flow' } },
+			400,
+		);
+	}
 
 	// Exchange the one-time code for the actual token via Connect service
 	const exchangeCodeParam = c.req.query('code');
@@ -101,12 +114,11 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 	}
 
 	// For AI provider platforms, store as ai_provider_config with oauth_token auth method
-	if (AI_PROVIDER_PLATFORMS.has(platform)) {
+	if (isAiProvider) {
 		try {
 			await storeAiProviderKey(
 				db,
 				masterKeyManager,
-				companyId,
 				platform as AiProvider,
 				accessToken,
 				AiAuthMethod.OAuthToken,
@@ -114,10 +126,17 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 				metadata,
 			);
 		} catch (e) {
-			console.warn('AI provider config creation failed:', e instanceof Error ? e.message : e);
+			log.warn('AI provider config creation failed:', e instanceof Error ? e.message : e);
 		}
 
-		return c.redirect(`/companies/${companyId}/settings?ai_provider_connected=${platform}`);
+		return c.redirect(`/settings/ai-providers?ai_provider_connected=${platform}`);
+	}
+
+	if (!companyId) {
+		return c.json(
+			{ error: { code: 'BAD_REQUEST', message: 'State missing company_id for platform flow' } },
+			400,
+		);
 	}
 
 	await storeOAuthToken(
@@ -132,21 +151,26 @@ oauthCallbackRoutes.get('/oauth/callback', async (c) => {
 
 	if (platform === PlatformType.GitHub) {
 		try {
-			let sshKey = await getCompanySSHKey(db, companyId, masterKeyManager);
-			if (!sshKey) {
-				const generated = await generateCompanySSHKey(db, companyId, masterKeyManager);
-				sshKey = { publicKey: generated.publicKey, privateKey: '', githubKeyId: null };
-			}
-			if (!sshKey.githubKeyId) {
+			const existingKey = await getCompanySSHKey(db, companyId, masterKeyManager);
+			if (existingKey?.githubKeyId) {
+				log.debug(`SSH key already registered on GitHub for company ${companyId} — skipping`);
+			} else {
+				let publicKey: string;
+				if (existingKey) {
+					publicKey = existingKey.publicKey;
+				} else {
+					const generated = await generateCompanySSHKey(db, companyId, masterKeyManager);
+					publicKey = generated.publicKey;
+				}
 				const { id: githubKeyId } = await registerSSHKeyOnGitHub(
-					sshKey.publicKey,
+					publicKey,
 					`hezo-${companyId}`,
 					accessToken,
 				);
 				await updateGitHubKeyId(db, companyId, githubKeyId);
 			}
 		} catch (err) {
-			console.warn('SSH key registration failed:', err instanceof Error ? err.message : err);
+			log.warn('SSH key registration failed:', err instanceof Error ? err.message : err);
 		}
 	}
 

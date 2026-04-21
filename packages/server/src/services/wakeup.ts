@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { type WakeupSource, WakeupStatus } from '@hezo/shared';
 
-const COALESCING_WINDOW_MS = 10_000;
+const COALESCING_WINDOW_MS = 2_000;
 
 export async function createWakeup(
 	db: PGlite,

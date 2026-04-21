@@ -1,4 +1,4 @@
-import { WsMessageType, type WsRowChangeMessage } from '@hezo/shared';
+import { WsMessageType, type WsRowChangeMessage, wsRoom } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useSocket } from '../contexts/socket-context';
@@ -8,10 +8,24 @@ const TABLE_TO_QUERY_KEY: Record<
 	(companyId: string, row: Record<string, unknown>) => string[][]
 > = {
 	issues: (cid) => [['companies', cid, 'issues']],
-	issue_comments: (cid, row) => [
-		['companies', cid, 'issues'],
-		...(row.issue_id ? [['companies', cid, 'issues', row.issue_id as string, 'comments']] : []),
-	],
+	heartbeat_runs: (cid, row) => {
+		const keys: string[][] = [['companies', cid, 'issues']];
+		if (row.member_id) {
+			keys.push(['companies', cid, 'agents', row.member_id as string, 'heartbeat-runs']);
+			if (row.id) {
+				keys.push([
+					'companies',
+					cid,
+					'agents',
+					row.member_id as string,
+					'heartbeat-runs',
+					row.id as string,
+				]);
+			}
+		}
+		return keys;
+	},
+	issue_comments: (cid) => [['companies', cid, 'issues']],
 	member_agents: (cid) => [['companies', cid, 'agents']],
 	projects: (cid) => [['companies', cid, 'projects']],
 	approvals: (cid) => [['companies', cid, 'approvals']],
@@ -22,6 +36,7 @@ const TABLE_TO_QUERY_KEY: Record<
 	cost_entries: (cid) => [['companies', cid, 'costs']],
 	execution_locks: (cid) => [['companies', cid, 'execution-locks']],
 	repos: (cid) => [['companies', cid, 'projects']],
+	goals: (cid) => [['companies', cid, 'goals']],
 };
 
 export function useWebSocket(wsCompanyId: string, routeCompanyId: string): void {
@@ -29,7 +44,7 @@ export function useWebSocket(wsCompanyId: string, routeCompanyId: string): void 
 	const { joinRoom, leaveRoom, subscribe } = useSocket();
 
 	useEffect(() => {
-		const room = `company:${wsCompanyId}`;
+		const room = wsRoom.company(wsCompanyId);
 		joinRoom(room);
 
 		const unsubscribe = subscribe(WsMessageType.RowChange, (msg) => {

@@ -3,6 +3,7 @@ import type { PGlite } from '@electric-sql/pglite';
 interface ResolveContext {
 	companyId: string;
 	projectId?: string;
+	issueId?: string;
 	agentId?: string;
 	dataDir?: string;
 }
@@ -45,9 +46,6 @@ export async function resolveSystemPrompt(
 ): Promise<string> {
 	let resolved = template;
 
-	// Cache companySlug for reuse across multiple resolutions
-	let companySlug: string | undefined;
-
 	if (resolved.includes('{{current_date}}')) {
 		resolved = resolved.replace(/\{\{current_date\}\}/g, new Date().toISOString().slice(0, 10));
 	}
@@ -63,7 +61,6 @@ export async function resolveSystemPrompt(
 			[ctx.companyId],
 		);
 		const row = result.rows[0];
-		companySlug = row?.slug;
 		resolved = resolved.replace(/\{\{company_name\}\}/g, row?.name ?? '');
 		resolved = resolved.replace(/\{\{company_description\}\}/g, row?.description ?? '');
 		resolved = resolved.replace(/\{\{company_mission\}\}/g, row?.description ?? '');
@@ -135,10 +132,51 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{project_docs_context\}\}/g, docsText);
 	}
 
+	if (resolved.includes('{{company_goals}}')) {
+		const goals = await db.query<{
+			title: string;
+			description: string;
+			project_name: string | null;
+		}>(
+			`SELECT g.title, g.description,
+			        (SELECT name FROM projects p WHERE p.id = g.project_id) AS project_name
+			 FROM goals g
+			 WHERE g.company_id = $1 AND g.status = 'active'
+			 ORDER BY g.created_at DESC`,
+			[ctx.companyId],
+		);
+		const goalsText =
+			goals.rows.length === 0
+				? 'No active goals.'
+				: goals.rows
+						.map((g) => {
+							const scope = g.project_name ? `Project: ${g.project_name}` : 'Company-wide';
+							const desc = g.description?.trim() ? `\n  ${g.description}` : '';
+							return `- **${g.title}** _(${scope})_${desc}`;
+						})
+						.join('\n\n');
+		resolved = resolved.replace(/\{\{company_goals\}\}/g, goalsText);
+	}
+
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
 
-	// Append shared working guidelines to every agent prompt
+	resolved += buildRunContextBlock(ctx);
 	resolved += SHARED_INSTRUCTIONS;
 
 	return resolved;
+}
+
+function buildRunContextBlock(ctx: ResolveContext): string {
+	const lines = [`- Company ID: ${ctx.companyId}`];
+	if (ctx.projectId) lines.push(`- Project ID: ${ctx.projectId}`);
+	if (ctx.issueId) lines.push(`- Issue ID: ${ctx.issueId}`);
+	return `
+
+---
+
+## Run Context
+
+You are currently running with the following identifiers. Pass them directly to MCP tools that take \`company_id\` / \`project_id\` / \`issue_id\` — do not guess or re-derive them.
+
+${lines.join('\n')}`;
 }

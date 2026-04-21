@@ -32,7 +32,7 @@ beforeAll(async () => {
 	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Template Project' }),
+		body: JSON.stringify({ name: 'Template Project', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 });
@@ -130,6 +130,44 @@ describe('template resolver', () => {
 		expect(result).toContain('Context: ');
 	});
 
+	it('resolves {{company_goals}} with no goals', async () => {
+		const result = await resolveSystemPrompt(db, 'Goals: {{company_goals}}', { companyId });
+		expect(result).toContain('No active goals');
+	});
+
+	it('resolves {{company_goals}} with active and archived goals', async () => {
+		await app.request(`/api/companies/${companyId}/goals`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Ship v1', description: 'Public launch by Q3.' }),
+		});
+		const scopedRes = await app.request(`/api/companies/${companyId}/goals`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Cut hosting costs', project_id: projectId }),
+		});
+		const archivedRes = await app.request(`/api/companies/${companyId}/goals`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Old goal' }),
+		});
+		const archivedId = (await archivedRes.json()).data.id;
+		await app.request(`/api/companies/${companyId}/goals/${archivedId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'archived' }),
+		});
+		expect(scopedRes.status).toBe(201);
+
+		const result = await resolveSystemPrompt(db, '{{company_goals}}', { companyId });
+		expect(result).toContain('Ship v1');
+		expect(result).toContain('Public launch by Q3');
+		expect(result).toContain('Cut hosting costs');
+		expect(result).toContain('Project: Template Project');
+		expect(result).toContain('Company-wide');
+		expect(result).not.toContain('Old goal');
+	});
+
 	it('appends shared working guidelines to every prompt', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId });
 		expect(result).toContain('## Working Guidelines');
@@ -141,6 +179,36 @@ describe('template resolver', () => {
 		expect(result).toContain('write_project_doc');
 		expect(result).toContain('upsert_kb_doc');
 		expect(result).toContain('create_issue');
+	});
+
+	it('injects Run Context with only company id when no project/issue', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId });
+		expect(result).toContain('## Run Context');
+		expect(result).toContain(`Company ID: ${companyId}`);
+		expect(result).not.toContain('Project ID:');
+		expect(result).not.toContain('Issue ID:');
+	});
+
+	it('injects Run Context with company + project ids when issue missing', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			companyId,
+			projectId,
+		});
+		expect(result).toContain(`Company ID: ${companyId}`);
+		expect(result).toContain(`Project ID: ${projectId}`);
+		expect(result).not.toContain('Issue ID:');
+	});
+
+	it('injects Run Context with all three ids when issueId supplied', async () => {
+		const fakeIssueId = '11111111-2222-3333-4444-555555555555';
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			companyId,
+			projectId,
+			issueId: fakeIssueId,
+		});
+		expect(result).toContain(`Company ID: ${companyId}`);
+		expect(result).toContain(`Project ID: ${projectId}`);
+		expect(result).toContain(`Issue ID: ${fakeIssueId}`);
 	});
 });
 
@@ -243,7 +311,7 @@ Current date: {{current_date}}
 			expect(agent.system_prompt).toContain('{{company_mission}}');
 			expect(agent.system_prompt).toContain('{{current_date}}');
 			expect(agent.system_prompt).toContain('{{kb_context}}');
-			expect(agent.system_prompt).toContain('Rules:');
+			expect(agent.system_prompt).toMatch(/##\s*Rules/);
 		}
 	});
 

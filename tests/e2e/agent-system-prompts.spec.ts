@@ -22,7 +22,7 @@ test('agents created from company type have system prompts via API', async ({ pa
 	const ceo = agents.find((a: any) => a.slug === 'ceo');
 	expect(ceo.system_prompt).toContain('You are the CEO of');
 	expect(ceo.system_prompt).toContain('{{company_name}}');
-	expect(ceo.system_prompt).toContain('Rules:');
+	expect(ceo.system_prompt).toMatch(/##\s+Rules\b/);
 
 	const engineer = agents.find((a: any) => a.slug === 'engineer');
 	expect(engineer.system_prompt).toContain('You are an Engineer at');
@@ -49,7 +49,7 @@ test('agent detail page displays system prompt in textarea', async ({ page }) =>
 	const promptValue = await promptTextarea.inputValue();
 	expect(promptValue).toContain('You are an Engineer at');
 	expect(promptValue).toContain('{{company_name}}');
-	expect(promptValue).toContain('Rules:');
+	expect(promptValue).toMatch(/##\s+Rules\b/);
 });
 
 test('system prompt can be edited and saved', async ({ page }) => {

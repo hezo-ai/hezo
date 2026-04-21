@@ -1,9 +1,20 @@
-import { expect, test } from '@playwright/test';
-import { authenticate, dismissAiProviderModal } from './helpers';
+import { expect, type Page, test } from '@playwright/test';
+import { authenticate, waitForPageLoad } from './helpers';
+
+async function suppressAiModal(page: Page) {
+	await page.route('**/ai-providers/status', (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ data: { configured: true } }),
+		}),
+	);
+}
 
 test('can create a company with Startup template and see auto-created agents', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
+	await suppressAiModal(page);
 	await page.goto('/companies/new');
 
 	// Startup template should be selected by default
@@ -17,18 +28,20 @@ test('can create a company with Startup template and see auto-created agents', a
 	await page.getByLabel('Name').fill('Test Corp');
 	await page.getByRole('button', { name: 'Create' }).click();
 
-	// Dismiss the AI provider setup modal
-	await dismissAiProviderModal(page);
-
 	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
 
-	// Navigate to agents and verify auto-created agents are visible
-	await page.getByRole('link', { name: 'All agents' }).click();
+	// Navigate to agents page and verify auto-created agents are visible
+	await page.goto(`/companies/${page.url().split('/companies/')[1].split('/')[0]}/agents`);
+	await waitForPageLoad(page);
 
 	const main = page.getByRole('main');
-	await expect(main.getByText('CEO')).toBeVisible({ timeout: 5000 });
-	await expect(main.getByText('Product Lead')).toBeVisible({ timeout: 5000 });
-	await expect(main.getByText('QA Engineer')).toBeVisible({ timeout: 5000 });
+	await expect(main.getByRole('link', { name: 'CEO', exact: true })).toBeVisible({ timeout: 5000 });
+	await expect(main.getByRole('link', { name: 'Product Lead', exact: true })).toBeVisible({
+		timeout: 5000,
+	});
+	await expect(main.getByRole('link', { name: 'QA Engineer', exact: true })).toBeVisible({
+		timeout: 5000,
+	});
 });
 
 test('new company page shows template selection', async ({ page }) => {
@@ -44,6 +57,7 @@ test('new company page shows template selection', async ({ page }) => {
 test('Blank template shows built-in agents note and creates CEO/Coach', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
+	await suppressAiModal(page);
 	await page.goto('/companies/new');
 
 	// Select Blank template
@@ -60,14 +74,14 @@ test('Blank template shows built-in agents note and creates CEO/Coach', async ({
 	await page.getByLabel('Name').fill('Blank Test Co');
 	await page.getByRole('button', { name: 'Create' }).click();
 
-	// Dismiss the AI provider setup modal
-	await dismissAiProviderModal(page);
-
 	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
 
-	// Navigate to Team and verify CEO and Coach exist
-	await page.getByRole('link', { name: 'All agents' }).click();
+	// Navigate to agents page and verify CEO and Coach exist
+	await page.goto(`/companies/${page.url().split('/companies/')[1].split('/')[0]}/agents`);
+	await waitForPageLoad(page);
 	const main = page.getByRole('main');
-	await expect(main.getByText('CEO')).toBeVisible({ timeout: 5000 });
-	await expect(main.getByText('Coach')).toBeVisible({ timeout: 5000 });
+	await expect(main.getByRole('link', { name: 'CEO', exact: true })).toBeVisible({ timeout: 5000 });
+	await expect(main.getByRole('link', { name: 'Coach', exact: true })).toBeVisible({
+		timeout: 5000,
+	});
 });

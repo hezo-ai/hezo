@@ -1,17 +1,28 @@
-import { createFileRoute, Outlet } from '@tanstack/react-router';
-import { AiProviderSetupModal } from '../../../components/ai-provider-setup-modal';
+import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router';
+import { useEffect } from 'react';
+import { ContainerStatusBanner } from '../../../components/container-status-banner';
 import { useCompany } from '../../../hooks/use-companies';
 import { useWebSocket } from '../../../hooks/use-websocket';
 
 function CompanyLayout() {
 	const { companyId } = Route.useParams();
-	const { data: company } = useCompany(companyId);
+	const { data: company, error } = useCompany(companyId);
+	const navigate = useNavigate();
+
+	useEffect(() => {
+		if (error && (error as { status?: number }).status === 404) {
+			navigate({ to: '/companies', replace: true });
+		}
+	}, [error, navigate]);
+
 	useWebSocket(company?.id ?? companyId, companyId);
 
 	return (
-		<div className="max-w-[1000px] mx-auto w-full px-8 py-6">
-			<AiProviderSetupModal companyId={companyId} />
-			<Outlet />
+		<div className="flex flex-col">
+			<ContainerStatusBanner companyId={companyId} />
+			<div className="max-w-[1000px] mx-auto w-full px-8 py-6">
+				<Outlet />
+			</div>
 		</div>
 	);
 }

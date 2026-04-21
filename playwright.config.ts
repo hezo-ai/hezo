@@ -19,10 +19,15 @@ export default defineConfig({
 	},
 	webServer: [
 		{
-			command: `bun run --watch src/index.ts -- --port ${SERVER_PORT} --data-dir ${TEST_DATA_DIR} --connect-url http://localhost:${CONNECT_PORT} --master-key e2e-test-master-key-0123456789abcdef0123456789abcdef --reset --no-open`,
+			command: `bun run --watch src/index.ts -- --port ${SERVER_PORT} --data-dir ${TEST_DATA_DIR} --connect-url http://localhost:${CONNECT_PORT} --master-key e2e-test-master-key-0123456789abcdef0123456789abcdef --reset`,
 			cwd: './packages/server',
 			port: SERVER_PORT,
 			reuseExistingServer: true,
+			env: {
+				SKIP_AI_KEY_VALIDATION: '1',
+				HEZO_SKIP_DOCKER: '1',
+				HEZO_WAKEUP_COALESCING_MS: '100',
+			},
 		},
 		{
 			command: 'bun run --watch src/index.ts',

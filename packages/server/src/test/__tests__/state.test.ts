@@ -119,4 +119,16 @@ describe('signOAuthState + verifyOAuthState', () => {
 		expect(result).toBeNull();
 		await db.close();
 	});
+
+	it('roundtrips an AI-provider payload without company_id', async () => {
+		const db = await createTestDbWithMigrations();
+		const mkm = new MasterKeyManager();
+		await mkm.initialize(db, generateMasterKey());
+
+		const signed = await signOAuthState({ ai_provider: 'anthropic' }, mkm);
+		const result = await verifyOAuthState(signed, mkm);
+		expect(result).toEqual({ ai_provider: 'anthropic' });
+		expect(result?.company_id).toBeUndefined();
+		await db.close();
+	});
 });

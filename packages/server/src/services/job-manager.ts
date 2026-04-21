@@ -3,22 +3,35 @@ import {
 	AgentAdminStatus,
 	type AgentRuntime,
 	AgentRuntimeStatus,
-	CommentContentType,
-	ExecutionLockType,
+	type AiProvider,
+	ContainerStatus,
+	HeartbeatRunStatus,
 	IssuePriority,
-	READER_AGENT_SLUGS,
 	TERMINAL_ISSUE_STATUSES,
+	WakeupSource,
 	WakeupStatus,
+	wsRoom,
 } from '@hezo/shared';
 import { Cron } from 'cron-async';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { broadcastRowChange } from '../lib/broadcast';
+import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
-import { syncAllContainerStatuses } from './containers';
+import {
+	type ContainerDeps,
+	type ContainerExitReason,
+	type ContainerTransition,
+	failProjectRuns,
+	syncAllContainerStatuses,
+} from './containers';
 import type { DockerClient } from './docker';
+import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans } from './orphan-detector';
+import { ensureRepoSetupAction } from './repo-setup';
+import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
-const log = (...args: unknown[]) => console.log('[job-manager]', ...args);
+const log = logger.child('job-manager');
 
 interface RunningTask {
 	key: string;
@@ -28,6 +41,15 @@ interface RunningTask {
 	timeoutId: ReturnType<typeof setTimeout>;
 }
 
+export interface LiveRun {
+	runId: string;
+	memberId: string;
+	issueId: string;
+	projectId: string;
+	companyId: string;
+	taskKey: string;
+}
+
 export interface JobManagerDeps {
 	db: PGlite;
 	docker: DockerClient;
@@ -35,13 +57,15 @@ export interface JobManagerDeps {
 	serverPort: number;
 	dataDir: string;
 	wsManager: WebSocketManager;
+	logs: LogStreamBroker;
 }
 
-const COALESCING_WINDOW_MS = 10_000;
+const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
 
 export class JobManager {
 	private cron: Cron;
 	private runningTasks = new Map<string, RunningTask>();
+	private liveRuns = new Map<string, LiveRun>();
 	private guards = new Map<string, boolean>();
 	private deps: JobManagerDeps;
 	private started = false;
@@ -49,6 +73,50 @@ export class JobManager {
 	constructor(deps: JobManagerDeps) {
 		this.deps = deps;
 		this.cron = new Cron();
+	}
+
+	registerLiveRun(run: LiveRun): void {
+		this.liveRuns.set(run.runId, run);
+	}
+
+	unregisterLiveRun(runId: string): void {
+		this.liveRuns.delete(runId);
+	}
+
+	getLiveRunIds(): Set<string> {
+		return new Set(this.liveRuns.keys());
+	}
+
+	getLiveRunsForProject(projectId: string): LiveRun[] {
+		return Array.from(this.liveRuns.values()).filter((r) => r.projectId === projectId);
+	}
+
+	cancelLiveRun(runId: string, reason?: ContainerExitReason): boolean {
+		const run = this.liveRuns.get(runId);
+		if (!run) return false;
+		this.cancelTask(run.taskKey, reason);
+		this.liveRuns.delete(runId);
+		return true;
+	}
+
+	cancelLiveRunsForProject(projectId: string, reason: ContainerExitReason): number {
+		const runs = this.getLiveRunsForProject(projectId);
+		for (const run of runs) {
+			this.cancelTask(run.taskKey, reason);
+			this.liveRuns.delete(run.runId);
+		}
+		return runs.length;
+	}
+
+	private buildContainerDeps(): ContainerDeps {
+		return {
+			db: this.deps.db,
+			docker: this.deps.docker,
+			dataDir: this.deps.dataDir,
+			wsManager: this.deps.wsManager,
+			masterKeyManager: this.deps.masterKeyManager,
+			logs: this.deps.logs,
+		};
 	}
 
 	start(): void {
@@ -74,7 +142,7 @@ export class JobManager {
 			cron: '*/30 * * * * *',
 			onTick: () => this.guarded('embeddings', () => this.processEmbeddingQueue()),
 		});
-		console.log('Job manager started.');
+		log.info('Job manager started.');
 	}
 
 	launchTask(key: string, fn: (signal: AbortSignal) => Promise<unknown>, timeoutMs: number): void {
@@ -82,7 +150,7 @@ export class JobManager {
 		const ac = new AbortController();
 
 		const timeoutId = setTimeout(() => {
-			console.warn(`Task ${key} timed out after ${timeoutMs}ms`);
+			log.warn(`Task ${key} timed out after ${timeoutMs}ms`);
 			ac.abort();
 		}, timeoutMs);
 
@@ -100,11 +168,11 @@ export class JobManager {
 		});
 	}
 
-	cancelTask(key: string): boolean {
+	cancelTask(key: string, reason?: unknown): boolean {
 		const task = this.runningTasks.get(key);
 		if (!task) return false;
 		clearTimeout(task.timeoutId);
-		task.abortController.abort();
+		task.abortController.abort(reason);
 		return true;
 	}
 
@@ -122,8 +190,136 @@ export class JobManager {
 			task.abortController.abort();
 		}
 		this.runningTasks.clear();
+		this.liveRuns.clear();
 		this.cron.shutdown();
-		console.log('Job manager stopped.');
+		log.info('Job manager stopped.');
+	}
+
+	/**
+	 * Reconcile DB state with the (now-empty) in-process run registry. Runs in
+	 * `running` or `queued` state from the previous process were necessarily lost
+	 * with that process — fail them, reset their agents to idle, release locks,
+	 * broadcast, and enqueue recovery wakeups so work resumes.
+	 *
+	 * Also self-heals projects stuck in `error` state whose underlying container
+	 * is actually alive (e.g. from a prior false-positive transport-error trip).
+	 */
+	async reconcileOnStartup(): Promise<void> {
+		const { db, docker, wsManager } = this.deps;
+
+		const stranded = await db.query<{
+			id: string;
+			member_id: string;
+			company_id: string;
+			issue_id: string | null;
+		}>(
+			`UPDATE heartbeat_runs
+			 SET status = $1::heartbeat_run_status,
+			     finished_at = COALESCE(finished_at, now()),
+			     error = COALESCE(error, $2),
+			     exit_code = COALESCE(exit_code, -1)
+			 WHERE status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
+			 RETURNING id, member_id, company_id, issue_id`,
+			[
+				HeartbeatRunStatus.Failed,
+				'Server restarted while run in flight',
+				HeartbeatRunStatus.Running,
+				HeartbeatRunStatus.Queued,
+			],
+		);
+
+		const resetAgents = await db.query<{ id: string; company_id: string }>(
+			`UPDATE member_agents ma
+			 SET runtime_status = $1::agent_runtime_status
+			 FROM members m
+			 WHERE ma.id = m.id
+			   AND ma.runtime_status = $2::agent_runtime_status
+			 RETURNING ma.id, m.company_id`,
+			[AgentRuntimeStatus.Idle, AgentRuntimeStatus.Active],
+		);
+
+		await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
+
+		for (const run of stranded.rows) {
+			broadcastRowChange(wsManager, wsRoom.company(run.company_id), 'heartbeat_runs', 'UPDATE', {
+				id: run.id,
+				member_id: run.member_id,
+				issue_id: run.issue_id,
+				status: HeartbeatRunStatus.Failed,
+				error: 'Server restarted while run in flight',
+			});
+		}
+
+		for (const agent of resetAgents.rows) {
+			broadcastRowChange(wsManager, wsRoom.company(agent.company_id), 'member_agents', 'UPDATE', {
+				id: agent.id,
+				runtime_status: AgentRuntimeStatus.Idle,
+			});
+		}
+
+		for (const run of stranded.rows) {
+			if (!run.issue_id) continue;
+			await createWakeup(db, run.member_id, run.company_id, WakeupSource.Timer, {
+				reason: 'startup_recovery',
+				issue_id: run.issue_id,
+				previous_run_id: run.id,
+			}).catch((e) => log.error('Failed to enqueue startup recovery wakeup:', e));
+		}
+
+		if (stranded.rows.length > 0 || resetAgents.rows.length > 0) {
+			log.info(
+				`Startup reconciliation: failed ${stranded.rows.length} stranded run(s), reset ${resetAgents.rows.length} agent(s) to idle`,
+			);
+		}
+
+		await this.selfHealErroredContainers(docker);
+	}
+
+	private async selfHealErroredContainers(docker: DockerClient): Promise<void> {
+		const { db, wsManager } = this.deps;
+
+		const reachable = await docker.ping();
+		if (!reachable) {
+			log.warn('Docker not reachable at startup; skipping container self-heal');
+			return;
+		}
+
+		const candidates = await db.query<{
+			id: string;
+			company_id: string;
+			slug: string;
+			company_slug: string;
+		}>(
+			`SELECT p.id, p.company_id, p.slug, c.slug AS company_slug
+			 FROM projects p
+			 JOIN companies c ON c.id = p.company_id
+			 WHERE p.container_status = $1::container_status
+			    OR (p.container_status IS NULL AND p.container_id IS NULL)`,
+			[ContainerStatus.Error],
+		);
+
+		for (const project of candidates.rows) {
+			const name = `hezo-${project.company_slug}-${project.slug}`;
+			let info: Awaited<ReturnType<DockerClient['inspectContainerByName']>>;
+			try {
+				info = await docker.inspectContainerByName(name);
+			} catch (err) {
+				log.warn(`Self-heal inspect failed for ${name}:`, err);
+				continue;
+			}
+			if (info === null || !info.State.Running) continue;
+
+			await db.query(
+				`UPDATE projects SET container_id = $1, container_status = $2::container_status WHERE id = $3`,
+				[info.Id, ContainerStatus.Running, project.id],
+			);
+			broadcastRowChange(wsManager, wsRoom.company(project.company_id), 'projects', 'UPDATE', {
+				id: project.id,
+				container_id: info.Id,
+				container_status: ContainerStatus.Running,
+			});
+			log.info(`Self-healed project ${project.id} — re-attached to live container ${name}`);
+		}
 	}
 
 	private async guarded(name: string, fn: () => Promise<void>): Promise<void> {
@@ -132,7 +328,7 @@ export class JobManager {
 		try {
 			await fn();
 		} catch (error) {
-			console.error(`Job ${name} error:`, error);
+			log.error(`Job ${name} error:`, error);
 		} finally {
 			this.guards.set(name, false);
 		}
@@ -159,12 +355,12 @@ export class JobManager {
 		);
 
 		if (wakeups.rows.length > 0) {
-			log(`Processing ${wakeups.rows.length} queued wakeup(s)`);
+			log.debug(`Processing ${wakeups.rows.length} queued wakeup(s)`);
 		}
 
 		for (const wakeup of wakeups.rows) {
-			if (this.isTaskRunning(`agent:${wakeup.member_id}`)) {
-				log(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
+			if (this.isTaskRunning(wsRoom.agent(wakeup.member_id))) {
+				log.debug(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
 				continue;
 			}
 
@@ -176,7 +372,7 @@ export class JobManager {
 			try {
 				await this.activateAgent(wakeup.member_id, wakeup.company_id, wakeup.id, wakeup.payload);
 			} catch (error) {
-				console.error(`[job-manager] activateAgent threw for wakeup ${wakeup.id}:`, error);
+				log.error(`activateAgent threw for wakeup ${wakeup.id}:`, error);
 				await db
 					.query('UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2', [
 						WakeupStatus.Failed,
@@ -207,11 +403,11 @@ export class JobManager {
 		);
 
 		if (dueAgents.rows.length > 0) {
-			log(`${dueAgents.rows.length} agent(s) due for heartbeat`);
+			log.debug(`${dueAgents.rows.length} agent(s) due for heartbeat`);
 		}
 
 		for (const agent of dueAgents.rows) {
-			if (this.isTaskRunning(`agent:${agent.id}`)) {
+			if (this.isTaskRunning(wsRoom.agent(agent.id))) {
 				continue;
 			}
 			await this.activateAgent(agent.id, agent.company_id);
@@ -233,16 +429,20 @@ export class JobManager {
 			system_prompt: string;
 			admin_status: string;
 			heartbeat_interval_min: number;
-			runtime_type: string;
 			default_effort: string;
+			touches_code: boolean;
+			model_override_provider: AiProvider | null;
+			model_override_model: string | null;
 		}>(
-			`SELECT id, title, slug, system_prompt, admin_status, heartbeat_interval_min, runtime_type, default_effort
+			`SELECT id, title, slug, system_prompt, admin_status,
+			        heartbeat_interval_min, default_effort, touches_code,
+			        model_override_provider, model_override_model
 			 FROM member_agents WHERE id = $1`,
 			[memberId],
 		);
 
 		if (agent.rows.length === 0 || agent.rows[0].admin_status !== AgentAdminStatus.Enabled) {
-			log(`Agent ${memberId} not found or disabled — skipping`);
+			log.debug(`Agent ${memberId} not found or disabled — skipping`);
 			if (wakeupId) {
 				await db.query(
 					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
@@ -252,7 +452,7 @@ export class JobManager {
 			return;
 		}
 
-		const issues = await db.query<{
+		type IssueRow = {
 			id: string;
 			identifier: string;
 			title: string;
@@ -261,66 +461,22 @@ export class JobManager {
 			priority: string;
 			project_id: string;
 			rules: string | null;
-		}>(
-			`SELECT id, identifier, title, description, status, priority, project_id, rules
-			 FROM issues
-			 WHERE assignee_id = $1 AND company_id = $2
-			   AND status NOT IN ($3, $4, $5)
-			 ORDER BY
-			   CASE priority WHEN $6 THEN 0 WHEN $7 THEN 1 WHEN $8 THEN 2 WHEN $9 THEN 3 END,
-			   created_at ASC
-			 LIMIT 1`,
-			[
-				memberId,
-				companyId,
-				...TERMINAL_ISSUE_STATUSES,
-				IssuePriority.Urgent,
-				IssuePriority.High,
-				IssuePriority.Medium,
-				IssuePriority.Low,
-			],
-		);
-
-		let issue: {
-			id: string;
-			identifier: string;
-			title: string;
-			description: string;
-			status: string;
-			priority: string;
-			project_id: string;
-			rules: string | null;
+			runtime_type: AgentRuntime | null;
 		};
 
-		if (issues.rows.length === 0) {
-			// Coach agent may have no assigned issues but is woken by issue_done automation
-			if (wakeupPayload?.trigger === 'issue_done' && wakeupPayload?.issue_id) {
-				const payloadIssue = await db.query<{
-					id: string;
-					identifier: string;
-					title: string;
-					description: string;
-					status: string;
-					priority: string;
-					project_id: string;
-					rules: string | null;
-				}>(
-					'SELECT id, identifier, title, description, status, priority, project_id, rules FROM issues WHERE id = $1 AND company_id = $2',
-					[wakeupPayload.issue_id, companyId],
-				);
-				if (payloadIssue.rows.length === 0) {
-					log(`Payload issue ${wakeupPayload.issue_id} not found for coach trigger`);
-					if (wakeupId) {
-						await db.query(
-							`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
-							[WakeupStatus.Completed, wakeupId],
-						);
-					}
-					return;
-				}
-				issue = payloadIssue.rows[0];
-			} else {
-				log(`No actionable issues for agent ${memberId}`);
+		let issue: IssueRow | undefined;
+
+		// Wakeups with an explicit issue_id (mentions, comments, coach triggers) target
+		// that specific issue — even if the agent isn't the assignee.
+		const payloadIssueId =
+			typeof wakeupPayload?.issue_id === 'string' ? wakeupPayload.issue_id : undefined;
+		if (payloadIssueId) {
+			const payloadIssue = await db.query<IssueRow>(
+				'SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type FROM issues WHERE id = $1 AND company_id = $2',
+				[payloadIssueId, companyId],
+			);
+			if (payloadIssue.rows.length === 0) {
+				log.debug(`Payload issue ${payloadIssueId} not found for agent ${memberId}`);
 				if (wakeupId) {
 					await db.query(
 						`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
@@ -329,21 +485,59 @@ export class JobManager {
 				}
 				return;
 			}
+			issue = payloadIssue.rows[0];
 		} else {
+			const issues = await db.query<IssueRow>(
+				`SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type
+				 FROM issues
+				 WHERE assignee_id = $1 AND company_id = $2
+				   AND status NOT IN ($3, $4, $5)
+				 ORDER BY
+				   CASE priority WHEN $6 THEN 0 WHEN $7 THEN 1 WHEN $8 THEN 2 WHEN $9 THEN 3 END,
+				   created_at ASC
+				 LIMIT 1`,
+				[
+					memberId,
+					companyId,
+					...TERMINAL_ISSUE_STATUSES,
+					IssuePriority.Urgent,
+					IssuePriority.High,
+					IssuePriority.Medium,
+					IssuePriority.Low,
+				],
+			);
+			if (issues.rows.length === 0) {
+				log.debug(`No actionable issues for agent ${memberId}`);
+				if (wakeupId) {
+					await db.query(
+						`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
+						[WakeupStatus.Completed, wakeupId],
+					);
+				}
+				return;
+			}
 			issue = issues.rows[0];
 		}
 
 		const project = await db.query<{
 			id: string;
 			slug: string;
+			company_id: string;
+			company_slug: string;
 			container_id: string;
 			container_status: string;
-		}>('SELECT id, slug, container_id, container_status FROM projects WHERE id = $1', [
-			issue.project_id,
-		]);
+			designated_repo_id: string | null;
+		}>(
+			`SELECT p.id, p.slug, p.company_id, c.slug AS company_slug,
+			        p.container_id, p.container_status, p.designated_repo_id
+			 FROM projects p
+			 JOIN companies c ON c.id = p.company_id
+			 WHERE p.id = $1`,
+			[issue.project_id],
+		);
 
-		if (project.rows.length === 0 || !project.rows[0].container_id) {
-			log(`No container for project ${issue.project_id} — wakeup failed`);
+		if (project.rows.length === 0) {
+			log.debug(`Project ${issue.project_id} not found — wakeup failed`);
 			if (wakeupId) {
 				await db.query(
 					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
@@ -353,35 +547,89 @@ export class JobManager {
 			return;
 		}
 
-		// Determine lock type: readers (Coach, QA, Security) get shared locks; others get exclusive
-		const isCoachReview = wakeupPayload?.trigger === 'issue_done';
-		const lockType =
-			isCoachReview || READER_AGENT_SLUGS.has(agent.rows[0].slug)
-				? ExecutionLockType.Read
-				: ExecutionLockType.Write;
+		const projectRow = project.rows[0];
+		const agentSlug = agent.rows[0].slug;
+		if (!projectRow.designated_repo_id && agent.rows[0].touches_code) {
+			try {
+				const ensured = await ensureRepoSetupAction(db, {
+					companyId,
+					projectId: projectRow.id,
+					issueId: issue.id,
+				});
+				if (ensured.commentRow) {
+					broadcastRowChange(
+						this.deps.wsManager,
+						wsRoom.company(companyId),
+						'issue_comments',
+						'INSERT',
+						ensured.commentRow,
+					);
+				}
+				if (ensured.approvalRow) {
+					broadcastRowChange(
+						this.deps.wsManager,
+						wsRoom.company(companyId),
+						'approvals',
+						'INSERT',
+						ensured.approvalRow,
+					);
+				}
+			} catch (e) {
+				log.error(`Failed to ensure repo setup action for agent ${agentSlug}:`, e);
+			}
 
-		// Acquire lock with proper exclusion semantics
-		const lockQuery =
-			lockType === ExecutionLockType.Write
-				? // Write lock: exclusive — no other locks allowed
-					`INSERT INTO execution_locks (issue_id, member_id, lock_type)
-					 SELECT $1, $2, 'write'
-					 WHERE NOT EXISTS (
-					   SELECT 1 FROM execution_locks WHERE issue_id = $1 AND released_at IS NULL
-					 )
-					 RETURNING id`
-				: // Read lock: shared — blocked only by write locks
-					`INSERT INTO execution_locks (issue_id, member_id, lock_type)
-					 SELECT $1, $2, 'read'
-					 WHERE NOT EXISTS (
-					   SELECT 1 FROM execution_locks WHERE issue_id = $1 AND lock_type = 'write' AND released_at IS NULL
-					 )
-					 RETURNING id`;
+			if (wakeupId) {
+				await db.query(
+					`UPDATE agent_wakeup_requests
+					 SET status = $1::wakeup_status,
+					     payload = payload || $2::jsonb
+					 WHERE id = $3`,
+					[
+						WakeupStatus.Deferred,
+						JSON.stringify({
+							reason: 'awaiting_repo_setup',
+							project_id: projectRow.id,
+							issue_id: issue.id,
+						}),
+						wakeupId,
+					],
+				);
+			}
+			log.debug(
+				`Agent ${agentSlug} deferred on issue ${issue.identifier} — project has no designated repo`,
+			);
+			return;
+		}
 
-		const lockResult = await db.query<{ id: string }>(lockQuery, [issue.id, memberId]);
+		if (!projectRow.container_id) {
+			log.debug(`No container for project ${issue.project_id} — wakeup failed`);
+			if (wakeupId) {
+				await db.query(
+					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
+					[WakeupStatus.Failed, wakeupId],
+				);
+			}
+			return;
+		}
+
+		// Execution locks are observational — multiple agents can run concurrently on the
+		// same issue. The only acquisition guard is per-agent-per-issue: if this agent
+		// already holds an active lock on this issue, coalesce the wakeup.
+		const lockResult = await db.query<{ id: string }>(
+			`INSERT INTO execution_locks (issue_id, member_id, lock_type)
+			 SELECT $1, $2, 'read'
+			 WHERE NOT EXISTS (
+			   SELECT 1 FROM execution_locks
+			   WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL
+			 )
+			 RETURNING id`,
+			[issue.id, memberId],
+		);
 
 		if (lockResult.rows.length === 0) {
-			log(`Could not acquire ${lockType} lock on issue ${issue.identifier} — deferring wakeup`);
+			log.debug(
+				`Agent ${agent.rows[0].slug} already holds a lock on issue ${issue.identifier} — deferring wakeup`,
+			);
 			if (wakeupId) {
 				await db.query(
 					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
@@ -395,14 +643,12 @@ export class JobManager {
 			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
 			[AgentRuntimeStatus.Active, memberId],
 		);
-		this.deps.wsManager.broadcast(`company:${companyId}`, {
-			type: 'row_change',
-			table: 'member_agents',
-			action: 'UPDATE',
-			row: { id: memberId, runtime_status: AgentRuntimeStatus.Active },
+		broadcastRowChange(this.deps.wsManager, wsRoom.company(companyId), 'member_agents', 'UPDATE', {
+			id: memberId,
+			runtime_status: AgentRuntimeStatus.Active,
 		});
 
-		log(`Launching agent ${agent.rows[0].title} for issue ${issue.identifier}`);
+		log.debug(`Launching agent ${agent.rows[0].title} for issue ${issue.identifier}`);
 
 		const deps: RunnerDeps = {
 			db,
@@ -410,36 +656,49 @@ export class JobManager {
 			masterKeyManager,
 			serverPort,
 			dataDir: this.deps.dataDir,
+			wsManager: this.deps.wsManager,
+			logs: this.deps.logs,
 		};
 		const timeoutMs = agent.rows[0].heartbeat_interval_min * 60 * 1000;
 
+		const projectId = project.rows[0].id;
+		const taskKey = wsRoom.agent(memberId);
+
 		this.launchTask(
-			`agent:${memberId}`,
+			taskKey,
 			async (signal) => {
+				let registeredRunId: string | undefined;
 				const result = await runAgent(
 					deps,
 					{
 						id: memberId,
 						title: agent.rows[0].title,
+						slug: agent.rows[0].slug,
 						system_prompt: agent.rows[0].system_prompt,
 						company_id: companyId,
-						runtime_type: agent.rows[0].runtime_type as AgentRuntime,
 						default_effort: agent.rows[0].default_effort,
+						model_override_provider: agent.rows[0].model_override_provider,
+						model_override_model: agent.rows[0].model_override_model,
 					},
 					issue,
 					project.rows[0],
 					wakeupPayload,
 					signal,
+					(runId) => {
+						registeredRunId = runId;
+						this.registerLiveRun({
+							runId,
+							memberId,
+							issueId: issue.id,
+							projectId,
+							companyId,
+							taskKey,
+						});
+					},
 				);
 
-				await this.onAgentComplete(
-					memberId,
-					agent.rows[0].title,
-					issue.id,
-					companyId,
-					wakeupId,
-					result,
-				);
+				if (registeredRunId) this.unregisterLiveRun(registeredRunId);
+				await this.onAgentComplete(memberId, issue.id, companyId, wakeupId, result);
 				return result;
 			},
 			timeoutMs,
@@ -448,7 +707,6 @@ export class JobManager {
 
 	private async onAgentComplete(
 		memberId: string,
-		agentTitle: string,
 		issueId: string,
 		companyId: string,
 		wakeupId: string | undefined,
@@ -456,7 +714,7 @@ export class JobManager {
 	): Promise<void> {
 		const { db } = this.deps;
 
-		log(
+		log.debug(
 			`Agent ${memberId} completed: success=${result.success}, exit=${result.exitCode}, duration=${result.durationMs}ms`,
 		);
 
@@ -469,11 +727,9 @@ export class JobManager {
 			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status, last_heartbeat_at = now() WHERE id = $2',
 			[AgentRuntimeStatus.Idle, memberId],
 		);
-		this.deps.wsManager.broadcast(`company:${companyId}`, {
-			type: 'row_change',
-			table: 'member_agents',
-			action: 'UPDATE',
-			row: { id: memberId, runtime_status: AgentRuntimeStatus.Idle },
+		broadcastRowChange(this.deps.wsManager, wsRoom.company(companyId), 'member_agents', 'UPDATE', {
+			id: memberId,
+			runtime_status: AgentRuntimeStatus.Idle,
 		});
 
 		if (wakeupId) {
@@ -482,47 +738,48 @@ export class JobManager {
 				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
 			);
 		}
-
-		try {
-			const content = {
-				heartbeat_run_id: result.heartbeatRunId,
-				agent_id: memberId,
-				agent_title: agentTitle,
-				status: result.success ? 'succeeded' : 'failed',
-				exit_code: result.exitCode,
-				duration_ms: result.durationMs,
-				stdout_preview: result.stdout?.slice(0, 200) ?? '',
-			};
-			await db.query(
-				`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
-				 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
-				[issueId, memberId, CommentContentType.Execution, JSON.stringify(content)],
-			);
-			this.deps.wsManager.broadcast(`company:${companyId}`, {
-				type: 'row_change',
-				table: 'issue_comments',
-				action: 'INSERT',
-				row: { issue_id: issueId },
-			});
-		} catch (err) {
-			console.error('Failed to create execution comment:', err);
-		}
 	}
 
 	private async detectOrphanedRuns(): Promise<void> {
-		const runningPids = new Set<number>();
-		await detectOrphans(this.deps.db, runningPids);
+		await detectOrphans(this.deps.db, this.getLiveRunIds(), this.deps.wsManager);
 	}
 
 	private async syncContainerStatuses(): Promise<void> {
-		await syncAllContainerStatuses(this.deps.db, this.deps.docker, this.deps.wsManager);
+		const reachable = await this.deps.docker.ping();
+		if (!reachable) {
+			return;
+		}
+
+		const transitions = await syncAllContainerStatuses(
+			this.deps.db,
+			this.deps.docker,
+			this.deps.wsManager,
+		);
+
+		for (const transition of transitions) {
+			await this.handleContainerTransition(transition);
+		}
+	}
+
+	private async handleContainerTransition(transition: ContainerTransition): Promise<void> {
+		const { projectId, companyId, oldStatus, newStatus } = transition;
+
+		if (
+			oldStatus === ContainerStatus.Running &&
+			(newStatus === ContainerStatus.Error || newStatus === ContainerStatus.Stopped)
+		) {
+			const reason: ContainerExitReason =
+				newStatus === ContainerStatus.Error ? 'container_error' : 'container_stopped';
+			this.cancelLiveRunsForProject(projectId, reason);
+			await failProjectRuns(this.buildContainerDeps(), projectId, companyId, reason);
+		}
 	}
 
 	private async processEmbeddingQueue(): Promise<void> {
 		const { processPendingEmbeddings } = await import('./embeddings');
 		const count = await processPendingEmbeddings(this.deps.db);
 		if (count > 0) {
-			log(`Processed ${count} embedding(s)`);
+			log.debug(`Processed ${count} embedding(s)`);
 		}
 	}
 }

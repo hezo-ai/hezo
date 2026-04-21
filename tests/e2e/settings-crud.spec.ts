@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, configureAiProvider, getToken } from './helpers';
+import { authenticate, getToken } from './helpers';
 
 async function createCompany(page: import('@playwright/test').Page) {
 	const token = await getToken(page);
@@ -14,7 +14,6 @@ async function createCompany(page: import('@playwright/test').Page) {
 		},
 	});
 	const company = (await companyRes.json()).data;
-	await configureAiProvider(page, company.id, headers);
 	return { company, token, headers };
 }
 
@@ -99,6 +98,7 @@ test('can edit and save preferences', async ({ page }) => {
 	await prefsSection.locator('textarea').fill('Always be concise.');
 	await prefsSection.getByRole('button', { name: 'Save' }).click();
 
+	await expect(prefsSection.getByRole('button', { name: 'Edit' })).toBeVisible({ timeout: 5000 });
 	await expect(prefsSection.getByText('Always be concise.')).toBeVisible({ timeout: 5000 });
 
 	await page.reload();

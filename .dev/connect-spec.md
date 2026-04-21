@@ -385,6 +385,15 @@ CREATE TABLE usage_monthly (
 - OAuth app secrets stored as environment variables
 - Signing key for state parameters is auto-generated on first startup and exposed via the `/signing-key` endpoint
 
+### Overridable provider base URLs (tests only)
+
+Both the Connect service (`packages/connect/src/providers/github.ts`) and the Hezo server (`packages/server/src/services/github.ts`) read the GitHub base URLs from environment variables with production defaults:
+
+- `GITHUB_OAUTH_BASE_URL` — defaults to `https://github.com`
+- `GITHUB_API_BASE_URL` — defaults to `https://api.github.com`
+
+Tests override these to point at the local simulator in `packages/server/src/test/helpers/github-sim.ts`. In production neither variable is set and the defaults apply.
+
 ---
 
 ## 11. Error Handling

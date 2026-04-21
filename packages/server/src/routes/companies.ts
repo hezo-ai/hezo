@@ -1,22 +1,18 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType, BUILTIN_AGENT_SLUGS, MemberType, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
+import { AuthType, BUILTIN_AGENT_SLUGS, MemberType, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { toIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
+import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess, requireSuperuser } from '../middleware/auth';
 import { type ProjectRow, provisionContainer } from '../services/containers';
 import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
 
-export const companiesRoutes = new Hono<Env>();
+const log = logger.child('routes');
 
-/** Generate parameterized placeholders for terminal issue statuses, starting at the given index. */
-function terminalStatusParams(startIdx: number): { placeholders: string; values: string[] } {
-	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${startIdx + i}::issue_status`).join(
-		', ',
-	);
-	return { placeholders, values: [...TERMINAL_ISSUE_STATUSES] };
-}
+export const companiesRoutes = new Hono<Env>();
 
 companiesRoutes.get('/companies', async (c) => {
 	const db = c.get('db');
@@ -86,11 +82,19 @@ companiesRoutes.post('/companies', async (c) => {
 
 	await db.query('BEGIN');
 	try {
+		const teamSummaryResult = body.template_id
+			? await db.query<{ default_team_summary: string }>(
+					'SELECT default_team_summary FROM company_types WHERE id = $1',
+					[body.template_id],
+				)
+			: null;
+		const teamSummary = teamSummaryResult?.rows[0]?.default_team_summary ?? '';
+
 		const companyResult = await db.query(
-			`INSERT INTO companies (name, slug, description, issue_prefix)
-       VALUES ($1, $2, $3, $4)
+			`INSERT INTO companies (name, slug, description, team_summary, issue_prefix)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-			[body.name.trim(), slug, body.description ?? '', issuePrefix],
+			[body.name.trim(), slug, body.description ?? '', teamSummary, issuePrefix],
 		);
 		const company = companyResult.rows[0] as { id: string; [key: string]: unknown };
 
@@ -113,9 +117,9 @@ companiesRoutes.post('/companies', async (c) => {
 		}
 
 		await db.query(
-			`INSERT INTO projects (company_id, name, slug, goal, is_internal)
-			 VALUES ($1, 'Operations', 'operations', 'Administrative workspace for internal operations such as agent onboarding, team coordination, and company-wide tasks.', true)`,
-			[company.id],
+			`INSERT INTO projects (company_id, name, slug, description, is_internal)
+			 VALUES ($1, 'Operations', $2, 'Administrative workspace for internal operations such as agent onboarding, team coordination, and company-wide tasks.', true)`,
+			[company.id, OPERATIONS_PROJECT_SLUG],
 		);
 
 		if (body.template_id) {
@@ -139,13 +143,23 @@ companiesRoutes.post('/companies', async (c) => {
 
 		const opsResult = await db.query<ProjectRow>(
 			`SELECT id, company_id, slug, docker_base_image, container_id, container_status, dev_ports
-			 FROM projects WHERE company_id = $1 AND slug = 'operations'`,
-			[company.id],
+			 FROM projects WHERE company_id = $1 AND slug = $2`,
+			[company.id, OPERATIONS_PROJECT_SLUG],
 		);
 		if (opsResult.rows[0]) {
-			const docker = c.get('docker');
-			provisionContainer(db, docker, opsResult.rows[0], slug, dataDir).catch((error) => {
-				console.error(`Failed to provision container for operations project:`, error);
+			provisionContainer(
+				{
+					db,
+					docker: c.get('docker'),
+					dataDir,
+					wsManager: c.get('wsManager'),
+					masterKeyManager: c.get('masterKeyManager'),
+					logs: c.get('logs'),
+				},
+				opsResult.rows[0],
+				slug,
+			).catch((error) => {
+				log.error(`Failed to provision container for operations project:`, error);
 			});
 		}
 
@@ -274,13 +288,13 @@ interface AgentTypeRow {
 	name: string;
 	slug: string;
 	role_description: string;
+	default_summary: string;
 	system_prompt_template: string;
-	runtime_type: string;
 	default_effort: string;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
+	touches_code: boolean;
 	reports_to_slug: string | null;
-	runtime_type_override: string | null;
 	heartbeat_interval_override: number | null;
 	monthly_budget_override: number | null;
 }
@@ -293,10 +307,12 @@ async function createAgentsFromTeamTypes(
 	const allRows: AgentTypeRow[] = [];
 	for (const typeId of teamTypeIds) {
 		const joinRows = await db.query<AgentTypeRow>(
-			`SELECT at.id, at.name, at.slug, at.role_description, at.system_prompt_template,
-			        at.runtime_type, at.default_effort, at.heartbeat_interval_min, at.monthly_budget_cents,
+			`SELECT at.id, at.name, at.slug, at.role_description, at.default_summary,
+			        at.system_prompt_template,
+			        at.default_effort, at.heartbeat_interval_min, at.monthly_budget_cents,
+			        at.touches_code,
 			        ctat.reports_to_slug,
-			        ctat.runtime_type_override, ctat.heartbeat_interval_override, ctat.monthly_budget_override
+			        ctat.heartbeat_interval_override, ctat.monthly_budget_override
 			 FROM company_type_agent_types ctat
 			 JOIN agent_types at ON at.id = ctat.agent_type_id
 			 WHERE ctat.company_type_id = $1
@@ -320,7 +336,6 @@ async function createAgentsFromTeamTypes(
 	const slugToMemberId = new Map<string, string>();
 
 	for (const row of dedupedRows) {
-		const runtimeType = row.runtime_type_override ?? row.runtime_type;
 		const heartbeat = row.heartbeat_interval_override ?? row.heartbeat_interval_min;
 		const budget = row.monthly_budget_override ?? row.monthly_budget_cents;
 
@@ -334,20 +349,23 @@ async function createAgentsFromTeamTypes(
 		slugToMemberId.set(row.slug, memberId);
 
 		await db.query(
-			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, system_prompt,
-			                            runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_runtime, $8::agent_effort, $9, $10)`,
+			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
+			                            system_prompt,
+			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
+			                            touches_code)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11)`,
 			[
 				memberId,
 				row.id,
 				row.name,
 				row.slug,
 				row.role_description,
+				row.default_summary ?? '',
 				row.system_prompt_template,
-				runtimeType,
 				row.default_effort,
 				heartbeat,
 				budget,
+				row.touches_code ?? false,
 			],
 		);
 	}
@@ -377,19 +395,34 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 	const missingSlugs = BUILTIN_AGENT_SLUGS.filter((s) => !existingSlugs.has(s));
 	if (missingSlugs.length === 0) return;
 
+	const overrideResult = await db.query<{ builtin_agent_prompts: Record<string, string> | null }>(
+		`SELECT ct.builtin_agent_prompts
+		 FROM company_team_types ctt
+		 JOIN company_types ct ON ct.id = ctt.company_type_id
+		 WHERE ctt.company_id = $1`,
+		[companyId],
+	);
+	const promptOverrides: Record<string, string> = {};
+	for (const row of overrideResult.rows) {
+		for (const [slug, prompt] of Object.entries(row.builtin_agent_prompts ?? {})) {
+			if (prompt && !promptOverrides[slug]) promptOverrides[slug] = prompt;
+		}
+	}
+
 	const agentTypes = await db.query<{
 		id: string;
 		name: string;
 		slug: string;
 		role_description: string;
+		default_summary: string;
 		system_prompt_template: string;
-		runtime_type: string;
 		default_effort: string;
 		heartbeat_interval_min: number;
 		monthly_budget_cents: number;
+		touches_code: boolean;
 	}>(
-		`SELECT id, name, slug, role_description, system_prompt_template,
-		        runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents
+		`SELECT id, name, slug, role_description, default_summary, system_prompt_template,
+		        default_effort, heartbeat_interval_min, monthly_budget_cents, touches_code
 		 FROM agent_types WHERE slug = ANY($1)`,
 		[missingSlugs],
 	);
@@ -402,20 +435,23 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 			[companyId, MemberType.Agent, at.name],
 		);
 		await db.query(
-			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, system_prompt,
-			                            runtime_type, default_effort, heartbeat_interval_min, monthly_budget_cents)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_runtime, $8::agent_effort, $9, $10)`,
+			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
+			                            system_prompt,
+			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
+			                            touches_code)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11)`,
 			[
 				memberResult.rows[0].id,
 				at.id,
 				at.name,
 				at.slug,
 				at.role_description,
-				at.system_prompt_template,
-				at.runtime_type,
+				at.default_summary ?? '',
+				promptOverrides[at.slug] || at.system_prompt_template,
 				at.default_effort,
 				at.heartbeat_interval_min,
 				at.monthly_budget_cents,
+				at.touches_code ?? false,
 			],
 		);
 	}
@@ -467,7 +503,7 @@ async function createSkillsFromTemplate(
 			);
 		} catch (e) {
 			if (e instanceof SkillDownloadError) {
-				console.warn(`Failed to download template skill "${skill.name}": ${e.message}`);
+				log.warn(`Failed to download template skill "${skill.name}": ${e.message}`);
 				continue;
 			}
 			throw e;

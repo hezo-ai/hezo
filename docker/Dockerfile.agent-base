@@ -5,6 +5,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl jq openssh-client ca-certificates python3 \
     && rm -rf /var/lib/apt/lists/*
 
+ENV PATH="/root/.local/bin:${PATH}"
+
 # Install AI coding CLIs
 #   @anthropic-ai/claude-code → claude
 #   @openai/codex             → codex

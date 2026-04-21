@@ -1,3 +1,4 @@
+import { wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -146,7 +147,7 @@ costsRoutes.post('/companies/:companyId/costs', async (c) => {
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'cost_entries',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,

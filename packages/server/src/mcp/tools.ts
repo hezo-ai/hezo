@@ -1,8 +1,11 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	ApprovalStatus,
 	ApprovalType,
 	AuthType,
+	CEO_AGENT_SLUG,
+	COACH_AGENT_SLUG,
 	CommentContentType,
 	IssuePriority,
 	IssueStatus,
@@ -10,9 +13,15 @@ import {
 } from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { assertOperationsAssignee } from '../lib/operations-assignee';
 import type { AuthInfo } from '../lib/types';
+import { logger } from '../logger';
 import { triggerStatusAutomations } from '../services/issue-automation';
 import { createWakeup } from '../services/wakeup';
+
+const log = logger.child('mcp');
+
+export const authContext = new AsyncLocalStorage<AuthInfo>();
 
 export interface ToolDef {
 	name: string;
@@ -36,7 +45,7 @@ function tool(
 		schema: Object.fromEntries(Object.entries(schema).map(([k, v]) => [k, v.description ?? k])),
 	});
 	server.tool(name, description, schema, async (args: Record<string, unknown>) => {
-		const auth = args.__auth as AuthInfo | undefined;
+		const auth = authContext.getStore();
 		if (!auth) {
 			return {
 				content: [
@@ -47,10 +56,7 @@ function tool(
 				],
 			};
 		}
-		// Remove internal auth from args before passing to handler
-		const cleanArgs = { ...args };
-		delete cleanArgs.__auth;
-		const result = await handler(cleanArgs, db, auth);
+		const result = await handler(args, db, auth);
 		return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
 	});
 }
@@ -228,6 +234,12 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				.optional()
 				.describe('Assignee agent slug (alternative to assignee_id)'),
 			parent_issue_id: z.string().optional().describe('Parent issue ID (creates a sub-issue)'),
+			runtime_type: z
+				.string()
+				.optional()
+				.describe(
+					'Pin this issue to a specific AI runtime (claude_code, codex, gemini, kimi). Leave unset to use the instance default.',
+				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -248,6 +260,14 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			}
 			if (!assigneeId) return { error: 'Either assignee_id or assignee_slug is required' };
 
+			const opsCheck = await assertOperationsAssignee(
+				db,
+				args.company_id as string,
+				args.project_id as string,
+				assigneeId,
+			);
+			if (!opsCheck.ok) return { error: opsCheck.message };
+
 			const companyResult = await db.query<{ issue_prefix: string }>(
 				'SELECT issue_prefix FROM companies WHERE id = $1',
 				[args.company_id],
@@ -259,20 +279,23 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			);
 			const num = numberResult.rows[0].number;
 			const identifier = `${companyResult.rows[0].issue_prefix}-${num}`;
+			const createdByRunId = auth.type === AuthType.Agent ? auth.runId : null;
 			const r = await db.query<{ id: string }>(
-				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, number, identifier, title, description, status, priority)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority) RETURNING *`,
+				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, runtime_type)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::issue_status, $11::issue_priority, $12::agent_runtime) RETURNING *`,
 				[
 					args.company_id,
 					args.project_id,
 					assigneeId,
 					args.parent_issue_id ?? null,
+					createdByRunId,
 					num,
 					identifier,
 					args.title,
 					args.description ?? '',
 					IssueStatus.Backlog,
 					args.priority ?? IssuePriority.Medium,
+					args.runtime_type ?? null,
 				],
 			);
 
@@ -281,7 +304,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			if (isAgent.rows.length > 0) {
 				createWakeup(db, assigneeId, args.company_id as string, WakeupSource.Assignment, {
 					issue_id: r.rows[0].id,
-				}).catch((e) => console.error('Failed to wake agent:', e));
+				}).catch((e) => log.error('Failed to wake agent:', e));
 			}
 
 			return r.rows[0];
@@ -309,10 +332,34 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			progress_summary: z.string().optional().describe('Progress summary update'),
 			rules: z.string().optional().describe('Rules/constraints for this issue'),
 			branch_name: z.string().optional().describe('Git branch name for this issue'),
+			runtime_type: z
+				.string()
+				.optional()
+				.describe(
+					'Override the AI runtime for this issue (claude_code, codex, gemini, kimi). Pass an empty string to clear.',
+				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
+
+			if (args.assignee_id) {
+				const issueRow = await db.query<{ project_id: string }>(
+					'SELECT project_id FROM issues WHERE id = $1 AND company_id = $2',
+					[args.issue_id, args.company_id],
+				);
+				const projectId = issueRow.rows[0]?.project_id;
+				if (projectId) {
+					const opsCheck = await assertOperationsAssignee(
+						db,
+						args.company_id as string,
+						projectId,
+						args.assignee_id as string,
+					);
+					if (!opsCheck.ok) return { error: opsCheck.message };
+				}
+			}
+
 			const sets: string[] = [];
 			const params: unknown[] = [];
 			let idx = 1;
@@ -322,6 +369,11 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 					sets.push(`status = $${idx}::issue_status`);
 				} else if (key === 'priority') {
 					sets.push(`priority = $${idx}::issue_priority`);
+				} else if (key === 'runtime_type') {
+					sets.push(`runtime_type = $${idx}::agent_runtime`);
+					params.push(val === '' ? null : val);
+					idx++;
+					continue;
 				} else if (key === 'progress_summary') {
 					sets.push(`progress_summary = $${idx}`);
 					params.push(val);
@@ -353,7 +405,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 					args.company_id as string,
 					args.issue_id as string,
 					args.status as string,
-				).catch((e) => console.error('Failed to trigger status automations:', e));
+				).catch((e) => log.error('Failed to trigger status automations:', e));
 			}
 
 			// Wake agent if assignee changed
@@ -370,7 +422,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 						{
 							issue_id: args.issue_id,
 						},
-					).catch((e) => console.error('Failed to wake agent:', e));
+					).catch((e) => log.error('Failed to wake agent:', e));
 				}
 			}
 
@@ -391,12 +443,88 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 			const r = await db.query(
-				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug, ma.runtime_type,
+				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug,
 				        ma.monthly_budget_cents, ma.budget_used_cents, ma.runtime_status, ma.admin_status
 				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.company_id = $1 ORDER BY ma.title`,
 				[args.company_id],
 			);
 			return r.rows;
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'update_hire_proposal',
+		'Revise the draft of a pending hire approval. CEO-only. Use this to expand or rewrite the system prompt, adjust role description, budget, heartbeat, or touches_code before board review. All fields are optional — pass only what you want to change.',
+		{
+			approval_id: z.string().describe('Hire approval ID'),
+			title: z.string().optional().describe('Updated role title'),
+			role_description: z.string().optional().describe('Updated short role description'),
+			system_prompt: z.string().optional().describe('Updated system prompt'),
+			default_effort: z
+				.string()
+				.optional()
+				.describe('Updated default effort: minimal, low, medium, high, max'),
+			heartbeat_interval_min: z.number().optional().describe('Updated heartbeat interval (min)'),
+			monthly_budget_cents: z.number().optional().describe('Updated monthly budget in cents'),
+			touches_code: z.boolean().optional().describe('Whether this agent reads/writes repo code'),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent) {
+				return { error: 'update_hire_proposal is only callable by agents' };
+			}
+			const caller = await db.query<{ slug: string }>(
+				'SELECT slug FROM member_agents WHERE id = $1',
+				[auth.memberId],
+			);
+			if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
+				return { error: 'Only the CEO can revise hire proposals' };
+			}
+
+			const approval = await db.query<{
+				id: string;
+				company_id: string;
+				type: string;
+				status: string;
+				payload: Record<string, unknown>;
+			}>('SELECT id, company_id, type, status, payload FROM approvals WHERE id = $1', [
+				args.approval_id,
+			]);
+			if (approval.rows.length === 0) return { error: 'Approval not found' };
+
+			const row = approval.rows[0];
+			if (row.company_id !== auth.companyId) {
+				return { error: 'Access denied: company mismatch' };
+			}
+			if (row.type !== ApprovalType.Hire) {
+				return { error: 'Approval is not a hire request' };
+			}
+			if (row.status !== ApprovalStatus.Pending) {
+				return { error: 'Hire approval is already resolved' };
+			}
+
+			const patch: Record<string, unknown> = {};
+			if (args.title !== undefined) patch.title = (args.title as string).trim();
+			if (args.role_description !== undefined) patch.role_description = args.role_description;
+			if (args.system_prompt !== undefined) patch.system_prompt = args.system_prompt;
+			if (args.default_effort !== undefined) patch.default_effort = args.default_effort;
+			if (args.heartbeat_interval_min !== undefined)
+				patch.heartbeat_interval_min = args.heartbeat_interval_min;
+			if (args.monthly_budget_cents !== undefined)
+				patch.monthly_budget_cents = args.monthly_budget_cents;
+			if (args.touches_code !== undefined) patch.touches_code = args.touches_code;
+
+			if (Object.keys(patch).length === 0) {
+				return { error: 'no fields to update' };
+			}
+
+			const updated = await db.query<Record<string, unknown>>(
+				`UPDATE approvals SET payload = payload || $1::jsonb
+				 WHERE id = $2 RETURNING *`,
+				[JSON.stringify(patch), args.approval_id],
+			);
+			return updated.rows[0] ?? null;
 		},
 		db,
 	);
@@ -427,7 +555,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		{
 			company_id: z.string().describe('Company ID'),
 			name: z.string().describe('Project name'),
-			goal: z.string().optional().describe('Project goal'),
+			description: z.string().optional().describe('Project description'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -437,8 +565,8 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/^-|-$/g, '');
 			const r = await db.query(
-				`INSERT INTO projects (company_id, name, slug, goal) VALUES ($1, $2, $3, $4) RETURNING *`,
-				[args.company_id, args.name, slug, args.goal ?? ''],
+				`INSERT INTO projects (company_id, name, slug, description) VALUES ($1, $2, $3, $4) RETURNING *`,
+				[args.company_id, args.name, slug, args.description ?? ''],
 			);
 			return r.rows[0];
 		},
@@ -464,7 +592,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			]);
 			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
 			const r = await db.query(
-				`SELECT ic.*, COALESCE(ma.title, m.display_name) AS author_name
+				`SELECT ic.*, COALESCE(ma.title, m.display_name, 'Board') AS author_name
 			 FROM issue_comments ic LEFT JOIN members m ON m.id = ic.author_member_id LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
 			 WHERE ic.issue_id = $1 ORDER BY ic.created_at ASC`,
 				[args.issue_id],
@@ -492,9 +620,15 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				args.company_id,
 			]);
 			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
+			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const r = await db.query(
-				`INSERT INTO issue_comments (issue_id, content_type, content) VALUES ($1, $2::comment_content_type, $3::jsonb) RETURNING *`,
-				[args.issue_id, CommentContentType.Text, JSON.stringify({ text: args.content })],
+				`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content) VALUES ($1, $2, $3::comment_content_type, $4::jsonb) RETURNING *`,
+				[
+					args.issue_id,
+					authorMemberId,
+					CommentContentType.Text,
+					JSON.stringify({ text: args.content }),
+				],
 			);
 			return r.rows[0];
 		},
@@ -730,6 +864,78 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				],
 			);
 			return { applied: false, approval_id: result.rows[0].id, status: result.rows[0].status };
+		},
+		db,
+	);
+
+	// Description maintenance — used by the CEO (and self) to write back
+	// auto-generated agent and team summaries.
+	tool(
+		server,
+		'set_agent_summary',
+		'Save a short human-readable summary for an agent (≤1000 chars, single paragraph, plain prose). Callable by any agent in the same company or any board user; the CEO is the expected caller, but agents may also self-summarise.',
+		{
+			company_id: z.string().describe('Company ID'),
+			agent_id: z.string().describe('Target agent member ID'),
+			summary: z.string().describe('The new summary, ≤1000 chars'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
+				return { error: 'Access denied' };
+			}
+
+			const summary = String(args.summary ?? '').trim();
+			if (summary.length === 0) return { error: 'summary must be non-empty' };
+			if (summary.length > 1000) {
+				return { error: `summary too long (${summary.length} chars; max 1000)` };
+			}
+
+			const r = await db.query<{ id: string }>(
+				`UPDATE member_agents SET summary = $1, updated_at = now()
+				 WHERE id = $2 AND id IN (
+				   SELECT m.id FROM members m WHERE m.id = $2 AND m.company_id = $3
+				 )
+				 RETURNING id`,
+				[summary, args.agent_id, args.company_id],
+			);
+			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
+
+			return { updated: true };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'set_team_summary',
+		'Save the team-level collaboration summary for a company (≤4000 chars, plain prose, may span paragraphs). Only callable by the CEO of that company.',
+		{
+			company_id: z.string().describe('Company ID'),
+			summary: z.string().describe('The new team summary, ≤4000 chars'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			if (!(await isCeoOfCompany(db, auth, args.company_id as string))) {
+				return { error: 'Access denied: only the CEO can update the team summary' };
+			}
+
+			const summary = String(args.summary ?? '').trim();
+			if (summary.length === 0) return { error: 'summary must be non-empty' };
+			if (summary.length > 4000) {
+				return { error: `summary too long (${summary.length} chars; max 4000)` };
+			}
+
+			await db.query('UPDATE companies SET team_summary = $1, updated_at = now() WHERE id = $2', [
+				summary,
+				args.company_id,
+			]);
+
+			return { updated: true };
 		},
 		db,
 	);
@@ -1027,7 +1233,18 @@ async function isCoachOrSelf(db: PGlite, auth: AuthInfo, targetAgentId: string):
 		const coach = await db.query<{ slug: string }>('SELECT slug FROM member_agents WHERE id = $1', [
 			auth.memberId,
 		]);
-		return coach.rows[0]?.slug === 'coach';
+		return coach.rows[0]?.slug === COACH_AGENT_SLUG;
 	}
 	return false;
+}
+
+async function isCeoOfCompany(db: PGlite, auth: AuthInfo, companyId: string): Promise<boolean> {
+	if (auth.type !== AuthType.Agent) return false;
+	const r = await db.query<{ slug: string }>(
+		`SELECT ma.slug FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE ma.id = $1 AND m.company_id = $2`,
+		[auth.memberId, companyId],
+	);
+	return r.rows[0]?.slug === CEO_AGENT_SLUG;
 }

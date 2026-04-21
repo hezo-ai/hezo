@@ -4,6 +4,10 @@ import type { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { type Context, Hono } from 'hono';
 import type { HezoConfig } from './cli';
+import { logger } from './logger';
+
+const log = logger.child('startup');
+
 import { MasterKeyManager } from './crypto/master-key';
 import { BASE_SCHEMA } from './db/schema';
 import type { Env } from './lib/types';
@@ -24,10 +28,11 @@ import { companyTypesRoutes } from './routes/company-types';
 import { connectionsRoutes } from './routes/connections';
 import { costsRoutes } from './routes/costs';
 import { executionLocksRoutes } from './routes/execution-locks';
+import { githubRoutes } from './routes/github';
+import { goalsRoutes } from './routes/goals';
 import { healthRoutes } from './routes/health';
 import { issuesRoutes } from './routes/issues';
 import { kbDocsRoutes } from './routes/kb-docs';
-import { liveChatRoutes } from './routes/live-chat';
 import { oauthCallbackRoutes } from './routes/oauth-callback';
 import { preferencesRoutes } from './routes/preferences';
 import { previewRoutes } from './routes/preview';
@@ -40,6 +45,7 @@ import { skillsRoutes } from './routes/skills';
 import { uiStateRoutes } from './routes/ui-state';
 import { DockerClient } from './services/docker';
 import { JobManager } from './services/job-manager';
+import { LogStreamBroker } from './services/log-stream-broker';
 import { WebSocketManager } from './services/ws';
 
 export type { HezoConfig };
@@ -61,6 +67,7 @@ export interface StartupResult {
 	db: PGlite;
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
+	logs: LogStreamBroker;
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
@@ -91,8 +98,16 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	const connectPublicKey = await fetchConnectPublicKey(config.connectUrl);
 
-	const docker = new DockerClient();
+	let docker: DockerClient;
+	if (process.env.HEZO_SKIP_DOCKER) {
+		const { createFakeDockerClient } = await import('./test/helpers/fake-docker.js');
+		docker = createFakeDockerClient();
+	} else {
+		docker = new DockerClient();
+	}
 	const wsManager = new WebSocketManager();
+	const logs = new LogStreamBroker();
+	logs.setWsManager(wsManager);
 	const jobManager = new JobManager({
 		db,
 		docker,
@@ -100,15 +115,19 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		serverPort: config.port,
 		dataDir: config.dataDir,
 		wsManager,
+		logs,
 	});
 
 	masterKeyManager.onUnlock(() => {
-		jobManager.start();
+		jobManager
+			.reconcileOnStartup()
+			.catch((err) => log.error('Startup reconciliation failed:', err))
+			.finally(() => jobManager.start());
 		// Initialize embedding model in background (downloads on first use)
 		import('./services/embeddings').then(({ initializeEmbeddingModel }) => {
 			const { join } = require('node:path') as typeof import('node:path');
 			initializeEmbeddingModel(join(config.dataDir, 'models')).catch((err) =>
-				console.error('[startup] Embedding model init failed:', err),
+				log.error('Embedding model init failed:', err),
 			);
 		});
 	});
@@ -124,6 +143,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker,
 		wsManager,
 		jobManager,
+		logs,
 	);
 
 	return {
@@ -135,6 +155,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		db,
 		docker,
 		masterKeyManager,
+		logs,
 	};
 }
 
@@ -145,8 +166,10 @@ export function buildApp(
 	docker: DockerClient = new DockerClient(),
 	wsManager: WebSocketManager = new WebSocketManager(),
 	jobManager?: JobManager,
+	logs: LogStreamBroker = new LogStreamBroker(),
 ): Hono<Env> {
 	const app = new Hono<Env>();
+	logs.setWsManager(wsManager);
 
 	app.use('*', async (c, next) => {
 		c.set('db', db);
@@ -154,6 +177,7 @@ export function buildApp(
 		c.set('docker', docker);
 		c.set('wsManager', wsManager);
 		if (jobManager) c.set('jobManager', jobManager);
+		c.set('logs', logs);
 		c.set('dataDir', config.dataDir);
 		c.set('connectUrl', config.connectUrl);
 		c.set('connectPublicKey', config.connectPublicKey);
@@ -199,6 +223,7 @@ export function buildApp(
 	app.route('/api', companiesRoutes);
 	app.route('/api', agentsRoutes);
 	app.route('/api', projectsRoutes);
+	app.route('/api', goalsRoutes);
 	app.route('/api', issuesRoutes);
 	app.route('/api', commentsRoutes);
 	app.route('/api', secretsRoutes);
@@ -213,8 +238,8 @@ export function buildApp(
 	app.route('/api', connectionsRoutes);
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', reposRoutes);
+	app.route('/api', githubRoutes);
 	app.route('/api', executionLocksRoutes);
-	app.route('/api', liveChatRoutes);
 	app.route('/api', auditLogRoutes);
 	app.route('/api', previewRoutes);
 	app.route('/api', searchRoutes);
@@ -270,10 +295,10 @@ async function fetchConnectPublicKey(connectUrl: string): Promise<string> {
 		const res = await fetch(`${connectUrl}/signing-key`, { signal: AbortSignal.timeout(5000) });
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		const { key } = (await res.json()) as { key: string };
-		console.log('Fetched Connect signing public key.');
+		log.info('Fetched Connect signing public key.');
 		return key;
 	} catch {
-		console.warn('Could not fetch Connect signing key. OAuth flows will be unavailable.');
+		log.warn('Could not fetch Connect signing key. OAuth flows will be unavailable.');
 		return '';
 	}
 }
@@ -290,7 +315,7 @@ async function runAvailableMigrations(db: PGlite): Promise<void> {
 			const migrations = await loadFilesystemMigrations(migrationsDir);
 			await runMigrations(db, migrations);
 		} catch {
-			console.warn('No migrations found. Run build:migrations or add migration files.');
+			log.warn('No migrations found. Run build:migrations or add migration files.');
 		}
 	}
 }
@@ -308,7 +333,7 @@ async function runSeed(db: PGlite): Promise<void> {
 		) {
 			return;
 		}
-		console.error('Seed failed:', err);
+		log.error('Seed failed:', err);
 	}
 }
 
@@ -327,10 +352,10 @@ async function resolveMasterKeyState(
 				? 'Invalid master key provided. Server starting in locked state.'
 				: 'Server starting in locked state. Provide master key to unlock.',
 		};
-		console.log(messages[state]);
+		log.info(messages[state]);
 		return state;
 	} catch {
-		console.warn('Master key module not available. Skipping key verification.');
+		log.warn('Master key module not available. Skipping key verification.');
 		return 'unset';
 	}
 }

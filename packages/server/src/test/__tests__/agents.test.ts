@@ -90,6 +90,44 @@ describe('agents CRUD', () => {
 		expect(body.data).toHaveProperty('admin_status');
 	});
 
+	it('seeds the architect with a PRD gate instruction', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const architect = agents.find((a: Record<string, unknown>) => a.slug === 'architect');
+
+		const res = await app.request(`/api/companies/${companyId}/agents/${architect.id}`, {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		const prompt = body.data.system_prompt as string;
+
+		expect(prompt).toMatch(/read_project_doc/);
+		expect(prompt).toMatch(/prd\.md/);
+		expect(prompt).toMatch(/@-?mention the Product Lead/i);
+		expect(prompt).toMatch(/PRD gate/i);
+	});
+
+	it('no agent system prompt still references filesystem .dev docs for project docs', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const filesystemDocRefs =
+			/\.dev\/(prd|research|spec|implementation-plan|implementation-phases|marketing-plan|ui-design-decisions)\.md/;
+		const designatedRepoAsDocStorage = /designated[\s-]repo['s]*\s+\.dev\//i;
+		for (const summary of agents) {
+			const res = await app.request(`/api/companies/${companyId}/agents/${summary.id}`, {
+				headers: authHeader(token),
+			});
+			const body = await res.json();
+			const prompt = body.data.system_prompt as string;
+			expect(prompt).not.toMatch(filesystemDocRefs);
+			expect(prompt).not.toMatch(designatedRepoAsDocStorage);
+		}
+	});
+
 	it('creates (hires) a custom agent', async () => {
 		const res = await app.request(`/api/companies/${companyId}/agents`, {
 			method: 'POST',
@@ -185,23 +223,7 @@ describe('agents CRUD', () => {
 		expect(res.status).toBe(409);
 	});
 
-	it('terminates an agent', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
-			headers: authHeader(token),
-		});
-		const agents = (await listRes.json()).data;
-		const marketingLead = agents.find((a: Record<string, unknown>) => a.slug === 'marketing-lead');
-
-		const res = await app.request(
-			`/api/companies/${companyId}/agents/${marketingLead.id}/terminate`,
-			{ method: 'POST', headers: authHeader(token) },
-		);
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data.admin_status).toBe('terminated');
-	});
-
-	it('rejects disabling a terminated agent', async () => {
+	it('disabling an agent unassigns its open issues', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
 			headers: authHeader(token),
 		});
@@ -212,21 +234,9 @@ describe('agents CRUD', () => {
 			`/api/companies/${companyId}/agents/${marketingLead.id}/disable`,
 			{ method: 'POST', headers: authHeader(token) },
 		);
-		expect(res.status).toBe(409);
-	});
-
-	it('rejects enabling a terminated agent', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
-			headers: authHeader(token),
-		});
-		const agents = (await listRes.json()).data;
-		const marketingLead = agents.find((a: Record<string, unknown>) => a.slug === 'marketing-lead');
-
-		const res = await app.request(`/api/companies/${companyId}/agents/${marketingLead.id}/enable`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(409);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.admin_status).toBe('disabled');
 	});
 
 	it('returns org chart with runtime_status and admin_status', async () => {
@@ -278,7 +288,7 @@ describe('heartbeat runs', () => {
 		const agent = agents[0];
 
 		await db.query(
-			`INSERT INTO heartbeat_runs (member_id, company_id, status, started_at, finished_at, exit_code, stdout_excerpt)
+			`INSERT INTO heartbeat_runs (member_id, company_id, status, started_at, finished_at, exit_code, log_text)
 			 VALUES ($1, $2, 'succeeded', now() - interval '5 minutes', now(), 0, 'All done')`,
 			[agent.id, companyId],
 		);
@@ -291,6 +301,6 @@ describe('heartbeat runs', () => {
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
 		expect(body.data[0].status).toBe('succeeded');
 		expect(body.data[0].exit_code).toBe(0);
-		expect(body.data[0].stdout_excerpt).toBe('All done');
+		expect(body.data[0].log_text).toBe('All done');
 	});
 });

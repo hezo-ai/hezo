@@ -1,0 +1,1 @@
+- **No designated repo means no run.** If a project has no designated repository yet, the runtime automatically pauses your run, posts a setup prompt on the ticket, and raises a board approval. You will be woken up when the board completes the flow. Do not attempt to work around the missing repo.

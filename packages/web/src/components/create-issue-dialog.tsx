@@ -1,7 +1,8 @@
+import { CEO_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from '@tanstack/react-router';
 import { Loader2, X } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useCreateIssue } from '../hooks/use-issues';
 import { useProjects } from '../hooks/use-projects';
@@ -32,6 +33,25 @@ export function CreateIssueDialog({
 	const createIssue = useCreateIssue(companyId);
 	const navigate = useNavigate();
 
+	const selectedProject = projects?.find((p) => p.id === projectId);
+	const isOperationsProject = selectedProject?.slug === OPERATIONS_PROJECT_SLUG;
+	const ceoAgent = useMemo(() => agents?.find((a) => a.slug === CEO_AGENT_SLUG), [agents]);
+	const selectableAgents = useMemo(() => {
+		if (!agents) return [];
+		if (isOperationsProject) {
+			return ceoAgent ? [ceoAgent] : [];
+		}
+		return agents.filter((a) => a.admin_status !== 'disabled');
+	}, [agents, ceoAgent, isOperationsProject]);
+
+	function handleProjectChange(nextProjectId: string) {
+		setProjectId(nextProjectId);
+		const next = projects?.find((p) => p.id === nextProjectId);
+		if (next?.slug === OPERATIONS_PROJECT_SLUG) {
+			setAssigneeId(ceoAgent?.id ?? '');
+		}
+	}
+
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!projectId) return;
@@ -47,7 +67,7 @@ export function CreateIssueDialog({
 		setDescription('');
 		navigate({
 			to: '/companies/$companyId/issues/$issueId',
-			params: { companyId, issueId: result.id },
+			params: { companyId, issueId: result.identifier.toLowerCase() },
 		});
 	}
 
@@ -83,7 +103,7 @@ export function CreateIssueDialog({
 							<span className="text-sm text-text-muted">Project *</span>
 							<select
 								value={projectId}
-								onChange={(e) => setProjectId(e.target.value)}
+								onChange={(e) => handleProjectChange(e.target.value)}
 								required
 								className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
 							>
@@ -119,13 +139,11 @@ export function CreateIssueDialog({
 									className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
 								>
 									<option value="">Select assignee</option>
-									{agents
-										?.filter((a) => a.admin_status !== 'terminated')
-										.map((a) => (
-											<option key={a.id} value={a.id}>
-												{a.title}
-											</option>
-										))}
+									{selectableAgents.map((a) => (
+										<option key={a.id} value={a.id}>
+											{a.title}
+										</option>
+									))}
 								</select>
 							</label>
 						</div>

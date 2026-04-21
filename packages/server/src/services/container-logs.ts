@@ -1,10 +1,16 @@
 import { WsMessageType } from '@hezo/shared';
 import type { DockerClient } from './docker';
-import type { WebSocketManager } from './ws';
+import type { LogStreamBroker } from './log-stream-broker';
 
 interface StreamState {
 	abortController: AbortController;
 	refCount: number;
+}
+
+const CONTAINER_LOG_CAP_BYTES = 64 * 1024;
+
+function containerStreamId(projectId: string): string {
+	return `container:${projectId}`;
 }
 
 export class ContainerLogStreamer {
@@ -13,7 +19,7 @@ export class ContainerLogStreamer {
 	subscribe(
 		projectId: string,
 		containerId: string,
-		wsManager: WebSocketManager,
+		logs: LogStreamBroker,
 		docker: DockerClient,
 	): void {
 		const existing = this.streams.get(projectId);
@@ -26,12 +32,25 @@ export class ContainerLogStreamer {
 		const state: StreamState = { abortController, refCount: 1 };
 		this.streams.set(projectId, state);
 
-		this.startStreaming(projectId, containerId, wsManager, docker, abortController).catch(() => {
+		logs.begin({
+			streamId: containerStreamId(projectId),
+			room: `container-logs:${projectId}`,
+			buildMessage: (line) => ({
+				type: WsMessageType.ContainerLog,
+				projectId,
+				stream: line.stream,
+				text: line.text,
+			}),
+			capBytes: CONTAINER_LOG_CAP_BYTES,
+		});
+
+		this.startStreaming(projectId, containerId, logs, docker, abortController).catch(() => {
 			this.streams.delete(projectId);
+			void logs.end(containerStreamId(projectId));
 		});
 	}
 
-	unsubscribe(projectId: string): void {
+	unsubscribe(projectId: string, logs?: LogStreamBroker): void {
 		const state = this.streams.get(projectId);
 		if (!state) return;
 
@@ -39,24 +58,26 @@ export class ContainerLogStreamer {
 		if (state.refCount <= 0) {
 			state.abortController.abort();
 			this.streams.delete(projectId);
+			if (logs) void logs.end(containerStreamId(projectId));
 		}
 	}
 
-	stopAll(): void {
+	stopAll(logs?: LogStreamBroker): void {
 		for (const [id, state] of this.streams) {
 			state.abortController.abort();
 			this.streams.delete(id);
+			if (logs) void logs.end(containerStreamId(id));
 		}
 	}
 
 	private async startStreaming(
 		projectId: string,
 		containerId: string,
-		wsManager: WebSocketManager,
+		logs: LogStreamBroker,
 		docker: DockerClient,
 		abortController: AbortController,
 	): Promise<void> {
-		const room = `container-logs:${projectId}`;
+		const streamId = containerStreamId(projectId);
 		const res = await docker.containerLogs(
 			containerId,
 			{ follow: true, tail: 200, stdout: true, stderr: true },
@@ -76,12 +97,7 @@ export class ContainerLogStreamer {
 			const lines = batchLines;
 			batchLines = [];
 			for (const line of lines) {
-				wsManager.broadcast(room, {
-					type: WsMessageType.ContainerLog,
-					projectId,
-					stream: line.stream,
-					text: line.text,
-				});
+				logs.emit(streamId, line.stream, line.text);
 			}
 		};
 

@@ -11,7 +11,7 @@ import type { Env } from '../../lib/types';
 import { signBoardJwt } from '../../middleware/auth';
 import { buildApp } from '../../startup';
 import { safeClose } from '../helpers';
-import { authHeader } from '../helpers/app';
+import { authHeader, createStubDocker } from '../helpers/app';
 import { createTestDbWithMigrations } from '../helpers/db';
 
 let app: Hono<Env>;
@@ -30,11 +30,12 @@ beforeAll(async () => {
 	const masterKeyHex = generateMasterKey();
 	await masterKeyManager.initialize(db, masterKeyHex);
 	await seedBuiltins(db, await loadAgentRoles());
-	app = buildApp(db, masterKeyManager, {
-		dataDir: tempDataDir,
-		connectUrl: '',
-		connectPublicKey: '',
-	});
+	app = buildApp(
+		db,
+		masterKeyManager,
+		{ dataDir: tempDataDir, connectUrl: '', connectPublicKey: '' },
+		createStubDocker(),
+	);
 	const userResult = await db.query<{ id: string }>(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('Test Admin', true) RETURNING id",
 	);
@@ -50,7 +51,7 @@ beforeAll(async () => {
 	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Main Project' }),
+		body: JSON.stringify({ name: 'Main Project', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 });
@@ -199,7 +200,7 @@ describe('AGENTS.md (filesystem-based)', () => {
 		const projRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Repo Project' }),
+			body: JSON.stringify({ name: 'Repo Project', description: 'Test project.' }),
 		});
 		repoProjectId = (await projRes.json()).data.id;
 
@@ -255,7 +256,7 @@ describe('AGENTS.md (filesystem-based)', () => {
 		const projRes = await app.request(`/api/companies/${companyId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No Repo' }),
+			body: JSON.stringify({ name: 'No Repo', description: 'Test project.' }),
 		});
 		const noRepoProjId = (await projRes.json()).data.id;
 

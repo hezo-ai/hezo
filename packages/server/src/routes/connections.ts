@@ -1,3 +1,4 @@
+import { OAUTH_CALLBACK_PATH } from '@hezo/shared';
 import { Hono } from 'hono';
 import { signOAuthState } from '../crypto/state';
 import { err, ok } from '../lib/response';
@@ -50,7 +51,7 @@ connectionsRoutes.post('/companies/:companyId/connections/:platform/start', asyn
 
 	// Derive the callback URL from the request origin
 	const origin = new URL(c.req.url).origin;
-	const callbackUrl = `${origin}/oauth/callback`;
+	const callbackUrl = `${origin}${OAUTH_CALLBACK_PATH}`;
 
 	const authUrl = `${connectUrl}/auth/${platform}/start?callback=${encodeURIComponent(callbackUrl)}&state=${encodeURIComponent(state)}`;
 

@@ -8,12 +8,12 @@
 | `users` | Global human identity. Display name, avatar. One per human across all companies. | Standalone (identity). |
 | `user_auth_methods` | OAuth login methods (GitHub, GitLab). Links provider identity to user. | belongs to user |
 | `members` | Base table for all company participants (agents and users). Has `member_type` enum discriminator. Shared UUID used by child tables. | belongs to company |
-| `member_agents` | Agent-specific extension. System prompt, runtime type, `default_effort` (reasoning level applied to runs), budget, heartbeat, org chart. References agent_type_id for provenance. | extends member (PK = member.id), optionally references agent_type |
+| `member_agents` | Agent-specific extension. System prompt, runtime type, `default_effort` (reasoning level applied to runs), budget, heartbeat, org chart, `summary` (auto-generated agent description, ≤5 lines), `touches_code` (capability flag used by the job manager to gate runs on designated-repo setup). `model_override_provider` + `model_override_model` let a single agent target a specific provider/model; when set they take precedence over the instance-default provider and the provider config's `default_model` (both must be set together — enforced by `model_override_requires_provider` CHECK). References agent_type_id for provenance. | extends member (PK = member.id), optionally references agent_type |
 | `member_users` | User-in-company extension. Role (board/member), role_title, permissions_text, project_ids. Links to global user. | extends member (PK = member.id), references user |
-| `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget. Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
-| `company_types` | Company blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers. | Referenced by company_team_types. |
+| `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget, `default_summary` (pre-generated description loaded from `packages/server/src/db/agent-summaries.json`), `touches_code` (default capability flag — seeded true for builder roles, copied onto `member_agents` at hire time). Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
+| `company_types` | Company blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers, `default_team_summary` (pre-generated team collaboration description). | Referenced by company_team_types. |
 | `company_type_agent_types` | Join table linking company types to agent types. Stores org chart hierarchy (reports_to_slug) and per-company-type config overrides (runtime type, heartbeat, budget). | belongs to company_type + agent_type |
-| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), company-level budget. | Parent of everything. |
+| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), company-level budget, `team_summary` (auto-generated team collaboration description, ≤20 lines). | Parent of everything. |
 | `company_team_types` | Many-to-many join table linking companies to the team types they were created from. | belongs to company + company_type |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
@@ -31,8 +31,6 @@
 | `audit_log` | Append-only. Never updated or deleted. | belongs to company |
 | `kb_docs` | Knowledge base documents. Markdown, company-scoped, slug-addressable. AGENTS.md is a special KB doc written to disk. | belongs to company |
 | `kb_doc_revisions` | Version history for KB documents. | belongs to kb_doc |
-| `live_chats` | Persistent live chat per issue. One ongoing conversation. | belongs to issue |
-| `live_chat_messages` | Individual messages in a live chat. Author, content, metadata. | belongs to live_chat |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to company |
 | `company_ssh_keys` | Generated SSH key pairs per company. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to company |
 | `execution_locks` | Issue work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to issue + member_agent |
@@ -53,7 +51,7 @@
 | `company_issue_counters` | Helper for atomic issue numbering. | belongs to company |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
 | `slack_connections` | Per-company Slack app config. Bot token encrypted in secrets. | belongs to company |
-| `ai_provider_configs` | Per-company AI provider credentials. Stores encrypted API keys or OAuth tokens for Claude/Codex/Gemini/Kimi. Auth method distinguishes API key vs subscription OAuth token. Agent runner decrypts at execution time and injects as env var. | belongs to company, references secrets |
+| `ai_provider_configs` | Instance-level AI provider credentials shared across every company in the Hezo instance. Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription OAuth token. A partial unique index on `is_default` enforces one default per provider; `(provider, label)` is unique so multiple rows per provider coexist — typically one `api_key` and one `oauth_token` — and `getProviderCredential` / `resolveRuntimeForIssue` pick the `is_default` row at runtime. `default_model` (nullable) holds the CLI `--model` value applied to every run that uses this config when the agent has no explicit override. Agent runner decrypts at execution time and injects as env var. | instance-scoped |
 
 ## Key design decisions
 
@@ -63,7 +61,7 @@ Both agents and human users participate in companies as "members." The `members`
 table is the base identity table for all company participants:
 
 - `members(id UUID PK, company_id FK, member_type ENUM('agent','user'), display_name TEXT, created_at)`
-- `member_agents(id PK/FK → members.id, system_prompt, runtime_type, ...)` — agent-specific fields
+- `member_agents(id PK/FK → members.id, system_prompt, default_effort, ...)` — agent-specific fields
 - `member_users(id PK/FK → members.id, user_id FK → users.id, role, role_title, permissions_text, project_ids)` — user-in-company fields
 
 `members.id` is the shared UUID — it IS the agent or user-in-company ID. No
@@ -100,9 +98,7 @@ The `content_type` enum discriminates the shape:
 - `trace` → `{ "summary": "4 tool calls" }` (detail lives in `tool_calls` table)
 - `system` → `{ "text": "Agent disabled — budget limit reached" }`
 - `execution` → `{ "heartbeat_run_id", "agent_id", "agent_title", "status", "exit_code", "duration_ms", "stdout_preview" }` (auto-created on agent run completion)
-
-Live chat is displayed in a separate tab on the issue detail view,
-not as comments in the thread.
+- `action` → `{ "kind": "setup_repo", "approval_id": "..." }` — surfaces a board-required action inline on the ticket. Resolves by setting `chosen_option` to `{ status: 'complete', result: {...} }`. Currently only `setup_repo` is defined, used by the designated-repo gate.
 
 ### Atomic budget enforcement
 
@@ -163,6 +159,44 @@ The app layer performs a two-step validation before inserting:
 
 Short names are unique within a project and used for @-mentions in issue
 comments (`@frontend`, `@api`).
+
+### Designated repo immutability
+
+The first repo linked to a project is automatically set as
+`projects.designated_repo_id` and cannot be changed thereafter. The FK is
+`ON DELETE RESTRICT`, so deleting the designated repo directly is blocked at
+the DB level; cascade from `projects` still cleans it up cleanly because repos
+are deleted before the parent project row. The `DELETE /repos/:id` route also
+returns 409 `DESIGNATED_REPO_IMMUTABLE` to make the invariant explicit.
+
+Additional (non-designated) repos can be added at any time from project
+settings. They are cloned into the project container alongside the designated
+repo but have no special protection.
+
+### Setup-repo approval and action comment
+
+Projects start without a designated repo. When an agent with
+`member_agents.touches_code = true` is activated on an issue whose project
+still has `designated_repo_id IS NULL`, the job manager:
+
+1. Upserts a single pending `oauth_request` approval per `(company_id,
+   project_id)` with `payload.reason = 'designated_repo'`. A partial unique
+   index `idx_one_pending_repo_setup` dedupes concurrent runs.
+2. Inserts a comment of type `action` on the triggering issue with content
+   `{ kind: 'setup_repo', approval_id }`.
+3. Marks the wakeup `Deferred` with `payload.reason = 'awaiting_repo_setup'`.
+
+When the board drives the wizard to completion (via `POST /repos`):
+
+- The repo insert atomically sets `designated_repo_id` under a `FOR UPDATE`
+  lock on the project row.
+- Every pending `action` comment attached to this approval gets its
+  `chosen_option` set to `{ status: 'complete', result: {...} }`, and a
+  `system` comment is appended per affected issue.
+- The approval is resolved to `approved`.
+- The host workspace clone and container provisioning run post-commit.
+- Each deferred wakeup is re-enqueued as a fresh `Automation` wakeup with
+  `payload.reason = 'repo_setup_complete'`.
 
 ### SSH keys per company
 
@@ -353,6 +387,26 @@ records which agent type was used. This is for provenance tracking only — the
 system prompt is copied at creation time, giving each agent instance its own
 mutable copy.
 
+### Agent and team auto-descriptions
+
+Each agent has a `summary` (TEXT, ≤1000 chars) on `member_agents` — a short
+auto-generated description of the agent's role and capabilities (≤5 lines).
+Each company has a `team_summary` (TEXT, ≤4000 chars) on `companies` — a
+description of how the team collaborates (≤20 lines).
+
+**Pre-baked defaults:** Built-in agent types carry a `default_summary` on
+`agent_types`, loaded from committed source data at
+`packages/server/src/db/agent-summaries.json`. Company types carry a
+`default_team_summary` on `company_types`. These defaults are copied to
+`member_agents.summary` and `companies.team_summary` during company
+provisioning.
+
+**Runtime updates:** The CEO agent can regenerate descriptions at runtime by
+processing `description-update` issues (created in the Operations project).
+Two MCP tools — `set_agent_summary` and `set_team_summary` — write the new
+text directly to the database. Only agents and board members within the
+company can set agent summaries; only the CEO agent can set the team summary.
+
 ### Agent self-update of system prompts
 
 Agents can read and request updates to their own system prompts via the agent API:
@@ -391,19 +445,18 @@ the agent subprocess.
 ### Project documents
 
 Project documents (PRDs, technical specifications, implementation plans, research,
-UI design decisions, marketing plans) are stored as files in the `.dev/` folder
-of the project's designated repo worktree — not in the database. The API reads
-and writes these files directly on the filesystem at
-`~/.hezo/companies/{slug}/projects/{project}/{repo}/.dev/`.
-
-A project must have a `designated_repo_id` set for project docs to work. The API
-resolves the repo's worktree path and operates on `.dev/*.md` files within it.
+UI design decisions, marketing plans) are stored in the `project_docs` table,
+keyed by `(project_id, filename)`. Every write creates a row in
+`project_doc_revisions` for full revision history. Projects do not need a
+designated repo for project docs to work.
 
 PRD updates (`prd.md`) by agents require board approval — the agent's write
-creates an approval request instead of writing the file directly.
+creates an approval request instead of updating the document directly.
 
 The `{{project_docs_context}}` template variable in system prompts auto-injects
-all project documents for the current issue's project.
+all project documents for the current issue's project. Agents read and write
+docs via the `list_project_docs`, `read_project_doc`, and `write_project_doc`
+MCP tools.
 
 ### Knowledge base
 
@@ -425,26 +478,6 @@ and agent conventions. It is stored in the database like any other KB doc but
 also written to the project root filesystem (`AGENTS.md`) so that any coding
 agent (Claude Code, Codex, Gemini) automatically reads it. On every update to
 this KB doc, the file on disk is re-written.
-
-### Live chat (persistent per issue)
-
-`live_chats` stores a single persistent conversation per issue. There are no
-discrete "sessions" — each issue has one ongoing live chat from creation.
-Messages are stored in the `live_chat_messages` table, each with an author
-(`author_member_id` + `author_type`), text content, and optional metadata JSONB.
-
-Live chat is displayed in a dedicated **Live Chat tab** on the issue detail
-view — messages do not appear as comments in the Comments tab.
-
-The assigned agent is always a participant. Board members can @-mention any
-other agent to pull them into the conversation. Mentioned agents wake
-immediately (not on next heartbeat).
-
-Constraints:
-- One live chat per issue (auto-created with the issue)
-- An agent can only be active in one live chat at a time
-- Tool calls during live chat are captured in the transcript
-- Agents should post a summary of Q&A outcomes as a comment on the issue for the permanent record
 
 ### Connected platforms (Hezo Connect)
 
@@ -514,20 +547,16 @@ to another member (human or agent), or @-mention an agent in a comment to
 request specific help. When an agent is assigned, the standard agent execution
 flow applies.
 
-### Execution locks (read/write)
+### Execution locks (observational)
 
-The `execution_locks` table tracks issue work ownership with read/write semantics:
+The `execution_locks` table tracks which agents are currently running against an issue:
 - `issue_id` FK
 - `member_id` FK → members.id
-- `lock_type` TEXT — `'read'` or `'write'`
+- `lock_type` TEXT — retained from an earlier read/write design; every active lock is `'read'` under the current model
 - `locked_at` timestamp
 - `released_at` timestamp (soft delete)
 
-**Write locks** are exclusive — no other locks (read or write) can coexist. Used by agents doing implementation (Engineer, Architect, etc.).
-
-**Read locks** are shared — multiple readers can hold locks simultaneously, blocked only by write locks. Used by agents doing review (QA Engineer, Security Engineer, Coach).
-
-Lock type is determined automatically from agent slug (`READER_AGENT_SLUGS: coach, qa-engineer, security-engineer`) and wakeup context (issue_done trigger → read). If a lock can't be acquired, the wakeup is deferred.
+Locks are observational, not exclusive — multiple agents can run against the same issue concurrently, with one active lock row per agent. The only acquisition guard is per-agent-per-issue: a second wakeup for an agent that already holds an active lock on that issue is coalesced (deferred). This lets a comment that @-mentions several agents trigger concurrent runs while still driving the "currently running" display on the issue page.
 
 ### Issue dependencies
 
@@ -585,9 +614,49 @@ for continuity.
 
 ### Heartbeat runs
 
-`heartbeat_runs` stores one row per agent execution with full traceability:
-invocation source, status, timing, token usage, cost, log references,
-and retry tracking for orphan recovery.
+`heartbeat_runs` stores one row per agent execution with full traceability.
+Each row captures:
+
+- **Timing**: `started_at` (`NOT NULL DEFAULT now()`), `finished_at`, `status`
+  (`queued` → `running` → `succeeded` / `failed` / `cancelled` / `timed_out`),
+  `exit_code`.
+- **Invocation**: `invocation_command` is the exact CLI that was passed to
+  `docker exec` (with the agent JWT redacted to `Bearer ***`). `working_dir` is
+  the container path the exec was rooted at (normally the designated repo's
+  per-issue worktree, e.g. `/worktrees/<issue-identifier>/<repo-short-name>`).
+- **Logs**: `log_text` holds interleaved stdout and stderr captured from the
+  streaming Docker exec, capped at 1 MB (with a `...[truncated — log capped at
+  N bytes]` marker when exceeded). Stderr lines are prefixed `[stderr] ` so
+  consumers can tint them without needing a second column. The same stream is
+  broadcast live over the `project-runs:<projectId>` WebSocket room as each
+  chunk arrives, so a run's detail page and the associated issue page can
+  render output in real time.
+- **Usage**: `input_tokens`, `output_tokens`, `cost_cents`.
+- **Retry tracking**: `retry_of_run_id`, `process_loss_retry_count`,
+  `process_pid` — the orphan detector uses these to recover runs whose process
+  disappeared.
+
+### Workspaces, repos, and worktrees
+
+Each project has a single container and a per-project directory on disk that
+is bind-mounted into the container:
+
+- `<dataDir>/companies/<company-slug>/projects/<project-slug>/workspace/` ↔
+  `/workspace/` in the container. For every repo linked to the project,
+  `ensureProjectRepos` populates a subdirectory `<workspace>/<short-name>/`.
+  The repo-add route (`POST /repos`), container provision, and the agent
+  runner all call this helper, so the set of on-disk clones stays in sync
+  with the `repos` rows for the project.
+- `<dataDir>/.../worktrees/` ↔ `/worktrees/` in the container. For each issue
+  an agent works on, the runner creates `git worktree` directories under
+  `/worktrees/<issue-identifier>/<repo-short-name>/` on the branch
+  `hezo/<issue-identifier>`. Worktrees persist across runs on the same issue
+  so iterative work survives between invocations, and are torn down when the
+  issue transitions to a terminal status (`done`, `cancelled`, etc.) or its
+  repo is detached.
+- The agent's working directory resolves to the designated repo's worktree
+  when repos are present, otherwise falls back to `/workspace` with a warning
+  so that projects without a designated repo still run.
 
 ### KB document revisions
 

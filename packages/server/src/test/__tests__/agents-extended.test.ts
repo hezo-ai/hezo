@@ -39,34 +39,121 @@ afterAll(async () => {
 });
 
 describe('POST /companies/:companyId/agents/onboard', () => {
-	it('creates agent with disabled status when CEO and ops project exist', async () => {
-		// The Startup template seeds a CEO and an internal operations project,
-		// so onboarding should produce a disabled agent + an onboarding issue.
+	it('creates a hire approval and CEO ticket, but no agent yet', async () => {
 		const res = await app.request(`/api/companies/${companyId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				title: 'Data Engineer',
 				role_description: 'Builds and maintains data pipelines',
+				system_prompt: 'Draft prompt',
 			}),
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data).toHaveProperty('agent');
-		expect(body.data).toHaveProperty('issue');
-		const { agent, issue } = body.data;
-		expect(agent.title).toBe('Data Engineer');
-		expect(agent.slug).toBe('data-engineer');
-		expect(agent.admin_status).toBe('disabled');
-		// An onboarding issue should be created and assigned to the CEO
+		const { agent, issue, approval, bootstrap } = body.data;
+
+		expect(bootstrap).toBe(false);
+		expect(agent).toBeNull();
 		expect(issue).not.toBeNull();
 		expect(issue.title).toBe('Onboard new agent: Data Engineer');
-		expect(issue.priority).toBe('high');
-		expect(issue.labels).toContain('onboarding');
+		expect(issue.labels).toContain('hire');
+		expect(approval).not.toBeNull();
+		expect(approval.type).toBe('hire');
+		expect(approval.status).toBe('pending');
+		expect(approval.payload.title).toBe('Data Engineer');
+		expect(approval.payload.slug).toBe('data-engineer');
+		expect(approval.payload.system_prompt).toBe('Draft prompt');
+		expect(approval.payload.issue_id).toBe(issue.id);
+
+		// No member_agent should exist yet
+		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await agentsRes.json()).data;
+		expect(agents.find((a: Record<string, unknown>) => a.slug === 'data-engineer')).toBeUndefined();
 	});
 
-	it('returns agent and null issue when CEO is absent', async () => {
-		// Create a separate company with no template so no CEO is seeded
+	it('resolving the hire approval materializes the agent and closes the ticket', async () => {
+		const onboardRes = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				title: 'Payments Engineer',
+				role_description: 'Owns payments integration',
+				system_prompt: 'Draft prompt',
+				monthly_budget_cents: 7500,
+				heartbeat_interval_min: 45,
+			}),
+		});
+		const { approval, issue } = (await onboardRes.json()).data;
+
+		const resolveRes = await app.request(`/api/approvals/${approval.id}/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'approved', resolution_note: 'looks good' }),
+		});
+		expect(resolveRes.status).toBe(200);
+
+		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const created = (await agentsRes.json()).data.find(
+			(a: Record<string, unknown>) => a.slug === 'payments-engineer',
+		);
+		expect(created).toBeDefined();
+		expect(created.admin_status).toBe('enabled');
+		expect(created.system_prompt).toBe('Draft prompt');
+		expect(created.monthly_budget_cents).toBe(7500);
+		expect(created.heartbeat_interval_min).toBe(45);
+
+		const issueRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			headers: authHeader(token),
+		});
+		const updatedIssue = (await issueRes.json()).data;
+		expect(updatedIssue.status).toBe('done');
+	});
+
+	it('denying the hire approval leaves no agent behind', async () => {
+		const onboardRes = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Dropped Role', role_description: 'No go' }),
+		});
+		const { approval } = (await onboardRes.json()).data;
+
+		await app.request(`/api/approvals/${approval.id}/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'denied', resolution_note: 'not needed right now' }),
+		});
+
+		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const exists = (await agentsRes.json()).data.find(
+			(a: Record<string, unknown>) => a.slug === 'dropped-role',
+		);
+		expect(exists).toBeUndefined();
+	});
+
+	it('rejects a second pending hire for the same slug', async () => {
+		const first = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Growth Marketer', role_description: 'x' }),
+		});
+		expect(first.status).toBe(201);
+
+		const dup = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Growth Marketer', role_description: 'y' }),
+		});
+		expect(dup.status).toBe(409);
+	});
+
+	it('bootstrap: with no CEO, creates the agent enabled without an approval', async () => {
 		const typesRes = await app.request('/api/company-types', {
 			headers: authHeader(token),
 		});
@@ -81,14 +168,13 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 		});
 		const bareCompanyId = (await bareRes.json()).data.id;
 
-		// Terminate the CEO so hasCeo becomes false
+		// Disable the CEO so hasCeo becomes false
 		const agentsRes = await app.request(`/api/companies/${bareCompanyId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
 		const ceo = agents.find((a: Record<string, unknown>) => a.slug === 'ceo');
-
-		await app.request(`/api/companies/${bareCompanyId}/agents/${ceo.id}/terminate`, {
+		await app.request(`/api/companies/${bareCompanyId}/agents/${ceo.id}/disable`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
@@ -96,17 +182,14 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 		const res = await app.request(`/api/companies/${bareCompanyId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				title: 'Solo Agent',
-				role_description: 'Works independently',
-			}),
+			body: JSON.stringify({ title: 'Solo Agent', role_description: 'Works independently' }),
 		});
 		expect(res.status).toBe(201);
-		const body = await res.json();
-		const { agent, issue } = body.data;
-		// No CEO means agent should be enabled and no issue created
+		const { agent, issue, approval, bootstrap } = (await res.json()).data;
+		expect(bootstrap).toBe(true);
 		expect(agent.admin_status).toBe('enabled');
 		expect(issue).toBeNull();
+		expect(approval).toBeNull();
 	});
 
 	it('rejects onboard with missing title', async () => {
@@ -120,7 +203,7 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 		expect(body.error.code).toBe('INVALID_REQUEST');
 	});
 
-	it('rejects onboard with duplicate slug', async () => {
+	it('rejects onboard with duplicate slug against existing agent', async () => {
 		// CEO slug already exists from the Startup template
 		const res = await app.request(`/api/companies/${companyId}/agents/onboard`, {
 			method: 'POST',
@@ -130,26 +213,6 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 		expect(res.status).toBe(409);
 		const body = await res.json();
 		expect(body.error.code).toBe('CONFLICT');
-	});
-
-	it('respects optional fields passed to onboard', async () => {
-		const res = await app.request(`/api/companies/${companyId}/agents/onboard`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				title: 'ML Researcher',
-				role_description: 'Runs experiments',
-				system_prompt: 'You are an ML researcher.',
-				monthly_budget_cents: 5000,
-				heartbeat_interval_min: 30,
-			}),
-		});
-		expect(res.status).toBe(201);
-		const body = await res.json();
-		const { agent } = body.data;
-		expect(agent.system_prompt).toBe('You are an ML researcher.');
-		expect(agent.monthly_budget_cents).toBe(5000);
-		expect(agent.heartbeat_interval_min).toBe(30);
 	});
 
 	it('requires authentication', async () => {
@@ -193,14 +256,13 @@ describe('agent listing with admin_status filter', () => {
 	});
 
 	it('returns empty array when filter matches no agents', async () => {
-		const res = await app.request(`/api/companies/${companyId}/agents?admin_status=terminated`, {
+		const res = await app.request(`/api/companies/${companyId}/agents?admin_status=disabled`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		// No terminated agents in a fresh company
 		expect(Array.isArray(body.data)).toBe(true);
-		expect(body.data.every((a: Record<string, unknown>) => a.admin_status === 'terminated')).toBe(
+		expect(body.data.every((a: Record<string, unknown>) => a.admin_status === 'disabled')).toBe(
 			true,
 		);
 	});
@@ -342,6 +404,72 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 			body: JSON.stringify({ role_description: 'Ghost agent' }),
 		});
 		expect(res.status).toBe(404);
+	});
+
+	it('sets and clears model_override_provider + model_override_model', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const agent = agents.find((a: Record<string, unknown>) => a.slug === 'architect');
+
+		const set = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model_override_provider: 'openai',
+				model_override_model: 'gpt-5-mini',
+			}),
+		});
+		expect(set.status).toBe(200);
+		const setBody = await set.json();
+		expect(setBody.data.model_override_provider).toBe('openai');
+		expect(setBody.data.model_override_model).toBe('gpt-5-mini');
+
+		const clear = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ model_override_provider: null }),
+		});
+		expect(clear.status).toBe(200);
+		const clearBody = await clear.json();
+		expect(clearBody.data.model_override_provider).toBeNull();
+		expect(clearBody.data.model_override_model).toBeNull();
+	});
+
+	it('rejects an unknown provider in model_override_provider', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agent = (await listRes.json()).data[0];
+
+		const res = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ model_override_provider: 'nope' }),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it('rejects a model without an existing or new provider', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		// Pick an agent with no override set; ensure cleared first.
+		const agent = agents[0];
+		await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ model_override_provider: null }),
+		});
+
+		const res = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ model_override_model: 'gpt-5' }),
+		});
+		expect(res.status).toBe(400);
 	});
 });
 

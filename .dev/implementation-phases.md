@@ -189,7 +189,10 @@ Screens:
 
 ## Phase 4: Agent Execution
 
-**Status:** Done (2026-04)
+**Status:** Done (2026-04) — amended 2026-04-16 with in-container MCP wiring,
+per-issue worktrees on every linked repo, realtime run-log streaming, and the
+`started_at` / `invocation_command` / `log_text` / `working_dir` columns on
+`heartbeat_runs`.
 
 **Goal:** Agents can actually run. Docker containers per project, subprocesses, heartbeats, worktrees, budget enforcement.
 
@@ -197,10 +200,28 @@ Screens:
 
 Backend:
 - Project Docker container lifecycle (provision, start, stop, rebuild via Docker Engine API)
-  - One container per project (all repos checked out inside)
+  - One container per project (all project repos checked out at
+    `/workspace/<repo-short-name>/` inside; kept in sync by
+    `ensureProjectRepos` on provision, on repo attach, and before every run)
   - Dev port forwarding for preview access
 - Agent subprocess management (`claude_code` adapter: subprocess in project container via `docker exec`)
-- Git worktrees for parallel agent work
+- In-container MCP wiring: the runner passes `--mcp-config <json>` and
+  `--strict-mcp-config` to Claude Code for each run, pointing at
+  `http://host.docker.internal:<serverPort>/mcp` with a per-run JWT whose
+  `run_id` claim is the `heartbeat_runs.id` for that run. The server validates
+  each request against the run row's status, so the token is automatically
+  rejected once the run finalizes.
+- Git worktrees per issue on every linked repo
+  (`/worktrees/<issue-identifier>/<repo-short-name>/` on branch
+  `hezo/<issue-identifier>`). The agent's working directory resolves to the
+  designated repo's worktree; other repos sit alongside. Worktrees persist
+  across runs on the same issue and are removed when the issue transitions to
+  a terminal status or its repo is detached.
+- Streaming run logs: Docker exec output is demuxed per-frame, broadcast over
+  the `project-runs:<projectId>` WebSocket room as `run_log` messages, and
+  accumulated into `heartbeat_runs.log_text` (capped at 1 MB with a truncation
+  marker). The exact CLI is persisted as `invocation_command` with the JWT
+  redacted.
 - Heartbeat engine: wakeup queue, coalescing, timer ticks
 - Issue work ownership (claim on start, release on complete/reassign/pause)
 - Orphan detection and auto-retry
@@ -238,7 +259,7 @@ UI:
 
 **Status:** Done (2026-04)
 
-**Goal:** KB revisions, audit log, live queries, WebSocket events, live chat, previews. Migrate frontend from polling to real-time.
+**Goal:** KB revisions, audit log, live queries, WebSocket events, previews. Migrate frontend from polling to real-time.
 
 **What's included:**
 
@@ -248,15 +269,13 @@ Backend:
 - Project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan)
 - Audit log (append-only, never updated/deleted)
 - PGlite live queries for frontend data reactivity (`live.query()`, `live.changes()`)
-- WebSocket real-time events (agent lifecycle, container status, live chat)
-- Persistent live chat (per-issue, @-mention agents)
+- WebSocket real-time events (agent lifecycle, container status)
 - HTML previews (agent writes to workspace volume, served via proxy)
 - Structured options (clickable choice cards)
 
 UI:
 - WebSocket connection from browser to server
 - WebSocket real-time migration — replace TanStack Query polling with WebSocket-triggered cache invalidation for all entity types
-- Live Chat panel on issue detail — real-time agent conversation, session persistence across reloads
 - Tool call trace rendering — expandable trace blocks in issue comments
 - HTML preview rendering — iframe or proxy route for agent-generated previews
 - Audit log viewer in Settings
@@ -270,7 +289,6 @@ UI:
 - Audit log entries viewable for all significant actions
 - Tool call traces render inline in issue comments
 - WebSocket events fire on agent status changes — UI updates in real-time
-- Live chat session with an agent works in real-time, persists across page reloads
 - Preview URL serves agent-generated HTML, accessible from project detail
 - Structured options render as clickable choice cards
 
@@ -366,7 +384,7 @@ Backend:
 
 Frontend:
 - Company icon rail (left sidebar) with home, company avatars, theme switcher, inbox badge
-- Unified side menu: Inbox, Issues, Projects, Agents, Org Chart, Knowledge Base, Settings
+- Unified side menu grouping: Inbox, Work (Issues, Goals), Projects (header links to projects list), Team (header links to org chart), Resources (Knowledge base, Settings, Audit log)
 - Removed top header with breadcrumbs
 - Tab-based project view (Issues, Agents, Container, Settings) replacing project sidebar
 - Full-page Inbox route for pending approvals
@@ -453,34 +471,65 @@ UI:
 **What's included:**
 
 Backend:
-- `ai_provider_configs` table: per-company AI provider credential storage
+- `ai_provider_configs` table: instance-level AI provider credential storage, encrypted credential inlined on each row
 - `ai_provider` enum: anthropic, openai, google, moonshot
 - `ai_auth_method` enum: api_key, oauth_token (subscription mode)
 - `kimi` added to `agent_runtime` enum
-- CRUD routes for AI provider configs (`/api/companies/:companyId/ai-providers`)
+- Instance-level CRUD routes for AI provider configs (`/api/ai-providers`). Mutations require superuser.
 - Provider key verification endpoint (lightweight API call to provider)
 - AI provider status endpoint for setup detection
 - Agent runner injects provider-specific env vars per exec (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
 - Agent runner dispatches correct CLI command per runtime type (claude, codex, gemini, kimi)
 - Connect OAuth providers for Anthropic, OpenAI, Google (subscription token flow)
-- OAuth callback creates ai_provider_configs with auth_method=oauth_token
+- OAuth callback stores AI provider tokens with auth_method=oauth_token; OAuth state carries only `ai_provider` (no company_id)
 - Dockerfile.agent-base with all 4 AI CLIs pre-installed
 
 UI:
-- AI Providers settings section with per-provider cards
+- Dedicated `/settings/ai-providers` route with per-provider cards
 - Manual API key entry (password input, format validation)
 - OAuth connection for subscription mode (Anthropic, OpenAI, Google)
-- Blocking setup modal after company creation (requires at least one provider)
-- Dynamic detection — modal re-checks on every page load, no stale state
+- Each provider card renders every stored config row (API key and/or OAuth subscription) and exposes add buttons only for auth methods not yet configured, so an API key and an OAuth subscription can coexist for the same provider. A `Default` badge and `Set default` button let the operator pick which config the agent runner uses.
+- Full-screen setup gate rendered by the root shell immediately after master-key unlock, before the app is interactive. Blocks company creation until at least one provider is active. Re-raises if the last provider is deleted.
 
 **How to test:**
-- Create company via browser — blocking modal appears
-- Enter API key in modal — modal closes, workspace accessible
-- Settings > AI Providers shows configured providers with status badges
+- Fresh instance → enter master key → gate appears before any company UI is reachable
+- Enter API key in gate → gate drops, company list visible, create company succeeds
+- `/settings/ai-providers` shows configured providers with status badges
 - Verify button tests key against provider API
+- Delete the last key → gate re-appears over whichever route you were on
 - Agent runner injects correct env var based on runtime type and auth method
 
 **Depends on:** Phase 7
+
+---
+
+## Phase 7.5.1: Model selection
+
+**Status:** Done (2026-04-21)
+
+**Goal:** Let operators pick a specific model per provider config and per agent, instead of always using each CLI's built-in default.
+
+**What's included:**
+
+Backend:
+- `ai_provider_configs.default_model` column (nullable TEXT) — the model passed to `--model` when this config is the one the runner selects.
+- `member_agents.model_override_provider` + `member_agents.model_override_model` columns with a `CHECK` ensuring the model isn't set without a provider.
+- `GET /api/ai-providers/:configId/models` — superuser only; fetches models live from the provider (reusing the URL + headers from `AI_PROVIDER_INFO.verifyEndpoint`), filters to chat models, normalises to `{ id, label }[]`. No server cache — TanStack Query caches on the client.
+- `PATCH /api/ai-providers/:configId` — superuser only; accepts `{ default_model: string | null }`.
+- `PATCH /api/companies/:companyId/agents/:agentId` accepts `model_override_provider` + `model_override_model` alongside existing fields; clearing the provider also clears the model.
+- `getProviderCredentialAndModel` returns config + credential + default model together so the runner does it in one query.
+- Runner precedence: `agent.model_override_provider` wins over `resolveRuntimeForIssue`; `agent.model_override_model` wins over `config.default_model`; when nothing is set, no `--model` flag is added (matching prior behaviour).
+
+UI:
+- On `/settings/ai-providers`, each config row has a "Default model" dropdown that lazy-loads the provider's catalog on focus and persists the choice.
+- Agent settings page has a "Model override" section with provider + model selects. The provider select lists only providers with an active config; the model select populates from that provider's active config. "Use instance default" clears both.
+
+**How to test:**
+- Set a default model on a provider config in `/settings/ai-providers`, reload, confirm persistence.
+- On an agent settings page pick a provider + model, save, reload; the selects show the stored values.
+- Trigger an agent run — the `heartbeat_runs.invocation_command` row contains `--model <resolved>` (or no `--model` when neither is set).
+
+**Depends on:** Phase 7.5
 
 ---
 
@@ -652,6 +701,93 @@ UI:
 
 ---
 
+## Phase 12: Agent & Team Auto-Descriptions
+
+**Status:** Done (2026-04-17)
+
+**Goal:** Auto-generated descriptions for agents and teams — pre-baked defaults for built-in types, runtime regeneration via CEO-managed tickets.
+
+**What's included:**
+
+Backend:
+- `member_agents.summary` (TEXT) — agent description, ≤5 lines / 1000 chars
+- `companies.team_summary` (TEXT) — team collaboration description, ≤20 lines / 4000 chars
+- `agent_types.default_summary` (TEXT) — pre-generated defaults loaded from `packages/server/src/db/agent-summaries.json`
+- `company_types.default_team_summary` (TEXT) — pre-generated team defaults
+- Summaries copied to agents and company during provisioning
+- `set_agent_summary` MCP tool — any agent or board member in the company can set an agent's summary
+- `set_team_summary` MCP tool — CEO agent only, sets the company team summary
+- `description-update` label convention: issue created in Operations project, assigned to CEO, triggers regeneration
+
+**How to test:**
+- Create a company from built-in template — agents have pre-baked summaries, company has team summary
+- CEO processes a `description-update` issue — calls MCP tools to update summaries
+- Non-CEO agent cannot call `set_team_summary` (rejected)
+- `bun run test --skip-e2e` passes
+
+**Depends on:** Phase 11.5
+
+---
+
+## Phase 13: Designated Repo Setup via OAuth
+
+**Status:** In progress
+
+**Goal:** Drive the board through a Hezo Connect GitHub OAuth dance when a code-touching agent (`member_agents.touches_code = true`) starts work on a repo-less project. The flow either creates a new GitHub repo under a selected org or links an existing accessible one, and the first repo becomes the designated repo (immutable thereafter).
+
+**What's included:**
+
+Backend:
+- `CommentContentType.Action` + `setup_repo` action comment kind for in-ticket board actions
+- Partial unique index `idx_one_pending_repo_setup` dedupes concurrent pending approvals per `(company, project)`
+- `projects.designated_repo_id` FK switched to `ON DELETE RESTRICT` (designated repo can't be deleted directly)
+- `DELETE /repos/:id` returns 409 `DESIGNATED_REPO_IMMUTABLE` for the designated repo
+- `POST /repos` accepts `mode: 'link' | 'create'`; `mode=create` POSTs to GitHub's `/user/repos` or `/orgs/:owner/repos` after re-validating `owner` against the user's accessible orgs; first-repo-wins designation happens atomically under a `FOR UPDATE` project lock
+- `GET /github/orgs` and `GET /github/repos?owner=&query=` proxy GitHub via the stored OAuth token
+- `packages/server/src/services/repo-setup.ts` — `ensureRepoSetupAction` (approval + action comment upsert) and `finalizePendingRepoSetup` (sweep comments, resolve approval, enqueue resume wakeups)
+- Job manager pre-run gate: `member_agents.touches_code = true` + `designated_repo_id IS NULL` → defer wakeup, skip execution lock. The flag is seeded from `agent_types.touches_code` (true for engineer / architect / qa-engineer / devops-engineer / security-engineer / ui-designer) and exposed per-agent on the hire form and agent settings so custom agents can declare the capability.
+- OAuth callback idempotency: SSH key regen/upload is skipped when the key is already registered
+- Post-setup: `ensureProjectRepos` + `provisionContainer` run before `Automation` resume wakeups are enqueued
+
+Frontend:
+- `RepoSetupWizard` modal: step 1 connects GitHub via existing Connect flow; step 2 org picker + `Create new` (default) / `Select existing` tabs with private/public toggle
+- `ActionComment` renderer for `action` comments (button while pending, ✓ success strip once resolved)
+- Project settings: wizard reused for "Add Repo", "Designated" badge, lock icon replacing trash on the designated repo
+- `useGithubOrgs` / `useGithubRepos` hooks
+
+Tests:
+- Local GitHub simulator in `packages/server/src/test/helpers/github-sim.ts` — Hono app on port 0 implementing the subset of GitHub API we call plus Connect's token-exchange endpoint
+- Integration: gate behavior (approval + comment + deferred wakeup, no execution lock); concurrent runs share one approval; immutability on delete; `mode=create` owner check; first-repo auto-designation race; `finalizePendingRepoSetup` idempotency; OAuth callback SSH-key idempotency; authorization on all new endpoints
+- E2E: full wizard flow end-to-end against the simulator, both `Create new` and `Select existing`, plus the disabled-delete path
+
+Docs:
+- `.dev/spec.md`, `.dev/schema.md`, `.dev/api.md` updated to reflect the new flow and invariants
+- All six code-touching agent role docs note the auto-pause behavior
+
+**How to test:**
+- Create a company + project with no repo, assign an engineer to an issue, see the action comment + inbox approval, drive the wizard with the GitHub simulator (integration) or a real local Connect + GitHub account (manual)
+- Verify the cloned repo appears at `/workspace/{short_name}/` inside the project container and a worktree is created on the engineer's resume
+- Verify `DELETE` on the designated repo returns 409
+- `bun run test` and `bun run test --e2e` pass
+
+**Depends on:** Phase 11.5, Phase 12
+
+---
+
+## Phase 13 — Orphan Recovery & Container State Propagation
+
+**Status:** Done — 2026-04-20
+
+In-process **live-run registry** keyed by `heartbeat_runs.id` becomes the single source of truth for "this run is alive." Three reconciliation paths converge on one outcome (run failed, agent reset to idle, locks released, broadcasts emitted, retry wakeup created): startup reconciliation (all DB `running`/`queued` rows are necessarily orphaned), the orphan-detection cron (DB rows whose id isn't in the live registry, after a 30s safety window), and container-state transitions (any project leaving `running` fans out to fail every in-flight run for that project's issues).
+
+`syncContainerStatus` now distinguishes a real terminal signal (HTTP 404 from `docker inspect` → `error` + `container_id` cleared) from a transport error (daemon unreachable / EPIPE → status untouched, retry next tick). The container-sync cron defers its first tick until `docker.ping()` succeeds, killing the startup-race that previously soft-bricked projects on every dev-server restart. Startup reconciliation also self-heals projects already stuck in `error` whose canonical container `hezo-<companySlug>-<projectSlug>` is alive in Docker, by re-attaching to it.
+
+After successful container provisioning or rebuild, runs that died with `error='container_error'` are automatically re-queued via `container_recovery` wakeups (capped at 50 per project, 24h lookback). Runs that died with `error='container_stopped'` are intentionally left alone — those came from a user-initiated stop where surprise auto-resume would be worse than a missed retry. Sentinel error strings: `container_error`, `container_stopped`, `Orphaned: process no longer running`, `Server restarted while run in flight`.
+
+**Verification:** `bun run typecheck` passes; full `bun run test --skip-e2e` passes (87/87 test files); manual cycle of `ctrl-c` / `bun run dev` no longer produces error banners or stuck "Running" sidebar badges.
+
+---
+
 ## Phase Summary
 
 | Phase | Focus | Key Deliverable |
@@ -662,7 +798,7 @@ UI:
 | 3 | GitHub Integration | OAuth flow, token storage, repo validation and cloning |
 | 3.5 | UI Foundation + Core Screens | React app with all CRUD screens for Phases 0–3 APIs, master key gate, board inbox |
 | 4 | Agent Execution + UI | Docker per project, subprocesses, heartbeats, budgets + agent status UI, cost views |
-| 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack Query, live chat, real-time updates |
+| 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack Query, real-time updates |
 | 6 | MCP + Skill File + Binary Build | MCP endpoint, skill file + `bun build --compile` single binary, Playwright E2E |
 | 6.5 | Auth + Session Compaction | Custom OAuth auth (board members only), session compaction + login page, account settings |
 | 6.6 | UI Redesign + Agent Onboarding | Company icon rail, unified side menu, tab-based project view, agent onboarding via CEO |
@@ -673,5 +809,6 @@ UI:
 | 10 | Deploy + Messaging + UI | Staging/production pipeline, Slack + Telegram + deploy status, notification preferences |
 | 11 | Agent Execution Logs | Execution comments on issues, agent Executions/Settings tabs, run detail pages |
 | 11.5 | Per-Run Reasoning Effort | `agent_effort` enum, per-agent `default_effort`, per-comment override, runtime-native knobs (ultrathink, model_reasoning_effort) |
+| 12 | Agent & Team Auto-Descriptions | Pre-baked summaries for built-in types, runtime regeneration via CEO tickets, `set_agent_summary` / `set_team_summary` MCP tools |
 
 Each phase produces a testable increment. Phase 0 can be built and verified in isolation. Phases 1–3 give a working API server testable entirely with curl. Phase 3.5 makes everything browser-testable. From Phase 4 onward, every phase includes UI alongside backend so new functionality is always manually testable in the browser.

@@ -1,10 +1,13 @@
-import { AgentEffort } from '@hezo/shared';
-import { createFileRoute } from '@tanstack/react-router';
+import { AgentEffort, CEO_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 import { AgentStatusLabel } from '../../../../components/agent-status-label';
 import { type CommentData, CommentRenderer } from '../../../../components/comment-renderers';
-import { LiveChatPanel } from '../../../../components/live-chat-panel';
+import { MarkdownProse } from '../../../../components/markdown-prose';
 import { Avatar, avatarColorFromString } from '../../../../components/ui/avatar';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
@@ -17,6 +20,7 @@ import {
 	useDeleteIssue,
 	useIssue,
 	useIssueDependencies,
+	useIssues,
 	useRemoveDependency,
 	useUpdateIssue,
 } from '../../../../hooks/use-issues';
@@ -51,9 +55,27 @@ const priorityColors: Record<string, string> = {
 
 function IssueDetailPage() {
 	const { companyId, issueId } = Route.useParams();
+	const navigate = useNavigate();
 	const { data: issue, isLoading } = useIssue(companyId, issueId);
+
+	useEffect(() => {
+		if (!issue?.identifier) return;
+		const friendly = issue.identifier.toLowerCase();
+		if (UUID_RE.test(issueId) && issueId !== friendly) {
+			navigate({
+				to: '/companies/$companyId/issues/$issueId',
+				params: { companyId, issueId: friendly },
+				replace: true,
+			});
+		}
+	}, [issue?.identifier, issueId, companyId, navigate]);
 	const { data: comments } = useComments(companyId, issueId);
 	const { data: deps } = useIssueDependencies(companyId, issueId);
+	const { data: subIssues } = useIssues(
+		companyId,
+		issue?.id ? { parent_issue_id: issue.id } : undefined,
+		{ enabled: !!issue?.id },
+	);
 	const { data: agents } = useAgents(companyId);
 	const { data: lock } = useExecutionLock(companyId, issueId);
 	const updateIssue = useUpdateIssue(companyId, issueId);
@@ -67,7 +89,7 @@ function IssueDetailPage() {
 	const [commentEffort, setCommentEffort] = useState<'' | AgentEffort>('');
 	const [subIssueTitle, setSubIssueTitle] = useState('');
 	const [showSubForm, setShowSubForm] = useState(false);
-	const [activeTab, setActiveTab] = useState<'comments' | 'chat'>('comments');
+	const [subIssuesOpen, setSubIssuesOpen] = useState(false);
 	const [editingSummary, setEditingSummary] = useState(false);
 	const [summaryText, setSummaryText] = useState('');
 	const [editingRules, setEditingRules] = useState(false);
@@ -87,6 +109,10 @@ function IssueDetailPage() {
 	}, [assigneeOpen]);
 
 	const assignedAgent = agents?.find((a) => a.id === issue?.assignee_id);
+	const isOperationsProject = issue?.project_slug === OPERATIONS_PROJECT_SLUG;
+	const assigneeOptions = agents
+		?.filter((a) => a.admin_status !== 'disabled')
+		.filter((a) => !isOperationsProject || a.slug === CEO_AGENT_SLUG);
 
 	if (isLoading || !issue)
 		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;
@@ -122,7 +148,15 @@ function IssueDetailPage() {
 						{issue.status.replace('_', ' ')}
 					</Badge>
 					<Badge color={priorityColors[issue.priority] as 'neutral'}>{issue.priority}</Badge>
-					{issue.project_name && <Badge color="info">{issue.project_name}</Badge>}
+					{issue.project_name && issue.project_slug && (
+						<Link
+							to="/companies/$companyId/projects/$projectId"
+							params={{ companyId, projectId: issue.project_slug }}
+							className="hover:opacity-80 transition-opacity"
+						>
+							<Badge color="info">{issue.project_name}</Badge>
+						</Link>
+					)}
 				</div>
 
 				<div className="flex flex-wrap gap-1.5 mb-5">
@@ -151,112 +185,101 @@ function IssueDetailPage() {
 							>
 								<span className="w-2 h-2 rounded-full bg-accent-blue animate-pulse" />
 								<span className="text-accent-blue-text font-medium">{l.member_name}</span>
-								<span className="text-text-muted">
-									{l.lock_type === 'write' ? 'is working on this issue' : 'is reviewing this issue'}
-								</span>
+								<span className="text-text-muted">is running on this issue</span>
 							</div>
 						))}
 					</div>
 				)}
 
-				<div className="bg-bg-subtle rounded-radius-md p-3 mb-5 text-[13px] text-text-muted leading-relaxed">
-					<div className="flex items-center justify-between mb-1">
-						<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
-							Progress Summary
-						</span>
-						{!editingSummary && (
-							<button
-								type="button"
-								onClick={() => {
-									setSummaryText(issue.progress_summary ?? '');
-									setEditingSummary(true);
-								}}
-								className="text-[11px] text-text-subtle hover:text-text"
-							>
-								Edit
-							</button>
-						)}
-					</div>
-					{editingSummary ? (
-						<div className="flex flex-col gap-2">
-							<Textarea
-								value={summaryText}
-								onChange={(e) => setSummaryText(e.target.value)}
-								className="min-h-[60px]"
-							/>
-							<div className="flex gap-2 justify-end">
-								<Button size="sm" variant="secondary" onClick={() => setEditingSummary(false)}>
-									Cancel
-								</Button>
-								<Button
-									size="sm"
-									onClick={() => {
-										updateIssue.mutate({
-											progress_summary: summaryText || null,
-										});
-										setEditingSummary(false);
-									}}
-								>
-									Save
-								</Button>
-							</div>
-						</div>
-					) : (
-						<span>{issue.progress_summary || 'No progress summary yet.'}</span>
-					)}
-				</div>
-
-				<div className="bg-bg-subtle rounded-radius-md p-3 mb-5 text-[13px] text-text-muted leading-relaxed border-l-2 border-accent-blue">
-					<div className="flex items-center justify-between mb-1">
-						<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
-							Rules
-						</span>
-						{!editingRules && (
-							<button
-								type="button"
-								onClick={() => {
-									setRulesText(issue.rules ?? '');
-									setEditingRules(true);
-								}}
-								className="text-[11px] text-text-subtle hover:text-text"
-							>
-								Edit
-							</button>
-						)}
-					</div>
-					{editingRules ? (
-						<div className="flex flex-col gap-2">
-							<Textarea
-								value={rulesText}
-								onChange={(e) => setRulesText(e.target.value)}
-								placeholder="e.g., Consult the architect before making changes..."
-								className="min-h-[60px]"
-							/>
-							<div className="flex gap-2 justify-end">
-								<Button size="sm" variant="secondary" onClick={() => setEditingRules(false)}>
-									Cancel
-								</Button>
-								<Button
-									size="sm"
-									onClick={() => {
-										updateIssue.mutate({ rules: rulesText || null });
-										setEditingRules(false);
-									}}
-								>
-									Save
-								</Button>
-							</div>
-						</div>
-					) : (
-						<span>{issue.rules || 'No rules set.'}</span>
-					)}
-				</div>
-
 				{issue.description && (
-					<p className="text-[13px] text-text-muted mb-5 whitespace-pre-wrap leading-relaxed">
-						{issue.description}
-					</p>
+					<div
+						className="mb-5 rounded-md border border-border bg-bg-elevated overflow-hidden"
+						data-testid="issue-description-card"
+					>
+						<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-muted">
+							<span className="text-xs font-medium text-text-muted">Description</span>
+						</div>
+						<div className="px-3 py-2.5">
+							<MarkdownProse testId="issue-description">{issue.description}</MarkdownProse>
+						</div>
+					</div>
 				)}
+
+				{/* Sub-issues */}
+				<div
+					className="mb-5 rounded-md border border-border overflow-hidden"
+					data-testid="sub-issues-card"
+				>
+					<div className="flex items-center px-3 py-2 bg-bg-muted">
+						<button
+							type="button"
+							onClick={() => setSubIssuesOpen((o) => !o)}
+							className="flex items-center gap-2 flex-1 text-left cursor-pointer"
+							data-testid="sub-issues-toggle"
+							aria-expanded={subIssuesOpen}
+						>
+							<ChevronDown
+								className={`w-3.5 h-3.5 text-text-subtle transition-transform ${
+									subIssuesOpen ? '' : '-rotate-90'
+								}`}
+							/>
+							<span className="text-xs font-medium text-text-muted">Sub-issues</span>
+							<span className="bg-bg-subtle px-[7px] py-px rounded-full text-[11px] text-text-muted">
+								{subIssues?.data.length ?? 0}
+							</span>
+						</button>
+						<button
+							type="button"
+							onClick={() => {
+								setSubIssuesOpen(true);
+								setShowSubForm((s) => !s);
+							}}
+							className="text-[11px] text-text-subtle hover:text-text flex items-center gap-1 cursor-pointer"
+							data-testid="sub-issues-add"
+						>
+							<Plus className="w-3 h-3" /> Add
+						</button>
+					</div>
+					{subIssuesOpen && (
+						<div
+							className="px-3 py-2.5 flex flex-col gap-1.5 border-t border-border"
+							data-testid="sub-issues-list"
+						>
+							{showSubForm && (
+								<form onSubmit={handleSubIssue} className="flex gap-2 mb-1">
+									<input
+										value={subIssueTitle}
+										onChange={(e) => setSubIssueTitle(e.target.value)}
+										placeholder="Sub-issue title"
+										className="flex-1 rounded-radius-md border border-border bg-bg px-3 py-1.5 text-[13px] text-text outline-none focus:border-border-hover"
+										data-testid="sub-issue-title-input"
+									/>
+									<Button type="submit" size="sm" disabled={!subIssueTitle.trim()}>
+										Create
+									</Button>
+								</form>
+							)}
+							{(subIssues?.data.length ?? 0) === 0 && !showSubForm && (
+								<span className="text-[13px] text-text-muted">No sub-issues.</span>
+							)}
+							{subIssues?.data.map((s) => (
+								<Link
+									key={s.id}
+									to="/companies/$companyId/issues/$issueId"
+									params={{ companyId, issueId: s.identifier.toLowerCase() }}
+									className="flex items-center gap-2 text-[13px] hover:bg-bg-subtle rounded px-2 py-1"
+									data-testid="sub-issue-item"
+								>
+									<Badge color={statusColors[s.status] as 'neutral'}>
+										{s.status.replace('_', ' ')}
+									</Badge>
+									<span className="font-mono text-xs text-text-muted">{s.identifier}</span>
+									<span className="truncate">{s.title}</span>
+								</Link>
+							))}
+						</div>
+					)}
+				</div>
 
 				{/* Blocked by */}
 				{(deps?.length || 0) > 0 && (
@@ -287,134 +310,187 @@ function IssueDetailPage() {
 					</div>
 				)}
 
-				{/* Comments / Chat tabs */}
+				{/* Comments */}
 				<div className="border-t border-border pt-4">
-					<div className="flex border-b border-border mb-4">
-						<button
-							type="button"
-							onClick={() => setActiveTab('comments')}
-							className={`px-4 py-2 text-[13px] border-b-2 transition-colors ${
-								activeTab === 'comments'
-									? 'text-text font-medium border-text'
-									: 'text-text-muted border-transparent hover:text-text'
-							}`}
-						>
-							Comments
-							<span className="ml-1.5 bg-bg-subtle px-[7px] py-px rounded-full text-[11px] font-normal">
-								{comments?.length ?? 0}
-							</span>
-						</button>
-						<button
-							type="button"
-							onClick={() => setActiveTab('chat')}
-							className={`px-4 py-2 text-[13px] border-b-2 transition-colors ${
-								activeTab === 'chat'
-									? 'text-text font-medium border-text'
-									: 'text-text-muted border-transparent hover:text-text'
-							}`}
-						>
-							Live chat
-						</button>
+					<div className="flex items-center gap-1.5 mb-4">
+						<h3 className="text-[13px] text-text font-medium">Comments</h3>
+						<span className="bg-bg-subtle px-[7px] py-px rounded-full text-[11px] text-text-muted">
+							{comments?.length ?? 0}
+						</span>
 					</div>
 
-					{activeTab === 'comments' ? (
-						<>
-							<div className="flex flex-col gap-4 mb-4">
-								{comments?.map((c) => (
-									<div key={c.id} className="flex gap-2.5">
-										<Avatar
-											initials={c.author_name?.slice(0, 2) ?? '??'}
-											size="sm"
-											color={avatarColorFromString(c.author_name ?? 'unknown')}
-										/>
-										<div className="flex-1 min-w-0">
-											<div className="flex items-center gap-2 mb-1">
-												<span className="text-xs font-medium">{c.author_name}</span>
-												<span className="text-[11px] text-text-subtle">
-													{new Date(c.created_at).toLocaleString()}
-												</span>
-											</div>
+					<div
+						data-testid="pinned-progress-summary"
+						className="bg-bg-subtle rounded-radius-md p-3 mb-3 text-[13px] text-text-muted leading-relaxed"
+					>
+						<div className="flex items-center justify-between mb-1">
+							<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
+								Progress Summary
+							</span>
+							{!editingSummary && (
+								<button
+									type="button"
+									onClick={() => {
+										setSummaryText(issue.progress_summary ?? '');
+										setEditingSummary(true);
+									}}
+									className="text-[11px] text-text-subtle hover:text-text"
+								>
+									Edit
+								</button>
+							)}
+						</div>
+						{editingSummary ? (
+							<div className="flex flex-col gap-2">
+								<Textarea
+									value={summaryText}
+									onChange={(e) => setSummaryText(e.target.value)}
+									className="min-h-[60px]"
+								/>
+								<div className="flex gap-2 justify-end">
+									<Button size="sm" variant="secondary" onClick={() => setEditingSummary(false)}>
+										Cancel
+									</Button>
+									<Button
+										size="sm"
+										onClick={() => {
+											updateIssue.mutate({
+												progress_summary: summaryText || null,
+											});
+											setEditingSummary(false);
+										}}
+									>
+										Save
+									</Button>
+								</div>
+							</div>
+						) : (
+							<span>{issue.progress_summary || 'No progress summary yet.'}</span>
+						)}
+					</div>
+
+					<div
+						data-testid="pinned-rules"
+						className="bg-bg-subtle rounded-radius-md p-3 mb-5 text-[13px] text-text-muted leading-relaxed border-l-2 border-accent-blue"
+					>
+						<div className="flex items-center justify-between mb-1">
+							<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
+								Rules
+							</span>
+							{!editingRules && (
+								<button
+									type="button"
+									onClick={() => {
+										setRulesText(issue.rules ?? '');
+										setEditingRules(true);
+									}}
+									className="text-[11px] text-text-subtle hover:text-text"
+								>
+									Edit
+								</button>
+							)}
+						</div>
+						{editingRules ? (
+							<div className="flex flex-col gap-2">
+								<Textarea
+									value={rulesText}
+									onChange={(e) => setRulesText(e.target.value)}
+									placeholder="e.g., Consult the architect before making changes..."
+									className="min-h-[60px]"
+								/>
+								<div className="flex gap-2 justify-end">
+									<Button size="sm" variant="secondary" onClick={() => setEditingRules(false)}>
+										Cancel
+									</Button>
+									<Button
+										size="sm"
+										onClick={() => {
+											updateIssue.mutate({ rules: rulesText || null });
+											setEditingRules(false);
+										}}
+									>
+										Save
+									</Button>
+								</div>
+							</div>
+						) : (
+							<span>{issue.rules || 'No rules set.'}</span>
+						)}
+					</div>
+
+					<div className="flex flex-col gap-4 mb-4">
+						{comments?.map((c) => {
+							const authorName = c.author_name ?? 'Board';
+							const isAgent = c.author_type === 'agent';
+							return (
+								<div key={c.id} className="flex gap-2.5" data-testid="comment-item">
+									<Avatar
+										initials={authorName.slice(0, 2)}
+										size="sm"
+										color={avatarColorFromString(authorName)}
+									/>
+									<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-elevated overflow-hidden">
+										<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-muted">
+											<span
+												className={`text-xs font-medium ${isAgent ? 'text-text' : 'text-text-muted'}`}
+												data-testid="comment-author"
+											>
+												{authorName}
+											</span>
+											<span className="text-[11px] text-text-subtle">
+												{new Date(c.created_at).toLocaleString()}
+											</span>
+										</div>
+										<div className="px-3 py-2.5">
 											<CommentRenderer
 												comment={c as unknown as CommentData}
 												onChooseOption={(commentId, chosenId) =>
 													chooseOption.mutate({ commentId, chosen_id: chosenId })
 												}
 												companyId={companyId}
+												projectId={issue?.project_id ?? undefined}
 											/>
 										</div>
 									</div>
-								))}
-							</div>
-
-							<form onSubmit={handleComment} className="flex flex-col gap-2">
-								<Textarea
-									value={commentText}
-									onChange={(e) => setCommentText(e.target.value)}
-									placeholder="Add a comment..."
-									className="min-h-[60px]"
-								/>
-								<div className="flex items-center justify-between gap-2">
-									<label className="flex items-center gap-2 text-[11px] text-text-muted">
-										<span>Effort</span>
-										<select
-											value={commentEffort}
-											onChange={(e) => setCommentEffort(e.target.value as '' | AgentEffort)}
-											className="bg-background border border-border rounded-radius-md px-2 py-1 text-[11px]"
-											aria-label="Reasoning effort for the agent run triggered by this comment"
-										>
-											<option value="">Default</option>
-											<option value={AgentEffort.Minimal}>Minimal</option>
-											<option value={AgentEffort.Low}>Low</option>
-											<option value={AgentEffort.Medium}>Medium</option>
-											<option value={AgentEffort.High}>High</option>
-											<option value={AgentEffort.Max}>Max (ultrathink)</option>
-										</select>
-									</label>
-									<Button
-										type="submit"
-										size="sm"
-										disabled={!commentText.trim() || createComment.isPending}
-									>
-										{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-										Comment
-									</Button>
 								</div>
-							</form>
-						</>
-					) : (
-						<div className="h-80 border border-border rounded-radius-lg overflow-hidden">
-							<LiveChatPanel
-								companyId={companyId}
-								issueId={issueId}
-								agents={agents?.map((a) => ({ slug: a.slug, title: a.title })) ?? []}
-							/>
-						</div>
-					)}
-				</div>
-
-				{/* Sub-issues */}
-				<div className="border-t border-border pt-4 mt-4">
-					<div className="flex items-center justify-between mb-2">
-						<h3 className="text-xs font-medium uppercase tracking-wider text-text-muted">
-							Sub-issues
-						</h3>
-						<Button variant="secondary" size="sm" onClick={() => setShowSubForm(!showSubForm)}>
-							<Plus className="w-3 h-3" /> Add
-						</Button>
+							);
+						})}
 					</div>
-					{showSubForm && (
-						<form onSubmit={handleSubIssue} className="flex gap-2 mb-3">
-							<input
-								value={subIssueTitle}
-								onChange={(e) => setSubIssueTitle(e.target.value)}
-								placeholder="Sub-issue title"
-								className="flex-1 rounded-radius-md border border-border bg-bg px-3 py-1.5 text-[13px] text-text outline-none focus:border-border-hover"
-							/>
-							<Button type="submit" size="sm" disabled={!subIssueTitle.trim()}>
-								Create
+
+					<form onSubmit={handleComment} className="flex flex-col gap-2">
+						<Textarea
+							value={commentText}
+							onChange={(e) => setCommentText(e.target.value)}
+							placeholder="Add a comment..."
+							className="min-h-[60px]"
+						/>
+						<div className="flex items-center justify-between gap-2">
+							<label className="flex items-center gap-2 text-[11px] text-text-muted">
+								<span>Effort</span>
+								<select
+									value={commentEffort}
+									onChange={(e) => setCommentEffort(e.target.value as '' | AgentEffort)}
+									className="bg-background border border-border rounded-radius-md px-2 py-1 text-[11px]"
+									aria-label="Reasoning effort for the agent run triggered by this comment"
+								>
+									<option value="">Default</option>
+									<option value={AgentEffort.Minimal}>Minimal</option>
+									<option value={AgentEffort.Low}>Low</option>
+									<option value={AgentEffort.Medium}>Medium</option>
+									<option value={AgentEffort.High}>High</option>
+									<option value={AgentEffort.Max}>Max (ultrathink)</option>
+								</select>
+							</label>
+							<Button
+								type="submit"
+								size="sm"
+								disabled={!commentText.trim() || createComment.isPending}
+							>
+								{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+								Comment
 							</Button>
-						</form>
-					)}
+						</div>
+					</form>
 				</div>
 			</div>
 
@@ -457,23 +533,21 @@ function IssueDetailPage() {
 					</button>
 					{assigneeOpen && (
 						<div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-radius-md border border-border bg-bg shadow-md max-h-48 overflow-y-auto">
-							{agents
-								?.filter((a) => a.admin_status !== 'terminated')
-								.map((a) => (
-									<button
-										type="button"
-										key={a.id}
-										onClick={() => {
-											updateIssue.mutate({ assignee_id: a.id });
-											setAssigneeOpen(false);
-										}}
-										className={`flex items-center w-full px-2.5 py-1.5 text-xs text-left hover:bg-bg-subtle transition-colors ${
-											a.id === issue.assignee_id ? 'bg-bg-subtle font-medium' : ''
-										}`}
-									>
-										<AgentStatusLabel name={a.title} runtimeStatus={a.runtime_status} />
-									</button>
-								))}
+							{assigneeOptions?.map((a) => (
+								<button
+									type="button"
+									key={a.id}
+									onClick={() => {
+										updateIssue.mutate({ assignee_id: a.id });
+										setAssigneeOpen(false);
+									}}
+									className={`flex items-center w-full px-2.5 py-1.5 text-xs text-left hover:bg-bg-subtle transition-colors ${
+										a.id === issue.assignee_id ? 'bg-bg-subtle font-medium' : ''
+									}`}
+								>
+									<AgentStatusLabel name={a.title} runtimeStatus={a.runtime_status} />
+								</button>
+							))}
 						</div>
 					)}
 				</div>
@@ -482,7 +556,17 @@ function IssueDetailPage() {
 					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
 						Project
 					</span>
-					<span className="text-[13px] text-text">{issue.project_name || '—'}</span>
+					{issue.project_name && issue.project_slug ? (
+						<Link
+							to="/companies/$companyId/projects/$projectId"
+							params={{ companyId, projectId: issue.project_slug }}
+							className="text-[13px] text-text hover:text-accent-blue-text transition-colors"
+						>
+							{issue.project_name}
+						</Link>
+					) : (
+						<span className="text-[13px] text-text">—</span>
+					)}
 				</div>
 
 				<div>

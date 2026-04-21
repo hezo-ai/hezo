@@ -1,13 +1,24 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { ContainerStatus, TERMINAL_ISSUE_STATUSES, WakeupSource } from '@hezo/shared';
-import { Hono } from 'hono';
+import {
+	AgentAdminStatus,
+	CEO_AGENT_SLUG,
+	ContainerStatus,
+	IssuePriority,
+	IssueStatus,
+	WakeupSource,
+	wsRoom,
+} from '@hezo/shared';
+import { type Context, Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
+import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import {
+	type ContainerDeps,
 	type ProjectRow,
 	provisionContainer,
 	rebuildContainer,
@@ -16,6 +27,19 @@ import {
 } from '../services/containers';
 import type { JobManager } from '../services/job-manager';
 import { createWakeup } from '../services/wakeup';
+
+function buildContainerDeps(c: Context<Env>): ContainerDeps {
+	return {
+		db: c.get('db'),
+		docker: c.get('docker'),
+		dataDir: c.get('dataDir'),
+		wsManager: c.get('wsManager'),
+		masterKeyManager: c.get('masterKeyManager'),
+		logs: c.get('logs'),
+	};
+}
+
+const log = logger.child('routes');
 
 async function cancelRunningAgentTasks(
 	db: PGlite,
@@ -31,7 +55,7 @@ async function cancelRunningAgentTasks(
 		[projectId, companyId],
 	);
 	for (const row of running.rows) {
-		jobManager.cancelTask(`agent:${row.assignee_id}`);
+		jobManager.cancelTask(wsRoom.agent(row.assignee_id));
 	}
 }
 
@@ -54,19 +78,11 @@ async function wakeAgentsWithPendingWork(
 		createWakeup(db, row.agent_id, companyId, WakeupSource.Automation, {
 			trigger: 'container_start',
 			project_id: projectId,
-		}).catch((e) => console.error('[wakeup] Failed to create wakeup on container start:', e));
+		}).catch((e) => log.error('Failed to create wakeup on container start:', e));
 	}
 }
 
 export const projectsRoutes = new Hono<Env>();
-
-/** Generate parameterized placeholders for terminal issue statuses, starting at the given index. */
-function terminalStatusParams(startIdx: number): { placeholders: string; values: string[] } {
-	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${startIdx + i}::issue_status`).join(
-		', ',
-	);
-	return { placeholders, values: [...TERMINAL_ISSUE_STATUSES] };
-}
 
 projectsRoutes.get('/companies/:companyId/projects', async (c) => {
 	const access = await requireCompanyAccess(c);
@@ -95,19 +111,43 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 	const db = c.get('db');
 	const { companyId } = access;
 
-	const companyCheck = await db.query('SELECT id FROM companies WHERE id = $1', [companyId]);
-	if (companyCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Company not found', 404);
-	}
-
 	const body = await c.req.json<{
 		name: string;
-		goal?: string;
+		description?: string;
 		docker_base_image?: string;
 	}>();
 
 	if (!body.name?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'name is required', 400);
+	}
+	if (!body.description?.trim()) {
+		return err(c, 'INVALID_REQUEST', 'description is required', 400);
+	}
+
+	const companyMetaResult = await db.query<{ slug: string; issue_prefix: string }>(
+		'SELECT slug, issue_prefix FROM companies WHERE id = $1',
+		[companyId],
+	);
+	const companyMeta = companyMetaResult.rows[0];
+	if (!companyMeta) {
+		return err(c, 'NOT_FOUND', 'Company not found', 404);
+	}
+
+	const ceoResult = await db.query<{ id: string }>(
+		`SELECT ma.id FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.company_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
+		 LIMIT 1`,
+		[companyId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+	);
+	const ceoMemberId = ceoResult.rows[0]?.id;
+	if (!ceoMemberId) {
+		return err(
+			c,
+			'INTERNAL',
+			'No enabled CEO found for this company. Re-enable the CEO agent before creating projects.',
+			500,
+		);
 	}
 
 	const slug = await uniqueSlug(toSlug(body.name), async (s) => {
@@ -118,40 +158,104 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 		return r.rows.length > 0;
 	});
 
-	const result = await db.query(
-		`INSERT INTO projects (company_id, name, slug, goal, docker_base_image)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING *`,
-		[companyId, body.name.trim(), slug, body.goal ?? '', body.docker_base_image ?? 'node:24-slim'],
-	);
+	const projectName = body.name.trim();
+	const projectDescription = body.description.trim();
 
-	const project = result.rows[0] as Record<string, unknown>;
-	broadcastChange(c, `company:${companyId}`, 'projects', 'INSERT', project);
+	await db.query('BEGIN');
+	let project: Record<string, unknown>;
+	let planningIssue: Record<string, unknown>;
+	try {
+		const projectResult = await db.query(
+			`INSERT INTO projects (company_id, name, slug, description, docker_base_image)
+			 VALUES ($1, $2, $3, $4, $5)
+			 RETURNING *`,
+			[
+				companyId,
+				projectName,
+				slug,
+				projectDescription,
+				body.docker_base_image ?? 'hezo/agent-base:latest',
+			],
+		);
+		project = projectResult.rows[0] as Record<string, unknown>;
 
-	const companySlugResult = await db.query<{ slug: string }>(
-		'SELECT slug FROM companies WHERE id = $1',
-		[companyId],
-	);
-	const companySlug = companySlugResult.rows[0]?.slug;
+		const numberResult = await db.query<{ number: number }>(
+			'SELECT next_issue_number($1) AS number',
+			[companyId],
+		);
+		const issueNumber = numberResult.rows[0].number;
+		const identifier = `${companyMeta.issue_prefix}-${issueNumber}`;
 
-	if (companySlug) {
-		const docker = c.get('docker');
-		const dataDir = c.get('dataDir');
-		const wsManager = c.get('wsManager');
-		provisionContainer(
-			db,
-			docker,
-			project as unknown as ProjectRow,
-			companySlug,
-			dataDir,
-			wsManager,
-			companyId,
-		).catch((error) => {
-			console.error(`Failed to provision container for project ${project.slug}:`, error);
-		});
+		const issueBody = `## Draft the execution plan for this new project
+
+A new project has just been created. Please read the description below carefully and produce an execution plan.
+
+### Project: ${projectName}
+
+**Description**
+
+${projectDescription}
+
+### Your task
+
+1. Read the description above. If anything is ambiguous, post a clarifying comment on this issue for the board.
+2. Use \`list_agents\` / \`get_agent_system_prompt\` to recall who is on the team.
+3. Break the work into 3-8 top-level milestones. Write a short scope note for each.
+4. Post the plan as a comment on this issue, then create child issues with \`create_issue\` (using \`parent_issue_id\` on this issue) for the first milestone, assigning each to the right agent.
+5. Move this issue to **done** once the first milestone's child issues have been created and assigned.
+
+Container provisioning for this project is in progress. Focus on planning while the environment comes up — implementation agents can start work as soon as their tickets are ready.`;
+
+		const issueResult = await db.query(
+			`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier,
+			                     title, description, status, priority, labels)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
+			 RETURNING *`,
+			[
+				companyId,
+				project.id,
+				ceoMemberId,
+				issueNumber,
+				identifier,
+				`Draft execution plan for "${projectName}"`,
+				issueBody,
+				IssueStatus.Open,
+				IssuePriority.High,
+				JSON.stringify(['planning']),
+			],
+		);
+		planningIssue = issueResult.rows[0] as Record<string, unknown>;
+
+		await db.query('COMMIT');
+	} catch (e) {
+		await db.query('ROLLBACK');
+		throw e;
 	}
 
-	return ok(c, project, 201);
+	broadcastChange(c, wsRoom.company(companyId), 'projects', 'INSERT', project);
+	broadcastChange(c, wsRoom.company(companyId), 'issues', 'INSERT', planningIssue);
+
+	createWakeup(db, ceoMemberId, companyId, WakeupSource.Assignment, {
+		issue_id: planningIssue.id,
+	}).catch((e) => log.error('Failed to wake CEO for project planning:', e));
+
+	provisionContainer(
+		buildContainerDeps(c),
+		project as unknown as ProjectRow,
+		companyMeta.slug,
+	).catch((error) => {
+		log.error(`Failed to provision container for project ${project.slug}:`, error);
+	});
+
+	return ok(
+		c,
+		{
+			...project,
+			planning_issue_id: planningIssue.id,
+			planning_issue_identifier: planningIssue.identifier,
+		},
+		201,
+	);
 });
 
 projectsRoutes.get('/companies/:companyId/projects/:projectId', async (c) => {
@@ -203,7 +307,7 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 
 	const body = await c.req.json<{
 		name?: string;
-		goal?: string;
+		description?: string;
 	}>();
 
 	const sets: string[] = [];
@@ -225,9 +329,9 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 		params.push(newSlug);
 		idx++;
 	}
-	if (body.goal !== undefined) {
-		sets.push(`goal = $${idx}`);
-		params.push(body.goal);
+	if (body.description !== undefined) {
+		sets.push(`description = $${idx}`);
+		params.push(body.description);
 		idx++;
 	}
 
@@ -244,7 +348,7 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 
 	broadcastChange(
 		c,
-		`company:${companyId}`,
+		wsRoom.company(companyId),
 		'projects',
 		'UPDATE',
 		result.rows[0] as Record<string, unknown>,
@@ -288,22 +392,18 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 	const companySlug = companySlugResult.rows[0]?.slug;
 
 	if (companySlug) {
-		const docker = c.get('docker');
-		const dataDir = c.get('dataDir');
 		await teardownContainer(
-			db,
-			docker,
+			buildContainerDeps(c),
 			projectId,
 			companySlug,
 			existing.rows[0].slug,
-			dataDir,
 		).catch((error) => {
-			console.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
+			log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
 		});
 	}
 
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
-	broadcastChange(c, `company:${companyId}`, 'projects', 'DELETE', { id: projectId });
+	broadcastChange(c, wsRoom.company(companyId), 'projects', 'DELETE', { id: projectId });
 	return c.json({ data: null }, 200);
 });
 
@@ -330,7 +430,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/start',
 			ContainerStatus.Running,
 			projectId,
 		]);
-		broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+		broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
 			id: projectId,
 			container_status: ContainerStatus.Running,
 		});
@@ -364,7 +464,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 			ContainerStatus.Stopped,
 			projectId,
 		]);
-		broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+		broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
 			id: projectId,
 			container_status: ContainerStatus.Stopped,
 		});
@@ -375,22 +475,24 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 		ContainerStatus.Stopping,
 		projectId,
 	]);
-	broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+	broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
 		id: projectId,
 		container_status: ContainerStatus.Stopping,
 	});
 
-	const docker = c.get('docker');
-	const wsManager = c.get('wsManager');
 	const jobManager = c.get('jobManager');
+	const containerDeps = buildContainerDeps(c);
 
 	await cancelRunningAgentTasks(db, jobManager, projectId, companyId);
+
+	const containerId = row.container_id;
+	if (!containerId) return ok(c, { container_status: ContainerStatus.Stopping });
 
 	const taskKey = `stop:${projectId}`;
 	jobManager.launchTask(
 		taskKey,
 		async () => {
-			await stopContainerGracefully(db, docker, projectId, row.container_id!, wsManager, companyId);
+			await stopContainerGracefully(containerDeps, projectId, companyId, containerId);
 		},
 		60_000,
 	);
@@ -434,16 +536,14 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 	jobManager.cancelTask(taskKey);
 	await cancelRunningAgentTasks(db, jobManager, projectId, companyId);
 
-	const docker = c.get('docker');
-	const dataDir = c.get('dataDir');
-	const wsManager = c.get('wsManager');
+	const containerDeps = buildContainerDeps(c);
 
 	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 		ContainerStatus.Creating,
 		projectId,
 	]);
 
-	broadcastChange(c, `company:${companyId}`, 'projects', 'UPDATE', {
+	broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
 		id: projectId,
 		container_status: ContainerStatus.Creating,
 	});
@@ -452,18 +552,10 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 		taskKey,
 		async () => {
 			try {
-				await rebuildContainer(
-					db,
-					docker,
-					projectResult.rows[0] as ProjectRow,
-					companySlug,
-					dataDir,
-					wsManager,
-					companyId,
-				);
+				await rebuildContainer(containerDeps, projectResult.rows[0] as ProjectRow, companySlug);
 				wakeAgentsWithPendingWork(db, projectId, companyId);
 			} catch (error) {
-				console.error(`Container rebuild failed for project ${projectId}:`, error);
+				log.error(`Container rebuild failed for project ${projectId}:`, error);
 			}
 		},
 		REBUILD_TIMEOUT_MS,
