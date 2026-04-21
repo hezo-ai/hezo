@@ -179,11 +179,9 @@ test.describe('Repository setup wizard', () => {
 
 		const card = page.getByTestId('approval-card');
 		await expect(card).toBeVisible({ timeout: 10000 });
-		await expect(card.getByTestId('approval-oauth-cta')).toBeVisible();
-		await expect(card.getByRole('button', { name: /^Approve$/ })).toHaveCount(0);
-		await expect(card.getByRole('button', { name: /^Deny$/ })).toHaveCount(0);
+		await expect(card.getByRole('button')).toHaveCount(0);
 
-		await card.getByTestId('approval-oauth-cta').click();
+		await card.click();
 
 		await expect(page.getByTestId('action-setup-repo')).toBeVisible({ timeout: 10000 });
 		await expect(page).toHaveURL(

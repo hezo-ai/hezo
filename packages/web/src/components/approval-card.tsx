@@ -1,6 +1,6 @@
 import { ApprovalStatus, ApprovalType, OAuthRequestReason } from '@hezo/shared';
-import { Link, useNavigate } from '@tanstack/react-router';
-import { ArrowRight, Check, GitBranch, Loader2, X } from 'lucide-react';
+import { Link } from '@tanstack/react-router';
+import { Check, Loader2, X } from 'lucide-react';
 import type { Approval } from '../hooks/use-approvals';
 import { useResolveApproval } from '../hooks/use-approvals';
 import { Badge } from './ui/badge';
@@ -71,7 +71,6 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 			const platform = (p.platform as string) ?? 'GitHub';
 			const reason = p.reason as string | undefined;
 			const projectName = approval.payload_project_name;
-			const projectSlug = approval.payload_project_slug;
 			const action =
 				reason === 'designated_repo'
 					? 'set up the designated repo for'
@@ -80,22 +79,13 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 						: 'access';
 			return (
 				<span>
-					Requesting {platform} OAuth to {action}{' '}
-					{projectSlug && projectName ? (
+					Requesting {platform} OAuth to {action}
+					{projectName && (
 						<>
-							project{' '}
-							<EntityLink
-								to="/companies/$companyId/projects/$projectId"
-								params={{ companyId: companySlug, projectId: projectSlug }}
-							>
-								{projectName}
-							</EntityLink>
-						</>
-					) : projectName ? (
-						<>
+							{' '}
 							project <span className="font-medium">{projectName}</span>
 						</>
-					) : null}
+					)}
 				</span>
 			);
 		}
@@ -217,11 +207,12 @@ interface ApprovalCardProps {
 	showCompany?: boolean;
 }
 
-export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProps) {
-	const resolveApproval = useResolveApproval();
+const baseCardClass = 'block p-4 border border-border rounded-radius-md';
+const linkCardClass = `${baseCardClass} hover:bg-bg-subtle transition-colors`;
 
+function CardBody({ approval, showCompany }: { approval: Approval; showCompany: boolean }) {
 	return (
-		<div className="p-4 border border-border rounded-radius-md" data-testid="approval-card">
+		<>
 			<div className="flex items-center gap-2 mb-1.5 flex-wrap">
 				<Badge color={typeColors[approval.type] as 'gray'}>{approval.type.replace('_', ' ')}</Badge>
 				{showCompany && approval.company_name && (
@@ -231,86 +222,91 @@ export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProp
 			{approval.requested_by_name && (
 				<p className="text-xs text-text-muted mb-1">From: {approval.requested_by_name}</p>
 			)}
-			<div className="text-sm text-text-subtle mb-3 break-words">
+			<div className="text-sm text-text-subtle break-words">
 				<ApprovalMessage approval={approval} />
 			</div>
-			<div className="flex gap-2">
-				{approval.type === ApprovalType.OauthRequest ? (
-					<OauthNavigateButton approval={approval} />
-				) : (
-					<>
-						<Button
-							size="sm"
-							variant="secondary"
-							disabled={resolveApproval.isPending}
-							onClick={() =>
-								resolveApproval.mutate({
-									approvalId: approval.id,
-									status: ApprovalStatus.Approved,
-								})
-							}
-						>
-							{resolveApproval.isPending ? (
-								<Loader2 className="w-3 h-3 animate-spin" />
-							) : (
-								<Check className="w-3 h-3" />
-							)}
-							Approve
-						</Button>
-						<Button
-							size="sm"
-							variant="ghost"
-							className="text-accent-red"
-							disabled={resolveApproval.isPending}
-							onClick={() =>
-								resolveApproval.mutate({
-									approvalId: approval.id,
-									status: ApprovalStatus.Denied,
-								})
-							}
-						>
-							<X className="w-3 h-3" /> Deny
-						</Button>
-					</>
-				)}
-			</div>
-		</div>
+		</>
 	);
 }
 
-function OauthNavigateButton({ approval }: { approval: Approval }) {
-	const navigate = useNavigate();
+function resolveOauthDestination(approval: Approval) {
 	const reason = approval.payload.reason as string | undefined;
 	const companySlug = approval.company_slug;
 
-	let label = 'Connect GitHub';
-	let onClick = () =>
-		navigate({ to: '/companies/$companyId/settings', params: { companyId: companySlug } });
-
 	if (reason === OAuthRequestReason.DesignatedRepo && approval.payload_issue_identifier) {
-		const issueId = approval.payload_issue_identifier.toLowerCase();
-		label = 'Set up repository';
-		onClick = () =>
-			navigate({
-				to: '/companies/$companyId/issues/$issueId',
-				params: { companyId: companySlug, issueId },
-				hash: 'setup-repo',
-			});
-	} else if (reason === OAuthRequestReason.RepoAdd && approval.payload_project_slug) {
-		const projectSlug = approval.payload_project_slug;
-		label = 'Open project settings';
-		onClick = () =>
-			navigate({
-				to: '/companies/$companyId/projects/$projectId/settings',
-				params: { companyId: companySlug, projectId: projectSlug },
-			});
+		return {
+			to: '/companies/$companyId/issues/$issueId' as const,
+			params: { companyId: companySlug, issueId: approval.payload_issue_identifier.toLowerCase() },
+			hash: 'setup-repo',
+		};
+	}
+	if (reason === OAuthRequestReason.RepoAdd && approval.payload_project_slug) {
+		return {
+			to: '/companies/$companyId/projects/$projectId/settings' as const,
+			params: { companyId: companySlug, projectId: approval.payload_project_slug },
+		};
+	}
+	return {
+		to: '/companies/$companyId/settings' as const,
+		params: { companyId: companySlug },
+	};
+}
+
+export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProps) {
+	const resolveApproval = useResolveApproval();
+
+	if (approval.type === ApprovalType.OauthRequest) {
+		const dest = resolveOauthDestination(approval);
+		return (
+			<Link
+				to={dest.to as never}
+				params={dest.params as never}
+				{...(dest.hash ? { hash: dest.hash } : {})}
+				className={linkCardClass}
+				data-testid="approval-card"
+			>
+				<CardBody approval={approval} showCompany={showCompany} />
+			</Link>
+		);
 	}
 
 	return (
-		<Button size="sm" onClick={onClick} data-testid="approval-oauth-cta">
-			<GitBranch className="w-3 h-3" />
-			{label}
-			<ArrowRight className="w-3 h-3" />
-		</Button>
+		<div className={baseCardClass} data-testid="approval-card">
+			<CardBody approval={approval} showCompany={showCompany} />
+			<div className="flex gap-2 mt-3">
+				<Button
+					size="sm"
+					variant="secondary"
+					disabled={resolveApproval.isPending}
+					onClick={() =>
+						resolveApproval.mutate({
+							approvalId: approval.id,
+							status: ApprovalStatus.Approved,
+						})
+					}
+				>
+					{resolveApproval.isPending ? (
+						<Loader2 className="w-3 h-3 animate-spin" />
+					) : (
+						<Check className="w-3 h-3" />
+					)}
+					Approve
+				</Button>
+				<Button
+					size="sm"
+					variant="ghost"
+					className="text-accent-red"
+					disabled={resolveApproval.isPending}
+					onClick={() =>
+						resolveApproval.mutate({
+							approvalId: approval.id,
+							status: ApprovalStatus.Denied,
+						})
+					}
+				>
+					<X className="w-3 h-3" /> Deny
+				</Button>
+			</div>
+		</div>
 	);
 }
