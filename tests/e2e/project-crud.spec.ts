@@ -24,6 +24,24 @@ test.describe('Project CRUD', () => {
 		await expect(
 			page.getByRole('main').getByText('Draft execution plan for "Marketing Campaign"'),
 		).toBeVisible({ timeout: 5000 });
+
+		const description = page.getByTestId('issue-description');
+		await expect(description).toBeVisible({ timeout: 5000 });
+		const paragraphMarginBottom = await description
+			.locator('p')
+			.first()
+			.evaluate((el) => Number.parseFloat(getComputedStyle(el).marginBottom));
+		expect(paragraphMarginBottom).toBeGreaterThan(0);
+		const headingFontWeight = await description
+			.locator('h2')
+			.first()
+			.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontWeight));
+		expect(headingFontWeight).toBeGreaterThanOrEqual(600);
+		const listStyle = await description
+			.locator('ol')
+			.first()
+			.evaluate((el) => getComputedStyle(el).listStyleType);
+		expect(listStyle).not.toBe('none');
 	});
 
 	test('project list shows default Operations project', async ({ page }) => {
