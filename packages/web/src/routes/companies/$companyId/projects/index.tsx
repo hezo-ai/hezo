@@ -101,8 +101,9 @@ function ProjectListPage() {
 }
 
 export const Route = createFileRoute('/companies/$companyId/projects/')({
-	validateSearch: (search: Record<string, unknown>): ProjectListSearch => ({
-		create: search.create === true || search.create === 'true',
-	}),
+	validateSearch: (search: Record<string, unknown>): ProjectListSearch => {
+		if (search.create === true || search.create === 'true') return { create: true };
+		return {};
+	},
 	component: ProjectListPage,
 });
