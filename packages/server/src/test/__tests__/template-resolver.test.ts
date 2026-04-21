@@ -180,6 +180,36 @@ describe('template resolver', () => {
 		expect(result).toContain('upsert_kb_doc');
 		expect(result).toContain('create_issue');
 	});
+
+	it('injects Run Context with only company id when no project/issue', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId });
+		expect(result).toContain('## Run Context');
+		expect(result).toContain(`Company ID: ${companyId}`);
+		expect(result).not.toContain('Project ID:');
+		expect(result).not.toContain('Issue ID:');
+	});
+
+	it('injects Run Context with company + project ids when issue missing', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			companyId,
+			projectId,
+		});
+		expect(result).toContain(`Company ID: ${companyId}`);
+		expect(result).toContain(`Project ID: ${projectId}`);
+		expect(result).not.toContain('Issue ID:');
+	});
+
+	it('injects Run Context with all three ids when issueId supplied', async () => {
+		const fakeIssueId = '11111111-2222-3333-4444-555555555555';
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			companyId,
+			projectId,
+			issueId: fakeIssueId,
+		});
+		expect(result).toContain(`Company ID: ${companyId}`);
+		expect(result).toContain(`Project ID: ${projectId}`);
+		expect(result).toContain(`Issue ID: ${fakeIssueId}`);
+	});
 });
 
 describe('template resolver with agents', () => {

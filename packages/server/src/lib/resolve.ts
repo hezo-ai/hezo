@@ -21,6 +21,19 @@ export async function resolveProjectId(
 	return result.rows[0]?.id ?? null;
 }
 
+export async function resolveIssueId(
+	db: PGlite,
+	companyId: string,
+	raw: string,
+): Promise<string | null> {
+	if (UUID_RE.test(raw)) return raw;
+	const result = await db.query<{ id: string }>(
+		'SELECT id FROM issues WHERE company_id = $1 AND LOWER(identifier) = LOWER($2)',
+		[companyId, raw],
+	);
+	return result.rows[0]?.id ?? null;
+}
+
 export interface ProjectLocator {
 	id: string;
 	slug: string;

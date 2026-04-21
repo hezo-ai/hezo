@@ -375,6 +375,34 @@ describe('runAgent', () => {
 		expect(capturedUser).toBe('node');
 	});
 
+	it('injects Run Context with company, project, and issue IDs into the system prompt', async () => {
+		let capturedPrompt = '';
+		const docker = createMockDocker({
+			execCreate: async (_containerId: string, opts: any) => {
+				capturedPrompt = opts.Cmd[opts.Cmd.length - 1];
+				return 'exec-run-ctx';
+			},
+			execStart: async () => ({ stdout: 'ok', stderr: '' }),
+			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		});
+
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort: 3100,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+
+		expect(capturedPrompt).toContain('## Run Context');
+		expect(capturedPrompt).toContain(`Company ID: ${companyId}`);
+		expect(capturedPrompt).toContain(`Project ID: ${projectId}`);
+		expect(capturedPrompt).toContain(`Issue ID: ${issueId}`);
+	});
+
 	it('handles coach review trigger', async () => {
 		let capturedPrompt = '';
 		const docker = createMockDocker({

@@ -19,6 +19,7 @@ export interface Project {
 	created_at: string;
 	repos?: Repo[];
 	planning_issue_id?: string;
+	planning_issue_identifier?: string;
 }
 
 export interface Repo {

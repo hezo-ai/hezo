@@ -3,6 +3,7 @@ import type { PGlite } from '@electric-sql/pglite';
 interface ResolveContext {
 	companyId: string;
 	projectId?: string;
+	issueId?: string;
 	agentId?: string;
 	dataDir?: string;
 }
@@ -159,8 +160,23 @@ export async function resolveSystemPrompt(
 
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
 
-	// Append shared working guidelines to every agent prompt
+	resolved += buildRunContextBlock(ctx);
 	resolved += SHARED_INSTRUCTIONS;
 
 	return resolved;
+}
+
+function buildRunContextBlock(ctx: ResolveContext): string {
+	const lines = [`- Company ID: ${ctx.companyId}`];
+	if (ctx.projectId) lines.push(`- Project ID: ${ctx.projectId}`);
+	if (ctx.issueId) lines.push(`- Issue ID: ${ctx.issueId}`);
+	return `
+
+---
+
+## Run Context
+
+You are currently running with the following identifiers. Pass them directly to MCP tools that take \`company_id\` / \`project_id\` / \`issue_id\` — do not guess or re-derive them.
+
+${lines.join('\n')}`;
 }

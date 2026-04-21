@@ -247,7 +247,15 @@ Container provisioning for this project is in progress. Focus on planning while 
 		log.error(`Failed to provision container for project ${project.slug}:`, error);
 	});
 
-	return ok(c, { ...project, planning_issue_id: planningIssue.id }, 201);
+	return ok(
+		c,
+		{
+			...project,
+			planning_issue_id: planningIssue.id,
+			planning_issue_identifier: planningIssue.identifier,
+		},
+		201,
+	);
 });
 
 projectsRoutes.get('/companies/:companyId/projects/:projectId', async (c) => {

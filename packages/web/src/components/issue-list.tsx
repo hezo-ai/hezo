@@ -164,7 +164,7 @@ export function IssueList({ companyId, projectId, issueDetailRoute }: IssueListP
 						navigate({
 							to: (issueDetailRoute ??
 								'/companies/$companyId/issues/$issueId') as '/companies/$companyId/issues/$issueId',
-							params: { companyId, issueId: row.id },
+							params: { companyId, issueId: row.identifier.toLowerCase() },
 						})
 					}
 				/>

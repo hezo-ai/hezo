@@ -25,10 +25,7 @@ const TABLE_TO_QUERY_KEY: Record<
 		}
 		return keys;
 	},
-	issue_comments: (cid, row) => [
-		['companies', cid, 'issues'],
-		...(row.issue_id ? [['companies', cid, 'issues', row.issue_id as string, 'comments']] : []),
-	],
+	issue_comments: (cid) => [['companies', cid, 'issues']],
 	member_agents: (cid) => [['companies', cid, 'agents']],
 	projects: (cid) => [['companies', cid, 'projects']],
 	approvals: (cid) => [['companies', cid, 'approvals']],

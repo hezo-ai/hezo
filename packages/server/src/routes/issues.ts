@@ -15,7 +15,7 @@ import { auditLog } from '../lib/audit';
 import { broadcastChange } from '../lib/broadcast';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
-import { getProjectLocator, resolveProjectId } from '../lib/resolve';
+import { getProjectLocator, resolveIssueId, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -238,6 +238,8 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
 
 	const db = c.get('db');
 	const { companyId } = access;
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const result = await db.query(
 		`SELECT i.*,
@@ -256,7 +258,7 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
      LEFT JOIN members m_ps ON m_ps.id = i.progress_summary_updated_by
      LEFT JOIN member_agents ma_ps ON ma_ps.id = i.progress_summary_updated_by
      WHERE i.id = $1 AND i.company_id = $2`,
-		[c.req.param('issueId'), companyId],
+		[issueId, companyId],
 	);
 
 	if (result.rows.length === 0) {
@@ -272,7 +274,8 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId/latest-run', async (c) =
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const result = await db.query(
 		`SELECT hr.id, hr.member_id, hr.status, hr.started_at, hr.finished_at,
@@ -300,7 +303,8 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const existing = await db.query<{ id: string; status: string; project_id: string }>(
 		'SELECT id, status, project_id FROM issues WHERE id = $1 AND company_id = $2',
@@ -456,7 +460,8 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId', async (c) => {
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const existing = await db.query<{ status: string }>(
 		'SELECT status FROM issues WHERE id = $1 AND company_id = $2',
@@ -492,7 +497,8 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const parentIssueId = c.req.param('issueId');
+	const parentIssueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!parentIssueId) return err(c, 'NOT_FOUND', 'Parent issue not found', 404);
 
 	const parent = await db.query<{ project_id: string }>(
 		'SELECT project_id FROM issues WHERE id = $1 AND company_id = $2',
@@ -572,16 +578,8 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId/dependencies', async (c)
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
-
-	// Verify issue belongs to company
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const result = await db.query(
 		`SELECT d.id, d.issue_id, d.blocked_by_issue_id, d.created_at,
@@ -600,32 +598,21 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const body = await c.req.json<{ blocked_by_issue_id: string }>();
 
 	if (!body.blocked_by_issue_id) {
 		return err(c, 'INVALID_REQUEST', 'blocked_by_issue_id is required', 400);
 	}
 
-	if (body.blocked_by_issue_id === issueId) {
-		return err(c, 'INVALID_REQUEST', 'An issue cannot block itself', 400);
-	}
-
-	// Verify both issues belong to the same company
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
-
-	const blockerCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		body.blocked_by_issue_id,
-		companyId,
-	]);
-	if (blockerCheck.rows.length === 0) {
+	const blockerId = await resolveIssueId(db, companyId, body.blocked_by_issue_id);
+	if (!blockerId) {
 		return err(c, 'NOT_FOUND', 'Blocking issue not found in this company', 404);
+	}
+
+	if (blockerId === issueId) {
+		return err(c, 'INVALID_REQUEST', 'An issue cannot block itself', 400);
 	}
 
 	const result = await db.query(
@@ -633,7 +620,7 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
      VALUES ($1, $2)
      ON CONFLICT DO NOTHING
      RETURNING *`,
-		[issueId, body.blocked_by_issue_id],
+		[issueId, blockerId],
 	);
 
 	if (result.rows.length === 0) {
@@ -649,7 +636,8 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId/dependencies/:depId',
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const depId = c.req.param('depId');
 
 	// Verify issue belongs to company and dependency belongs to issue

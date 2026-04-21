@@ -77,7 +77,7 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 
 	await page.goto(`/companies/${company.slug}/agents/${ceo.id}/executions/${run.id}`);
 
-	await expect(page.getByText(/Run \w{8}/i)).toBeVisible({ timeout: 5000 });
+	await expect(page.getByRole('heading', { name: /Run \w{8}/i })).toBeVisible({ timeout: 5000 });
 
 	const invocationToggle = page.getByRole('button', { name: /invocation/i });
 	await expect(invocationToggle).toBeVisible({ timeout: 5000 });
@@ -110,7 +110,7 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	const issueLink = page.getByRole('link', { name: new RegExp(issue.identifier, 'i') });
 	await expect(issueLink).toBeVisible();
 	await issueLink.click();
-	await expect(page).toHaveURL(new RegExp(`/issues/${issue.id}$`));
+	await expect(page).toHaveURL(new RegExp(`/issues/${issue.identifier.toLowerCase()}$`));
 });
 
 test('issue page renders run as an inline comment with live-styled log', async ({ page }) => {

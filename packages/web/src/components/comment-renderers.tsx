@@ -185,7 +185,7 @@ function RunComment({ comment, companyId }: { comment: CommentData; companyId?: 
 						<Link
 							key={issue.id}
 							to="/companies/$companyId/issues/$issueId"
-							params={{ companyId, issueId: issue.id }}
+							params={{ companyId, issueId: issue.identifier.toLowerCase() }}
 							className="text-xs text-accent-blue-text hover:underline self-start"
 						>
 							{issue.identifier} — {issue.title}

@@ -8,6 +8,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import { resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
@@ -153,15 +154,8 @@ agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
-	const issueId = c.req.param('issueId');
-
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		auth.companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
+	const issueId = await resolveIssueId(db, auth.companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const body = await c.req.json<{
 		content_type: string;
@@ -190,16 +184,9 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, auth.companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const commentId = c.req.param('commentId');
-
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		auth.companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
 
 	const commentCheck = await db.query(
 		'SELECT id FROM issue_comments WHERE id = $1 AND issue_id = $2',

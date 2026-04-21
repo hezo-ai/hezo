@@ -29,10 +29,13 @@ export function CreateProjectDialog({ companyId, open, onOpenChange }: CreatePro
 		onOpenChange(false);
 		setName('');
 		setDescription('');
-		if (project.planning_issue_id) {
+		if (project.planning_issue_identifier) {
 			navigate({
 				to: '/companies/$companyId/issues/$issueId',
-				params: { companyId, issueId: project.planning_issue_id },
+				params: {
+					companyId,
+					issueId: project.planning_issue_identifier.toLowerCase(),
+				},
 			});
 		}
 	}

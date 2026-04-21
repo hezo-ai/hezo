@@ -1,6 +1,7 @@
 import { wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess } from '../middleware/auth';
@@ -13,15 +14,8 @@ executionLocksRoutes.get('/companies/:companyId/issues/:issueId/lock', async (c)
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
-
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const result = await db.query(
 		`SELECT el.id, el.issue_id, el.member_id, el.lock_type, el.locked_at,
@@ -42,15 +36,8 @@ executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
-
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const body = await c.req.json<{ member_id: string }>();
 	if (!body.member_id) {
@@ -88,15 +75,8 @@ executionLocksRoutes.delete('/companies/:companyId/issues/:issueId/lock', async 
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
-
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	await db.query(
 		'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',

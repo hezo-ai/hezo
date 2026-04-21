@@ -50,7 +50,7 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 		author_member_id: ceo.id,
 	};
 
-	await page.route(`**/api/companies/*/issues/${issue.id}/comments**`, async (route) => {
+	await page.route(`**/api/companies/*/issues/*/comments**`, async (route) => {
 		if (route.request().method() !== 'GET') return route.continue();
 		await route.fulfill({
 			status: 200,
@@ -103,14 +103,14 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 	});
 	await expect(linkA).toHaveAttribute(
 		'href',
-		new RegExp(`/companies/${company.slug}/issues/${spawnedA.id}$`),
+		new RegExp(`/companies/${company.slug}/issues/${spawnedA.identifier.toLowerCase()}$`),
 	);
 	const linkB = createdSection.getByRole('link', {
 		name: `${spawnedB.identifier} — ${spawnedB.title}`,
 	});
 	await expect(linkB).toHaveAttribute(
 		'href',
-		new RegExp(`/companies/${company.slug}/issues/${spawnedB.id}$`),
+		new RegExp(`/companies/${company.slug}/issues/${spawnedB.identifier.toLowerCase()}$`),
 	);
 });
 
@@ -152,7 +152,7 @@ test('run comment omits created tickets section when list is empty', async ({ pa
 		author_member_id: ceo.id,
 	};
 
-	await page.route(`**/api/companies/*/issues/${issue.id}/comments**`, async (route) => {
+	await page.route(`**/api/companies/*/issues/*/comments**`, async (route) => {
 		if (route.request().method() !== 'GET') return route.continue();
 		await route.fulfill({
 			status: 200,

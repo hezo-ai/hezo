@@ -39,7 +39,7 @@ function HireAgentPage() {
 		if (result.issue) {
 			navigate({
 				to: '/companies/$companyId/issues/$issueId',
-				params: { companyId, issueId: result.issue.id },
+				params: { companyId, issueId: result.issue.identifier.toLowerCase() },
 			});
 		} else if (result.agent) {
 			navigate({

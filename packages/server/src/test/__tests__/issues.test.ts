@@ -152,6 +152,26 @@ describe('issues CRUD', () => {
 		expect(body.data).toHaveProperty('cost_cents');
 	});
 
+	it('resolves an issue by identifier (case-insensitive)', async () => {
+		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		const issue = (await listRes.json()).data[0];
+
+		const upperRes = await app.request(`/api/companies/${companyId}/issues/${issue.identifier}`, {
+			headers: authHeader(token),
+		});
+		expect(upperRes.status).toBe(200);
+		expect((await upperRes.json()).data.id).toBe(issue.id);
+
+		const lowerRes = await app.request(
+			`/api/companies/${companyId}/issues/${issue.identifier.toLowerCase()}`,
+			{ headers: authHeader(token) },
+		);
+		expect(lowerRes.status).toBe(200);
+		expect((await lowerRes.json()).data.id).toBe(issue.id);
+	});
+
 	it('updates an issue status', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
 			headers: authHeader(token),

@@ -1,6 +1,7 @@
 import { AuthType, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -18,16 +19,9 @@ commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) =
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const includeToolCalls = c.req.query('include_tool_calls') === 'true';
-
-	const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
 
 	const result = await db.query(
 		`SELECT ic.id, ic.issue_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
@@ -65,7 +59,8 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const issueId = c.req.param('issueId');
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const auth = c.get('auth');
 
 	const issueCheck = await db.query<{ id: string; assignee_id: string | null }>(
@@ -165,17 +160,9 @@ commentsRoutes.post(
 
 		const db = c.get('db');
 		const { companyId } = access;
-		const issueId = c.req.param('issueId');
+		const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+		if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 		const commentId = c.req.param('commentId');
-
-		// Verify issue belongs to company
-		const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
-			issueId,
-			companyId,
-		]);
-		if (issueCheck.rows.length === 0) {
-			return err(c, 'NOT_FOUND', 'Issue not found', 404);
-		}
 
 		const body = await c.req.json<{ chosen_id: string }>();
 		if (!body.chosen_id) {

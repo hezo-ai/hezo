@@ -1,7 +1,10 @@
 import { AgentEffort, CEO_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 import { AgentStatusLabel } from '../../../../components/agent-status-label';
 import { type CommentData, CommentRenderer } from '../../../../components/comment-renderers';
 import { MarkdownProse } from '../../../../components/markdown-prose';
@@ -51,7 +54,20 @@ const priorityColors: Record<string, string> = {
 
 function IssueDetailPage() {
 	const { companyId, issueId } = Route.useParams();
+	const navigate = useNavigate();
 	const { data: issue, isLoading } = useIssue(companyId, issueId);
+
+	useEffect(() => {
+		if (!issue?.identifier) return;
+		const friendly = issue.identifier.toLowerCase();
+		if (UUID_RE.test(issueId) && issueId !== friendly) {
+			navigate({
+				to: '/companies/$companyId/issues/$issueId',
+				params: { companyId, issueId: friendly },
+				replace: true,
+			});
+		}
+	}, [issue?.identifier, issueId, companyId, navigate]);
 	const { data: comments } = useComments(companyId, issueId);
 	const { data: deps } = useIssueDependencies(companyId, issueId);
 	const { data: agents } = useAgents(companyId);

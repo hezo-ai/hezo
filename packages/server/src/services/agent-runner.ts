@@ -120,6 +120,7 @@ async function buildRunContext(
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, agent.system_prompt, {
 		companyId: agent.company_id,
 		projectId: project.id,
+		issueId: issue.id,
 		agentId: agent.id,
 		dataDir: deps.dataDir,
 	});

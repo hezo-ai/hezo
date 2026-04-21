@@ -67,7 +67,7 @@ export function CreateIssueDialog({
 		setDescription('');
 		navigate({
 			to: '/companies/$companyId/issues/$issueId',
-			params: { companyId, issueId: result.id },
+			params: { companyId, issueId: result.identifier.toLowerCase() },
 		});
 	}
 

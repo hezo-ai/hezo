@@ -95,7 +95,7 @@ function ExecutionDetailPage() {
 				(run.issue_id ? (
 					<Link
 						to="/companies/$companyId/issues/$issueId"
-						params={{ companyId, issueId: run.issue_id }}
+						params={{ companyId, issueId: run.issue_identifier.toLowerCase() }}
 						className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted hover:text-text"
 					>
 						<span>Issue:</span>

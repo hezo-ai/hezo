@@ -18,7 +18,7 @@ test.describe('Project CRUD', () => {
 
 		await page.getByRole('button', { name: 'Create' }).click();
 
-		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/issues/[0-9a-f-]{36}$`), {
+		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/issues/[a-z0-9-]+$`), {
 			timeout: 5000,
 		});
 		await expect(
