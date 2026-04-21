@@ -1,4 +1,5 @@
-import { ApprovalStatus } from '@hezo/shared';
+import { ApprovalStatus, ApprovalType } from '@hezo/shared';
+import { Link } from '@tanstack/react-router';
 import { Check, Loader2, X } from 'lucide-react';
 import type { Approval } from '../hooks/use-approvals';
 import { useResolveApproval } from '../hooks/use-approvals';
@@ -13,7 +14,181 @@ const typeColors: Record<string, string> = {
 	hire: 'green',
 	plan_review: 'blue',
 	deploy_production: 'red',
+	system_prompt_update: 'purple',
+	skill_proposal: 'blue',
 };
+
+const linkClass = 'font-medium text-accent-blue-text hover:underline';
+
+function EntityLink({
+	to,
+	params,
+	children,
+}: {
+	to: string;
+	params: Record<string, string>;
+	children: React.ReactNode;
+}) {
+	return (
+		// biome-ignore lint: dynamic route params
+		<Link to={to as never} params={params as never} className={linkClass}>
+			{children}
+		</Link>
+	);
+}
+
+function ApprovalMessage({ approval }: { approval: Approval }) {
+	const p = approval.payload;
+	const companySlug = approval.company_slug;
+
+	switch (approval.type) {
+		case ApprovalType.SystemPromptUpdate: {
+			const agentName = approval.payload_member_name ?? 'an agent';
+			const agentSlug = approval.payload_member_slug ?? (p.member_id as string);
+			return (
+				<>
+					<span>
+						Wants to update{' '}
+						{agentSlug ? (
+							<EntityLink
+								to="/companies/$companyId/agents/$agentId"
+								params={{ companyId: companySlug, agentId: agentSlug }}
+							>
+								{agentName}
+							</EntityLink>
+						) : (
+							<span className="font-medium">{agentName}</span>
+						)}
+						's system prompt
+					</span>
+					{p.reason && (
+						<span className="block text-xs text-text-muted mt-1">{p.reason as string}</span>
+					)}
+				</>
+			);
+		}
+		case ApprovalType.OauthRequest: {
+			const platform = (p.platform as string) ?? 'GitHub';
+			const reason = p.reason as string | undefined;
+			const projectName = approval.payload_project_name;
+			const projectSlug = approval.payload_project_slug;
+			const action =
+				reason === 'designated_repo'
+					? 'set up the designated repo for'
+					: reason === 'repo_add'
+						? 'add a repo to'
+						: 'access';
+			return (
+				<span>
+					Requesting {platform} OAuth to {action}{' '}
+					{projectSlug && projectName ? (
+						<>
+							project{' '}
+							<EntityLink
+								to="/companies/$companyId/projects/$projectId"
+								params={{ companyId: companySlug, projectId: projectSlug }}
+							>
+								{projectName}
+							</EntityLink>
+						</>
+					) : projectName ? (
+						<>
+							project <span className="font-medium">{projectName}</span>
+						</>
+					) : null}
+				</span>
+			);
+		}
+		case ApprovalType.SecretAccess: {
+			const secretName = p.secret_name as string;
+			const projectName = approval.payload_project_name;
+			const projectSlug = approval.payload_project_slug;
+			return (
+				<>
+					<span>
+						Requesting access to secret "<span className="font-medium">{secretName}</span>"
+						{projectSlug && projectName && (
+							<>
+								{' '}
+								in project{' '}
+								<EntityLink
+									to="/companies/$companyId/projects/$projectId"
+									params={{ companyId: companySlug, projectId: projectSlug }}
+								>
+									{projectName}
+								</EntityLink>
+							</>
+						)}
+					</span>
+					{p.reason && (
+						<span className="block text-xs text-text-muted mt-1">{p.reason as string}</span>
+					)}
+				</>
+			);
+		}
+		case ApprovalType.Hire: {
+			const title = (p.title as string) ?? 'a new agent';
+			const issueId = approval.payload_issue_identifier;
+			return (
+				<span>
+					Proposing to hire <span className="font-medium">{title}</span>
+					{issueId && (
+						<>
+							{' '}
+							(
+							<EntityLink
+								to="/companies/$companyId/issues/$issueId"
+								params={{ companyId: companySlug, issueId: issueId.toLowerCase() }}
+							>
+								{issueId}
+							</EntityLink>
+							)
+						</>
+					)}
+				</span>
+			);
+		}
+		case ApprovalType.KbUpdate: {
+			const docTitle = (p.title as string) ?? 'a document';
+			const changeSummary = p.change_summary as string | undefined;
+			return (
+				<>
+					<span>
+						Proposing update to KB doc "<span className="font-medium">{docTitle}</span>"
+					</span>
+					{changeSummary && (
+						<span className="block text-xs text-text-muted mt-1">{changeSummary}</span>
+					)}
+				</>
+			);
+		}
+		case ApprovalType.SkillProposal: {
+			const skillName = (p.skill_name as string) ?? (p.skill_slug as string) ?? 'a skill';
+			return (
+				<>
+					<span>
+						Proposing new skill: "<span className="font-medium">{skillName}</span>"
+					</span>
+					{p.reason && (
+						<span className="block text-xs text-text-muted mt-1">{p.reason as string}</span>
+					)}
+				</>
+			);
+		}
+		case ApprovalType.PlanReview: {
+			return (
+				<>
+					<span>Requesting plan review</span>
+					{p.reason && (
+						<span className="block text-xs text-text-muted mt-1">{p.reason as string}</span>
+					)}
+				</>
+			);
+		}
+		default:
+			return <span>{approval.type.replace(/_/g, ' ')}</span>;
+	}
+}
 
 interface ApprovalCardProps {
 	approval: Approval;
@@ -34,9 +209,9 @@ export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProp
 			{approval.requested_by_name && (
 				<p className="text-xs text-text-muted mb-1">From: {approval.requested_by_name}</p>
 			)}
-			<p className="text-sm text-text-subtle mb-3 break-words">
-				{JSON.stringify(approval.payload).substring(0, 300)}
-			</p>
+			<div className="text-sm text-text-subtle mb-3 break-words">
+				<ApprovalMessage approval={approval} />
+			</div>
 			<div className="flex gap-2">
 				<Button
 					size="sm"

@@ -1112,20 +1112,29 @@ Response:
       "id": "uuid",
       "company_id": "uuid",
       "company_name": "NoteGenius AI",
+      "company_slug": "notegenius-ai",
       "type": "secret_access",
       "status": "pending",
-      "requested_by_agent_id": "uuid",
-      "requested_by_agent_title": "Dev Engineer",
+      "requested_by_member_id": "uuid",
+      "requested_by_name": "Dev Engineer",
       "payload": {
-        "secret_id": "uuid",
+        "member_id": "uuid",
         "secret_name": "GITHUB_TOKEN",
+        "project_id": "uuid",
         "reason": "Need to push to feature branch for issue #47"
       },
+      "payload_member_name": "Dev Engineer",
+      "payload_member_slug": "dev-engineer",
+      "payload_project_name": "Backend API",
+      "payload_project_slug": "backend-api",
+      "payload_issue_identifier": null,
       "created_at": "..."
     }
   ]
 }
 ```
+
+The resolved `payload_*` fields are populated by LEFT JOINing payload UUID references (`member_id`, `project_id`, `issue_id`) against their respective tables. Fields are null when the payload does not contain the corresponding UUID. `company_slug` is always present.
 
 #### `POST /companies/:companyId/approvals`
 Create an approval request directly. Used internally by agents and the board.

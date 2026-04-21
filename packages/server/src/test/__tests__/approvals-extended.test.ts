@@ -46,6 +46,89 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
+describe('GET /companies/:companyId/approvals enriched fields', () => {
+	it('returns company_slug and resolved payload references', async () => {
+		// Create a project so we can reference it in the payload
+		const projRes = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Enriched Test Project',
+				description: 'For enrichment testing',
+			}),
+		});
+		expect(projRes.status).toBe(201);
+		const project = (await projRes.json()).data;
+
+		// Create an approval with member_id and project_id in the payload
+		const createRes = await app.request(`/api/companies/${companyId}/approvals`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				type: ApprovalType.SecretAccess,
+				requested_by_member_id: agentId,
+				payload: {
+					member_id: agentId,
+					secret_name: 'ENRICH_TEST',
+					project_id: project.id,
+					reason: 'testing enriched fields',
+				},
+			}),
+		});
+		expect(createRes.status).toBe(201);
+
+		const listRes = await app.request(`/api/companies/${companyId}/approvals`, {
+			headers: authHeader(token),
+		});
+		expect(listRes.status).toBe(200);
+		const rows = (await listRes.json()).data as any[];
+		const row = rows.find(
+			(r: any) => r.type === 'secret_access' && r.payload?.secret_name === 'ENRICH_TEST',
+		);
+		expect(row).toBeDefined();
+
+		expect(row.company_slug).toBeTruthy();
+		expect(row.payload_member_name).toBeTruthy();
+		expect(row.payload_member_slug).toBeTruthy();
+		expect(row.payload_project_name).toBe('Enriched Test Project');
+		expect(row.payload_project_slug).toBeTruthy();
+	});
+
+	it('returns null for resolved fields when payload UUIDs are absent', async () => {
+		const createRes = await app.request(`/api/companies/${companyId}/approvals`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				type: ApprovalType.SkillProposal,
+				requested_by_member_id: agentId,
+				payload: {
+					skill_name: 'test-skill',
+					skill_slug: 'test-skill',
+					content: '# Test',
+					reason: 'testing null fields',
+				},
+			}),
+		});
+		expect(createRes.status).toBe(201);
+
+		const listRes = await app.request(`/api/companies/${companyId}/approvals`, {
+			headers: authHeader(token),
+		});
+		const rows = (await listRes.json()).data as any[];
+		const row = rows.find(
+			(r: any) => r.type === 'skill_proposal' && r.payload?.skill_slug === 'test-skill',
+		);
+		expect(row).toBeDefined();
+
+		expect(row.company_slug).toBeTruthy();
+		expect(row.payload_member_name).toBeNull();
+		expect(row.payload_member_slug).toBeNull();
+		expect(row.payload_project_name).toBeNull();
+		expect(row.payload_project_slug).toBeNull();
+		expect(row.payload_issue_identifier).toBeNull();
+	});
+});
+
 describe('POST /companies/:companyId/approvals validation', () => {
 	it('returns 400 when type is missing', async () => {
 		const res = await app.request(`/api/companies/${companyId}/approvals`, {
