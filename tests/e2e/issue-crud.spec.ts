@@ -464,6 +464,52 @@ test('issue description renders markdown', async ({ page }) => {
 	await expect(desc.locator('p', { hasText: '# Heading One' })).toHaveCount(0);
 });
 
+test('project badge and metadata label both link to the project page', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = (await agentsRes.json()).data as { id: string }[];
+	const agent = agents[0];
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Linkable Project', description: 'Test project.' },
+	});
+	const project = (await projectRes.json()).data as { id: string; slug: string };
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: { project_id: project.id, title: 'Project Link Issue', assignee_id: agent.id },
+	});
+	const issue = (await issueRes.json()).data;
+
+	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+	await waitForPageLoad(page);
+	await expect(page.getByRole('heading', { name: 'Project Link Issue' })).toBeVisible({
+		timeout: 10000,
+	});
+
+	const expectedHref = `/companies/${company.slug}/projects/${project.slug}`;
+
+	const mainContent = page.locator('.grid > div').first();
+	const badgeLink = mainContent.getByRole('link', { name: 'Linkable Project' });
+	await expect(badgeLink).toHaveAttribute('href', expectedHref);
+
+	const metadataPanel = page.locator('.grid > div').last();
+	const metadataLink = metadataPanel.getByRole('link', { name: 'Linkable Project' });
+	await expect(metadataLink).toHaveAttribute('href', expectedHref);
+
+	await metadataLink.click();
+	await expect(page).toHaveURL(expectedHref + '/issues');
+	await expect(page.getByRole('heading', { name: 'Linkable Project' })).toBeVisible({
+		timeout: 10000,
+	});
+});
+
 test('sidebar shows agent status badges', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);

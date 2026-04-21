@@ -1,5 +1,5 @@
 import { AgentEffort, CEO_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AgentStatusLabel } from '../../../../components/agent-status-label';
@@ -125,7 +125,15 @@ function IssueDetailPage() {
 						{issue.status.replace('_', ' ')}
 					</Badge>
 					<Badge color={priorityColors[issue.priority] as 'neutral'}>{issue.priority}</Badge>
-					{issue.project_name && <Badge color="info">{issue.project_name}</Badge>}
+					{issue.project_name && issue.project_slug && (
+						<Link
+							to="/companies/$companyId/projects/$projectId"
+							params={{ companyId, projectId: issue.project_slug }}
+							className="hover:opacity-80 transition-opacity"
+						>
+							<Badge color="info">{issue.project_name}</Badge>
+						</Link>
+					)}
 				</div>
 
 				<div className="flex flex-wrap gap-1.5 mb-5">
@@ -466,7 +474,17 @@ function IssueDetailPage() {
 					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
 						Project
 					</span>
-					<span className="text-[13px] text-text">{issue.project_name || '—'}</span>
+					{issue.project_name && issue.project_slug ? (
+						<Link
+							to="/companies/$companyId/projects/$projectId"
+							params={{ companyId, projectId: issue.project_slug }}
+							className="text-[13px] text-text hover:text-accent-blue-text transition-colors"
+						>
+							{issue.project_name}
+						</Link>
+					) : (
+						<span className="text-[13px] text-text">—</span>
+					)}
 				</div>
 
 				<div>

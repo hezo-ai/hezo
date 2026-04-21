@@ -32,20 +32,44 @@ async function runSyntheticExec(opts: ExecStartOpts): Promise<{ stdout: string; 
  * deterministic synthetic script so log streams behave like real runs.
  */
 export function createFakeDockerClient(): DockerClient {
+	const containers = new Map<string, { running: boolean }>();
+
 	const stub = {
 		ping: async () => true,
 		imageExists: async () => true,
 		pullImage: async () => {},
-		createContainer: async (name: string) => ({ Id: `noop-${name}`, Warnings: [] }),
-		startContainer: async () => {},
-		stopContainer: async () => {},
-		removeContainer: async () => {},
-		inspectContainer: async (id: string) => ({
-			Id: id,
-			State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
-			Config: { Image: 'noop' },
-		}),
-		containerLogs: async () => new Response(new ReadableStream()),
+		createContainer: async (name: string) => {
+			const id = `noop-${name}`;
+			containers.set(id, { running: false });
+			return { Id: id, Warnings: [] };
+		},
+		startContainer: async (id: string) => {
+			const c = containers.get(id) ?? { running: false };
+			c.running = true;
+			containers.set(id, c);
+		},
+		stopContainer: async (id: string) => {
+			const c = containers.get(id);
+			if (c) c.running = false;
+		},
+		removeContainer: async (id: string) => {
+			containers.delete(id);
+		},
+		inspectContainer: async (id: string) => {
+			const c = containers.get(id);
+			const running = c?.running ?? true;
+			return {
+				Id: id,
+				State: {
+					Status: running ? 'running' : 'exited',
+					Running: running,
+					Pid: running ? 1 : 0,
+					ExitCode: 0,
+				},
+				Config: { Image: 'noop' },
+			};
+		},
+		containerLogs: async () => new Response(new Uint8Array()),
 		execCreate: async () => 'noop-exec',
 		execStart: async (
 			_id: string,

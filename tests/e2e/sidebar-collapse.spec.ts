@@ -45,9 +45,37 @@ test('sidebar toggle stays clickable when the container status banner is showing
 	});
 	const project = ((await projRes.json()) as { data: { slug: string } }).data;
 
+	await expect
+		.poll(
+			async () => {
+				const res = await page.request.get(
+					`/api/companies/${company.id}/projects/${project.slug}`,
+					{ headers },
+				);
+				const body = (await res.json()) as { data: { container_status: string | null } };
+				return body.data.container_status;
+			},
+			{ timeout: 30000, intervals: [500] },
+		)
+		.toMatch(/^(running|error)$/);
+
 	await page.request.post(`/api/companies/${company.id}/projects/${project.slug}/container/stop`, {
 		headers,
 	});
+
+	await expect
+		.poll(
+			async () => {
+				const res = await page.request.get(
+					`/api/companies/${company.id}/projects/${project.slug}`,
+					{ headers },
+				);
+				const body = (await res.json()) as { data: { container_status: string | null } };
+				return body.data.container_status;
+			},
+			{ timeout: 60000, intervals: [500] },
+		)
+		.toMatch(/^(stopped|error)$/);
 
 	await page.goto(`/companies/${company.slug}/inbox`);
 
