@@ -11,6 +11,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import { assertNoActiveRun } from '../lib/active-run';
 import { auditLog } from '../lib/audit';
 import { broadcastChange } from '../lib/broadcast';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
@@ -256,7 +257,11 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
             m.member_type AS assignee_type,
             COALESCE(ma_ps.title, m_ps.display_name) AS progress_summary_updated_by_name,
             (SELECT count(*)::int FROM issue_comments ic WHERE ic.issue_id = i.id) AS comment_count,
-            (SELECT COALESCE(sum(ce.amount_cents), 0)::int FROM cost_entries ce WHERE ce.issue_id = i.id) AS cost_cents
+            (SELECT COALESCE(sum(ce.amount_cents), 0)::int FROM cost_entries ce WHERE ce.issue_id = i.id) AS cost_cents,
+            EXISTS (
+              SELECT 1 FROM heartbeat_runs hr
+              WHERE hr.issue_id = i.id AND hr.status IN ('running', 'queued')
+            ) AS has_active_run
      FROM issues i
      JOIN projects p ON p.id = i.project_id
      JOIN companies co ON co.id = i.company_id
@@ -313,10 +318,15 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
-	const existing = await db.query<{ id: string; status: string; project_id: string }>(
-		'SELECT id, status, project_id FROM issues WHERE id = $1 AND company_id = $2',
-		[issueId, companyId],
-	);
+	const existing = await db.query<{
+		id: string;
+		status: string;
+		project_id: string;
+		assignee_id: string | null;
+	}>('SELECT id, status, project_id, assignee_id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		companyId,
+	]);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	}
@@ -361,6 +371,12 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	if (body.assignee_id !== undefined) {
 		if (body.assignee_id === null) {
 			return err(c, 'INVALID_REQUEST', 'assignee_id cannot be null', 400);
+		}
+		if (body.assignee_id !== existing.rows[0].assignee_id) {
+			const activeRunCheck = await assertNoActiveRun(db, issueId);
+			if (!activeRunCheck.ok) {
+				return err(c, 'CONFLICT', activeRunCheck.message, 409);
+			}
 		}
 		const opsCheck = await assertOperationsAssignee(
 			db,

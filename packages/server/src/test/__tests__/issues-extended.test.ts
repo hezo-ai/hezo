@@ -543,3 +543,125 @@ describe('issues list — assignee_type and has_active_run', () => {
 		expect(body.data.assignee_type).toBe('agent');
 	});
 });
+
+describe('issues PATCH — block assignee change while agent is running', () => {
+	let otherMemberId: string;
+
+	beforeAll(async () => {
+		const res = await db.query<{ id: string }>(
+			`INSERT INTO members (company_id, display_name, member_type)
+             VALUES ($1, 'Dev Two', 'agent') RETURNING id`,
+			[companyId],
+		);
+		otherMemberId = res.rows[0].id;
+	});
+
+	const insertRun = async (status: 'running' | 'queued' | 'succeeded') => {
+		const finished = status === 'succeeded' ? ', now()' : '';
+		const finishedCol = status === 'succeeded' ? ', finished_at' : '';
+		const r = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at${finishedCol})
+             VALUES ($1, $2, $3, $4, now()${finished}) RETURNING id`,
+			[memberId, companyId, issueInProgressUrgent, status],
+		);
+		return r.rows[0].id;
+	};
+
+	const deleteRun = async (id: string) => {
+		await db.query(`DELETE FROM heartbeat_runs WHERE id = $1`, [id]);
+	};
+
+	const getAssignee = async () => {
+		const r = await db.query<{ assignee_id: string }>(
+			'SELECT assignee_id FROM issues WHERE id = $1',
+			[issueInProgressUrgent],
+		);
+		return r.rows[0].assignee_id;
+	};
+
+	it('returns 409 when changing assignee while a running run exists', async () => {
+		const runId = await insertRun('running');
+		try {
+			const before = await getAssignee();
+			const res = await app.request(`/api/companies/${companyId}/issues/${issueInProgressUrgent}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ assignee_id: otherMemberId }),
+			});
+			expect(res.status).toBe(409);
+			const body = await res.json();
+			expect(body.error.code).toBe('CONFLICT');
+			expect(await getAssignee()).toBe(before);
+		} finally {
+			await deleteRun(runId);
+		}
+	});
+
+	it('returns 409 when changing assignee while a queued run exists', async () => {
+		const runId = await insertRun('queued');
+		try {
+			const res = await app.request(`/api/companies/${companyId}/issues/${issueInProgressUrgent}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ assignee_id: otherMemberId }),
+			});
+			expect(res.status).toBe(409);
+		} finally {
+			await deleteRun(runId);
+		}
+	});
+
+	it('allows assignee change after the run reaches a terminal status', async () => {
+		const runId = await insertRun('succeeded');
+		try {
+			const res = await app.request(`/api/companies/${companyId}/issues/${issueInProgressUrgent}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ assignee_id: otherMemberId }),
+			});
+			expect(res.status).toBe(200);
+			expect(await getAssignee()).toBe(otherMemberId);
+		} finally {
+			await deleteRun(runId);
+			await db.query(`UPDATE issues SET assignee_id = $1 WHERE id = $2`, [
+				memberId,
+				issueInProgressUrgent,
+			]);
+		}
+	});
+
+	it('allows a no-op assignee PATCH (same value) while a run is active', async () => {
+		const runId = await insertRun('running');
+		try {
+			const current = await getAssignee();
+			const res = await app.request(`/api/companies/${companyId}/issues/${issueInProgressUrgent}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ assignee_id: current }),
+			});
+			expect(res.status).toBe(200);
+			expect(await getAssignee()).toBe(current);
+		} finally {
+			await deleteRun(runId);
+		}
+	});
+
+	it('allows patching non-assignee fields while a run is active', async () => {
+		const runId = await insertRun('running');
+		try {
+			const res = await app.request(`/api/companies/${companyId}/issues/${issueInProgressUrgent}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ priority: 'high' }),
+			});
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			expect(body.data.priority).toBe('high');
+		} finally {
+			await deleteRun(runId);
+			await db.query(`UPDATE issues SET priority = 'urgent' WHERE id = $1`, [
+				issueInProgressUrgent,
+			]);
+		}
+	});
+});

@@ -1,6 +1,6 @@
 import { AgentEffort, CEO_AGENT_SLUG, DEFAULT_EFFORT, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, Info, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -12,6 +12,7 @@ import { Avatar, avatarColorFromString } from '../../../../components/ui/avatar'
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Textarea } from '../../../../components/ui/textarea';
+import { Tooltip } from '../../../../components/ui/tooltip';
 import { useAgents } from '../../../../hooks/use-agents';
 import { useChooseOption, useComments, useCreateComment } from '../../../../hooks/use-comments';
 import { useExecutionLock } from '../../../../hooks/use-execution-locks';
@@ -556,38 +557,59 @@ function IssueDetailPage() {
 					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
 						Assignee
 					</span>
-					<button
-						type="button"
-						onClick={() => setAssigneeOpen((o) => !o)}
-						className="flex items-center gap-1 w-full text-left text-[13px] text-text rounded-radius-md hover:bg-bg-subtle px-1 py-0.5 transition-colors"
-					>
-						<AgentStatusLabel
-							name={assignedAgent?.title ?? '—'}
-							runtimeStatus={assignedAgent?.runtime_status ?? 'idle'}
-							className="flex-1 min-w-0"
-						/>
-						<ChevronDown
-							className={`w-3.5 h-3.5 text-text-subtle shrink-0 transition-transform ${assigneeOpen ? 'rotate-180' : ''}`}
-						/>
-					</button>
-					{assigneeOpen && (
-						<div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-radius-md border border-border bg-bg shadow-md max-h-48 overflow-y-auto">
-							{assigneeOptions?.map((a) => (
+					{issue.has_active_run ? (
+						<div className="flex items-center gap-1 w-full text-[13px] text-text px-1 py-0.5">
+							<AgentStatusLabel
+								name={assignedAgent?.title ?? '—'}
+								runtimeStatus={assignedAgent?.runtime_status ?? 'idle'}
+								className="flex-1 min-w-0"
+							/>
+							<Tooltip content="Cannot change assignee while an agent is running on this issue">
 								<button
 									type="button"
-									key={a.id}
-									onClick={() => {
-										updateIssue.mutate({ assignee_id: a.id });
-										setAssigneeOpen(false);
-									}}
-									className={`flex items-center w-full px-2.5 py-1.5 text-xs text-left hover:bg-bg-subtle transition-colors ${
-										a.id === issue.assignee_id ? 'bg-bg-subtle font-medium' : ''
-									}`}
+									aria-label="Assignee locked: agent is running"
+									className="shrink-0 text-text-subtle hover:text-text transition-colors"
 								>
-									<AgentStatusLabel name={a.title} runtimeStatus={a.runtime_status} />
+									<Info className="w-3.5 h-3.5" />
 								</button>
-							))}
+							</Tooltip>
 						</div>
+					) : (
+						<>
+							<button
+								type="button"
+								onClick={() => setAssigneeOpen((o) => !o)}
+								className="flex items-center gap-1 w-full text-left text-[13px] text-text rounded-radius-md hover:bg-bg-subtle px-1 py-0.5 transition-colors"
+							>
+								<AgentStatusLabel
+									name={assignedAgent?.title ?? '—'}
+									runtimeStatus={assignedAgent?.runtime_status ?? 'idle'}
+									className="flex-1 min-w-0"
+								/>
+								<ChevronDown
+									className={`w-3.5 h-3.5 text-text-subtle shrink-0 transition-transform ${assigneeOpen ? 'rotate-180' : ''}`}
+								/>
+							</button>
+							{assigneeOpen && (
+								<div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-radius-md border border-border bg-bg shadow-md max-h-48 overflow-y-auto">
+									{assigneeOptions?.map((a) => (
+										<button
+											type="button"
+											key={a.id}
+											onClick={() => {
+												updateIssue.mutate({ assignee_id: a.id });
+												setAssigneeOpen(false);
+											}}
+											className={`flex items-center w-full px-2.5 py-1.5 text-xs text-left hover:bg-bg-subtle transition-colors ${
+												a.id === issue.assignee_id ? 'bg-bg-subtle font-medium' : ''
+											}`}
+										>
+											<AgentStatusLabel name={a.title} runtimeStatus={a.runtime_status} />
+										</button>
+									))}
+								</div>
+							)}
+						</>
 					)}
 				</div>
 

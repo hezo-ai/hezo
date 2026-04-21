@@ -13,6 +13,7 @@ import {
 } from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { assertNoActiveRun } from '../lib/active-run';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
@@ -344,16 +345,23 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			if (denied) return { error: denied };
 
 			if (args.assignee_id) {
-				const issueRow = await db.query<{ project_id: string }>(
-					'SELECT project_id FROM issues WHERE id = $1 AND company_id = $2',
-					[args.issue_id, args.company_id],
-				);
-				const projectId = issueRow.rows[0]?.project_id;
-				if (projectId) {
+				const issueRow = await db.query<{
+					project_id: string;
+					assignee_id: string | null;
+				}>('SELECT project_id, assignee_id FROM issues WHERE id = $1 AND company_id = $2', [
+					args.issue_id,
+					args.company_id,
+				]);
+				const row = issueRow.rows[0];
+				if (row) {
+					if (args.assignee_id !== row.assignee_id) {
+						const activeRunCheck = await assertNoActiveRun(db, args.issue_id as string);
+						if (!activeRunCheck.ok) return { error: activeRunCheck.message };
+					}
 					const opsCheck = await assertOperationsAssignee(
 						db,
 						args.company_id as string,
-						projectId,
+						row.project_id,
 						args.assignee_id as string,
 					);
 					if (!opsCheck.ok) return { error: opsCheck.message };
