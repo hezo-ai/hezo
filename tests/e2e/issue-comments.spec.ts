@@ -172,6 +172,40 @@ test.describe('Issue Comments', () => {
 		expect(postBodies[0]).not.toHaveProperty('effort');
 	});
 
+	test('agent mentions render as bold anchor-colored links to agent page', async ({ page }) => {
+		await authenticate(page);
+		const { company, issue, headers, agent } = await createProjectAndIssue(page);
+
+		const body = `Hey @${agent.slug} please check this. Also @not-a-real-agent-xyz stays plain.`;
+		await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+			headers,
+			data: { content_type: 'text', content: { text: body } },
+		});
+
+		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await waitForPageLoad(page);
+
+		const comment = page.getByTestId('text-comment-body').first();
+		await expect(comment).toBeVisible({ timeout: 5000 });
+
+		const mentionLink = comment.getByTestId('agent-mention-link');
+		await expect(mentionLink).toHaveText(`@${agent.slug}`);
+		await expect(mentionLink).toHaveAttribute(
+			'href',
+			`/companies/${company.slug}/agents/${agent.slug}`,
+		);
+		await expect(mentionLink).toHaveClass(/font-semibold/);
+		await expect(mentionLink).toHaveClass(/text-accent-blue-text/);
+
+		await expect(comment).toContainText('@not-a-real-agent-xyz');
+		await expect(comment.locator('a', { hasText: '@not-a-real-agent-xyz' })).toHaveCount(0);
+
+		await mentionLink.click();
+		await expect(page).toHaveURL(
+			new RegExp(`/companies/${company.slug}/agents/${agent.slug}(/|$)`),
+		);
+	});
+
 	test('comment items render as bordered cards with a tinted header', async ({ page }) => {
 		await authenticate(page);
 		const { company, issue, headers } = await createProjectAndIssue(page);

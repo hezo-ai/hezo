@@ -67,6 +67,7 @@ function KbPage() {
 
 	return (
 		<DocsLibrary
+			companyId={companyId}
 			items={items}
 			isLoadingList={isLoadingList}
 			selectedKey={selectedSlug}

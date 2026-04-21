@@ -64,7 +64,7 @@ export function CommentRenderer({ comment, onChooseOption, companyId, projectId 
 		case 'action':
 			return <ActionComment comment={comment} companyId={companyId} projectId={projectId} />;
 		default:
-			return <TextComment comment={comment} />;
+			return <TextComment comment={comment} companyId={companyId} />;
 	}
 }
 
@@ -204,12 +204,16 @@ function RunComment({ comment, companyId }: { comment: CommentData; companyId?: 
 	);
 }
 
-function TextComment({ comment }: { comment: CommentData }) {
+function TextComment({ comment, companyId }: { comment: CommentData; companyId?: string }) {
 	const content =
 		typeof comment.content === 'object'
 			? comment.content.text || JSON.stringify(comment.content)
 			: String(comment.content);
-	return <MarkdownProse testId="text-comment-body">{content}</MarkdownProse>;
+	return (
+		<MarkdownProse testId="text-comment-body" companyId={companyId}>
+			{content}
+		</MarkdownProse>
+	);
 }
 
 function SystemComment({ comment }: { comment: CommentData }) {

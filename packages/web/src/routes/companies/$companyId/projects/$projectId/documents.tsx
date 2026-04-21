@@ -89,6 +89,7 @@ function ProjectDocumentsPage() {
 
 	return (
 		<DocsLibrary
+			companyId={companyId}
 			items={items}
 			isLoadingList={isLoadingList}
 			selectedKey={file ?? null}

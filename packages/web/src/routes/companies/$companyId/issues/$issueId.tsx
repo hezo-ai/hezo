@@ -213,7 +213,9 @@ function IssueDetailPage() {
 							<span className="text-xs font-medium text-text-muted">Description</span>
 						</div>
 						<div className="px-3 py-2.5">
-							<MarkdownProse testId="issue-description">{issue.description}</MarkdownProse>
+							<MarkdownProse testId="issue-description" companyId={companyId}>
+								{issue.description}
+							</MarkdownProse>
 						</div>
 					</div>
 				)}
@@ -378,7 +380,7 @@ function IssueDetailPage() {
 								</div>
 							</div>
 						) : issue.progress_summary ? (
-							<MarkdownProse>{issue.progress_summary}</MarkdownProse>
+							<MarkdownProse companyId={companyId}>{issue.progress_summary}</MarkdownProse>
 						) : (
 							<span>No progress summary yet.</span>
 						)}
@@ -429,7 +431,7 @@ function IssueDetailPage() {
 								</div>
 							</div>
 						) : issue.rules ? (
-							<MarkdownProse>{issue.rules}</MarkdownProse>
+							<MarkdownProse companyId={companyId}>{issue.rules}</MarkdownProse>
 						) : (
 							<span>No rules set.</span>
 						)}

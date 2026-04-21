@@ -34,6 +34,8 @@ interface DocsLibraryProps {
 
 	emptyTitle?: string;
 	emptyDescription?: string;
+
+	companyId?: string;
 }
 
 export function DocsLibrary({
@@ -52,6 +54,7 @@ export function DocsLibrary({
 	viewerExtras,
 	emptyTitle = 'No documents yet',
 	emptyDescription,
+	companyId,
 }: DocsLibraryProps) {
 	const [mode, setMode] = useState<'view' | 'edit'>('view');
 	const [modeKey, setModeKey] = useState<string | null>(selectedKey);
@@ -195,7 +198,7 @@ export function DocsLibrary({
 						</div>
 
 						{mode === 'view' ? (
-							<MarkdownProse>{docContent || '_(empty)_'}</MarkdownProse>
+							<MarkdownProse companyId={companyId}>{docContent || '_(empty)_'}</MarkdownProse>
 						) : (
 							<Textarea
 								value={draft}
