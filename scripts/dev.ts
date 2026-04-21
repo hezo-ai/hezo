@@ -10,7 +10,7 @@ const program = new Command()
 	.name('dev')
 	.description('Start all Hezo services in development mode')
 	.option('--reset', 'Reset the server database')
-	.option('--no-open', 'Do not auto-open the browser')
+	.option('--open', 'Auto-open the browser')
 	.option('--port <port>', 'Server port')
 	.option('--master-key <key>', 'Master key for unlocking')
 	.option('--data-dir <path>', 'Data directory')
@@ -28,7 +28,7 @@ if (opts.reset) {
 }
 
 const serverArgs: string[] = [];
-if (opts.open === false) serverArgs.push('--no-open');
+if (opts.open) serverArgs.push('--open');
 if (opts.port) serverArgs.push('--port', opts.port);
 if (opts.masterKey) serverArgs.push('--master-key', opts.masterKey);
 if (opts.dataDir) serverArgs.push('--data-dir', opts.dataDir);

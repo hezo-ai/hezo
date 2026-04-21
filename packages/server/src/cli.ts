@@ -10,7 +10,7 @@ export interface HezoConfig {
 	connectUrl: string;
 	connectApiKey?: string;
 	reset: boolean;
-	noOpen: boolean;
+	open: boolean;
 }
 
 export function parseArgs(argv: string[] = process.argv): HezoConfig {
@@ -23,7 +23,7 @@ export function parseArgs(argv: string[] = process.argv): HezoConfig {
 		.option('--connect-url <url>', 'Hezo Connect URL', DEFAULT_CONNECT_URL)
 		.option('--connect-api-key <key>', 'Hezo Connect API key')
 		.option('--reset', 'Reset database and start fresh')
-		.option('--no-open', 'Do not auto-open the browser')
+		.option('--open', 'Auto-open the browser')
 		.parse(argv);
 
 	const opts = program.opts();
@@ -47,6 +47,6 @@ export function parseArgs(argv: string[] = process.argv): HezoConfig {
 		connectUrl: opts.connectUrl,
 		connectApiKey: opts.connectApiKey,
 		reset: opts.reset ?? false,
-		noOpen: opts.open === false,
+		open: opts.open ?? false,
 	};
 }

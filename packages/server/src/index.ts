@@ -60,7 +60,7 @@ startup(config)
 		logsRef = result.logs;
 		const url = `http://localhost:${result.port}`;
 		log.info(`Hezo server running at ${url} [${result.masterKeyState}]`);
-		if (!config.noOpen) {
+		if (config.open) {
 			Bun.spawn(['open', `http://localhost:${DEFAULT_WEB_PORT}`]);
 		}
 	})
