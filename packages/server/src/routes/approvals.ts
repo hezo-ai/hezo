@@ -194,12 +194,22 @@ approvalsRoutes.get('/companies/:companyId/approvals', async (c) => {
 		`SELECT a.id, a.company_id, a.type, a.status, a.payload, a.resolution_note,
             a.resolved_at, a.created_at,
             co.name AS company_name,
+            co.slug AS company_slug,
             COALESCE(ma.title, m.display_name) AS requested_by_name,
-            a.requested_by_member_id
+            a.requested_by_member_id,
+            COALESCE(pma.title, pm.display_name) AS payload_member_name,
+            pma.slug AS payload_member_slug,
+            pp.name AS payload_project_name,
+            pp.slug AS payload_project_slug,
+            pi.identifier AS payload_issue_identifier
      FROM approvals a
      JOIN companies co ON co.id = a.company_id
      LEFT JOIN members m ON m.id = a.requested_by_member_id
      LEFT JOIN member_agents ma ON ma.id = a.requested_by_member_id
+     LEFT JOIN members pm ON pm.id = (a.payload->>'member_id')::uuid
+     LEFT JOIN member_agents pma ON pma.id = pm.id
+     LEFT JOIN projects pp ON pp.id = (a.payload->>'project_id')::uuid
+     LEFT JOIN issues pi ON pi.id = (a.payload->>'issue_id')::uuid
      WHERE a.company_id = $1 AND a.status IN (${statusFilter
 				.split(',')
 				.map((_, i) => `$${i + 2}::approval_status`)

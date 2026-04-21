@@ -13,8 +13,14 @@ export interface Approval {
 	resolved_at: string | null;
 	created_at: string;
 	company_name: string;
+	company_slug: string;
 	requested_by_name: string | null;
 	requested_by_member_id: string | null;
+	payload_member_name: string | null;
+	payload_member_slug: string | null;
+	payload_project_name: string | null;
+	payload_project_slug: string | null;
+	payload_issue_identifier: string | null;
 }
 
 export function useApprovals(

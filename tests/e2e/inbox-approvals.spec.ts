@@ -30,9 +30,9 @@ test.describe('Inbox / Approvals', () => {
 		await page.goto(`/companies/${company.slug}/inbox`);
 		await waitForPageLoad(page);
 
-		// Verify approval card is visible
+		// Verify approval card is visible with friendly message
 		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('strategy')).toBeVisible();
+		await expect(page.getByText('Proposing strategy')).toBeVisible();
 		await expect(page.getByText('Launch new product line')).toBeVisible();
 
 		// Verify approve/deny buttons
@@ -60,7 +60,7 @@ test.describe('Inbox / Approvals', () => {
 		await page.goto(`/companies/${company.slug}/inbox`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByText('hire')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Proposing to hire')).toBeVisible({ timeout: 5000 });
 
 		// Click approve
 		await page.getByRole('button', { name: 'Approve' }).click();
@@ -85,7 +85,7 @@ test.describe('Inbox / Approvals', () => {
 		await page.goto(`/companies/${company.slug}/inbox`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByText('secret access')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Requesting access to secret')).toBeVisible({ timeout: 5000 });
 
 		// Click deny
 		await page.getByRole('button', { name: 'Deny' }).click();
@@ -127,10 +127,17 @@ test.describe('Inbox / Approvals', () => {
 		await waitForPageLoad(page);
 
 		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('First company strategy')).toBeVisible();
-		await expect(page.getByText('Second company plan')).toBeVisible();
-		await expect(page.getByText(first.company.name)).toBeVisible();
-		await expect(page.getByText(second.company.name)).toBeVisible();
+		// Both approval types render friendly messages scoped to their company card.
+		// Other tests can leave pending approvals in unrelated companies, so scope
+		// the assertions to the specific approval cards for the companies we created.
+		const firstCard = page
+			.locator('[data-testid="approval-card"]')
+			.filter({ hasText: first.company.name });
+		const secondCard = page
+			.locator('[data-testid="approval-card"]')
+			.filter({ hasText: second.company.name });
+		await expect(firstCard.getByText('Proposing strategy')).toBeVisible();
+		await expect(secondCard.getByText('Requesting plan review')).toBeVisible();
 	});
 
 	test('rail inbox icon navigates to global inbox', async ({ page }) => {
