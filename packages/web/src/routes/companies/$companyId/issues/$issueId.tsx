@@ -377,8 +377,10 @@ function IssueDetailPage() {
 									</Button>
 								</div>
 							</div>
+						) : issue.progress_summary ? (
+							<MarkdownProse>{issue.progress_summary}</MarkdownProse>
 						) : (
-							<span>{issue.progress_summary || 'No progress summary yet.'}</span>
+							<span>No progress summary yet.</span>
 						)}
 					</div>
 
@@ -426,8 +428,10 @@ function IssueDetailPage() {
 									</Button>
 								</div>
 							</div>
+						) : issue.rules ? (
+							<MarkdownProse>{issue.rules}</MarkdownProse>
 						) : (
-							<span>{issue.rules || 'No rules set.'}</span>
+							<span>No rules set.</span>
 						)}
 					</div>
 

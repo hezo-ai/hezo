@@ -241,6 +241,73 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 	await expect(pinnedRules).toBeVisible();
 });
 
+test('issue rules and progress summary render markdown formatting', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = (await agentsRes.json()).data as { id: string }[];
+	const agent = agents[0];
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Markdown Project', description: 'Test project.' },
+	});
+	const project = (await projectRes.json()).data;
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: { project_id: project.id, title: 'Markdown Test Issue', assignee_id: agent.id },
+	});
+	const issue = (await issueRes.json()).data;
+
+	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await waitForPageLoad(page);
+	await expect(page.getByRole('heading', { name: 'Markdown Test Issue' })).toBeVisible({
+		timeout: 10000,
+	});
+
+	const rulesSection = page.getByText('Rules', { exact: true }).locator('..').locator('..');
+	await rulesSection.getByText('Edit').click();
+	await rulesSection
+		.locator('textarea')
+		.fill(
+			'Use **bold** guidance.\n\n- first bullet\n- second bullet\n\nRun `bun test` before merge.',
+		);
+	await rulesSection.getByRole('button', { name: 'Save' }).click();
+
+	const pinnedRules = page.getByTestId('pinned-rules');
+	await expect(pinnedRules.locator('strong', { hasText: 'bold' })).toBeVisible({ timeout: 5000 });
+	await expect(pinnedRules.locator('ul li', { hasText: 'first bullet' })).toBeVisible();
+	await expect(pinnedRules.locator('ul li', { hasText: 'second bullet' })).toBeVisible();
+	await expect(pinnedRules.locator('code', { hasText: 'bun test' })).toBeVisible();
+
+	const summarySection = page
+		.getByText('Progress Summary', { exact: true })
+		.locator('..')
+		.locator('..');
+	await summarySection.getByText('Edit').click();
+	await summarySection
+		.locator('textarea')
+		.fill('1. Scaffolded routes\n2. Wired up DB\n3. Added tests');
+	await summarySection.getByRole('button', { name: 'Save' }).click();
+
+	const pinnedSummary = page.getByTestId('pinned-progress-summary');
+	await expect(pinnedSummary.locator('ol li', { hasText: 'Scaffolded routes' })).toBeVisible({
+		timeout: 5000,
+	});
+	await expect(pinnedSummary.locator('ol li', { hasText: 'Wired up DB' })).toBeVisible();
+	await expect(pinnedSummary.locator('ol li', { hasText: 'Added tests' })).toBeVisible();
+
+	await page.reload();
+	await waitForPageLoad(page);
+	await expect(pinnedRules.locator('strong', { hasText: 'bold' })).toBeVisible({ timeout: 15000 });
+	await expect(pinnedSummary.locator('ol li', { hasText: 'Scaffolded routes' })).toBeVisible();
+});
+
 test('issue detail shows assignee with status badge', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
