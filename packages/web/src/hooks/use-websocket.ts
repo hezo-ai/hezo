@@ -39,11 +39,12 @@ const TABLE_TO_QUERY_KEY: Record<
 	goals: (cid) => [['companies', cid, 'goals']],
 };
 
-export function useWebSocket(wsCompanyId: string, routeCompanyId: string): void {
+export function useWebSocket(wsCompanyId: string | undefined, routeCompanyId: string): void {
 	const queryClient = useQueryClient();
 	const { joinRoom, leaveRoom, subscribe } = useSocket();
 
 	useEffect(() => {
+		if (!wsCompanyId) return;
 		const room = wsRoom.company(wsCompanyId);
 		joinRoom(room);
 

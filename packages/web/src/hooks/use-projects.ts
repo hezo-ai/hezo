@@ -36,6 +36,8 @@ export function useProjects(companyId: string) {
 	return useQuery({
 		queryKey: ['companies', companyId, 'projects'],
 		queryFn: () => api.get<Project[]>(`/api/companies/${companyId}/projects`),
+		staleTime: 0,
+		refetchOnMount: 'always',
 	});
 }
 

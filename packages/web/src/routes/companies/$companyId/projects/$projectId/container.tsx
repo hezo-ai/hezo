@@ -122,7 +122,7 @@ function ContainerPage() {
 					<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
 					<div className="flex flex-col gap-1">
 						<span className="font-medium text-red-400">Container error</span>
-						<span className="whitespace-pre-wrap font-mono text-xs text-red-200/90">
+						<span className="whitespace-pre-wrap font-mono text-xs text-red-300">
 							{project.container_error}
 						</span>
 					</div>
