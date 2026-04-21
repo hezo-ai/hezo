@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { FolderKanban, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { CreateProjectDialog } from '../../../../components/create-project-dialog';
@@ -8,6 +8,8 @@ import { Card } from '../../../../components/ui/card';
 import { EmptyState } from '../../../../components/ui/empty-state';
 import { useProjects } from '../../../../hooks/use-projects';
 
+type ProjectListSearch = { create?: boolean };
+
 function getInitials(name: string): string {
 	const words = name.split(/\s+/).filter(Boolean);
 	if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
@@ -16,8 +18,22 @@ function getInitials(name: string): string {
 
 function ProjectListPage() {
 	const { companyId } = Route.useParams();
+	const { create } = Route.useSearch();
+	const navigate = useNavigate();
 	const { data: projects, isLoading } = useProjects(companyId);
-	const [createOpen, setCreateOpen] = useState(false);
+	const [createOpen, setCreateOpen] = useState(create ?? false);
+
+	function handleCreateOpenChange(open: boolean) {
+		setCreateOpen(open);
+		if (!open && create) {
+			navigate({
+				to: '/companies/$companyId/projects',
+				params: { companyId },
+				search: {},
+				replace: true,
+			});
+		}
+	}
 
 	return (
 		<div className="max-w-[900px] mx-auto w-full px-8 py-6">
@@ -75,11 +91,18 @@ function ProjectListPage() {
 				</div>
 			)}
 
-			<CreateProjectDialog companyId={companyId} open={createOpen} onOpenChange={setCreateOpen} />
+			<CreateProjectDialog
+				companyId={companyId}
+				open={createOpen}
+				onOpenChange={handleCreateOpenChange}
+			/>
 		</div>
 	);
 }
 
 export const Route = createFileRoute('/companies/$companyId/projects/')({
+	validateSearch: (search: Record<string, unknown>): ProjectListSearch => ({
+		create: search.create === true || search.create === 'true',
+	}),
 	component: ProjectListPage,
 });

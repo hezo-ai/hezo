@@ -85,3 +85,24 @@ test('Blank template shows built-in agents note and creates CEO/Coach', async ({
 		timeout: 5000,
 	});
 });
+
+test('post-create redirect lands on projects page with create dialog open', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+	await suppressAiModal(page);
+	await page.goto('/companies/new');
+
+	await page.getByRole('button', { name: 'Continue' }).click();
+	await page.getByLabel('Name').fill('Auto Create Co');
+	await page.getByRole('button', { name: 'Create' }).click();
+
+	await expect(page).toHaveURL(/\/companies\/[^/]+\/projects\?create=true$/, { timeout: 10000 });
+
+	const dialog = page.getByRole('dialog');
+	await expect(dialog).toBeVisible({ timeout: 5000 });
+	await expect(dialog.getByText('Create Project')).toBeVisible();
+
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(dialog).toBeHidden({ timeout: 5000 });
+	await expect(page).toHaveURL(/\/companies\/[^/]+\/projects$/, { timeout: 5000 });
+});
