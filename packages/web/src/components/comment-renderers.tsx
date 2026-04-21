@@ -47,9 +47,16 @@ interface RenderProps {
 	onChooseOption?: (commentId: string, chosenId: string) => void;
 	companyId?: string;
 	projectId?: string;
+	issueId?: string;
 }
 
-export function CommentRenderer({ comment, onChooseOption, companyId, projectId }: RenderProps) {
+export function CommentRenderer({
+	comment,
+	onChooseOption,
+	companyId,
+	projectId,
+	issueId,
+}: RenderProps) {
 	switch (comment.content_type) {
 		case 'run':
 			return <RunComment comment={comment} companyId={companyId} />;
@@ -62,7 +69,14 @@ export function CommentRenderer({ comment, onChooseOption, companyId, projectId 
 		case 'system':
 			return <SystemComment comment={comment} />;
 		case 'action':
-			return <ActionComment comment={comment} companyId={companyId} projectId={projectId} />;
+			return (
+				<ActionComment
+					comment={comment}
+					companyId={companyId}
+					projectId={projectId}
+					issueId={issueId}
+				/>
+			);
 		default:
 			return <TextComment comment={comment} companyId={companyId} />;
 	}
@@ -72,10 +86,12 @@ function ActionComment({
 	comment,
 	companyId,
 	projectId,
+	issueId,
 }: {
 	comment: CommentData;
 	companyId?: string;
 	projectId?: string;
+	issueId?: string;
 }) {
 	const content = typeof comment.content === 'object' ? comment.content : {};
 	const kind: string = content.kind ?? '';
@@ -124,6 +140,7 @@ function ActionComment({
 			<RepoSetupWizard
 				companyId={companyId}
 				projectId={projectId}
+				issueId={issueId}
 				open={wizardOpen}
 				onOpenChange={setWizardOpen}
 			/>

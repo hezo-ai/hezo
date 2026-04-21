@@ -420,7 +420,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	wakeAgentIfAssigned(db, body.assignee_id, companyId, issueId);
 
 	if (body.status) {
-		triggerStatusAutomations(db, companyId, issueId, body.status).catch((e) =>
+		triggerStatusAutomations(db, companyId, issueId, body.status, c.get('wsManager')).catch((e) =>
 			log.error('Failed to trigger status automations:', e),
 		);
 

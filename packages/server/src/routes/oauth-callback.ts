@@ -13,6 +13,7 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { storeAiProviderKey } from '../services/ai-provider-keys';
 import { registerSSHKeyOnGitHub } from '../services/github';
+import { enqueueOAuthVerificationTask } from '../services/oauth-verification-tasks';
 import { generateCompanySSHKey, getCompanySSHKey, updateGitHubKeyId } from '../services/ssh-keys';
 import { storeOAuthToken } from '../services/token-store';
 
@@ -186,6 +187,22 @@ oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 			platform,
 		],
 	);
+
+	try {
+		const verification = await enqueueOAuthVerificationTask(
+			db,
+			companyId,
+			platform as PlatformType,
+			statePayload.issue_id ?? null,
+			metadata,
+			c.get('wsManager'),
+		);
+		if (verification) {
+			return c.redirect(`/companies/${companyId}/issues/${verification.identifier}`);
+		}
+	} catch (e) {
+		log.warn('Failed to create OAuth verification task:', e instanceof Error ? e.message : e);
+	}
 
 	return c.redirect(`/companies/${companyId}/settings?connected=${platform}`);
 });

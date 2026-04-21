@@ -487,6 +487,7 @@ function IssueDetailPage() {
 												}
 												companyId={companyId}
 												projectId={issue?.project_id ?? undefined}
+												issueId={issue?.id ?? undefined}
 											/>
 										</div>
 									</div>
