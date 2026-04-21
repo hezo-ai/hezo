@@ -188,6 +188,11 @@ oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 		],
 	);
 
+	const slugResult = await db.query<{ slug: string }>('SELECT slug FROM companies WHERE id = $1', [
+		companyId,
+	]);
+	const companyRef = slugResult.rows[0]?.slug ?? companyId;
+
 	try {
 		const verification = await enqueueOAuthVerificationTask(
 			db,
@@ -198,11 +203,11 @@ oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 			c.get('wsManager'),
 		);
 		if (verification) {
-			return c.redirect(`/companies/${companyId}/issues/${verification.identifier}`);
+			return c.redirect(`/companies/${companyRef}/issues/${verification.identifier}`);
 		}
 	} catch (e) {
 		log.warn('Failed to create OAuth verification task:', e instanceof Error ? e.message : e);
 	}
 
-	return c.redirect(`/companies/${companyId}/settings?connected=${platform}`);
+	return c.redirect(`/companies/${companyRef}/settings?connected=${platform}`);
 });

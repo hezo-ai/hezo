@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { ApprovalStatus, ApprovalType, PlatformType } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import { signOAuthState } from '../../crypto/state';
 import type { Env } from '../../lib/types';
@@ -13,6 +13,9 @@ let db: PGlite;
 let boardToken: string;
 let masterKeyManager: MasterKeyManager;
 let companyId: string;
+let companySlug: string;
+
+const originalFetch = globalThis.fetch;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -29,7 +32,13 @@ beforeAll(async () => {
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'OAuth Co', template_id: typeId, issue_prefix: 'OC' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	const companyBody = (await companyRes.json()).data;
+	companyId = companyBody.id;
+	companySlug = companyBody.slug;
+});
+
+afterEach(() => {
+	globalThis.fetch = originalFetch;
 });
 
 afterAll(async () => {
@@ -137,5 +146,26 @@ describe('GET /oauth/callback (public, no auth required)', () => {
 			[companyId, ApprovalType.OauthRequest, ApprovalStatus.Pending],
 		);
 		expect(before.rows.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('redirects to /companies/<slug>/issues/... (not UUID) after a successful OAuth exchange', async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				access_token: 'gho_test',
+				scopes: 'repo',
+				metadata: '',
+				platform: PlatformType.GitHub,
+			}),
+		}) as unknown as typeof fetch;
+
+		const state = await signOAuthState({ company_id: companyId }, masterKeyManager);
+		const res = await app.request(
+			`/oauth/callback?state=${encodeURIComponent(state)}&platform=github&code=test_code`,
+		);
+		expect(res.status).toBe(302);
+		const location = res.headers.get('location') ?? '';
+		expect(location).toMatch(new RegExp(`^/companies/${companySlug}/(issues|settings)`));
+		expect(location).not.toContain(companyId);
 	});
 });
