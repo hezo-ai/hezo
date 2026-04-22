@@ -73,9 +73,20 @@ export function IssueList({ companyId, projectId, issueDetailRoute }: IssueListP
 		{
 			key: 'id',
 			header: 'ID',
-			width: '72px',
+			width: '88px',
 			className: 'font-mono text-text-muted',
-			render: (row) => row.identifier,
+			render: (row) => (
+				<span className="inline-flex items-center gap-1.5">
+					{row.has_active_run && (
+						<span
+							data-testid="issue-running-dot"
+							title="Agent run in progress"
+							className="inline-block w-2 h-2 rounded-full bg-accent-yellow animate-pulse shrink-0"
+						/>
+					)}
+					{row.identifier}
+				</span>
+			),
 		},
 		{
 			key: 'title',
@@ -117,17 +128,7 @@ export function IssueList({ companyId, projectId, issueDetailRoute }: IssueListP
 			key: 'assignee',
 			header: 'Assignee',
 			width: '100px',
-			render: (row) => (
-				<span className="text-text-muted inline-flex items-center gap-1.5">
-					{row.assignee_type === 'agent' && row.has_active_run && (
-						<span
-							data-testid="assignee-running-dot"
-							className="inline-block w-2 h-2 rounded-full bg-accent-yellow animate-pulse shrink-0"
-						/>
-					)}
-					{row.assignee_name || '—'}
-				</span>
-			),
+			render: (row) => <span className="text-text-muted">{row.assignee_name || '—'}</span>,
 		},
 	];
 
