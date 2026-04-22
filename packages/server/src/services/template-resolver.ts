@@ -24,7 +24,7 @@ const SHARED_INSTRUCTIONS = `
   - \`done\` — when work is complete and merged (triggers Coach review)
 
 ### Knowledge Maintenance
-- **Project docs** (\`.dev/\` folder): Use the \`write_project_doc\` tool for high-level project context — architecture decisions, API designs, schema, implementation plans. Keep these aligned with the actual codebase. Do NOT put agent-specific working knowledge here.
+- **Project docs**: Use \`list_project_docs\`, \`read_project_doc\`, and \`write_project_doc\` for high-level project context — PRDs, architecture decisions, API designs, schemas, implementation plans. Docs live in the project-doc store and are addressed by bare filename (e.g. \`prd.md\`, \`spec.md\`, \`research.md\`) — they are NOT filesystem paths, so never prefix a folder. Keep them aligned with the actual codebase. Do NOT put agent-specific working knowledge here.
 - **AGENTS.md**: For practical conventions, commands, and constraints that agents need when working on this project. Update via git in the repo.
 - **Company KB**: Use the \`upsert_kb_doc\` tool for organizational knowledge that spans projects — company policies, standards, and shared conventions.
 

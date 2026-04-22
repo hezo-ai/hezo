@@ -64,7 +64,6 @@ CREATE TYPE heartbeat_run_status AS ENUM ('queued', 'running', 'succeeded', 'fai
 CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
 CREATE TYPE membership_role AS ENUM ('board', 'member');
 CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
--- project_doc_type enum removed: project docs now live in the designated repo's .dev/ folder
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
 CREATE TYPE company_type_source AS ENUM ('builtin', 'custom', 'marketplace');
 CREATE TYPE goal_status AS ENUM ('active', 'achieved', 'archived');
@@ -709,9 +708,6 @@ CREATE TABLE company_preference_revisions (
 
 CREATE INDEX idx_company_pref_revisions_pref ON company_preference_revisions(preference_id);
 
--- PROJECT DOCUMENTS and PROJECT DOCUMENT REVISIONS tables removed.
--- Project docs now live in the designated repo's .dev/ folder, tracked by git.
-
 -------------------------------------------------------------------------------
 -- KB DOCUMENT REVISIONS
 -------------------------------------------------------------------------------
@@ -1037,7 +1033,8 @@ CREATE TRIGGER trg_kb_docs_updated BEFORE UPDATE ON kb_docs
 CREATE TRIGGER trg_company_prefs_updated BEFORE UPDATE ON company_preferences
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
--- trg_project_docs_updated removed (project_docs table removed)
+CREATE TRIGGER trg_project_docs_updated BEFORE UPDATE ON project_docs
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_connected_platforms_updated BEFORE UPDATE ON connected_platforms
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
