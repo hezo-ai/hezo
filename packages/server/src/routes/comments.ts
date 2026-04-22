@@ -1,6 +1,7 @@
 import { AuthType, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { extractMentionSlugs } from '../lib/mentions';
 import { resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -104,27 +105,25 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		],
 	);
 
-	const contentText = typeof body.content === 'object' ? JSON.stringify(body.content) : '';
-	const mentions = contentText.match(/@([\w-]+)/g);
+	const mentionedSlugs = extractMentionSlugs(body.content);
 	const mentionedAgentIds = new Set<string>();
-	if (mentions) {
-		for (const mention of mentions) {
-			const slug = mention.slice(1);
-			const mentioned = await db.query<{ id: string }>(
-				`SELECT ma.id FROM member_agents ma
-				 JOIN members m ON m.id = ma.id
-				 WHERE ma.slug = $1 AND m.company_id = $2`,
-				[slug, companyId],
-			);
-			if (mentioned.rows.length > 0) {
-				mentionedAgentIds.add(mentioned.rows[0].id);
-				createWakeup(db, mentioned.rows[0].id, companyId, WakeupSource.Mention, {
-					issue_id: issueId,
-					comment_id: result.rows[0].id,
-					...(commentEffort ? { effort: commentEffort } : {}),
-				}).catch((e) => log.error('Failed to create mention wakeup:', e));
-			}
-		}
+	for (const slug of mentionedSlugs) {
+		const mentioned = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE ma.slug = $1 AND m.company_id = $2`,
+			[slug, companyId],
+		);
+		if (mentioned.rows.length === 0) continue;
+		const mentionedId = mentioned.rows[0].id;
+		if (auth.type === AuthType.Agent && auth.memberId === mentionedId) continue;
+		mentionedAgentIds.add(mentionedId);
+		createWakeup(db, mentionedId, companyId, WakeupSource.Mention, {
+			source: WakeupSource.Mention,
+			issue_id: issueId,
+			comment_id: result.rows[0].id,
+			...(commentEffort ? { effort: commentEffort } : {}),
+		}).catch((e) => log.error('Failed to create mention wakeup:', e));
 	}
 
 	const assigneeId = issueCheck.rows[0].assignee_id;

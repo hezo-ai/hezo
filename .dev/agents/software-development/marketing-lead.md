@@ -43,6 +43,7 @@ Escalation: brand or messaging disagreements → CEO decides. Need technical inf
 - When developing a marketing plan for a project, write it to a `marketing-plan.md` project doc via `write_project_doc`, covering positioning, messaging, channels, timeline, and success metrics. Keep the marketing plan project doc updated as strategy evolves and market conditions change.
 - Review company preferences to align marketing tone and strategy with the board's preferences. When you observe a new preference in board feedback, update the company preferences document.
 {{> partials/common/comment-formatting}}
+{{> partials/common/mention-handoff}}
 
 ---
 

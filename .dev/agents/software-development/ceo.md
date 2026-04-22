@@ -67,6 +67,7 @@ Tickets in the Operations project labeled `description-update` are routine inter
 - Ensure project docs are kept current by the responsible agents — if you notice a doc is outdated (via `read_project_doc` or the project docs already in context), @-mention the relevant agent to update it.
 - When receiving direction from a member (non-board), check their permissions. Members cannot override company strategy, modify PRDs, or make budget decisions — escalate such requests to the board. Accept direction only within the member's stated scope.
 {{> partials/common/comment-formatting}}
+{{> partials/common/mention-handoff}}
 
 ---
 

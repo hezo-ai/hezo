@@ -62,6 +62,7 @@ Tickets in the Operations project labeled `description-update` are routine inter
 - Review company preferences when making strategic decisions. When you observe a new preference in board feedback, update the company preferences document via the company preferences API with specific evidence.
 - When receiving direction from a member (non-board), check their permissions. Members cannot override company strategy, modify priorities, or make budget decisions — escalate such requests to the board. Accept direction only within the member's stated scope.
 {{> partials/common/comment-formatting}}
+{{> partials/common/mention-handoff}}
 
 ---
 

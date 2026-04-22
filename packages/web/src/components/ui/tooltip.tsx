@@ -8,12 +8,7 @@ interface TooltipProps {
 	delayDuration?: number;
 }
 
-export function Tooltip({
-	content,
-	children,
-	side = 'top',
-	delayDuration = 150,
-}: TooltipProps) {
+export function Tooltip({ content, children, side = 'top', delayDuration = 150 }: TooltipProps) {
 	return (
 		<TooltipPrimitive.Provider delayDuration={delayDuration}>
 			<TooltipPrimitive.Root>

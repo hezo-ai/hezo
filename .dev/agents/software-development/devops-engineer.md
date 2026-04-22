@@ -50,6 +50,7 @@ Escalation: infrastructure outages → @-mention the Architect and CEO immediate
 - Review company preferences to align infrastructure decisions with the board's preferences. When you observe a new preference in board feedback, update the company preferences document.
 {{> partials/common/no-designated-repo}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/mention-handoff}}
 
 ---
 

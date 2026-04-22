@@ -2115,9 +2115,21 @@ Text content can contain `@<agent-slug>` references. The slug is derived from
 the agent title (lowercased, spaces → hyphens, e.g. "Dev Engineer" → `dev-engineer`).
 Repo short names can also be referenced: `@frontend`, `@api`.
 
-The server parses mentions from comment content and creates notifications for
-the mentioned agent. The mentioned agent receives the notification on its next
-heartbeat (in the `notifications` array).
+On `POST /companies/:companyId/issues/:issueId/comments`, the server parses
+mentions out of the comment content (ignoring fenced code blocks and self-
+mentions) and creates a `mention`-source wakeup for each distinct mentioned
+agent. The wakeup payload carries `{ source: "mention", issue_id, comment_id }`,
+and the mentioned agent wakes immediately — not on the next heartbeat tick.
+
+**Handoff semantics.** A mention-triggered run opens on the triggering ticket
+for triage. The agent's task prompt includes a "Mention Handoff" section that
+names the mentioner, quotes an excerpt of the comment (≤ 500 chars, with code
+fences stripped), and lists the agent's own open tickets. The agent is expected
+to route the work: update one of its own open tickets, or create a new one
+(subtask of the triggering ticket or standalone), then post a single linking
+comment back on the triggering ticket ("Tracking this on `{identifier}`.") and
+end the turn. The only exception is direct inline questions the mentioned
+agent can answer as the authority on the triggering ticket.
 
 Agents can use this to: ask questions, request reviews, escalate blockers, hand
 off context, or coordinate work across teams — all visible in the issue thread,

@@ -53,6 +53,7 @@ If the spec is unclear, ask the Architect — don't guess. If you disagree with 
 - Review company preferences to align implementation style with the board's preferences. When you observe a new preference in board feedback, update the company preferences document.
 {{> partials/common/no-designated-repo}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/mention-handoff}}
 
 ---
 

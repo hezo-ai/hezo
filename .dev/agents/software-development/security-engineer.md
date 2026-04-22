@@ -70,6 +70,7 @@ On heartbeats, audit the codebase across these areas:
 - Review company preferences to align security standards with the board's expectations.
 {{> partials/common/no-designated-repo}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/mention-handoff}}
 
 ---
 

@@ -58,6 +58,7 @@ Keep the research document updated as new findings emerge or earlier conclusions
 - Propose KB documents for findings that will be useful across multiple tickets.
 - Review company preferences to align research approach and presentation with the board's preferences. When you observe a new preference in board feedback, update the company preferences document.
 {{> partials/common/comment-formatting}}
+{{> partials/common/mention-handoff}}
 
 ---
 

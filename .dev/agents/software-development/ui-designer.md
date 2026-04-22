@@ -50,6 +50,7 @@ When disagreeing with the Engineer on design, the Architect decides. Accessibili
 - Review company preferences to align design direction with the board's aesthetic and UX preferences. When you observe a new preference in board feedback, update the company preferences document.
 {{> partials/common/no-designated-repo}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/mention-handoff}}
 
 ---
 

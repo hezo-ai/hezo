@@ -167,11 +167,16 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 	tool(
 		server,
 		'list_issues',
-		'List issues for a company',
+		'List issues for a company. Filter by assignee_id or assignee_slug to find your own open tickets (e.g. pass your own agent slug).',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().optional().describe('Filter by project ID'),
 			status: z.string().optional().describe('Filter by status (comma-separated)'),
+			assignee_id: z.string().optional().describe('Filter by assignee member ID'),
+			assignee_slug: z
+				.string()
+				.optional()
+				.describe('Filter by assignee agent slug (alternative to assignee_id)'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -189,6 +194,23 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				const ph = statuses.map((_, i) => `$${idx + i}::issue_status`).join(', ');
 				conditions.push(`i.status IN (${ph})`);
 				params.push(...statuses);
+				idx += statuses.length;
+			}
+			let assigneeId = args.assignee_id as string | undefined;
+			if (!assigneeId && args.assignee_slug) {
+				const agent = await db.query<{ id: string }>(
+					`SELECT ma.id FROM member_agents ma
+					 JOIN members m ON m.id = ma.id
+					 WHERE ma.slug = $1 AND m.company_id = $2`,
+					[args.assignee_slug, args.company_id],
+				);
+				if (agent.rows.length === 0) return [];
+				assigneeId = agent.rows[0].id;
+			}
+			if (assigneeId) {
+				conditions.push(`i.assignee_id = $${idx}`);
+				params.push(assigneeId);
+				idx++;
 			}
 			const r = await db.query(
 				`SELECT i.*, p.name AS project_name FROM issues i JOIN projects p ON p.id = i.project_id WHERE ${conditions.join(' AND ')} ORDER BY i.created_at DESC LIMIT 50`,

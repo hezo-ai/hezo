@@ -48,6 +48,7 @@ The Architect uses a four-stage planning workflow, gated on a finalised PRD.
 - Review company preferences to align technical decisions with the board's architectural and design preferences. When you observe a new preference in board feedback, update the company preferences document via the company preferences API with specific evidence.
 {{> partials/common/no-designated-repo}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/mention-handoff}}
 
 ---
 

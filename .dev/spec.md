@@ -1202,9 +1202,18 @@ Agents can create sub-issues and assign them to their direct reports or peers (a
 
 All inter-agent communication happens through @-mentions in issue comments — same as GitHub. No side channels, no direct messaging, no hidden state. Everything is on the record and fully traceable.
 
-An agent can `@architect` or `@engineer` in a comment. The mentioned agent receives a notification on its next heartbeat. The slug for @-mentions is derived from the agent title (lowercased, spaces → hyphens). Slugs are unique within a company.
+An agent can `@architect` or `@engineer` in a comment. The mentioned agent wakes immediately (see §Event-based triggers). The slug for @-mentions is derived from the agent title (lowercased, spaces → hyphens). Slugs are unique within a company.
 
 Repo short names can also be @-mentioned: `@frontend`, `@api` — these reference the repo, not an agent.
+
+**Handoff contract.** When an agent is woken by a mention, its run opens on the triggering ticket for *triage only* — not as new assigned work. The agent's task prompt is prepended with a Mention Handoff block showing the mentioner, the comment excerpt, and the agent's own open tickets. The expected behaviour is:
+
+- If one of the agent's open tickets already covers the topic of the mention, the agent updates that ticket's description, rules, or progress_summary to reflect what was communicated and references the triggering ticket so the handoff is traceable.
+- If no existing ticket covers it, the agent opens one via `create_issue` — as a sub-issue of the triggering ticket when the work belongs underneath it, or standalone when it is peer-level. The new ticket is assigned to the mentioned agent.
+- The agent then posts a single short comment on the triggering ticket ("Tracking this on `{identifier}`.") and ends the turn. The next heartbeat picks up the agent's own ticket.
+- The only exception is when the mention is a direct question the mentioned agent can answer inline as the authority on the triggering ticket — in that case the agent replies in-thread and ends the turn.
+
+Self-mentions (an agent mentioning its own slug in a comment it authors) do not create a wakeup; this prevents infinite wake loops when agents quote their prior output. Mentions inside fenced code blocks are also ignored.
 
 Use cases: asking questions, requesting code reviews, escalating blockers, handing off context, coordinating cross-team work. All of it visible in the issue thread.
 

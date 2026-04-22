@@ -13,6 +13,8 @@ import {
 	RUNTIME_COMMANDS,
 	RUNTIME_STREAM_ARGS,
 	RUNTIME_TO_PROVIDER,
+	TERMINAL_ISSUE_STATUSES,
+	WakeupSource,
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
@@ -153,9 +155,13 @@ async function buildRunContext(
 	const effortApplication = applyEffortToRuntime(runtimeType, effort);
 
 	const isCoachReview = wakeupPayload?.trigger === 'issue_done';
+	const mentionContext =
+		wakeupPayload?.source === WakeupSource.Mention
+			? await loadMentionContext(deps.db, agent.id, agent.company_id, wakeupPayload)
+			: null;
 	const basePrompt = isCoachReview
 		? await buildCoachReviewPrompt(deps.db, resolvedPrompt, issue, agent.company_id)
-		: buildTaskPrompt(resolvedPrompt, issue, wakeupPayload);
+		: buildTaskPrompt(resolvedPrompt, issue, wakeupPayload, mentionContext);
 	const taskPrompt = effortApplication.promptDirective
 		? `${basePrompt}\n\n${effortApplication.promptDirective}`
 		: basePrompt;
@@ -547,21 +553,99 @@ async function prepareWorktrees(
 	return { workingDir, designatedRepo: primary ?? null };
 }
 
+export interface MentionOpenTicket {
+	identifier: string;
+	title: string;
+	status: string;
+	priority: string;
+}
+
+export interface MentionContext {
+	authorName: string;
+	excerpt: string;
+	openTickets: MentionOpenTicket[];
+}
+
+const MENTION_EXCERPT_MAX = 500;
+const FENCED_CODE_STRIP_RE = /(?:^|\n)(?:```|~~~)[^\n]*\n[\s\S]*?(?:```|~~~)(?=\n|$)/g;
+
+export async function loadMentionContext(
+	db: PGlite,
+	agentMemberId: string,
+	companyId: string,
+	wakeupPayload: Record<string, unknown>,
+): Promise<MentionContext | null> {
+	const commentId = typeof wakeupPayload.comment_id === 'string' ? wakeupPayload.comment_id : null;
+	if (!commentId) return null;
+
+	const row = await db.query<{
+		content: Record<string, unknown>;
+		author_name: string | null;
+	}>(
+		`SELECT ic.content,
+		        COALESCE(ma.title, m.display_name, 'Board') AS author_name
+		 FROM issue_comments ic
+		 LEFT JOIN members m ON m.id = ic.author_member_id
+		 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
+		 WHERE ic.id = $1`,
+		[commentId],
+	);
+	if (row.rows.length === 0) return null;
+
+	const commentText = extractCommentText(row.rows[0].content);
+	const excerpt = truncateExcerpt(commentText, MENTION_EXCERPT_MAX);
+
+	const tickets = await db.query<MentionOpenTicket>(
+		`SELECT identifier, title, status::text AS status, priority::text AS priority
+		 FROM issues
+		 WHERE assignee_id = $1
+		   AND company_id = $2
+		   AND status NOT IN (${TERMINAL_ISSUE_STATUSES.map((_, i) => `$${i + 3}::issue_status`).join(', ')})
+		 ORDER BY
+		   CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
+		   updated_at DESC
+		 LIMIT 10`,
+		[agentMemberId, companyId, ...TERMINAL_ISSUE_STATUSES],
+	);
+
+	return {
+		authorName: row.rows[0].author_name ?? 'Board',
+		excerpt,
+		openTickets: tickets.rows,
+	};
+}
+
+function extractCommentText(content: unknown): string {
+	if (!content || typeof content !== 'object') return '';
+	const obj = content as Record<string, unknown>;
+	if (typeof obj.text === 'string') return obj.text;
+	return Object.values(obj)
+		.filter((v): v is string => typeof v === 'string')
+		.join('\n');
+}
+
+function truncateExcerpt(text: string, max: number): string {
+	const stripped = text.replace(FENCED_CODE_STRIP_RE, '[code omitted]').trim();
+	if (stripped.length <= max) return stripped;
+	return `${stripped.slice(0, max).trimEnd()}…`;
+}
+
 export function buildTaskPrompt(
 	systemPrompt: string,
 	issue: IssueInfo,
 	wakeupPayload?: Record<string, unknown>,
+	mentionContext?: MentionContext | null,
 ): string {
-	const parts = [
-		systemPrompt,
-		'',
-		'---',
-		'',
-		`## Current Task: ${issue.identifier} — ${issue.title}`,
-		`**Priority:** ${issue.priority}`,
-		`**Status:** ${issue.status}`,
-		'',
-	];
+	const parts = [systemPrompt, '', '---', ''];
+
+	if (mentionContext && wakeupPayload?.source === WakeupSource.Mention) {
+		parts.push(...renderMentionHandoff(issue, mentionContext));
+	}
+
+	parts.push(`## Current Task: ${issue.identifier} — ${issue.title}`);
+	parts.push(`**Priority:** ${issue.priority}`);
+	parts.push(`**Status:** ${issue.status}`);
+	parts.push('');
 
 	if (issue.rules) {
 		parts.push('### Rules for this issue');
@@ -586,6 +670,41 @@ export function buildTaskPrompt(
 	parts.push('Work on this task. Post comments via the Agent API to report progress.');
 
 	return parts.join('\n');
+}
+
+function renderMentionHandoff(issue: IssueInfo, ctx: MentionContext): string[] {
+	const ticketList =
+		ctx.openTickets.length === 0
+			? 'none'
+			: ctx.openTickets
+					.map((t) => `- ${t.identifier} — ${t.title} (${t.status}, ${t.priority})`)
+					.join('\n');
+	const excerptBlock = ctx.excerpt
+		? ctx.excerpt
+				.split('\n')
+				.map((line) => `> ${line}`)
+				.join('\n')
+		: '> (empty)';
+	return [
+		'## Mention Handoff',
+		`You were mentioned by ${ctx.authorName} in ${issue.identifier} — a comment excerpt:`,
+		'',
+		excerptBlock,
+		'',
+		'### Your open tickets',
+		ticketList,
+		'',
+		'### How to handle this mention',
+		`1. Decide which of your open tickets this mention pertains to. If one exists, use \`update_issue\` to bring its description, rules, or progress_summary in line with what the mention communicates. Reference ${issue.identifier} in the updated text so readers can trace the handoff.`,
+		`2. If none of your open tickets covers this, use \`create_issue\` to open one. Choose \`parent_issue_id = ${issue.id}\` if the work belongs underneath ${issue.identifier}; omit \`parent_issue_id\` for a peer-level ticket. Assign it to yourself.`,
+		`3. Post a single \`create_comment\` on ${issue.identifier} of the form "Tracking this on {your_ticket_identifier}." so the mentioner sees where the work moved.`,
+		`4. End the turn. Do not modify ${issue.identifier} beyond that one comment. Your next heartbeat picks up your own ticket and continues work there.`,
+		'',
+		`If the mention is a direct question you can answer inline as the authority on ${issue.identifier}, reply via \`create_comment\` and end the turn.`,
+		'',
+		'---',
+		'',
+	];
 }
 
 async function buildCoachReviewPrompt(

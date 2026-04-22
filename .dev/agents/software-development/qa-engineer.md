@@ -77,6 +77,7 @@ On heartbeats, audit the entire codebase across these areas:
 - Review company preferences to align quality standards with the board's expectations. When you observe a new preference in board feedback, update the company preferences document.
 {{> partials/common/no-designated-repo}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/mention-handoff}}
 
 ---
 

@@ -53,6 +53,7 @@ If a pattern suggests a fundamental role redesign is needed, flag it to the boar
 - Do not propose changes if the ticket completed smoothly without significant rework or feedback.
 - Focus on patterns, not isolated incidents — if something only happened once and seems unlikely to recur, skip it.
 {{> partials/common/comment-formatting}}
+{{> partials/common/mention-handoff}}
 
 ---
 
