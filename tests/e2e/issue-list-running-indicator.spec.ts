@@ -51,7 +51,7 @@ test('issue running dot appears when has_active_run is true', async ({ page }) =
 	});
 	const issue = ((await issueRes.json()) as { data: { id: string } }).data;
 
-	await page.route(`**/api/companies/${company.id}/issues?**`, async (route) => {
+	await page.route(`**/api/companies/${company.slug}/issues?**`, async (route) => {
 		const response = await route.fetch();
 		const body = await response.json();
 		const data = Array.isArray(body) ? body : body.data;
