@@ -1,12 +1,12 @@
 import { AuthType, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
-import { extractMentionSlugs } from '../lib/mentions';
 import { resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
+import { fireCommentWakeups } from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
 import { createWakeup } from '../services/wakeup';
 
@@ -105,41 +105,16 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		],
 	);
 
-	const mentionedSlugs = extractMentionSlugs(body.content);
-	const mentionedAgentIds = new Set<string>();
-	for (const slug of mentionedSlugs) {
-		const mentioned = await db.query<{ id: string }>(
-			`SELECT ma.id FROM member_agents ma
-			 JOIN members m ON m.id = ma.id
-			 WHERE ma.slug = $1 AND m.company_id = $2`,
-			[slug, companyId],
-		);
-		if (mentioned.rows.length === 0) continue;
-		const mentionedId = mentioned.rows[0].id;
-		if (auth.type === AuthType.Agent && auth.memberId === mentionedId) continue;
-		mentionedAgentIds.add(mentionedId);
-		createWakeup(db, mentionedId, companyId, WakeupSource.Mention, {
-			source: WakeupSource.Mention,
-			issue_id: issueId,
-			comment_id: result.rows[0].id,
-			...(commentEffort ? { effort: commentEffort } : {}),
-		}).catch((e) => log.error('Failed to create mention wakeup:', e));
-	}
-
-	const assigneeId = issueCheck.rows[0].assignee_id;
-	if (assigneeId && !mentionedAgentIds.has(assigneeId)) {
-		const isSelfComment = auth.type === AuthType.Agent && auth.memberId === assigneeId;
-		if (!isSelfComment) {
-			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
-			if (isAgent.rows.length > 0) {
-				createWakeup(db, assigneeId, companyId, WakeupSource.Comment, {
-					issue_id: issueId,
-					comment_id: result.rows[0].id,
-					...(commentEffort ? { effort: commentEffort } : {}),
-				}).catch((e) => log.error('Failed to create comment wakeup:', e));
-			}
-		}
-	}
+	await fireCommentWakeups({
+		db,
+		issueId,
+		companyId,
+		commentId: result.rows[0].id,
+		content: body.content,
+		contentType: body.content_type ?? CommentContentType.Text,
+		authorMemberId,
+		effort: commentEffort,
+	});
 
 	broadcastChange(
 		c,

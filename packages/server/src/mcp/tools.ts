@@ -17,6 +17,7 @@ import { assertNoActiveRun } from '../lib/active-run';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
+import { fireCommentWakeups } from '../services/comment-wakeups';
 import { triggerStatusAutomations } from '../services/issue-automation';
 import { createWakeup } from '../services/wakeup';
 
@@ -651,15 +652,20 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			]);
 			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const r = await db.query(
+			const content = { text: args.content };
+			const r = await db.query<{ id: string }>(
 				`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content) VALUES ($1, $2, $3::comment_content_type, $4::jsonb) RETURNING *`,
-				[
-					args.issue_id,
-					authorMemberId,
-					CommentContentType.Text,
-					JSON.stringify({ text: args.content }),
-				],
+				[args.issue_id, authorMemberId, CommentContentType.Text, JSON.stringify(content)],
 			);
+			await fireCommentWakeups({
+				db,
+				issueId: args.issue_id as string,
+				companyId: args.company_id as string,
+				commentId: r.rows[0].id,
+				content,
+				contentType: CommentContentType.Text,
+				authorMemberId,
+			});
 			return r.rows[0];
 		},
 		db,
