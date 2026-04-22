@@ -181,6 +181,7 @@ export const WakeupSource = {
 	Automation: 'automation',
 	OptionChosen: 'option_chosen',
 	Comment: 'comment',
+	Reply: 'reply',
 } as const;
 export type WakeupSource = (typeof WakeupSource)[keyof typeof WakeupSource];
 

@@ -288,7 +288,7 @@ describe('company settings JSONB', () => {
 			headers: authHeader(boardToken),
 		});
 		const company = (await res.json()).data;
-		expect(company.settings).toEqual({ coach_auto_apply: false });
+		expect(company.settings).toEqual({ coach_auto_apply: false, wake_mentioner_on_reply: true });
 	});
 
 	it('can update coach_auto_apply via settings PATCH', async () => {

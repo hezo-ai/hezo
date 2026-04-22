@@ -58,7 +58,7 @@ CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
 CREATE TYPE platform_type AS ENUM ('github', 'gmail', 'gitlab', 'stripe', 'posthog', 'railway', 'vercel', 'digitalocean', 'x', 'anthropic', 'openai', 'google');
 CREATE TYPE connection_status AS ENUM ('active', 'expired', 'disconnected');
-CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'comment');
+CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'comment', 'reply');
 CREATE TYPE wakeup_status AS ENUM ('queued', 'claimed', 'completed', 'failed', 'skipped', 'coalesced', 'deferred', 'cancelled');
 CREATE TYPE heartbeat_run_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'timed_out');
 CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
@@ -154,7 +154,7 @@ CREATE TABLE companies (
     budget_reset_at      TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
     mcp_servers          JSONB NOT NULL DEFAULT '[]'::jsonb,
     mpp_config           JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
-    settings             JSONB NOT NULL DEFAULT '{"coach_auto_apply": false}'::jsonb,
+    settings             JSONB NOT NULL DEFAULT '{"coach_auto_apply": false, "wake_mentioner_on_reply": true}'::jsonb,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );

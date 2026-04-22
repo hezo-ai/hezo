@@ -32,6 +32,36 @@ test('general section displays company info', async ({ page }) => {
 	await expect(generalSection.getByText('Build great things')).toBeVisible({ timeout: 5000 });
 });
 
+test('automations section exposes the wake-mentioner toggle and persists the change', async ({
+	page,
+}) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompany(page);
+	await page.goto(`/companies/${company.slug}/settings`);
+
+	const automations = page.locator('#settings-automations');
+	await expect(automations.getByRole('heading', { name: 'Automations' })).toBeVisible({
+		timeout: 5000,
+	});
+
+	const toggle = automations.getByRole('checkbox', { name: /wake mentioner on reply/i });
+	await expect(toggle).toBeChecked();
+
+	await toggle.click();
+	await expect(toggle).not.toBeChecked();
+
+	const res = await page.request.get(`/api/companies/${company.id}`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const persisted = (await res.json()).data.settings;
+	expect(persisted.wake_mentioner_on_reply).toBe(false);
+
+	await toggle.click();
+	await expect(toggle).toBeChecked();
+});
+
 test('can add and delete a secret', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);

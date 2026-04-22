@@ -119,6 +119,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		content: body.content,
 		contentType: body.content_type ?? CommentContentType.Text,
 		authorMemberId,
+		authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
 		effort: commentEffort,
 		wakeAssignee,
 	});

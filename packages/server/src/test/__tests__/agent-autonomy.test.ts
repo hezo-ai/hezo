@@ -432,7 +432,9 @@ describe('agent-runner: mention handoff prompt', () => {
 			],
 		};
 
-		const prompt = buildTaskPrompt('System prompt', mentionIssue, mentionPayload, ctx);
+		const prompt = buildTaskPrompt('System prompt', mentionIssue, mentionPayload, {
+			mentionContext: ctx,
+		});
 
 		expect(prompt).toContain('## Mention Handoff');
 		expect(prompt).toContain('You were mentioned by CEO in AUT-42');
@@ -441,7 +443,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		expect(prompt).toContain('AUT-12 — Review PRD (in_progress, medium)');
 		expect(prompt).toContain('AUT-15 — ADR: runtime (backlog, low)');
 		expect(prompt).toContain('parent_issue_id = trig-uuid');
-		expect(prompt).toContain('Tracking this on');
+		expect(prompt).toContain('brief, meaningful acknowledgement');
 		// Ensure the normal Current Task block still follows.
 		expect(prompt).toContain('## Current Task: AUT-42');
 		// Handoff appears before the Current Task block.
@@ -457,7 +459,9 @@ describe('agent-runner: mention handoff prompt', () => {
 			openTickets: [],
 		};
 
-		const prompt = buildTaskPrompt('System prompt', mentionIssue, mentionPayload, ctx);
+		const prompt = buildTaskPrompt('System prompt', mentionIssue, mentionPayload, {
+			mentionContext: ctx,
+		});
 
 		expect(prompt).toContain('### Your open tickets\nnone');
 		expect(prompt).toContain('use `create_issue` to open one');
@@ -472,12 +476,11 @@ describe('agent-runner: mention handoff prompt', () => {
 			openTickets: [],
 		};
 
-		// Assignment wakeup — should NOT render the handoff even if ctx is passed.
 		const prompt = buildTaskPrompt(
 			'System prompt',
 			mentionIssue,
 			{ source: 'assignment', issue_id: 'trig-uuid' },
-			ctx,
+			{ mentionContext: ctx },
 		);
 
 		expect(prompt).not.toContain('## Mention Handoff');
@@ -502,7 +505,9 @@ describe('agent-runner: mention handoff prompt', () => {
 			},
 		};
 
-		const prompt = buildTaskPrompt('System prompt', mentionIssue, payload, ctx);
+		const prompt = buildTaskPrompt('System prompt', mentionIssue, payload, {
+			mentionContext: ctx,
+		});
 
 		expect(prompt).toContain('## Mention Handoff');
 		expect(prompt).toContain('## Retry Attempt 1/2');
@@ -538,7 +543,7 @@ describe('agent-runner: mention context loader', () => {
 				rules: null,
 			},
 			{ source: 'mention', comment_id: 'c', issue_id: 'i' },
-			ctx,
+			{ mentionContext: ctx },
 		);
 
 		expect(prompt).toContain('[code omitted]');

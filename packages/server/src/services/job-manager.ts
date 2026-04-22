@@ -462,6 +462,8 @@ export class JobManager {
 			project_id: string;
 			rules: string | null;
 			runtime_type: AgentRuntime | null;
+			parent_issue_id: string | null;
+			created_by_run_id: string | null;
 		};
 
 		let issue: IssueRow | undefined;
@@ -472,7 +474,7 @@ export class JobManager {
 			typeof wakeupPayload?.issue_id === 'string' ? wakeupPayload.issue_id : undefined;
 		if (payloadIssueId) {
 			const payloadIssue = await db.query<IssueRow>(
-				'SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type FROM issues WHERE id = $1 AND company_id = $2',
+				'SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type, parent_issue_id, created_by_run_id FROM issues WHERE id = $1 AND company_id = $2',
 				[payloadIssueId, companyId],
 			);
 			if (payloadIssue.rows.length === 0) {
@@ -488,7 +490,7 @@ export class JobManager {
 			issue = payloadIssue.rows[0];
 		} else {
 			const issues = await db.query<IssueRow>(
-				`SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type
+				`SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type, parent_issue_id, created_by_run_id
 				 FROM issues
 				 WHERE assignee_id = $1 AND company_id = $2
 				   AND status NOT IN ($3, $4, $5)

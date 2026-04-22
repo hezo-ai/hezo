@@ -665,6 +665,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				content,
 				contentType: CommentContentType.Text,
 				authorMemberId,
+				authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
 			});
 			return r.rows[0];
 		},

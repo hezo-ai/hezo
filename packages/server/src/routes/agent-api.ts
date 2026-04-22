@@ -182,6 +182,7 @@ agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
 		content: body.content,
 		contentType: body.content_type,
 		authorMemberId: auth.memberId,
+		authorRunId: auth.runId,
 	});
 
 	return ok(c, result.rows[0], 201);

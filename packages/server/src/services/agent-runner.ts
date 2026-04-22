@@ -55,6 +55,8 @@ export interface IssueInfo {
 	project_id: string;
 	rules: string | null;
 	runtime_type?: AgentRuntime | null;
+	parent_issue_id?: string | null;
+	created_by_run_id?: string | null;
 }
 
 interface ProjectInfo {
@@ -185,9 +187,18 @@ async function buildRunContext(
 		wakeupPayload?.source === WakeupSource.Mention
 			? await loadMentionContext(deps.db, agent.id, agent.company_id, wakeupPayload)
 			: null;
+	const replyContext =
+		wakeupPayload?.source === WakeupSource.Reply
+			? await loadReplyContext(deps.db, wakeupPayload)
+			: null;
+	const spawnedFrom = await loadSpawnedFromIssue(deps.db, issue);
 	const basePrompt = isCoachReview
 		? await buildCoachReviewPrompt(deps.db, resolvedPrompt, issue, agent.company_id)
-		: buildTaskPrompt(resolvedPrompt, issue, wakeupPayload, mentionContext);
+		: buildTaskPrompt(resolvedPrompt, issue, wakeupPayload, {
+				mentionContext,
+				replyContext,
+				spawnedFrom,
+			});
 	const taskPrompt = effortApplication.promptDirective
 		? `${basePrompt}\n\n${effortApplication.promptDirective}`
 		: basePrompt;
@@ -684,21 +695,32 @@ function truncateExcerpt(text: string, max: number): string {
 	return `${stripped.slice(0, max).trimEnd()}…`;
 }
 
+export interface BuildTaskPromptContext {
+	mentionContext?: MentionContext | null;
+	replyContext?: ReplyContext | null;
+	spawnedFrom?: SpawnedFromIssue | null;
+}
+
 export function buildTaskPrompt(
 	systemPrompt: string,
 	issue: IssueInfo,
 	wakeupPayload?: Record<string, unknown>,
-	mentionContext?: MentionContext | null,
+	ctx: BuildTaskPromptContext = {},
 ): string {
+	const { mentionContext, replyContext, spawnedFrom } = ctx;
 	const parts = [systemPrompt, '', '---', ''];
 
-	if (mentionContext && wakeupPayload?.source === WakeupSource.Mention) {
+	if (replyContext && wakeupPayload?.source === WakeupSource.Reply) {
+		parts.push(...renderReplyHandoff(issue, replyContext));
+	} else if (mentionContext && wakeupPayload?.source === WakeupSource.Mention) {
 		parts.push(...renderMentionHandoff(issue, mentionContext));
 	}
 
 	parts.push(`## Current Task: ${issue.identifier} — ${issue.title}`);
 	parts.push(`**Priority:** ${issue.priority}`);
 	parts.push(`**Status:** ${issue.status}`);
+	if (spawnedFrom?.parentLine) parts.push(spawnedFrom.parentLine);
+	if (spawnedFrom?.spawnLine) parts.push(spawnedFrom.spawnLine);
 	parts.push('');
 
 	if (issue.rules) {
@@ -750,15 +772,176 @@ function renderMentionHandoff(issue: IssueInfo, ctx: MentionContext): string[] {
 		'',
 		'### How to handle this mention',
 		`1. Decide which of your open tickets this mention pertains to. If one exists, use \`update_issue\` to bring its description, rules, or progress_summary in line with what the mention communicates. Reference ${issue.identifier} in the updated text so readers can trace the handoff.`,
-		`2. If none of your open tickets covers this, use \`create_issue\` to open one. Choose \`parent_issue_id = ${issue.id}\` if the work belongs underneath ${issue.identifier}; omit \`parent_issue_id\` for a peer-level ticket. Assign it to yourself.`,
-		`3. Post a single \`create_comment\` on ${issue.identifier} of the form "Tracking this on {your_ticket_identifier}." so the mentioner sees where the work moved.`,
-		`4. End the turn. Do not modify ${issue.identifier} beyond that one comment. Your next heartbeat picks up your own ticket and continues work there.`,
+		`2. If none of your open tickets covers this, use \`create_issue\` to open one. The new ticket is your own first-class work; shape it as you see fit: a sub-issue (\`parent_issue_id = ${issue.id}\`) when the work clearly belongs underneath ${issue.identifier}, a peer-level ticket when it sits alongside, or a top-level ticket when it's broader. Assign it to yourself. The system already records ${issue.identifier} as provenance via \`created_by_run_id\`; you don't need to restate that linkage in the description unless it aids a reader.`,
+		`3. Post a single \`create_comment\` on ${issue.identifier} with a brief, meaningful acknowledgement of what you've done or are about to do. Reference your new ticket by identifier if you opened one; otherwise answer inline.`,
+		`4. End the turn. Do not modify ${issue.identifier} beyond that one comment. Your next heartbeat picks up your own ticket (if any) and continues work there.`,
 		'',
 		`If the mention is a direct question you can answer inline as the authority on ${issue.identifier}, reply via \`create_comment\` and end the turn.`,
 		'',
 		'---',
 		'',
 	];
+}
+
+export interface ReplyContext {
+	responderName: string;
+	responderSlug: string | null;
+	replyExcerpt: string;
+	originalExcerpt: string;
+	referencedIssues: Array<{ identifier: string; title: string; status: string }>;
+}
+
+const REPLY_EXCERPT_MAX = 500;
+
+export async function loadReplyContext(
+	db: PGlite,
+	wakeupPayload: Record<string, unknown>,
+): Promise<ReplyContext | null> {
+	const replyCommentId =
+		typeof wakeupPayload.comment_id === 'string' ? wakeupPayload.comment_id : null;
+	const triggeringCommentId =
+		typeof wakeupPayload.triggering_comment_id === 'string'
+			? wakeupPayload.triggering_comment_id
+			: null;
+	if (!replyCommentId || !triggeringCommentId) return null;
+
+	const reply = await db.query<{
+		content: Record<string, unknown>;
+		issue_id: string;
+		author_name: string | null;
+		author_slug: string | null;
+	}>(
+		`SELECT ic.content, ic.issue_id,
+		        COALESCE(ma.title, m.display_name, 'Board') AS author_name,
+		        ma.slug AS author_slug
+		 FROM issue_comments ic
+		 LEFT JOIN members m ON m.id = ic.author_member_id
+		 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
+		 WHERE ic.id = $1`,
+		[replyCommentId],
+	);
+	if (reply.rows.length === 0) return null;
+
+	const original = await db.query<{ content: Record<string, unknown> }>(
+		'SELECT content FROM issue_comments WHERE id = $1',
+		[triggeringCommentId],
+	);
+	if (original.rows.length === 0) return null;
+
+	const replyText = extractCommentText(reply.rows[0].content);
+	const originalText = extractCommentText(original.rows[0].content);
+
+	const referencedIdentifiers = Array.from(
+		new Set(replyText.match(/\b[A-Z][A-Z0-9_]*-\d+\b/g) ?? []),
+	);
+	let referencedIssues: ReplyContext['referencedIssues'] = [];
+	if (referencedIdentifiers.length > 0) {
+		const rows = await db.query<{ identifier: string; title: string; status: string }>(
+			`SELECT identifier, title, status::text AS status
+			 FROM issues
+			 WHERE identifier = ANY($1::text[])`,
+			[referencedIdentifiers],
+		);
+		referencedIssues = rows.rows;
+	}
+
+	return {
+		responderName: reply.rows[0].author_name ?? 'Agent',
+		responderSlug: reply.rows[0].author_slug,
+		replyExcerpt: truncateExcerpt(replyText, REPLY_EXCERPT_MAX),
+		originalExcerpt: truncateExcerpt(originalText, REPLY_EXCERPT_MAX),
+		referencedIssues,
+	};
+}
+
+function renderReplyHandoff(issue: IssueInfo, ctx: ReplyContext): string[] {
+	const replyBlock = ctx.replyExcerpt
+		? ctx.replyExcerpt
+				.split('\n')
+				.map((line) => `> ${line}`)
+				.join('\n')
+		: '> (empty)';
+	const originalBlock = ctx.originalExcerpt
+		? ctx.originalExcerpt
+				.split('\n')
+				.map((line) => `> ${line}`)
+				.join('\n')
+		: '> (empty)';
+	const referenced =
+		ctx.referencedIssues.length === 0
+			? 'none'
+			: ctx.referencedIssues.map((t) => `- ${t.identifier} — ${t.title} (${t.status})`).join('\n');
+	const responderLabel = ctx.responderSlug
+		? `${ctx.responderName} (@${ctx.responderSlug})`
+		: ctx.responderName;
+	return [
+		'## Reply Received',
+		`${responderLabel} replied on ${issue.identifier} to a comment of yours. Your original comment:`,
+		'',
+		originalBlock,
+		'',
+		'### Their reply',
+		replyBlock,
+		'',
+		'### Tickets referenced by the reply',
+		referenced,
+		'',
+		'### How to handle this reply',
+		'1. Read the reply and any referenced tickets.',
+		`2. If more responses to the same original comment are still expected (you mentioned multiple agents), you may choose to wait — another reply wakeup will arrive and you'll see the latest state then.`,
+		`3. Otherwise, update your own plan or post a follow-up comment on ${issue.identifier} as appropriate. Do not re-mention the responder unless you need another round-trip.`,
+		'4. End the turn.',
+		'',
+		'---',
+		'',
+	];
+}
+
+export interface SpawnedFromIssue {
+	parentLine: string | null;
+	spawnLine: string | null;
+}
+
+export async function loadSpawnedFromIssue(
+	db: PGlite,
+	issue: IssueInfo,
+): Promise<SpawnedFromIssue | null> {
+	let spawningIssue: { id: string; identifier: string; title: string } | null = null;
+	if (issue.created_by_run_id) {
+		const row = await db.query<{ id: string; identifier: string; title: string }>(
+			`SELECT i.id, i.identifier, i.title
+			 FROM heartbeat_runs r JOIN issues i ON i.id = r.issue_id
+			 WHERE r.id = $1`,
+			[issue.created_by_run_id],
+		);
+		if (row.rows.length > 0 && row.rows[0].id !== issue.id) {
+			spawningIssue = row.rows[0];
+		}
+	}
+
+	let parent: { id: string; identifier: string; title: string } | null = null;
+	if (issue.parent_issue_id) {
+		const row = await db.query<{ id: string; identifier: string; title: string }>(
+			'SELECT id, identifier, title FROM issues WHERE id = $1',
+			[issue.parent_issue_id],
+		);
+		if (row.rows.length > 0) parent = row.rows[0];
+	}
+
+	if (!spawningIssue && !parent) return null;
+
+	if (parent && spawningIssue && parent.id === spawningIssue.id) {
+		return {
+			parentLine: `**Parent ticket:** ${parent.identifier} — ${parent.title}`,
+			spawnLine: null,
+		};
+	}
+	return {
+		parentLine: parent ? `**Parent ticket:** ${parent.identifier} — ${parent.title}` : null,
+		spawnLine: spawningIssue
+			? `**Spawned from:** ${spawningIssue.identifier} — ${spawningIssue.title} (provenance only; this ticket is your own work)`
+			: null,
+	};
 }
 
 async function buildCoachReviewPrompt(

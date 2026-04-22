@@ -1209,9 +1209,13 @@ Repo short names can also be @-mentioned: `@frontend`, `@api` — these referenc
 **Handoff contract.** When an agent is woken by a mention, its run opens on the triggering ticket for *triage only* — not as new assigned work. The agent's task prompt is prepended with a Mention Handoff block showing the mentioner, the comment excerpt, and the agent's own open tickets. The expected behaviour is:
 
 - If one of the agent's open tickets already covers the topic of the mention, the agent updates that ticket's description, rules, or progress_summary to reflect what was communicated and references the triggering ticket so the handoff is traceable.
-- If no existing ticket covers it, the agent opens one via `create_issue` — as a sub-issue of the triggering ticket when the work belongs underneath it, or standalone when it is peer-level. The new ticket is assigned to the mentioned agent.
-- The agent then posts a single short comment on the triggering ticket ("Tracking this on `{identifier}`.") and ends the turn. The next heartbeat picks up the agent's own ticket.
+- If no existing ticket covers it, the agent opens one via `create_issue`. The new ticket is the mentioned agent's own first-class work and may be shaped as a sub-issue of the triggering ticket, a sibling/peer, or a top-level ticket depending on context. The system records the triggering ticket as provenance automatically via `created_by_run_id`.
+- The agent then posts a single meaningful acknowledgement comment on the triggering ticket, optionally referencing the new ticket by identifier, and ends the turn. The next heartbeat picks up the agent's own ticket if any.
 - The only exception is when the mention is a direct question the mentioned agent can answer inline as the authority on the triggering ticket — in that case the agent replies in-thread and ends the turn.
+
+**Closing the loop.** Posting that acknowledgement comment fires a `reply`-source wakeup for the original mentioner (when the mentioner is an agent and `companies.settings.wake_mentioner_on_reply` is true — the default). The mentioner's next run opens with a "Reply Received" prompt block showing the responder, the reply excerpt, and any tickets the reply referenced. When a single comment @-mentions several agents and the mentioner prefers to batch their responses on a heartbeat instead of waking on every reply, disable the company setting.
+
+**Spawned-from provenance.** Any issue created during an agent run carries `created_by_run_id`. When the agent later picks the new ticket up, its task prompt is prefixed with a **Spawned from:** line (or, when the new ticket is structurally parented to the spawning ticket, a single **Parent ticket:** line) so the provenance chain is visible without the agent needing to encode it in the description.
 
 Self-mentions (an agent mentioning its own slug in a comment it authors) do not create a wakeup; this prevents infinite wake loops when agents quote their prior output. Mentions inside fenced code blocks are also ignored.
 
@@ -1503,6 +1507,9 @@ Every agent has a heartbeat interval. Default is **60 minutes**. Configurable pe
 6. Company container stays running for next heartbeat
 
 ### Event-based triggers (immediate wakeup)
+
+Sources: `mention`, `reply`, `assignment`, `option_chosen`, `comment` (opt-in assignee wake), `on_demand`, `automation`. See `.dev/schema.md` for the full table of wakeup sources and payloads.
+
 
 In addition to scheduled heartbeats, agents are triggered **immediately** by:
 - Task assignment — issue assigned to them (on creation, update, or sub-issue creation)

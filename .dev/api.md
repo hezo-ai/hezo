@@ -2132,10 +2132,36 @@ for triage. The agent's task prompt includes a "Mention Handoff" section that
 names the mentioner, quotes an excerpt of the comment (≤ 500 chars, with code
 fences stripped), and lists the agent's own open tickets. The agent is expected
 to route the work: update one of its own open tickets, or create a new one
-(subtask of the triggering ticket or standalone), then post a single linking
-comment back on the triggering ticket ("Tracking this on `{identifier}`.") and
-end the turn. The only exception is direct inline questions the mentioned
-agent can answer as the authority on the triggering ticket.
+(sub-issue of the triggering ticket, a sibling/peer, or top-level — the new
+ticket is first-class work owned by that agent; the system records the
+triggering ticket as provenance via `created_by_run_id` automatically). Then
+the agent posts a single meaningful acknowledgement comment on the triggering
+ticket, optionally referencing the new ticket by identifier, and ends the turn.
+The only exception is direct inline questions the mentioned agent can answer
+as the authority on the triggering ticket.
+
+**Closing the loop (`reply` wakeup).** When a mention-triggered run posts its
+reply comment back on the triggering ticket, the server fires a `reply`-source
+wakeup for the original mentioner if both are agents and the company has
+`settings.wake_mentioner_on_reply` enabled (default true). The wakeup payload
+carries `{ source: "reply", issue_id, comment_id, triggering_comment_id,
+responder_member_id }`, idempotency key `reply:<triggering_comment_id>:<reply_comment_id>`.
+The mentioner's next run opens with a "Reply Received" prompt block that shows
+the responder's name, their reply excerpt, the original comment excerpt, and
+any tickets referenced in the reply. When one comment @-mentions several
+agents, each responder fires its own reply wakeup; nearby wakeups are coalesced
+by the standard 2-second window. Companies that prefer to batch replies can
+set `settings.wake_mentioner_on_reply` to false — in that case the original
+mentioner will observe the accumulated replies on its next scheduled heartbeat.
+
+**Spawned-from linkage.** Whenever an agent creates a new issue during a run,
+the server records `created_by_run_id = <that run's id>`. For the agent that
+later picks up the new ticket, `buildTaskPrompt` resolves
+`created_by_run_id → heartbeat_runs.issue_id` and prepends a **Spawned from:**
+line to the task block, regardless of whether the new ticket is a sub-issue
+(`parent_issue_id` set), a sibling, or top-level. If the new ticket is a sub-
+issue and its structural parent is the same as the spawning ticket, the prompt
+collapses to a single **Parent ticket:** line.
 
 Agents can use this to: ask questions, request reviews, escalate blockers, hand
 off context, or coordinate work across teams — all visible in the issue thread,

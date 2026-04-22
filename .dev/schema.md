@@ -570,14 +570,39 @@ An issue's `status` can be set to `blocked` when it has unresolved dependencies.
 
 ### Wakeup queue
 
-`agent_wakeup_requests` stores all triggers (timer, assignment, mention, etc.)
-with deduplication via `idempotency_key` and coalescing via `coalesced_count`.
-Multiple wakeups for the same agent merge context snapshots instead of creating
-duplicate runs.
+`agent_wakeup_requests` stores all triggers (timer, assignment, mention, reply,
+etc.) with deduplication via `idempotency_key` and coalescing via
+`coalesced_count`. Multiple wakeups for the same agent merge context snapshots
+instead of creating duplicate runs.
 
-Event-based triggers (@-mention, assignment, option chosen, approval resolved)
-wake agents immediately — they do not wait for the next scheduled heartbeat.
-Scheduled heartbeats are a fallback for idle agents with no pending events.
+Event-based triggers (@-mention, reply, assignment, option chosen, approval
+resolved) wake agents immediately — they do not wait for the next scheduled
+heartbeat. Scheduled heartbeats are a fallback for idle agents with no pending
+events.
+
+`wakeup_source` values:
+
+| Source | Fires when |
+| --- | --- |
+| `timer` | Scheduled heartbeat tick (fallback for idle agents). |
+| `assignment` | Issue assigned to the agent (incl. `create_issue` tool). |
+| `on_demand` | Admin/API explicit wake. |
+| `mention` | A comment contains `@<agent-slug>` referencing this agent. |
+| `automation` | Server-side automation rule. |
+| `option_chosen` | Board user resolved an options comment. |
+| `comment` | Opt-in wake of the issue assignee from a plain Board comment (`wake_assignee=true`). |
+| `reply` | An agent whose run was mention-triggered posts a comment in the triggering ticket. The original mentioner (when an agent) is woken so it can pick up the response. Gated by `companies.settings.wake_mentioner_on_reply` (default `true`). Payload: `{ source, issue_id, comment_id, triggering_comment_id, responder_member_id }`. Idempotency key: `reply:<triggering_comment_id>:<reply_comment_id>`. |
+
+### Company settings (`companies.settings` JSONB)
+
+Per-company toggles stored in the `companies.settings` JSONB column. Patched
+via `PATCH /api/companies/:id` (shallow merge — missing keys preserve existing
+values).
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `coach_auto_apply` | `false` | When true, the coach agent's review recommendations are applied automatically. |
+| `wake_mentioner_on_reply` | `true` | When true, an agent's reply to a mention-triggered comment wakes the original mentioner. When false, the mentioner picks up replies on its next heartbeat — useful when one comment @-mentions several agents and the mentioner prefers to batch their responses. |
 
 ### Reasoning effort
 
