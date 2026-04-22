@@ -126,6 +126,7 @@ describe('agent triggering', () => {
 		});
 		const parentId = (await parentRes.json()).data.id;
 
+		await new Promise((r) => setTimeout(r, 50));
 		await clearWakeups();
 
 		const subRes = await app.request(`/api/companies/${companyId}/issues/${parentId}/sub-issues`, {
@@ -134,12 +135,14 @@ describe('agent triggering', () => {
 			body: JSON.stringify({ title: 'Sub-task for CEO', assignee_id: agentId }),
 		});
 		expect(subRes.status).toBe(201);
+		const subId = (await subRes.json()).data.id;
 
 		await new Promise((r) => setTimeout(r, 50));
 
 		const wakeups = await getWakeups(agentId);
-		expect(wakeups.length).toBe(1);
-		expect(wakeups[0].source).toBe('assignment');
+		const subWakeup = wakeups.find((w) => w.payload?.issue_id === subId);
+		expect(subWakeup).toBeDefined();
+		expect(subWakeup.source).toBe('assignment');
 	});
 
 	it('rejects clearing assignee via PATCH', async () => {

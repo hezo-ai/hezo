@@ -624,6 +624,91 @@ describe('JobManager workflow methods', () => {
 
 			manager.shutdown();
 		});
+
+		it('chains a wakeup for the next assigned non-terminal issue', async () => {
+			const manager = createJobManager();
+
+			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
+			await db.query(`UPDATE issues SET status = $1::issue_status WHERE id = $2`, [
+				IssueStatus.Backlog,
+				issueId,
+			]);
+
+			const numberRes = await db.query<{ number: number }>(
+				'SELECT next_issue_number($1) AS number',
+				[companyId],
+			);
+			const nextNumber = numberRes.rows[0].number;
+			const nextInsert = await db.query<{ id: string }>(
+				`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
+				 VALUES ($1, $2, $3, $4, $5, $6, '', $7::issue_status, 'medium'::issue_priority, '[]'::jsonb)
+				 RETURNING id`,
+				[
+					companyId,
+					projectId,
+					agentId,
+					nextNumber,
+					`WF-${nextNumber}`,
+					'Next queued ticket',
+					IssueStatus.Backlog,
+				],
+			);
+			const nextIssueId = nextInsert.rows[0].id;
+
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+			await (manager as any).onAgentComplete(agentId, issueId, companyId, undefined, {
+				success: true,
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			const chain = await db.query<{ source: string; payload: Record<string, unknown> }>(
+				`SELECT source, payload FROM agent_wakeup_requests
+				 WHERE member_id = $1 AND status = $2::wakeup_status
+				 ORDER BY created_at DESC LIMIT 1`,
+				[agentId, WakeupStatus.Queued],
+			);
+			expect(chain.rows.length).toBe(1);
+			expect(chain.rows[0].source).toBe('timer');
+			expect(chain.rows[0].payload.issue_id).toBe(nextIssueId);
+			expect(chain.rows[0].payload.reason).toBe('chain_after_completion');
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM issues WHERE id = $1', [nextIssueId]);
+		});
+
+		it('does not chain a wakeup when no other assigned issues exist', async () => {
+			const manager = createJobManager();
+
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			await db.query(
+				`UPDATE issues SET assignee_id = NULL
+				 WHERE assignee_id = $1 AND id != $2
+				   AND status NOT IN ('done', 'closed', 'cancelled')`,
+				[agentId, issueId],
+			);
+			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
+
+			await (manager as any).onAgentComplete(agentId, issueId, companyId, undefined, {
+				success: true,
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			const chain = await db.query<{ id: string }>(
+				`SELECT id FROM agent_wakeup_requests
+				 WHERE member_id = $1 AND status = $2::wakeup_status
+				   AND source = 'timer'`,
+				[agentId, WakeupStatus.Queued],
+			);
+			expect(chain.rows.length).toBe(0);
+
+			manager.shutdown();
+		});
 	});
 
 	describe('processScheduledHeartbeats', () => {

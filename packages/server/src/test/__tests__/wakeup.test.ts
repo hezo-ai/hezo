@@ -55,12 +55,34 @@ describe('wakeup service', () => {
 		expect((result.rows[0] as any).status).toBe('queued');
 	});
 
-	it('coalesces wakeups within the window', async () => {
+	it('does not coalesce wakeups targeting different issues', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
 		const id1 = await createWakeup(db, agentId, companyId, 'mention', {
-			issue_id: 'issue-1',
+			issue_id: 'coalesce-issue-a',
 		});
 		const id2 = await createWakeup(db, agentId, companyId, 'mention', {
-			issue_id: 'issue-2',
+			issue_id: 'coalesce-issue-b',
+		});
+
+		expect(id2).not.toBe(id1);
+
+		const rows = await db.query<{ id: string; payload: { issue_id: string } }>(
+			"SELECT id, payload FROM agent_wakeup_requests WHERE member_id = $1 AND status = 'queued' ORDER BY created_at ASC",
+			[agentId],
+		);
+		const issueIds = rows.rows.map((r) => r.payload.issue_id).sort();
+		expect(issueIds).toEqual(['coalesce-issue-a', 'coalesce-issue-b']);
+	});
+
+	it('coalesces wakeups for the same issue within the window', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		const id1 = await createWakeup(db, agentId, companyId, 'mention', {
+			issue_id: 'same-issue',
+		});
+		const id2 = await createWakeup(db, agentId, companyId, 'mention', {
+			issue_id: 'same-issue',
 		});
 
 		expect(id2).toBe(id1);
@@ -70,6 +92,19 @@ describe('wakeup service', () => {
 			[id1],
 		);
 		expect(result.rows[0].coalesced_count).toBeGreaterThanOrEqual(1);
+	});
+
+	it('coalesces wakeups that have no issue_id', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		const id1 = await createWakeup(db, agentId, companyId, 'timer', {
+			reason: 'tick-a',
+		});
+		const id2 = await createWakeup(db, agentId, companyId, 'timer', {
+			reason: 'tick-b',
+		});
+
+		expect(id2).toBe(id1);
 	});
 
 	it('respects idempotency keys', async () => {

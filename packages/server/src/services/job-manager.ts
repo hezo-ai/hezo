@@ -738,6 +738,45 @@ export class JobManager {
 				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
 			);
 		}
+
+		await this.chainNextIssueWakeup(memberId, issueId, companyId);
+	}
+
+	private async chainNextIssueWakeup(
+		memberId: string,
+		justCompletedIssueId: string,
+		companyId: string,
+	): Promise<void> {
+		const { db } = this.deps;
+		const next = await db.query<{ id: string }>(
+			`SELECT id FROM issues
+			 WHERE assignee_id = $1 AND company_id = $2 AND id != $3
+			   AND status NOT IN ($4::issue_status, $5::issue_status, $6::issue_status)
+			 ORDER BY
+			   CASE priority WHEN $7 THEN 0 WHEN $8 THEN 1 WHEN $9 THEN 2 WHEN $10 THEN 3 END,
+			   created_at ASC
+			 LIMIT 1`,
+			[
+				memberId,
+				companyId,
+				justCompletedIssueId,
+				...TERMINAL_ISSUE_STATUSES,
+				IssuePriority.Urgent,
+				IssuePriority.High,
+				IssuePriority.Medium,
+				IssuePriority.Low,
+			],
+		);
+		if (next.rows.length === 0) return;
+
+		try {
+			await createWakeup(db, memberId, companyId, WakeupSource.Timer, {
+				issue_id: next.rows[0].id,
+				reason: 'chain_after_completion',
+			});
+		} catch (e) {
+			log.error(`Failed to chain wakeup for agent ${memberId}:`, e);
+		}
 	}
 
 	private async detectOrphanedRuns(): Promise<void> {

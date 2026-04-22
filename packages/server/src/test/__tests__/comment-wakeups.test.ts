@@ -277,10 +277,7 @@ describe('agent-api POST comments fires mention-only wakeups', () => {
 });
 
 describe('board POST comments honors wake_assignee opt-in', () => {
-	async function postBoardComment(
-		issueId: string,
-		body: Record<string, unknown>,
-	): Promise<string> {
+	async function postBoardComment(issueId: string, body: Record<string, unknown>): Promise<string> {
 		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
