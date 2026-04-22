@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { Check, Copy, Maximize2, Minimize2, Trash2 } from 'lucide-react';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from './ui/button';
 
 export interface LogViewerLine {
@@ -31,26 +31,43 @@ export function LogViewer({
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [copied, setCopied] = useState(false);
 	const [isExpanded, setIsExpanded] = useState(false);
-	const scrollRef = useRef<HTMLDivElement>(null);
+	const scrollRef = useRef<HTMLDivElement | null>(null);
 	const lastCountRef = useRef(0);
-	const lastExpandedRef = useRef(false);
+	const pendingBottomOffsetRef = useRef<number | null>(null);
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const attachScrollRef = useCallback((node: HTMLDivElement | null) => {
+		scrollRef.current = node;
+		if (!node) return;
+		const offset = pendingBottomOffsetRef.current;
+		if (offset === null) return;
+		node.scrollTop = Math.max(0, node.scrollHeight - node.clientHeight - offset);
+		pendingBottomOffsetRef.current = null;
+	}, []);
 
 	useEffect(() => {
 		if (!autoScroll) {
 			lastCountRef.current = lines.length;
-			lastExpandedRef.current = isExpanded;
 			return;
 		}
 		const box = scrollRef.current;
 		if (!box) return;
-		const expandChanged = lastExpandedRef.current !== isExpanded;
-		if (expandChanged || lines.length !== lastCountRef.current) {
+		if (lines.length !== lastCountRef.current) {
 			box.scrollTop = box.scrollHeight;
 			lastCountRef.current = lines.length;
-			lastExpandedRef.current = isExpanded;
 		}
-	}, [lines, autoScroll, isExpanded]);
+	}, [lines, autoScroll]);
+
+	const toggleExpanded = () => {
+		const box = scrollRef.current;
+		if (box) {
+			pendingBottomOffsetRef.current = Math.max(
+				0,
+				box.scrollHeight - box.scrollTop - box.clientHeight,
+			);
+		}
+		setIsExpanded((v) => !v);
+	};
 
 	useEffect(() => {
 		return () => {
@@ -122,7 +139,7 @@ export function LogViewer({
 					<Button
 						variant="ghost"
 						size="sm"
-						onClick={() => setIsExpanded((v) => !v)}
+						onClick={toggleExpanded}
 						className="text-xs h-6 px-2"
 						aria-label={isExpanded ? 'Collapse log viewer' : 'Expand log viewer'}
 					>
@@ -130,7 +147,7 @@ export function LogViewer({
 					</Button>
 				</div>
 			</div>
-			<div ref={scrollRef} data-testid={testId} className={bodyClassName}>
+			<div ref={attachScrollRef} data-testid={testId} className={bodyClassName}>
 				{lines.length === 0 ? (
 					<span className="text-text-subtle">{emptyState ?? 'No output.'}</span>
 				) : (
@@ -152,7 +169,7 @@ export function LogViewer({
 			<Dialog.Root
 				open
 				onOpenChange={(open) => {
-					if (!open) setIsExpanded(false);
+					if (!open) toggleExpanded();
 				}}
 			>
 				<Dialog.Portal>
