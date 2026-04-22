@@ -49,9 +49,10 @@ export function CreateProjectDialog({ companyId, open, onOpenChange }: CreatePro
 		setPrdFilename(null);
 		if (project.planning_issue_identifier) {
 			navigate({
-				to: '/companies/$companyId/issues/$issueId',
+				to: '/companies/$companyId/projects/$projectId/issues/$issueId',
 				params: {
 					companyId,
+					projectId: project.slug,
 					issueId: project.planning_issue_identifier.toLowerCase(),
 				},
 			});

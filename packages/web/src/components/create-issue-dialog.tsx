@@ -65,10 +65,22 @@ export function CreateIssueDialog({
 		onOpenChange(false);
 		setTitle('');
 		setDescription('');
-		navigate({
-			to: '/companies/$companyId/issues/$issueId',
-			params: { companyId, issueId: result.identifier.toLowerCase() },
-		});
+		const targetProjectSlug = selectedProject?.slug ?? result.project_slug;
+		if (targetProjectSlug) {
+			navigate({
+				to: '/companies/$companyId/projects/$projectId/issues/$issueId',
+				params: {
+					companyId,
+					projectId: targetProjectSlug,
+					issueId: result.identifier.toLowerCase(),
+				},
+			});
+		} else {
+			navigate({
+				to: '/companies/$companyId/issues/$issueId',
+				params: { companyId, issueId: result.identifier.toLowerCase() },
+			});
+		}
 	}
 
 	return (

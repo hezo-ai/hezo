@@ -1,3 +1,4 @@
+import { OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
@@ -38,8 +39,12 @@ function HireAgentPage() {
 		});
 		if (result.issue) {
 			navigate({
-				to: '/companies/$companyId/issues/$issueId',
-				params: { companyId, issueId: result.issue.identifier.toLowerCase() },
+				to: '/companies/$companyId/projects/$projectId/issues/$issueId',
+				params: {
+					companyId,
+					projectId: OPERATIONS_PROJECT_SLUG,
+					issueId: result.issue.identifier.toLowerCase(),
+				},
 			});
 		} else if (result.agent) {
 			navigate({

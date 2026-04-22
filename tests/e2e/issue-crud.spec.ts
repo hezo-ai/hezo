@@ -434,7 +434,7 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 	await expect(dropdown.getByText('Unassigned')).toBeHidden();
 
 	// Click outside (on the main content area)
-	await page.locator('h1').click();
+	await page.getByRole('heading', { name: 'Outside Click Issue' }).click();
 
 	// Dropdown should close
 	await expect(dropdown).toBeHidden();

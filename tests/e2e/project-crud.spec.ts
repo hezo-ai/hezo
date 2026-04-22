@@ -18,9 +18,13 @@ test.describe('Project CRUD', () => {
 
 		await page.getByRole('button', { name: 'Create' }).click();
 
-		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/issues/[a-z0-9-]+$`), {
-			timeout: 5000,
-		});
+		await expect(
+			page,
+			'expected canonical project-scoped issue URL after creating a project',
+		).toHaveURL(
+			new RegExp(`/companies/${company.slug}/projects/[a-z0-9-]+/issues/[a-z0-9-]+(?:#.*)?$`),
+			{ timeout: 5000 },
+		);
 		await expect(
 			page.getByRole('main').getByText('Draft execution plan for "Marketing Campaign"'),
 		).toBeVisible({ timeout: 5000 });

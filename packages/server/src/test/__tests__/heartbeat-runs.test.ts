@@ -302,6 +302,7 @@ describe('created_issues tracking', () => {
 			id: string;
 			identifier: string;
 			title: string;
+			project_slug: string;
 		}>;
 		expect(createdIssues).toEqual(
 			expect.arrayContaining([
@@ -309,9 +310,13 @@ describe('created_issues tracking', () => {
 					id: created.id,
 					identifier: created.identifier,
 					title: 'Spawned Issue',
+					project_slug: expect.any(String),
 				}),
 			]),
 		);
+		const spawned = createdIssues.find((ci) => ci.id === created.id);
+		expect(spawned?.project_slug).toBeTruthy();
+		expect(runBody.data.project_slug).toBeTruthy();
 	});
 
 	it('returns empty created_issues when the run has created none', async () => {

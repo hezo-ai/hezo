@@ -119,6 +119,7 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 		case ApprovalType.Hire: {
 			const title = (p.title as string) ?? 'a new agent';
 			const issueId = approval.payload_issue_identifier;
+			const issueProjectSlug = approval.payload_project_slug;
 			return (
 				<span>
 					Proposing to hire <span className="font-medium">{title}</span>
@@ -126,12 +127,25 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 						<>
 							{' '}
 							(
-							<EntityLink
-								to="/companies/$companyId/issues/$issueId"
-								params={{ companyId: companySlug, issueId: issueId.toLowerCase() }}
-							>
-								{issueId}
-							</EntityLink>
+							{issueProjectSlug ? (
+								<EntityLink
+									to="/companies/$companyId/projects/$projectId/issues/$issueId"
+									params={{
+										companyId: companySlug,
+										projectId: issueProjectSlug,
+										issueId: issueId.toLowerCase(),
+									}}
+								>
+									{issueId}
+								</EntityLink>
+							) : (
+								<EntityLink
+									to="/companies/$companyId/issues/$issueId"
+									params={{ companyId: companySlug, issueId: issueId.toLowerCase() }}
+								>
+									{issueId}
+								</EntityLink>
+							)}
 							)
 						</>
 					)}
@@ -234,6 +248,17 @@ function resolveOauthDestination(approval: Approval) {
 	const companySlug = approval.company_slug;
 
 	if (reason === OAuthRequestReason.DesignatedRepo && approval.payload_issue_identifier) {
+		if (approval.payload_project_slug) {
+			return {
+				to: '/companies/$companyId/projects/$projectId/issues/$issueId' as const,
+				params: {
+					companyId: companySlug,
+					projectId: approval.payload_project_slug,
+					issueId: approval.payload_issue_identifier.toLowerCase(),
+				},
+				hash: 'setup-repo',
+			};
+		}
 		return {
 			to: '/companies/$companyId/issues/$issueId' as const,
 			params: { companyId: companySlug, issueId: approval.payload_issue_identifier.toLowerCase() },

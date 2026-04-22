@@ -201,8 +201,12 @@ function RunComment({ comment, companyId }: { comment: CommentData; companyId?: 
 					{createdIssues.map((issue) => (
 						<Link
 							key={issue.id}
-							to="/companies/$companyId/issues/$issueId"
-							params={{ companyId, issueId: issue.identifier.toLowerCase() }}
+							to="/companies/$companyId/projects/$projectId/issues/$issueId"
+							params={{
+								companyId,
+								projectId: issue.project_slug,
+								issueId: issue.identifier.toLowerCase(),
+							}}
 							className="text-xs text-accent-blue-text hover:underline self-start"
 						>
 							{issue.identifier} — {issue.title}

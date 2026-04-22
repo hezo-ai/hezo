@@ -250,7 +250,9 @@ test.describe('Sidebar Navigation', () => {
 		await page.getByLabel('Description').fill('Project for sidebar test.');
 		await page.getByRole('button', { name: 'Create' }).click();
 
-		await expect(nav.getByText('Sidebar Created Project')).toBeVisible({ timeout: 10000 });
+		await expect(nav.getByRole('link', { name: 'Sidebar Created Project' }).first()).toBeVisible({
+			timeout: 10000,
+		});
 	});
 
 	test('clicking a project in sidebar navigates to project detail', async ({ page }) => {
@@ -332,7 +334,9 @@ test.describe('Sidebar Navigation', () => {
 		await page.getByRole('button', { name: 'Create' }).click();
 
 		const nav = page.locator('nav');
-		await expect(nav.getByText('Dynamic Sidebar Project')).toBeVisible({ timeout: 10000 });
+		await expect(nav.getByRole('link', { name: 'Dynamic Sidebar Project' }).first()).toBeVisible({
+			timeout: 10000,
+		});
 	});
 
 	test('active project reveals subsection sub-links in sidebar', async ({ page }) => {

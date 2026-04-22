@@ -44,6 +44,7 @@ interface IssueRow {
 	status: string;
 	priority: string;
 	project_name: string | null;
+	project_slug: string | null;
 	assignee_name: string | null;
 	assignee_type: 'agent' | 'user' | null;
 	has_active_run: boolean;
@@ -52,10 +53,9 @@ interface IssueRow {
 interface IssueListProps {
 	companyId: string;
 	projectId?: string;
-	issueDetailRoute?: string;
 }
 
-export function IssueList({ companyId, projectId, issueDetailRoute }: IssueListProps) {
+export function IssueList({ companyId, projectId }: IssueListProps) {
 	const navigate = useNavigate();
 	const [filters, setFilters] = useState<IssueFilters>({});
 	const [statusFilter, setStatusFilter] = useState('');
@@ -161,13 +161,24 @@ export function IssueList({ companyId, projectId, issueDetailRoute }: IssueListP
 					columns={columns}
 					data={issues}
 					rowKey={(row) => row.id}
-					onRowClick={(row) =>
-						navigate({
-							to: (issueDetailRoute ??
-								'/companies/$companyId/issues/$issueId') as '/companies/$companyId/issues/$issueId',
-							params: { companyId, issueId: row.identifier.toLowerCase() },
-						})
-					}
+					onRowClick={(row) => {
+						const rowProjectSlug = row.project_slug ?? projectId;
+						if (rowProjectSlug) {
+							navigate({
+								to: '/companies/$companyId/projects/$projectId/issues/$issueId',
+								params: {
+									companyId,
+									projectId: rowProjectSlug,
+									issueId: row.identifier.toLowerCase(),
+								},
+							});
+						} else {
+							navigate({
+								to: '/companies/$companyId/issues/$issueId',
+								params: { companyId, issueId: row.identifier.toLowerCase() },
+							});
+						}
+					}}
 				/>
 			)}
 

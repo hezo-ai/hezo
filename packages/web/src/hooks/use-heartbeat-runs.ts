@@ -9,6 +9,7 @@ export interface HeartbeatRun {
 	issue_identifier: string | null;
 	issue_title: string | null;
 	project_id: string | null;
+	project_slug: string | null;
 	status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
 	started_at: string;
 	finished_at: string | null;
@@ -20,7 +21,7 @@ export interface HeartbeatRun {
 	invocation_command: string | null;
 	log_text: string | null;
 	working_dir: string | null;
-	created_issues: { id: string; identifier: string; title: string }[];
+	created_issues: { id: string; identifier: string; title: string; project_slug: string }[];
 }
 
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';

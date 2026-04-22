@@ -185,7 +185,9 @@ test.describe('Repository setup wizard', () => {
 
 		await expect(page.getByTestId('action-setup-repo')).toBeVisible({ timeout: 10000 });
 		await expect(page).toHaveURL(
-			new RegExp(`/companies/${company.slug}/issues/${issue.identifier.toLowerCase()}$`),
+			new RegExp(
+				`/companies/${company.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}(#.*)?$`,
+			),
 			{ timeout: 5000 },
 		);
 		await page.getByRole('button', { name: 'Set up repository' }).click();
