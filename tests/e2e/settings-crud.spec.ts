@@ -9,7 +9,6 @@ async function createCompany(page: import('@playwright/test').Page) {
 		headers,
 		data: {
 			name: `Settings Corp ${Date.now()}`,
-			issue_prefix: `ST${Date.now().toString().slice(-4)}`,
 			description: 'Build great things',
 		},
 	});

@@ -29,7 +29,7 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Agent Trigger Co',
-			issue_prefix: 'AT',
+
 			template_id: companyTypeId,
 		}),
 	});

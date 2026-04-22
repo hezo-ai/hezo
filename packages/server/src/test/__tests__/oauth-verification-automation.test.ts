@@ -54,9 +54,9 @@ afterAll(async () => {
 
 async function createParentIssue(title = 'Originating ticket'): Promise<string> {
 	const meta = await db.query<{ issue_prefix: string; number: number }>(
-		`SELECT (SELECT issue_prefix FROM companies WHERE id = $1) AS issue_prefix,
-		        next_issue_number($1) AS number`,
-		[companyId],
+		`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
+		 FROM projects p WHERE p.id = $1`,
+		[parentProjectId],
 	);
 	const row = meta.rows[0];
 	const inserted = await db.query<{ id: string }>(

@@ -76,7 +76,6 @@ test('issue detail shows execution lock banner when locked', async ({ page }) =>
 		headers,
 		data: {
 			name: `Lock Test ${Date.now()}`,
-			issue_prefix: `LK${Date.now().toString().slice(-4)}`,
 			template_id: typeId,
 		},
 	});
@@ -129,7 +128,6 @@ test('issue detail lists every agent running concurrently on a ticket', async ({
 		headers,
 		data: {
 			name: `Concurrent Lock ${Date.now()}`,
-			issue_prefix: `CL${Date.now().toString().slice(-4)}`,
 			template_id: typeId,
 		},
 	});

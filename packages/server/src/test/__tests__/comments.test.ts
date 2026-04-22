@@ -26,7 +26,7 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Comment Co', issue_prefix: 'CC' }),
+		body: JSON.stringify({ name: 'Comment Co' }),
 	});
 	companyId = (await companyRes.json()).data.id;
 

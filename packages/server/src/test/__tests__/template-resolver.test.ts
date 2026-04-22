@@ -23,7 +23,7 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Template Co',
-			issue_prefix: 'TMP',
+
 			description: 'Build amazing things',
 		}),
 	});
@@ -232,7 +232,7 @@ describe('template resolver with agents', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Agent Test Co',
-				issue_prefix: 'ATC',
+
 				description: 'Test company for agent templates',
 				template_id: softDevType.id,
 			}),

@@ -30,7 +30,7 @@ beforeAll(async () => {
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Agent API Co',
-			issue_prefix: 'AAC',
+
 			template_id: companyTypeId,
 		}),
 	});

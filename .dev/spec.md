@@ -1134,8 +1134,8 @@ GitHub-style issue tracker. Issues are the primary interaction surface for the e
 | Priority | Yes | `urgent`, `high`, `medium`, `low` |
 | Labels | No | Free-form tags (JSONB array) |
 | Parent issue | No | For sub-issues / delegation |
-| Number | Auto | Per-company auto-incrementing (atomic) |
-| Identifier | Auto | Linear-style: `{prefix}-{number}` (e.g. `ACME-42`). Globally unique. |
+| Number | Auto | Per-project auto-incrementing (atomic) |
+| Identifier | Auto | Linear-style: `{project.issue_prefix}-{number}` (e.g. `OP-42`). Unique per company. |
 | Blocked by | No | References to other issues blocking this one (many-to-many via `issue_dependencies` table) |
 | Progress summary | No | Concise markdown summary of requirements, what's done, and what's next. Updated by agents when they start/finish work on the issue. Collapsed by default in UI. |
 | Progress summary updated at | Auto | Timestamp of last progress summary update |
@@ -2205,7 +2205,7 @@ auth_provider:        github, gitlab
 
 ### Atomic functions
 
-**`next_issue_number(company_id)`** — Upsert + returning for gap-free per-company issue numbering.
+**`next_project_issue_number(project_id)`** — Upsert + returning for gap-free per-project issue numbering.
 
 **`debit_agent_budget(agent_id, amount_cents)`** — SELECT FOR UPDATE to row-lock, check agent budget AND company budget, debit both. Returns FALSE if either budget is exceeded.
 

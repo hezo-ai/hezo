@@ -14,6 +14,7 @@ import { Hono } from 'hono';
 import { assertNoActiveRun } from '../lib/active-run';
 import { auditLog } from '../lib/audit';
 import { broadcastChange } from '../lib/broadcast';
+import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import { getProjectLocator, resolveIssueId, resolveProjectId } from '../lib/resolve';
@@ -174,20 +175,7 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 		return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
 	}
 
-	const companyResult = await db.query<{ issue_prefix: string }>(
-		'SELECT issue_prefix FROM companies WHERE id = $1',
-		[companyId],
-	);
-	if (companyResult.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Company not found', 404);
-	}
-
-	const numberResult = await db.query<{ number: number }>(
-		'SELECT next_issue_number($1) AS number',
-		[companyId],
-	);
-	const issueNumber = numberResult.rows[0].number;
-	const identifier = `${companyResult.rows[0].issue_prefix}-${issueNumber}`;
+	const { number: issueNumber, identifier } = await allocateIssueIdentifier(db, body.project_id);
 
 	const result = await db.query(
 		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,
@@ -278,6 +266,44 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
 	}
 
 	return ok(c, result.rows[0]);
+});
+
+issuesRoutes.post('/companies/:companyId/issues/resolve', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+
+	const body = await c.req.json<{ identifiers?: unknown }>();
+	const raw = body.identifiers;
+	if (!Array.isArray(raw)) {
+		return err(c, 'INVALID_REQUEST', 'identifiers must be an array of strings', 400);
+	}
+	if (raw.length > 100) {
+		return err(c, 'INVALID_REQUEST', 'identifiers array may not exceed 100 entries', 400);
+	}
+	const identifiers = Array.from(
+		new Set(
+			raw
+				.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+				.map((v) => v.trim().toLowerCase()),
+		),
+	);
+	if (identifiers.length === 0) return ok(c, []);
+
+	const result = await db.query<{
+		identifier: string;
+		title: string;
+		project_slug: string;
+		status: string;
+	}>(
+		`SELECT i.identifier, i.title, p.slug AS project_slug, i.status::text AS status
+		 FROM issues i JOIN projects p ON p.id = i.project_id
+		 WHERE i.company_id = $1 AND LOWER(i.identifier) = ANY($2::text[])`,
+		[companyId, identifiers],
+	);
+	return ok(c, result.rows);
 });
 
 issuesRoutes.get('/companies/:companyId/issues/:issueId/latest-run', async (c) => {
@@ -557,16 +583,10 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 		return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
 	}
 
-	const companyResult = await db.query<{ issue_prefix: string }>(
-		'SELECT issue_prefix FROM companies WHERE id = $1',
-		[companyId],
+	const { number: issueNumber, identifier } = await allocateIssueIdentifier(
+		db,
+		parent.rows[0].project_id,
 	);
-	const numberResult = await db.query<{ number: number }>(
-		'SELECT next_issue_number($1) AS number',
-		[companyId],
-	);
-	const issueNumber = numberResult.rows[0].number;
-	const identifier = `${companyResult.rows[0].issue_prefix}-${issueNumber}`;
 
 	const result = await db.query(
 		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,

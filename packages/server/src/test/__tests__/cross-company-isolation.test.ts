@@ -44,7 +44,7 @@ beforeAll(async () => {
 	const companyARes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Company Alpha', template_id: typeId, issue_prefix: 'CA' }),
+		body: JSON.stringify({ name: 'Company Alpha', template_id: typeId }),
 	});
 	companyAId = (await companyARes.json()).data.id;
 
@@ -52,7 +52,7 @@ beforeAll(async () => {
 	const companyBRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Company Beta', template_id: typeId, issue_prefix: 'CB' }),
+		body: JSON.stringify({ name: 'Company Beta', template_id: typeId }),
 	});
 	companyBId = (await companyBRes.json()).data.id;
 

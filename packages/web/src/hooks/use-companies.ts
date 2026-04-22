@@ -14,7 +14,6 @@ export interface Company {
 	slug: string;
 	description: string | null;
 	team_summary: string | null;
-	issue_prefix: string;
 	team_type_ids: string[];
 	mcp_servers: unknown[];
 	settings: CompanySettings;
@@ -40,12 +39,8 @@ export function useCompany(id: string, enabled = true) {
 
 export function useCreateCompany() {
 	return useMutation({
-		mutationFn: (data: {
-			name: string;
-			description?: string;
-			template_id?: string;
-			issue_prefix?: string;
-		}) => api.post<Company>('/api/companies', data),
+		mutationFn: (data: { name: string; description?: string; template_id?: string }) =>
+			api.post<Company>('/api/companies', data),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['companies'] }),
 	});
 }

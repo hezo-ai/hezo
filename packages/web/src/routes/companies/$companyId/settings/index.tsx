@@ -119,14 +119,6 @@ function GeneralSection({ companyId }: { companyId: string }) {
 					</span>
 					<div className="text-[13px]">{company?.name ?? '—'}</div>
 				</div>
-				{company?.issue_prefix && (
-					<div>
-						<span className="text-xs font-medium uppercase tracking-wider text-text-muted block mb-1.5">
-							Identifier prefix
-						</span>
-						<div className="text-[13px] font-mono">{company.issue_prefix}</div>
-					</div>
-				)}
 				{company?.description && (
 					<div>
 						<span className="text-xs font-medium uppercase tracking-wider text-text-muted block mb-1.5">

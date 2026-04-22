@@ -41,7 +41,6 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'MCP Tool Test Co',
 			template_id: typeId,
-			issue_prefix: 'MTC',
 		}),
 	});
 	companyId = (await companyRes.json()).data.id;
@@ -72,7 +71,6 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'MCP Tool Test Co B',
 			template_id: typeId,
-			issue_prefix: 'MTCB',
 		}),
 	});
 	companyBId = (await companyBRes.json()).data.id;
@@ -230,7 +228,7 @@ describe('MCP tool handlers: data queries via DB', () => {
 	it('get_company returns correct company', async () => {
 		const r = await db.query('SELECT * FROM companies WHERE id = $1', [companyId]);
 		expect(r.rows.length).toBe(1);
-		expect((r.rows[0] as any).issue_prefix).toBe('MTC');
+		expect((r.rows[0] as any).name).toBe('MCP Tool Test Co');
 	});
 
 	it('list_issues returns issues for company', async () => {
@@ -255,16 +253,13 @@ describe('MCP tool handlers: data queries via DB', () => {
 	});
 
 	it('create_issue inserts correctly', async () => {
-		const companyResult = await db.query<{ issue_prefix: string }>(
-			'SELECT issue_prefix FROM companies WHERE id = $1',
-			[companyId],
+		const meta = await db.query<{ issue_prefix: string; number: number }>(
+			`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
+			 FROM projects p WHERE p.id = $1`,
+			[projectId],
 		);
-		const numberResult = await db.query<{ number: number }>(
-			'SELECT next_issue_number($1) AS number',
-			[companyId],
-		);
-		const num = numberResult.rows[0].number;
-		const identifier = `${companyResult.rows[0].issue_prefix}-${num}`;
+		const num = meta.rows[0].number;
+		const identifier = `${meta.rows[0].issue_prefix}-${num}`;
 
 		const r = await db.query(
 			`INSERT INTO issues (company_id, project_id, number, identifier, title, description, status, priority)
@@ -273,7 +268,7 @@ describe('MCP tool handlers: data queries via DB', () => {
 		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).title).toBe('Direct DB Issue');
-		expect((r.rows[0] as any).identifier).toMatch(/^MTC-/);
+		expect((r.rows[0] as any).identifier).toMatch(/^TP-/);
 	});
 
 	it('update_issue changes status', async () => {
@@ -306,11 +301,12 @@ describe('MCP tool handlers: data queries via DB', () => {
 
 	it('create_project inserts correctly', async () => {
 		const r = await db.query(
-			"INSERT INTO projects (company_id, name, slug, description) VALUES ($1, 'MCP Project', 'mcp-project', 'test') RETURNING *",
+			"INSERT INTO projects (company_id, name, slug, issue_prefix, description) VALUES ($1, 'MCP Project', 'mcp-project', 'MCPP', 'test') RETURNING *",
 			[companyId],
 		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).name).toBe('MCP Project');
+		expect((r.rows[0] as any).issue_prefix).toBe('MCPP');
 	});
 
 	it('list_approvals returns pending approvals', async () => {

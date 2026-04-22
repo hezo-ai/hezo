@@ -3,7 +3,14 @@ import { useMemo } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAgents } from '../hooks/use-agents';
-import { remarkAgentMentions } from '../lib/remark-agent-mentions';
+import { useIssueMentions } from '../hooks/use-issues';
+import {
+	type AgentMentionData,
+	extractIssueCandidates,
+	type IssueMentionData,
+	remarkMentions,
+} from '../lib/remark-mentions';
+import { Tooltip } from './ui/tooltip';
 
 type RemarkPlugin = Parameters<typeof Markdown>[0]['remarkPlugins'];
 
@@ -21,32 +28,79 @@ interface MarkdownProseProps {
 
 export function MarkdownProse({ children, testId, className, companyId }: MarkdownProseProps) {
 	const { data: agents } = useAgents(companyId ?? '');
+	const issueCandidates = useMemo(() => extractIssueCandidates(children), [children]);
+	const { data: resolvedIssues } = useIssueMentions(companyId ?? '', issueCandidates);
+
+	const agentsMap = useMemo<Map<string, AgentMentionData>>(() => {
+		const m = new Map<string, AgentMentionData>();
+		if (!agents) return m;
+		for (const a of agents) m.set(a.slug.toLowerCase(), { title: a.title });
+		return m;
+	}, [agents]);
+
+	const issuesMap = useMemo<Map<string, IssueMentionData>>(() => {
+		const m = new Map<string, IssueMentionData>();
+		if (!resolvedIssues) return m;
+		for (const i of resolvedIssues) {
+			m.set(i.identifier.toLowerCase(), { title: i.title, projectSlug: i.project_slug });
+		}
+		return m;
+	}, [resolvedIssues]);
 
 	const remarkPlugins = useMemo<RemarkPlugin>(() => {
 		const plugins: NonNullable<RemarkPlugin> = [remarkGfm];
-		if (companyId && agents && agents.length > 0) {
-			const slugs = new Set(agents.map((a) => a.slug.toLowerCase()));
-			plugins.push([remarkAgentMentions, { companyId, agentSlugs: slugs }]);
+		if (companyId && (agentsMap.size > 0 || issuesMap.size > 0)) {
+			plugins.push([remarkMentions, { companyId, agents: agentsMap, issues: issuesMap }]);
 		}
 		return plugins;
-	}, [companyId, agents]);
+	}, [companyId, agentsMap, issuesMap]);
 
 	const components = useMemo<Components>(
 		() => ({
 			a: (props) => {
-				const mentionSlug = (props as { 'data-mention-agent-slug'?: string })[
-					'data-mention-agent-slug'
-				];
-				if (mentionSlug && companyId) {
+				const attrs = props as {
+					'data-mention-agent-slug'?: string;
+					'data-mention-agent-title'?: string;
+					'data-mention-issue-identifier'?: string;
+					'data-mention-issue-title'?: string;
+					'data-mention-project-slug'?: string;
+				};
+				const issueIdentifier = attrs['data-mention-issue-identifier'];
+				const issueTitle = attrs['data-mention-issue-title'];
+				const projectSlug = attrs['data-mention-project-slug'];
+				if (issueIdentifier && issueTitle && projectSlug && companyId) {
 					return (
-						<Link
-							to="/companies/$companyId/agents/$agentId"
-							params={{ companyId, agentId: mentionSlug }}
-							className={MENTION_CLASSES}
-							data-testid="agent-mention-link"
-						>
-							{props.children}
-						</Link>
+						<Tooltip content={issueTitle}>
+							<Link
+								to="/companies/$companyId/projects/$projectId/issues/$issueId"
+								params={{
+									companyId,
+									projectId: projectSlug,
+									issueId: issueIdentifier.toLowerCase(),
+								}}
+								className={MENTION_CLASSES}
+								data-testid="issue-mention-link"
+							>
+								{props.children}
+							</Link>
+						</Tooltip>
+					);
+				}
+
+				const agentSlug = attrs['data-mention-agent-slug'];
+				const agentTitle = attrs['data-mention-agent-title'];
+				if (agentSlug && companyId) {
+					return (
+						<Tooltip content={agentTitle ?? `@${agentSlug}`}>
+							<Link
+								to="/companies/$companyId/agents/$agentId"
+								params={{ companyId, agentId: agentSlug }}
+								className={MENTION_CLASSES}
+								data-testid="agent-mention-link"
+							>
+								{props.children}
+							</Link>
+						</Tooltip>
 					);
 				}
 				return (

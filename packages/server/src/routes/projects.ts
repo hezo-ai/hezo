@@ -10,9 +10,10 @@ import {
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
-import { toSlug, uniqueSlug } from '../lib/slug';
+import { toProjectIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -82,6 +83,64 @@ async function wakeAgentsWithPendingWork(
 	}
 }
 
+export const ISSUE_PREFIX_SHAPE = /^[A-Z][A-Z0-9]{1,3}$/;
+
+export type IssuePrefixResult =
+	| { ok: true; prefix: string }
+	| { ok: false; code: 'INVALID_REQUEST' | 'CONFLICT'; message: string; status: 400 | 409 };
+
+export async function resolveProjectIssuePrefix(
+	db: PGlite,
+	companyId: string,
+	provided: string | undefined,
+	projectName: string,
+): Promise<IssuePrefixResult> {
+	if (provided?.trim()) {
+		const candidate = provided.trim().toUpperCase();
+		if (!ISSUE_PREFIX_SHAPE.test(candidate)) {
+			return {
+				ok: false,
+				code: 'INVALID_REQUEST',
+				message:
+					'issue_prefix must be 2-4 uppercase alphanumeric characters starting with a letter',
+				status: 400,
+			};
+		}
+		const collision = await db.query(
+			'SELECT 1 FROM projects WHERE company_id = $1 AND issue_prefix = $2',
+			[companyId, candidate],
+		);
+		if (collision.rows.length > 0) {
+			return {
+				ok: false,
+				code: 'CONFLICT',
+				message: `Issue prefix '${candidate}' is already in use for this company`,
+				status: 409,
+			};
+		}
+		return { ok: true, prefix: candidate };
+	}
+
+	const base = toProjectIssuePrefix(projectName);
+	const existing = await db.query<{ issue_prefix: string }>(
+		'SELECT issue_prefix FROM projects WHERE company_id = $1 AND issue_prefix LIKE $2',
+		[companyId, `${base}%`],
+	);
+	const taken = new Set(existing.rows.map((r) => r.issue_prefix));
+	if (!taken.has(base)) return { ok: true, prefix: base };
+	for (let n = 2; n < 1000; n++) {
+		const candidate = `${base}${n}`;
+		if (!ISSUE_PREFIX_SHAPE.test(candidate)) break;
+		if (!taken.has(candidate)) return { ok: true, prefix: candidate };
+	}
+	return {
+		ok: false,
+		code: 'CONFLICT',
+		message: `Unable to derive a unique issue_prefix from '${projectName}'; supply one explicitly`,
+		status: 409,
+	};
+}
+
 export const projectsRoutes = new Hono<Env>();
 
 projectsRoutes.get('/companies/:companyId/projects', async (c) => {
@@ -116,6 +175,7 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 		description?: string;
 		docker_base_image?: string;
 		initial_prd?: string;
+		issue_prefix?: string;
 	}>();
 
 	if (!body.name?.trim()) {
@@ -125,14 +185,18 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'description is required', 400);
 	}
 
-	const companyMetaResult = await db.query<{ slug: string; issue_prefix: string }>(
-		'SELECT slug, issue_prefix FROM companies WHERE id = $1',
+	const companyMetaResult = await db.query<{ slug: string }>(
+		'SELECT slug FROM companies WHERE id = $1',
 		[companyId],
 	);
 	const companyMeta = companyMetaResult.rows[0];
 	if (!companyMeta) {
 		return err(c, 'NOT_FOUND', 'Company not found', 404);
 	}
+
+	const prefixResult = await resolveProjectIssuePrefix(db, companyId, body.issue_prefix, body.name);
+	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
+	const issuePrefix = prefixResult.prefix;
 
 	const ceoResult = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
@@ -168,18 +232,23 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 	let planningIssue: Record<string, unknown>;
 	try {
 		const projectResult = await db.query(
-			`INSERT INTO projects (company_id, name, slug, description, docker_base_image)
-			 VALUES ($1, $2, $3, $4, $5)
+			`INSERT INTO projects (company_id, name, slug, issue_prefix, description, docker_base_image)
+			 VALUES ($1, $2, $3, $4, $5, $6)
 			 RETURNING *`,
 			[
 				companyId,
 				projectName,
 				slug,
+				issuePrefix,
 				projectDescription,
 				body.docker_base_image ?? 'hezo/agent-base:latest',
 			],
 		);
 		project = projectResult.rows[0] as Record<string, unknown>;
+
+		await db.query('INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)', [
+			project.id,
+		]);
 
 		if (initialPrd) {
 			await db.query(
@@ -189,12 +258,10 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 			);
 		}
 
-		const numberResult = await db.query<{ number: number }>(
-			'SELECT next_issue_number($1) AS number',
-			[companyId],
+		const { number: issueNumber, identifier } = await allocateIssueIdentifier(
+			db,
+			project.id as string,
 		);
-		const issueNumber = numberResult.rows[0].number;
-		const identifier = `${companyMeta.issue_prefix}-${issueNumber}`;
 
 		const initialPrdNote = initialPrd
 			? `\n\n> **Note:** The board has provided an initial requirements document saved as \`initial-prd.md\` in this project's docs. Direct the Researcher and Product Lead to consult this document as a starting point for research and the formal PRD.`

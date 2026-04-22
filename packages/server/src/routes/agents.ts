@@ -17,6 +17,7 @@ import {
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import { buildUpdateSet, terminalStatusParams } from '../lib/sql';
@@ -388,16 +389,7 @@ ${proposal.system_prompt ? `\n\`\`\`\n${proposal.system_prompt}\n\`\`\`\n` : '_(
 ### Existing team
 ${teamRoster}`;
 
-		const companyResult = await db.query<{ issue_prefix: string }>(
-			'SELECT issue_prefix FROM companies WHERE id = $1',
-			[companyId],
-		);
-		const numberResult = await db.query<{ number: number }>(
-			'SELECT next_issue_number($1) AS number',
-			[companyId],
-		);
-		const issueNumber = numberResult.rows[0].number;
-		const identifier = `${companyResult.rows[0].issue_prefix}-${issueNumber}`;
+		const { number: issueNumber, identifier } = await allocateIssueIdentifier(db, projectId);
 
 		const issueResult = await db.query<Record<string, unknown>>(
 			`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier,

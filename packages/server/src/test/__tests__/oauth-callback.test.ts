@@ -30,7 +30,7 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'OAuth Co', template_id: typeId, issue_prefix: 'OC' }),
+		body: JSON.stringify({ name: 'OAuth Co', template_id: typeId }),
 	});
 	const companyBody = (await companyRes.json()).data;
 	companyId = companyBody.id;
@@ -194,7 +194,7 @@ describe('GET /oauth/callback with webUrl configured (dev-mode behavior)', () =>
 		const companyRes = await devApp.request('/api/companies', {
 			method: 'POST',
 			headers: { ...authHeader(devBoardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Dev OAuth Co', template_id: typeId, issue_prefix: 'DC' }),
+			body: JSON.stringify({ name: 'Dev OAuth Co', template_id: typeId }),
 		});
 		const companyBody = (await companyRes.json()).data;
 		devCompanyId = companyBody.id;

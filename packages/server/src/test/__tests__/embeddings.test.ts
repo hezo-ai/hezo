@@ -30,15 +30,18 @@ beforeAll(async () => {
 
 	// Create a company and project directly
 	const companyResult = await db.query<{ id: string }>(
-		"INSERT INTO companies (name, slug, issue_prefix) VALUES ('Embed Co', 'embed-co', 'EMB') RETURNING id",
+		"INSERT INTO companies (name, slug) VALUES ('Embed Co', 'embed-co') RETURNING id",
 	);
 	companyId = companyResult.rows[0].id;
 
 	const projectResult = await db.query<{ id: string }>(
-		"INSERT INTO projects (company_id, name, slug) VALUES ($1, 'Embed Project', 'embed-project') RETURNING id",
+		"INSERT INTO projects (company_id, name, slug, issue_prefix) VALUES ($1, 'Embed Project', 'embed-project', 'EP') RETURNING id",
 		[companyId],
 	);
 	projectId = projectResult.rows[0].id;
+	await db.query('INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)', [
+		projectId,
+	]);
 });
 
 afterAll(async () => {
@@ -123,17 +126,17 @@ describe('semanticSearch with pre-populated embeddings', () => {
 		);
 		kbDocId = kbRes.rows[0].id;
 
-		// Create a number for the issue
-		const numRes = await db.query<{ number: number }>('SELECT next_issue_number($1) AS number', [
-			companyId,
-		]);
+		const numRes = await db.query<{ number: number }>(
+			'SELECT next_project_issue_number($1) AS number',
+			[projectId],
+		);
 		const num = numRes.rows[0].number;
 
 		const issueRes = await db.query<{ id: string }>(
 			`INSERT INTO issues (company_id, project_id, number, identifier, title, description, embedding)
 			 VALUES ($1, $2, $3, $4, 'Fix login bug', 'Users cannot log in with SSO', $5::vector)
 			 RETURNING id`,
-			[companyId, projectId, num, `EMB-${num}`, vectorStr(vec2)],
+			[companyId, projectId, num, `EP-${num}`, vectorStr(vec2)],
 		);
 		issueId = issueRes.rows[0].id;
 
@@ -217,7 +220,7 @@ describe('semanticSearch with pre-populated embeddings', () => {
 	it('results are company-scoped', async () => {
 		// Create a second company
 		const co2 = await db.query<{ id: string }>(
-			"INSERT INTO companies (name, slug, issue_prefix) VALUES ('Other Co', 'other-co', 'OTH') RETURNING id",
+			"INSERT INTO companies (name, slug) VALUES ('Other Co', 'other-co') RETURNING id",
 		);
 		const otherCompanyId = co2.rows[0].id;
 

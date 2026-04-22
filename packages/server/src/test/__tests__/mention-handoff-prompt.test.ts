@@ -49,7 +49,6 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'Mention Handoff Prompt Co',
 			template_id: typeId,
-			issue_prefix: 'MHP',
 		}),
 	});
 	companyId = (await companyRes.json()).data.id;
@@ -183,7 +182,6 @@ describe('mention handoff prompt (integration)', () => {
 			body: JSON.stringify({
 				name: 'No Tickets Co',
 				template_id: typeId,
-				issue_prefix: 'NTC',
 			}),
 		});
 		const soloCompanyId = (await companyRes.json()).data.id;
@@ -414,7 +412,7 @@ describe('spawned-from prompt line', () => {
 
 		const subRes = await db.query<{ id: string; identifier: string }>(
 			`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
-			 VALUES ($1, $2, $3, $4, $5, next_issue_number($1), 'MHP-sub', 'Sub work', '', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
+			 VALUES ($1, $2, $3, $4, $5, next_project_issue_number($2), 'MHP-sub', 'Sub work', '', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
 			 RETURNING id, identifier`,
 			[companyId, projectId, architectMemberId, parent.id, run.rows[0].id],
 		);
@@ -477,7 +475,7 @@ describe('spawned-from prompt line', () => {
 
 		const topRes = await db.query<{ id: string; identifier: string }>(
 			`INSERT INTO issues (company_id, project_id, assignee_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
-			 VALUES ($1, $2, $3, $4, next_issue_number($1), 'MHP-top', 'Top-level follow-up', '', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
+			 VALUES ($1, $2, $3, $4, next_project_issue_number($2), 'MHP-top', 'Top-level follow-up', '', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
 			 RETURNING id, identifier`,
 			[companyId, projectId, architectMemberId, run.rows[0].id],
 		);

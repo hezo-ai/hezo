@@ -88,8 +88,8 @@
   - Org chart with `reports_to` hierarchy
 - Project CRUD (create, update, delete, list)
 - Issue CRUD (create, update, delete, list, status transitions)
-  - Atomic issue numbering (`next_issue_number()`)
-  - Linear-style identifiers (ACME-42)
+  - Atomic per-project issue numbering (`next_project_issue_number()`)
+  - Linear-style identifiers (`OP-42` — project prefix + number)
   - Issue work ownership fields
   - Sub-issues and `blocked_by`
 - Comment CRUD (create, list) with all content types (text, options, preview, trace, system)

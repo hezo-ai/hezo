@@ -40,15 +40,17 @@ async function wakeupsForComment(commentId: string): Promise<WakeupRow[]> {
 // create-issue path queues an assignment wakeup that would coalesce with
 // the comment wakeups we're trying to observe).
 async function insertIssue(assigneeId: string, title: string): Promise<string> {
-	const number = await db.query<{ number: number }>('SELECT next_issue_number($1) AS number', [
-		companyId,
-	]);
-	const n = number.rows[0].number;
+	const meta = await db.query<{ issue_prefix: string; number: number }>(
+		`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
+		 FROM projects p WHERE p.id = $1`,
+		[projectId],
+	);
+	const n = meta.rows[0].number;
 	const res = await db.query<{ id: string }>(
 		`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
 		 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
 		 RETURNING id`,
-		[companyId, projectId, assigneeId, n, `CW-${n}`, title],
+		[companyId, projectId, assigneeId, n, `${meta.rows[0].issue_prefix}-${n}`, title],
 	);
 	return res.rows[0].id;
 }
@@ -130,7 +132,6 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'Comment Wakeups Co',
 			template_id: typeId,
-			issue_prefix: 'CW',
 		}),
 	});
 	companyId = (await companyRes.json()).data.id;

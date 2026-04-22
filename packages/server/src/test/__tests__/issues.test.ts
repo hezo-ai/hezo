@@ -21,7 +21,7 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Issue Test Co', issue_prefix: 'ITC' }),
+		body: JSON.stringify({ name: 'Issue Test Co' }),
 	});
 	companyId = (await companyRes.json()).data.id;
 
@@ -58,7 +58,7 @@ describe('issues CRUD', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.identifier).toMatch(/^ITC-\d+$/);
+		expect(body.data.identifier).toMatch(/^MP-\d+$/);
 		expect(body.data.number).toBeGreaterThanOrEqual(1);
 		expect(body.data.status).toBe('backlog');
 		expect(body.data.priority).toBe('high');
@@ -204,7 +204,7 @@ describe('issues CRUD', () => {
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.parent_issue_id).toBe(parentIssue.id);
-		expect(body.data.identifier).toMatch(/^ITC-\d+$/);
+		expect(body.data.identifier).toMatch(/^MP-\d+$/);
 	});
 
 	it('manages issue dependencies', async () => {

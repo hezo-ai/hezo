@@ -125,12 +125,11 @@ Request:
 {
   "name": "NoteGenius AI",
   "description": "Build the #1 AI note-taking app",
-  "template_id": "uuid",
-  "issue_prefix": "NOTE"
+  "template_id": "uuid"
 }
 ```
 
-`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). `issue_prefix` is optional and defaults to an auto-generated prefix from the company name.
+`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). Issue prefixes are configured per project (see `POST /companies/:companyId/projects`), not at the company level.
 
 Response: full company object. On creation, the server automatically:
 
@@ -790,9 +789,10 @@ Request:
 ```
 
 `project_id` and `assignee_id` are required (enforced). `number` is auto-assigned via
-`next_issue_number()`. If the assignee is an agent, the agent receives
-an event trigger. If a board member, they are notified via inbox and
-configured messaging channels.
+`next_project_issue_number()`, and `identifier` is composed as
+`{project.issue_prefix}-{number}` (e.g. `OP-42`). If the assignee is an agent,
+the agent receives an event trigger. If a board member, they are notified via
+inbox and configured messaging channels.
 
 Issues in the auto-created Operations project (`slug = 'operations'`, `is_internal = true`) must be assigned to the CEO. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Operations project issues must be assigned to the CEO`.
 

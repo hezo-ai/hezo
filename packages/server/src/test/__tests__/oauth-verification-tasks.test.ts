@@ -96,12 +96,10 @@ describe('enqueueOAuthVerificationTask', () => {
 	});
 
 	it('links the new issue to the originating issue via parent_issue_id', async () => {
-		const nextNum = await db.query<{ number: number }>('SELECT next_issue_number($1) AS number', [
-			companyId,
-		]);
-		const companyMeta = await db.query<{ issue_prefix: string }>(
-			'SELECT issue_prefix FROM companies WHERE id = $1',
-			[companyId],
+		const meta = await db.query<{ issue_prefix: string; number: number }>(
+			`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
+			 FROM projects p WHERE p.id = $1`,
+			[parentProjectId],
 		);
 		const parent = await db.query<{ id: string; identifier: string }>(
 			`INSERT INTO issues (company_id, project_id, number, identifier, title)
@@ -110,8 +108,8 @@ describe('enqueueOAuthVerificationTask', () => {
 			[
 				companyId,
 				parentProjectId,
-				nextNum.rows[0].number,
-				`${companyMeta.rows[0].issue_prefix}-${nextNum.rows[0].number}`,
+				meta.rows[0].number,
+				`${meta.rows[0].issue_prefix}-${meta.rows[0].number}`,
 			],
 		);
 		const parentId = parent.rows[0].id;

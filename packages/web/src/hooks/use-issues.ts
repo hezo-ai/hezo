@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
@@ -70,6 +71,29 @@ export function useIssue(companyId: string, issueId: string) {
 	return useQuery({
 		queryKey: ['companies', companyId, 'issues', issueId],
 		queryFn: () => api.get<Issue>(`/api/companies/${companyId}/issues/${issueId}`),
+	});
+}
+
+export interface IssueMentionData {
+	identifier: string;
+	title: string;
+	project_slug: string;
+	status: string;
+}
+
+export function useIssueMentions(companyId: string, candidates: string[]) {
+	const key = useMemo(
+		() => [...new Set(candidates.map((s) => s.toLowerCase()))].sort(),
+		[candidates],
+	);
+	return useQuery({
+		queryKey: ['companies', companyId, 'issues', 'resolve', key],
+		queryFn: () =>
+			api.post<IssueMentionData[]>(`/api/companies/${companyId}/issues/resolve`, {
+				identifiers: key,
+			}),
+		enabled: !!companyId && key.length > 0,
+		staleTime: 60_000,
 	});
 }
 

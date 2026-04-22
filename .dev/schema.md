@@ -13,13 +13,13 @@
 | `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget, `default_summary` (pre-generated description loaded from `packages/server/src/db/agent-summaries.json`), `touches_code` (default capability flag — seeded true for builder roles, copied onto `member_agents` at hire time). Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
 | `company_types` | Company blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers, `default_team_summary` (pre-generated team collaboration description). | Referenced by company_team_types. |
 | `company_type_agent_types` | Join table linking company types to agent types. Stores org chart hierarchy (reports_to_slug) and per-company-type config overrides (runtime type, heartbeat, budget). | belongs to company_type + agent_type |
-| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), company-level budget, `team_summary` (auto-generated team collaboration description, ≤20 lines). | Parent of everything. |
+| `companies` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), company-level budget, `team_summary` (auto-generated team collaboration description, ≤20 lines). | Parent of everything. |
 | `company_team_types` | Many-to-many join table linking companies to the team types they were created from. | belongs to company + company_type |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
-| `projects` | Group of related work under a company. Has Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Operations) that cannot be deleted. | belongs to company |
+| `projects` | Group of related work under a company. Has `issue_prefix` (2–4 uppercase chars used for issue identifiers), Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Operations) that cannot be deleted. | belongs to company |
 | `repos` | Git repo (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. | belongs to project |
-| `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `ACME-42`). Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to company + project, assigned to member |
+| `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `OP-42`) built from the project's `issue_prefix` + per-project number. Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to company + project, assigned to member |
 | `issue_dependencies` | Many-to-many blocking relationships between issues. | links issue ↔ issue |
 | `issue_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. Includes execution-type comments auto-created when agent runs complete. | belongs to issue |
 | `issue_attachments` | Links uploaded files to issues. | links asset ↔ issue |
@@ -48,7 +48,7 @@
 | `company_preferences` | Company-level preference doc. Agents observe and record board working style preferences. | belongs to company |
 | `company_preference_revisions` | Version history for company preferences. | belongs to company_preference |
 | `instance_user_roles` | Instance-level admin roles for users. First user gets instance_admin. | belongs to user |
-| `company_issue_counters` | Helper for atomic issue numbering. | belongs to company |
+| `project_issue_counters` | Helper for atomic issue numbering per project. | belongs to project |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
 | `slack_connections` | Per-company Slack app config. Bot token encrypted in secrets. | belongs to company |
 | `ai_provider_configs` | Instance-level AI provider credentials shared across every company in the Hezo instance. Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription OAuth token. A partial unique index on `is_default` enforces one default per provider; `(provider, label)` is unique so multiple rows per provider coexist — typically one `api_key` and one `oauth_token` — and `getProviderCredential` / `resolveRuntimeForIssue` pick the `is_default` row at runtime. `default_model` (nullable) holds the CLI `--model` value applied to every run that uses this config when the agent has no explicit override. Agent runner decrypts at execution time and injects as env var. | instance-scoped |
@@ -109,8 +109,8 @@ pause the agent and emit a system comment.
 
 ### Atomic issue numbering
 
-`next_issue_number()` uses upsert + returning to atomically assign per-company
-issue numbers. No gaps under normal operation.
+`next_project_issue_number()` uses upsert + returning to atomically assign
+per-project issue numbers. No gaps under normal operation.
 
 ### Master key lifecycle
 
@@ -527,13 +527,20 @@ Hezo app to it via `--connect-url`.
 
 ### Issue identifiers (Linear-style)
 
-Each company has an `issue_prefix` column (e.g. `ACME`, `NOTE`) auto-derived
-from the company name at creation time. On collision, a numeric suffix is
-appended (ACME, ACME2, ACME3). The prefix is globally unique across all
-companies on the instance. Issues have an `identifier` column computed as
-`{prefix}-{number}` (e.g. `ACME-42`). The identifier is the primary
-human-facing reference for issues — used in UI, API responses, @-mentions
-(`#ACME-42`), and git branch names.
+Each project has an `issue_prefix` column (2–4 uppercase alphanumeric chars,
+e.g. `OP` for "Operations", `WA` for "Web App") auto-derived from the project
+name at creation time. Single-word names use the first two characters;
+multi-word names use the initials, capped at four characters. Callers may
+override via the project-creation `issue_prefix` field. On collision within a
+company, a numeric suffix is appended (`OP`, `OP2`, `OP3`). Prefixes are
+unique per company, not globally.
+
+Issues have an `identifier` column computed at creation as `{project_prefix}-{number}`
+(e.g. `OP-42`), with `number` being the per-project issue counter. Identifiers
+are unique per company. The identifier is the primary human-facing reference
+for issues — used in UI, API responses, @-mentions (`@OP-42`), and git branch
+names. Identifiers are frozen at creation time: renaming a project does not
+retroactively change the prefix on existing issues.
 
 ### Issue assignees
 

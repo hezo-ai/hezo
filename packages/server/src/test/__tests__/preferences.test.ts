@@ -19,7 +19,7 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Pref Test Co', issue_prefix: 'PTC' }),
+		body: JSON.stringify({ name: 'Pref Test Co' }),
 	});
 	companyId = (await companyRes.json()).data.id;
 });
@@ -90,7 +90,7 @@ describe('Company preferences', () => {
 		const coRes = await app.request('/api/companies', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Empty Prefs Co', issue_prefix: 'EPC' }),
+			body: JSON.stringify({ name: 'Empty Prefs Co' }),
 		});
 		const emptyCoId = (await coRes.json()).data.id;
 

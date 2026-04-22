@@ -9,7 +9,6 @@ async function createCompany(page: import('@playwright/test').Page) {
 		headers,
 		data: {
 			name: `KB Test ${Date.now()}`,
-			issue_prefix: `KB${Date.now().toString().slice(-4)}`,
 		},
 	});
 	const company = (await companyRes.json()).data;

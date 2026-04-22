@@ -23,14 +23,14 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'UI State Co', issue_prefix: 'USC' }),
+		body: JSON.stringify({ name: 'UI State Co' }),
 	});
 	companyId = (await companyRes.json()).data.id;
 
 	const company2Res = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'UI State Co 2', issue_prefix: 'US2' }),
+		body: JSON.stringify({ name: 'UI State Co 2' }),
 	});
 	company2Id = (await company2Res.json()).data.id;
 });

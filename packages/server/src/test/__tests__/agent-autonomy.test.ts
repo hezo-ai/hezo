@@ -28,7 +28,7 @@ beforeAll(async () => {
 		headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Autonomy Test Co',
-			issue_prefix: 'AUT',
+
 			description: 'Testing agent autonomy',
 			template_id: softDevType.id,
 		}),

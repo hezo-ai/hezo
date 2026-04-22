@@ -15,7 +15,6 @@ async function createCompany(page: Page, token: string) {
 		headers,
 		data: {
 			name: `Audit Test ${Date.now()}`,
-			issue_prefix: `AU${Date.now().toString().slice(-4)}`,
 		},
 	});
 	const company = (await companyRes.json()).data;

@@ -22,8 +22,8 @@ beforeAll(async () => {
 
 	// Create a company
 	const companyRes = await db.query<{ id: string }>(
-		`INSERT INTO companies (name, slug, issue_prefix)
-		 VALUES ('SSH Test Co', 'ssh-test-co', 'ST') RETURNING id`,
+		`INSERT INTO companies (name, slug)
+		 VALUES ('SSH Test Co', 'ssh-test-co') RETURNING id`,
 	);
 	companyId = companyRes.rows[0].id;
 });
@@ -80,8 +80,8 @@ describe('SSH key management', () => {
 
 	it('returns null for company without SSH key', async () => {
 		const otherCompanyRes = await db.query<{ id: string }>(
-			`INSERT INTO companies (name, slug, issue_prefix)
-			 VALUES ('No Key Co', 'no-key-co', 'NK') RETURNING id`,
+			`INSERT INTO companies (name, slug)
+			 VALUES ('No Key Co', 'no-key-co') RETURNING id`,
 		);
 		const result = await getCompanySSHKey(db, otherCompanyRes.rows[0].id, masterKeyManager);
 		expect(result).toBeNull();

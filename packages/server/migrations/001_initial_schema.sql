@@ -148,7 +148,6 @@ CREATE TABLE companies (
     slug                 TEXT NOT NULL UNIQUE,
     description          TEXT NOT NULL DEFAULT '',
     team_summary         TEXT NOT NULL DEFAULT '',
-    issue_prefix         TEXT NOT NULL UNIQUE,
     budget_monthly_cents INTEGER NOT NULL DEFAULT 50000,
     budget_used_cents    INTEGER NOT NULL DEFAULT 0,
     budget_reset_at      TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
@@ -284,6 +283,7 @@ CREATE TABLE projects (
     company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     name                TEXT NOT NULL,
     slug                TEXT NOT NULL,
+    issue_prefix        TEXT NOT NULL,
     description         TEXT NOT NULL DEFAULT '',
     is_internal         BOOLEAN NOT NULL DEFAULT false,
     docker_base_image   TEXT NOT NULL DEFAULT 'hezo/agent-base:latest',
@@ -299,6 +299,7 @@ CREATE TABLE projects (
 
 CREATE INDEX idx_projects_company ON projects(company_id);
 CREATE UNIQUE INDEX idx_projects_company_slug ON projects(company_id, slug);
+CREATE UNIQUE INDEX idx_projects_company_issue_prefix ON projects(company_id, issue_prefix);
 
 -------------------------------------------------------------------------------
 -- REPOS
@@ -382,8 +383,8 @@ CREATE TABLE company_ssh_keys (
 -- ISSUES
 -------------------------------------------------------------------------------
 
-CREATE TABLE company_issue_counters (
-    company_id  UUID PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+CREATE TABLE project_issue_counters (
+    project_id  UUID PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
     next_number INTEGER NOT NULL DEFAULT 1
 );
 
@@ -396,7 +397,7 @@ CREATE TABLE issues (
     created_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
     created_by_run_id    UUID,
     number               INTEGER NOT NULL,
-    identifier           TEXT NOT NULL UNIQUE,
+    identifier           TEXT NOT NULL,
     title                TEXT NOT NULL,
     description          TEXT NOT NULL DEFAULT '',
     status               issue_status NOT NULL DEFAULT 'backlog',
@@ -412,7 +413,8 @@ CREATE TABLE issues (
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE (company_id, number)
+    UNIQUE (project_id, number),
+    UNIQUE (company_id, identifier)
 );
 
 CREATE INDEX idx_issues_company ON issues(company_id);
@@ -420,7 +422,7 @@ CREATE INDEX idx_issues_project ON issues(project_id);
 CREATE INDEX idx_issues_assignee ON issues(assignee_id);
 CREATE INDEX idx_issues_status ON issues(company_id, status);
 CREATE INDEX idx_issues_parent ON issues(parent_issue_id);
-CREATE INDEX idx_issues_identifier ON issues(identifier);
+CREATE INDEX idx_issues_identifier ON issues(company_id, identifier);
 CREATE INDEX idx_issues_embedding ON issues USING hnsw (embedding vector_cosine_ops);
 
 -------------------------------------------------------------------------------
@@ -1059,15 +1061,15 @@ CREATE TRIGGER trg_notification_prefs_updated BEFORE UPDATE ON notification_pref
 -- FUNCTIONS
 -------------------------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION next_issue_number(p_company_id UUID)
+CREATE OR REPLACE FUNCTION next_project_issue_number(p_project_id UUID)
 RETURNS INTEGER AS $$
 DECLARE
     v_number INTEGER;
 BEGIN
-    INSERT INTO company_issue_counters (company_id, next_number)
-    VALUES (p_company_id, 2)
-    ON CONFLICT (company_id)
-    DO UPDATE SET next_number = company_issue_counters.next_number + 1
+    INSERT INTO project_issue_counters (project_id, next_number)
+    VALUES (p_project_id, 2)
+    ON CONFLICT (project_id)
+    DO UPDATE SET next_number = project_issue_counters.next_number + 1
     RETURNING next_number - 1 INTO v_number;
 
     RETURN v_number;

@@ -73,7 +73,7 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Workflow Test Co', template_id: typeId, issue_prefix: 'WF' }),
+		body: JSON.stringify({ name: 'Workflow Test Co', template_id: typeId }),
 	});
 	companyId = (await companyRes.json()).data.id;
 
@@ -634,11 +634,12 @@ describe('JobManager workflow methods', () => {
 				issueId,
 			]);
 
-			const numberRes = await db.query<{ number: number }>(
-				'SELECT next_issue_number($1) AS number',
-				[companyId],
+			const meta = await db.query<{ issue_prefix: string; number: number }>(
+				`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
+				 FROM projects p WHERE p.id = $1`,
+				[projectId],
 			);
-			const nextNumber = numberRes.rows[0].number;
+			const nextNumber = meta.rows[0].number;
 			const nextInsert = await db.query<{ id: string }>(
 				`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
 				 VALUES ($1, $2, $3, $4, $5, $6, '', $7::issue_status, 'medium'::issue_priority, '[]'::jsonb)
@@ -648,7 +649,7 @@ describe('JobManager workflow methods', () => {
 					projectId,
 					agentId,
 					nextNumber,
-					`WF-${nextNumber}`,
+					`${meta.rows[0].issue_prefix}-${nextNumber}`,
 					'Next queued ticket',
 					IssueStatus.Backlog,
 				],

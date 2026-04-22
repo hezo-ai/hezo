@@ -14,7 +14,9 @@ import {
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { assertNoActiveRun } from '../lib/active-run';
+import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
+import { resolveProjectIssuePrefix } from '../routes/projects';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import { fireCommentWakeups } from '../services/comment-wakeups';
@@ -144,7 +146,6 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		'Create a new company (superuser only)',
 		{
 			name: z.string().describe('Company name'),
-			issue_prefix: z.string().describe('Issue prefix (e.g. ACME)'),
 			description: z.string().optional().describe('Company description'),
 		},
 		async (args, db, auth) => {
@@ -156,8 +157,8 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/^-|-$/g, '');
 			const r = await db.query(
-				`INSERT INTO companies (name, slug, issue_prefix, description) VALUES ($1, $2, $3, $4) RETURNING *`,
-				[args.name, slug, args.issue_prefix, args.description ?? ''],
+				`INSERT INTO companies (name, slug, description) VALUES ($1, $2, $3) RETURNING *`,
+				[args.name, slug, args.description ?? ''],
 			);
 			return r.rows[0];
 		},
@@ -292,17 +293,10 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			);
 			if (!opsCheck.ok) return { error: opsCheck.message };
 
-			const companyResult = await db.query<{ issue_prefix: string }>(
-				'SELECT issue_prefix FROM companies WHERE id = $1',
-				[args.company_id],
+			const { number: num, identifier } = await allocateIssueIdentifier(
+				db,
+				args.project_id as string,
 			);
-			if (companyResult.rows.length === 0) throw new Error('Company not found');
-			const numberResult = await db.query<{ number: number }>(
-				'SELECT next_issue_number($1) AS number',
-				[args.company_id],
-			);
-			const num = numberResult.rows[0].number;
-			const identifier = `${companyResult.rows[0].issue_prefix}-${num}`;
 			const createdByRunId = auth.type === AuthType.Agent ? auth.runId : null;
 			const r = await db.query<{ id: string }>(
 				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, runtime_type)
@@ -587,6 +581,10 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			company_id: z.string().describe('Company ID'),
 			name: z.string().describe('Project name'),
 			description: z.string().optional().describe('Project description'),
+			issue_prefix: z
+				.string()
+				.optional()
+				.describe('2–4 uppercase alphanumeric chars; derived from name if omitted'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -595,9 +593,20 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				.toLowerCase()
 				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/^-|-$/g, '');
-			const r = await db.query(
-				`INSERT INTO projects (company_id, name, slug, description) VALUES ($1, $2, $3, $4) RETURNING *`,
-				[args.company_id, args.name, slug, args.description ?? ''],
+			const prefixResult = await resolveProjectIssuePrefix(
+				db,
+				args.company_id as string,
+				args.issue_prefix as string | undefined,
+				args.name as string,
+			);
+			if (!prefixResult.ok) return { error: prefixResult.message };
+			const r = await db.query<{ id: string }>(
+				`INSERT INTO projects (company_id, name, slug, issue_prefix, description) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+				[args.company_id, args.name, slug, prefixResult.prefix, args.description ?? ''],
+			);
+			await db.query(
+				'INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)',
+				[r.rows[0].id],
 			);
 			return r.rows[0];
 		},
