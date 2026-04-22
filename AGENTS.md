@@ -1,7 +1,5 @@
 # Agent Guidelines
 
-Note that dev docs (prd, schema, impl phases, etc) are in `.dev` folder. Consult these documents during research and planning phases to better understand the code architecture and purpose quicker. And keep these documents in sync with the codebase.
-
 ## Commands
 
 - `bun run test` — run all tests across all packages in parallel (unit, integration, and e2e)

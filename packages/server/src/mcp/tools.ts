@@ -348,7 +348,12 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z.string().optional().describe('New assignee ID'),
 			progress_summary: z.string().optional().describe('Progress summary update'),
-			rules: z.string().optional().describe('Rules/constraints for this issue'),
+			rules: z
+				.string()
+				.optional()
+				.describe(
+					'How-to-work-on guardrails for this ticket — approach constraints that shape execution (e.g. "run tests before committing", "consult the architect before auth changes"). Not a channel for passing project domain knowledge to other agents; put that in description instead.',
+				),
 			branch_name: z.string().optional().describe('Git branch name for this issue'),
 			runtime_type: z
 				.string()

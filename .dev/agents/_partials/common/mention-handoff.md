@@ -2,7 +2,7 @@
 
 When you are @-mentioned on a ticket, your run opens on the triggering ticket for triage only — do not treat it as your assigned work.
 
-1. Check your own open tickets for one that already covers this topic. If found, update its description, rules, or progress_summary with what the mention communicates, and reference the triggering ticket so the handoff is traceable.
+1. Check your own open tickets for one that already covers this topic. If found, fold what the mention communicates into the field that actually fits each piece of it: scope / domain context / what the ticket is about → `description`; in-flight status or what's been done → `progress_summary`; approach constraints or guardrails that shape how the work is done → `rules` (rules are for *how* the ticket should be worked on, not a back-channel for handing domain knowledge to the next agent). Reference the triggering ticket so the handoff is traceable.
 2. If none of your open tickets covers this, open one via `create_issue`. The new ticket is your own first-class work; shape it as the context warrants:
    - a sub-issue (set `parent_issue_id` to the triggering ticket) when the work clearly belongs underneath it,
    - a peer/sibling ticket when it sits alongside,
