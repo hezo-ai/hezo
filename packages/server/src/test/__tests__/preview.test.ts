@@ -33,7 +33,7 @@ beforeAll(async () => {
 	app = buildApp(
 		db,
 		masterKeyManager,
-		{ dataDir, connectUrl: 'http://localhost:4100', connectPublicKey: '' },
+		{ dataDir, connectUrl: 'http://localhost:4100', connectPublicKey: '', webUrl: '' },
 		createStubDocker(),
 	);
 	const userResult = await db.query<{ id: string }>(

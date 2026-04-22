@@ -9,6 +9,7 @@ export interface HezoConfig {
 	masterKey?: string;
 	connectUrl: string;
 	connectApiKey?: string;
+	webUrl: string;
 	reset: boolean;
 	open: boolean;
 }
@@ -22,6 +23,11 @@ export function parseArgs(argv: string[] = process.argv): HezoConfig {
 		.option('--master-key <key>', 'Master key for unlocking')
 		.option('--connect-url <url>', 'Hezo Connect URL', DEFAULT_CONNECT_URL)
 		.option('--connect-api-key <key>', 'Hezo Connect API key')
+		.option(
+			'--web-url <url>',
+			'Web UI base URL for OAuth redirects (leave empty to use same origin)',
+			'',
+		)
 		.option('--reset', 'Reset database and start fresh')
 		.option('--open', 'Auto-open the browser')
 		.parse(argv);
@@ -46,6 +52,7 @@ export function parseArgs(argv: string[] = process.argv): HezoConfig {
 		masterKey: opts.masterKey,
 		connectUrl: opts.connectUrl,
 		connectApiKey: opts.connectApiKey,
+		webUrl: opts.webUrl ?? '',
 		reset: opts.reset ?? false,
 		open: opts.open ?? false,
 	};

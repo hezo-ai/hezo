@@ -27,6 +27,9 @@ oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const connectUrl = c.get('connectUrl');
+	const webUrl = c.get('webUrl');
+
+	const redirect = (path: string) => c.redirect(webUrl ? `${webUrl}${path}` : path);
 
 	const error = c.req.query('error');
 	const platform = c.req.query('platform');
@@ -34,7 +37,7 @@ oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 
 	if (error) {
 		const message = c.req.query('message') || error;
-		return c.redirect(`/error?message=${encodeURIComponent(message)}`);
+		return redirect(`/error?message=${encodeURIComponent(message)}`);
 	}
 
 	if (!state || !platform) {
@@ -89,7 +92,7 @@ oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 		if (!exchangeRes.ok) {
 			const errBody = await exchangeRes.json().catch(() => null);
 			const msg = (errBody as Record<string, string>)?.message || 'Token exchange failed';
-			return c.redirect(`/error?message=${encodeURIComponent(msg)}`);
+			return redirect(`/error?message=${encodeURIComponent(msg)}`);
 		}
 
 		const exchangeData = (await exchangeRes.json()) as {
@@ -109,7 +112,7 @@ oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 			}
 		}
 	} catch {
-		return c.redirect(
+		return redirect(
 			`/error?message=${encodeURIComponent('Failed to exchange token with Connect service')}`,
 		);
 	}
@@ -130,7 +133,7 @@ oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 			log.warn('AI provider config creation failed:', e instanceof Error ? e.message : e);
 		}
 
-		return c.redirect(`/settings/ai-providers?ai_provider_connected=${platform}`);
+		return redirect(`/settings/ai-providers?ai_provider_connected=${platform}`);
 	}
 
 	if (!companyId) {
@@ -203,11 +206,11 @@ oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 			c.get('wsManager'),
 		);
 		if (verification) {
-			return c.redirect(`/companies/${companyRef}/issues/${verification.identifier}`);
+			return redirect(`/companies/${companyRef}/issues/${verification.identifier}`);
 		}
 	} catch (e) {
 		log.warn('Failed to create OAuth verification task:', e instanceof Error ? e.message : e);
 	}
 
-	return c.redirect(`/companies/${companyRef}/settings?connected=${platform}`);
+	return redirect(`/companies/${companyRef}/settings?connected=${platform}`);
 });

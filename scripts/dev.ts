@@ -27,7 +27,10 @@ if (opts.reset) {
 	}
 }
 
-const serverArgs: string[] = [];
+// Duplicated from @hezo/shared (DEFAULT_WEB_PORT) to avoid adding a root-level
+// workspace dependency — mirrors packages/web/vite.config.ts.
+const webPort = process.env.HEZO_WEB_PORT ?? '5173';
+const serverArgs: string[] = ['--web-url', `http://localhost:${webPort}`];
 if (opts.open) serverArgs.push('--open');
 if (opts.port) serverArgs.push('--port', opts.port);
 if (opts.masterKey) serverArgs.push('--master-key', opts.masterKey);

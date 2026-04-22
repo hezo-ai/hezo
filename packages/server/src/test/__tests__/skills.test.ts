@@ -51,7 +51,7 @@ beforeAll(async () => {
 	app = buildApp(
 		db,
 		masterKeyManager,
-		{ dataDir: tempDataDir, connectUrl: '', connectPublicKey: '' },
+		{ dataDir: tempDataDir, connectUrl: '', connectPublicKey: '', webUrl: '' },
 		createStubDocker(),
 	);
 	const userResult = await db.query<{ id: string }>(

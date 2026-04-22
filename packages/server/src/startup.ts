@@ -56,6 +56,7 @@ export interface AppConfig {
 	dataDir: string;
 	connectUrl: string;
 	connectPublicKey: string;
+	webUrl: string;
 }
 
 export interface StartupResult {
@@ -139,6 +140,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			dataDir: config.dataDir,
 			connectUrl: config.connectUrl,
 			connectPublicKey,
+			webUrl: config.webUrl,
 		},
 		docker,
 		wsManager,
@@ -162,7 +164,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 export function buildApp(
 	db: PGlite,
 	masterKeyManager: MasterKeyManager,
-	config: AppConfig = { dataDir: '', connectUrl: '', connectPublicKey: '' },
+	config: AppConfig = { dataDir: '', connectUrl: '', connectPublicKey: '', webUrl: '' },
 	docker: DockerClient = new DockerClient(),
 	wsManager: WebSocketManager = new WebSocketManager(),
 	jobManager?: JobManager,
@@ -181,6 +183,7 @@ export function buildApp(
 		c.set('dataDir', config.dataDir);
 		c.set('connectUrl', config.connectUrl);
 		c.set('connectPublicKey', config.connectPublicKey);
+		c.set('webUrl', config.webUrl);
 		return next();
 	});
 
