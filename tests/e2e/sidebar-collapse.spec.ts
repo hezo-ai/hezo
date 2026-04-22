@@ -83,9 +83,8 @@ test('sidebar toggle stays clickable when the container status banner is showing
 
 	await page.goto(`/companies/${company.slug}/inbox`);
 
-	await expect(page.getByText(/container is stopped|container has an error/i)).toBeVisible({
-		timeout: 10000,
-	});
+	await expect(page.getByTestId('container-status-banner')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByTestId('container-status-banner')).toContainText(/container failed/i);
 
 	const toggle = page.getByTestId('sidebar-toggle');
 	await expect(toggle).toBeVisible();
