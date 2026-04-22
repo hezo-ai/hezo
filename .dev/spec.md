@@ -476,7 +476,7 @@ Agents can request updates to their own system prompts via `PATCH /agent-api/sel
 
 Role docs for different company templates frequently share boilerplate — the same "no designated repo means no run" rule appears in every code-touching role, the same hire workflow belongs on every CEO prompt regardless of template. To avoid drift we resolve **section-level partials** at bundle time.
 
-- Partials live under `.dev/agents/_partials/**/*.md`. They are plain Markdown with no frontmatter and are not seeded as role docs themselves.
+- Partials live under `agents/_partials/**/*.md`. They are plain Markdown with no frontmatter and are not seeded as role docs themselves.
 - A role doc pulls one in with a **whole-line** directive: `{{> partials/<name>}}` (leading whitespace tolerated; anything else on the line makes it literal text). The name mirrors the path under `_partials/` without the `.md` suffix.
 - Resolution runs in `scripts/bundle-agents.ts` before the bundle is zipped into `packages/server/src/db/agents-bundle.json`, and in the filesystem fallback (`loadAgentRoles` in `packages/server/src/db/agent-roles.ts`) used by tests and dev mode. The DB still stores fully expanded prompts; nothing reads partials at runtime.
 - Partials may include other partials; cycles and unknown refs hard-fail the bundler. Runtime variable substitutions (`{{company_name}}`, `{{kb_context}}`, …) are untouched — those happen later in `template-resolver.ts` per-run.

@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { loadFilesystemAgentRoles } from '../src/db/agent-roles';
 import { resolvePartials } from '../src/db/resolve-partials';
 
-const agentsDir = join(import.meta.dir, '..', '..', '..', '.dev', 'agents');
+const agentsDir = join(import.meta.dir, '..', '..', '..', 'agents');
 const outputPath = join(import.meta.dir, '..', 'src', 'db', 'agents-bundle.json');
 
 const raw = await loadFilesystemAgentRoles(agentsDir);
