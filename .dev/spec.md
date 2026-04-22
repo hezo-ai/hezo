@@ -1513,9 +1513,11 @@ In addition to scheduled heartbeats, agents are triggered **immediately** by:
 
 Event-triggered wakeups do not wait for the next scheduled heartbeat — the agent subprocess is spawned immediately. Scheduled heartbeats are a fallback for idle agents with no pending events.
 
+Plain comments on an assigned ticket (with no `@`-mention targeting the assignee) do not fire an event-based wakeup; the assignee reconciles thread activity on its next scheduled heartbeat. Only explicit `@`-mentions — or other triggers in the list above — spawn a run.
+
 ### Wakeup queue and coalescing
 
-When multiple events fire for the same agent in quick succession (e.g. several @-mentions, assignment + comment), wakeups are coalesced into a single activation. The wakeup queue:
+When multiple events fire for the same agent in quick succession (e.g. several @-mentions, or assignment + option_chosen), wakeups are coalesced into a single activation. The wakeup queue:
 
 - Batches events within a short coalescing window (default: 10 seconds)
 - Delivers all pending events in a single heartbeat response

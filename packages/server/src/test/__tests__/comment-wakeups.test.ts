@@ -159,7 +159,7 @@ beforeEach(async () => {
 	await db.query('DELETE FROM agent_wakeup_requests');
 });
 
-describe('MCP create_comment fires mention + assignee wakeups', () => {
+describe('MCP create_comment fires mention-only wakeups', () => {
 	it('wakes a mentioned agent who is not the author or assignee', async () => {
 		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'CEO roadmap ticket');
 		const commentId = await postMcpComment(
@@ -177,19 +177,15 @@ describe('MCP create_comment fires mention + assignee wakeups', () => {
 		expect(mention?.payload.issue_id).toBe(issueId);
 	});
 
-	it('wakes the assignee when a different agent posts a comment', async () => {
+	it('does not wake the assignee when a plain (non-mentioning) comment is posted', async () => {
 		const { issueId, agentToken } = await setup(architectId, productLeadId, 'Architecture task');
 		const commentId = await postMcpComment(agentToken, issueId, 'Added context for you.');
 
 		const wakeups = await wakeupsForComment(commentId);
-		const comment = wakeups.find(
-			(w) => w.source === WakeupSource.Comment && w.member_id === architectId,
-		);
-		expect(comment).toBeDefined();
-		expect(wakeups.some((w) => w.source === WakeupSource.Mention)).toBe(false);
+		expect(wakeups).toEqual([]);
 	});
 
-	it('fires both mention and assignee wakeups on the same comment', async () => {
+	it('wakes only @-mentioned agents, not the assignee, on a mention-bearing comment', async () => {
 		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'Cross-team ticket');
 		const commentId = await postMcpComment(
 			agentToken,
@@ -201,14 +197,11 @@ describe('MCP create_comment fires mention + assignee wakeups', () => {
 		const mentionTargets = wakeups
 			.filter((w) => w.source === WakeupSource.Mention)
 			.map((w) => w.member_id);
-		const commentTargets = wakeups
-			.filter((w) => w.source === WakeupSource.Comment)
-			.map((w) => w.member_id);
 		expect(mentionTargets).toEqual([architectId]);
-		expect(commentTargets).toEqual([ceoId]);
+		expect(wakeups.some((w) => w.source === WakeupSource.Comment)).toBe(false);
 	});
 
-	it('skips self-mentions and self-comments', async () => {
+	it('skips self-mentions', async () => {
 		const { issueId, agentToken } = await setup(architectId, architectId, 'Architect own ticket');
 		const commentId = await postMcpComment(
 			agentToken,
@@ -241,7 +234,7 @@ describe('MCP create_comment fires mention + assignee wakeups', () => {
 	});
 });
 
-describe('agent-api POST comments fires mention + assignee wakeups', () => {
+describe('agent-api POST comments fires mention-only wakeups', () => {
 	it('wakes a mentioned agent on an agent-api-posted comment', async () => {
 		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'CEO roadmap ticket 2');
 		const commentId = await postAgentApiComment(
@@ -257,15 +250,12 @@ describe('agent-api POST comments fires mention + assignee wakeups', () => {
 		expect(mention).toBeDefined();
 	});
 
-	it('wakes the assignee on an agent-api-posted comment from a different agent', async () => {
+	it('does not wake the assignee on a plain agent-api comment from a different agent', async () => {
 		const { issueId, agentToken } = await setup(architectId, productLeadId, 'Architecture task 2');
 		const commentId = await postAgentApiComment(agentToken, issueId, 'More context for you here.');
 
 		const wakeups = await wakeupsForComment(commentId);
-		const comment = wakeups.find(
-			(w) => w.source === WakeupSource.Comment && w.member_id === architectId,
-		);
-		expect(comment).toBeDefined();
+		expect(wakeups).toEqual([]);
 	});
 
 	it('skips non-text content types even when they contain @-mentions', async () => {

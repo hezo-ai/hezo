@@ -276,8 +276,9 @@ Request:
 
 `default_effort` is optional. Valid values: `minimal | low | medium | high | max`.
 It is the baseline reasoning level every agent created from this type inherits
-(each agent can also override it individually, and each run can override it
-again via a comment — see [Reasoning effort](#reasoning-effort)).
+(each agent can also override it individually, and each mention-triggered run
+can override it again via the `effort` field on the `@`-mentioning comment —
+see [Reasoning effort](#reasoning-effort)).
 
 #### `GET /agent-types/:id`
 Get a single agent type.
@@ -390,8 +391,9 @@ model_override_provider, model_override_model.
 Cannot update: status (use lifecycle endpoints), budget_used_cents (system-managed).
 
 `default_effort` accepts `minimal | low | medium | high | max`. It sets the
-baseline reasoning level applied to every run of this agent; comments posted
-on the issue can override it per-run — see [Reasoning effort](#reasoning-effort).
+baseline reasoning level applied to every run of this agent; an `@`-mentioning
+comment can override it per-run via the `effort` field — see
+[Reasoning effort](#reasoning-effort).
 
 `model_override_provider` (one of `anthropic | openai | google | moonshot`, or
 `null`) and `model_override_model` (free-form model id, e.g. `claude-opus-4-7`,
@@ -948,10 +950,11 @@ Request:
 `author_type` is always `board` for this endpoint.
 
 `effort` is optional. When set (valid values: `minimal | low | medium | high | max`),
-it overrides the assigned agent's `default_effort` for the wakeup triggered by
-this comment — useful for asking an agent to think harder about a tricky piece
-of feedback. Invalid values are silently dropped. See
-[Reasoning effort](#reasoning-effort).
+it overrides each `@`-mentioned agent's `default_effort` for the wakeups that
+the mentions trigger — useful for asking a mentioned agent to think harder
+about a tricky piece of feedback. If the comment contains no `@`-mentions,
+`effort` has no observable effect (no wakeup is fired). Invalid values are
+silently dropped. See [Reasoning effort](#reasoning-effort).
 
 #### `POST /companies/:companyId/issues/:issueId/comments/:commentId/choose`
 Board picks an option on an options-type comment.
@@ -2120,6 +2123,9 @@ mentions out of the comment content (ignoring fenced code blocks and self-
 mentions) and creates a `mention`-source wakeup for each distinct mentioned
 agent. The wakeup payload carries `{ source: "mention", issue_id, comment_id }`,
 and the mentioned agent wakes immediately — not on the next heartbeat tick.
+The ticket assignee is **not** woken by plain comments; assignees reconcile
+thread activity during their next scheduled heartbeat unless they are
+explicitly `@`-mentioned themselves.
 
 **Handoff semantics.** A mention-triggered run opens on the triggering ticket
 for triage. The agent's task prompt includes a "Mention Handoff" section that
