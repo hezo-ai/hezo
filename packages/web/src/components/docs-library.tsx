@@ -1,9 +1,9 @@
 import { ArrowLeft, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { MarkdownProse } from './markdown-prose';
+import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
-import { Textarea } from './ui/textarea';
 
 export interface DocItem {
 	key: string;
@@ -36,6 +36,7 @@ interface DocsLibraryProps {
 	emptyDescription?: string;
 
 	companyId?: string;
+	projectSlug?: string;
 }
 
 export function DocsLibrary({
@@ -55,6 +56,7 @@ export function DocsLibrary({
 	emptyTitle = 'No documents yet',
 	emptyDescription,
 	companyId,
+	projectSlug,
 }: DocsLibraryProps) {
 	const [mode, setMode] = useState<'view' | 'edit'>('view');
 	const [modeKey, setModeKey] = useState<string | null>(selectedKey);
@@ -198,9 +200,13 @@ export function DocsLibrary({
 						</div>
 
 						{mode === 'view' ? (
-							<MarkdownProse companyId={companyId}>{docContent || '_(empty)_'}</MarkdownProse>
+							<MarkdownProse companyId={companyId} projectSlug={projectSlug}>
+								{docContent || '_(empty)_'}
+							</MarkdownProse>
 						) : (
-							<Textarea
+							<MentionTextarea
+								companyId={companyId}
+								projectSlug={projectSlug}
 								value={draft}
 								onChange={(e) => setDraft(e.target.value)}
 								className="min-h-[400px] font-mono text-xs"

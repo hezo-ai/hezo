@@ -47,6 +47,7 @@ interface RenderProps {
 	onChooseOption?: (commentId: string, chosenId: string) => void;
 	companyId?: string;
 	projectId?: string;
+	projectSlug?: string;
 	issueId?: string;
 }
 
@@ -55,6 +56,7 @@ export function CommentRenderer({
 	onChooseOption,
 	companyId,
 	projectId,
+	projectSlug,
 	issueId,
 }: RenderProps) {
 	switch (comment.content_type) {
@@ -78,7 +80,7 @@ export function CommentRenderer({
 				/>
 			);
 		default:
-			return <TextComment comment={comment} companyId={companyId} />;
+			return <TextComment comment={comment} companyId={companyId} projectSlug={projectSlug} />;
 	}
 }
 
@@ -225,13 +227,21 @@ function RunComment({ comment, companyId }: { comment: CommentData; companyId?: 
 	);
 }
 
-function TextComment({ comment, companyId }: { comment: CommentData; companyId?: string }) {
+function TextComment({
+	comment,
+	companyId,
+	projectSlug,
+}: {
+	comment: CommentData;
+	companyId?: string;
+	projectSlug?: string;
+}) {
 	const content =
 		typeof comment.content === 'object'
 			? comment.content.text || JSON.stringify(comment.content)
 			: String(comment.content);
 	return (
-		<MarkdownProse testId="text-comment-body" companyId={companyId}>
+		<MarkdownProse testId="text-comment-body" companyId={companyId} projectSlug={projectSlug}>
 			{content}
 		</MarkdownProse>
 	);

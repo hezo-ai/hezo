@@ -6,9 +6,9 @@ import { useMemo, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useCreateIssue } from '../hooks/use-issues';
 import { useProjects } from '../hooks/use-projects';
+import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { Textarea } from './ui/textarea';
 
 interface CreateIssueDialogProps {
 	companyId: string;
@@ -104,7 +104,9 @@ export function CreateIssueDialog({
 							onChange={(e) => setTitle(e.target.value)}
 							required
 						/>
-						<Textarea
+						<MentionTextarea
+							companyId={companyId}
+							projectSlug={selectedProject?.slug}
 							label="Description"
 							value={description}
 							onChange={(e) => setDescription(e.target.value)}

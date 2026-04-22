@@ -33,6 +33,7 @@ import { goalsRoutes } from './routes/goals';
 import { healthRoutes } from './routes/health';
 import { issuesRoutes } from './routes/issues';
 import { kbDocsRoutes } from './routes/kb-docs';
+import { mentionsRoutes } from './routes/mentions';
 import { oauthCallbackRoutes } from './routes/oauth-callback';
 import { preferencesRoutes } from './routes/preferences';
 import { previewRoutes } from './routes/preview';
@@ -238,6 +239,7 @@ export function buildApp(
 	app.route('/api', preferencesRoutes);
 	app.route('/api', uiStateRoutes);
 	app.route('/api', projectDocsRoutes);
+	app.route('/api', mentionsRoutes);
 	app.route('/api', connectionsRoutes);
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', reposRoutes);

@@ -2,9 +2,9 @@ import { createFileRoute } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { type DocItem, DocsLibrary } from '../../../../../components/docs-library';
+import { MentionTextarea } from '../../../../../components/mention-textarea';
 import { Button } from '../../../../../components/ui/button';
 import { Input } from '../../../../../components/ui/input';
-import { Textarea } from '../../../../../components/ui/textarea';
 import {
 	useDeleteProjectDoc,
 	useProjectAgentsMd,
@@ -90,6 +90,7 @@ function ProjectDocumentsPage() {
 	return (
 		<DocsLibrary
 			companyId={companyId}
+			projectSlug={projectId}
 			items={items}
 			isLoadingList={isLoadingList}
 			selectedKey={file ?? null}
@@ -109,6 +110,8 @@ function ProjectDocumentsPage() {
 			isCreating={isCreating}
 			newForm={
 				<NewProjectDocForm
+					companyId={companyId}
+					projectSlug={projectId}
 					onCancel={() => setIsCreating(false)}
 					onCreate={async (filename, content) => {
 						await updateDoc.mutateAsync({ filename, content });
@@ -128,10 +131,14 @@ function ProjectDocumentsPage() {
 }
 
 function NewProjectDocForm({
+	companyId,
+	projectSlug,
 	onCancel,
 	onCreate,
 	isPending,
 }: {
+	companyId: string;
+	projectSlug: string;
 	onCancel: () => void;
 	onCreate: (filename: string, content: string) => Promise<void>;
 	isPending: boolean;
@@ -163,7 +170,9 @@ function NewProjectDocForm({
 				onChange={(e) => setFilename(e.target.value)}
 				required
 			/>
-			<Textarea
+			<MentionTextarea
+				companyId={companyId}
+				projectSlug={projectSlug}
 				label="Content (Markdown)"
 				value={content}
 				onChange={(e) => setContent(e.target.value)}

@@ -8,10 +8,10 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 import { AgentStatusLabel } from '../../../../../../components/agent-status-label';
 import { type CommentData, CommentRenderer } from '../../../../../../components/comment-renderers';
 import { MarkdownProse } from '../../../../../../components/markdown-prose';
+import { MentionTextarea } from '../../../../../../components/mention-textarea';
 import { Avatar, avatarColorFromString } from '../../../../../../components/ui/avatar';
 import { Badge } from '../../../../../../components/ui/badge';
 import { Button } from '../../../../../../components/ui/button';
-import { Textarea } from '../../../../../../components/ui/textarea';
 import { Tooltip } from '../../../../../../components/ui/tooltip';
 import { useAgents } from '../../../../../../hooks/use-agents';
 import {
@@ -236,7 +236,11 @@ function IssueDetailPage() {
 							<span className="text-xs font-medium text-text-muted">Description</span>
 						</div>
 						<div className="px-3 py-2.5">
-							<MarkdownProse testId="issue-description" companyId={companyId}>
+							<MarkdownProse
+								testId="issue-description"
+								companyId={companyId}
+								projectSlug={issueProjectSlug}
+							>
 								{issue.description}
 							</MarkdownProse>
 						</div>
@@ -266,7 +270,9 @@ function IssueDetailPage() {
 					</div>
 					{editingSummary ? (
 						<div className="flex flex-col gap-2">
-							<Textarea
+							<MentionTextarea
+								companyId={companyId}
+								projectSlug={issueProjectSlug}
 								value={summaryText}
 								onChange={(e) => setSummaryText(e.target.value)}
 								className="min-h-[60px]"
@@ -289,7 +295,9 @@ function IssueDetailPage() {
 							</div>
 						</div>
 					) : issue.progress_summary ? (
-						<MarkdownProse companyId={companyId}>{issue.progress_summary}</MarkdownProse>
+						<MarkdownProse companyId={companyId} projectSlug={issueProjectSlug}>
+							{issue.progress_summary}
+						</MarkdownProse>
 					) : (
 						<span>No progress summary yet.</span>
 					)}
@@ -318,7 +326,9 @@ function IssueDetailPage() {
 					</div>
 					{editingRules ? (
 						<div className="flex flex-col gap-2">
-							<Textarea
+							<MentionTextarea
+								companyId={companyId}
+								projectSlug={issueProjectSlug}
 								value={rulesText}
 								onChange={(e) => setRulesText(e.target.value)}
 								placeholder="e.g., Consult the architect before making changes..."
@@ -340,7 +350,9 @@ function IssueDetailPage() {
 							</div>
 						</div>
 					) : issue.rules ? (
-						<MarkdownProse companyId={companyId}>{issue.rules}</MarkdownProse>
+						<MarkdownProse companyId={companyId} projectSlug={issueProjectSlug}>
+							{issue.rules}
+						</MarkdownProse>
 					) : (
 						<span>No rules set.</span>
 					)}
@@ -504,6 +516,7 @@ function IssueDetailPage() {
 												}
 												companyId={companyId}
 												projectId={issue?.project_id ?? undefined}
+												projectSlug={issueProjectSlug}
 												issueId={issue?.id ?? undefined}
 											/>
 										</div>
@@ -514,7 +527,9 @@ function IssueDetailPage() {
 					</div>
 
 					<form onSubmit={handleComment} className="flex flex-col gap-2">
-						<Textarea
+						<MentionTextarea
+							companyId={companyId}
+							projectSlug={issueProjectSlug}
 							value={commentText}
 							onChange={(e) => setCommentText(e.target.value)}
 							placeholder="Add a comment..."

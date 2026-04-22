@@ -4,9 +4,9 @@ import { Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { type GoalWithProject, useCreateGoal, useUpdateGoal } from '../hooks/use-goals';
 import { useProjects } from '../hooks/use-projects';
+import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { Textarea } from './ui/textarea';
 
 interface GoalDialogProps {
 	companyId: string;
@@ -80,7 +80,9 @@ export function GoalDialog({ companyId, open, onOpenChange, goal }: GoalDialogPr
 							required
 							placeholder="Ship a public v1 by end of Q3"
 						/>
-						<Textarea
+						<MentionTextarea
+							companyId={companyId}
+							projectSlug={projects?.find((p) => p.id === projectId)?.slug}
 							label="Description"
 							value={description}
 							onChange={(e) => setDescription(e.target.value)}

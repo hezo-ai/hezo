@@ -2,10 +2,10 @@ import { createFileRoute } from '@tanstack/react-router';
 import { Clock, Loader2, RotateCcw } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { type DocItem, DocsLibrary } from '../../../../components/docs-library';
+import { MentionTextarea } from '../../../../components/mention-textarea';
 import { Button } from '../../../../components/ui/button';
 import { Card } from '../../../../components/ui/card';
 import { Input } from '../../../../components/ui/input';
-import { Textarea } from '../../../../components/ui/textarea';
 import {
 	useCreateKbDoc,
 	useDeleteKbDoc,
@@ -87,6 +87,7 @@ function KbPage() {
 			isCreating={isCreating}
 			newForm={
 				<NewKbDocForm
+					companyId={companyId}
 					onCancel={() => setIsCreating(false)}
 					onCreate={async (title, content) => {
 						const created = await createDoc.mutateAsync({ title, content });
@@ -107,10 +108,12 @@ function KbPage() {
 }
 
 function NewKbDocForm({
+	companyId,
 	onCancel,
 	onCreate,
 	isPending,
 }: {
+	companyId: string;
 	onCancel: () => void;
 	onCreate: (title: string, content: string) => Promise<void>;
 	isPending: boolean;
@@ -127,7 +130,8 @@ function NewKbDocForm({
 		<form onSubmit={handleSubmit} className="flex flex-col gap-4 max-w-2xl">
 			<h2 className="text-base font-semibold">New document</h2>
 			<Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} required />
-			<Textarea
+			<MentionTextarea
+				companyId={companyId}
 				label="Content (Markdown)"
 				value={content}
 				onChange={(e) => setContent(e.target.value)}
