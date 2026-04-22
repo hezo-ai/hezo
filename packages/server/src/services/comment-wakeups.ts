@@ -15,17 +15,28 @@ export interface FireCommentWakeupsParams {
 	contentType: string;
 	authorMemberId: string | null;
 	effort?: string | null;
+	wakeAssignee?: boolean;
 }
 
 export async function fireCommentWakeups(params: FireCommentWakeupsParams): Promise<void> {
-	const { db, issueId, companyId, commentId, content, contentType, authorMemberId, effort } =
-		params;
+	const {
+		db,
+		issueId,
+		companyId,
+		commentId,
+		content,
+		contentType,
+		authorMemberId,
+		effort,
+		wakeAssignee,
+	} = params;
 
 	// System/Run/Trace/Options/Preview/Action comments are internal channels
 	// with no user-authored @mentions.
 	if (contentType !== CommentContentType.Text) return;
 
 	const effortPayload = effort ? { effort } : {};
+	const mentionedAgentIds = new Set<string>();
 	const wakeupPromises: Array<Promise<unknown>> = [];
 
 	for (const slug of extractMentionSlugs(content)) {
@@ -38,6 +49,7 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 		if (mentioned.rows.length === 0) continue;
 		const mentionedId = mentioned.rows[0].id;
 		if (mentionedId === authorMemberId) continue;
+		mentionedAgentIds.add(mentionedId);
 		wakeupPromises.push(
 			createWakeup(db, mentionedId, companyId, WakeupSource.Mention, {
 				source: WakeupSource.Mention,
@@ -46,6 +58,26 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 				...effortPayload,
 			}).catch((e) => log.error('Failed to create mention wakeup:', e)),
 		);
+	}
+
+	if (wakeAssignee) {
+		const issueRow = await db.query<{ assignee_id: string | null }>(
+			'SELECT assignee_id FROM issues WHERE id = $1 AND company_id = $2',
+			[issueId, companyId],
+		);
+		const assigneeId = issueRow.rows[0]?.assignee_id ?? null;
+		if (assigneeId && assigneeId !== authorMemberId && !mentionedAgentIds.has(assigneeId)) {
+			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
+			if (isAgent.rows.length > 0) {
+				wakeupPromises.push(
+					createWakeup(db, assigneeId, companyId, WakeupSource.Comment, {
+						issue_id: issueId,
+						comment_id: commentId,
+						...effortPayload,
+					}).catch((e) => log.error('Failed to create comment wakeup:', e)),
+				);
+			}
+		}
 	}
 
 	await Promise.all(wakeupPromises);

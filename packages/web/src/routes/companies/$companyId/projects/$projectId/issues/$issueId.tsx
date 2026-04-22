@@ -104,6 +104,7 @@ function IssueDetailPage() {
 	// Per-comment reasoning effort. `null` = user hasn't touched the dropdown, so
 	// leave effort unset on submit and let the server resolve the agent default.
 	const [commentEffort, setCommentEffort] = useState<AgentEffort | null>(null);
+	const [wakeAssignee, setWakeAssignee] = useState(true);
 	const [subIssueTitle, setSubIssueTitle] = useState('');
 	const [showSubForm, setShowSubForm] = useState(false);
 	const [subIssuesOpen, setSubIssuesOpen] = useState(false);
@@ -154,9 +155,11 @@ function IssueDetailPage() {
 		await createComment.mutateAsync({
 			content: commentText,
 			...(commentEffort ? { effort: commentEffort } : {}),
+			...(issue?.assignee_id ? { wake_assignee: wakeAssignee } : {}),
 		});
 		setCommentText('');
 		setCommentEffort(null);
+		setWakeAssignee(true);
 	}
 
 	async function handleSubIssue(e: React.FormEvent) {
@@ -534,14 +537,28 @@ function IssueDetailPage() {
 									))}
 								</select>
 							</label>
-							<Button
-								type="submit"
-								size="sm"
-								disabled={!commentText.trim() || createComment.isPending}
-							>
-								{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-								Comment
-							</Button>
+							<div className="flex items-center gap-3">
+								{issue.assignee_id && (
+									<label className="flex items-center gap-1.5 text-[11px] text-text-muted cursor-pointer select-none">
+										<input
+											type="checkbox"
+											checked={wakeAssignee}
+											onChange={(e) => setWakeAssignee(e.target.checked)}
+											className="rounded"
+											aria-label="Wake assignee on submit"
+										/>
+										Wake assignee
+									</label>
+								)}
+								<Button
+									type="submit"
+									size="sm"
+									disabled={!commentText.trim() || createComment.isPending}
+								>
+									{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+									Comment
+								</Button>
+							</div>
 						</div>
 					</form>
 				</div>

@@ -76,6 +76,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		content_type?: string;
 		content: Record<string, unknown>;
 		effort?: string;
+		wake_assignee?: boolean;
 	}>();
 
 	if (!body.content) {
@@ -92,6 +93,11 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 	} else if (auth.type === AuthType.Agent) {
 		authorMemberId = auth.memberId;
 	}
+
+	// Only Board (human) callers can opt into waking the assignee on a plain
+	// comment. Agent-authored paths (/agent-api, /mcp) keep mention-only behavior
+	// regardless of the body field.
+	const wakeAssignee = auth.type === AuthType.Board && body.wake_assignee === true;
 
 	const result = await db.query<{ id: string }>(
 		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
@@ -114,6 +120,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		contentType: body.content_type ?? CommentContentType.Text,
 		authorMemberId,
 		effort: commentEffort,
+		wakeAssignee,
 	});
 
 	broadcastChange(

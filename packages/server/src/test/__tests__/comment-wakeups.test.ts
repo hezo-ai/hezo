@@ -275,3 +275,89 @@ describe('agent-api POST comments fires mention-only wakeups', () => {
 		expect(wakeups).toEqual([]);
 	});
 });
+
+describe('board POST comments honors wake_assignee opt-in', () => {
+	async function postBoardComment(
+		issueId: string,
+		body: Record<string, unknown>,
+	): Promise<string> {
+		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+		expect(res.status).toBe(201);
+		return (await res.json()).data.id;
+	}
+
+	it('wakes the assignee when wake_assignee is true', async () => {
+		const issueId = await insertIssue(architectId, 'Board wake true');
+		const commentId = await postBoardComment(issueId, {
+			content_type: CommentContentType.Text,
+			content: { text: 'Take a look when you can.' },
+			wake_assignee: true,
+		});
+
+		const wakeups = await wakeupsForComment(commentId);
+		expect(wakeups).toHaveLength(1);
+		expect(wakeups[0].source).toBe(WakeupSource.Comment);
+		expect(wakeups[0].member_id).toBe(architectId);
+		expect(wakeups[0].payload.issue_id).toBe(issueId);
+		expect(wakeups[0].payload.comment_id).toBe(commentId);
+	});
+
+	it('does not wake the assignee when wake_assignee is false', async () => {
+		const issueId = await insertIssue(architectId, 'Board wake false');
+		const commentId = await postBoardComment(issueId, {
+			content_type: CommentContentType.Text,
+			content: { text: 'Just a note.' },
+			wake_assignee: false,
+		});
+
+		const wakeups = await wakeupsForComment(commentId);
+		expect(wakeups).toEqual([]);
+	});
+
+	it('does not wake the assignee when wake_assignee is omitted', async () => {
+		const issueId = await insertIssue(architectId, 'Board wake omitted');
+		const commentId = await postBoardComment(issueId, {
+			content_type: CommentContentType.Text,
+			content: { text: 'No flag at all.' },
+		});
+
+		const wakeups = await wakeupsForComment(commentId);
+		expect(wakeups).toEqual([]);
+	});
+
+	it('does not double-fire when the assignee is also @-mentioned', async () => {
+		const issueId = await insertIssue(architectId, 'Board wake mention overlap');
+		const commentId = await postBoardComment(issueId, {
+			content_type: CommentContentType.Text,
+			content: { text: '@architect please weigh in.' },
+			wake_assignee: true,
+		});
+
+		const wakeups = await wakeupsForComment(commentId);
+		expect(wakeups).toHaveLength(1);
+		expect(wakeups[0].source).toBe(WakeupSource.Mention);
+		expect(wakeups[0].member_id).toBe(architectId);
+	});
+
+	it('ignores wake_assignee when posted via the agent-api', async () => {
+		const { issueId, agentToken } = await setup(architectId, productLeadId, 'Agent flag ignored');
+		const res = await app.request(`/agent-api/issues/${issueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: CommentContentType.Text,
+				content: { text: 'Plain agent comment.' },
+				wake_assignee: true,
+			}),
+		});
+		expect(res.status).toBe(201);
+		const commentId = (await res.json()).data.id;
+
+		const wakeups = await wakeupsForComment(commentId);
+		expect(wakeups).toEqual([]);
+	});
+});
