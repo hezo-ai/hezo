@@ -40,7 +40,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			default_effort: AgentEffort.Max,
 			heartbeat_interval_min: 60,
 			monthly_budget_cents: 4000,
-			touches_code: true,
+			touches_code: false,
 			role_description:
 				'Owns technical vision, translates product requirements into technical specifications, and makes architecture decisions.',
 		},

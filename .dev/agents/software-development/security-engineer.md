@@ -69,6 +69,7 @@ On heartbeats, audit the codebase across these areas:
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. When you discover a security-relevant convention that would prevent future issues, update the project's AGENTS.md.
 - Review company preferences to align security standards with the board's expectations.
 {{> partials/common/no-designated-repo}}
+{{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
 {{> partials/common/mention-handoff}}
 

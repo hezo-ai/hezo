@@ -76,6 +76,7 @@ On heartbeats, audit the entire codebase across these areas:
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. When you discover an operational issue or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review company preferences to align quality standards with the board's expectations. When you observe a new preference in board feedback, update the company preferences document.
 {{> partials/common/no-designated-repo}}
+{{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
 {{> partials/common/mention-handoff}}
 
