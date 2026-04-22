@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentRuntime,
@@ -102,13 +102,39 @@ export function buildProviderEnv(provider: AiProvider, credential: AiProviderCre
 	return [`${envVarName}=${credential.value}`];
 }
 
-interface RunContext {
+export interface RunContext {
 	cmd: string[];
+	execCmd: string[];
 	env: string[];
 	taskPrompt: string;
+	promptFilePath: string;
 	effort: string;
 	effortApplication: EffortRuntimeApplication;
 	agentJwt: string;
+}
+
+const CONTAINER_PROMPT_DIR = '/workspace/.hezo/prompts';
+
+export function getContainerPromptPath(heartbeatRunId: string): string {
+	return `${CONTAINER_PROMPT_DIR}/${heartbeatRunId}.txt`;
+}
+
+export function getHostPromptPath(
+	dataDir: string,
+	companySlug: string,
+	projectSlug: string,
+	heartbeatRunId: string,
+): string {
+	return join(
+		getWorkspacePath(dataDir, companySlug, projectSlug),
+		'.hezo',
+		'prompts',
+		`${heartbeatRunId}.txt`,
+	);
+}
+
+function wrapExecCmd(cmd: string[]): string[] {
+	return ['sh', '-c', 'exec "$@" < "$HEZO_PROMPT_FILE"', 'sh', ...cmd];
 }
 
 async function buildRunContext(
@@ -166,6 +192,8 @@ async function buildRunContext(
 		? `${basePrompt}\n\n${effortApplication.promptDirective}`
 		: basePrompt;
 
+	const promptFilePath = getContainerPromptPath(heartbeatRunId);
+
 	const env: string[] = [
 		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
@@ -174,6 +202,7 @@ async function buildRunContext(
 		`HEZO_ISSUE_ID=${issue.id}`,
 		`HEZO_ISSUE_IDENTIFIER=${issue.identifier}`,
 		`HEZO_AGENT_EFFORT=${effort}`,
+		`HEZO_PROMPT_FILE=${promptFilePath}`,
 		...effortApplication.extraEnv,
 		...buildProviderEnv(provider, credential),
 	];
@@ -206,10 +235,20 @@ async function buildRunContext(
 		...effortApplication.extraArgs,
 		...modelArgs,
 		'-p',
-		taskPrompt,
 	];
 
-	return { cmd, env, taskPrompt, effort, effortApplication, agentJwt };
+	const execCmd = wrapExecCmd(cmd);
+
+	return {
+		cmd,
+		execCmd,
+		env,
+		taskPrompt,
+		promptFilePath,
+		effort,
+		effortApplication,
+		agentJwt,
+	};
 }
 
 export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
@@ -367,8 +406,17 @@ export async function runAgent(
 
 	const prep = await prepareWorktrees(deps, project, issue, emit, signal);
 
+	const hostPromptPath = getHostPromptPath(
+		deps.dataDir,
+		project.company_slug,
+		project.slug,
+		heartbeatRunId,
+	);
+	mkdirSync(dirname(hostPromptPath), { recursive: true });
+	writeFileSync(hostPromptPath, context.taskPrompt);
+
 	const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
-	const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')}`;
+	const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')} < ${context.promptFilePath}`;
 
 	await deps.db.query(
 		`UPDATE heartbeat_runs SET invocation_command = $1, working_dir = $2 WHERE id = $3`,
@@ -379,11 +427,15 @@ export async function runAgent(
 
 	const parser = createAgentStreamParser(runtimeType);
 
+	const cleanupPromptFile = () => {
+		rmSync(hostPromptPath, { force: true });
+	};
+
 	try {
 		if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
 		const execId = await deps.docker.execCreate(project.container_id, {
-			Cmd: context.cmd,
+			Cmd: context.execCmd,
 			Env: context.env,
 			WorkingDir: prep.workingDir,
 			User: 'node',
@@ -417,6 +469,7 @@ export async function runAgent(
 			runBroadcast,
 		);
 
+		cleanupPromptFile();
 		return { success, exitCode: execInfo.ExitCode, stdout, stderr, durationMs, heartbeatRunId };
 	} catch (error) {
 		const durationMs = Date.now() - startTime;
@@ -444,6 +497,7 @@ export async function runAgent(
 			runBroadcast,
 		);
 
+		cleanupPromptFile();
 		return {
 			success: false,
 			exitCode: -1,
