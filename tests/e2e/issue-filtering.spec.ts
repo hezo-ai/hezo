@@ -44,18 +44,17 @@ test.describe('Issue Filtering', () => {
 		return { company, project, token };
 	}
 
-	test('issue list shows all issues by default', async ({ page }) => {
+	test('issue list shows non-terminal issues by default', async ({ page }) => {
 		await authenticate(page);
 		const { company, project } = await setupIssuesWithStatuses(page);
 
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
-		// All 4 issues should be visible
 		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 10000 });
 		await expect(page.getByText('In Progress Issue')).toBeVisible();
-		await expect(page.getByText('Done Issue')).toBeVisible();
 		await expect(page.getByText('Backlog Issue')).toBeVisible();
+		await expect(page.getByText('Done Issue')).toBeHidden();
 	});
 
 	test('filter bar renders collapsed by default with a New Issue button', async ({ page }) => {
@@ -84,6 +83,7 @@ test.describe('Issue Filtering', () => {
 		await expect(page.getByTestId('issue-filter-panel')).toBeVisible();
 
 		await page.getByTestId('issue-filter-status').click();
+		await page.getByRole('button', { name: 'Clear selection' }).click();
 		await page.getByRole('button', { name: 'done' }).click();
 		await page.keyboard.press('Escape');
 
@@ -103,14 +103,16 @@ test.describe('Issue Filtering', () => {
 
 		await page.getByTestId('issue-filter-toggle').click();
 		await page.getByTestId('issue-filter-status').click();
+		await page.getByRole('button', { name: 'Clear selection' }).click();
 		await page.getByRole('button', { name: 'in progress' }).click();
 		await page.keyboard.press('Escape');
 
 		await expect(page.getByText('In Progress Issue')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('Done Issue')).toBeHidden();
+		await expect(page.getByText('Review Issue')).toBeHidden();
+		await expect(page.getByText('Backlog Issue')).toBeHidden();
 	});
 
-	test('reset button clears all filters', async ({ page }) => {
+	test('reset button restores default non-terminal filter', async ({ page }) => {
 		await authenticate(page);
 		const { company, project } = await setupIssuesWithStatuses(page);
 
@@ -121,6 +123,7 @@ test.describe('Issue Filtering', () => {
 
 		await page.getByTestId('issue-filter-toggle').click();
 		await page.getByTestId('issue-filter-status').click();
+		await page.getByRole('button', { name: 'Clear selection' }).click();
 		await page.getByRole('button', { name: 'done' }).click();
 		await page.keyboard.press('Escape');
 		await expect(page.getByText('Done Issue')).toBeVisible({ timeout: 5000 });
@@ -129,7 +132,9 @@ test.describe('Issue Filtering', () => {
 		await page.getByTestId('issue-filter-reset').click();
 
 		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('Done Issue')).toBeVisible();
+		await expect(page.getByText('In Progress Issue')).toBeVisible();
+		await expect(page.getByText('Backlog Issue')).toBeVisible();
+		await expect(page.getByText('Done Issue')).toBeHidden();
 	});
 
 	test('issue list shows status badges', async ({ page }) => {
@@ -141,9 +146,8 @@ test.describe('Issue Filtering', () => {
 
 		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 10000 });
 
-		// Status badges should be visible in the table
 		await expect(page.getByText('review').first()).toBeVisible();
 		await expect(page.getByText('in progress').first()).toBeVisible();
-		await expect(page.getByText('done').first()).toBeVisible();
+		await expect(page.getByText('backlog').first()).toBeVisible();
 	});
 });

@@ -6,6 +6,7 @@ export interface Column<T> {
 	width?: string;
 	render: (row: T) => ReactNode;
 	className?: string;
+	hideOnMobile?: boolean;
 }
 
 interface DataTableProps<T> {
@@ -23,7 +24,9 @@ export function DataTable<T>({ columns, data, rowKey, onRowClick }: DataTablePro
 					{columns.map((col) => (
 						<th
 							key={col.key}
-							className="text-left text-xs text-text-muted font-normal px-2 py-2 border-b border-border"
+							className={`text-left text-xs text-text-muted font-normal px-2 py-2 border-b border-border ${
+								col.hideOnMobile ? 'hidden md:table-cell' : ''
+							}`}
 							style={col.width ? { width: col.width } : undefined}
 						>
 							{col.header}
@@ -41,7 +44,9 @@ export function DataTable<T>({ columns, data, rowKey, onRowClick }: DataTablePro
 						{columns.map((col) => (
 							<td
 								key={col.key}
-								className={`px-2 py-2.5 border-b border-border text-[13px] align-middle ${col.className ?? ''}`}
+								className={`px-2 py-2.5 border-b border-border text-[13px] align-middle ${
+									col.hideOnMobile ? 'hidden md:table-cell ' : ''
+								}${col.className ?? ''}`}
 							>
 								{col.render(row)}
 							</td>

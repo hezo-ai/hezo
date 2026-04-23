@@ -1,7 +1,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, Outlet, useNavigate, useParams } from '@tanstack/react-router';
-import { ChevronsLeft, ChevronsRight } from 'lucide-react';
-import { useEffect } from 'react';
+import { ChevronsLeft, ChevronsRight, Menu, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { AiProviderSetupModal } from '../components/ai-provider-setup-modal';
 import { CompanyRail } from '../components/company-rail';
 import { CompanySidebar } from '../components/company-sidebar';
@@ -62,14 +62,66 @@ function AppShell() {
 
 	return (
 		<SocketProvider token={api.getToken()}>
-			<div className="h-screen flex flex-row overflow-hidden">
-				<CompanyRail />
-				{companyId && <CompanySidebarShell companyId={companyId} />}
-				<main className="flex-1 overflow-auto">
-					<Outlet />
-				</main>
-			</div>
+			<ShellLayout companyId={companyId} />
 		</SocketProvider>
+	);
+}
+
+function ShellLayout({ companyId }: { companyId: string | undefined }) {
+	const [drawerOpen, setDrawerOpen] = useState(false);
+
+	return (
+		<div className="h-screen flex flex-row overflow-hidden">
+			<div className="hidden md:flex">
+				<CompanyRail />
+			</div>
+			{companyId && (
+				<div className="hidden lg:block">
+					<CompanySidebarShell companyId={companyId} />
+				</div>
+			)}
+			<main className="flex-1 overflow-auto relative">
+				<button
+					type="button"
+					onClick={() => setDrawerOpen(true)}
+					aria-label="Open navigation"
+					data-testid="mobile-nav-toggle"
+					className="lg:hidden fixed top-3 left-3 z-40 w-9 h-9 rounded-radius-md bg-bg-elevated border border-border flex items-center justify-center text-text-muted hover:text-text shadow-sm"
+				>
+					<Menu className="w-4 h-4" />
+				</button>
+				<Outlet />
+			</main>
+			{drawerOpen && (
+				<div className="lg:hidden fixed inset-0 z-50 flex" data-testid="mobile-nav-drawer">
+					<button
+						type="button"
+						aria-label="Close navigation"
+						onClick={() => setDrawerOpen(false)}
+						className="absolute inset-0 bg-black/50 cursor-default"
+					/>
+					<div className="relative flex h-full bg-bg shadow-xl">
+						<div className="md:hidden">
+							<CompanyRail />
+						</div>
+						{companyId && (
+							<div className="w-[260px] h-full overflow-y-auto py-2 border-r border-border bg-bg">
+								<CompanySidebar companyId={companyId} />
+							</div>
+						)}
+						<button
+							type="button"
+							aria-label="Close navigation"
+							onClick={() => setDrawerOpen(false)}
+							data-testid="mobile-nav-close"
+							className="absolute top-2 -right-10 w-9 h-9 rounded-radius-md bg-bg-elevated border border-border flex items-center justify-center text-text-muted hover:text-text shadow-sm"
+						>
+							<X className="w-4 h-4" />
+						</button>
+					</div>
+				</div>
+			)}
+		</div>
 	);
 }
 
@@ -82,11 +134,11 @@ function CompanySidebarShell({ companyId }: { companyId: string }) {
 		<div className="relative shrink-0 flex">
 			<div
 				className={`overflow-hidden border-r border-border bg-bg transition-[width] duration-150 ${
-					collapsed ? 'w-0' : 'w-[200px]'
+					collapsed ? 'w-0' : 'w-[260px]'
 				}`}
 			>
 				<div
-					className={`w-[200px] h-full overflow-y-auto py-2 ${collapsed ? 'invisible' : ''}`}
+					className={`w-[260px] h-full overflow-y-auto py-2 ${collapsed ? 'invisible' : ''}`}
 					aria-hidden={collapsed}
 				>
 					<CompanySidebar companyId={companyId} />
