@@ -1,10 +1,4 @@
-import {
-	createFileRoute,
-	Outlet,
-	useLocation,
-	useParams,
-	useSearch,
-} from '@tanstack/react-router';
+import { createFileRoute, Outlet, useLocation, useParams, useSearch } from '@tanstack/react-router';
 import { Breadcrumb } from '../../../../../components/ui/breadcrumb';
 import { useProject } from '../../../../../hooks/use-projects';
 
