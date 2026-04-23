@@ -158,11 +158,11 @@ test('can restore a previous preferences revision', async ({ page }) => {
 	await prefsSection.getByRole('button', { name: /show revision history/i }).click();
 	await expect(prefsSection.getByText(/Rev 1/)).toBeVisible({ timeout: 5000 });
 
-	page.on('dialog', (dialog) => dialog.accept());
 	await prefsSection
 		.getByRole('button', { name: /restore/i })
 		.first()
 		.click();
+	await page.getByTestId('confirm-dialog-confirm').click();
 	await expect(prefsSection.getByText('Original preferences body')).toBeVisible({ timeout: 5000 });
 });
 

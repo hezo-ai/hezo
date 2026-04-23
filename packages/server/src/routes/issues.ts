@@ -67,11 +67,18 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
 		}
 	}
 
-	const assigneeId = c.req.query('assignee_id');
-	if (assigneeId) {
-		conditions.push(`i.assignee_id = $${idx}`);
-		params.push(assigneeId);
-		idx++;
+	const assigneeIdFilter = c.req.query('assignee_id');
+	if (assigneeIdFilter) {
+		const ids = assigneeIdFilter
+			.split(',')
+			.map((s) => s.trim())
+			.filter(Boolean);
+		if (ids.length > 0) {
+			const placeholders = ids.map((_, i) => `$${idx + i}`).join(', ');
+			conditions.push(`i.assignee_id IN (${placeholders})`);
+			params.push(...ids);
+			idx += ids.length;
+		}
 	}
 
 	const parentIssueId = c.req.query('parent_issue_id');
@@ -137,7 +144,11 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
      LEFT JOIN members m ON m.id = i.assignee_id
      LEFT JOIN member_agents ma ON ma.id = i.assignee_id
      WHERE ${where}
-     ORDER BY i.${sortColumn} ${sortDirection}
+     ORDER BY EXISTS (
+                SELECT 1 FROM heartbeat_runs hr
+                WHERE hr.issue_id = i.id AND hr.status IN ('running', 'queued')
+              ) DESC,
+              i.${sortColumn} ${sortDirection}
      LIMIT $${idx} OFFSET $${idx + 1}`,
 		dataParams,
 	);
@@ -370,6 +381,15 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		runtime_type?: string | null;
 	}>();
 
+	const auth = c.get('auth');
+	if (
+		body.status !== undefined &&
+		auth.type === AuthType.Agent &&
+		existing.rows[0].status === IssueStatus.Closed
+	) {
+		return err(c, 'FORBIDDEN', 'Only board members can re-open a closed issue', 403);
+	}
+
 	const sets: string[] = [];
 	const params: unknown[] = [];
 	let idx = 1;
@@ -427,7 +447,6 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		params.push(body.progress_summary);
 		idx++;
 		sets.push('progress_summary_updated_at = now()');
-		const auth = c.get('auth');
 		const updatedBy = auth.type === AuthType.Agent ? auth.memberId : null;
 		sets.push(`progress_summary_updated_by = $${idx}`);
 		params.push(updatedBy);
@@ -501,43 +520,6 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		result.rows[0] as Record<string, unknown>,
 	);
 	return ok(c, result.rows[0]);
-});
-
-issuesRoutes.delete('/companies/:companyId/issues/:issueId', async (c) => {
-	const access = await requireCompanyAccess(c);
-	if (access instanceof Response) return access;
-
-	const db = c.get('db');
-	const { companyId } = access;
-	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
-	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
-
-	const existing = await db.query<{ status: string }>(
-		'SELECT status FROM issues WHERE id = $1 AND company_id = $2',
-		[issueId, companyId],
-	);
-	if (existing.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
-
-	if (
-		existing.rows[0].status !== IssueStatus.Backlog &&
-		existing.rows[0].status !== IssueStatus.Open
-	) {
-		return err(c, 'FORBIDDEN', 'Can only delete issues with status backlog or open', 403);
-	}
-
-	const comments = await db.query<{ count: number }>(
-		'SELECT count(*)::int AS count FROM issue_comments WHERE issue_id = $1',
-		[issueId],
-	);
-	if (comments.rows[0].count > 0) {
-		return err(c, 'CONFLICT', 'Cannot delete issue with comments', 409);
-	}
-
-	await db.query('DELETE FROM issues WHERE id = $1', [issueId]);
-	broadcastChange(c, wsRoom.company(companyId), 'issues', 'DELETE', { id: issueId });
-	return c.json({ data: null }, 200);
 });
 
 issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) => {

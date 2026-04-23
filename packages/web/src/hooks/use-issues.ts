@@ -131,14 +131,6 @@ export function useUpdateIssue(companyId: string, issueId: string) {
 	});
 }
 
-export function useDeleteIssue(companyId: string) {
-	return useMutation({
-		mutationFn: (issueId: string) => api.delete(`/api/companies/${companyId}/issues/${issueId}`),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'issues'] }),
-	});
-}
-
 export function useCreateSubIssue(companyId: string, parentIssueId: string) {
 	return useMutation({
 		mutationFn: (data: {

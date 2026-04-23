@@ -1,4 +1,10 @@
-import { AgentEffort, CEO_AGENT_SLUG, DEFAULT_EFFORT, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import {
+	AgentEffort,
+	CEO_AGENT_SLUG,
+	DEFAULT_EFFORT,
+	IssueStatus,
+	OPERATIONS_PROJECT_SLUG,
+} from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Info, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -12,6 +18,7 @@ import { MentionTextarea } from '../../../../../../components/mention-textarea';
 import { Avatar, avatarColorFromString } from '../../../../../../components/ui/avatar';
 import { Badge } from '../../../../../../components/ui/badge';
 import { Button } from '../../../../../../components/ui/button';
+import { ConfirmDialog } from '../../../../../../components/ui/confirm-dialog';
 import { Tooltip } from '../../../../../../components/ui/tooltip';
 import { useAgents } from '../../../../../../hooks/use-agents';
 import {
@@ -22,7 +29,6 @@ import {
 import { useExecutionLock } from '../../../../../../hooks/use-execution-locks';
 import {
 	useCreateSubIssue,
-	useDeleteIssue,
 	useIssue,
 	useIssueDependencies,
 	useIssues,
@@ -30,15 +36,6 @@ import {
 	useUpdateIssue,
 } from '../../../../../../hooks/use-issues';
 
-const statusFlow = [
-	'backlog',
-	'open',
-	'in_progress',
-	'review',
-	'approved',
-	'done',
-	'closed',
-] as const;
 const statusColors: Record<string, string> = {
 	backlog: 'neutral',
 	open: 'info',
@@ -95,7 +92,6 @@ function IssueDetailPage() {
 	const { data: agents } = useAgents(companyId);
 	const { data: lock } = useExecutionLock(companyId, issueId);
 	const updateIssue = useUpdateIssue(companyId, issueId);
-	const deleteIssue = useDeleteIssue(companyId);
 	const createComment = useCreateComment(companyId, issueId);
 	const chooseOption = useChooseOption(companyId, issueId);
 	const createSubIssue = useCreateSubIssue(companyId, issueId);
@@ -113,6 +109,8 @@ function IssueDetailPage() {
 	const [editingRules, setEditingRules] = useState(false);
 	const [rulesText, setRulesText] = useState('');
 	const [assigneeOpen, setAssigneeOpen] = useState(false);
+	const [closeOpen, setCloseOpen] = useState(false);
+	const [reopenOpen, setReopenOpen] = useState(false);
 	const assigneeRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
@@ -193,23 +191,6 @@ function IssueDetailPage() {
 							<Badge color="info">{issue.project_name}</Badge>
 						</Link>
 					)}
-				</div>
-
-				<div className="flex flex-wrap gap-1.5 mb-5">
-					{statusFlow.map((s) => (
-						<button
-							type="button"
-							key={s}
-							onClick={() => updateIssue.mutate({ status: s })}
-							className={`px-2.5 py-1 rounded-radius-md text-xs cursor-pointer transition-colors ${
-								issue.status === s
-									? 'bg-primary text-bg font-medium'
-									: 'bg-bg-subtle text-text-muted hover:text-text hover:bg-bg-muted'
-							}`}
-						>
-							{s.replace('_', ' ')}
-						</button>
-					))}
 				</div>
 
 				{lock && lock.locks.length > 0 && (
@@ -685,18 +666,54 @@ function IssueDetailPage() {
 				</div>
 
 				<div className="mt-auto pt-4 border-t border-border">
-					<Button
-						variant="danger-text"
-						size="sm"
-						className="w-full"
-						onClick={() => {
-							if (confirm('Delete this issue?')) deleteIssue.mutate(issueId);
-						}}
-					>
-						<Trash2 className="w-3 h-3" /> Delete Issue
-					</Button>
+					{issue.status === IssueStatus.Closed ? (
+						<Button
+							variant="secondary"
+							size="sm"
+							className="w-full"
+							onClick={() => setReopenOpen(true)}
+							data-testid="issue-reopen-button"
+						>
+							Re-open issue
+						</Button>
+					) : (
+						<Button
+							variant="danger-text"
+							size="sm"
+							className="w-full"
+							onClick={() => setCloseOpen(true)}
+							data-testid="issue-close-button"
+						>
+							Close issue
+						</Button>
+					)}
 				</div>
 			</div>
+
+			<ConfirmDialog
+				open={closeOpen}
+				onOpenChange={setCloseOpen}
+				title="Close this issue?"
+				description="The issue will be marked as closed. This skips the coach review step that runs when an issue is marked done."
+				confirmLabel="Close issue"
+				variant="danger"
+				loading={updateIssue.isPending}
+				onConfirm={async () => {
+					await updateIssue.mutateAsync({ status: IssueStatus.Closed });
+				}}
+			/>
+
+			<ConfirmDialog
+				open={reopenOpen}
+				onOpenChange={setReopenOpen}
+				title="Re-open this issue?"
+				description="Status will be set back to open."
+				confirmLabel="Re-open"
+				loading={updateIssue.isPending}
+				onConfirm={async () => {
+					await updateIssue.mutateAsync({ status: IssueStatus.Open });
+				}}
+			/>
 		</div>
 	);
 }

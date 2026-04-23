@@ -1,9 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { AlertTriangle, ExternalLink, Loader2, Play, RefreshCw, Square } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { LogViewer, type LogViewerLine } from '../../../../../components/log-viewer';
 import { Badge } from '../../../../../components/ui/badge';
 import { Button } from '../../../../../components/ui/button';
+import { ConfirmDialog } from '../../../../../components/ui/confirm-dialog';
 import {
 	useRebuildContainer,
 	useStartContainer,
@@ -18,6 +19,8 @@ function ContainerPage() {
 	const startContainer = useStartContainer(companyId, projectId);
 	const stopContainer = useStopContainer(companyId, projectId);
 	const rebuildContainer = useRebuildContainer(companyId, projectId);
+	const [stopOpen, setStopOpen] = useState(false);
+	const [rebuildOpen, setRebuildOpen] = useState(false);
 
 	const status = project?.container_status;
 	const isRunning = status === 'running';
@@ -76,11 +79,7 @@ function ContainerPage() {
 					<Button
 						variant="ghost"
 						size="sm"
-						onClick={() => {
-							if (confirm('Stop this container? Running agent tasks will be cancelled.')) {
-								stopContainer.mutate();
-							}
-						}}
+						onClick={() => setStopOpen(true)}
 						disabled={anyPending || isStopping || (!isRunning && !isCreating)}
 						title="Stop container"
 					>
@@ -94,15 +93,7 @@ function ContainerPage() {
 					<Button
 						variant="ghost"
 						size="sm"
-						onClick={() => {
-							if (
-								confirm(
-									'Rebuild container from scratch? All unpushed work will be lost and running agent tasks will be cancelled.',
-								)
-							) {
-								rebuildContainer.mutate();
-							}
-						}}
+						onClick={() => setRebuildOpen(true)}
 						disabled={anyPending || isCreating || isStopping}
 						title="Rebuild container from scratch"
 					>
@@ -155,6 +146,32 @@ function ContainerPage() {
 					</div>
 				)}
 			</div>
+
+			<ConfirmDialog
+				open={stopOpen}
+				onOpenChange={setStopOpen}
+				title="Stop this container?"
+				description="Running agent tasks will be cancelled."
+				confirmLabel="Stop"
+				variant="danger"
+				loading={stopContainer.isPending}
+				onConfirm={async () => {
+					await stopContainer.mutateAsync();
+				}}
+			/>
+
+			<ConfirmDialog
+				open={rebuildOpen}
+				onOpenChange={setRebuildOpen}
+				title="Rebuild container from scratch?"
+				description="All unpushed work will be lost and running agent tasks will be cancelled."
+				confirmLabel="Rebuild"
+				variant="danger"
+				loading={rebuildContainer.isPending}
+				onConfirm={async () => {
+					await rebuildContainer.mutateAsync();
+				}}
+			/>
 
 			<LogViewer
 				lines={logs}

@@ -58,41 +58,41 @@ test.describe('Issue Filtering', () => {
 		await expect(page.getByText('Backlog Issue')).toBeVisible();
 	});
 
-	test('filter pills are visible', async ({ page }) => {
+	test('filter bar renders collapsed by default with a New Issue button', async ({ page }) => {
 		await authenticate(page);
 		const { company, project } = await setupIssuesWithStatuses(page);
 
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
-		// Filter pills should be present
 		await expect(page.getByText('Open Issue')).toBeVisible({ timeout: 10000 });
-		await expect(page.getByRole('button', { name: 'All' })).toBeVisible();
-		await expect(page.getByRole('button', { name: 'Open' })).toBeVisible();
-		await expect(page.getByRole('button', { name: 'In progress' })).toBeVisible();
-		await expect(page.getByRole('button', { name: 'Done' })).toBeVisible();
+		await expect(page.getByTestId('issue-filter-bar')).toBeVisible();
+		await expect(page.getByTestId('issue-filter-panel')).toBeHidden();
+		await expect(page.getByTestId('issue-list-new-issue')).toBeVisible();
 	});
 
-	test('can filter by "Done" status', async ({ page }) => {
+	test('can filter by "done" status via the expanded filter bar', async ({ page }) => {
 		await authenticate(page);
 		const { company, project } = await setupIssuesWithStatuses(page);
 
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
-		// Wait for issues to load
 		await expect(page.getByText('Open Issue')).toBeVisible({ timeout: 10000 });
 
-		// Click "Done" filter
-		await page.getByRole('button', { name: 'Done' }).click();
+		await page.getByTestId('issue-filter-toggle').click();
+		await expect(page.getByTestId('issue-filter-panel')).toBeVisible();
 
-		// Only "Done Issue" should be visible
+		await page.getByTestId('issue-filter-status').click();
+		await page.getByRole('button', { name: 'done' }).click();
+		await page.keyboard.press('Escape');
+
 		await expect(page.getByText('Done Issue')).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('Open Issue')).toBeHidden();
 		await expect(page.getByText('Backlog Issue')).toBeHidden();
 	});
 
-	test('can filter by "In progress" status', async ({ page }) => {
+	test('can filter by "in progress" status via multi-select', async ({ page }) => {
 		await authenticate(page);
 		const { company, project } = await setupIssuesWithStatuses(page);
 
@@ -101,14 +101,16 @@ test.describe('Issue Filtering', () => {
 
 		await expect(page.getByText('Open Issue')).toBeVisible({ timeout: 10000 });
 
-		// Click "In progress" filter
-		await page.getByRole('button', { name: 'In progress' }).click();
+		await page.getByTestId('issue-filter-toggle').click();
+		await page.getByTestId('issue-filter-status').click();
+		await page.getByRole('button', { name: 'in progress' }).click();
+		await page.keyboard.press('Escape');
 
 		await expect(page.getByText('In Progress Issue')).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('Done Issue')).toBeHidden();
 	});
 
-	test('clicking "All" resets filter', async ({ page }) => {
+	test('reset button clears all filters', async ({ page }) => {
 		await authenticate(page);
 		const { company, project } = await setupIssuesWithStatuses(page);
 
@@ -117,15 +119,15 @@ test.describe('Issue Filtering', () => {
 
 		await expect(page.getByText('Open Issue')).toBeVisible({ timeout: 10000 });
 
-		// Filter to "Done" first
-		await page.getByRole('button', { name: 'Done' }).click();
+		await page.getByTestId('issue-filter-toggle').click();
+		await page.getByTestId('issue-filter-status').click();
+		await page.getByRole('button', { name: 'done' }).click();
+		await page.keyboard.press('Escape');
 		await expect(page.getByText('Done Issue')).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('Open Issue')).toBeHidden();
 
-		// Click "All" to reset
-		await page.getByRole('button', { name: 'All' }).click();
+		await page.getByTestId('issue-filter-reset').click();
 
-		// All issues should be visible again
 		await expect(page.getByText('Open Issue')).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('Done Issue')).toBeVisible();
 	});

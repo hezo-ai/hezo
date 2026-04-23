@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useState } from 'react';
 import { MarkdownProse } from './markdown-prose';
 import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
+import { ConfirmDialog } from './ui/confirm-dialog';
 import { EmptyState } from './ui/empty-state';
 
 export interface DocItem {
@@ -61,6 +62,7 @@ export function DocsLibrary({
 	const [mode, setMode] = useState<'view' | 'edit'>('view');
 	const [modeKey, setModeKey] = useState<string | null>(selectedKey);
 	const [draft, setDraft] = useState('');
+	const [deleteOpen, setDeleteOpen] = useState(false);
 
 	if (modeKey !== selectedKey) {
 		setModeKey(selectedKey);
@@ -82,9 +84,8 @@ export function DocsLibrary({
 		setMode('view');
 	}
 
-	async function handleDelete() {
+	async function handleConfirmDelete() {
 		if (!onDelete) return;
-		if (!confirm('Delete this document?')) return;
 		await onDelete();
 		onSelect(null);
 	}
@@ -178,7 +179,7 @@ export function DocsLibrary({
 												variant="ghost"
 												size="sm"
 												className="text-accent-red"
-												onClick={handleDelete}
+												onClick={() => setDeleteOpen(true)}
 												aria-label="Delete document"
 											>
 												<Trash2 className="w-3.5 h-3.5" />
@@ -217,6 +218,16 @@ export function DocsLibrary({
 					</div>
 				)}
 			</section>
+
+			<ConfirmDialog
+				open={deleteOpen}
+				onOpenChange={setDeleteOpen}
+				title="Delete this document?"
+				description="The document will be permanently removed."
+				confirmLabel="Delete"
+				variant="danger"
+				onConfirm={handleConfirmDelete}
+			/>
 		</div>
 	);
 }

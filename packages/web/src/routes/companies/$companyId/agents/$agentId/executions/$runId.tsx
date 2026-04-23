@@ -170,7 +170,7 @@ function ExecutionDetailPage() {
 				<LogViewer
 					lines={lines}
 					emptyState={isActive ? 'Waiting for log output...' : 'No output captured.'}
-					liveLabel={isActive ? <span className="text-accent-yellow">(live)</span> : null}
+					liveLabel={isActive ? <span className="text-accent-amber">(live)</span> : null}
 					heightClassName="max-h-[60vh]"
 					testId="run-log"
 				/>

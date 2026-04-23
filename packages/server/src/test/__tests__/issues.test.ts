@@ -1,13 +1,15 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
+let masterKeyManager: MasterKeyManager;
 let companyId: string;
 let projectId: string;
 let agentId: string;
@@ -17,6 +19,7 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;
+	masterKeyManager = ctx.masterKeyManager;
 
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
@@ -241,25 +244,6 @@ describe('issues CRUD', () => {
 		expect(removeRes.status).toBe(200);
 	});
 
-	it('deletes a backlog issue with no comments', async () => {
-		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: projectId,
-				title: 'To delete',
-				assignee_id: agentId,
-			}),
-		});
-		const issue = (await createRes.json()).data;
-
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
-			method: 'DELETE',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-	});
-
 	it('updates and retrieves progress_summary', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
 			headers: authHeader(token),
@@ -423,19 +407,191 @@ describe('issues CRUD', () => {
 		expect(body.error.message).toContain('assignee_id cannot be null');
 	});
 
-	it('prevents deleting an in-progress issue', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
-			headers: authHeader(token),
+	it('filters by multiple assignee_ids when comma-separated', async () => {
+		const secondAgentRes = await app.request(`/api/companies/${companyId}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Second Agent' }),
 		});
-		const inProgress = (await listRes.json()).data.find((i: any) => i.status === 'in_progress');
+		const secondAgentId = (await secondAgentRes.json()).data.id;
 
-		if (inProgress) {
-			const res = await app.request(`/api/companies/${companyId}/issues/${inProgress.id}`, {
-				method: 'DELETE',
-				headers: authHeader(token),
-			});
-			expect(res.status).toBe(403);
-		}
+		await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Agent two ticket',
+				assignee_id: secondAgentId,
+			}),
+		});
+
+		const listRes = await app.request(
+			`/api/companies/${companyId}/issues?assignee_id=${agentId},${secondAgentId}`,
+			{ headers: authHeader(token) },
+		);
+		expect(listRes.status).toBe(200);
+		const issues = (await listRes.json()).data;
+		const assigneeIds = new Set(issues.map((i: any) => i.assignee_id));
+		expect(assigneeIds.has(agentId)).toBe(true);
+		expect(assigneeIds.has(secondAgentId)).toBe(true);
+	});
+
+	it('pins issues with active runs to the top regardless of sort order', async () => {
+		const oldRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Old running issue',
+				assignee_id: agentId,
+			}),
+		});
+		const oldIssue = (await oldRes.json()).data;
+
+		await new Promise((r) => setTimeout(r, 10));
+
+		const newRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'New idle issue',
+				assignee_id: agentId,
+			}),
+		});
+		const newIssue = (await newRes.json()).data;
+
+		await db.query(
+			`INSERT INTO heartbeat_runs (company_id, member_id, issue_id, status)
+			 VALUES ($1, $2, $3, 'running')`,
+			[companyId, agentId, oldIssue.id],
+		);
+
+		const listRes = await app.request(
+			`/api/companies/${companyId}/issues?project_id=${projectId}&sort=created_at:desc`,
+			{ headers: authHeader(token) },
+		);
+		const data = (await listRes.json()).data;
+		const oldIdx = data.findIndex((i: any) => i.id === oldIssue.id);
+		const newIdx = data.findIndex((i: any) => i.id === newIssue.id);
+		expect(oldIdx).toBeGreaterThanOrEqual(0);
+		expect(newIdx).toBeGreaterThanOrEqual(0);
+		expect(oldIdx).toBeLessThan(newIdx);
+		expect(data[oldIdx].has_active_run).toBe(true);
+
+		await db.query(`DELETE FROM heartbeat_runs WHERE issue_id = $1`, [oldIssue.id]);
+	});
+
+	it('allows an agent to close an issue via PATCH', async () => {
+		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Agent-close target',
+				assignee_id: agentId,
+			}),
+		});
+		const issue = (await createRes.json()).data;
+
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'closed' }),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.status).toBe('closed');
+	});
+
+	it('rejects an agent trying to re-open a closed issue via PATCH', async () => {
+		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Agent-reopen target',
+				assignee_id: agentId,
+			}),
+		});
+		const issue = (await createRes.json()).data;
+
+		await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'closed' }),
+		});
+
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+
+		const reopenRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'open' }),
+		});
+		expect(reopenRes.status).toBe(403);
+		const body = await reopenRes.json();
+		expect(body.error.message).toMatch(/board/i);
+
+		const bypassRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'in_progress' }),
+		});
+		expect(bypassRes.status).toBe(403);
+	});
+
+	it('allows a board member to close and re-open an issue', async () => {
+		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Board close/reopen target',
+				assignee_id: agentId,
+			}),
+		});
+		const issue = (await createRes.json()).data;
+
+		const closeRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'closed' }),
+		});
+		expect(closeRes.status).toBe(200);
+		expect((await closeRes.json()).data.status).toBe('closed');
+
+		const reopenRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'open' }),
+		});
+		expect(reopenRes.status).toBe(200);
+		expect((await reopenRes.json()).data.status).toBe('open');
+	});
+
+	it('allows agents to set non-terminal statuses via PATCH', async () => {
+		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Agent progress target',
+				assignee_id: agentId,
+			}),
+		});
+		const issue = (await createRes.json()).data;
+
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'in_progress' }),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.status).toBe('in_progress');
 	});
 });
 

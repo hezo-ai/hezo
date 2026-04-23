@@ -375,6 +375,88 @@ describe('MCP endpoint: tool call integration', () => {
 		// Either way the endpoint responds correctly
 		expect(data).toBeDefined();
 	});
+
+	async function callUpdateIssueAsAgent(args: Record<string, unknown>): Promise<unknown> {
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: { name: 'update_issue', arguments: args },
+				id: 1,
+			}),
+		});
+		const body = (await res.json()) as {
+			result: { content: Array<{ type: string; text: string }> };
+		};
+		return JSON.parse(body.result.content[0].text);
+	}
+
+	it('update_issue via MCP as agent can set status=closed', async () => {
+		const created = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Agent MCP close target',
+			assignee_id: agentId,
+		})) as { id: string };
+
+		const result = (await callUpdateIssueAsAgent({
+			company_id: companyId,
+			issue_id: created.id,
+			status: 'closed',
+		})) as { status?: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe('closed');
+	});
+
+	it('update_issue via MCP as agent cannot re-open a closed issue', async () => {
+		const created = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Agent MCP reopen target',
+			assignee_id: agentId,
+		})) as { id: string };
+
+		// Board closes the issue first.
+		await callToolViaMcp('update_issue', {
+			company_id: companyId,
+			issue_id: created.id,
+			status: 'closed',
+		});
+
+		const result = (await callUpdateIssueAsAgent({
+			company_id: companyId,
+			issue_id: created.id,
+			status: 'open',
+		})) as { error?: string };
+		expect(result.error).toMatch(/board/i);
+
+		const bypass = (await callUpdateIssueAsAgent({
+			company_id: companyId,
+			issue_id: created.id,
+			status: 'in_progress',
+		})) as { error?: string };
+		expect(bypass.error).toMatch(/board/i);
+	});
+
+	it('update_issue via MCP as agent can still set non-terminal statuses', async () => {
+		const created = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Agent MCP progress target',
+			assignee_id: agentId,
+		})) as { id: string };
+
+		const result = (await callUpdateIssueAsAgent({
+			company_id: companyId,
+			issue_id: created.id,
+			status: 'in_progress',
+		})) as { status?: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe('in_progress');
+	});
 });
 
 describe('MCP tool handlers: additional data queries via DB', () => {

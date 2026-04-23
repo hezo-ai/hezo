@@ -341,7 +341,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_issue',
-		'Update an issue. Agents can use this to change status, update progress, set rules, and record branch names.',
+		'Update an issue. Agents can use this to change status (including closing), update progress, set rules, and record branch names. Re-opening a closed issue is board-only — once an issue is `closed` only the board can change its status again.',
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
@@ -351,7 +351,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'New status (backlog, open, in_progress, review, approved, blocked, done, closed, cancelled)',
+					'New status (backlog, open, in_progress, review, approved, blocked, done, closed, cancelled). Once an issue is `closed`, only board members can change its status again.',
 				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z.string().optional().describe('New assignee ID'),
@@ -373,6 +373,16 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
+
+			if (args.status !== undefined && auth.type === AuthType.Agent) {
+				const currentStatus = await db.query<{ status: string }>(
+					'SELECT status FROM issues WHERE id = $1 AND company_id = $2',
+					[args.issue_id, args.company_id],
+				);
+				if (currentStatus.rows[0]?.status === IssueStatus.Closed) {
+					return { error: 'Only board members can re-open a closed issue' };
+				}
+			}
 
 			if (args.assignee_id) {
 				const issueRow = await db.query<{

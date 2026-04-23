@@ -63,11 +63,11 @@ test('shows revision history and restores a previous version', async ({ page }) 
 	await page.getByRole('button', { name: /show revision history/i }).click();
 	await expect(page.getByText(/Rev 1/)).toBeVisible({ timeout: 5000 });
 
-	page.on('dialog', (dialog) => dialog.accept());
 	await page
 		.getByRole('button', { name: /restore/i })
 		.first()
 		.click();
+	await page.getByTestId('confirm-dialog-confirm').click();
 	await expect(page.getByText('Original plan')).toBeVisible({ timeout: 5000 });
 });
 

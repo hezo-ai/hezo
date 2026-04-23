@@ -2,6 +2,7 @@ import { Clock, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
+import { ConfirmDialog } from './ui/confirm-dialog';
 
 export interface DocumentRevision {
 	id: string;
@@ -20,6 +21,7 @@ interface RevisionsPanelProps {
 
 export function RevisionsPanel({ revisions, onRestore, isRestoring }: RevisionsPanelProps) {
 	const [open, setOpen] = useState(false);
+	const [pendingRestore, setPendingRestore] = useState<number | null>(null);
 
 	return (
 		<div className="mt-6 pt-4 border-t border-border-subtle">
@@ -51,11 +53,7 @@ export function RevisionsPanel({ revisions, onRestore, isRestoring }: RevisionsP
 										size="sm"
 										className="ml-1 text-xs"
 										disabled={isRestoring}
-										onClick={async () => {
-											if (confirm(`Restore to revision ${rev.revision_number}?`)) {
-												await onRestore(rev.revision_number);
-											}
-										}}
+										onClick={() => setPendingRestore(rev.revision_number)}
 									>
 										<RotateCcw className="w-3 h-3" /> Restore
 									</Button>
@@ -68,6 +66,25 @@ export function RevisionsPanel({ revisions, onRestore, isRestoring }: RevisionsP
 					)}
 				</div>
 			)}
+
+			<ConfirmDialog
+				open={pendingRestore !== null}
+				onOpenChange={(next) => {
+					if (!next) setPendingRestore(null);
+				}}
+				title={
+					pendingRestore !== null ? `Restore to revision ${pendingRestore}?` : 'Restore revision'
+				}
+				description="The current content will be replaced with this revision."
+				confirmLabel="Restore"
+				loading={isRestoring}
+				onConfirm={async () => {
+					if (pendingRestore !== null) {
+						await onRestore(pendingRestore);
+						setPendingRestore(null);
+					}
+				}}
+			/>
 		</div>
 	);
 }

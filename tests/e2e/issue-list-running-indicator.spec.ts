@@ -69,5 +69,10 @@ test('issue running dot appears when has_active_run is true', async ({ page }) =
 	await waitForPageLoad(page);
 
 	await expect(page.getByText('Busy Issue')).toBeVisible({ timeout: 10000 });
-	await expect(page.getByTestId('issue-running-dot')).toHaveCount(1);
+	const dot = page.getByTestId('issue-running-dot');
+	await expect(dot).toHaveCount(1);
+	const bgColor = await dot.evaluate((el) => getComputedStyle(el).backgroundColor);
+	expect(bgColor).toBeTruthy();
+	expect(bgColor).not.toBe('rgba(0, 0, 0, 0)');
+	expect(bgColor).not.toBe('transparent');
 });
