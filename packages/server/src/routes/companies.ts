@@ -460,10 +460,10 @@ async function createKbDocsFromTemplate(
 	const docs = result.rows[0]?.kb_docs_config ?? [];
 	for (const doc of docs) {
 		await db.query(
-			`INSERT INTO kb_docs (company_id, title, slug, content)
-			 VALUES ($1, $2, $3, $4)
-			 ON CONFLICT (company_id, slug) DO NOTHING`,
-			[companyId, doc.title, doc.slug, doc.content],
+			`INSERT INTO documents (company_id, type, slug, title, content)
+			 VALUES ($1, 'kb_doc', $2, $3, $4)
+			 ON CONFLICT DO NOTHING`,
+			[companyId, doc.slug, doc.title, doc.content],
 		);
 	}
 }

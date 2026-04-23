@@ -136,6 +136,36 @@ test('can edit and save preferences', async ({ page }) => {
 	});
 });
 
+test('can restore a previous preferences revision', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, headers } = await createCompany(page);
+
+	await page.request.patch(`/api/companies/${company.id}/preferences`, {
+		headers,
+		data: { content: 'Original preferences body' },
+	});
+	await page.request.patch(`/api/companies/${company.id}/preferences`, {
+		headers,
+		data: { content: 'Updated preferences body', change_summary: 'second pass' },
+	});
+
+	await page.goto(`/companies/${company.slug}/settings`);
+	const prefsSection = page.locator('#settings-preferences');
+	await expect(prefsSection.getByText('Updated preferences body')).toBeVisible({ timeout: 5000 });
+
+	await prefsSection.getByRole('button', { name: /show revision history/i }).click();
+	await expect(prefsSection.getByText(/Rev 1/)).toBeVisible({ timeout: 5000 });
+
+	page.on('dialog', (dialog) => dialog.accept());
+	await prefsSection
+		.getByRole('button', { name: /restore/i })
+		.first()
+		.click();
+	await expect(prefsSection.getByText('Original preferences body')).toBeVisible({ timeout: 5000 });
+});
+
 test('can add and delete an mcp server', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);

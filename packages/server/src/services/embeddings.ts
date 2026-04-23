@@ -7,7 +7,6 @@ export const EMBEDDING_DIMENSIONS = 384;
 const MODEL_ID = 'Xenova/bge-small-en-v1.5';
 const QUERY_PREFIX = 'Represent this sentence for searching relevant passages: ';
 
-// Singleton pipeline instance — typed loosely to avoid coupling to transformers.js internals
 let extractor:
 	| ((
 			texts: string[],
@@ -16,10 +15,6 @@ let extractor:
 	| null = null;
 let initPromise: Promise<void> | null = null;
 
-/**
- * Initialize the embedding model. Downloads on first use, caches locally.
- * Safe to call multiple times — only initializes once.
- */
 export async function initializeEmbeddingModel(cacheDir?: string): Promise<void> {
 	if (extractor) return;
 	if (initPromise) return initPromise;
@@ -44,17 +39,10 @@ export async function initializeEmbeddingModel(cacheDir?: string): Promise<void>
 	return initPromise;
 }
 
-/**
- * Check if the embedding model is ready.
- */
 export function isModelReady(): boolean {
 	return extractor !== null;
 }
 
-/**
- * Generate an embedding vector from text.
- * Returns null if the model isn't loaded.
- */
 export async function generateEmbedding(
 	text: string,
 	type: 'query' | 'document',
@@ -62,7 +50,6 @@ export async function generateEmbedding(
 	if (!extractor) return null;
 
 	const input = type === 'query' ? `${QUERY_PREFIX}${text}` : text;
-	// Truncate to ~500 tokens worth of text to stay within model limits
 	const truncated = input.slice(0, 2000);
 
 	const output = await extractor([truncated], { pooling: 'cls', normalize: true });
@@ -70,13 +57,9 @@ export async function generateEmbedding(
 	return vectors[0];
 }
 
-/**
- * Generate an embedding and store it in the specified table row.
- * No-op if model not loaded.
- */
 export async function embedAndStore(
 	db: PGlite,
-	table: 'kb_docs' | 'issues' | 'skills' | 'project_docs',
+	table: 'documents' | 'issues' | 'skills',
 	id: string,
 	text: string,
 ): Promise<void> {
@@ -95,16 +78,14 @@ export interface SearchResult {
 	score: number;
 }
 
-/**
- * Semantic search across kb_docs, issues, and skills.
- * Company-scoped. Returns ranked results.
- */
+export type SearchScope = 'all' | 'kb_docs' | 'issues' | 'skills' | 'project_docs';
+
 export async function semanticSearch(
 	db: PGlite,
 	companyId: string,
 	query: string,
 	options: {
-		scope?: 'all' | 'kb_docs' | 'issues' | 'skills' | 'project_docs';
+		scope?: SearchScope;
 		limit?: number;
 	} = {},
 ): Promise<SearchResult[]> {
@@ -116,20 +97,33 @@ export async function semanticSearch(
 	const scope = options.scope ?? 'all';
 	const results: SearchResult[] = [];
 
-	if (scope === 'all' || scope === 'kb_docs') {
-		const kbResults = await db.query<{ id: string; title: string; content: string; score: number }>(
-			`SELECT id, title, LEFT(content, 200) AS content, 1 - (embedding <=> $1::vector) AS score
-			 FROM kb_docs
-			 WHERE company_id = $2 AND embedding IS NOT NULL
+	const wantKb = scope === 'all' || scope === 'kb_docs';
+	const wantProjectDocs = scope === 'all' || scope === 'project_docs';
+	if (wantKb || wantProjectDocs) {
+		const types: string[] = [];
+		if (wantKb) types.push('kb_doc');
+		if (wantProjectDocs) types.push('project_doc');
+		const docResults = await db.query<{
+			id: string;
+			type: 'kb_doc' | 'project_doc';
+			title: string;
+			slug: string;
+			content: string;
+			score: number;
+		}>(
+			`SELECT id, type, title, slug, LEFT(content, 200) AS content,
+			        1 - (embedding <=> $1::vector) AS score
+			 FROM documents
+			 WHERE company_id = $2 AND embedding IS NOT NULL AND type = ANY($3::document_type[])
 			 ORDER BY embedding <=> $1::vector
-			 LIMIT $3`,
-			[vectorStr, companyId, limit],
+			 LIMIT $4`,
+			[vectorStr, companyId, types, limit],
 		);
-		for (const r of kbResults.rows) {
+		for (const r of docResults.rows) {
 			results.push({
-				type: 'kb_doc',
+				type: r.type,
 				id: r.id,
-				title: r.title,
+				title: r.title || r.slug,
 				snippet: r.content,
 				score: r.score,
 			});
@@ -181,55 +175,33 @@ export async function semanticSearch(
 		}
 	}
 
-	if (scope === 'all' || scope === 'project_docs') {
-		const pdResults = await db.query<{
-			id: string;
-			filename: string;
-			content: string;
-			score: number;
-		}>(
-			`SELECT id, filename, LEFT(content, 200) AS content, 1 - (embedding <=> $1::vector) AS score
-			 FROM project_docs
-			 WHERE company_id = $2 AND embedding IS NOT NULL
-			 ORDER BY embedding <=> $1::vector
-			 LIMIT $3`,
-			[vectorStr, companyId, limit],
-		);
-		for (const r of pdResults.rows) {
-			results.push({
-				type: 'project_doc',
-				id: r.id,
-				title: r.filename,
-				snippet: r.content,
-				score: r.score,
-			});
-		}
-	}
-
-	// Sort all results by score descending
 	results.sort((a, b) => b.score - a.score);
 	return results.slice(0, limit);
 }
 
-/**
- * Process pending embeddings — finds rows with NULL embedding and generates them.
- * Call periodically from a background job.
- */
 export async function processPendingEmbeddings(db: PGlite): Promise<number> {
 	if (!extractor) return 0;
 
 	let processed = 0;
 
-	// KB docs
-	const kbDocs = await db.query<{ id: string; title: string; content: string }>(
-		`SELECT id, title, content FROM kb_docs WHERE embedding IS NULL LIMIT 5`,
+	const docs = await db.query<{
+		id: string;
+		type: string;
+		title: string;
+		slug: string;
+		content: string;
+	}>(
+		`SELECT id, type, title, slug, content
+		 FROM documents
+		 WHERE embedding IS NULL AND type IN ('kb_doc', 'project_doc')
+		 LIMIT 5`,
 	);
-	for (const doc of kbDocs.rows) {
-		await embedAndStore(db, 'kb_docs', doc.id, `${doc.title}\n${doc.content}`);
+	for (const doc of docs.rows) {
+		const heading = doc.title || doc.slug;
+		await embedAndStore(db, 'documents', doc.id, `${heading}\n${doc.content}`);
 		processed++;
 	}
 
-	// Issues
 	const issues = await db.query<{ id: string; title: string; description: string }>(
 		`SELECT id, title, description FROM issues WHERE embedding IS NULL LIMIT 5`,
 	);
@@ -238,21 +210,11 @@ export async function processPendingEmbeddings(db: PGlite): Promise<number> {
 		processed++;
 	}
 
-	// Skills
 	const skills = await db.query<{ id: string; name: string; content: string }>(
 		`SELECT id, name, content FROM skills WHERE embedding IS NULL AND is_active = true LIMIT 5`,
 	);
 	for (const skill of skills.rows) {
 		await embedAndStore(db, 'skills', skill.id, `${skill.name}\n${skill.content}`);
-		processed++;
-	}
-
-	// Project docs
-	const projectDocs = await db.query<{ id: string; filename: string; content: string }>(
-		`SELECT id, filename, content FROM project_docs WHERE embedding IS NULL LIMIT 5`,
-	);
-	for (const doc of projectDocs.rows) {
-		await embedAndStore(db, 'project_docs', doc.id, `${doc.filename}\n${doc.content}`);
 		processed++;
 	}
 

@@ -159,7 +159,7 @@ describe('Project docs (DB-backed)', () => {
 
 	it('stores docs in the database', async () => {
 		const result = await db.query(
-			'SELECT * FROM project_docs WHERE project_id = $1 AND filename = $2',
+			"SELECT * FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug = $2",
 			[projectId, 'spec.md'],
 		);
 		expect(result.rows.length).toBe(1);
@@ -189,6 +189,86 @@ describe('Project docs (DB-backed)', () => {
 		expect(filenames).toContain('prd.md');
 		expect(filenames).toContain('implementation-plan.md');
 		expect(filenames).toContain('spec.md');
+	});
+});
+
+describe('Project doc revisions and restore', () => {
+	const filename = 'revisioned.md';
+
+	it('updates create revisions of prior content', async () => {
+		await app.request(`/api/companies/${companyId}/projects/${projectId}/docs/${filename}`, {
+			method: 'PUT',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: 'v1' }),
+		});
+		await app.request(`/api/companies/${companyId}/projects/${projectId}/docs/${filename}`, {
+			method: 'PUT',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: 'v2', change_summary: 'second pass' }),
+		});
+
+		const revRes = await app.request(
+			`/api/companies/${companyId}/projects/${projectId}/docs/${filename}/revisions`,
+			{ headers: authHeader(token) },
+		);
+		expect(revRes.status).toBe(200);
+		const revBody = await revRes.json();
+		expect(revBody.data.length).toBe(1);
+		expect(revBody.data[0].content).toBe('v1');
+		expect(revBody.data[0].change_summary).toBe('second pass');
+	});
+
+	it('restores to a previous revision and snapshots the pre-restore content', async () => {
+		await app.request(`/api/companies/${companyId}/projects/${projectId}/docs/${filename}`, {
+			method: 'PUT',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: 'v3', change_summary: 'third' }),
+		});
+
+		const restoreRes = await app.request(
+			`/api/companies/${companyId}/projects/${projectId}/docs/${filename}/restore`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ revision_number: 1 }),
+			},
+		);
+		expect(restoreRes.status).toBe(200);
+		const restored = await restoreRes.json();
+		expect(restored.data.content).toBe('v1');
+
+		const revRes = await app.request(
+			`/api/companies/${companyId}/projects/${projectId}/docs/${filename}/revisions`,
+			{ headers: authHeader(token) },
+		);
+		const revBody = await revRes.json();
+		expect(revBody.data.length).toBe(3);
+		expect(revBody.data[0].change_summary).toBe('Restored to revision 1');
+		expect(revBody.data[0].content).toBe('v3');
+	});
+
+	it('returns 404 when restoring an unknown revision', async () => {
+		const res = await app.request(
+			`/api/companies/${companyId}/projects/${projectId}/docs/${filename}/restore`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ revision_number: 999 }),
+			},
+		);
+		expect(res.status).toBe(404);
+	});
+
+	it('returns 404 when restoring on a doc that does not exist', async () => {
+		const res = await app.request(
+			`/api/companies/${companyId}/projects/${projectId}/docs/missing.md/restore`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ revision_number: 1 }),
+			},
+		);
+		expect(res.status).toBe(404);
 	});
 });
 

@@ -29,14 +29,13 @@
 | `approvals` | Pending board decisions. Polymorphic payload. | belongs to company, requested by member_agent |
 | `cost_entries` | Immutable spend records per agent per issue. | belongs to company + member_agent, optionally issue/project |
 | `audit_log` | Append-only. Never updated or deleted. | belongs to company |
-| `kb_docs` | Knowledge base documents. Markdown, company-scoped, slug-addressable. AGENTS.md is a special KB doc written to disk. | belongs to company |
-| `kb_doc_revisions` | Version history for KB documents. | belongs to kb_doc |
+| `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `kb_doc` / `company_preferences`). Project docs scope by `(project_id, slug)` where slug is the filename; KB docs scope by `(company_id, slug)`; preferences enforce one row per company via partial unique index. Embeddings live on this table for KB and project docs. | belongs to company, optionally project |
+| `document_revisions` | Snapshot of prior content created on every change. `change_summary` captures intent; `Restored to revision N` is set automatically by the rollback path. | belongs to document |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to company |
 | `company_ssh_keys` | Generated SSH key pairs per company. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to company |
 | `execution_locks` | Issue work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to issue + member_agent |
 | `skills` | Reusable instruction documents (DB-backed). Tags, content, source URL, creator tracking, embeddings. | belongs to company |
 | `skill_revisions` | Version history for skills. | belongs to skill |
-| `project_docs` | Project documentation (PRD, spec, etc.). DB-backed with embeddings. | belongs to project + company |
 | `system_prompt_revisions` | History of agent system prompt changes. Tracks old/new prompt, change summary, author. Linked to approval if change required approval. | belongs to member_agent + company |
 | `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. | belongs to member_agent + company |
 | `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the issue being worked on via `issue_id`. | belongs to member_agent + company, optionally issue |
@@ -45,8 +44,6 @@
 | `plugins` | Installed plugins. Manifest, status, config. | belongs to company |
 | `plugin_state` | Scoped key-value store for plugin data. | belongs to plugin + company |
 | `plugin_jobs` | Cron job declarations for plugins. | belongs to plugin |
-| `company_preferences` | Company-level preference doc. Agents observe and record board working style preferences. | belongs to company |
-| `company_preference_revisions` | Version history for company preferences. | belongs to company_preference |
 | `instance_user_roles` | Instance-level admin roles for users. First user gets instance_admin. | belongs to user |
 | `project_issue_counters` | Helper for atomic issue numbering per project. | belongs to project |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
@@ -350,8 +347,8 @@ agents from the selected team type via the `company_type_agent_types` join table
    - Config overrides applied from the join table (runtime type, heartbeat, budget)
    - `budget_used_cents` reset to 0
 4. Second pass resolves `reports_to_slug` → `reports_to` UUID for the org chart
-5. Creates `kb_docs` rows from `company_types.kb_docs_config`
-6. Creates `company_preferences` row from `company_types.preferences_config`
+5. Creates `documents` rows of type `kb_doc` from `company_types.kb_docs_config`
+6. Creates `documents` row of type `company_preferences` from `company_types.preferences_config`
 7. Copies `mcp_servers` array from company type
 8. Copies `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
 9. Inserts rows into `company_team_types` to record the association
@@ -420,58 +417,42 @@ resolution handler applies the change by updating `member_agents.system_prompt`.
 
 `system_prompt_revisions` tracks the history of changes to agent system prompts. Each update records the old and new prompt text, a change summary, who authored the change, and optionally which approval authorized it. This enables auditability of prompt evolution and rollback if needed.
 
-### Company preferences
+### Documents
 
-`company_preferences` stores a single Markdown document per company, recording
-observed board preferences in areas like code architecture, design approach,
-research style, and team working conventions. Preferences are company-level
-(not per-member) — even with multiple board members, the company has one unified
-set of preferences that represent how the board collectively wants things done.
+`documents` is a single table that backs three kinds of Markdown content,
+distinguished by the `type` column (`project_doc` / `kb_doc` /
+`company_preferences`). The same write path, revision capture, restore, embedding,
+and broadcast logic apply to all three; per-type quirks (URL surface, agent
+approval gates) live in thin route handlers.
 
-Agents update this document directly (no approval required) as they observe
-patterns in board feedback. Every change creates a revision in
-`company_preference_revisions` for auditability. The board can also edit
-directly, review revision history, and revert.
+Scoping is enforced by partial unique indexes:
 
-The `UNIQUE (company_id)` constraint ensures one preference document per company.
-Content is structured Markdown with sections for different preference categories
-(code architecture, design, research, team working, etc.).
+- `project_doc` — unique on `(project_id, slug)`. Slug holds the filename
+  (e.g. `spec.md`); `title` is empty (the filename is the display label).
+- `kb_doc` — unique on `(company_id, slug)`. Slug derives from `title` via
+  `toSlug`; `title` carries the human label.
+- `company_preferences` — partial unique on `(company_id)` with slug fixed
+  to `preferences`. Enforces one row per company.
 
-The `{{company_preferences_context}}` template variable in system prompts
-injects the preference document so agents can align with the board's working
-style. The orchestrator pre-resolves all template variables before spawning
-the agent subprocess.
+Every content change snapshots the prior content into `document_revisions`
+with an auto-incremented `revision_number` per document, the change summary,
+and the author. Restore is board-only: it inserts a fresh revision capturing
+the pre-restore content (`change_summary = 'Restored to revision N'`,
+`author_member_id = the restoring board user`), then writes the historic
+content back to the parent row.
 
-### Project documents
+Project doc PRD updates (`slug = 'prd.md'`) from agents create a Strategy
+approval instead of writing directly. KB doc updates from agents create a
+KbUpdate approval. Preferences updates from agents apply directly. Approval
+apply paths flow through the same `upsertDocument` service so revisions are
+recorded on materialisation.
 
-Project documents (PRDs, technical specifications, implementation plans, research,
-UI design decisions, marketing plans) are stored in the `project_docs` table,
-keyed by `(project_id, filename)`. Every write creates a row in
-`project_doc_revisions` for full revision history. Projects do not need a
-designated repo for project docs to work.
+The `{{kb_context}}`, `{{company_preferences_context}}`, and
+`{{project_docs_context}}` template variables in system prompts pull from
+this table filtered by type, so agents see the current document set.
 
-PRD updates (`prd.md`) by agents require board approval — the agent's write
-creates an approval request instead of updating the document directly.
-
-The `{{project_docs_context}}` template variable in system prompts auto-injects
-all project documents for the current issue's project. Agents read and write
-docs via the `list_project_docs`, `read_project_doc`, and `write_project_doc`
-MCP tools.
-
-### Knowledge base
-
-`kb_docs` stores company-wide Markdown documents — coding standards, UX
-guidelines, architecture decisions, etc. Each doc has a `slug`
-(UNIQUE per company) for referencing.
-
-Agents can read KB docs via the Agent API and propose updates. Proposals
-create a `kb_update` approval with a diff view. On approval, the document is
-updated and `last_updated_by_agent_id` is set. This keeps the KB current as
-agents learn patterns during their work.
-
-The `{{kb_context}}` template variable in system prompts injects all KB docs.
-The orchestrator pre-resolves all template variables and includes everything
-for MVP. Optimization with smart selection deferred.
+AGENTS.md remains a filesystem file in the repo (git tracks its history) and
+is not part of the documents table.
 
 **AGENTS.md** is a special KB doc that contains company-wide engineering rules
 and agent conventions. It is stored in the database like any other KB doc but
@@ -690,11 +671,12 @@ is bind-mounted into the container:
   when repos are present, otherwise falls back to `/workspace` with a warning
   so that projects without a designated repo still run.
 
-### KB document revisions
+### Document revisions
 
-`kb_doc_revisions` stores version history for knowledge base documents.
-Each edit creates a new revision with content snapshot, change summary,
-and attribution. Supports diff between versions and revert.
+`document_revisions` stores version history for every row in `documents`
+regardless of type. Each edit captures the prior content, change summary,
+and author. Restore (board-only) snapshots the current content as a new
+revision before reverting the parent row, so nothing is lost.
 
 ### Auth and roles
 

@@ -3,13 +3,16 @@ import { Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { type DocItem, DocsLibrary } from '../../../../../components/docs-library';
 import { MentionTextarea } from '../../../../../components/mention-textarea';
+import { RevisionsPanel } from '../../../../../components/revisions-panel';
 import { Button } from '../../../../../components/ui/button';
 import { Input } from '../../../../../components/ui/input';
 import {
 	useDeleteProjectDoc,
 	useProjectAgentsMd,
 	useProjectDoc,
+	useProjectDocRevisions,
 	useProjectDocs,
+	useRestoreProjectDocRevision,
 	useUpdateProjectAgentsMd,
 	useUpdateProjectDoc,
 } from '../../../../../hooks/use-project-docs';
@@ -124,8 +127,33 @@ function ProjectDocumentsPage() {
 					isPending={updateDoc.isPending}
 				/>
 			}
+			viewerExtras={
+				file && !isAgentsMd ? (
+					<ProjectDocRevisionsPanel companyId={companyId} projectId={projectId} filename={file} />
+				) : null
+			}
 			emptyTitle="Select a document"
 			emptyDescription="Choose a project document from the list to view or edit it."
+		/>
+	);
+}
+
+function ProjectDocRevisionsPanel({
+	companyId,
+	projectId,
+	filename,
+}: {
+	companyId: string;
+	projectId: string;
+	filename: string;
+}) {
+	const { data: revisions } = useProjectDocRevisions(companyId, projectId, filename);
+	const restore = useRestoreProjectDocRevision(companyId, projectId, filename);
+	return (
+		<RevisionsPanel
+			revisions={revisions}
+			onRestore={(rev) => restore.mutateAsync(rev)}
+			isRestoring={restore.isPending}
 		/>
 	);
 }

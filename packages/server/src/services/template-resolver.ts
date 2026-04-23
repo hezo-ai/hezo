@@ -82,7 +82,7 @@ export async function resolveSystemPrompt(
 
 	if (resolved.includes('{{kb_context}}')) {
 		const docs = await db.query<{ title: string; content: string }>(
-			'SELECT title, content FROM kb_docs WHERE company_id = $1 ORDER BY title',
+			"SELECT title, content FROM documents WHERE type = 'kb_doc' AND company_id = $1 ORDER BY title",
 			[ctx.companyId],
 		);
 		const kbText =
@@ -108,7 +108,7 @@ export async function resolveSystemPrompt(
 
 	if (resolved.includes('{{company_preferences_context}}')) {
 		const prefs = await db.query<{ content: string }>(
-			'SELECT content FROM company_preferences WHERE company_id = $1',
+			"SELECT content FROM documents WHERE type = 'company_preferences' AND company_id = $1",
 			[ctx.companyId],
 		);
 		const prefsText =
@@ -122,7 +122,7 @@ export async function resolveSystemPrompt(
 		let docsText = 'No project documentation available.';
 		if (ctx.projectId) {
 			const docs = await db.query<{ filename: string; content: string }>(
-				'SELECT filename, content FROM project_docs WHERE project_id = $1 ORDER BY filename',
+				"SELECT slug AS filename, content FROM documents WHERE type = 'project_doc' AND project_id = $1 ORDER BY slug",
 				[ctx.projectId],
 			);
 			if (docs.rows.length > 0) {

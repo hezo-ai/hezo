@@ -68,8 +68,8 @@ mentionsRoutes.post('/companies/:companyId/docs/resolve', async (c) => {
 			updated_at: string;
 		}>(
 			`SELECT slug, title, octet_length(content)::int AS size, updated_at
-			 FROM kb_docs
-			 WHERE company_id = $1 AND LOWER(slug) = ANY($2::text[])`,
+			 FROM documents
+			 WHERE type = 'kb_doc' AND company_id = $1 AND LOWER(slug) = ANY($2::text[])`,
 			[companyId, kbSlugs],
 		);
 		kbDocs = result.rows;
@@ -90,13 +90,14 @@ mentionsRoutes.post('/companies/:companyId/docs/resolve', async (c) => {
 			size: number;
 			updated_at: string;
 		}>(
-			`SELECT p.slug AS project_slug, pd.filename,
+			`SELECT p.slug AS project_slug, pd.slug AS filename,
 			        octet_length(pd.content)::int AS size, pd.updated_at
-			 FROM project_docs pd
+			 FROM documents pd
 			 JOIN projects p ON p.id = pd.project_id
-			 WHERE pd.company_id = $1
+			 WHERE pd.type = 'project_doc'
+			   AND pd.company_id = $1
 			   AND LOWER(p.slug) = ANY($2::text[])
-			   AND pd.filename = ANY($3::text[])`,
+			   AND pd.slug = ANY($3::text[])`,
 			[companyId, slugs, filenames],
 		);
 		const requested = new Set(
@@ -177,8 +178,8 @@ mentionsRoutes.get('/companies/:companyId/mentions/search', async (c) => {
 	if (kinds.includes('kb')) {
 		const r = await db.query<{ slug: string; title: string }>(
 			`SELECT slug, title
-			 FROM kb_docs
-			 WHERE company_id = $1
+			 FROM documents
+			 WHERE type = 'kb_doc' AND company_id = $1
 			   AND ($2 = '' OR slug ILIKE $3 OR title ILIKE $3)
 			 ORDER BY title
 			 LIMIT $4`,
@@ -196,13 +197,13 @@ mentionsRoutes.get('/companies/:companyId/mentions/search', async (c) => {
 
 	if (kinds.includes('doc')) {
 		const r = await db.query<{ filename: string; project_slug: string }>(
-			`SELECT pd.filename, p.slug AS project_slug
-			 FROM project_docs pd
+			`SELECT pd.slug AS filename, p.slug AS project_slug
+			 FROM documents pd
 			 JOIN projects p ON p.id = pd.project_id
-			 WHERE pd.company_id = $1
-			   AND ($2 = '' OR pd.filename ILIKE $3 OR p.slug ILIKE $3)
+			 WHERE pd.type = 'project_doc' AND pd.company_id = $1
+			   AND ($2 = '' OR pd.slug ILIKE $3 OR p.slug ILIKE $3)
 			 ORDER BY (CASE WHEN $4::text IS NOT NULL AND LOWER(p.slug) = LOWER($4) THEN 0 ELSE 1 END),
-			          p.slug, pd.filename
+			          p.slug, pd.slug
 			 LIMIT $5`,
 			[companyId, q, pattern, projectSlug, perKind],
 		);

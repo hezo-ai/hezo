@@ -71,6 +71,34 @@ test('can edit a kb document', async ({ page }) => {
 	await expect(page.getByText('Updated content body')).toBeVisible({ timeout: 5000 });
 });
 
+test('shows revision history and restores a previous version', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, headers } = await createCompany(page);
+
+	const docRes = await page.request.post(`/api/companies/${company.id}/kb-docs`, {
+		headers,
+		data: { title: 'Restore Me', content: 'Original kb body' },
+	});
+	const doc = (await docRes.json()).data;
+
+	await page.request.patch(`/api/companies/${company.id}/kb-docs/${doc.slug}`, {
+		headers,
+		data: { content: 'Updated kb body', change_summary: 'second pass' },
+	});
+
+	await page.goto(`/companies/${company.slug}/kb?slug=${doc.slug}`);
+	await expect(page.getByText('Updated kb body')).toBeVisible({ timeout: 5000 });
+
+	await page.getByRole('button', { name: /show revision history/i }).click();
+	await expect(page.getByText(/Rev 1/)).toBeVisible({ timeout: 5000 });
+
+	page.on('dialog', (dialog) => dialog.accept());
+	await page.getByRole('button', { name: 'Restore', exact: true }).click();
+	await expect(page.getByText('Original kb body')).toBeVisible({ timeout: 5000 });
+});
+
 test('can delete a kb document', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);

@@ -4,6 +4,7 @@ import {
 	AgentAdminStatus,
 	ApprovalStatus,
 	ApprovalType,
+	DocumentType,
 	IssueStatus,
 	MemberType,
 	wsRoom,
@@ -15,6 +16,7 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess, requireCompanyAccessForResource } from '../middleware/auth';
 import { enqueueAgentSummaryTask, enqueueTeamSummaryTask } from '../services/description-tasks';
+import { upsertDocument } from '../services/documents';
 
 const log = logger.child('approvals');
 
@@ -136,6 +138,54 @@ async function applyApprovalSideEffect(
 			enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
 				log.error('Failed to enqueue team summary task:', e),
 			);
+			break;
+		}
+		case ApprovalType.KbUpdate: {
+			const slug = payload.slug as string;
+			const requestedBy = (approval.requested_by_member_id as string) ?? null;
+			const doc = await upsertDocument(db, undefined, {
+				scope: {
+					type: DocumentType.KbDoc,
+					companyId: approval.company_id as string,
+					slug,
+				},
+				title: typeof payload.title === 'string' ? payload.title : undefined,
+				content: typeof payload.content === 'string' ? payload.content : '',
+				changeSummary: (payload.change_summary as string) ?? '',
+				authorMemberId: requestedBy,
+			});
+			broadcasts.push({
+				table: 'documents',
+				op: 'UPDATE',
+				row: doc as unknown as Record<string, unknown>,
+			});
+			break;
+		}
+		case ApprovalType.Strategy: {
+			if (
+				typeof payload.action === 'string' &&
+				payload.action === 'update_prd' &&
+				typeof payload.filename === 'string' &&
+				typeof payload.content === 'string' &&
+				typeof payload.project_id === 'string'
+			) {
+				const requestedBy = (approval.requested_by_member_id as string) ?? null;
+				const doc = await upsertDocument(db, undefined, {
+					scope: {
+						type: DocumentType.ProjectDoc,
+						companyId: approval.company_id as string,
+						projectId: payload.project_id,
+						slug: payload.filename,
+					},
+					content: payload.content,
+					authorMemberId: requestedBy,
+				});
+				broadcasts.push({
+					table: 'documents',
+					op: 'UPDATE',
+					row: doc as unknown as Record<string, unknown>,
+				});
+			}
 			break;
 		}
 		case ApprovalType.SkillProposal: {

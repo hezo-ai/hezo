@@ -1,10 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { Clock, Loader2, RotateCcw } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { type DocItem, DocsLibrary } from '../../../../components/docs-library';
 import { MentionTextarea } from '../../../../components/mention-textarea';
+import { RevisionsPanel } from '../../../../components/revisions-panel';
 import { Button } from '../../../../components/ui/button';
-import { Card } from '../../../../components/ui/card';
 import { Input } from '../../../../components/ui/input';
 import {
 	useCreateKbDoc,
@@ -151,57 +151,14 @@ function NewKbDocForm({
 }
 
 function KbRevisionsPanel({ companyId, slug }: { companyId: string; slug: string }) {
-	const [open, setOpen] = useState(false);
 	const { data: revisions } = useKbDocRevisions(companyId, slug);
 	const restore = useRestoreKbDocRevision(companyId, slug);
-
 	return (
-		<div className="mt-6 pt-4 border-t border-border-subtle">
-			<button
-				type="button"
-				onClick={() => setOpen(!open)}
-				className="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted hover:text-text mb-3"
-			>
-				<Clock className="w-3.5 h-3.5" />
-				{open ? 'Hide' : 'Show'} revision history
-				{revisions?.length ? ` (${revisions.length})` : ''}
-			</button>
-
-			{open && (
-				<div className="space-y-2">
-					{!revisions?.length ? (
-						<p className="text-xs text-text-muted">No revisions yet.</p>
-					) : (
-						revisions.map((rev) => (
-							<Card key={rev.id} className="p-3">
-								<div className="flex items-center gap-2 mb-1">
-									<span className="text-xs font-medium text-text">Rev {rev.revision_number}</span>
-									<span className="text-xs text-text-muted">{rev.author_name || 'Board'}</span>
-									<span className="text-xs text-text-subtle ml-auto">
-										{new Date(rev.created_at).toLocaleString()}
-									</span>
-									<Button
-										variant="ghost"
-										size="sm"
-										className="ml-1 text-xs"
-										onClick={async () => {
-											if (confirm(`Restore to revision ${rev.revision_number}?`)) {
-												await restore.mutateAsync(rev.revision_number);
-											}
-										}}
-									>
-										<RotateCcw className="w-3 h-3" /> Restore
-									</Button>
-								</div>
-								{rev.change_summary && (
-									<p className="text-xs text-text-muted">{rev.change_summary}</p>
-								)}
-							</Card>
-						))
-					)}
-				</div>
-			)}
-		</div>
+		<RevisionsPanel
+			revisions={revisions}
+			onRestore={(rev) => restore.mutateAsync(rev)}
+			isRestoring={restore.isPending}
+		/>
 	);
 }
 

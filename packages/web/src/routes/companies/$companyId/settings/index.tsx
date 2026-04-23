@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Copy, ExternalLink, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { RevisionsPanel } from '../../../../components/revisions-panel';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
@@ -12,7 +13,12 @@ import {
 	useStartConnection,
 } from '../../../../hooks/use-connections';
 import { useCosts } from '../../../../hooks/use-costs';
-import { usePreferences, useUpdatePreferences } from '../../../../hooks/use-preferences';
+import {
+	usePreferenceRevisions,
+	usePreferences,
+	useRestorePreferenceRevision,
+	useUpdatePreferences,
+} from '../../../../hooks/use-preferences';
 import { useCreateSecret, useDeleteSecret, useSecrets } from '../../../../hooks/use-secrets';
 import {
 	useCreateSkill,
@@ -406,7 +412,9 @@ function BudgetSection({ companyId }: { companyId: string }) {
 
 function PreferencesSection({ companyId }: { companyId: string }) {
 	const { data: prefs } = usePreferences(companyId);
+	const { data: revisions } = usePreferenceRevisions(companyId);
 	const updatePrefs = useUpdatePreferences(companyId);
+	const restorePrefs = useRestorePreferenceRevision(companyId);
 	const [content, setContent] = useState('');
 	const [editing, setEditing] = useState(false);
 
@@ -447,9 +455,18 @@ function PreferencesSection({ companyId }: { companyId: string }) {
 					</div>
 				</div>
 			) : (
-				<p className="text-[13px] text-text-muted whitespace-pre-wrap">
-					{prefs?.content || 'No preferences set.'}
-				</p>
+				<>
+					<p className="text-[13px] text-text-muted whitespace-pre-wrap">
+						{prefs?.content || 'No preferences set.'}
+					</p>
+					{prefs && (
+						<RevisionsPanel
+							revisions={revisions}
+							onRestore={(rev) => restorePrefs.mutateAsync(rev)}
+							isRestoring={restorePrefs.isPending}
+						/>
+					)}
+				</>
 			)}
 		</section>
 	);

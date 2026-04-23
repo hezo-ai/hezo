@@ -189,7 +189,7 @@ export function buildApp(
 	});
 
 	// Initialize MCP server
-	initMcpServer(db, config.dataDir);
+	initMcpServer(db, config.dataDir, wsManager);
 
 	// Public routes
 	app.route('/', healthRoutes);

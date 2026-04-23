@@ -86,7 +86,6 @@ describe('Company preferences', () => {
 	});
 
 	it('returns empty revisions when no preferences exist', async () => {
-		// Create a new company with no preferences
 		const coRes = await app.request('/api/companies', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -99,5 +98,41 @@ describe('Company preferences', () => {
 		});
 		expect(res.status).toBe(200);
 		expect((await res.json()).data).toEqual([]);
+	});
+
+	it('restores preferences to a prior revision', async () => {
+		await app.request(`/api/companies/${companyId}/preferences`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content: '# Preferences\n\nReverted body',
+				change_summary: 'pre-restore checkpoint',
+			}),
+		});
+
+		const restoreRes = await app.request(`/api/companies/${companyId}/preferences/restore`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ revision_number: 1 }),
+		});
+		expect(restoreRes.status).toBe(200);
+		const restored = await restoreRes.json();
+		expect(restored.data.content).toContain('functional patterns');
+		expect(restored.data.content).not.toContain('Reverted body');
+
+		const revRes = await app.request(`/api/companies/${companyId}/preferences/revisions`, {
+			headers: authHeader(token),
+		});
+		const revs = (await revRes.json()).data;
+		expect(revs[0].change_summary).toBe('Restored to revision 1');
+	});
+
+	it('returns 404 when restoring an unknown revision number', async () => {
+		const res = await app.request(`/api/companies/${companyId}/preferences/restore`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ revision_number: 9999 }),
+		});
+		expect(res.status).toBe(404);
 	});
 });

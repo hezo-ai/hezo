@@ -326,7 +326,7 @@ describe('MCP tool handlers: data queries via DB', () => {
 
 	it('list_kb_docs returns kb docs for company', async () => {
 		const r = await db.query(
-			'SELECT id, title, slug, updated_at FROM kb_docs WHERE company_id = $1 ORDER BY title',
+			"SELECT id, title, slug, updated_at FROM documents WHERE type = 'kb_doc' AND company_id = $1 ORDER BY title",
 			[companyId],
 		);
 		// May have kb docs from template, or may be empty — just verify query works
@@ -442,8 +442,8 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 
 	it('upsert_kb_doc inserts a new doc', async () => {
 		const r = await db.query(
-			`INSERT INTO kb_docs (company_id, title, slug, content)
-			 VALUES ($1, 'MCP KB Doc', 'mcp-kb-doc', 'Created via MCP')
+			`INSERT INTO documents (company_id, type, slug, title, content)
+			 VALUES ($1, 'kb_doc', 'mcp-kb-doc', 'MCP KB Doc', 'Created via MCP')
 			 RETURNING *`,
 			[companyId],
 		);
@@ -452,10 +452,10 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 	});
 
 	it('get_kb_doc query returns doc by slug', async () => {
-		const r = await db.query('SELECT * FROM kb_docs WHERE company_id = $1 AND slug = $2', [
-			companyId,
-			'mcp-kb-doc',
-		]);
+		const r = await db.query(
+			"SELECT * FROM documents WHERE type = 'kb_doc' AND company_id = $1 AND slug = $2",
+			[companyId, 'mcp-kb-doc'],
+		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).title).toBe('MCP KB Doc');
 		expect((r.rows[0] as any).content).toBe('Created via MCP');
@@ -498,31 +498,31 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 
 	it('write_project_doc inserts correctly', async () => {
 		const r = await db.query(
-			`INSERT INTO project_docs (company_id, project_id, filename, content)
-			 VALUES ($1, $2, 'test-doc.md', '# Test Document')
-			 ON CONFLICT (project_id, filename) DO UPDATE SET content = EXCLUDED.content
+			`INSERT INTO documents (company_id, project_id, type, slug, content)
+			 VALUES ($1, $2, 'project_doc', 'test-doc.md', '# Test Document')
 			 RETURNING *`,
 			[companyId, projectId],
 		);
 		expect(r.rows.length).toBe(1);
-		expect((r.rows[0] as any).filename).toBe('test-doc.md');
+		expect((r.rows[0] as any).slug).toBe('test-doc.md');
 	});
 
 	it('read_project_doc query returns doc content', async () => {
-		const r = await db.query('SELECT * FROM project_docs WHERE project_id = $1 AND filename = $2', [
-			projectId,
-			'test-doc.md',
-		]);
+		const r = await db.query(
+			"SELECT * FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug = $2",
+			[projectId, 'test-doc.md'],
+		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).content).toBe('# Test Document');
 	});
 
 	it('list_project_docs query returns docs for project', async () => {
-		const r = await db.query('SELECT * FROM project_docs WHERE project_id = $1 ORDER BY filename', [
-			projectId,
-		]);
+		const r = await db.query(
+			"SELECT * FROM documents WHERE type = 'project_doc' AND project_id = $1 ORDER BY slug",
+			[projectId],
+		);
 		expect(r.rows.length).toBeGreaterThanOrEqual(1);
-		const filenames = r.rows.map((d: any) => d.filename);
+		const filenames = r.rows.map((d: any) => d.slug);
 		expect(filenames).toContain('test-doc.md');
 	});
 

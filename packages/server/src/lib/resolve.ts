@@ -1,6 +1,24 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { AuthType } from '@hezo/shared';
+import type { AuthInfo } from './types';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function resolveActorMemberId(
+	db: PGlite,
+	auth: AuthInfo,
+	companyId: string,
+): Promise<string | null> {
+	if (auth.type === AuthType.Agent) return auth.memberId;
+	if (auth.type === AuthType.Board) {
+		const result = await db.query<{ id: string }>(
+			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.company_id = $2',
+			[auth.userId, companyId],
+		);
+		return result.rows[0]?.id ?? null;
+	}
+	return null;
+}
 
 export async function resolveCompanyId(db: PGlite, raw: string): Promise<string | null> {
 	if (UUID_RE.test(raw)) return raw;

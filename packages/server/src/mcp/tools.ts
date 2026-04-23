@@ -7,6 +7,7 @@ import {
 	CEO_AGENT_SLUG,
 	COACH_AGENT_SLUG,
 	CommentContentType,
+	DocumentType,
 	IssuePriority,
 	IssueStatus,
 	WakeupSource,
@@ -20,8 +21,10 @@ import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import { resolveProjectIssuePrefix } from '../routes/projects';
 import { fireCommentWakeups } from '../services/comment-wakeups';
+import { getDocument, listDocuments, upsertDocument } from '../services/documents';
 import { triggerStatusAutomations } from '../services/issue-automation';
 import { createWakeup } from '../services/wakeup';
+import type { WebSocketManager } from '../services/ws';
 
 const log = logger.child('mcp');
 
@@ -90,7 +93,12 @@ async function verifyCompanyAccess(
 	return 'Access denied';
 }
 
-export function registerTools(server: McpServer, db: PGlite, dataDir: string): ToolDef[] {
+export function registerTools(
+	server: McpServer,
+	db: PGlite,
+	_dataDir: string,
+	wsManager?: WebSocketManager,
+): ToolDef[] {
 	registeredTools.length = 0;
 
 	// Companies
@@ -746,11 +754,16 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const r = await db.query(
-				'SELECT id, title, slug, updated_at FROM kb_docs WHERE company_id = $1 ORDER BY title',
-				[args.company_id],
-			);
-			return r.rows;
+			const docs = await listDocuments(db, {
+				type: DocumentType.KbDoc,
+				companyId: args.company_id as string,
+			});
+			return docs.map((d) => ({
+				id: d.id,
+				title: d.title,
+				slug: d.slug,
+				updated_at: d.updated_at,
+			}));
 		},
 		db,
 	);
@@ -766,11 +779,11 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const r = await db.query('SELECT * FROM kb_docs WHERE company_id = $1 AND slug = $2', [
-				args.company_id,
-				args.slug,
-			]);
-			return r.rows[0] ?? null;
+			return await getDocument(db, {
+				type: DocumentType.KbDoc,
+				companyId: args.company_id as string,
+				slug: args.slug as string,
+			});
 		},
 		db,
 	);
@@ -1006,16 +1019,16 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const r = await db.query(
-				`INSERT INTO kb_docs (company_id, title, slug, content, last_updated_by_member_id)
-				 VALUES ($1, $2, $3, $4, $5)
-				 ON CONFLICT (company_id, slug) DO UPDATE
-				 SET title = EXCLUDED.title, content = EXCLUDED.content,
-				     last_updated_by_member_id = EXCLUDED.last_updated_by_member_id, updated_at = now()
-				 RETURNING *`,
-				[args.company_id, args.title, args.slug, args.content, callerMemberId],
-			);
-			return r.rows[0];
+			return await upsertDocument(db, wsManager, {
+				scope: {
+					type: DocumentType.KbDoc,
+					companyId: args.company_id as string,
+					slug: args.slug as string,
+				},
+				title: args.title as string,
+				content: args.content as string,
+				authorMemberId: callerMemberId,
+			});
 		},
 		db,
 	);
@@ -1032,11 +1045,18 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const result = await db.query(
-				'SELECT id, filename, updated_at FROM project_docs WHERE project_id = $1 ORDER BY filename',
-				[args.project_id],
-			);
-			return { files: result.rows };
+			const docs = await listDocuments(db, {
+				type: DocumentType.ProjectDoc,
+				companyId: args.company_id as string,
+				projectId: args.project_id as string,
+			});
+			return {
+				files: docs.map((d) => ({
+					id: d.id,
+					filename: d.slug,
+					updated_at: d.updated_at,
+				})),
+			};
 		},
 		db,
 	);
@@ -1053,12 +1073,14 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const result = await db.query<{ filename: string; content: string }>(
-				'SELECT filename, content FROM project_docs WHERE project_id = $1 AND filename = $2',
-				[args.project_id, args.filename],
-			);
-			if (result.rows.length === 0) return { error: `File '${args.filename}' not found` };
-			return result.rows[0];
+			const doc = await getDocument(db, {
+				type: DocumentType.ProjectDoc,
+				companyId: args.company_id as string,
+				projectId: args.project_id as string,
+				slug: args.filename as string,
+			});
+			if (!doc) return { error: `File '${args.filename}' not found` };
+			return { filename: doc.slug, content: doc.content };
 		},
 		db,
 	);
@@ -1077,17 +1099,17 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const result = await db.query<{ id: string; filename: string }>(
-				`INSERT INTO project_docs (project_id, company_id, filename, content, last_updated_by_member_id)
-				 VALUES ($1, $2, $3, $4, $5)
-				 ON CONFLICT (project_id, filename) DO UPDATE SET
-				   content = EXCLUDED.content,
-				   last_updated_by_member_id = EXCLUDED.last_updated_by_member_id,
-				   updated_at = now()
-				 RETURNING id, filename`,
-				[args.project_id, args.company_id, args.filename, args.content, callerMemberId],
-			);
-			return { written: true, id: result.rows[0].id, filename: result.rows[0].filename };
+			const doc = await upsertDocument(db, wsManager, {
+				scope: {
+					type: DocumentType.ProjectDoc,
+					companyId: args.company_id as string,
+					projectId: args.project_id as string,
+					slug: args.filename as string,
+				},
+				content: args.content as string,
+				authorMemberId: callerMemberId,
+			});
+			return { written: true, id: doc.id, filename: doc.slug };
 		},
 		db,
 	);

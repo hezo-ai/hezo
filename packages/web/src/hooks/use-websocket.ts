@@ -29,8 +29,18 @@ const TABLE_TO_QUERY_KEY: Record<
 	member_agents: (cid) => [['companies', cid, 'agents']],
 	projects: (cid) => [['companies', cid, 'projects']],
 	approvals: (cid) => [['companies', cid, 'approvals']],
-	kb_docs: (cid) => [['companies', cid, 'kb-docs']],
-	company_preferences: (cid) => [['companies', cid, 'preferences']],
+	documents: (cid, row) => {
+		switch (row.type) {
+			case 'project_doc':
+				return [['companies', cid, 'projects']];
+			case 'kb_doc':
+				return [['companies', cid, 'kb-docs']];
+			case 'company_preferences':
+				return [['companies', cid, 'preferences']];
+			default:
+				return [];
+		}
+	},
 	secrets: (cid) => [['companies', cid, 'secrets']],
 	api_keys: (cid) => [['companies', cid, 'api-keys']],
 	cost_entries: (cid) => [['companies', cid, 'costs']],

@@ -580,25 +580,53 @@ CREATE INDEX idx_audit_created ON audit_log(company_id, created_at);
 CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 
 -------------------------------------------------------------------------------
--- KNOWLEDGE BASE DOCUMENTS
+-- DOCUMENTS (unified: project docs, knowledge base, company preferences)
 -------------------------------------------------------------------------------
 
-CREATE TABLE kb_docs (
-    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id               UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    title                    TEXT NOT NULL,
-    slug                     TEXT NOT NULL,
-    content                  TEXT NOT NULL DEFAULT '',
-    last_updated_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    embedding                vector(384),
-    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+CREATE TYPE document_type AS ENUM ('project_doc', 'kb_doc', 'company_preferences');
 
-    UNIQUE (company_id, slug)
+CREATE TABLE documents (
+    id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id                UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    project_id                UUID REFERENCES projects(id) ON DELETE CASCADE,
+    type                      document_type NOT NULL,
+    slug                      TEXT NOT NULL,
+    title                     TEXT NOT NULL DEFAULT '',
+    content                   TEXT NOT NULL DEFAULT '',
+    last_updated_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
+    embedding                 vector(384),
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_kb_docs_company ON kb_docs(company_id);
-CREATE INDEX idx_kb_docs_embedding ON kb_docs USING hnsw (embedding vector_cosine_ops);
+CREATE UNIQUE INDEX idx_documents_project_doc
+    ON documents (project_id, slug)
+    WHERE type = 'project_doc';
+CREATE UNIQUE INDEX idx_documents_kb_doc
+    ON documents (company_id, slug)
+    WHERE type = 'kb_doc';
+CREATE UNIQUE INDEX idx_documents_company_preferences
+    ON documents (company_id)
+    WHERE type = 'company_preferences';
+
+CREATE INDEX idx_documents_company ON documents (company_id);
+CREATE INDEX idx_documents_type_company ON documents (type, company_id);
+CREATE INDEX idx_documents_project ON documents (project_id) WHERE project_id IS NOT NULL;
+CREATE INDEX idx_documents_embedding ON documents USING hnsw (embedding vector_cosine_ops);
+
+CREATE TABLE document_revisions (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id      UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    revision_number  INTEGER NOT NULL,
+    content          TEXT NOT NULL,
+    change_summary   TEXT NOT NULL DEFAULT '',
+    author_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (document_id, revision_number)
+);
+
+CREATE INDEX idx_document_revisions_document ON document_revisions(document_id);
 
 -------------------------------------------------------------------------------
 -- CONNECTED PLATFORMS
@@ -676,57 +704,6 @@ CREATE TABLE issue_attachments (
 CREATE INDEX idx_issue_attachments_issue ON issue_attachments(issue_id);
 
 -------------------------------------------------------------------------------
--- COMPANY PREFERENCES
--------------------------------------------------------------------------------
-
-CREATE TABLE company_preferences (
-    id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id                UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    content                   TEXT NOT NULL DEFAULT '',
-    last_updated_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (company_id)
-);
-
--------------------------------------------------------------------------------
--- COMPANY PREFERENCE REVISIONS
--------------------------------------------------------------------------------
-
-CREATE TABLE company_preference_revisions (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    preference_id   UUID NOT NULL REFERENCES company_preferences(id) ON DELETE CASCADE,
-    revision_number INTEGER NOT NULL,
-    content         TEXT NOT NULL,
-    change_summary  TEXT NOT NULL DEFAULT '',
-    author_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (preference_id, revision_number)
-);
-
-CREATE INDEX idx_company_pref_revisions_pref ON company_preference_revisions(preference_id);
-
--------------------------------------------------------------------------------
--- KB DOCUMENT REVISIONS
--------------------------------------------------------------------------------
-
-CREATE TABLE kb_doc_revisions (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    doc_id           UUID NOT NULL REFERENCES kb_docs(id) ON DELETE CASCADE,
-    revision_number  INTEGER NOT NULL,
-    content          TEXT NOT NULL,
-    change_summary   TEXT NOT NULL DEFAULT '',
-    author_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (doc_id, revision_number)
-);
-
-CREATE INDEX idx_kb_revisions_doc ON kb_doc_revisions(doc_id);
-
--------------------------------------------------------------------------------
 -- SKILLS
 -------------------------------------------------------------------------------
 
@@ -770,28 +747,6 @@ CREATE TABLE skill_revisions (
 );
 
 CREATE INDEX idx_skill_revisions_skill ON skill_revisions(skill_id);
-
--------------------------------------------------------------------------------
--- PROJECT DOCUMENTS
--------------------------------------------------------------------------------
-
-CREATE TABLE project_docs (
-    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id            UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    company_id            UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    filename              TEXT NOT NULL,
-    content               TEXT NOT NULL DEFAULT '',
-    last_updated_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    embedding             vector(384),
-    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE(project_id, filename)
-);
-
-CREATE INDEX idx_project_docs_project ON project_docs(project_id);
-CREATE INDEX idx_project_docs_company ON project_docs(company_id);
-CREATE INDEX idx_project_docs_embedding ON project_docs USING hnsw (embedding vector_cosine_ops);
 
 -------------------------------------------------------------------------------
 -- SYSTEM PROMPT REVISIONS
@@ -1027,13 +982,7 @@ CREATE TRIGGER trg_issues_updated BEFORE UPDATE ON issues
 CREATE TRIGGER trg_secrets_updated BEFORE UPDATE ON secrets
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER trg_kb_docs_updated BEFORE UPDATE ON kb_docs
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TRIGGER trg_company_prefs_updated BEFORE UPDATE ON company_preferences
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TRIGGER trg_project_docs_updated BEFORE UPDATE ON project_docs
+CREATE TRIGGER trg_documents_updated BEFORE UPDATE ON documents
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_connected_platforms_updated BEFORE UPDATE ON connected_platforms

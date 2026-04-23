@@ -252,8 +252,8 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 
 		if (initialPrd) {
 			await db.query(
-				`INSERT INTO project_docs (project_id, company_id, filename, content)
-				 VALUES ($1, $2, 'initial-prd.md', $3)`,
+				`INSERT INTO documents (project_id, company_id, type, slug, content)
+				 VALUES ($1, $2, 'project_doc', 'initial-prd.md', $3)`,
 				[project.id, companyId, initialPrd],
 			);
 		}

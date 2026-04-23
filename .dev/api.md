@@ -1574,6 +1574,16 @@ Request:
 #### `GET /companies/:companyId/preferences/revisions`
 List revision history for the company preferences document.
 
+#### `POST /companies/:companyId/preferences/restore`
+Restore the company preferences document to a previous revision. Board-only.
+
+Request:
+```json
+{
+  "revision_number": 2
+}
+```
+
 Response:
 ```json
 {
@@ -1620,17 +1630,31 @@ Response:
 ```
 
 #### `PUT /companies/:companyId/projects/:projectId/docs/:filename`
-Write a project document (upsert). Agent writes to `prd.md` create an approval request (202 response) instead of writing directly.
+Write a project document (upsert). Agent writes to `prd.md` create an approval request (202 response) instead of writing directly. When the content changes, the prior content is captured as a new revision before the update.
 
 Request:
 ```json
 {
-  "content": "# Technical Specification\n\n## Updated..."
+  "content": "# Technical Specification\n\n## Updated...",
+  "change_summary": "optional"
 }
 ```
 
 #### `DELETE /companies/:companyId/projects/:projectId/docs/:filename`
 Delete a project document.
+
+#### `GET /companies/:companyId/projects/:projectId/docs/:filename/revisions`
+List revision history for a project document, ordered by `revision_number` descending.
+
+#### `POST /companies/:companyId/projects/:projectId/docs/:filename/restore`
+Restore a project document to a previous revision. Board-only (agents cannot restore). Snapshots the current content as a fresh revision before reverting.
+
+Request:
+```json
+{
+  "revision_number": 2
+}
+```
 
 #### `GET /companies/:companyId/projects/:projectId/agents-md`
 Read the project's AGENTS.md file.
@@ -2425,7 +2449,7 @@ Response:
 
 ### Project Documents (agent-side)
 
-Agents access project documents through the same board endpoints (scoped to their company). Project docs are stored in the `project_docs` table. See the board-side Project Documents section for endpoint details.
+Agents access project documents through the same board endpoints (scoped to their company). Project docs are stored in the unified `documents` table with `type = 'project_doc'`. See the board-side Project Documents section for endpoint details.
 
 Agent writes to `prd.md` create an approval request instead of updating the document directly.
 
@@ -2621,16 +2645,12 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `approval.denied` | approval | Board denies |
 | `api_key.created` | api_key | Board generates API key |
 | `api_key.revoked` | api_key | Board revokes API key |
-| `kb_doc.created` | kb_doc | Board or agent (via approval) |
-| `kb_doc.updated` | kb_doc | Board or agent (via approval) |
-| `kb_doc.deleted` | kb_doc | Board deletes |
+| `documents.INSERT` | document | Board, agent, or approval-apply creates any document (`type` in row payload selects KB / project doc / preferences). Restore is published as `UPDATE`. |
+| `documents.UPDATE` | document | Document content edited or restored to a prior revision |
+| `documents.DELETE` | document | Document removed |
 | `kb_update.proposed` | approval | Agent proposes KB change |
 | `kb_update.approved` | approval | Board approves KB change |
 | `kb_update.denied` | approval | Board denies KB change |
-| `company_preferences.updated` | company_preferences | Board or agent updates preferences |
-| `project_doc.created` | project_doc | Board or agent creates project doc |
-| `project_doc.updated` | project_doc | Board or agent updates project doc |
-| `project_doc.deleted` | project_doc | Board deletes project doc |
 | `budget.warning` | agent | Agent hits 80% budget |
 | `budget.exceeded` | agent | Agent hits 100% budget |
 | `budget.reset` | agent | Monthly budget reset |

@@ -257,7 +257,7 @@ UI:
 
 ## Phase 5: Knowledge + Observability
 
-**Status:** Done (2026-04)
+**Status:** Done (2026-04). Documents unified into a single `documents` + `document_revisions` schema (2026-04-22) — project docs, KB docs, and company preferences all share one revision-with-rollback path; project docs and preferences gained the rollback UI as part of that.
 
 **Goal:** KB revisions, audit log, live queries, WebSocket events, previews. Migrate frontend from polling to real-time.
 

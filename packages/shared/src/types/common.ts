@@ -215,15 +215,12 @@ export const PluginStatus = {
 } as const;
 export type PluginStatus = (typeof PluginStatus)[keyof typeof PluginStatus];
 
-export const ProjectDocType = {
-	TechSpec: 'tech_spec',
-	ImplementationPlan: 'implementation_plan',
-	Research: 'research',
-	UiDesignDecisions: 'ui_design_decisions',
-	MarketingPlan: 'marketing_plan',
-	Other: 'other',
+export const DocumentType = {
+	ProjectDoc: 'project_doc',
+	KbDoc: 'kb_doc',
+	CompanyPreferences: 'company_preferences',
 } as const;
-export type ProjectDocType = (typeof ProjectDocType)[keyof typeof ProjectDocType];
+export type DocumentType = (typeof DocumentType)[keyof typeof DocumentType];
 
 export const AuditActorType = { Board: 'board', Agent: 'agent', System: 'system' } as const;
 export type AuditActorType = (typeof AuditActorType)[keyof typeof AuditActorType];
@@ -240,7 +237,7 @@ export const AuditEntityType = {
 	Agent: 'agent',
 	Company: 'company',
 	Secret: 'secret',
-	KbDoc: 'kb_doc',
+	Document: 'document',
 } as const;
 export type AuditEntityType = (typeof AuditEntityType)[keyof typeof AuditEntityType];
 

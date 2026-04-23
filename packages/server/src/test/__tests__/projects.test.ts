@@ -242,7 +242,7 @@ describe('initial PRD upload', () => {
 		const project = (await res.json()).data;
 
 		const docResult = await db.query<{ filename: string; content: string }>(
-			'SELECT filename, content FROM project_docs WHERE project_id = $1 AND filename = $2',
+			"SELECT slug AS filename, content FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug = $2",
 			[project.id, 'initial-prd.md'],
 		);
 		expect(docResult.rows.length).toBe(1);
@@ -270,7 +270,7 @@ describe('initial PRD upload', () => {
 		const project = (await res.json()).data;
 
 		const docResult = await db.query(
-			'SELECT 1 FROM project_docs WHERE project_id = $1 AND filename = $2',
+			"SELECT 1 FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug = $2",
 			[project.id, 'initial-prd.md'],
 		);
 		expect(docResult.rows.length).toBe(0);
@@ -296,7 +296,7 @@ describe('initial PRD upload', () => {
 		const project = (await res.json()).data;
 
 		const docResult = await db.query(
-			'SELECT 1 FROM project_docs WHERE project_id = $1 AND filename = $2',
+			"SELECT 1 FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug = $2",
 			[project.id, 'initial-prd.md'],
 		);
 		expect(docResult.rows.length).toBe(0);
