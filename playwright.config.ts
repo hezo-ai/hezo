@@ -14,7 +14,7 @@ export default defineConfig({
 	testDir: './tests/e2e',
 	timeout: 90_000,
 	retries: isCI ? 1 : 0,
-	workers: isCI ? 4 : 6,
+	workers: isCI ? 2 : 6,
 	fullyParallel: true,
 	use: {
 		baseURL: `http://localhost:${WEB_PORT}`,
