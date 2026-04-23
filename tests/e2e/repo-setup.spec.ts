@@ -210,7 +210,7 @@ test.describe('Repository setup wizard', () => {
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/settings`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByRole('heading', { name: 'Settings Wizard' })).toBeVisible({
+		await expect(page.getByTestId('breadcrumb').getByText('Settings Wizard')).toBeVisible({
 			timeout: 10000,
 		});
 		await page.getByRole('button', { name: /Add Repo/i }).click();

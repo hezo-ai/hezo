@@ -25,7 +25,7 @@ test.describe('Project Settings', () => {
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/settings`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByRole('heading', { name: 'Settings Project' })).toBeVisible({
+		await expect(page.getByTestId('breadcrumb').getByText('Settings Project')).toBeVisible({
 			timeout: 5000,
 		});
 		await expect(page.getByText('Test project settings').first()).toBeVisible();
@@ -70,7 +70,7 @@ test.describe('Project Settings', () => {
 		await page.getByRole('button', { name: 'Cancel' }).click();
 
 		// Original name should still be visible
-		await expect(page.getByRole('heading', { name: 'Settings Project' })).toBeVisible({
+		await expect(page.getByTestId('breadcrumb').getByText('Settings Project')).toBeVisible({
 			timeout: 5000,
 		});
 		await expect(page.getByText('Should Not Save')).toBeHidden();
