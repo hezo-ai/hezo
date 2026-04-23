@@ -944,7 +944,7 @@ export async function loadSpawnedFromIssue(
 	};
 }
 
-async function buildCoachReviewPrompt(
+export async function buildCoachReviewPrompt(
 	db: PGlite,
 	systemPrompt: string,
 	issue: IssueInfo,
@@ -1020,6 +1020,14 @@ async function buildCoachReviewPrompt(
 		'`propose_system_prompt_update` to propose a specific rule to add to their `## Learned Rules` section.',
 		'',
 		'If the ticket completed smoothly without significant rework or feedback, no changes are needed.',
+		'',
+		`### Final Step — Post a Review Summary Comment`,
+		`After you finish (whether or not you proposed any updates), call \`create_comment\` exactly once on ${issue.identifier} summarising this review. Required format:`,
+		'',
+		'- If you proposed rule updates: one line per proposal as `- @<agent-slug>: <one-line lesson> (auto-applied)` or `- @<agent-slug>: <one-line lesson> (pending approval)`, depending on the `applied` flag returned by `propose_system_prompt_update`.',
+		'- If you made no proposals: a single sentence stating that the ticket completed cleanly and no rule changes were warranted.',
+		'',
+		'Keep the comment concise (≤10 lines). This is the closing action of the task — do not end the turn without posting it.',
 	];
 
 	return parts.join('\n');
