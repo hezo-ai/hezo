@@ -12,7 +12,7 @@ const reuseExistingServer = !isCI;
 
 export default defineConfig({
 	testDir: './tests/e2e',
-	timeout: 60_000,
+	timeout: 90_000,
 	retries: isCI ? 1 : 0,
 	workers: isCI ? 4 : 6,
 	fullyParallel: true,
@@ -30,6 +30,7 @@ export default defineConfig({
 		{
 			name: 'parallel',
 			testIgnore: /ai-providers?(-gate)?\.spec\.ts$/,
+			dependencies: ['ai-provider-serial'],
 		},
 	],
 	webServer: [

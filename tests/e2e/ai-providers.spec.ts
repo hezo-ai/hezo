@@ -96,7 +96,15 @@ test.describe('AI Providers instance settings', () => {
 		await expect(anthropicCard.getByRole('button', { name: /Connect via OAuth/i })).toHaveCount(0);
 		await expect(anthropicCard.getByRole('button', { name: 'Enter API key' })).toHaveCount(0);
 
-		await anthropicCard.getByRole('button', { name: 'Set default' }).click();
+		const [setDefaultResponse] = await Promise.all([
+			page.waitForResponse(
+				(resp) =>
+					/\/api\/ai-providers\/.+\/default$/.test(resp.url()) &&
+					resp.request().method() === 'PATCH',
+			),
+			anthropicCard.getByRole('button', { name: 'Set default' }).click(),
+		]);
+		expect(setDefaultResponse.ok()).toBe(true);
 
 		const listAfter = await page.request.get('/api/ai-providers', { headers });
 		const configs = (await listAfter.json()).data as Array<{
