@@ -161,7 +161,7 @@ export async function enqueueGoalReviewTask(
 			identifier,
 			`Review plans for goal: "${goal.title}"`,
 			buildGoalBody(goalId, goal.title, goal.description, scopeLabel, reason),
-			IssueStatus.Open,
+			IssueStatus.Backlog,
 			IssuePriority.Medium,
 			JSON.stringify([GOAL_LABEL]),
 		],

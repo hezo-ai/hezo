@@ -38,7 +38,6 @@ import {
 
 const statusColors: Record<string, string> = {
 	backlog: 'neutral',
-	open: 'info',
 	in_progress: 'warning',
 	review: 'purple',
 	approved: 'success',
@@ -697,11 +696,11 @@ function IssueDetailPage() {
 				open={reopenOpen}
 				onOpenChange={setReopenOpen}
 				title="Re-open this issue?"
-				description="Status will be set back to open."
+				description="Status will be set back to backlog."
 				confirmLabel="Re-open"
 				loading={updateIssue.isPending}
 				onConfirm={async () => {
-					await updateIssue.mutateAsync({ status: IssueStatus.Open });
+					await updateIssue.mutateAsync({ status: IssueStatus.Backlog });
 				}}
 			/>
 		</div>

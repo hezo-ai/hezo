@@ -63,7 +63,6 @@ export type ContainerStatus = (typeof ContainerStatus)[keyof typeof ContainerSta
 
 export const IssueStatus = {
 	Backlog: 'backlog',
-	Open: 'open',
 	InProgress: 'in_progress',
 	Review: 'review',
 	Approved: 'approved',

@@ -13,7 +13,6 @@ import { MultiSelect, type MultiSelectOption } from './ui/multi-select';
 
 const statusColors: Record<string, string> = {
 	backlog: 'neutral',
-	open: 'info',
 	in_progress: 'warning',
 	review: 'purple',
 	approved: 'success',

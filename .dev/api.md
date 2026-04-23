@@ -732,7 +732,7 @@ Query params:
 - `?project_id=uuid` — filter by project
 - `?assignee_id=uuid` — filter by assignee (references members.id)
 - `?parent_issue_id=uuid` — filter to children of a specific parent issue (used by the sub-issues panel on the issue detail page)
-- `?status=open,in_progress` — comma-separated status filter
+- `?status=backlog,in_progress` — comma-separated status filter
 - `?priority=urgent,high` — comma-separated priority filter
 - `?search=websocket` — full-text search on title + description
 - `?page=1&per_page=50` — pagination (default 50, max 200)
@@ -841,7 +841,7 @@ Changing `status` to `done` or `closed` triggers preview cleanup.
 For issues whose project is Operations (`slug = 'operations'`, `is_internal = true`), `assignee_id` must be the CEO; any other value returns `400 INVALID_REQUEST`.
 
 #### `DELETE /companies/:companyId/issues/:issueId`
-Delete an issue. Only allowed if status is `backlog` or `open`, and no comments exist.
+Delete an issue. Only allowed if status is `backlog`, and no comments exist.
 
 #### `POST /companies/:companyId/issues/:issueId/sub-issues`
 Create a sub-issue. `project_id` is inherited from the parent. When the parent belongs to the Operations project, the sub-issue's `assignee_id` must be the CEO.

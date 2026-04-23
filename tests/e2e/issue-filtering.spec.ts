@@ -21,7 +21,7 @@ test.describe('Issue Filtering', () => {
 
 		// Create issues with different statuses
 		const issueData = [
-			{ title: 'Open Issue', status: 'open' },
+			{ title: 'Review Issue', status: 'review' },
 			{ title: 'In Progress Issue', status: 'in_progress' },
 			{ title: 'Done Issue', status: 'done' },
 			{ title: 'Backlog Issue' }, // default status
@@ -52,7 +52,7 @@ test.describe('Issue Filtering', () => {
 		await waitForPageLoad(page);
 
 		// All 4 issues should be visible
-		await expect(page.getByText('Open Issue')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 10000 });
 		await expect(page.getByText('In Progress Issue')).toBeVisible();
 		await expect(page.getByText('Done Issue')).toBeVisible();
 		await expect(page.getByText('Backlog Issue')).toBeVisible();
@@ -65,7 +65,7 @@ test.describe('Issue Filtering', () => {
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByText('Open Issue')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 10000 });
 		await expect(page.getByTestId('issue-filter-bar')).toBeVisible();
 		await expect(page.getByTestId('issue-filter-panel')).toBeHidden();
 		await expect(page.getByTestId('issue-list-new-issue')).toBeVisible();
@@ -78,7 +78,7 @@ test.describe('Issue Filtering', () => {
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByText('Open Issue')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 10000 });
 
 		await page.getByTestId('issue-filter-toggle').click();
 		await expect(page.getByTestId('issue-filter-panel')).toBeVisible();
@@ -88,7 +88,7 @@ test.describe('Issue Filtering', () => {
 		await page.keyboard.press('Escape');
 
 		await expect(page.getByText('Done Issue')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('Open Issue')).toBeHidden();
+		await expect(page.getByText('Review Issue')).toBeHidden();
 		await expect(page.getByText('Backlog Issue')).toBeHidden();
 	});
 
@@ -99,7 +99,7 @@ test.describe('Issue Filtering', () => {
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByText('Open Issue')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 10000 });
 
 		await page.getByTestId('issue-filter-toggle').click();
 		await page.getByTestId('issue-filter-status').click();
@@ -117,18 +117,18 @@ test.describe('Issue Filtering', () => {
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByText('Open Issue')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 10000 });
 
 		await page.getByTestId('issue-filter-toggle').click();
 		await page.getByTestId('issue-filter-status').click();
 		await page.getByRole('button', { name: 'done' }).click();
 		await page.keyboard.press('Escape');
 		await expect(page.getByText('Done Issue')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('Open Issue')).toBeHidden();
+		await expect(page.getByText('Review Issue')).toBeHidden();
 
 		await page.getByTestId('issue-filter-reset').click();
 
-		await expect(page.getByText('Open Issue')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('Done Issue')).toBeVisible();
 	});
 
@@ -139,10 +139,10 @@ test.describe('Issue Filtering', () => {
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByText('Open Issue')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 10000 });
 
 		// Status badges should be visible in the table
-		await expect(page.getByText('open').first()).toBeVisible();
+		await expect(page.getByText('review').first()).toBeVisible();
 		await expect(page.getByText('in progress').first()).toBeVisible();
 		await expect(page.getByText('done').first()).toBeVisible();
 	});

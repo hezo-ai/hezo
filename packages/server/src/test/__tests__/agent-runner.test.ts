@@ -145,7 +145,7 @@ function makeIssue() {
 		identifier: 'RC-1',
 		title: 'Runner Issue',
 		description: 'Test description',
-		status: 'open',
+		status: 'backlog',
 		priority: 'medium',
 		project_id: projectId,
 		rules: null,

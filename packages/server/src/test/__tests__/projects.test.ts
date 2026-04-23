@@ -71,7 +71,7 @@ describe('projects CRUD', () => {
 		expect(issueResult.rows.length).toBe(1);
 		const issue = issueResult.rows[0];
 		expect(issue.assignee_id).toBe(ceoId);
-		expect(issue.status).toBe('open');
+		expect(issue.status).toBe('backlog');
 		expect(issue.priority).toBe('high');
 		expect(issue.title).toContain('Draft execution plan');
 		expect(issue.description).toContain(VALID_DESCRIPTION);

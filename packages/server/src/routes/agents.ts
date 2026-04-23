@@ -404,7 +404,7 @@ ${teamRoster}`;
 				identifier,
 				`Onboard new agent: ${proposal.title}`,
 				description,
-				IssueStatus.Open,
+				IssueStatus.Backlog,
 				IssuePriority.High,
 				JSON.stringify(['onboarding', 'hire']),
 			],

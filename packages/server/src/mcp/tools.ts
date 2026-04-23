@@ -351,7 +351,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'New status (backlog, open, in_progress, review, approved, blocked, done, closed, cancelled). Once an issue is `closed`, only board members can change its status again.',
+					'New status (backlog, in_progress, review, approved, blocked, done, closed, cancelled). Once an issue is `closed`, only board members can change its status again.',
 				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z.string().optional().describe('New assignee ID'),

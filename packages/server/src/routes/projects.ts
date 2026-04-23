@@ -300,7 +300,7 @@ Container provisioning for this project is in progress. Focus on planning while 
 				identifier,
 				`Draft execution plan for "${projectName}"`,
 				issueBody,
-				IssueStatus.Open,
+				IssueStatus.Backlog,
 				IssuePriority.High,
 				JSON.stringify(['planning']),
 			],

@@ -104,7 +104,7 @@ async function createTriggeringIssueWithComment(commentText: string): Promise<{
 
 async function createArchitectTicket(
 	title: string,
-	status: IssueStatus = IssueStatus.Open,
+	status: IssueStatus = IssueStatus.Backlog,
 ): Promise<{ id: string; identifier: string }> {
 	const res = await app.request(`/api/companies/${companyId}/issues`, {
 		method: 'POST',
@@ -235,7 +235,7 @@ describe('mention handoff prompt (integration)', () => {
 				identifier: triggering.identifier,
 				title: 'CEO ticket only',
 				description: 'x',
-				status: 'open',
+				status: 'backlog',
 				priority: 'medium',
 				project_id: soloProjectId,
 				rules: null,

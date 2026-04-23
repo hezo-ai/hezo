@@ -185,7 +185,7 @@ export async function enqueueOAuthVerificationTask(
 			identifier,
 			title,
 			description,
-			IssueStatus.Open,
+			IssueStatus.Backlog,
 			IssuePriority.High,
 			JSON.stringify(['internal', OAUTH_VERIFICATION_LABEL]),
 		],
