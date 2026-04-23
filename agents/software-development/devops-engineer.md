@@ -51,6 +51,7 @@ Escalation: infrastructure outages → @-mention the Architect and CEO immediate
 {{> partials/common/no-designated-repo}}
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/linking-syntax}}
 {{> partials/common/mention-handoff}}
 
 ---

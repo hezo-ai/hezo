@@ -54,6 +54,7 @@ If a pattern suggests that a missing role or fundamental redesign is needed, fla
 - Focus on patterns, not isolated incidents — if something only happened once and seems unlikely to recur, skip it.
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/linking-syntax}}
 {{> partials/common/mention-handoff}}
 
 ---

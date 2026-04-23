@@ -112,6 +112,15 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			);
 		}
 
+		// Every role doc picks up the linking-syntax guidance.
+		for (const key of allRoleKeys) {
+			expect(docs[key], `${key} should include the linking-syntax rule`).toContain(
+				'## Linking to Hezo entities',
+			);
+			expect(docs[key], `${key} should include an @doc/ example`).toContain('@doc/');
+			expect(docs[key], `${key} should include an @kb/ example`).toContain('@kb/');
+		}
+
 		// Partial files themselves are stripped from the returned map
 		expect(Object.keys(docs).some((k) => k.startsWith('_partials/'))).toBe(false);
 	});

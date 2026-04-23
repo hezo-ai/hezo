@@ -47,6 +47,7 @@ You are the second step in the ticket workflow (after the Researcher).
 - Review company preferences to align product decisions with the board's priorities and working style. When you observe a new preference in board feedback, update the company preferences document via the company preferences API with specific evidence.
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/linking-syntax}}
 {{> partials/common/mention-handoff}}
 
 ---

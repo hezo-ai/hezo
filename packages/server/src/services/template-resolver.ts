@@ -81,13 +81,15 @@ export async function resolveSystemPrompt(
 	}
 
 	if (resolved.includes('{{kb_context}}')) {
-		const docs = await db.query<{ title: string; content: string }>(
-			"SELECT title, content FROM documents WHERE type = 'kb_doc' AND company_id = $1 ORDER BY title",
+		const docs = await db.query<{ title: string; slug: string; content: string }>(
+			"SELECT title, slug, content FROM documents WHERE type = 'kb_doc' AND company_id = $1 ORDER BY title",
 			[ctx.companyId],
 		);
 		const kbText =
 			docs.rows.length > 0
-				? docs.rows.map((d) => `## ${d.title}\n${d.content}`).join('\n\n---\n\n')
+				? docs.rows
+						.map((d) => `## ${d.title} (link: @kb/${d.slug})\n${d.content}`)
+						.join('\n\n---\n\n')
 				: 'No knowledge base documents available.';
 		resolved = resolved.replace(/\{\{kb_context\}\}/g, kbText);
 	}
@@ -126,7 +128,9 @@ export async function resolveSystemPrompt(
 				[ctx.projectId],
 			);
 			if (docs.rows.length > 0) {
-				docsText = docs.rows.map((d) => `## ${d.filename}\n${d.content}`).join('\n\n---\n\n');
+				docsText = docs.rows
+					.map((d) => `## ${d.filename} (link: @doc/${d.filename})\n${d.content}`)
+					.join('\n\n---\n\n');
 			}
 		}
 		resolved = resolved.replace(/\{\{project_docs_context\}\}/g, docsText);

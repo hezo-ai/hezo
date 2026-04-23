@@ -51,6 +51,7 @@ When disagreeing with the Engineer on design, the Architect decides. Accessibili
 {{> partials/common/no-designated-repo}}
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/linking-syntax}}
 {{> partials/common/mention-handoff}}
 
 ---

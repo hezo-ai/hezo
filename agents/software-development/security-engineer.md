@@ -71,6 +71,7 @@ On heartbeats, audit the codebase across these areas:
 {{> partials/common/no-designated-repo}}
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/linking-syntax}}
 {{> partials/common/mention-handoff}}
 
 ---
