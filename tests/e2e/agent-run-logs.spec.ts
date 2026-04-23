@@ -113,7 +113,11 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	await expect(page).toHaveURL(new RegExp(`/issues/${issue.identifier.toLowerCase()}$`));
 });
 
-test('issue page renders run as an inline comment with live-styled log', async ({ page }) => {
+test('issue page renders run as an inline comment with live-styled log', async ({
+	page,
+	context,
+}) => {
+	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 	await authenticate(page);
 	const { company, token } = await createCompanyWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
@@ -161,6 +165,27 @@ test('issue page renders run as an inline comment with live-styled log', async (
 	expect(height).toBeLessThan(220);
 
 	await expect(page.getByTestId('issue-run-log-tail')).toHaveCount(0);
+
+	const copyBtn = runComment.getByRole('button', { name: /copy logs to clipboard/i });
+	await expect(copyBtn).toBeVisible();
+	await copyBtn.click();
+	await expect(copyBtn).toContainText(/copied/i, { timeout: 2000 });
+	const minifiedClipboard = await page.evaluate(() => navigator.clipboard.readText());
+	expect(minifiedClipboard).toContain('[synthetic]');
+
+	const expandBtn = runComment.getByRole('button', { name: /expand log viewer/i });
+	await expandBtn.click();
+	const fullscreen = page.getByTestId('log-viewer-fullscreen');
+	await expect(fullscreen).toBeVisible();
+	const fullscreenCopyBtn = fullscreen.getByRole('button', { name: /copy logs to clipboard/i });
+	await expect(fullscreenCopyBtn).toBeVisible();
+	await fullscreenCopyBtn.click();
+	await expect(fullscreenCopyBtn).toContainText(/copied/i, { timeout: 2000 });
+	const expandedClipboard = await page.evaluate(() => navigator.clipboard.readText());
+	expect(expandedClipboard).toContain('[synthetic]');
+
+	await page.keyboard.press('Escape');
+	await expect(fullscreen).toBeHidden();
 
 	const runLink = runComment.getByRole('link', { name: /view full run/i });
 	await expect(runLink).toBeVisible();

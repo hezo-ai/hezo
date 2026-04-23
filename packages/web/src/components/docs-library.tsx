@@ -1,9 +1,10 @@
 import { ArrowLeft, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { MarkdownProse } from './markdown-prose';
+import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
+import { ConfirmDialog } from './ui/confirm-dialog';
 import { EmptyState } from './ui/empty-state';
-import { Textarea } from './ui/textarea';
 
 export interface DocItem {
 	key: string;
@@ -34,6 +35,9 @@ interface DocsLibraryProps {
 
 	emptyTitle?: string;
 	emptyDescription?: string;
+
+	companyId?: string;
+	projectSlug?: string;
 }
 
 export function DocsLibrary({
@@ -52,10 +56,13 @@ export function DocsLibrary({
 	viewerExtras,
 	emptyTitle = 'No documents yet',
 	emptyDescription,
+	companyId,
+	projectSlug,
 }: DocsLibraryProps) {
 	const [mode, setMode] = useState<'view' | 'edit'>('view');
 	const [modeKey, setModeKey] = useState<string | null>(selectedKey);
 	const [draft, setDraft] = useState('');
+	const [deleteOpen, setDeleteOpen] = useState(false);
 
 	if (modeKey !== selectedKey) {
 		setModeKey(selectedKey);
@@ -77,9 +84,8 @@ export function DocsLibrary({
 		setMode('view');
 	}
 
-	async function handleDelete() {
+	async function handleConfirmDelete() {
 		if (!onDelete) return;
-		if (!confirm('Delete this document?')) return;
 		await onDelete();
 		onSelect(null);
 	}
@@ -173,7 +179,7 @@ export function DocsLibrary({
 												variant="ghost"
 												size="sm"
 												className="text-accent-red"
-												onClick={handleDelete}
+												onClick={() => setDeleteOpen(true)}
 												aria-label="Delete document"
 											>
 												<Trash2 className="w-3.5 h-3.5" />
@@ -195,9 +201,13 @@ export function DocsLibrary({
 						</div>
 
 						{mode === 'view' ? (
-							<MarkdownProse>{docContent || '_(empty)_'}</MarkdownProse>
+							<MarkdownProse companyId={companyId} projectSlug={projectSlug}>
+								{docContent || '_(empty)_'}
+							</MarkdownProse>
 						) : (
-							<Textarea
+							<MentionTextarea
+								companyId={companyId}
+								projectSlug={projectSlug}
 								value={draft}
 								onChange={(e) => setDraft(e.target.value)}
 								className="min-h-[400px] font-mono text-xs"
@@ -208,6 +218,16 @@ export function DocsLibrary({
 					</div>
 				)}
 			</section>
+
+			<ConfirmDialog
+				open={deleteOpen}
+				onOpenChange={setDeleteOpen}
+				title="Delete this document?"
+				description="The document will be permanently removed."
+				confirmLabel="Delete"
+				variant="danger"
+				onConfirm={handleConfirmDelete}
+			/>
 		</div>
 	);
 }

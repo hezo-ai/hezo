@@ -9,7 +9,6 @@ async function createCompany(page: import('@playwright/test').Page) {
 		headers,
 		data: {
 			name: `Settings Corp ${Date.now()}`,
-			issue_prefix: `ST${Date.now().toString().slice(-4)}`,
 			description: 'Build great things',
 		},
 	});
@@ -30,6 +29,36 @@ test('general section displays company info', async ({ page }) => {
 	});
 	await expect(generalSection.getByText(company.name)).toBeVisible({ timeout: 5000 });
 	await expect(generalSection.getByText('Build great things')).toBeVisible({ timeout: 5000 });
+});
+
+test('automations section exposes the wake-mentioner toggle and persists the change', async ({
+	page,
+}) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompany(page);
+	await page.goto(`/companies/${company.slug}/settings`);
+
+	const automations = page.locator('#settings-automations');
+	await expect(automations.getByRole('heading', { name: 'Automations' })).toBeVisible({
+		timeout: 5000,
+	});
+
+	const toggle = automations.getByRole('checkbox', { name: /wake mentioner on reply/i });
+	await expect(toggle).toBeChecked();
+
+	await toggle.click();
+	await expect(toggle).not.toBeChecked();
+
+	const res = await page.request.get(`/api/companies/${company.id}`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const persisted = (await res.json()).data.settings;
+	expect(persisted.wake_mentioner_on_reply).toBe(false);
+
+	await toggle.click();
+	await expect(toggle).toBeChecked();
 });
 
 test('can add and delete a secret', async ({ page }) => {
@@ -105,6 +134,36 @@ test('can edit and save preferences', async ({ page }) => {
 	await expect(page.locator('#settings-preferences').getByText('Always be concise.')).toBeVisible({
 		timeout: 10000,
 	});
+});
+
+test('can restore a previous preferences revision', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, headers } = await createCompany(page);
+
+	await page.request.patch(`/api/companies/${company.id}/preferences`, {
+		headers,
+		data: { content: 'Original preferences body' },
+	});
+	await page.request.patch(`/api/companies/${company.id}/preferences`, {
+		headers,
+		data: { content: 'Updated preferences body', change_summary: 'second pass' },
+	});
+
+	await page.goto(`/companies/${company.slug}/settings`);
+	const prefsSection = page.locator('#settings-preferences');
+	await expect(prefsSection.getByText('Updated preferences body')).toBeVisible({ timeout: 5000 });
+
+	await prefsSection.getByRole('button', { name: /show revision history/i }).click();
+	await expect(prefsSection.getByText(/Rev 1/)).toBeVisible({ timeout: 5000 });
+
+	await prefsSection
+		.getByRole('button', { name: /restore/i })
+		.first()
+		.click();
+	await page.getByTestId('confirm-dialog-confirm').click();
+	await expect(prefsSection.getByText('Original preferences body')).toBeVisible({ timeout: 5000 });
 });
 
 test('can add and delete an mcp server', async ({ page }) => {

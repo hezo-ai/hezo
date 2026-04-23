@@ -7,6 +7,7 @@ export interface Project {
 	company_id: string;
 	name: string;
 	slug: string;
+	issue_prefix: string;
 	description: string;
 	docker_base_image: string | null;
 	container_id: string | null;
@@ -36,6 +37,8 @@ export function useProjects(companyId: string) {
 	return useQuery({
 		queryKey: ['companies', companyId, 'projects'],
 		queryFn: () => api.get<Project[]>(`/api/companies/${companyId}/projects`),
+		staleTime: 0,
+		refetchOnMount: 'always',
 	});
 }
 
@@ -49,8 +52,12 @@ export function useProject(companyId: string, projectId: string, options?: { ena
 
 export function useCreateProject(companyId: string) {
 	return useMutation({
-		mutationFn: (data: { name: string; description: string; initial_prd?: string }) =>
-			api.post<Project>(`/api/companies/${companyId}/projects`, data),
+		mutationFn: (data: {
+			name: string;
+			description: string;
+			initial_prd?: string;
+			issue_prefix?: string;
+		}) => api.post<Project>(`/api/companies/${companyId}/projects`, data),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] }),
 	});

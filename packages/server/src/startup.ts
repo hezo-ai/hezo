@@ -33,6 +33,7 @@ import { goalsRoutes } from './routes/goals';
 import { healthRoutes } from './routes/health';
 import { issuesRoutes } from './routes/issues';
 import { kbDocsRoutes } from './routes/kb-docs';
+import { mentionsRoutes } from './routes/mentions';
 import { oauthCallbackRoutes } from './routes/oauth-callback';
 import { preferencesRoutes } from './routes/preferences';
 import { previewRoutes } from './routes/preview';
@@ -56,6 +57,7 @@ export interface AppConfig {
 	dataDir: string;
 	connectUrl: string;
 	connectPublicKey: string;
+	webUrl: string;
 }
 
 export interface StartupResult {
@@ -139,6 +141,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			dataDir: config.dataDir,
 			connectUrl: config.connectUrl,
 			connectPublicKey,
+			webUrl: config.webUrl,
 		},
 		docker,
 		wsManager,
@@ -162,7 +165,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 export function buildApp(
 	db: PGlite,
 	masterKeyManager: MasterKeyManager,
-	config: AppConfig = { dataDir: '', connectUrl: '', connectPublicKey: '' },
+	config: AppConfig = { dataDir: '', connectUrl: '', connectPublicKey: '', webUrl: '' },
 	docker: DockerClient = new DockerClient(),
 	wsManager: WebSocketManager = new WebSocketManager(),
 	jobManager?: JobManager,
@@ -181,11 +184,12 @@ export function buildApp(
 		c.set('dataDir', config.dataDir);
 		c.set('connectUrl', config.connectUrl);
 		c.set('connectPublicKey', config.connectPublicKey);
+		c.set('webUrl', config.webUrl);
 		return next();
 	});
 
 	// Initialize MCP server
-	initMcpServer(db, config.dataDir);
+	initMcpServer(db, config.dataDir, wsManager);
 
 	// Public routes
 	app.route('/', healthRoutes);
@@ -235,6 +239,7 @@ export function buildApp(
 	app.route('/api', preferencesRoutes);
 	app.route('/api', uiStateRoutes);
 	app.route('/api', projectDocsRoutes);
+	app.route('/api', mentionsRoutes);
 	app.route('/api', connectionsRoutes);
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', reposRoutes);

@@ -109,22 +109,19 @@ describe('agents CRUD', () => {
 		expect(prompt).toMatch(/PRD gate/i);
 	});
 
-	it('no agent system prompt still references filesystem .dev docs for project docs', async () => {
+	it('no agent system prompt references a .dev/ path for project docs', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
-		const filesystemDocRefs =
-			/\.dev\/(prd|research|spec|implementation-plan|implementation-phases|marketing-plan|ui-design-decisions)\.md/;
-		const designatedRepoAsDocStorage = /designated[\s-]repo['s]*\s+\.dev\//i;
+		const anyDevFolderRef = /\.dev\//;
 		for (const summary of agents) {
 			const res = await app.request(`/api/companies/${companyId}/agents/${summary.id}`, {
 				headers: authHeader(token),
 			});
 			const body = await res.json();
 			const prompt = body.data.system_prompt as string;
-			expect(prompt).not.toMatch(filesystemDocRefs);
-			expect(prompt).not.toMatch(designatedRepoAsDocStorage);
+			expect(prompt).not.toMatch(anyDevFolderRef);
 		}
 	});
 

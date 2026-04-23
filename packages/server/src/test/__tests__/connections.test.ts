@@ -12,6 +12,7 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let companyId: string;
+let companySlug: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -30,7 +31,9 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Connection Test Co', template_id: builtinTypeId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	const companyBody = (await companyRes.json()).data;
+	companyId = companyBody.id;
+	companySlug = companyBody.slug;
 });
 
 afterAll(async () => {
@@ -109,8 +112,8 @@ describe('connections CRUD', () => {
 
 			expect(res.status).toBe(302);
 			const location = res.headers.get('Location')!;
-			expect(location).toContain(`/companies/${companyId}/settings`);
-			expect(location).toContain('connected=github');
+			expect(location).toContain(`/companies/${companySlug}/issues/`);
+			expect(location).not.toContain(companyId);
 
 			// Verify connection was created
 			const connRes = await app.request(`/api/companies/${companyId}/connections`, {
@@ -122,6 +125,24 @@ describe('connections CRUD', () => {
 			expect(connections[0].status).toBe('active');
 			expect(connections[0].scopes).toBe('repo,workflow');
 			expect(connections[0].metadata.username).toBe('test-bot');
+
+			// Verify a CEO-assigned OAuth verification ticket was created in Operations
+			const verifyRes = await db.query<{
+				identifier: string;
+				assignee_slug: string;
+				project_slug: string;
+			}>(
+				`SELECT i.identifier, ma.slug AS assignee_slug, p.slug AS project_slug
+				 FROM issues i
+				 JOIN projects p ON p.id = i.project_id
+				 LEFT JOIN member_agents ma ON ma.id = i.assignee_id
+				 WHERE i.company_id = $1 AND i.labels @> '["oauth-verification"]'::jsonb`,
+				[companyId],
+			);
+			expect(verifyRes.rows.length).toBe(1);
+			expect(verifyRes.rows[0].assignee_slug).toBe('ceo');
+			expect(verifyRes.rows[0].project_slug).toBe('operations');
+			expect(location).toContain(verifyRes.rows[0].identifier);
 		});
 
 		it('returns 400 for invalid state', async () => {

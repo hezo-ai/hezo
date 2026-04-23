@@ -23,5 +23,6 @@ export type Env = {
 		dataDir: string;
 		connectUrl: string;
 		connectPublicKey: string;
+		webUrl: string;
 	};
 };

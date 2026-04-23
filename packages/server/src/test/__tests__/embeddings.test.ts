@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
 	EMBEDDING_DIMENSIONS,
 	embedAndStore,
@@ -30,15 +30,18 @@ beforeAll(async () => {
 
 	// Create a company and project directly
 	const companyResult = await db.query<{ id: string }>(
-		"INSERT INTO companies (name, slug, issue_prefix) VALUES ('Embed Co', 'embed-co', 'EMB') RETURNING id",
+		"INSERT INTO companies (name, slug) VALUES ('Embed Co', 'embed-co') RETURNING id",
 	);
 	companyId = companyResult.rows[0].id;
 
 	const projectResult = await db.query<{ id: string }>(
-		"INSERT INTO projects (company_id, name, slug) VALUES ($1, 'Embed Project', 'embed-project') RETURNING id",
+		"INSERT INTO projects (company_id, name, slug, issue_prefix) VALUES ($1, 'Embed Project', 'embed-project', 'EP') RETURNING id",
 		[companyId],
 	);
 	projectId = projectResult.rows[0].id;
+	await db.query('INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)', [
+		projectId,
+	]);
 });
 
 afterAll(async () => {
@@ -72,18 +75,17 @@ describe('generateEmbedding', () => {
 
 describe('embedAndStore', () => {
 	it('is a no-op when model is not loaded', async () => {
-		// Create a KB doc
 		const docResult = await db.query<{ id: string }>(
-			"INSERT INTO kb_docs (company_id, title, slug, content) VALUES ($1, 'Embed Test', 'embed-test', 'content') RETURNING id",
+			`INSERT INTO documents (company_id, type, slug, title, content)
+			 VALUES ($1, 'kb_doc', 'embed-test', 'Embed Test', 'content') RETURNING id`,
 			[companyId],
 		);
 		const docId = docResult.rows[0].id;
 
-		// embedAndStore should be a no-op — embedding stays null
-		await embedAndStore(db, 'kb_docs', docId, 'Embed Test\ncontent');
+		await embedAndStore(db, 'documents', docId, 'Embed Test\ncontent');
 
 		const check = await db.query<{ embedding: unknown }>(
-			'SELECT embedding FROM kb_docs WHERE id = $1',
+			'SELECT embedding FROM documents WHERE id = $1',
 			[docId],
 		);
 		expect(check.rows[0].embedding).toBeNull();
@@ -103,72 +105,55 @@ describe('semanticSearch', () => {
 });
 
 describe('semanticSearch with pre-populated embeddings', () => {
-	let kbDocId: string;
-	let issueId: string;
-	let skillId: string;
-	let projectDocId: string;
-
 	beforeAll(async () => {
-		// Manually insert rows with embeddings to test search queries
 		const vec1 = fakeVector(0.3);
 		const vec2 = fakeVector(0.6);
 		const vec3 = fakeVector(0.9);
 		const vec4 = fakeVector(1.2);
 
-		const kbRes = await db.query<{ id: string }>(
-			`INSERT INTO kb_docs (company_id, title, slug, content, embedding)
-			 VALUES ($1, 'Architecture Guide', 'arch-guide', 'How the system architecture works', $2::vector)
-			 RETURNING id`,
+		await db.query(
+			`INSERT INTO documents (company_id, type, slug, title, content, embedding)
+			 VALUES ($1, 'kb_doc', 'arch-guide', 'Architecture Guide', 'How the system architecture works', $2::vector)`,
 			[companyId, vectorStr(vec1)],
 		);
-		kbDocId = kbRes.rows[0].id;
 
-		// Create a number for the issue
-		const numRes = await db.query<{ number: number }>('SELECT next_issue_number($1) AS number', [
-			companyId,
-		]);
+		const numRes = await db.query<{ number: number }>(
+			'SELECT next_project_issue_number($1) AS number',
+			[projectId],
+		);
 		const num = numRes.rows[0].number;
 
-		const issueRes = await db.query<{ id: string }>(
+		await db.query(
 			`INSERT INTO issues (company_id, project_id, number, identifier, title, description, embedding)
-			 VALUES ($1, $2, $3, $4, 'Fix login bug', 'Users cannot log in with SSO', $5::vector)
-			 RETURNING id`,
-			[companyId, projectId, num, `EMB-${num}`, vectorStr(vec2)],
+			 VALUES ($1, $2, $3, $4, 'Fix login bug', 'Users cannot log in with SSO', $5::vector)`,
+			[companyId, projectId, num, `EP-${num}`, vectorStr(vec2)],
 		);
-		issueId = issueRes.rows[0].id;
 
-		const skillRes = await db.query<{ id: string }>(
+		await db.query(
 			`INSERT INTO skills (company_id, name, slug, content, is_active, embedding)
-			 VALUES ($1, 'Deploy Skill', 'deploy-skill', 'How to deploy to production', true, $2::vector)
-			 RETURNING id`,
+			 VALUES ($1, 'Deploy Skill', 'deploy-skill', 'How to deploy to production', true, $2::vector)`,
 			[companyId, vectorStr(vec3)],
 		);
-		skillId = skillRes.rows[0].id;
 
-		const pdRes = await db.query<{ id: string }>(
-			`INSERT INTO project_docs (company_id, project_id, filename, content, embedding)
-			 VALUES ($1, $2, 'spec.md', 'Product spec for the project', $3::vector)
-			 RETURNING id`,
+		await db.query(
+			`INSERT INTO documents (company_id, project_id, type, slug, content, embedding)
+			 VALUES ($1, $2, 'project_doc', 'spec.md', 'Product spec for the project', $3::vector)`,
 			[companyId, projectId, vectorStr(vec4)],
 		);
-		projectDocId = pdRes.rows[0].id;
 	});
 
-	// Since the model is not loaded, semanticSearch returns [] — but we can test the
-	// SQL queries directly by inserting a query vector and running the search logic ourselves.
 	it('kb_docs query returns results with valid embeddings', async () => {
-		const queryVec = fakeVector(0.31); // close to vec1
+		const queryVec = fakeVector(0.31);
 		const r = await db.query<{ id: string; title: string; score: number }>(
 			`SELECT id, title, 1 - (embedding <=> $1::vector) AS score
-			 FROM kb_docs
-			 WHERE company_id = $2 AND embedding IS NOT NULL
+			 FROM documents
+			 WHERE type = 'kb_doc' AND company_id = $2 AND embedding IS NOT NULL
 			 ORDER BY embedding <=> $1::vector
 			 LIMIT 5`,
 			[vectorStr(queryVec), companyId],
 		);
 		expect(r.rows.length).toBeGreaterThanOrEqual(1);
 		expect(r.rows[0].title).toBe('Architecture Guide');
-		// Score is cosine similarity; with synthetic vectors it may be any value
 		expect(typeof r.rows[0].score).toBe('number');
 	});
 
@@ -203,9 +188,9 @@ describe('semanticSearch with pre-populated embeddings', () => {
 	it('project_docs query returns results', async () => {
 		const queryVec = fakeVector(1.21);
 		const r = await db.query<{ id: string; filename: string; score: number }>(
-			`SELECT id, filename, 1 - (embedding <=> $1::vector) AS score
-			 FROM project_docs
-			 WHERE company_id = $2 AND embedding IS NOT NULL
+			`SELECT id, slug AS filename, 1 - (embedding <=> $1::vector) AS score
+			 FROM documents
+			 WHERE type = 'project_doc' AND company_id = $2 AND embedding IS NOT NULL
 			 ORDER BY embedding <=> $1::vector
 			 LIMIT 5`,
 			[vectorStr(queryVec), companyId],
@@ -215,16 +200,15 @@ describe('semanticSearch with pre-populated embeddings', () => {
 	});
 
 	it('results are company-scoped', async () => {
-		// Create a second company
 		const co2 = await db.query<{ id: string }>(
-			"INSERT INTO companies (name, slug, issue_prefix) VALUES ('Other Co', 'other-co', 'OTH') RETURNING id",
+			"INSERT INTO companies (name, slug) VALUES ('Other Co', 'other-co') RETURNING id",
 		);
 		const otherCompanyId = co2.rows[0].id;
 
 		const queryVec = fakeVector(0.31);
 		const r = await db.query<{ id: string }>(
-			`SELECT id FROM kb_docs
-			 WHERE company_id = $2 AND embedding IS NOT NULL
+			`SELECT id FROM documents
+			 WHERE type = 'kb_doc' AND company_id = $2 AND embedding IS NOT NULL
 			 ORDER BY embedding <=> $1::vector
 			 LIMIT 5`,
 			[vectorStr(queryVec), otherCompanyId],

@@ -137,7 +137,7 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Repo Setup Test', template_id: typeId, issue_prefix: 'RS' }),
+		body: JSON.stringify({ name: 'Repo Setup Test', template_id: typeId }),
 	});
 	companyId = (await companyRes.json()).data.id;
 
@@ -162,7 +162,6 @@ describe('agent_types.touches_code seed', () => {
 	it('marks every builder role as touching code', async () => {
 		const builders = [
 			'engineer',
-			'architect',
 			'qa-engineer',
 			'devops-engineer',
 			'security-engineer',
@@ -179,7 +178,14 @@ describe('agent_types.touches_code seed', () => {
 	});
 
 	it('leaves non-code roles with touches_code=false', async () => {
-		const nonBuilders = ['ceo', 'product-lead', 'coach', 'researcher', 'marketing-lead'];
+		const nonBuilders = [
+			'ceo',
+			'architect',
+			'product-lead',
+			'coach',
+			'researcher',
+			'marketing-lead',
+		];
 		const res = await db.query<{ slug: string; touches_code: boolean }>(
 			`SELECT slug, touches_code FROM agent_types WHERE slug = ANY($1)`,
 			[nonBuilders],
@@ -200,7 +206,7 @@ describe('agent_types.touches_code seed', () => {
 		);
 		const bySlug = new Map(res.rows.map((r) => [r.slug, r.touches_code]));
 		expect(bySlug.get('engineer')).toBe(true);
-		expect(bySlug.get('architect')).toBe(true);
+		expect(bySlug.get('architect')).toBe(false);
 		expect(bySlug.get('ceo')).toBe(false);
 		expect(bySlug.get('product-lead')).toBe(false);
 	});
@@ -376,6 +382,66 @@ describe('JobManager repo-setup gate', () => {
 		// For non-coders, the gate is bypassed. Since project has no container,
 		// the existing logic marks it Failed.
 		expect(wakeup.rows[0].status).toBe(WakeupStatus.Failed);
+
+		manager.shutdown();
+	});
+
+	it('does not gate architect mentions on a no-repo project', async () => {
+		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const architect = (
+			(await agentsRes.json()).data as Array<{
+				id: string;
+				slug: string;
+				touches_code: boolean;
+			}>
+		).find((a) => a.slug === 'architect');
+		if (!architect) throw new Error('expected architect agent');
+		expect(architect.touches_code).toBe(false);
+
+		const issueId = await createIssue(architect.id, 'architect plan-only ticket');
+		await db.query('UPDATE projects SET designated_repo_id = NULL WHERE id = $1', [projectId]);
+		await db.query(
+			"UPDATE projects SET container_id = NULL, container_status = 'stopped' WHERE id = $1",
+			[projectId],
+		);
+
+		const manager = createJobManager();
+		const wakeupRes = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+			 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
+			 RETURNING id`,
+			[architect.id, companyId, JSON.stringify({ issue_id: issueId })],
+		);
+
+		await (
+			manager as unknown as {
+				activateAgent: (
+					id: string,
+					cid: string,
+					wid: string,
+					p: Record<string, unknown>,
+				) => Promise<void>;
+			}
+		).activateAgent(architect.id, companyId, wakeupRes.rows[0].id, { issue_id: issueId });
+
+		const wakeup = await db.query<{ status: string; payload: Record<string, unknown> }>(
+			'SELECT status, payload FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupRes.rows[0].id],
+		);
+		// Architect is no longer in the touches_code gate — the wakeup proceeds past the
+		// repo-setup defer. With no container this run short-circuits as Failed, not Deferred.
+		expect(wakeup.rows[0].status).not.toBe(WakeupStatus.Deferred);
+		expect(wakeup.rows[0].payload.reason).not.toBe('awaiting_repo_setup');
+
+		const setupComments = await db.query<{ id: string }>(
+			`SELECT id FROM issue_comments
+			 WHERE issue_id = $1 AND content_type = $2::comment_content_type
+			   AND content->>'kind' = $3`,
+			[issueId, CommentContentType.Action, ActionCommentKind.SetupRepo],
+		);
+		expect(setupComments.rows.length).toBe(0);
 
 		manager.shutdown();
 	});

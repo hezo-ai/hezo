@@ -1,4 +1,4 @@
-import { ApprovalStatus, ApprovalType } from '@hezo/shared';
+import { ApprovalStatus, ApprovalType, OAuthRequestReason } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { Check, Loader2, X } from 'lucide-react';
 import type { Approval } from '../hooks/use-approvals';
@@ -71,7 +71,6 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 			const platform = (p.platform as string) ?? 'GitHub';
 			const reason = p.reason as string | undefined;
 			const projectName = approval.payload_project_name;
-			const projectSlug = approval.payload_project_slug;
 			const action =
 				reason === 'designated_repo'
 					? 'set up the designated repo for'
@@ -80,22 +79,13 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 						: 'access';
 			return (
 				<span>
-					Requesting {platform} OAuth to {action}{' '}
-					{projectSlug && projectName ? (
+					Requesting {platform} OAuth to {action}
+					{projectName && (
 						<>
-							project{' '}
-							<EntityLink
-								to="/companies/$companyId/projects/$projectId"
-								params={{ companyId: companySlug, projectId: projectSlug }}
-							>
-								{projectName}
-							</EntityLink>
-						</>
-					) : projectName ? (
-						<>
+							{' '}
 							project <span className="font-medium">{projectName}</span>
 						</>
-					) : null}
+					)}
 				</span>
 			);
 		}
@@ -129,6 +119,7 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 		case ApprovalType.Hire: {
 			const title = (p.title as string) ?? 'a new agent';
 			const issueId = approval.payload_issue_identifier;
+			const issueProjectSlug = approval.payload_project_slug;
 			return (
 				<span>
 					Proposing to hire <span className="font-medium">{title}</span>
@@ -136,12 +127,25 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 						<>
 							{' '}
 							(
-							<EntityLink
-								to="/companies/$companyId/issues/$issueId"
-								params={{ companyId: companySlug, issueId: issueId.toLowerCase() }}
-							>
-								{issueId}
-							</EntityLink>
+							{issueProjectSlug ? (
+								<EntityLink
+									to="/companies/$companyId/projects/$projectId/issues/$issueId"
+									params={{
+										companyId: companySlug,
+										projectId: issueProjectSlug,
+										issueId: issueId.toLowerCase(),
+									}}
+								>
+									{issueId}
+								</EntityLink>
+							) : (
+								<EntityLink
+									to="/companies/$companyId/issues/$issueId"
+									params={{ companyId: companySlug, issueId: issueId.toLowerCase() }}
+								>
+									{issueId}
+								</EntityLink>
+							)}
 							)
 						</>
 					)}
@@ -217,11 +221,12 @@ interface ApprovalCardProps {
 	showCompany?: boolean;
 }
 
-export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProps) {
-	const resolveApproval = useResolveApproval();
+const baseCardClass = 'block p-4 border border-border rounded-radius-md';
+const linkCardClass = `${baseCardClass} hover:bg-bg-subtle transition-colors`;
 
+function CardBody({ approval, showCompany }: { approval: Approval; showCompany: boolean }) {
 	return (
-		<div className="p-4 border border-border rounded-radius-md" data-testid="approval-card">
+		<>
 			<div className="flex items-center gap-2 mb-1.5 flex-wrap">
 				<Badge color={typeColors[approval.type] as 'gray'}>{approval.type.replace('_', ' ')}</Badge>
 				{showCompany && approval.company_name && (
@@ -231,10 +236,69 @@ export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProp
 			{approval.requested_by_name && (
 				<p className="text-xs text-text-muted mb-1">From: {approval.requested_by_name}</p>
 			)}
-			<div className="text-sm text-text-subtle mb-3 break-words">
+			<div className="text-sm text-text-subtle break-words">
 				<ApprovalMessage approval={approval} />
 			</div>
-			<div className="flex gap-2">
+		</>
+	);
+}
+
+function resolveOauthDestination(approval: Approval) {
+	const reason = approval.payload.reason as string | undefined;
+	const companySlug = approval.company_slug;
+
+	if (reason === OAuthRequestReason.DesignatedRepo && approval.payload_issue_identifier) {
+		if (approval.payload_project_slug) {
+			return {
+				to: '/companies/$companyId/projects/$projectId/issues/$issueId' as const,
+				params: {
+					companyId: companySlug,
+					projectId: approval.payload_project_slug,
+					issueId: approval.payload_issue_identifier.toLowerCase(),
+				},
+				hash: 'setup-repo',
+			};
+		}
+		return {
+			to: '/companies/$companyId/issues/$issueId' as const,
+			params: { companyId: companySlug, issueId: approval.payload_issue_identifier.toLowerCase() },
+			hash: 'setup-repo',
+		};
+	}
+	if (reason === OAuthRequestReason.RepoAdd && approval.payload_project_slug) {
+		return {
+			to: '/companies/$companyId/projects/$projectId/settings' as const,
+			params: { companyId: companySlug, projectId: approval.payload_project_slug },
+		};
+	}
+	return {
+		to: '/companies/$companyId/settings' as const,
+		params: { companyId: companySlug },
+	};
+}
+
+export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProps) {
+	const resolveApproval = useResolveApproval();
+
+	if (approval.type === ApprovalType.OauthRequest) {
+		const dest = resolveOauthDestination(approval);
+		return (
+			<Link
+				to={dest.to as never}
+				params={dest.params as never}
+				{...(dest.hash ? { hash: dest.hash } : {})}
+				className={linkCardClass}
+				data-testid="approval-card"
+			>
+				<CardBody approval={approval} showCompany={showCompany} />
+			</Link>
+		);
+	}
+
+	return (
+		<div className={baseCardClass} data-testid="approval-card">
+			<CardBody approval={approval} showCompany={showCompany} />
+			<div className="flex gap-2 mt-3">
 				<Button
 					size="sm"
 					variant="secondary"

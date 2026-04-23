@@ -76,7 +76,6 @@ test('issue detail shows execution lock banner when locked', async ({ page }) =>
 		headers,
 		data: {
 			name: `Lock Test ${Date.now()}`,
-			issue_prefix: `LK${Date.now().toString().slice(-4)}`,
 			template_id: typeId,
 		},
 	});
@@ -129,7 +128,6 @@ test('issue detail lists every agent running concurrently on a ticket', async ({
 		headers,
 		data: {
 			name: `Concurrent Lock ${Date.now()}`,
-			issue_prefix: `CL${Date.now().toString().slice(-4)}`,
 			template_id: typeId,
 		},
 	});
@@ -171,16 +169,105 @@ test('issue detail lists every agent running concurrently on a ticket', async ({
 	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 
-	const runningLines = page.getByText('is running on this issue');
-	await expect(runningLines).toHaveCount(2, { timeout: 15000 });
+	const runningLine = page.getByTestId('running-agents-line');
+	await expect(runningLine).toHaveCount(1, { timeout: 15000 });
+	await expect(runningLine).toContainText('are running on this issue');
+	await expect(runningLine).toContainText(firstAgent.title);
+	await expect(runningLine).toContainText(secondAgent.title);
+	await expect(runningLine).toContainText(' and ');
+});
 
-	for (const title of [firstAgent.title, secondAgent.title]) {
-		const banner = page
-			.locator('div', { hasText: 'is running on this issue' })
-			.filter({ hasText: title })
-			.first();
-		await expect(banner).toBeVisible();
-	}
+test('running-agents line links each name to its run comment and scrolls into view', async ({
+	page,
+}) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const token = await getToken(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const typesRes = await page.request.get('/api/company-types', { headers });
+	const types = (await typesRes.json()).data as { id: string; name: string }[];
+	const typeId = types.find((t) => t.name === 'Startup')?.id;
+
+	const companyRes = await page.request.post('/api/companies', {
+		headers,
+		data: { name: `Running Link ${Date.now()}`, template_id: typeId },
+	});
+	const company = (await companyRes.json()).data;
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Running Link Project', description: 'Test project.' },
+	});
+	const project = (await projectRes.json()).data;
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
+	const agent = agents[0];
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: { project_id: project.id, title: 'Linked Running Issue', assignee_id: agent.id },
+	});
+	const issue = (await issueRes.json()).data;
+
+	const lockRes = await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/lock`, {
+		headers,
+		data: { member_id: agent.id },
+	});
+	expect(lockRes.ok()).toBeTruthy();
+
+	const commentId = 'bbbb0000-0000-0000-0000-000000000001';
+	const runId = 'cccc0000-0000-0000-0000-000000000001';
+	const runComment = {
+		id: commentId,
+		issue_id: issue.id,
+		content_type: 'run',
+		content: { run_id: runId, agent_id: agent.id, agent_title: agent.title },
+		chosen_option: null,
+		created_at: new Date().toISOString(),
+		author_type: 'agent',
+		author_name: agent.title,
+		author_member_id: agent.id,
+	};
+
+	// Pad with filler text comments so the run comment sits below the fold.
+	const filler = Array.from({ length: 20 }, (_, i) => ({
+		id: `dddd0000-0000-0000-0000-${String(i).padStart(12, '0')}`,
+		issue_id: issue.id,
+		content_type: 'text',
+		content: { text: `Filler comment ${i} — lorem ipsum dolor sit amet.` },
+		chosen_option: null,
+		created_at: new Date(Date.now() - (30 - i) * 60_000).toISOString(),
+		author_type: 'user',
+		author_name: 'Board',
+		author_member_id: null,
+	}));
+
+	await page.route(`**/api/companies/*/issues/*/comments**`, async (route) => {
+		if (route.request().method() !== 'GET') return route.continue();
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ data: [...filler, runComment] }),
+		});
+	});
+
+	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await waitForPageLoad(page);
+
+	const runningLine = page.getByTestId('running-agents-line');
+	await expect(runningLine).toBeVisible({ timeout: 15000 });
+
+	const link = runningLine.getByRole('link', { name: agent.title });
+	await expect(link).toHaveAttribute('href', `#comment-${commentId}`);
+
+	const targetComment = page.locator(`#comment-${commentId}`);
+	await expect(targetComment).not.toBeInViewport();
+
+	await link.click();
+	await expect(targetComment).toBeInViewport({ timeout: 5000 });
 });
 
 test('can edit issue rules and progress summary', async ({ page }) => {
@@ -239,6 +326,73 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 	const pinnedRules = page.getByTestId('pinned-rules');
 	await expect(pinnedSummary).toBeVisible();
 	await expect(pinnedRules).toBeVisible();
+});
+
+test('issue rules and progress summary render markdown formatting', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = (await agentsRes.json()).data as { id: string }[];
+	const agent = agents[0];
+
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Markdown Project', description: 'Test project.' },
+	});
+	const project = (await projectRes.json()).data;
+
+	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers,
+		data: { project_id: project.id, title: 'Markdown Test Issue', assignee_id: agent.id },
+	});
+	const issue = (await issueRes.json()).data;
+
+	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await waitForPageLoad(page);
+	await expect(page.getByRole('heading', { name: 'Markdown Test Issue' })).toBeVisible({
+		timeout: 10000,
+	});
+
+	const rulesSection = page.getByText('Rules', { exact: true }).locator('..').locator('..');
+	await rulesSection.getByText('Edit').click();
+	await rulesSection
+		.locator('textarea')
+		.fill(
+			'Use **bold** guidance.\n\n- first bullet\n- second bullet\n\nRun `bun test` before merge.',
+		);
+	await rulesSection.getByRole('button', { name: 'Save' }).click();
+
+	const pinnedRules = page.getByTestId('pinned-rules');
+	await expect(pinnedRules.locator('strong', { hasText: 'bold' })).toBeVisible({ timeout: 5000 });
+	await expect(pinnedRules.locator('ul li', { hasText: 'first bullet' })).toBeVisible();
+	await expect(pinnedRules.locator('ul li', { hasText: 'second bullet' })).toBeVisible();
+	await expect(pinnedRules.locator('code', { hasText: 'bun test' })).toBeVisible();
+
+	const summarySection = page
+		.getByText('Progress Summary', { exact: true })
+		.locator('..')
+		.locator('..');
+	await summarySection.getByText('Edit').click();
+	await summarySection
+		.locator('textarea')
+		.fill('1. Scaffolded routes\n2. Wired up DB\n3. Added tests');
+	await summarySection.getByRole('button', { name: 'Save' }).click();
+
+	const pinnedSummary = page.getByTestId('pinned-progress-summary');
+	await expect(pinnedSummary.locator('ol li', { hasText: 'Scaffolded routes' })).toBeVisible({
+		timeout: 5000,
+	});
+	await expect(pinnedSummary.locator('ol li', { hasText: 'Wired up DB' })).toBeVisible();
+	await expect(pinnedSummary.locator('ol li', { hasText: 'Added tests' })).toBeVisible();
+
+	await page.reload();
+	await waitForPageLoad(page);
+	await expect(pinnedRules.locator('strong', { hasText: 'bold' })).toBeVisible({ timeout: 15000 });
+	await expect(pinnedSummary.locator('ol li', { hasText: 'Scaffolded routes' })).toBeVisible();
 });
 
 test('issue detail shows assignee with status badge', async ({ page }) => {
@@ -367,7 +521,7 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 	await expect(dropdown.getByText('Unassigned')).toBeHidden();
 
 	// Click outside (on the main content area)
-	await page.locator('h1').click();
+	await page.getByRole('heading', { name: 'Outside Click Issue' }).click();
 
 	// Dropdown should close
 	await expect(dropdown).toBeHidden();

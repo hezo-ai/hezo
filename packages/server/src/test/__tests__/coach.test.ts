@@ -34,7 +34,6 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'Coach Test Co',
 			template_id: companyTypeId,
-			issue_prefix: 'CTC',
 		}),
 	});
 	companyId = (await companyRes.json()).data.id;
@@ -288,7 +287,7 @@ describe('company settings JSONB', () => {
 			headers: authHeader(boardToken),
 		});
 		const company = (await res.json()).data;
-		expect(company.settings).toEqual({ coach_auto_apply: false });
+		expect(company.settings).toEqual({ coach_auto_apply: false, wake_mentioner_on_reply: true });
 	});
 
 	it('can update coach_auto_apply via settings PATCH', async () => {

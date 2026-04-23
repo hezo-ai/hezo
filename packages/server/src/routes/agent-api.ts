@@ -12,6 +12,7 @@ import { resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
+import { fireCommentWakeups } from '../services/comment-wakeups';
 
 export const agentApiRoutes = new Hono<Env>();
 
@@ -166,12 +167,23 @@ agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'content_type and content are required', 400);
 	}
 
-	const result = await db.query(
+	const result = await db.query<{ id: string }>(
 		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
 		 RETURNING *`,
 		[issueId, auth.memberId, body.content_type, JSON.stringify(body.content)],
 	);
+
+	await fireCommentWakeups({
+		db,
+		issueId,
+		companyId: auth.companyId,
+		commentId: result.rows[0].id,
+		content: body.content,
+		contentType: body.content_type,
+		authorMemberId: auth.memberId,
+		authorRunId: auth.runId,
+	});
 
 	return ok(c, result.rows[0], 201);
 });

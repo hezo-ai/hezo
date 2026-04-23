@@ -83,7 +83,6 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 		for (const slug of [
 			'engineer',
 			'qa-engineer',
-			'architect',
 			'security-engineer',
 			'ui-designer',
 			'devops-engineer',
@@ -94,6 +93,32 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 				'No designated repo means no run.',
 			);
 			expect(doc, `${slug} should have no unresolved directives`).not.toContain('{{> partials/');
+		}
+
+		// Architect is repo-optional and must not carry the no-designated-repo rule.
+		const architectDoc = docs['software-development/architect.md'];
+		expect(architectDoc).toBeDefined();
+		expect(architectDoc).not.toContain('No designated repo means no run.');
+		expect(architectDoc).toContain('You can run without a designated repo.');
+
+		// Every role doc picks up the no-auto-timelines guidance.
+		const allRoleKeys = Object.keys(docs).filter(
+			(k) => !k.startsWith('_partials/') && k.endsWith('.md'),
+		);
+		expect(allRoleKeys.length).toBeGreaterThan(0);
+		for (const key of allRoleKeys) {
+			expect(docs[key], `${key} should include the no-auto-timelines rule`).toContain(
+				'Do not invent timelines, deadlines, or weekly schedules.',
+			);
+		}
+
+		// Every role doc picks up the linking-syntax guidance.
+		for (const key of allRoleKeys) {
+			expect(docs[key], `${key} should include the linking-syntax rule`).toContain(
+				'## Linking to Hezo entities',
+			);
+			expect(docs[key], `${key} should include an @doc/ example`).toContain('@doc/');
+			expect(docs[key], `${key} should include an @kb/ example`).toContain('@kb/');
 		}
 
 		// Partial files themselves are stripped from the returned map

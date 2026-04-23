@@ -30,7 +30,6 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'Secret Extended Co',
 			template_id: typeId,
-			issue_prefix: 'SEC',
 		}),
 	});
 	companyId = (await companyRes.json()).data.id;

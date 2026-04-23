@@ -15,7 +15,7 @@ function CompanyLayout() {
 		}
 	}, [error, navigate]);
 
-	useWebSocket(company?.id ?? companyId, companyId);
+	useWebSocket(company?.id, companyId);
 
 	return (
 		<div className="flex flex-col">

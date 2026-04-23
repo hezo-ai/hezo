@@ -1,3 +1,4 @@
+import type { AgentEffort } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -11,6 +12,7 @@ export interface Agent {
 	role_description: string | null;
 	summary: string | null;
 	system_prompt: string | null;
+	default_effort: AgentEffort;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
 	budget_used_cents: number;
@@ -35,6 +37,7 @@ export function useAgents(companyId: string, adminStatus?: string) {
 				`/api/companies/${companyId}/agents`,
 				adminStatus ? { admin_status: adminStatus } : undefined,
 			),
+		enabled: !!companyId,
 	});
 }
 

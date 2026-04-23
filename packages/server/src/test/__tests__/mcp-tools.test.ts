@@ -41,7 +41,6 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'MCP Tool Test Co',
 			template_id: typeId,
-			issue_prefix: 'MTC',
 		}),
 	});
 	companyId = (await companyRes.json()).data.id;
@@ -72,7 +71,6 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'MCP Tool Test Co B',
 			template_id: typeId,
-			issue_prefix: 'MTCB',
 		}),
 	});
 	companyBId = (await companyBRes.json()).data.id;
@@ -230,7 +228,7 @@ describe('MCP tool handlers: data queries via DB', () => {
 	it('get_company returns correct company', async () => {
 		const r = await db.query('SELECT * FROM companies WHERE id = $1', [companyId]);
 		expect(r.rows.length).toBe(1);
-		expect((r.rows[0] as any).issue_prefix).toBe('MTC');
+		expect((r.rows[0] as any).name).toBe('MCP Tool Test Co');
 	});
 
 	it('list_issues returns issues for company', async () => {
@@ -255,16 +253,13 @@ describe('MCP tool handlers: data queries via DB', () => {
 	});
 
 	it('create_issue inserts correctly', async () => {
-		const companyResult = await db.query<{ issue_prefix: string }>(
-			'SELECT issue_prefix FROM companies WHERE id = $1',
-			[companyId],
+		const meta = await db.query<{ issue_prefix: string; number: number }>(
+			`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
+			 FROM projects p WHERE p.id = $1`,
+			[projectId],
 		);
-		const numberResult = await db.query<{ number: number }>(
-			'SELECT next_issue_number($1) AS number',
-			[companyId],
-		);
-		const num = numberResult.rows[0].number;
-		const identifier = `${companyResult.rows[0].issue_prefix}-${num}`;
+		const num = meta.rows[0].number;
+		const identifier = `${meta.rows[0].issue_prefix}-${num}`;
 
 		const r = await db.query(
 			`INSERT INTO issues (company_id, project_id, number, identifier, title, description, status, priority)
@@ -273,7 +268,7 @@ describe('MCP tool handlers: data queries via DB', () => {
 		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).title).toBe('Direct DB Issue');
-		expect((r.rows[0] as any).identifier).toMatch(/^MTC-/);
+		expect((r.rows[0] as any).identifier).toMatch(/^TP-/);
 	});
 
 	it('update_issue changes status', async () => {
@@ -306,11 +301,12 @@ describe('MCP tool handlers: data queries via DB', () => {
 
 	it('create_project inserts correctly', async () => {
 		const r = await db.query(
-			"INSERT INTO projects (company_id, name, slug, description) VALUES ($1, 'MCP Project', 'mcp-project', 'test') RETURNING *",
+			"INSERT INTO projects (company_id, name, slug, issue_prefix, description) VALUES ($1, 'MCP Project', 'mcp-project', 'MCPP', 'test') RETURNING *",
 			[companyId],
 		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).name).toBe('MCP Project');
+		expect((r.rows[0] as any).issue_prefix).toBe('MCPP');
 	});
 
 	it('list_approvals returns pending approvals', async () => {
@@ -330,7 +326,7 @@ describe('MCP tool handlers: data queries via DB', () => {
 
 	it('list_kb_docs returns kb docs for company', async () => {
 		const r = await db.query(
-			'SELECT id, title, slug, updated_at FROM kb_docs WHERE company_id = $1 ORDER BY title',
+			"SELECT id, title, slug, updated_at FROM documents WHERE type = 'kb_doc' AND company_id = $1 ORDER BY title",
 			[companyId],
 		);
 		// May have kb docs from template, or may be empty — just verify query works
@@ -378,6 +374,88 @@ describe('MCP endpoint: tool call integration', () => {
 		// If auth injection works, we get companies; if not, we get an error
 		// Either way the endpoint responds correctly
 		expect(data).toBeDefined();
+	});
+
+	async function callUpdateIssueAsAgent(args: Record<string, unknown>): Promise<unknown> {
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: { name: 'update_issue', arguments: args },
+				id: 1,
+			}),
+		});
+		const body = (await res.json()) as {
+			result: { content: Array<{ type: string; text: string }> };
+		};
+		return JSON.parse(body.result.content[0].text);
+	}
+
+	it('update_issue via MCP as agent can set status=closed', async () => {
+		const created = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Agent MCP close target',
+			assignee_id: agentId,
+		})) as { id: string };
+
+		const result = (await callUpdateIssueAsAgent({
+			company_id: companyId,
+			issue_id: created.id,
+			status: 'closed',
+		})) as { status?: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe('closed');
+	});
+
+	it('update_issue via MCP as agent cannot re-open a closed issue', async () => {
+		const created = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Agent MCP reopen target',
+			assignee_id: agentId,
+		})) as { id: string };
+
+		// Board closes the issue first.
+		await callToolViaMcp('update_issue', {
+			company_id: companyId,
+			issue_id: created.id,
+			status: 'closed',
+		});
+
+		const result = (await callUpdateIssueAsAgent({
+			company_id: companyId,
+			issue_id: created.id,
+			status: 'open',
+		})) as { error?: string };
+		expect(result.error).toMatch(/board/i);
+
+		const bypass = (await callUpdateIssueAsAgent({
+			company_id: companyId,
+			issue_id: created.id,
+			status: 'in_progress',
+		})) as { error?: string };
+		expect(bypass.error).toMatch(/board/i);
+	});
+
+	it('update_issue via MCP as agent can still set non-terminal statuses', async () => {
+		const created = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Agent MCP progress target',
+			assignee_id: agentId,
+		})) as { id: string };
+
+		const result = (await callUpdateIssueAsAgent({
+			company_id: companyId,
+			issue_id: created.id,
+			status: 'in_progress',
+		})) as { status?: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe('in_progress');
 	});
 });
 
@@ -446,8 +524,8 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 
 	it('upsert_kb_doc inserts a new doc', async () => {
 		const r = await db.query(
-			`INSERT INTO kb_docs (company_id, title, slug, content)
-			 VALUES ($1, 'MCP KB Doc', 'mcp-kb-doc', 'Created via MCP')
+			`INSERT INTO documents (company_id, type, slug, title, content)
+			 VALUES ($1, 'kb_doc', 'mcp-kb-doc', 'MCP KB Doc', 'Created via MCP')
 			 RETURNING *`,
 			[companyId],
 		);
@@ -456,10 +534,10 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 	});
 
 	it('get_kb_doc query returns doc by slug', async () => {
-		const r = await db.query('SELECT * FROM kb_docs WHERE company_id = $1 AND slug = $2', [
-			companyId,
-			'mcp-kb-doc',
-		]);
+		const r = await db.query(
+			"SELECT * FROM documents WHERE type = 'kb_doc' AND company_id = $1 AND slug = $2",
+			[companyId, 'mcp-kb-doc'],
+		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).title).toBe('MCP KB Doc');
 		expect((r.rows[0] as any).content).toBe('Created via MCP');
@@ -502,31 +580,31 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 
 	it('write_project_doc inserts correctly', async () => {
 		const r = await db.query(
-			`INSERT INTO project_docs (company_id, project_id, filename, content)
-			 VALUES ($1, $2, 'test-doc.md', '# Test Document')
-			 ON CONFLICT (project_id, filename) DO UPDATE SET content = EXCLUDED.content
+			`INSERT INTO documents (company_id, project_id, type, slug, content)
+			 VALUES ($1, $2, 'project_doc', 'test-doc.md', '# Test Document')
 			 RETURNING *`,
 			[companyId, projectId],
 		);
 		expect(r.rows.length).toBe(1);
-		expect((r.rows[0] as any).filename).toBe('test-doc.md');
+		expect((r.rows[0] as any).slug).toBe('test-doc.md');
 	});
 
 	it('read_project_doc query returns doc content', async () => {
-		const r = await db.query('SELECT * FROM project_docs WHERE project_id = $1 AND filename = $2', [
-			projectId,
-			'test-doc.md',
-		]);
+		const r = await db.query(
+			"SELECT * FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug = $2",
+			[projectId, 'test-doc.md'],
+		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).content).toBe('# Test Document');
 	});
 
 	it('list_project_docs query returns docs for project', async () => {
-		const r = await db.query('SELECT * FROM project_docs WHERE project_id = $1 ORDER BY filename', [
-			projectId,
-		]);
+		const r = await db.query(
+			"SELECT * FROM documents WHERE type = 'project_doc' AND project_id = $1 ORDER BY slug",
+			[projectId],
+		);
 		expect(r.rows.length).toBeGreaterThanOrEqual(1);
-		const filenames = r.rows.map((d: any) => d.filename);
+		const filenames = r.rows.map((d: any) => d.slug);
 		expect(filenames).toContain('test-doc.md');
 	});
 

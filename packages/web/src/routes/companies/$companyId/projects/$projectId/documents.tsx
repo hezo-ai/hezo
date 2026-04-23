@@ -2,14 +2,17 @@ import { createFileRoute } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { type DocItem, DocsLibrary } from '../../../../../components/docs-library';
+import { MentionTextarea } from '../../../../../components/mention-textarea';
+import { RevisionsPanel } from '../../../../../components/revisions-panel';
 import { Button } from '../../../../../components/ui/button';
 import { Input } from '../../../../../components/ui/input';
-import { Textarea } from '../../../../../components/ui/textarea';
 import {
 	useDeleteProjectDoc,
 	useProjectAgentsMd,
 	useProjectDoc,
+	useProjectDocRevisions,
 	useProjectDocs,
+	useRestoreProjectDocRevision,
 	useUpdateProjectAgentsMd,
 	useUpdateProjectDoc,
 } from '../../../../../hooks/use-project-docs';
@@ -89,6 +92,8 @@ function ProjectDocumentsPage() {
 
 	return (
 		<DocsLibrary
+			companyId={companyId}
+			projectSlug={projectId}
 			items={items}
 			isLoadingList={isLoadingList}
 			selectedKey={file ?? null}
@@ -108,6 +113,8 @@ function ProjectDocumentsPage() {
 			isCreating={isCreating}
 			newForm={
 				<NewProjectDocForm
+					companyId={companyId}
+					projectSlug={projectId}
 					onCancel={() => setIsCreating(false)}
 					onCreate={async (filename, content) => {
 						await updateDoc.mutateAsync({ filename, content });
@@ -120,17 +127,46 @@ function ProjectDocumentsPage() {
 					isPending={updateDoc.isPending}
 				/>
 			}
+			viewerExtras={
+				file && !isAgentsMd ? (
+					<ProjectDocRevisionsPanel companyId={companyId} projectId={projectId} filename={file} />
+				) : null
+			}
 			emptyTitle="Select a document"
 			emptyDescription="Choose a project document from the list to view or edit it."
 		/>
 	);
 }
 
+function ProjectDocRevisionsPanel({
+	companyId,
+	projectId,
+	filename,
+}: {
+	companyId: string;
+	projectId: string;
+	filename: string;
+}) {
+	const { data: revisions } = useProjectDocRevisions(companyId, projectId, filename);
+	const restore = useRestoreProjectDocRevision(companyId, projectId, filename);
+	return (
+		<RevisionsPanel
+			revisions={revisions}
+			onRestore={(rev) => restore.mutateAsync(rev)}
+			isRestoring={restore.isPending}
+		/>
+	);
+}
+
 function NewProjectDocForm({
+	companyId,
+	projectSlug,
 	onCancel,
 	onCreate,
 	isPending,
 }: {
+	companyId: string;
+	projectSlug: string;
 	onCancel: () => void;
 	onCreate: (filename: string, content: string) => Promise<void>;
 	isPending: boolean;
@@ -162,7 +198,9 @@ function NewProjectDocForm({
 				onChange={(e) => setFilename(e.target.value)}
 				required
 			/>
-			<Textarea
+			<MentionTextarea
+				companyId={companyId}
+				projectSlug={projectSlug}
 				label="Content (Markdown)"
 				value={content}
 				onChange={(e) => setContent(e.target.value)}

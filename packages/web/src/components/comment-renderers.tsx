@@ -47,9 +47,18 @@ interface RenderProps {
 	onChooseOption?: (commentId: string, chosenId: string) => void;
 	companyId?: string;
 	projectId?: string;
+	projectSlug?: string;
+	issueId?: string;
 }
 
-export function CommentRenderer({ comment, onChooseOption, companyId, projectId }: RenderProps) {
+export function CommentRenderer({
+	comment,
+	onChooseOption,
+	companyId,
+	projectId,
+	projectSlug,
+	issueId,
+}: RenderProps) {
 	switch (comment.content_type) {
 		case 'run':
 			return <RunComment comment={comment} companyId={companyId} />;
@@ -62,9 +71,16 @@ export function CommentRenderer({ comment, onChooseOption, companyId, projectId 
 		case 'system':
 			return <SystemComment comment={comment} />;
 		case 'action':
-			return <ActionComment comment={comment} companyId={companyId} projectId={projectId} />;
+			return (
+				<ActionComment
+					comment={comment}
+					companyId={companyId}
+					projectId={projectId}
+					issueId={issueId}
+				/>
+			);
 		default:
-			return <TextComment comment={comment} />;
+			return <TextComment comment={comment} companyId={companyId} projectSlug={projectSlug} />;
 	}
 }
 
@@ -72,10 +88,12 @@ function ActionComment({
 	comment,
 	companyId,
 	projectId,
+	issueId,
 }: {
 	comment: CommentData;
 	companyId?: string;
 	projectId?: string;
+	issueId?: string;
 }) {
 	const content = typeof comment.content === 'object' ? comment.content : {};
 	const kind: string = content.kind ?? '';
@@ -124,6 +142,7 @@ function ActionComment({
 			<RepoSetupWizard
 				companyId={companyId}
 				projectId={projectId}
+				issueId={issueId}
 				open={wizardOpen}
 				onOpenChange={setWizardOpen}
 			/>
@@ -137,7 +156,7 @@ function runStatusLabel(status: string): string {
 }
 
 function runStatusDotClass(status: string): string {
-	if (status === 'running' || status === 'queued') return 'bg-accent-yellow animate-pulse';
+	if (status === 'running' || status === 'queued') return 'bg-accent-amber animate-pulse';
 	if (status === 'succeeded') return 'bg-accent-green';
 	if (status === 'failed' || status === 'timed_out') return 'bg-accent-red';
 	return 'bg-text-subtle';
@@ -184,8 +203,12 @@ function RunComment({ comment, companyId }: { comment: CommentData; companyId?: 
 					{createdIssues.map((issue) => (
 						<Link
 							key={issue.id}
-							to="/companies/$companyId/issues/$issueId"
-							params={{ companyId, issueId: issue.identifier.toLowerCase() }}
+							to="/companies/$companyId/projects/$projectId/issues/$issueId"
+							params={{
+								companyId,
+								projectId: issue.project_slug,
+								issueId: issue.identifier.toLowerCase(),
+							}}
 							className="text-xs text-accent-blue-text hover:underline self-start"
 						>
 							{issue.identifier} — {issue.title}
@@ -204,12 +227,24 @@ function RunComment({ comment, companyId }: { comment: CommentData; companyId?: 
 	);
 }
 
-function TextComment({ comment }: { comment: CommentData }) {
+function TextComment({
+	comment,
+	companyId,
+	projectSlug,
+}: {
+	comment: CommentData;
+	companyId?: string;
+	projectSlug?: string;
+}) {
 	const content =
 		typeof comment.content === 'object'
 			? comment.content.text || JSON.stringify(comment.content)
 			: String(comment.content);
-	return <MarkdownProse testId="text-comment-body">{content}</MarkdownProse>;
+	return (
+		<MarkdownProse testId="text-comment-body" companyId={companyId} projectSlug={projectSlug}>
+			{content}
+		</MarkdownProse>
+	);
 }
 
 function SystemComment({ comment }: { comment: CommentData }) {

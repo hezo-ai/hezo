@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Copy, ExternalLink, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { RevisionsPanel } from '../../../../components/revisions-panel';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
@@ -12,7 +13,12 @@ import {
 	useStartConnection,
 } from '../../../../hooks/use-connections';
 import { useCosts } from '../../../../hooks/use-costs';
-import { usePreferences, useUpdatePreferences } from '../../../../hooks/use-preferences';
+import {
+	usePreferenceRevisions,
+	usePreferences,
+	useRestorePreferenceRevision,
+	useUpdatePreferences,
+} from '../../../../hooks/use-preferences';
 import { useCreateSecret, useDeleteSecret, useSecrets } from '../../../../hooks/use-secrets';
 import {
 	useCreateSkill,
@@ -23,6 +29,7 @@ import {
 
 const settingsNav = [
 	{ id: 'general', label: 'General' },
+	{ id: 'automations', label: 'Automations' },
 	{ id: 'connections', label: 'Connected platforms' },
 	{ id: 'secrets', label: 'Secrets vault' },
 	{ id: 'api-keys', label: 'API keys' },
@@ -64,6 +71,9 @@ function SettingsPage() {
 			<div className="space-y-8">
 				<div id="settings-general">
 					<GeneralSection companyId={companyId} />
+				</div>
+				<div id="settings-automations">
+					<AutomationsSection companyId={companyId} />
 				</div>
 				<div id="settings-connections">
 					<ConnectionsSection companyId={companyId} />
@@ -115,14 +125,6 @@ function GeneralSection({ companyId }: { companyId: string }) {
 					</span>
 					<div className="text-[13px]">{company?.name ?? '—'}</div>
 				</div>
-				{company?.issue_prefix && (
-					<div>
-						<span className="text-xs font-medium uppercase tracking-wider text-text-muted block mb-1.5">
-							Identifier prefix
-						</span>
-						<div className="text-[13px] font-mono">{company.issue_prefix}</div>
-					</div>
-				)}
 				{company?.description && (
 					<div>
 						<span className="text-xs font-medium uppercase tracking-wider text-text-muted block mb-1.5">
@@ -132,6 +134,43 @@ function GeneralSection({ companyId }: { companyId: string }) {
 					</div>
 				)}
 			</div>
+		</section>
+	);
+}
+
+function AutomationsSection({ companyId }: { companyId: string }) {
+	const { data: company } = useCompany(companyId);
+	const updateCompany = useUpdateCompany(companyId);
+	const wakeOnReply = company?.settings?.wake_mentioner_on_reply ?? true;
+
+	async function toggleWakeOnReply(next: boolean) {
+		await updateCompany.mutateAsync({ settings: { wake_mentioner_on_reply: next } });
+	}
+
+	return (
+		<section>
+			<SectionHeader
+				title="Automations"
+				desc="Per-company toggles for agent coordination behavior."
+			/>
+			<label className="flex items-start gap-3 text-[13px] max-w-xl cursor-pointer select-none">
+				<input
+					type="checkbox"
+					className="mt-0.5"
+					checked={wakeOnReply}
+					disabled={!company || updateCompany.isPending}
+					onChange={(e) => toggleWakeOnReply(e.target.checked)}
+				/>
+				<span>
+					<span className="font-medium block">Wake mentioner on reply</span>
+					<span className="text-text-muted block mt-0.5">
+						When an agent replies to a comment that @-mentioned it, automatically wake the original
+						commenter so they see the response right away. Disable to have the original commenter
+						pick up accumulated replies on their next heartbeat instead — useful when a single
+						comment @-mentions several agents and you'd rather batch their responses.
+					</span>
+				</span>
+			</label>
 		</section>
 	);
 }
@@ -373,7 +412,9 @@ function BudgetSection({ companyId }: { companyId: string }) {
 
 function PreferencesSection({ companyId }: { companyId: string }) {
 	const { data: prefs } = usePreferences(companyId);
+	const { data: revisions } = usePreferenceRevisions(companyId);
 	const updatePrefs = useUpdatePreferences(companyId);
+	const restorePrefs = useRestorePreferenceRevision(companyId);
 	const [content, setContent] = useState('');
 	const [editing, setEditing] = useState(false);
 
@@ -414,9 +455,18 @@ function PreferencesSection({ companyId }: { companyId: string }) {
 					</div>
 				</div>
 			) : (
-				<p className="text-[13px] text-text-muted whitespace-pre-wrap">
-					{prefs?.content || 'No preferences set.'}
-				</p>
+				<>
+					<p className="text-[13px] text-text-muted whitespace-pre-wrap">
+						{prefs?.content || 'No preferences set.'}
+					</p>
+					{prefs && (
+						<RevisionsPanel
+							revisions={revisions}
+							onRestore={(rev) => restorePrefs.mutateAsync(rev)}
+							isRestoring={restorePrefs.isPending}
+						/>
+					)}
+				</>
 			)}
 		</section>
 	);

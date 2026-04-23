@@ -2,6 +2,7 @@ import { AgentAdminStatus, AgentRuntimeStatus } from '@hezo/shared';
 import { createFileRoute, Link, Outlet, useMatchRoute } from '@tanstack/react-router';
 import { ArrowLeft } from 'lucide-react';
 import { Badge } from '../../../../../components/ui/badge';
+import { ExpandableText } from '../../../../../components/ui/expandable-text';
 import { useAgent } from '../../../../../hooks/use-agents';
 
 const RUNTIME_BADGE: Record<string, { color: string; label: string }> = {
@@ -60,11 +61,10 @@ function AgentLayout() {
 				data-testid="agent-summary"
 				className="rounded-lg border border-border-subtle bg-bg-subtle p-4 text-sm leading-relaxed text-text mb-6"
 			>
-				{agent.summary?.trim() ? (
-					agent.summary
-				) : (
-					<span className="italic text-text-muted">Description being generated…</span>
-				)}
+				<ExpandableText
+					text={agent.summary ?? ''}
+					placeholder={<span className="italic text-text-muted">Description being generated…</span>}
+				/>
 			</div>
 
 			<div className="flex gap-1 border-b border-border mb-6 mt-6">

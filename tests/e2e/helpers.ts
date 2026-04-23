@@ -98,7 +98,6 @@ export async function createCompanyWithAgents(page: Page) {
 		headers,
 		data: {
 			name: `Test Co ${uid}`,
-			issue_prefix: `T${uid.slice(-6).toUpperCase()}`,
 			template_id: typeId,
 		},
 	});

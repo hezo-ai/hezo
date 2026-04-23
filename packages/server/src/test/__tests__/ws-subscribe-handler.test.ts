@@ -32,7 +32,7 @@ async function seedCompanyWithProject(
 	);
 	const userId = user.rows[0].id;
 	const company = await db.query<{ id: string }>(
-		"INSERT INTO companies (name, slug, issue_prefix) VALUES ('C', 'c', 'CCC') RETURNING id",
+		"INSERT INTO companies (name, slug) VALUES ('C', 'c') RETURNING id",
 	);
 	const companyId = company.rows[0].id;
 	const member = await db.query<{ id: string }>(
@@ -46,8 +46,8 @@ async function seedCompanyWithProject(
 	]);
 
 	const project = await db.query<{ id: string }>(
-		`INSERT INTO projects (company_id, name, slug, container_id, container_status)
-		 VALUES ($1, 'P', 'p', $2, $3::container_status) RETURNING id`,
+		`INSERT INTO projects (company_id, name, slug, issue_prefix, container_id, container_status)
+		 VALUES ($1, 'P', 'p', 'P', $2, $3::container_status) RETURNING id`,
 		[companyId, opts.container_id ?? null, opts.container_status ?? null],
 	);
 	return { userId, companyId, projectId: project.rows[0].id };

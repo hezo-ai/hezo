@@ -27,7 +27,7 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Orphan Test Co',
-			issue_prefix: 'OTC',
+
 			template_id: companyTypeId,
 		}),
 	});

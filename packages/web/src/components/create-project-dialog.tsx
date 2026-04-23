@@ -13,14 +13,31 @@ interface CreateProjectDialogProps {
 	onOpenChange: (v: boolean) => void;
 }
 
+function derivePrefix(name: string): string {
+	const cleaned = name.trim().replace(/[^a-zA-Z0-9\s]/g, '');
+	const words = cleaned.split(/\s+/).filter(Boolean);
+	if (words.length === 0) return '';
+	if (words.length === 1) return words[0].substring(0, 2).toUpperCase();
+	return words
+		.map((w) => w[0])
+		.join('')
+		.substring(0, 4)
+		.toUpperCase();
+}
+
 export function CreateProjectDialog({ companyId, open, onOpenChange }: CreateProjectDialogProps) {
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [initialPrd, setInitialPrd] = useState('');
 	const [prdFilename, setPrdFilename] = useState<string | null>(null);
+	const [issuePrefix, setIssuePrefix] = useState('');
+	const [prefixTouched, setPrefixTouched] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const createProject = useCreateProject(companyId);
 	const navigate = useNavigate();
+
+	const derivedPrefix = derivePrefix(name);
+	const effectivePrefix = prefixTouched ? issuePrefix : derivedPrefix;
 
 	const handleFileUpload = useCallback((file: File) => {
 		const reader = new FileReader();
@@ -37,21 +54,26 @@ export function CreateProjectDialog({ companyId, open, onOpenChange }: CreatePro
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!name.trim() || !description.trim()) return;
+		const customPrefix = prefixTouched ? issuePrefix.trim().toUpperCase() : undefined;
 		const project = await createProject.mutateAsync({
 			name: name.trim(),
 			description: description.trim(),
 			initial_prd: initialPrd.trim() || undefined,
+			issue_prefix: customPrefix && customPrefix.length > 0 ? customPrefix : undefined,
 		});
 		onOpenChange(false);
 		setName('');
 		setDescription('');
 		setInitialPrd('');
 		setPrdFilename(null);
+		setIssuePrefix('');
+		setPrefixTouched(false);
 		if (project.planning_issue_identifier) {
 			navigate({
-				to: '/companies/$companyId/issues/$issueId',
+				to: '/companies/$companyId/projects/$projectId/issues/$issueId',
 				params: {
 					companyId,
+					projectId: project.slug,
 					issueId: project.planning_issue_identifier.toLowerCase(),
 				},
 			});
@@ -71,6 +93,18 @@ export function CreateProjectDialog({ companyId, open, onOpenChange }: CreatePro
 					</p>
 					<form onSubmit={handleSubmit} className="flex flex-col gap-4">
 						<Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
+						<Input
+							label="Issue prefix"
+							value={effectivePrefix}
+							onChange={(e) => {
+								setPrefixTouched(true);
+								setIssuePrefix(e.target.value.toUpperCase());
+							}}
+							placeholder={derivedPrefix || 'Auto-derived from name'}
+							maxLength={4}
+							pattern="[A-Z][A-Z0-9]{1,3}"
+							title="2–4 uppercase alphanumeric characters starting with a letter"
+						/>
 						<Textarea
 							label="Description"
 							value={description}

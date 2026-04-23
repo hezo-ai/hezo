@@ -125,6 +125,127 @@ test.describe('Issue Comments', () => {
 		await expect(author).toHaveText('Board');
 	});
 
+	test('effort dropdown marks the agent default and omits it from the submit body', async ({
+		page,
+	}) => {
+		await authenticate(page);
+		const { company, issue, agent } = await createProjectAndIssue(page);
+
+		const expectedDefault =
+			agent.slug === 'ceo'
+				? 'Max (ultrathink)'
+				: {
+						minimal: 'Minimal',
+						low: 'Low',
+						medium: 'Medium',
+						high: 'High',
+						max: 'Max (ultrathink)',
+					}[agent.default_effort as 'minimal' | 'low' | 'medium' | 'high' | 'max'];
+
+		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await waitForPageLoad(page);
+
+		const select = page.getByLabel('Reasoning effort for the agent run triggered by this comment');
+		await expect(select).toBeVisible({ timeout: 10000 });
+
+		const labels = await select.locator('option').allTextContents();
+		const withSuffix = labels.filter((l) => l.endsWith(' (default)'));
+		expect(withSuffix).toHaveLength(1);
+		expect(withSuffix[0]).toBe(`${expectedDefault} (default)`);
+		expect(labels).not.toContain('Default');
+
+		const postBodies: Array<Record<string, unknown>> = [];
+		page.on('request', (req) => {
+			if (
+				req.method() === 'POST' &&
+				/\/api\/companies\/[^/]+\/issues\/[^/]+\/comments$/.test(req.url())
+			) {
+				postBodies.push(req.postDataJSON());
+			}
+		});
+
+		await page.getByPlaceholder('Add a comment...').fill('default-effort test');
+		await page.getByRole('button', { name: 'Comment', exact: true }).click();
+		await expect(page.getByText('default-effort test')).toBeVisible({ timeout: 5000 });
+
+		expect(postBodies).toHaveLength(1);
+		expect(postBodies[0]).not.toHaveProperty('effort');
+	});
+
+	test('agent mentions render as bold anchor-colored links to agent page', async ({ page }) => {
+		await authenticate(page);
+		const { company, issue, headers, agent } = await createProjectAndIssue(page);
+
+		const body = `Hey @${agent.slug} please check this. Also @not-a-real-agent-xyz stays plain.`;
+		await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+			headers,
+			data: { content_type: 'text', content: { text: body } },
+		});
+
+		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await waitForPageLoad(page);
+
+		const comment = page.getByTestId('text-comment-body').first();
+		await expect(comment).toBeVisible({ timeout: 5000 });
+
+		const mentionLink = comment.getByTestId('agent-mention-link');
+		await expect(mentionLink).toHaveText(`@${agent.slug}`);
+		await expect(mentionLink).toHaveAttribute(
+			'href',
+			`/companies/${company.slug}/agents/${agent.slug}`,
+		);
+		await expect(mentionLink).toHaveClass(/font-semibold/);
+		await expect(mentionLink).toHaveClass(/text-accent-blue-text/);
+
+		await expect(comment).toContainText('@not-a-real-agent-xyz');
+		await expect(comment.locator('a', { hasText: '@not-a-real-agent-xyz' })).toHaveCount(0);
+
+		await mentionLink.click();
+		await expect(page).toHaveURL(
+			new RegExp(`/companies/${company.slug}/agents/${agent.slug}(/|$)`),
+		);
+	});
+
+	test('wake-assignee checkbox is visible, default-checked, and reflected in submit body', async ({
+		page,
+	}) => {
+		await authenticate(page);
+		const { company, issue } = await createProjectAndIssue(page);
+
+		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await waitForPageLoad(page);
+
+		const checkbox = page.getByRole('checkbox', { name: 'Wake assignee on submit' });
+		await expect(checkbox).toBeVisible({ timeout: 10000 });
+		await expect(checkbox).toBeChecked();
+
+		const postBodies: Array<Record<string, unknown>> = [];
+		page.on('request', (req) => {
+			if (
+				req.method() === 'POST' &&
+				/\/api\/companies\/[^/]+\/issues\/[^/]+\/comments$/.test(req.url())
+			) {
+				postBodies.push(req.postDataJSON());
+			}
+		});
+
+		await page.getByPlaceholder('Add a comment...').fill('wake-assignee on');
+		await page.getByRole('button', { name: 'Comment', exact: true }).click();
+		await expect(page.getByText('wake-assignee on')).toBeVisible({ timeout: 5000 });
+
+		await expect(checkbox).toBeChecked();
+		await checkbox.uncheck();
+		await page.getByPlaceholder('Add a comment...').fill('wake-assignee off');
+		await page.getByRole('button', { name: 'Comment', exact: true }).click();
+		await expect(page.getByText('wake-assignee off')).toBeVisible({ timeout: 5000 });
+
+		expect(postBodies).toHaveLength(2);
+		expect(postBodies[0].wake_assignee).toBe(true);
+		expect(postBodies[1].wake_assignee).toBe(false);
+
+		await expect(checkbox).toBeChecked();
+	});
+
 	test('comment items render as bordered cards with a tinted header', async ({ page }) => {
 		await authenticate(page);
 		const { company, issue, headers } = await createProjectAndIssue(page);

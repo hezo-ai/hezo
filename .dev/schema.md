@@ -13,13 +13,13 @@
 | `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget, `default_summary` (pre-generated description loaded from `packages/server/src/db/agent-summaries.json`), `touches_code` (default capability flag — seeded true for builder roles, copied onto `member_agents` at hire time). Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
 | `company_types` | Company blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers, `default_team_summary` (pre-generated team collaboration description). | Referenced by company_team_types. |
 | `company_type_agent_types` | Join table linking company types to agent types. Stores org chart hierarchy (reports_to_slug) and per-company-type config overrides (runtime type, heartbeat, budget). | belongs to company_type + agent_type |
-| `companies` | Top-level tenant. Has `issue_prefix`, `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), company-level budget, `team_summary` (auto-generated team collaboration description, ≤20 lines). | Parent of everything. |
+| `companies` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), company-level budget, `team_summary` (auto-generated team collaboration description, ≤20 lines). | Parent of everything. |
 | `company_team_types` | Many-to-many join table linking companies to the team types they were created from. | belongs to company + company_type |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
 | `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
-| `projects` | Group of related work under a company. Has Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Operations) that cannot be deleted. | belongs to company |
+| `projects` | Group of related work under a company. Has `issue_prefix` (2–4 uppercase chars used for issue identifiers), Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Operations) that cannot be deleted. | belongs to company |
 | `repos` | Git repo (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. | belongs to project |
-| `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `ACME-42`). Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to company + project, assigned to member |
+| `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `OP-42`) built from the project's `issue_prefix` + per-project number. Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to company + project, assigned to member |
 | `issue_dependencies` | Many-to-many blocking relationships between issues. | links issue ↔ issue |
 | `issue_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. Includes execution-type comments auto-created when agent runs complete. | belongs to issue |
 | `issue_attachments` | Links uploaded files to issues. | links asset ↔ issue |
@@ -29,14 +29,13 @@
 | `approvals` | Pending board decisions. Polymorphic payload. | belongs to company, requested by member_agent |
 | `cost_entries` | Immutable spend records per agent per issue. | belongs to company + member_agent, optionally issue/project |
 | `audit_log` | Append-only. Never updated or deleted. | belongs to company |
-| `kb_docs` | Knowledge base documents. Markdown, company-scoped, slug-addressable. AGENTS.md is a special KB doc written to disk. | belongs to company |
-| `kb_doc_revisions` | Version history for KB documents. | belongs to kb_doc |
+| `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `kb_doc` / `company_preferences`). Project docs scope by `(project_id, slug)` where slug is the filename; KB docs scope by `(company_id, slug)`; preferences enforce one row per company via partial unique index. Embeddings live on this table for KB and project docs. | belongs to company, optionally project |
+| `document_revisions` | Snapshot of prior content created on every change. `change_summary` captures intent; `Restored to revision N` is set automatically by the rollback path. | belongs to document |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to company |
 | `company_ssh_keys` | Generated SSH key pairs per company. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to company |
 | `execution_locks` | Issue work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to issue + member_agent |
 | `skills` | Reusable instruction documents (DB-backed). Tags, content, source URL, creator tracking, embeddings. | belongs to company |
 | `skill_revisions` | Version history for skills. | belongs to skill |
-| `project_docs` | Project documentation (PRD, spec, etc.). DB-backed with embeddings. | belongs to project + company |
 | `system_prompt_revisions` | History of agent system prompt changes. Tracks old/new prompt, change summary, author. Linked to approval if change required approval. | belongs to member_agent + company |
 | `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. | belongs to member_agent + company |
 | `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the issue being worked on via `issue_id`. | belongs to member_agent + company, optionally issue |
@@ -45,10 +44,8 @@
 | `plugins` | Installed plugins. Manifest, status, config. | belongs to company |
 | `plugin_state` | Scoped key-value store for plugin data. | belongs to plugin + company |
 | `plugin_jobs` | Cron job declarations for plugins. | belongs to plugin |
-| `company_preferences` | Company-level preference doc. Agents observe and record board working style preferences. | belongs to company |
-| `company_preference_revisions` | Version history for company preferences. | belongs to company_preference |
 | `instance_user_roles` | Instance-level admin roles for users. First user gets instance_admin. | belongs to user |
-| `company_issue_counters` | Helper for atomic issue numbering. | belongs to company |
+| `project_issue_counters` | Helper for atomic issue numbering per project. | belongs to project |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
 | `slack_connections` | Per-company Slack app config. Bot token encrypted in secrets. | belongs to company |
 | `ai_provider_configs` | Instance-level AI provider credentials shared across every company in the Hezo instance. Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription OAuth token. A partial unique index on `is_default` enforces one default per provider; `(provider, label)` is unique so multiple rows per provider coexist — typically one `api_key` and one `oauth_token` — and `getProviderCredential` / `resolveRuntimeForIssue` pick the `is_default` row at runtime. `default_model` (nullable) holds the CLI `--model` value applied to every run that uses this config when the agent has no explicit override. Agent runner decrypts at execution time and injects as env var. | instance-scoped |
@@ -109,8 +106,8 @@ pause the agent and emit a system comment.
 
 ### Atomic issue numbering
 
-`next_issue_number()` uses upsert + returning to atomically assign per-company
-issue numbers. No gaps under normal operation.
+`next_project_issue_number()` uses upsert + returning to atomically assign
+per-project issue numbers. No gaps under normal operation.
 
 ### Master key lifecycle
 
@@ -350,8 +347,8 @@ agents from the selected team type via the `company_type_agent_types` join table
    - Config overrides applied from the join table (runtime type, heartbeat, budget)
    - `budget_used_cents` reset to 0
 4. Second pass resolves `reports_to_slug` → `reports_to` UUID for the org chart
-5. Creates `kb_docs` rows from `company_types.kb_docs_config`
-6. Creates `company_preferences` row from `company_types.preferences_config`
+5. Creates `documents` rows of type `kb_doc` from `company_types.kb_docs_config`
+6. Creates `documents` row of type `company_preferences` from `company_types.preferences_config`
 7. Copies `mcp_servers` array from company type
 8. Copies `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
 9. Inserts rows into `company_team_types` to record the association
@@ -420,58 +417,42 @@ resolution handler applies the change by updating `member_agents.system_prompt`.
 
 `system_prompt_revisions` tracks the history of changes to agent system prompts. Each update records the old and new prompt text, a change summary, who authored the change, and optionally which approval authorized it. This enables auditability of prompt evolution and rollback if needed.
 
-### Company preferences
+### Documents
 
-`company_preferences` stores a single Markdown document per company, recording
-observed board preferences in areas like code architecture, design approach,
-research style, and team working conventions. Preferences are company-level
-(not per-member) — even with multiple board members, the company has one unified
-set of preferences that represent how the board collectively wants things done.
+`documents` is a single table that backs three kinds of Markdown content,
+distinguished by the `type` column (`project_doc` / `kb_doc` /
+`company_preferences`). The same write path, revision capture, restore, embedding,
+and broadcast logic apply to all three; per-type quirks (URL surface, agent
+approval gates) live in thin route handlers.
 
-Agents update this document directly (no approval required) as they observe
-patterns in board feedback. Every change creates a revision in
-`company_preference_revisions` for auditability. The board can also edit
-directly, review revision history, and revert.
+Scoping is enforced by partial unique indexes:
 
-The `UNIQUE (company_id)` constraint ensures one preference document per company.
-Content is structured Markdown with sections for different preference categories
-(code architecture, design, research, team working, etc.).
+- `project_doc` — unique on `(project_id, slug)`. Slug holds the filename
+  (e.g. `spec.md`); `title` is empty (the filename is the display label).
+- `kb_doc` — unique on `(company_id, slug)`. Slug derives from `title` via
+  `toSlug`; `title` carries the human label.
+- `company_preferences` — partial unique on `(company_id)` with slug fixed
+  to `preferences`. Enforces one row per company.
 
-The `{{company_preferences_context}}` template variable in system prompts
-injects the preference document so agents can align with the board's working
-style. The orchestrator pre-resolves all template variables before spawning
-the agent subprocess.
+Every content change snapshots the prior content into `document_revisions`
+with an auto-incremented `revision_number` per document, the change summary,
+and the author. Restore is board-only: it inserts a fresh revision capturing
+the pre-restore content (`change_summary = 'Restored to revision N'`,
+`author_member_id = the restoring board user`), then writes the historic
+content back to the parent row.
 
-### Project documents
+Project doc PRD updates (`slug = 'prd.md'`) from agents create a Strategy
+approval instead of writing directly. KB doc updates from agents create a
+KbUpdate approval. Preferences updates from agents apply directly. Approval
+apply paths flow through the same `upsertDocument` service so revisions are
+recorded on materialisation.
 
-Project documents (PRDs, technical specifications, implementation plans, research,
-UI design decisions, marketing plans) are stored in the `project_docs` table,
-keyed by `(project_id, filename)`. Every write creates a row in
-`project_doc_revisions` for full revision history. Projects do not need a
-designated repo for project docs to work.
+The `{{kb_context}}`, `{{company_preferences_context}}`, and
+`{{project_docs_context}}` template variables in system prompts pull from
+this table filtered by type, so agents see the current document set.
 
-PRD updates (`prd.md`) by agents require board approval — the agent's write
-creates an approval request instead of updating the document directly.
-
-The `{{project_docs_context}}` template variable in system prompts auto-injects
-all project documents for the current issue's project. Agents read and write
-docs via the `list_project_docs`, `read_project_doc`, and `write_project_doc`
-MCP tools.
-
-### Knowledge base
-
-`kb_docs` stores company-wide Markdown documents — coding standards, UX
-guidelines, architecture decisions, etc. Each doc has a `slug`
-(UNIQUE per company) for referencing.
-
-Agents can read KB docs via the Agent API and propose updates. Proposals
-create a `kb_update` approval with a diff view. On approval, the document is
-updated and `last_updated_by_agent_id` is set. This keeps the KB current as
-agents learn patterns during their work.
-
-The `{{kb_context}}` template variable in system prompts injects all KB docs.
-The orchestrator pre-resolves all template variables and includes everything
-for MVP. Optimization with smart selection deferred.
+AGENTS.md remains a filesystem file in the repo (git tracks its history) and
+is not part of the documents table.
 
 **AGENTS.md** is a special KB doc that contains company-wide engineering rules
 and agent conventions. It is stored in the database like any other KB doc but
@@ -527,13 +508,20 @@ Hezo app to it via `--connect-url`.
 
 ### Issue identifiers (Linear-style)
 
-Each company has an `issue_prefix` column (e.g. `ACME`, `NOTE`) auto-derived
-from the company name at creation time. On collision, a numeric suffix is
-appended (ACME, ACME2, ACME3). The prefix is globally unique across all
-companies on the instance. Issues have an `identifier` column computed as
-`{prefix}-{number}` (e.g. `ACME-42`). The identifier is the primary
-human-facing reference for issues — used in UI, API responses, @-mentions
-(`#ACME-42`), and git branch names.
+Each project has an `issue_prefix` column (2–4 uppercase alphanumeric chars,
+e.g. `OP` for "Operations", `WA` for "Web App") auto-derived from the project
+name at creation time. Single-word names use the first two characters;
+multi-word names use the initials, capped at four characters. Callers may
+override via the project-creation `issue_prefix` field. On collision within a
+company, a numeric suffix is appended (`OP`, `OP2`, `OP3`). Prefixes are
+unique per company, not globally.
+
+Issues have an `identifier` column computed at creation as `{project_prefix}-{number}`
+(e.g. `OP-42`), with `number` being the per-project issue counter. Identifiers
+are unique per company. The identifier is the primary human-facing reference
+for issues — used in UI, API responses, @-mentions (`@OP-42`), and git branch
+names. Identifiers are frozen at creation time: renaming a project does not
+retroactively change the prefix on existing issues.
 
 ### Issue assignees
 
@@ -570,14 +558,39 @@ An issue's `status` can be set to `blocked` when it has unresolved dependencies.
 
 ### Wakeup queue
 
-`agent_wakeup_requests` stores all triggers (timer, assignment, mention, etc.)
-with deduplication via `idempotency_key` and coalescing via `coalesced_count`.
-Multiple wakeups for the same agent merge context snapshots instead of creating
-duplicate runs.
+`agent_wakeup_requests` stores all triggers (timer, assignment, mention, reply,
+etc.) with deduplication via `idempotency_key` and coalescing via
+`coalesced_count`. Multiple wakeups for the same agent merge context snapshots
+instead of creating duplicate runs.
 
-Event-based triggers (@-mention, assignment, option chosen, approval resolved)
-wake agents immediately — they do not wait for the next scheduled heartbeat.
-Scheduled heartbeats are a fallback for idle agents with no pending events.
+Event-based triggers (@-mention, reply, assignment, option chosen, approval
+resolved) wake agents immediately — they do not wait for the next scheduled
+heartbeat. Scheduled heartbeats are a fallback for idle agents with no pending
+events.
+
+`wakeup_source` values:
+
+| Source | Fires when |
+| --- | --- |
+| `timer` | Scheduled heartbeat tick (fallback for idle agents). |
+| `assignment` | Issue assigned to the agent (incl. `create_issue` tool). |
+| `on_demand` | Admin/API explicit wake. |
+| `mention` | A comment contains `@<agent-slug>` referencing this agent. |
+| `automation` | Server-side automation rule. |
+| `option_chosen` | Board user resolved an options comment. |
+| `comment` | Opt-in wake of the issue assignee from a plain Board comment (`wake_assignee=true`). |
+| `reply` | An agent whose run was mention-triggered posts a comment in the triggering ticket. The original mentioner (when an agent) is woken so it can pick up the response. Gated by `companies.settings.wake_mentioner_on_reply` (default `true`). Payload: `{ source, issue_id, comment_id, triggering_comment_id, responder_member_id }`. Idempotency key: `reply:<triggering_comment_id>:<reply_comment_id>`. |
+
+### Company settings (`companies.settings` JSONB)
+
+Per-company toggles stored in the `companies.settings` JSONB column. Patched
+via `PATCH /api/companies/:id` (shallow merge — missing keys preserve existing
+values).
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `coach_auto_apply` | `false` | When true, the coach agent's review recommendations are applied automatically. |
+| `wake_mentioner_on_reply` | `true` | When true, an agent's reply to a mention-triggered comment wakes the original mentioner. When false, the mentioner picks up replies on its next heartbeat — useful when one comment @-mentions several agents and the mentioner prefers to batch their responses. |
 
 ### Reasoning effort
 
@@ -658,11 +671,12 @@ is bind-mounted into the container:
   when repos are present, otherwise falls back to `/workspace` with a warning
   so that projects without a designated repo still run.
 
-### KB document revisions
+### Document revisions
 
-`kb_doc_revisions` stores version history for knowledge base documents.
-Each edit creates a new revision with content snapshot, change summary,
-and attribution. Supports diff between versions and revert.
+`document_revisions` stores version history for every row in `documents`
+regardless of type. Each edit captures the prior content, change summary,
+and author. Restore (board-only) snapshots the current content as a new
+revision before reverting the parent row, so nothing is lost.
 
 ### Auth and roles
 

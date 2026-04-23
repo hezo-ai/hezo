@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { authenticate, createCompanyWithAgents, createProjectAndClearPlanning } from './helpers';
 
-test('issue page uses friendly identifier in URL and redirects UUID form', async ({ page }) => {
+test('canonical issue URL is project-scoped; short and UUID forms redirect', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
@@ -32,13 +32,24 @@ test('issue page uses friendly identifier in URL and redirects UUID form', async
 		}
 	).data;
 	const friendly = issue.identifier.toLowerCase();
+	const canonicalPath = `/companies/${company.slug}/projects/${project.slug}/issues/${friendly}`;
+
+	await page.goto(canonicalPath);
+	await expect(page.getByRole('heading', { name: issue.title })).toBeVisible();
+	expect(new URL(page.url()).pathname).toBe(canonicalPath);
 
 	await page.goto(`/companies/${company.slug}/issues/${friendly}`);
+	await page.waitForURL(`**${canonicalPath}`, { timeout: 10000 });
+	expect(new URL(page.url()).pathname).toBe(canonicalPath);
 	await expect(page.getByRole('heading', { name: issue.title })).toBeVisible();
-	expect(new URL(page.url()).pathname).toBe(`/companies/${company.slug}/issues/${friendly}`);
 
 	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
-	await page.waitForURL(`**/issues/${friendly}`, { timeout: 10000 });
-	expect(new URL(page.url()).pathname).toBe(`/companies/${company.slug}/issues/${friendly}`);
+	await page.waitForURL(`**${canonicalPath}`, { timeout: 10000 });
+	expect(new URL(page.url()).pathname).toBe(canonicalPath);
+	await expect(page.getByRole('heading', { name: issue.title })).toBeVisible();
+
+	await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues/${issue.id}`);
+	await page.waitForURL(`**${canonicalPath}`, { timeout: 10000 });
+	expect(new URL(page.url()).pathname).toBe(canonicalPath);
 	await expect(page.getByRole('heading', { name: issue.title })).toBeVisible();
 });

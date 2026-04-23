@@ -7,17 +7,24 @@ import {
 	CEO_AGENT_SLUG,
 	COACH_AGENT_SLUG,
 	CommentContentType,
+	DocumentType,
 	IssuePriority,
 	IssueStatus,
 	WakeupSource,
 } from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { assertNoActiveRun } from '../lib/active-run';
+import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
+import { resolveProjectIssuePrefix } from '../routes/projects';
+import { fireCommentWakeups } from '../services/comment-wakeups';
+import { getDocument, listDocuments, upsertDocument } from '../services/documents';
 import { triggerStatusAutomations } from '../services/issue-automation';
 import { createWakeup } from '../services/wakeup';
+import type { WebSocketManager } from '../services/ws';
 
 const log = logger.child('mcp');
 
@@ -86,7 +93,12 @@ async function verifyCompanyAccess(
 	return 'Access denied';
 }
 
-export function registerTools(server: McpServer, db: PGlite, dataDir: string): ToolDef[] {
+export function registerTools(
+	server: McpServer,
+	db: PGlite,
+	_dataDir: string,
+	wsManager?: WebSocketManager,
+): ToolDef[] {
 	registeredTools.length = 0;
 
 	// Companies
@@ -142,7 +154,6 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		'Create a new company (superuser only)',
 		{
 			name: z.string().describe('Company name'),
-			issue_prefix: z.string().describe('Issue prefix (e.g. ACME)'),
 			description: z.string().optional().describe('Company description'),
 		},
 		async (args, db, auth) => {
@@ -154,8 +165,8 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/^-|-$/g, '');
 			const r = await db.query(
-				`INSERT INTO companies (name, slug, issue_prefix, description) VALUES ($1, $2, $3, $4) RETURNING *`,
-				[args.name, slug, args.issue_prefix, args.description ?? ''],
+				`INSERT INTO companies (name, slug, description) VALUES ($1, $2, $3) RETURNING *`,
+				[args.name, slug, args.description ?? ''],
 			);
 			return r.rows[0];
 		},
@@ -166,11 +177,16 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 	tool(
 		server,
 		'list_issues',
-		'List issues for a company',
+		'List issues for a company. Filter by assignee_id or assignee_slug to find your own open tickets (e.g. pass your own agent slug).',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().optional().describe('Filter by project ID'),
 			status: z.string().optional().describe('Filter by status (comma-separated)'),
+			assignee_id: z.string().optional().describe('Filter by assignee member ID'),
+			assignee_slug: z
+				.string()
+				.optional()
+				.describe('Filter by assignee agent slug (alternative to assignee_id)'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -188,6 +204,23 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				const ph = statuses.map((_, i) => `$${idx + i}::issue_status`).join(', ');
 				conditions.push(`i.status IN (${ph})`);
 				params.push(...statuses);
+				idx += statuses.length;
+			}
+			let assigneeId = args.assignee_id as string | undefined;
+			if (!assigneeId && args.assignee_slug) {
+				const agent = await db.query<{ id: string }>(
+					`SELECT ma.id FROM member_agents ma
+					 JOIN members m ON m.id = ma.id
+					 WHERE ma.slug = $1 AND m.company_id = $2`,
+					[args.assignee_slug, args.company_id],
+				);
+				if (agent.rows.length === 0) return [];
+				assigneeId = agent.rows[0].id;
+			}
+			if (assigneeId) {
+				conditions.push(`i.assignee_id = $${idx}`);
+				params.push(assigneeId);
+				idx++;
 			}
 			const r = await db.query(
 				`SELECT i.*, p.name AS project_name FROM issues i JOIN projects p ON p.id = i.project_id WHERE ${conditions.join(' AND ')} ORDER BY i.created_at DESC LIMIT 50`,
@@ -221,7 +254,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 	tool(
 		server,
 		'create_issue',
-		'Create a new issue. Use parent_issue_id for sub-issues. Use assignee_slug as alternative to assignee_id.',
+		'Create a new issue. Use parent_issue_id for sub-issues. Use assignee_slug as alternative to assignee_id. In title/description, reference other Hezo entities with @-mentions: @<agent-slug>, @<ISSUE-ID> (e.g. @op-42), @kb/<slug>, @doc/<filename>. Do not wrap these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().describe('Project ID'),
@@ -268,17 +301,10 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			);
 			if (!opsCheck.ok) return { error: opsCheck.message };
 
-			const companyResult = await db.query<{ issue_prefix: string }>(
-				'SELECT issue_prefix FROM companies WHERE id = $1',
-				[args.company_id],
+			const { number: num, identifier } = await allocateIssueIdentifier(
+				db,
+				args.project_id as string,
 			);
-			if (companyResult.rows.length === 0) throw new Error('Company not found');
-			const numberResult = await db.query<{ number: number }>(
-				'SELECT next_issue_number($1) AS number',
-				[args.company_id],
-			);
-			const num = numberResult.rows[0].number;
-			const identifier = `${companyResult.rows[0].issue_prefix}-${num}`;
 			const createdByRunId = auth.type === AuthType.Agent ? auth.runId : null;
 			const r = await db.query<{ id: string }>(
 				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, runtime_type)
@@ -315,7 +341,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 	tool(
 		server,
 		'update_issue',
-		'Update an issue. Agents can use this to change status, update progress, set rules, and record branch names.',
+		'Update an issue. Agents can use this to change status (including closing), update progress, set rules, and record branch names. Re-opening a closed issue is board-only — once an issue is `closed` only the board can change its status again. In description, progress_summary, and rules, reference other Hezo entities with @-mentions: @<agent-slug>, @<ISSUE-ID> (e.g. @op-42), @kb/<slug>, @doc/<filename>. Do not wrap these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
@@ -325,12 +351,17 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				.string()
 				.optional()
 				.describe(
-					'New status (backlog, open, in_progress, review, approved, blocked, done, closed, cancelled)',
+					'New status (backlog, open, in_progress, review, approved, blocked, done, closed, cancelled). Once an issue is `closed`, only board members can change its status again.',
 				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z.string().optional().describe('New assignee ID'),
 			progress_summary: z.string().optional().describe('Progress summary update'),
-			rules: z.string().optional().describe('Rules/constraints for this issue'),
+			rules: z
+				.string()
+				.optional()
+				.describe(
+					'How-to-work-on guardrails for this ticket — approach constraints that shape execution (e.g. "run tests before committing", "consult the architect before auth changes"). Not a channel for passing project domain knowledge to other agents; put that in description instead.',
+				),
 			branch_name: z.string().optional().describe('Git branch name for this issue'),
 			runtime_type: z
 				.string()
@@ -343,17 +374,34 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 
-			if (args.assignee_id) {
-				const issueRow = await db.query<{ project_id: string }>(
-					'SELECT project_id FROM issues WHERE id = $1 AND company_id = $2',
+			if (args.status !== undefined && auth.type === AuthType.Agent) {
+				const currentStatus = await db.query<{ status: string }>(
+					'SELECT status FROM issues WHERE id = $1 AND company_id = $2',
 					[args.issue_id, args.company_id],
 				);
-				const projectId = issueRow.rows[0]?.project_id;
-				if (projectId) {
+				if (currentStatus.rows[0]?.status === IssueStatus.Closed) {
+					return { error: 'Only board members can re-open a closed issue' };
+				}
+			}
+
+			if (args.assignee_id) {
+				const issueRow = await db.query<{
+					project_id: string;
+					assignee_id: string | null;
+				}>('SELECT project_id, assignee_id FROM issues WHERE id = $1 AND company_id = $2', [
+					args.issue_id,
+					args.company_id,
+				]);
+				const row = issueRow.rows[0];
+				if (row) {
+					if (args.assignee_id !== row.assignee_id) {
+						const activeRunCheck = await assertNoActiveRun(db, args.issue_id as string);
+						if (!activeRunCheck.ok) return { error: activeRunCheck.message };
+					}
 					const opsCheck = await assertOperationsAssignee(
 						db,
 						args.company_id as string,
-						projectId,
+						row.project_id,
 						args.assignee_id as string,
 					);
 					if (!opsCheck.ok) return { error: opsCheck.message };
@@ -556,6 +604,10 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			company_id: z.string().describe('Company ID'),
 			name: z.string().describe('Project name'),
 			description: z.string().optional().describe('Project description'),
+			issue_prefix: z
+				.string()
+				.optional()
+				.describe('2–4 uppercase alphanumeric chars; derived from name if omitted'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -564,9 +616,20 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 				.toLowerCase()
 				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/^-|-$/g, '');
-			const r = await db.query(
-				`INSERT INTO projects (company_id, name, slug, description) VALUES ($1, $2, $3, $4) RETURNING *`,
-				[args.company_id, args.name, slug, args.description ?? ''],
+			const prefixResult = await resolveProjectIssuePrefix(
+				db,
+				args.company_id as string,
+				args.issue_prefix as string | undefined,
+				args.name as string,
+			);
+			if (!prefixResult.ok) return { error: prefixResult.message };
+			const r = await db.query<{ id: string }>(
+				`INSERT INTO projects (company_id, name, slug, issue_prefix, description) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+				[args.company_id, args.name, slug, prefixResult.prefix, args.description ?? ''],
+			);
+			await db.query(
+				'INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)',
+				[r.rows[0].id],
 			);
 			return r.rows[0];
 		},
@@ -605,7 +668,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to an issue',
+		'Add a comment to an issue. In content, reference other Hezo entities with @-mentions: @<agent-slug>, @<ISSUE-ID> (e.g. @op-42), @kb/<slug>, @doc/<filename>. Do not wrap these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
@@ -621,15 +684,21 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			]);
 			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const r = await db.query(
+			const content = { text: args.content };
+			const r = await db.query<{ id: string }>(
 				`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content) VALUES ($1, $2, $3::comment_content_type, $4::jsonb) RETURNING *`,
-				[
-					args.issue_id,
-					authorMemberId,
-					CommentContentType.Text,
-					JSON.stringify({ text: args.content }),
-				],
+				[args.issue_id, authorMemberId, CommentContentType.Text, JSON.stringify(content)],
 			);
+			await fireCommentWakeups({
+				db,
+				issueId: args.issue_id as string,
+				companyId: args.company_id as string,
+				commentId: r.rows[0].id,
+				content,
+				contentType: CommentContentType.Text,
+				authorMemberId,
+				authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
+			});
 			return r.rows[0];
 		},
 		db,
@@ -695,11 +764,16 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const r = await db.query(
-				'SELECT id, title, slug, updated_at FROM kb_docs WHERE company_id = $1 ORDER BY title',
-				[args.company_id],
-			);
-			return r.rows;
+			const docs = await listDocuments(db, {
+				type: DocumentType.KbDoc,
+				companyId: args.company_id as string,
+			});
+			return docs.map((d) => ({
+				id: d.id,
+				title: d.title,
+				slug: d.slug,
+				updated_at: d.updated_at,
+			}));
 		},
 		db,
 	);
@@ -715,11 +789,11 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const r = await db.query('SELECT * FROM kb_docs WHERE company_id = $1 AND slug = $2', [
-				args.company_id,
-				args.slug,
-			]);
-			return r.rows[0] ?? null;
+			return await getDocument(db, {
+				type: DocumentType.KbDoc,
+				companyId: args.company_id as string,
+				slug: args.slug as string,
+			});
 		},
 		db,
 	);
@@ -944,7 +1018,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 	tool(
 		server,
 		'upsert_kb_doc',
-		'Create or update a knowledge base document',
+		'Create or update a knowledge base document. In content, reference other Hezo entities with @-mentions: @<agent-slug>, @<ISSUE-ID> (e.g. @op-42), @kb/<slug>, @doc/<filename>. Do not wrap these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			title: z.string().describe('Document title'),
@@ -955,16 +1029,16 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const r = await db.query(
-				`INSERT INTO kb_docs (company_id, title, slug, content, last_updated_by_member_id)
-				 VALUES ($1, $2, $3, $4, $5)
-				 ON CONFLICT (company_id, slug) DO UPDATE
-				 SET title = EXCLUDED.title, content = EXCLUDED.content,
-				     last_updated_by_member_id = EXCLUDED.last_updated_by_member_id, updated_at = now()
-				 RETURNING *`,
-				[args.company_id, args.title, args.slug, args.content, callerMemberId],
-			);
-			return r.rows[0];
+			return await upsertDocument(db, wsManager, {
+				scope: {
+					type: DocumentType.KbDoc,
+					companyId: args.company_id as string,
+					slug: args.slug as string,
+				},
+				title: args.title as string,
+				content: args.content as string,
+				authorMemberId: callerMemberId,
+			});
 		},
 		db,
 	);
@@ -981,11 +1055,18 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const result = await db.query(
-				'SELECT id, filename, updated_at FROM project_docs WHERE project_id = $1 ORDER BY filename',
-				[args.project_id],
-			);
-			return { files: result.rows };
+			const docs = await listDocuments(db, {
+				type: DocumentType.ProjectDoc,
+				companyId: args.company_id as string,
+				projectId: args.project_id as string,
+			});
+			return {
+				files: docs.map((d) => ({
+					id: d.id,
+					filename: d.slug,
+					updated_at: d.updated_at,
+				})),
+			};
 		},
 		db,
 	);
@@ -1002,12 +1083,14 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const result = await db.query<{ filename: string; content: string }>(
-				'SELECT filename, content FROM project_docs WHERE project_id = $1 AND filename = $2',
-				[args.project_id, args.filename],
-			);
-			if (result.rows.length === 0) return { error: `File '${args.filename}' not found` };
-			return result.rows[0];
+			const doc = await getDocument(db, {
+				type: DocumentType.ProjectDoc,
+				companyId: args.company_id as string,
+				projectId: args.project_id as string,
+				slug: args.filename as string,
+			});
+			if (!doc) return { error: `File '${args.filename}' not found` };
+			return { filename: doc.slug, content: doc.content };
 		},
 		db,
 	);
@@ -1015,7 +1098,7 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 	tool(
 		server,
 		'write_project_doc',
-		'Write a project documentation file. For high-level project context: PRD, spec, implementation plan, research.',
+		'Write a project documentation file. For high-level project context: PRD, spec, implementation plan, research. In content, reference other Hezo entities with @-mentions: @<agent-slug>, @<ISSUE-ID> (e.g. @op-42), @kb/<slug>, @doc/<filename>. Do not wrap these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().describe('Project ID'),
@@ -1026,17 +1109,17 @@ export function registerTools(server: McpServer, db: PGlite, dataDir: string): T
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const result = await db.query<{ id: string; filename: string }>(
-				`INSERT INTO project_docs (project_id, company_id, filename, content, last_updated_by_member_id)
-				 VALUES ($1, $2, $3, $4, $5)
-				 ON CONFLICT (project_id, filename) DO UPDATE SET
-				   content = EXCLUDED.content,
-				   last_updated_by_member_id = EXCLUDED.last_updated_by_member_id,
-				   updated_at = now()
-				 RETURNING id, filename`,
-				[args.project_id, args.company_id, args.filename, args.content, callerMemberId],
-			);
-			return { written: true, id: result.rows[0].id, filename: result.rows[0].filename };
+			const doc = await upsertDocument(db, wsManager, {
+				scope: {
+					type: DocumentType.ProjectDoc,
+					companyId: args.company_id as string,
+					projectId: args.project_id as string,
+					slug: args.filename as string,
+				},
+				content: args.content as string,
+				authorMemberId: callerMemberId,
+			});
+			return { written: true, id: doc.id, filename: doc.slug };
 		},
 		db,
 	);

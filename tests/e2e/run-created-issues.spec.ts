@@ -14,7 +14,7 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 		headers,
 		data: { name: 'Spawned Tickets Project', description: 'Test project.' },
 	});
-	const project = ((await projectRes.json()) as { data: { id: string } }).data;
+	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
 	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
 		headers,
@@ -31,11 +31,13 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 		id: '11111111-1111-1111-1111-111111111111',
 		identifier: 'SPAWN-900',
 		title: 'Refactor auth',
+		project_slug: project.slug,
 	};
 	const spawnedB = {
 		id: '22222222-2222-2222-2222-222222222222',
 		identifier: 'SPAWN-901',
 		title: 'Add tests for X',
+		project_slug: project.slug,
 	};
 
 	const runComment = {
@@ -103,14 +105,14 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 	});
 	await expect(linkA).toHaveAttribute(
 		'href',
-		new RegExp(`/companies/${company.slug}/issues/${spawnedA.identifier.toLowerCase()}$`),
+		`/companies/${company.slug}/projects/${project.slug}/issues/${spawnedA.identifier.toLowerCase()}`,
 	);
 	const linkB = createdSection.getByRole('link', {
 		name: `${spawnedB.identifier} — ${spawnedB.title}`,
 	});
 	await expect(linkB).toHaveAttribute(
 		'href',
-		new RegExp(`/companies/${company.slug}/issues/${spawnedB.identifier.toLowerCase()}$`),
+		`/companies/${company.slug}/projects/${project.slug}/issues/${spawnedB.identifier.toLowerCase()}`,
 	);
 });
 

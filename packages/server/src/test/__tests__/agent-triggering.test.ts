@@ -1,9 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 
 let db: PGlite;
 let app: Hono<Env>;
@@ -11,12 +12,14 @@ let token: string;
 let companyId: string;
 let projectId: string;
 let agentId: string;
+let masterKeyManager: MasterKeyManager;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
 	db = ctx.db;
 	app = ctx.app;
 	token = ctx.token;
+	masterKeyManager = ctx.masterKeyManager;
 
 	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
 	const companyTypeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
@@ -26,7 +29,7 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Agent Trigger Co',
-			issue_prefix: 'AT',
+
 			template_id: companyTypeId,
 		}),
 	});
@@ -123,6 +126,7 @@ describe('agent triggering', () => {
 		});
 		const parentId = (await parentRes.json()).data.id;
 
+		await new Promise((r) => setTimeout(r, 50));
 		await clearWakeups();
 
 		const subRes = await app.request(`/api/companies/${companyId}/issues/${parentId}/sub-issues`, {
@@ -131,12 +135,14 @@ describe('agent triggering', () => {
 			body: JSON.stringify({ title: 'Sub-task for CEO', assignee_id: agentId }),
 		});
 		expect(subRes.status).toBe(201);
+		const subId = (await subRes.json()).data.id;
 
 		await new Promise((r) => setTimeout(r, 50));
 
 		const wakeups = await getWakeups(agentId);
-		expect(wakeups.length).toBe(1);
-		expect(wakeups[0].source).toBe('assignment');
+		const subWakeup = wakeups.find((w) => w.payload?.issue_id === subId);
+		expect(subWakeup).toBeDefined();
+		expect(subWakeup.source).toBe('assignment');
 	});
 
 	it('rejects clearing assignee via PATCH', async () => {
@@ -229,6 +235,177 @@ describe('agent triggering', () => {
 		);
 		expect(pending.rows.length).toBeGreaterThanOrEqual(1);
 		expect(pending.rows.some((r) => r.agent_id === agentId)).toBe(true);
+	});
+
+	it('mention wakeup carries source=mention in payload and references the comment', async () => {
+		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'CEO ticket that mentions architect',
+				assignee_id: agentId,
+			}),
+		});
+		const triggeringIssueId = (await issueRes.json()).data.id;
+
+		// Look up architect agent
+		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const architect = (await agentsRes.json()).data.find((a: any) => a.slug === 'architect');
+
+		await clearWakeups();
+
+		const commentRes = await app.request(
+			`/api/companies/${companyId}/issues/${triggeringIssueId}/comments`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					content: { text: '@architect please update the spec' },
+				}),
+			},
+		);
+		expect(commentRes.status).toBe(201);
+		const commentId = (await commentRes.json()).data.id;
+
+		await new Promise((r) => setTimeout(r, 50));
+
+		const wakeups = await getWakeups(architect.id);
+		const mention = wakeups.find((w: any) => w.source === 'mention');
+		expect(mention).toBeTruthy();
+		expect(mention.payload.source).toBe('mention');
+		expect(mention.payload.issue_id).toBe(triggeringIssueId);
+		expect(mention.payload.comment_id).toBe(commentId);
+	});
+
+	it('creates one mention wakeup per distinct agent when a comment mentions several', async () => {
+		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Multi-mention ticket',
+				assignee_id: agentId,
+			}),
+		});
+		const issueId = (await issueRes.json()).data.id;
+
+		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const allAgents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
+		const architect = allAgents.find((a) => a.slug === 'architect');
+		const engineer = allAgents.find((a) => a.slug === 'engineer');
+		if (!architect || !engineer) throw new Error('Expected architect and engineer agents');
+
+		await new Promise((r) => setTimeout(r, 50));
+		await clearWakeups();
+
+		await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content: { text: 'cc @architect and @engineer' },
+			}),
+		});
+
+		await new Promise((r) => setTimeout(r, 50));
+
+		const wakeups = await getWakeups();
+		const mentionWakeups = wakeups.filter((w: any) => w.source === 'mention');
+		const mentionedMembers = new Set(mentionWakeups.map((w: any) => w.member_id));
+		expect(mentionedMembers.has(architect.id)).toBe(true);
+		expect(mentionedMembers.has(engineer.id)).toBe(true);
+	});
+
+	it('ignores @mentions inside fenced code blocks', async () => {
+		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Code-fence mention',
+				assignee_id: agentId,
+			}),
+		});
+		const issueId = (await issueRes.json()).data.id;
+
+		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const architect = (await agentsRes.json()).data.find((a: any) => a.slug === 'architect');
+
+		await clearWakeups();
+
+		await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content: {
+					text: 'Here is a code sample:\n```\n@architect\n```\nend of sample.',
+				},
+			}),
+		});
+
+		await new Promise((r) => setTimeout(r, 50));
+
+		const wakeups = await getWakeups(architect.id);
+		const mention = wakeups.find((w: any) => w.source === 'mention');
+		expect(mention).toBeUndefined();
+	});
+
+	it('does not create a mention wakeup when an agent mentions itself', async () => {
+		// Assign to architect (not CEO) so there's no CEO-assignment wakeup to coalesce
+		// with the subsequent mention wakeup, which would mask the test.
+		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const architect = ((await agentsRes.json()).data as Array<{ id: string; slug: string }>).find(
+			(a) => a.slug === 'architect',
+		);
+		if (!architect) throw new Error('Expected architect agent');
+
+		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Self-mention ticket',
+				assignee_id: architect.id,
+			}),
+		});
+		const issueId = (await issueRes.json()).data.id;
+
+		// Let the assignment wakeup settle past the 2s coalescing window before clearing.
+		await new Promise((r) => setTimeout(r, 50));
+		await clearWakeups();
+
+		// Baseline: board-posted @ceo DOES create a mention wakeup for CEO.
+		await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: { text: '@ceo baseline mention' } }),
+		});
+		await new Promise((r) => setTimeout(r, 50));
+		const baselineMentions = (await getWakeups(agentId)).filter((w: any) => w.source === 'mention');
+		expect(baselineMentions.length).toBeGreaterThanOrEqual(1);
+
+		await clearWakeups();
+
+		// Now have the CEO agent itself post a comment mentioning @ceo on the same issue.
+		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const selfRes = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(ceoToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: { text: '@ceo self-mention should be skipped' } }),
+		});
+		expect(selfRes.status).toBe(201);
+		await new Promise((r) => setTimeout(r, 50));
+
+		const selfMentions = (await getWakeups(agentId)).filter((w: any) => w.source === 'mention');
+		expect(selfMentions.length).toBe(0);
 	});
 
 	it('releases execution locks when container stops', async () => {

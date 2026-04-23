@@ -17,13 +17,16 @@ export async function uniqueSlug(
 	return `${base}-${n}`;
 }
 
-export function toIssuePrefix(companyName: string): string {
-	const words = companyName.trim().split(/\s+/);
+export function toProjectIssuePrefix(projectName: string): string {
+	const cleaned = projectName.trim().replace(/[^a-zA-Z0-9\s]/g, '');
+	const words = cleaned.split(/\s+/).filter(Boolean);
+	if (words.length === 0) return 'P';
 	if (words.length === 1) {
-		return words[0].substring(0, 4).toUpperCase();
+		return words[0].substring(0, 2).toUpperCase();
 	}
 	return words
 		.map((w) => w[0])
 		.join('')
+		.substring(0, 4)
 		.toUpperCase();
 }

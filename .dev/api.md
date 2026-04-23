@@ -125,12 +125,11 @@ Request:
 {
   "name": "NoteGenius AI",
   "description": "Build the #1 AI note-taking app",
-  "template_id": "uuid",
-  "issue_prefix": "NOTE"
+  "template_id": "uuid"
 }
 ```
 
-`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). `issue_prefix` is optional and defaults to an auto-generated prefix from the company name.
+`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). Issue prefixes are configured per project (see `POST /companies/:companyId/projects`), not at the company level.
 
 Response: full company object. On creation, the server automatically:
 
@@ -276,8 +275,9 @@ Request:
 
 `default_effort` is optional. Valid values: `minimal | low | medium | high | max`.
 It is the baseline reasoning level every agent created from this type inherits
-(each agent can also override it individually, and each run can override it
-again via a comment — see [Reasoning effort](#reasoning-effort)).
+(each agent can also override it individually, and each mention-triggered run
+can override it again via the `effort` field on the `@`-mentioning comment —
+see [Reasoning effort](#reasoning-effort)).
 
 #### `GET /agent-types/:id`
 Get a single agent type.
@@ -390,8 +390,9 @@ model_override_provider, model_override_model.
 Cannot update: status (use lifecycle endpoints), budget_used_cents (system-managed).
 
 `default_effort` accepts `minimal | low | medium | high | max`. It sets the
-baseline reasoning level applied to every run of this agent; comments posted
-on the issue can override it per-run — see [Reasoning effort](#reasoning-effort).
+baseline reasoning level applied to every run of this agent; an `@`-mentioning
+comment can override it per-run via the `effort` field — see
+[Reasoning effort](#reasoning-effort).
 
 `model_override_provider` (one of `anthropic | openai | google | moonshot`, or
 `null`) and `model_override_model` (free-form model id, e.g. `claude-opus-4-7`,
@@ -788,9 +789,10 @@ Request:
 ```
 
 `project_id` and `assignee_id` are required (enforced). `number` is auto-assigned via
-`next_issue_number()`. If the assignee is an agent, the agent receives
-an event trigger. If a board member, they are notified via inbox and
-configured messaging channels.
+`next_project_issue_number()`, and `identifier` is composed as
+`{project.issue_prefix}-{number}` (e.g. `OP-42`). If the assignee is an agent,
+the agent receives an event trigger. If a board member, they are notified via
+inbox and configured messaging channels.
 
 Issues in the auto-created Operations project (`slug = 'operations'`, `is_internal = true`) must be assigned to the CEO. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Operations project issues must be assigned to the CEO`.
 
@@ -948,10 +950,11 @@ Request:
 `author_type` is always `board` for this endpoint.
 
 `effort` is optional. When set (valid values: `minimal | low | medium | high | max`),
-it overrides the assigned agent's `default_effort` for the wakeup triggered by
-this comment — useful for asking an agent to think harder about a tricky piece
-of feedback. Invalid values are silently dropped. See
-[Reasoning effort](#reasoning-effort).
+it overrides each `@`-mentioned agent's `default_effort` for the wakeups that
+the mentions trigger — useful for asking a mentioned agent to think harder
+about a tricky piece of feedback. If the comment contains no `@`-mentions,
+`effort` has no observable effect (no wakeup is fired). Invalid values are
+silently dropped. See [Reasoning effort](#reasoning-effort).
 
 #### `POST /companies/:companyId/issues/:issueId/comments/:commentId/choose`
 Board picks an option on an options-type comment.
@@ -1571,6 +1574,16 @@ Request:
 #### `GET /companies/:companyId/preferences/revisions`
 List revision history for the company preferences document.
 
+#### `POST /companies/:companyId/preferences/restore`
+Restore the company preferences document to a previous revision. Board-only.
+
+Request:
+```json
+{
+  "revision_number": 2
+}
+```
+
 Response:
 ```json
 {
@@ -1617,17 +1630,31 @@ Response:
 ```
 
 #### `PUT /companies/:companyId/projects/:projectId/docs/:filename`
-Write a project document (upsert). Agent writes to `prd.md` create an approval request (202 response) instead of writing directly.
+Write a project document (upsert). Agent writes to `prd.md` create an approval request (202 response) instead of writing directly. When the content changes, the prior content is captured as a new revision before the update.
 
 Request:
 ```json
 {
-  "content": "# Technical Specification\n\n## Updated..."
+  "content": "# Technical Specification\n\n## Updated...",
+  "change_summary": "optional"
 }
 ```
 
 #### `DELETE /companies/:companyId/projects/:projectId/docs/:filename`
 Delete a project document.
+
+#### `GET /companies/:companyId/projects/:projectId/docs/:filename/revisions`
+List revision history for a project document, ordered by `revision_number` descending.
+
+#### `POST /companies/:companyId/projects/:projectId/docs/:filename/restore`
+Restore a project document to a previous revision. Board-only (agents cannot restore). Snapshots the current content as a fresh revision before reverting.
+
+Request:
+```json
+{
+  "revision_number": 2
+}
+```
 
 #### `GET /companies/:companyId/projects/:projectId/agents-md`
 Read the project's AGENTS.md file.
@@ -2115,9 +2142,50 @@ Text content can contain `@<agent-slug>` references. The slug is derived from
 the agent title (lowercased, spaces → hyphens, e.g. "Dev Engineer" → `dev-engineer`).
 Repo short names can also be referenced: `@frontend`, `@api`.
 
-The server parses mentions from comment content and creates notifications for
-the mentioned agent. The mentioned agent receives the notification on its next
-heartbeat (in the `notifications` array).
+On `POST /companies/:companyId/issues/:issueId/comments`, the server parses
+mentions out of the comment content (ignoring fenced code blocks and self-
+mentions) and creates a `mention`-source wakeup for each distinct mentioned
+agent. The wakeup payload carries `{ source: "mention", issue_id, comment_id }`,
+and the mentioned agent wakes immediately — not on the next heartbeat tick.
+The ticket assignee is **not** woken by plain comments; assignees reconcile
+thread activity during their next scheduled heartbeat unless they are
+explicitly `@`-mentioned themselves.
+
+**Handoff semantics.** A mention-triggered run opens on the triggering ticket
+for triage. The agent's task prompt includes a "Mention Handoff" section that
+names the mentioner, quotes an excerpt of the comment (≤ 500 chars, with code
+fences stripped), and lists the agent's own open tickets. The agent is expected
+to route the work: update one of its own open tickets, or create a new one
+(sub-issue of the triggering ticket, a sibling/peer, or top-level — the new
+ticket is first-class work owned by that agent; the system records the
+triggering ticket as provenance via `created_by_run_id` automatically). Then
+the agent posts a single meaningful acknowledgement comment on the triggering
+ticket, optionally referencing the new ticket by identifier, and ends the turn.
+The only exception is direct inline questions the mentioned agent can answer
+as the authority on the triggering ticket.
+
+**Closing the loop (`reply` wakeup).** When a mention-triggered run posts its
+reply comment back on the triggering ticket, the server fires a `reply`-source
+wakeup for the original mentioner if both are agents and the company has
+`settings.wake_mentioner_on_reply` enabled (default true). The wakeup payload
+carries `{ source: "reply", issue_id, comment_id, triggering_comment_id,
+responder_member_id }`, idempotency key `reply:<triggering_comment_id>:<reply_comment_id>`.
+The mentioner's next run opens with a "Reply Received" prompt block that shows
+the responder's name, their reply excerpt, the original comment excerpt, and
+any tickets referenced in the reply. When one comment @-mentions several
+agents, each responder fires its own reply wakeup; nearby wakeups are coalesced
+by the standard 2-second window. Companies that prefer to batch replies can
+set `settings.wake_mentioner_on_reply` to false — in that case the original
+mentioner will observe the accumulated replies on its next scheduled heartbeat.
+
+**Spawned-from linkage.** Whenever an agent creates a new issue during a run,
+the server records `created_by_run_id = <that run's id>`. For the agent that
+later picks up the new ticket, `buildTaskPrompt` resolves
+`created_by_run_id → heartbeat_runs.issue_id` and prepends a **Spawned from:**
+line to the task block, regardless of whether the new ticket is a sub-issue
+(`parent_issue_id` set), a sibling, or top-level. If the new ticket is a sub-
+issue and its structural parent is the same as the spawning ticket, the prompt
+collapses to a single **Parent ticket:** line.
 
 Agents can use this to: ask questions, request reviews, escalate blockers, hand
 off context, or coordinate work across teams — all visible in the issue thread,
@@ -2381,7 +2449,7 @@ Response:
 
 ### Project Documents (agent-side)
 
-Agents access project documents through the same board endpoints (scoped to their company). Project docs are stored in the `project_docs` table. See the board-side Project Documents section for endpoint details.
+Agents access project documents through the same board endpoints (scoped to their company). Project docs are stored in the unified `documents` table with `type = 'project_doc'`. See the board-side Project Documents section for endpoint details.
 
 Agent writes to `prd.md` create an approval request instead of updating the document directly.
 
@@ -2577,16 +2645,12 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `approval.denied` | approval | Board denies |
 | `api_key.created` | api_key | Board generates API key |
 | `api_key.revoked` | api_key | Board revokes API key |
-| `kb_doc.created` | kb_doc | Board or agent (via approval) |
-| `kb_doc.updated` | kb_doc | Board or agent (via approval) |
-| `kb_doc.deleted` | kb_doc | Board deletes |
+| `documents.INSERT` | document | Board, agent, or approval-apply creates any document (`type` in row payload selects KB / project doc / preferences). Restore is published as `UPDATE`. |
+| `documents.UPDATE` | document | Document content edited or restored to a prior revision |
+| `documents.DELETE` | document | Document removed |
 | `kb_update.proposed` | approval | Agent proposes KB change |
 | `kb_update.approved` | approval | Board approves KB change |
 | `kb_update.denied` | approval | Board denies KB change |
-| `company_preferences.updated` | company_preferences | Board or agent updates preferences |
-| `project_doc.created` | project_doc | Board or agent creates project doc |
-| `project_doc.updated` | project_doc | Board or agent updates project doc |
-| `project_doc.deleted` | project_doc | Board deletes project doc |
 | `budget.warning` | agent | Agent hits 80% budget |
 | `budget.exceeded` | agent | Agent hits 100% budget |
 | `budget.reset` | agent | Monthly budget reset |

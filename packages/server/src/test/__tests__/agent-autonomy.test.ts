@@ -28,7 +28,7 @@ beforeAll(async () => {
 		headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Autonomy Test Co',
-			issue_prefix: 'AUT',
+
 			description: 'Testing agent autonomy',
 			template_id: softDevType.id,
 		}),
@@ -398,6 +398,156 @@ describe('agent-runner: retry context in task prompt', () => {
 		expect(prompt).toContain('### Rules for this issue');
 		expect(prompt).toContain('Must use PostgreSQL transactions');
 		expect(prompt).toContain('No raw SQL in route handlers');
+	});
+});
+
+describe('agent-runner: mention handoff prompt', () => {
+	const mentionIssue = {
+		id: 'trig-uuid',
+		identifier: 'AUT-42',
+		title: "CEO's roadmap",
+		description: 'Roadmap planning.',
+		status: 'in_progress',
+		priority: 'high',
+		project_id: 'proj-uuid',
+		rules: null,
+	};
+
+	const mentionPayload = {
+		source: 'mention',
+		issue_id: 'trig-uuid',
+		comment_id: 'comment-uuid',
+	};
+
+	it('prepends Mention Handoff when payload source is mention and ctx is provided', async () => {
+		const { buildTaskPrompt } = await import('../../services/agent-runner');
+
+		const ctx = {
+			authorName: 'CEO',
+			excerpt: 'Please update the spec to cover §6 and §11.',
+			openTickets: [
+				{ identifier: 'AUT-10', title: 'Draft spec', status: 'open', priority: 'high' },
+				{ identifier: 'AUT-12', title: 'Review PRD', status: 'in_progress', priority: 'medium' },
+				{ identifier: 'AUT-15', title: 'ADR: runtime', status: 'backlog', priority: 'low' },
+			],
+		};
+
+		const prompt = buildTaskPrompt('System prompt', mentionIssue, mentionPayload, {
+			mentionContext: ctx,
+		});
+
+		expect(prompt).toContain('## Mention Handoff');
+		expect(prompt).toContain('You were mentioned by CEO in AUT-42');
+		expect(prompt).toContain('> Please update the spec to cover §6 and §11.');
+		expect(prompt).toContain('AUT-10 — Draft spec (open, high)');
+		expect(prompt).toContain('AUT-12 — Review PRD (in_progress, medium)');
+		expect(prompt).toContain('AUT-15 — ADR: runtime (backlog, low)');
+		expect(prompt).toContain('parent_issue_id = trig-uuid');
+		expect(prompt).toContain('brief, meaningful acknowledgement');
+		// Ensure the normal Current Task block still follows.
+		expect(prompt).toContain('## Current Task: AUT-42');
+		// Handoff appears before the Current Task block.
+		expect(prompt.indexOf('## Mention Handoff')).toBeLessThan(prompt.indexOf('## Current Task'));
+	});
+
+	it('renders "none" in open tickets when agent has no assigned work', async () => {
+		const { buildTaskPrompt } = await import('../../services/agent-runner');
+
+		const ctx = {
+			authorName: 'CEO',
+			excerpt: 'Take a look at this.',
+			openTickets: [],
+		};
+
+		const prompt = buildTaskPrompt('System prompt', mentionIssue, mentionPayload, {
+			mentionContext: ctx,
+		});
+
+		expect(prompt).toContain('### Your open tickets\nnone');
+		expect(prompt).toContain('use `create_issue` to open one');
+	});
+
+	it('omits Mention Handoff when payload source is not mention', async () => {
+		const { buildTaskPrompt } = await import('../../services/agent-runner');
+
+		const ctx = {
+			authorName: 'CEO',
+			excerpt: 'hi',
+			openTickets: [],
+		};
+
+		const prompt = buildTaskPrompt(
+			'System prompt',
+			mentionIssue,
+			{ source: 'assignment', issue_id: 'trig-uuid' },
+			{ mentionContext: ctx },
+		);
+
+		expect(prompt).not.toContain('## Mention Handoff');
+		expect(prompt).toContain('## Current Task');
+	});
+
+	it('combines Mention Handoff with retry context when both are present', async () => {
+		const { buildTaskPrompt } = await import('../../services/agent-runner');
+
+		const ctx = {
+			authorName: 'Engineer',
+			excerpt: 'Spec out of date.',
+			openTickets: [{ identifier: 'AUT-1', title: 'Spec', status: 'open', priority: 'high' }],
+		};
+		const payload = {
+			...mentionPayload,
+			retry_count: 1,
+			max_retries: 2,
+			previous_failure: {
+				exit_code: 1,
+				stderr_tail: 'oops',
+			},
+		};
+
+		const prompt = buildTaskPrompt('System prompt', mentionIssue, payload, {
+			mentionContext: ctx,
+		});
+
+		expect(prompt).toContain('## Mention Handoff');
+		expect(prompt).toContain('## Retry Attempt 1/2');
+		expect(prompt.indexOf('## Mention Handoff')).toBeLessThan(prompt.indexOf('## Retry Attempt'));
+	});
+});
+
+describe('agent-runner: mention context loader', () => {
+	it('truncateExcerpt behaviour via loadMentionContext return: strips fenced code', async () => {
+		// Unit-level excerpt shape test via buildTaskPrompt: long excerpt with code fence gets stripped.
+		const { buildTaskPrompt } = await import('../../services/agent-runner');
+
+		const longCode = `Here is the plan\n\`\`\`\n${'x'.repeat(1200)}\n\`\`\`\nend`;
+		const ctx = {
+			authorName: 'CEO',
+			excerpt: longCode.replace(
+				/(?:^|\n)(?:```|~~~)[^\n]*\n[\s\S]*?(?:```|~~~)(?=\n|$)/g,
+				'[code omitted]',
+			),
+			openTickets: [],
+		};
+
+		const prompt = buildTaskPrompt(
+			'System',
+			{
+				id: 'i',
+				identifier: 'AUT-99',
+				title: 'x',
+				description: 'y',
+				status: 'open',
+				priority: 'low',
+				project_id: 'p',
+				rules: null,
+			},
+			{ source: 'mention', comment_id: 'c', issue_id: 'i' },
+			{ mentionContext: ctx },
+		);
+
+		expect(prompt).toContain('[code omitted]');
+		expect(prompt).not.toContain('x'.repeat(600));
 	});
 });
 

@@ -16,7 +16,7 @@ const SHARED_INSTRUCTIONS = `
 
 ### Ticket Maintenance
 - **Progress**: Update the current ticket's progress_summary via \`update_issue\` at natural milestones to reflect what you've accomplished and what remains.
-- **Rules**: If you discover constraints, requirements, or decisions specific to this ticket, add them to the ticket's rules field via \`update_issue\`.
+- **Rules**: The ticket \`rules\` field captures *how this ticket should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_issue\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the ticket \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or company-wide knowledge belongs in project docs (\`write_project_doc\`) or the company KB (\`upsert_kb_doc\`).
 - **Status**: Update the ticket status as you progress:
   - \`in_progress\` — when you begin active work
   - \`review\` — when handing off for review
@@ -24,7 +24,7 @@ const SHARED_INSTRUCTIONS = `
   - \`done\` — when work is complete and merged (triggers Coach review)
 
 ### Knowledge Maintenance
-- **Project docs** (\`.dev/\` folder): Use the \`write_project_doc\` tool for high-level project context — architecture decisions, API designs, schema, implementation plans. Keep these aligned with the actual codebase. Do NOT put agent-specific working knowledge here.
+- **Project docs**: Use \`list_project_docs\`, \`read_project_doc\`, and \`write_project_doc\` for high-level project context — PRDs, architecture decisions, API designs, schemas, implementation plans. Docs live in the project-doc store and are addressed by bare filename (e.g. \`prd.md\`, \`spec.md\`, \`research.md\`) — they are NOT filesystem paths, so never prefix a folder. Keep them aligned with the actual codebase. Do NOT put agent-specific working knowledge here.
 - **AGENTS.md**: For practical conventions, commands, and constraints that agents need when working on this project. Update via git in the repo.
 - **Company KB**: Use the \`upsert_kb_doc\` tool for organizational knowledge that spans projects — company policies, standards, and shared conventions.
 
@@ -81,13 +81,15 @@ export async function resolveSystemPrompt(
 	}
 
 	if (resolved.includes('{{kb_context}}')) {
-		const docs = await db.query<{ title: string; content: string }>(
-			'SELECT title, content FROM kb_docs WHERE company_id = $1 ORDER BY title',
+		const docs = await db.query<{ title: string; slug: string; content: string }>(
+			"SELECT title, slug, content FROM documents WHERE type = 'kb_doc' AND company_id = $1 ORDER BY title",
 			[ctx.companyId],
 		);
 		const kbText =
 			docs.rows.length > 0
-				? docs.rows.map((d) => `## ${d.title}\n${d.content}`).join('\n\n---\n\n')
+				? docs.rows
+						.map((d) => `## ${d.title} (link: @kb/${d.slug})\n${d.content}`)
+						.join('\n\n---\n\n')
 				: 'No knowledge base documents available.';
 		resolved = resolved.replace(/\{\{kb_context\}\}/g, kbText);
 	}
@@ -108,7 +110,7 @@ export async function resolveSystemPrompt(
 
 	if (resolved.includes('{{company_preferences_context}}')) {
 		const prefs = await db.query<{ content: string }>(
-			'SELECT content FROM company_preferences WHERE company_id = $1',
+			"SELECT content FROM documents WHERE type = 'company_preferences' AND company_id = $1",
 			[ctx.companyId],
 		);
 		const prefsText =
@@ -122,11 +124,13 @@ export async function resolveSystemPrompt(
 		let docsText = 'No project documentation available.';
 		if (ctx.projectId) {
 			const docs = await db.query<{ filename: string; content: string }>(
-				'SELECT filename, content FROM project_docs WHERE project_id = $1 ORDER BY filename',
+				"SELECT slug AS filename, content FROM documents WHERE type = 'project_doc' AND project_id = $1 ORDER BY slug",
 				[ctx.projectId],
 			);
 			if (docs.rows.length > 0) {
-				docsText = docs.rows.map((d) => `## ${d.filename}\n${d.content}`).join('\n\n---\n\n');
+				docsText = docs.rows
+					.map((d) => `## ${d.filename} (link: @doc/${d.filename})\n${d.content}`)
+					.join('\n\n---\n\n');
 			}
 		}
 		resolved = resolved.replace(/\{\{project_docs_context\}\}/g, docsText);

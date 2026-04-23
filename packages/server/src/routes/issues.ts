@@ -11,8 +11,10 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import { assertNoActiveRun } from '../lib/active-run';
 import { auditLog } from '../lib/audit';
 import { broadcastChange } from '../lib/broadcast';
+import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import { getProjectLocator, resolveIssueId, resolveProjectId } from '../lib/resolve';
@@ -65,11 +67,18 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
 		}
 	}
 
-	const assigneeId = c.req.query('assignee_id');
-	if (assigneeId) {
-		conditions.push(`i.assignee_id = $${idx}`);
-		params.push(assigneeId);
-		idx++;
+	const assigneeIdFilter = c.req.query('assignee_id');
+	if (assigneeIdFilter) {
+		const ids = assigneeIdFilter
+			.split(',')
+			.map((s) => s.trim())
+			.filter(Boolean);
+		if (ids.length > 0) {
+			const placeholders = ids.map((_, i) => `$${idx + i}`).join(', ');
+			conditions.push(`i.assignee_id IN (${placeholders})`);
+			params.push(...ids);
+			idx += ids.length;
+		}
 	}
 
 	const parentIssueId = c.req.query('parent_issue_id');
@@ -135,7 +144,11 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
      LEFT JOIN members m ON m.id = i.assignee_id
      LEFT JOIN member_agents ma ON ma.id = i.assignee_id
      WHERE ${where}
-     ORDER BY i.${sortColumn} ${sortDirection}
+     ORDER BY EXISTS (
+                SELECT 1 FROM heartbeat_runs hr
+                WHERE hr.issue_id = i.id AND hr.status IN ('running', 'queued')
+              ) DESC,
+              i.${sortColumn} ${sortDirection}
      LIMIT $${idx} OFFSET $${idx + 1}`,
 		dataParams,
 	);
@@ -173,20 +186,7 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 		return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
 	}
 
-	const companyResult = await db.query<{ issue_prefix: string }>(
-		'SELECT issue_prefix FROM companies WHERE id = $1',
-		[companyId],
-	);
-	if (companyResult.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Company not found', 404);
-	}
-
-	const numberResult = await db.query<{ number: number }>(
-		'SELECT next_issue_number($1) AS number',
-		[companyId],
-	);
-	const issueNumber = numberResult.rows[0].number;
-	const identifier = `${companyResult.rows[0].issue_prefix}-${issueNumber}`;
+	const { number: issueNumber, identifier } = await allocateIssueIdentifier(db, body.project_id);
 
 	const result = await db.query(
 		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,
@@ -256,7 +256,11 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
             m.member_type AS assignee_type,
             COALESCE(ma_ps.title, m_ps.display_name) AS progress_summary_updated_by_name,
             (SELECT count(*)::int FROM issue_comments ic WHERE ic.issue_id = i.id) AS comment_count,
-            (SELECT COALESCE(sum(ce.amount_cents), 0)::int FROM cost_entries ce WHERE ce.issue_id = i.id) AS cost_cents
+            (SELECT COALESCE(sum(ce.amount_cents), 0)::int FROM cost_entries ce WHERE ce.issue_id = i.id) AS cost_cents,
+            EXISTS (
+              SELECT 1 FROM heartbeat_runs hr
+              WHERE hr.issue_id = i.id AND hr.status IN ('running', 'queued')
+            ) AS has_active_run
      FROM issues i
      JOIN projects p ON p.id = i.project_id
      JOIN companies co ON co.id = i.company_id
@@ -273,6 +277,44 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
 	}
 
 	return ok(c, result.rows[0]);
+});
+
+issuesRoutes.post('/companies/:companyId/issues/resolve', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+
+	const body = await c.req.json<{ identifiers?: unknown }>();
+	const raw = body.identifiers;
+	if (!Array.isArray(raw)) {
+		return err(c, 'INVALID_REQUEST', 'identifiers must be an array of strings', 400);
+	}
+	if (raw.length > 100) {
+		return err(c, 'INVALID_REQUEST', 'identifiers array may not exceed 100 entries', 400);
+	}
+	const identifiers = Array.from(
+		new Set(
+			raw
+				.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+				.map((v) => v.trim().toLowerCase()),
+		),
+	);
+	if (identifiers.length === 0) return ok(c, []);
+
+	const result = await db.query<{
+		identifier: string;
+		title: string;
+		project_slug: string;
+		status: string;
+	}>(
+		`SELECT i.identifier, i.title, p.slug AS project_slug, i.status::text AS status
+		 FROM issues i JOIN projects p ON p.id = i.project_id
+		 WHERE i.company_id = $1 AND LOWER(i.identifier) = ANY($2::text[])`,
+		[companyId, identifiers],
+	);
+	return ok(c, result.rows);
 });
 
 issuesRoutes.get('/companies/:companyId/issues/:issueId/latest-run', async (c) => {
@@ -313,10 +355,15 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
-	const existing = await db.query<{ id: string; status: string; project_id: string }>(
-		'SELECT id, status, project_id FROM issues WHERE id = $1 AND company_id = $2',
-		[issueId, companyId],
-	);
+	const existing = await db.query<{
+		id: string;
+		status: string;
+		project_id: string;
+		assignee_id: string | null;
+	}>('SELECT id, status, project_id, assignee_id FROM issues WHERE id = $1 AND company_id = $2', [
+		issueId,
+		companyId,
+	]);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	}
@@ -333,6 +380,15 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		branch_name?: string | null;
 		runtime_type?: string | null;
 	}>();
+
+	const auth = c.get('auth');
+	if (
+		body.status !== undefined &&
+		auth.type === AuthType.Agent &&
+		existing.rows[0].status === IssueStatus.Closed
+	) {
+		return err(c, 'FORBIDDEN', 'Only board members can re-open a closed issue', 403);
+	}
 
 	const sets: string[] = [];
 	const params: unknown[] = [];
@@ -362,6 +418,12 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		if (body.assignee_id === null) {
 			return err(c, 'INVALID_REQUEST', 'assignee_id cannot be null', 400);
 		}
+		if (body.assignee_id !== existing.rows[0].assignee_id) {
+			const activeRunCheck = await assertNoActiveRun(db, issueId);
+			if (!activeRunCheck.ok) {
+				return err(c, 'CONFLICT', activeRunCheck.message, 409);
+			}
+		}
 		const opsCheck = await assertOperationsAssignee(
 			db,
 			companyId,
@@ -385,7 +447,6 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		params.push(body.progress_summary);
 		idx++;
 		sets.push('progress_summary_updated_at = now()');
-		const auth = c.get('auth');
 		const updatedBy = auth.type === AuthType.Agent ? auth.memberId : null;
 		sets.push(`progress_summary_updated_by = $${idx}`);
 		params.push(updatedBy);
@@ -420,7 +481,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	wakeAgentIfAssigned(db, body.assignee_id, companyId, issueId);
 
 	if (body.status) {
-		triggerStatusAutomations(db, companyId, issueId, body.status).catch((e) =>
+		triggerStatusAutomations(db, companyId, issueId, body.status, c.get('wsManager')).catch((e) =>
 			log.error('Failed to trigger status automations:', e),
 		);
 
@@ -459,43 +520,6 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		result.rows[0] as Record<string, unknown>,
 	);
 	return ok(c, result.rows[0]);
-});
-
-issuesRoutes.delete('/companies/:companyId/issues/:issueId', async (c) => {
-	const access = await requireCompanyAccess(c);
-	if (access instanceof Response) return access;
-
-	const db = c.get('db');
-	const { companyId } = access;
-	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
-	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
-
-	const existing = await db.query<{ status: string }>(
-		'SELECT status FROM issues WHERE id = $1 AND company_id = $2',
-		[issueId, companyId],
-	);
-	if (existing.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
-	}
-
-	if (
-		existing.rows[0].status !== IssueStatus.Backlog &&
-		existing.rows[0].status !== IssueStatus.Open
-	) {
-		return err(c, 'FORBIDDEN', 'Can only delete issues with status backlog or open', 403);
-	}
-
-	const comments = await db.query<{ count: number }>(
-		'SELECT count(*)::int AS count FROM issue_comments WHERE issue_id = $1',
-		[issueId],
-	);
-	if (comments.rows[0].count > 0) {
-		return err(c, 'CONFLICT', 'Cannot delete issue with comments', 409);
-	}
-
-	await db.query('DELETE FROM issues WHERE id = $1', [issueId]);
-	broadcastChange(c, wsRoom.company(companyId), 'issues', 'DELETE', { id: issueId });
-	return c.json({ data: null }, 200);
 });
 
 issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) => {
@@ -541,16 +565,10 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 		return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
 	}
 
-	const companyResult = await db.query<{ issue_prefix: string }>(
-		'SELECT issue_prefix FROM companies WHERE id = $1',
-		[companyId],
+	const { number: issueNumber, identifier } = await allocateIssueIdentifier(
+		db,
+		parent.rows[0].project_id,
 	);
-	const numberResult = await db.query<{ number: number }>(
-		'SELECT next_issue_number($1) AS number',
-		[companyId],
-	);
-	const issueNumber = numberResult.rows[0].number;
-	const identifier = `${companyResult.rows[0].issue_prefix}-${issueNumber}`;
 
 	const result = await db.query(
 		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,

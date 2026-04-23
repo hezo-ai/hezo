@@ -33,7 +33,7 @@ beforeAll(async () => {
 	app = buildApp(
 		db,
 		masterKeyManager,
-		{ dataDir, connectUrl: 'http://localhost:4100', connectPublicKey: '' },
+		{ dataDir, connectUrl: 'http://localhost:4100', connectPublicKey: '', webUrl: '' },
 		createStubDocker(),
 	);
 	const userResult = await db.query<{ id: string }>(
@@ -44,7 +44,7 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Preview Co', issue_prefix: 'PVW' }),
+		body: JSON.stringify({ name: 'Preview Co' }),
 	});
 	const company = (await companyRes.json()).data;
 	companyId = company.id;

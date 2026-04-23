@@ -21,10 +21,14 @@ export function useConnections(companyId: string) {
 
 export function useStartConnection(companyId: string) {
 	return useMutation({
-		mutationFn: (platform: string) =>
-			api.post<{ auth_url: string; state: string }>(
+		mutationFn: (input: string | { platform: string; issueId?: string }) => {
+			const platform = typeof input === 'string' ? input : input.platform;
+			const issueId = typeof input === 'string' ? undefined : input.issueId;
+			return api.post<{ auth_url: string; state: string }>(
 				`/api/companies/${companyId}/connections/${platform}/start`,
-			),
+				issueId ? { issue_id: issueId } : undefined,
+			);
+		},
 	});
 }
 

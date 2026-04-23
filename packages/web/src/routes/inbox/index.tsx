@@ -12,7 +12,7 @@ function GlobalInboxPage() {
 	const companyIds = companies?.map((c) => c.slug) ?? [];
 
 	return (
-		<div className="max-w-[900px] mx-auto w-full px-8 py-6">
+		<div className="max-w-[900px] w-full px-8 py-6">
 			<InboxView companyIds={companyIds} scope="global" />
 		</div>
 	);

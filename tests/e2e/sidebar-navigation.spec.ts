@@ -250,7 +250,9 @@ test.describe('Sidebar Navigation', () => {
 		await page.getByLabel('Description').fill('Project for sidebar test.');
 		await page.getByRole('button', { name: 'Create' }).click();
 
-		await expect(nav.getByText('Sidebar Created Project')).toBeVisible({ timeout: 10000 });
+		await expect(nav.getByRole('link', { name: 'Sidebar Created Project' }).first()).toBeVisible({
+			timeout: 10000,
+		});
 	});
 
 	test('clicking a project in sidebar navigates to project detail', async ({ page }) => {
@@ -332,6 +334,116 @@ test.describe('Sidebar Navigation', () => {
 		await page.getByRole('button', { name: 'Create' }).click();
 
 		const nav = page.locator('nav');
-		await expect(nav.getByText('Dynamic Sidebar Project')).toBeVisible({ timeout: 10000 });
+		await expect(nav.getByRole('link', { name: 'Dynamic Sidebar Project' }).first()).toBeVisible({
+			timeout: 10000,
+		});
+	});
+
+	test('active project reveals subsection sub-links in sidebar', async ({ page }) => {
+		await authenticate(page);
+		const { company, token } = await createCompanyWithAgents(page);
+		const headers = { Authorization: `Bearer ${token}` };
+
+		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+			headers,
+			data: { name: 'Alpha', description: 'Test project.' },
+		});
+		const alpha = ((await projRes.json()) as any).data;
+
+		await suppressAiModal(page);
+		await page.goto(`/companies/${company.slug}/projects/${alpha.slug}`);
+		await waitForPageLoad(page);
+
+		const nav = page.locator('nav');
+
+		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/issues"]`)).toBeVisible({
+			timeout: 10000,
+		});
+		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/documents"]`)).toBeVisible();
+		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/container"]`)).toBeVisible();
+		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/settings"]`)).toBeVisible();
+	});
+
+	test('non-active projects do not show subsection sub-links', async ({ page }) => {
+		await authenticate(page);
+		const { company, token } = await createCompanyWithAgents(page);
+		const headers = { Authorization: `Bearer ${token}` };
+
+		const alphaRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+			headers,
+			data: { name: 'Alpha', description: 'Test project.' },
+		});
+		const alpha = ((await alphaRes.json()) as any).data;
+
+		const betaRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+			headers,
+			data: { name: 'Beta', description: 'Test project.' },
+		});
+		const beta = ((await betaRes.json()) as any).data;
+
+		await suppressAiModal(page);
+		await page.goto(`/companies/${company.slug}/projects/${alpha.slug}`);
+		await waitForPageLoad(page);
+
+		const nav = page.locator('nav');
+
+		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/issues"]`)).toBeVisible({
+			timeout: 10000,
+		});
+		await expect(nav.locator(`a[href$="/projects/${beta.slug}/issues"]`)).toHaveCount(0);
+		await expect(nav.locator(`a[href$="/projects/${beta.slug}/settings"]`)).toHaveCount(0);
+	});
+
+	test('clicking a subsection sub-link navigates to that subsection', async ({ page }) => {
+		await authenticate(page);
+		const { company, token } = await createCompanyWithAgents(page);
+		const headers = { Authorization: `Bearer ${token}` };
+
+		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+			headers,
+			data: { name: 'Alpha', description: 'Test project.' },
+		});
+		const alpha = ((await projRes.json()) as any).data;
+
+		await suppressAiModal(page);
+		await page.goto(`/companies/${company.slug}/projects/${alpha.slug}`);
+		await waitForPageLoad(page);
+
+		const nav = page.locator('nav');
+		await nav.locator(`a[href$="/projects/${alpha.slug}/documents"]`).click();
+
+		await expect(page).toHaveURL(
+			new RegExp(`/companies/${company.slug}/projects/${alpha.slug}/documents`),
+			{ timeout: 5000 },
+		);
+
+		// Subsections still visible because the project is still active
+		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/settings"]`)).toBeVisible();
+	});
+
+	test('navigating away from project collapses its subsections', async ({ page }) => {
+		await authenticate(page);
+		const { company, token } = await createCompanyWithAgents(page);
+		const headers = { Authorization: `Bearer ${token}` };
+
+		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+			headers,
+			data: { name: 'Alpha', description: 'Test project.' },
+		});
+		const alpha = ((await projRes.json()) as any).data;
+
+		await suppressAiModal(page);
+		await page.goto(`/companies/${company.slug}/projects/${alpha.slug}`);
+		await waitForPageLoad(page);
+
+		const nav = page.locator('nav');
+		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/settings"]`)).toBeVisible({
+			timeout: 10000,
+		});
+
+		await nav.getByText('Inbox', { exact: true }).click();
+		await waitForPageLoad(page);
+
+		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/settings"]`)).toHaveCount(0);
 	});
 });

@@ -35,7 +35,7 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Container Sync Co',
-			issue_prefix: 'CSC',
+
 			template_id: companyTypeId,
 		}),
 	});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toIssuePrefix, toSlug, uniqueSlug } from '../../lib/slug';
+import { toProjectIssuePrefix, toSlug, uniqueSlug } from '../../lib/slug';
 
 describe('toSlug', () => {
 	it('converts simple string to slug', () => {
@@ -58,24 +58,32 @@ describe('uniqueSlug', () => {
 	});
 });
 
-describe('toIssuePrefix', () => {
-	it('takes first 4 chars for single word', () => {
-		expect(toIssuePrefix('Acme')).toBe('ACME');
+describe('toProjectIssuePrefix', () => {
+	it('takes first 2 chars for single-word names', () => {
+		expect(toProjectIssuePrefix('Operations')).toBe('OP');
 	});
 
-	it('takes first 4 chars for single long word', () => {
-		expect(toIssuePrefix('Enterprise')).toBe('ENTE');
+	it('takes first 2 chars for other single-word names', () => {
+		expect(toProjectIssuePrefix('Marketing')).toBe('MA');
 	});
 
 	it('takes initials for multi-word names', () => {
-		expect(toIssuePrefix('Acme Corp')).toBe('AC');
+		expect(toProjectIssuePrefix('Web App')).toBe('WA');
 	});
 
-	it('takes initials for three words', () => {
-		expect(toIssuePrefix('My Cool Startup')).toBe('MCS');
+	it('takes up to 4 initials for longer multi-word names', () => {
+		expect(toProjectIssuePrefix('My Cool Startup Project')).toBe('MCSP');
+	});
+
+	it('caps initials at 4 characters', () => {
+		expect(toProjectIssuePrefix('Very Important Customer Portal Extension')).toBe('VICP');
 	});
 
 	it('handles leading/trailing whitespace', () => {
-		expect(toIssuePrefix('  Acme Corp  ')).toBe('AC');
+		expect(toProjectIssuePrefix('  Web App  ')).toBe('WA');
+	});
+
+	it('strips non-alphanumeric characters', () => {
+		expect(toProjectIssuePrefix('Finance & Admin')).toBe('FA');
 	});
 });

@@ -5,14 +5,19 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Context } from 'hono';
 import type { AuthInfo, Env } from '../lib/types';
 import { verifyToken } from '../middleware/auth';
+import type { WebSocketManager } from '../services/ws';
 import { authContext, registerTools, type ToolDef } from './tools';
 
 let mcpServer: McpServer | null = null;
 let toolDefs: ToolDef[] = [];
 
-export function initMcpServer(db: PGlite, dataDir: string): ToolDef[] {
+export function initMcpServer(
+	db: PGlite,
+	dataDir: string,
+	wsManager?: WebSocketManager,
+): ToolDef[] {
 	mcpServer = new McpServer({ name: 'hezo', version: '0.1.0' });
-	toolDefs = registerTools(mcpServer, db, dataDir);
+	toolDefs = registerTools(mcpServer, db, dataDir, wsManager);
 	return toolDefs;
 }
 

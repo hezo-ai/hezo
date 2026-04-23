@@ -17,6 +17,7 @@ import {
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import { buildUpdateSet, terminalStatusParams } from '../lib/sql';
@@ -48,13 +49,19 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.company_id, hr.wakeup_id,
 	hr.invocation_command, hr.log_text, hr.working_dir,
 	hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
 	i.identifier AS issue_identifier, i.title AS issue_title,
-	i.project_id AS project_id,
+	i.project_id AS project_id, p.slug AS project_slug,
 	COALESCE(
 		(SELECT jsonb_agg(
-			jsonb_build_object('id', ci.id, 'identifier', ci.identifier, 'title', ci.title)
+			jsonb_build_object(
+				'id', ci.id,
+				'identifier', ci.identifier,
+				'title', ci.title,
+				'project_slug', cp.slug
+			)
 			ORDER BY ci.created_at ASC
 		)
 		FROM issues ci
+		JOIN projects cp ON cp.id = ci.project_id
 		WHERE ci.created_by_run_id = hr.id),
 		'[]'::jsonb
 	) AS created_issues`;
@@ -382,16 +389,7 @@ ${proposal.system_prompt ? `\n\`\`\`\n${proposal.system_prompt}\n\`\`\`\n` : '_(
 ### Existing team
 ${teamRoster}`;
 
-		const companyResult = await db.query<{ issue_prefix: string }>(
-			'SELECT issue_prefix FROM companies WHERE id = $1',
-			[companyId],
-		);
-		const numberResult = await db.query<{ number: number }>(
-			'SELECT next_issue_number($1) AS number',
-			[companyId],
-		);
-		const issueNumber = numberResult.rows[0].number;
-		const identifier = `${companyResult.rows[0].issue_prefix}-${issueNumber}`;
+		const { number: issueNumber, identifier } = await allocateIssueIdentifier(db, projectId);
 
 		const issueResult = await db.query<Record<string, unknown>>(
 			`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier,
@@ -759,6 +757,7 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs', async (
 		`SELECT ${HEARTBEAT_RUN_COLUMNS}
 		 FROM heartbeat_runs hr
 		 LEFT JOIN issues i ON i.id = hr.issue_id
+		 LEFT JOIN projects p ON p.id = i.project_id
 		 WHERE hr.member_id = $1
 		 ORDER BY hr.started_at DESC
 		 LIMIT 50`,
@@ -780,6 +779,7 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs/:runId', 
 		`SELECT ${HEARTBEAT_RUN_COLUMNS}
 		 FROM heartbeat_runs hr
 		 LEFT JOIN issues i ON i.id = hr.issue_id
+		 LEFT JOIN projects p ON p.id = i.project_id
 		 WHERE hr.id = $1 AND hr.member_id = $2`,
 		[runId, agentId],
 	);

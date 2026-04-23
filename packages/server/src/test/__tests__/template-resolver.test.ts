@@ -23,7 +23,7 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Template Co',
-			issue_prefix: 'TMP',
+
 			description: 'Build amazing things',
 		}),
 	});
@@ -86,6 +86,23 @@ describe('template resolver', () => {
 		expect(result).toContain('No knowledge base documents available');
 	});
 
+	it('renders {{kb_context}} with @kb/<slug> link tokens when docs exist', async () => {
+		const kbRes = await app.request(`/api/companies/${companyId}/kb-docs`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				title: 'Coding Standards',
+				slug: 'coding-standards',
+				content: 'Prefer early returns.',
+			}),
+		});
+		expect(kbRes.status).toBe(201);
+
+		const result = await resolveSystemPrompt(db, '{{kb_context}}', { companyId });
+		expect(result).toContain('## Coding Standards (link: @kb/coding-standards)');
+		expect(result).toContain('Prefer early returns.');
+	});
+
 	it('resolves {{company_preferences_context}} with no prefs', async () => {
 		const result = await resolveSystemPrompt(db, 'Prefs: {{company_preferences_context}}', {
 			companyId,
@@ -99,6 +116,25 @@ describe('template resolver', () => {
 			projectId,
 		});
 		expect(result).toContain('No project documentation available');
+	});
+
+	it('renders {{project_docs_context}} with @doc/<filename> link tokens when docs exist', async () => {
+		const docRes = await app.request(
+			`/api/companies/${companyId}/projects/${projectId}/docs/spec.md`,
+			{
+				method: 'PUT',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ content: 'Detailed spec.' }),
+			},
+		);
+		expect(docRes.status).toBe(200);
+
+		const result = await resolveSystemPrompt(db, '{{project_docs_context}}', {
+			companyId,
+			projectId,
+		});
+		expect(result).toContain('## spec.md (link: @doc/spec.md)');
+		expect(result).toContain('Detailed spec.');
 	});
 
 	it('passes through text without template variables', async () => {
@@ -232,7 +268,7 @@ describe('template resolver with agents', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Agent Test Co',
-				issue_prefix: 'ATC',
+
 				description: 'Test company for agent templates',
 				template_id: softDevType.id,
 			}),

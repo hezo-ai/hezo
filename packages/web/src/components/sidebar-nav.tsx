@@ -6,6 +6,7 @@ interface SidebarNavItem {
 	params?: Record<string, string>;
 	label: React.ReactNode;
 	count?: number;
+	subItems?: SidebarNavItem[];
 }
 
 export interface SidebarNavSection {
@@ -62,18 +63,40 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 						section.children?.map((item) => {
 							const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
 							return (
-								<Link
-									key={`${item.to}-${JSON.stringify(item.params)}`}
-									to={item.to}
-									params={item.params ?? {}}
-									className={`block text-left text-[13px] pl-5 pr-3 py-1 rounded-radius-md transition-colors ${
-										isActive
-											? 'text-text font-medium bg-bg-subtle'
-											: 'text-text-muted hover:text-text hover:bg-bg-subtle'
-									}`}
-								>
-									{item.label}
-								</Link>
+								<div key={`${item.to}-${JSON.stringify(item.params)}`}>
+									<Link
+										to={item.to}
+										params={item.params ?? {}}
+										className={`block text-left text-[13px] pl-5 pr-3 py-1 rounded-radius-md transition-colors ${
+											isActive
+												? 'text-text font-medium bg-bg-subtle'
+												: 'text-text-muted hover:text-text hover:bg-bg-subtle'
+										}`}
+									>
+										{item.label}
+									</Link>
+									{isActive &&
+										item.subItems?.map((subItem) => {
+											const isSubActive = matchRoute({
+												to: subItem.to,
+												params: subItem.params,
+											});
+											return (
+												<Link
+													key={`${subItem.to}-${JSON.stringify(subItem.params)}`}
+													to={subItem.to}
+													params={subItem.params ?? {}}
+													className={`block text-left text-[13px] pl-8 pr-3 py-1 rounded-radius-md transition-colors ${
+														isSubActive
+															? 'text-text font-medium bg-bg-subtle'
+															: 'text-text-muted hover:text-text hover:bg-bg-subtle'
+													}`}
+												>
+													{subItem.label}
+												</Link>
+											);
+										})}
+								</div>
 							);
 						})}
 				</div>

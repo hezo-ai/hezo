@@ -168,7 +168,9 @@ async function main() {
 
 	if (runE2E) {
 		console.log('\n── E2E Tests ──');
-		const proc = Bun.spawn(['bunx', 'playwright', 'test'], {
+		const playwrightArgs = ['playwright', 'test'];
+		if (pattern) playwrightArgs.push(pattern);
+		const proc = Bun.spawn(['bunx', ...playwrightArgs], {
 			cwd: ROOT,
 			stdout: 'inherit',
 			stderr: 'inherit',

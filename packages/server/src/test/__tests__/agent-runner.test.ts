@@ -1,14 +1,38 @@
+import { readFileSync } from 'node:fs';
 import type { PGlite } from '@electric-sql/pglite';
 import { AgentEffort, ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
-import { type RunnerDeps, runAgent, shellQuoteArg } from '../../services/agent-runner';
+import {
+	getHostPromptPath,
+	type RunnerDeps,
+	runAgent,
+	shellQuoteArg,
+} from '../../services/agent-runner';
 import type { DockerClient } from '../../services/docker';
 import { LogStreamBroker } from '../../services/log-stream-broker';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
+
+function readPromptFromExec(
+	opts: { Env: string[] },
+	dataDir: string,
+	project: { company_slug: string; slug: string },
+): string {
+	const entry = opts.Env.find((e) => e.startsWith('HEZO_PROMPT_FILE='));
+	if (!entry) throw new Error('HEZO_PROMPT_FILE env var missing from exec');
+	const containerPath = entry.slice('HEZO_PROMPT_FILE='.length);
+	const runId = containerPath
+		.split('/')
+		.pop()!
+		.replace(/\.txt$/, '');
+	return readFileSync(
+		getHostPromptPath(dataDir, project.company_slug, project.slug, runId),
+		'utf8',
+	);
+}
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -34,7 +58,7 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Runner Co', template_id: typeId, issue_prefix: 'RC' }),
+		body: JSON.stringify({ name: 'Runner Co', template_id: typeId }),
 	});
 	companyId = (await companyRes.json()).data.id;
 
@@ -313,9 +337,10 @@ describe('runAgent', () => {
 	});
 
 	it('includes issue rules in task prompt when present', async () => {
+		const project = makeProject();
 		const docker = createMockDocker({
 			execCreate: async (_containerId: string, opts: any) => {
-				const prompt = opts.Cmd[opts.Cmd.length - 1];
+				const prompt = readPromptFromExec(opts, '/tmp/test-data', project);
 				expect(prompt).toContain('Rules for this issue');
 				expect(prompt).toContain('Always write tests');
 				return 'exec-rules';
@@ -334,7 +359,7 @@ describe('runAgent', () => {
 		};
 
 		const issueWithRules = { ...makeIssue(), rules: 'Always write tests' };
-		const result = await runAgent(deps, makeAgent(), issueWithRules, makeProject());
+		const result = await runAgent(deps, makeAgent(), issueWithRules, project);
 		expect(result.success).toBe(true);
 	});
 
@@ -376,10 +401,11 @@ describe('runAgent', () => {
 	});
 
 	it('injects Run Context with company, project, and issue IDs into the system prompt', async () => {
+		const project = makeProject();
 		let capturedPrompt = '';
 		const docker = createMockDocker({
 			execCreate: async (_containerId: string, opts: any) => {
-				capturedPrompt = opts.Cmd[opts.Cmd.length - 1];
+				capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
 				return 'exec-run-ctx';
 			},
 			execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -395,7 +421,7 @@ describe('runAgent', () => {
 			logs: new LogStreamBroker(),
 		};
 
-		await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+		await runAgent(deps, makeAgent(), makeIssue(), project);
 
 		expect(capturedPrompt).toContain('## Run Context');
 		expect(capturedPrompt).toContain(`Company ID: ${companyId}`);
@@ -404,10 +430,11 @@ describe('runAgent', () => {
 	});
 
 	it('handles coach review trigger', async () => {
+		const project = makeProject();
 		let capturedPrompt = '';
 		const docker = createMockDocker({
 			execCreate: async (_containerId: string, opts: any) => {
-				capturedPrompt = opts.Cmd[opts.Cmd.length - 1];
+				capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
 				return 'exec-coach';
 			},
 			execStart: async () => ({ stdout: 'reviewed', stderr: '' }),
@@ -423,7 +450,7 @@ describe('runAgent', () => {
 			logs: new LogStreamBroker(),
 		};
 
-		const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject(), {
+		const result = await runAgent(deps, makeAgent(), makeIssue(), project, {
 			trigger: 'issue_done',
 		});
 
@@ -468,10 +495,11 @@ describe('runAgent', () => {
 
 	describe('effort configuration', () => {
 		it('appends the ultrathink directive when the wakeup asks for max effort', async () => {
+			const project = makeProject();
 			let capturedPrompt = '';
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
-					capturedPrompt = opts.Cmd[opts.Cmd.length - 1];
+					capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
 					return 'exec-ultra';
 				},
 				execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -487,7 +515,7 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			await runAgent(deps, makeAgent(), makeIssue(), makeProject(), {
+			await runAgent(deps, makeAgent(), makeIssue(), project, {
 				effort: AgentEffort.Max,
 			});
 
@@ -495,10 +523,11 @@ describe('runAgent', () => {
 		});
 
 		it("uses the agent's default_effort when the wakeup carries no override", async () => {
+			const project = makeProject();
 			let capturedPrompt = '';
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
-					capturedPrompt = opts.Cmd[opts.Cmd.length - 1];
+					capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
 					return 'exec-default';
 				},
 				execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -518,7 +547,7 @@ describe('runAgent', () => {
 				deps,
 				{ ...makeAgent(), default_effort: AgentEffort.High },
 				makeIssue(),
-				makeProject(),
+				project,
 			);
 
 			expect(capturedPrompt.trim().endsWith('think hard')).toBe(true);
@@ -593,7 +622,7 @@ describe('runAgent', () => {
 				{ effort: AgentEffort.High },
 			);
 
-			expect(capturedCmd[0]).toBe('codex');
+			expect(capturedCmd).toContain('codex');
 			expect(capturedCmd).toContain('-c');
 			expect(capturedCmd).toContain('model_reasoning_effort=high');
 		});
@@ -835,7 +864,53 @@ describe('runAgent', () => {
 			expect(row.rows[0].invocation_command!).not.toMatch(/Bearer eyJ/);
 		});
 
-		it('preserves real newlines in the invocation_command (no JSON escaping)', async () => {
+		it('sends a large system prompt via stdin file, keeping every argv element small', async () => {
+			const project = makeProject();
+			let capturedCmd: string[] = [];
+			let capturedEnv: string[] = [];
+			let promptOnDisk = '';
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					capturedEnv = opts.Env;
+					promptOnDisk = readPromptFromExec(opts, '/tmp/test-data', project);
+					return 'exec-huge';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			const hugeSystemPrompt = 'X'.repeat(256 * 1024);
+			const result = await runAgent(
+				deps,
+				{ ...makeAgent(), system_prompt: hugeSystemPrompt },
+				makeIssue(),
+				project,
+			);
+
+			expect(result.success).toBe(true);
+			expect(capturedCmd[0]).toBe('sh');
+			expect(capturedCmd[1]).toBe('-c');
+			for (const element of capturedCmd) {
+				expect(element.length).toBeLessThan(64 * 1024);
+			}
+			expect(
+				capturedEnv.some(
+					(e) => e === `HEZO_PROMPT_FILE=/workspace/.hezo/prompts/${result.heartbeatRunId}.txt`,
+				),
+			).toBe(true);
+			expect(promptOnDisk).toContain(hugeSystemPrompt);
+		});
+
+		it('records the prompt-file redirect suffix in the invocation_command', async () => {
 			const docker = createMockDocker({
 				execCreate: async () => 'exec-nl',
 				execStart: async () => ({ stdout: '', stderr: '' }),
@@ -850,17 +925,14 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject(), {
-				effort: AgentEffort.Max,
-			});
+			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
 
 			const row = await db.query<{ invocation_command: string | null }>(
 				'SELECT invocation_command FROM heartbeat_runs WHERE id = $1',
 				[result.heartbeatRunId],
 			);
 			const invocation = row.rows[0].invocation_command!;
-			expect(invocation).toContain('\nultrathink');
-			expect(invocation).not.toContain('\\nultrathink');
+			expect(invocation).toContain(`< /workspace/.hezo/prompts/${result.heartbeatRunId}.txt`);
 			expect(invocation).not.toContain('\\n');
 		});
 
@@ -968,7 +1040,7 @@ describe('runAgent', () => {
 				makeProject(),
 			);
 
-			expect(capturedCmd[0]).toBe('codex');
+			expect(capturedCmd).toContain('codex');
 			expect(capturedCmd).toContain('--dangerously-bypass-approvals-and-sandbox');
 		});
 
@@ -1298,7 +1370,7 @@ describe('runAgent', () => {
 				makeProject(),
 			);
 
-			expect(capturedCmd[0]).toBe('codex');
+			expect(capturedCmd).toContain('codex');
 			expect(capturedCmd).toContain('--model');
 			const idx = capturedCmd.indexOf('--model');
 			expect(capturedCmd[idx + 1]).toBe('gpt-5-mini');

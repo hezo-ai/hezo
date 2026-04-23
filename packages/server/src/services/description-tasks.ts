@@ -9,6 +9,7 @@ import {
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
+import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { logger } from '../logger';
 import { createWakeup } from './wakeup';
 
@@ -27,7 +28,6 @@ export type TeamSummaryReason =
 interface CompanyContext {
 	ceoMemberId: string | null;
 	operationsProjectId: string | null;
-	issuePrefix: string;
 }
 
 async function loadCompanyContext(db: PGlite, companyId: string): Promise<CompanyContext | null> {
@@ -46,17 +46,12 @@ async function loadCompanyContext(db: PGlite, companyId: string): Promise<Compan
 		[companyId, OPERATIONS_PROJECT_SLUG],
 	);
 
-	const company = await db.query<{ issue_prefix: string }>(
-		'SELECT issue_prefix FROM companies WHERE id = $1',
-		[companyId],
-	);
-
-	if (company.rows.length === 0) return null;
+	const companyExists = await db.query('SELECT 1 FROM companies WHERE id = $1', [companyId]);
+	if (companyExists.rows.length === 0) return null;
 
 	return {
 		ceoMemberId: ceo.rows[0]?.id ?? null,
 		operationsProjectId: ops.rows[0]?.id ?? null,
-		issuePrefix: company.rows[0].issue_prefix,
 	};
 }
 
@@ -88,12 +83,10 @@ async function createDescriptionIssue(
 ): Promise<string | null> {
 	if (!ctx.ceoMemberId || !ctx.operationsProjectId) return null;
 
-	const numberResult = await db.query<{ number: number }>(
-		'SELECT next_issue_number($1) AS number',
-		[companyId],
+	const { number: issueNumber, identifier } = await allocateIssueIdentifier(
+		db,
+		ctx.operationsProjectId,
 	);
-	const issueNumber = numberResult.rows[0].number;
-	const identifier = `${ctx.issuePrefix}-${issueNumber}`;
 
 	// Embed `target=...` in the description so dedup queries can find it without
 	// adding a separate column or jsonb payload field.

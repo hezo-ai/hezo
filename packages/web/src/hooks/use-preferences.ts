@@ -42,3 +42,18 @@ export function useUpdatePreferences(companyId: string) {
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'preferences'] }),
 	});
 }
+
+export function useRestorePreferenceRevision(companyId: string) {
+	return useMutation({
+		mutationFn: (revisionNumber: number) =>
+			api.post<Preferences>(`/api/companies/${companyId}/preferences/restore`, {
+				revision_number: revisionNumber,
+			}),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'preferences'] });
+			queryClient.invalidateQueries({
+				queryKey: ['companies', companyId, 'preferences', 'revisions'],
+			});
+		},
+	});
+}

@@ -88,8 +88,8 @@
   - Org chart with `reports_to` hierarchy
 - Project CRUD (create, update, delete, list)
 - Issue CRUD (create, update, delete, list, status transitions)
-  - Atomic issue numbering (`next_issue_number()`)
-  - Linear-style identifiers (ACME-42)
+  - Atomic per-project issue numbering (`next_project_issue_number()`)
+  - Linear-style identifiers (`OP-42` — project prefix + number)
   - Issue work ownership fields
   - Sub-issues and `blocked_by`
 - Comment CRUD (create, list) with all content types (text, options, preview, trace, system)
@@ -257,7 +257,7 @@ UI:
 
 ## Phase 5: Knowledge + Observability
 
-**Status:** Done (2026-04)
+**Status:** Done (2026-04). Documents unified into a single `documents` + `document_revisions` schema (2026-04-22) — project docs, KB docs, and company preferences all share one revision-with-rollback path; project docs and preferences gained the rollback UI as part of that.
 
 **Goal:** KB revisions, audit log, live queries, WebSocket events, previews. Migrate frontend from polling to real-time.
 

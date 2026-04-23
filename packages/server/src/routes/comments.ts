@@ -6,6 +6,7 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
+import { fireCommentWakeups } from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
 import { createWakeup } from '../services/wakeup';
 
@@ -75,6 +76,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		content_type?: string;
 		content: Record<string, unknown>;
 		effort?: string;
+		wake_assignee?: boolean;
 	}>();
 
 	if (!body.content) {
@@ -92,6 +94,11 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		authorMemberId = auth.memberId;
 	}
 
+	// Only Board (human) callers can opt into waking the assignee on a plain
+	// comment. Agent-authored paths (/agent-api, /mcp) keep mention-only behavior
+	// regardless of the body field.
+	const wakeAssignee = auth.type === AuthType.Board && body.wake_assignee === true;
+
 	const result = await db.query<{ id: string }>(
 		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
      VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
@@ -104,43 +111,18 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		],
 	);
 
-	const contentText = typeof body.content === 'object' ? JSON.stringify(body.content) : '';
-	const mentions = contentText.match(/@([\w-]+)/g);
-	const mentionedAgentIds = new Set<string>();
-	if (mentions) {
-		for (const mention of mentions) {
-			const slug = mention.slice(1);
-			const mentioned = await db.query<{ id: string }>(
-				`SELECT ma.id FROM member_agents ma
-				 JOIN members m ON m.id = ma.id
-				 WHERE ma.slug = $1 AND m.company_id = $2`,
-				[slug, companyId],
-			);
-			if (mentioned.rows.length > 0) {
-				mentionedAgentIds.add(mentioned.rows[0].id);
-				createWakeup(db, mentioned.rows[0].id, companyId, WakeupSource.Mention, {
-					issue_id: issueId,
-					comment_id: result.rows[0].id,
-					...(commentEffort ? { effort: commentEffort } : {}),
-				}).catch((e) => log.error('Failed to create mention wakeup:', e));
-			}
-		}
-	}
-
-	const assigneeId = issueCheck.rows[0].assignee_id;
-	if (assigneeId && !mentionedAgentIds.has(assigneeId)) {
-		const isSelfComment = auth.type === AuthType.Agent && auth.memberId === assigneeId;
-		if (!isSelfComment) {
-			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
-			if (isAgent.rows.length > 0) {
-				createWakeup(db, assigneeId, companyId, WakeupSource.Comment, {
-					issue_id: issueId,
-					comment_id: result.rows[0].id,
-					...(commentEffort ? { effort: commentEffort } : {}),
-				}).catch((e) => log.error('Failed to create comment wakeup:', e));
-			}
-		}
-	}
+	await fireCommentWakeups({
+		db,
+		issueId,
+		companyId,
+		commentId: result.rows[0].id,
+		content: body.content,
+		contentType: body.content_type ?? CommentContentType.Text,
+		authorMemberId,
+		authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
+		effort: commentEffort,
+		wakeAssignee,
+	});
 
 	broadcastChange(
 		c,

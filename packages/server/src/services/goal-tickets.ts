@@ -11,6 +11,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
+import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { logger } from '../logger';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -24,7 +25,6 @@ export type GoalChangeReason = 'created' | 'updated';
 interface CompanyContext {
 	ceoMemberId: string;
 	operationsProjectId: string;
-	issuePrefix: string;
 }
 
 async function loadCompanyContext(db: PGlite, companyId: string): Promise<CompanyContext | null> {
@@ -41,15 +41,10 @@ async function loadCompanyContext(db: PGlite, companyId: string): Promise<Compan
 		 LIMIT 1`,
 		[companyId, OPERATIONS_PROJECT_SLUG],
 	);
-	const company = await db.query<{ issue_prefix: string }>(
-		'SELECT issue_prefix FROM companies WHERE id = $1',
-		[companyId],
-	);
-	if (!ceo.rows[0] || !ops.rows[0] || !company.rows[0]) return null;
+	if (!ceo.rows[0] || !ops.rows[0]) return null;
 	return {
 		ceoMemberId: ceo.rows[0].id,
 		operationsProjectId: ops.rows[0].id,
-		issuePrefix: company.rows[0].issue_prefix,
 	};
 }
 
@@ -151,12 +146,7 @@ export async function enqueueGoalReviewTask(
 		return existingIssueId;
 	}
 
-	const numberResult = await db.query<{ number: number }>(
-		'SELECT next_issue_number($1) AS number',
-		[companyId],
-	);
-	const issueNumber = numberResult.rows[0].number;
-	const identifier = `${ctx.issuePrefix}-${issueNumber}`;
+	const { number: issueNumber, identifier } = await allocateIssueIdentifier(db, targetProjectId);
 
 	const issueResult = await db.query<Record<string, unknown>>(
 		`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier,

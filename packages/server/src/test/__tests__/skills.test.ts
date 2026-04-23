@@ -51,7 +51,7 @@ beforeAll(async () => {
 	app = buildApp(
 		db,
 		masterKeyManager,
-		{ dataDir: tempDataDir, connectUrl: '', connectPublicKey: '' },
+		{ dataDir: tempDataDir, connectUrl: '', connectPublicKey: '', webUrl: '' },
 		createStubDocker(),
 	);
 	const userResult = await db.query<{ id: string }>(
@@ -62,7 +62,7 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Skills Co', issue_prefix: 'SKL' }),
+		body: JSON.stringify({ name: 'Skills Co' }),
 	});
 	const companyBody = await companyRes.json();
 	companyId = companyBody.data.id;

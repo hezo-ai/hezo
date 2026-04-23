@@ -109,7 +109,11 @@ function DetailsStep({ template, onBack }: { template: CompanyType | null; onBac
 			description: description || undefined,
 			template_id: template?.id ?? undefined,
 		});
-		navigate({ to: '/companies/$companyId', params: { companyId: result.slug } });
+		navigate({
+			to: '/companies/$companyId/projects',
+			params: { companyId: result.slug },
+			search: { create: true },
+		});
 	}
 
 	return (

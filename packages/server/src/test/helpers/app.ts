@@ -43,7 +43,7 @@ export function createStubDocker(): DockerClient {
 	} as unknown as DockerClient;
 }
 
-export async function createTestApp() {
+export async function createTestApp(opts: { webUrl?: string } = {}) {
 	const db = await createTestDbWithMigrations();
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyHex = generateMasterKey();
@@ -58,6 +58,7 @@ export async function createTestApp() {
 			dataDir,
 			connectUrl: 'http://localhost:4100',
 			connectPublicKey: TEST_CONNECT_PUBLIC_KEY,
+			webUrl: opts.webUrl ?? '',
 		},
 		createStubDocker(),
 	);

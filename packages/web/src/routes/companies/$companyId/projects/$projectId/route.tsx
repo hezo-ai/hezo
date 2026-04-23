@@ -1,17 +1,41 @@
+import { IssueStatus, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
 import { createFileRoute, Link, Outlet, useMatchRoute } from '@tanstack/react-router';
 import { Breadcrumb } from '../../../../../components/ui/breadcrumb';
+import { useIssues } from '../../../../../hooks/use-issues';
 import { useProject } from '../../../../../hooks/use-projects';
 
+const NON_TERMINAL_STATUSES = Object.values(IssueStatus)
+	.filter((s) => !(TERMINAL_ISSUE_STATUSES as readonly string[]).includes(s))
+	.join(',');
+
 const tabs = [
-	{ label: 'Issues', to: '/companies/$companyId/projects/$projectId/issues' as const },
-	{ label: 'Documents', to: '/companies/$companyId/projects/$projectId/documents' as const },
-	{ label: 'Container', to: '/companies/$companyId/projects/$projectId/container' as const },
-	{ label: 'Settings', to: '/companies/$companyId/projects/$projectId/settings' as const },
-];
+	{ key: 'issues', label: 'Issues', to: '/companies/$companyId/projects/$projectId/issues' },
+	{
+		key: 'documents',
+		label: 'Documents',
+		to: '/companies/$companyId/projects/$projectId/documents',
+	},
+	{
+		key: 'container',
+		label: 'Container',
+		to: '/companies/$companyId/projects/$projectId/container',
+	},
+	{
+		key: 'settings',
+		label: 'Settings',
+		to: '/companies/$companyId/projects/$projectId/settings',
+	},
+] as const;
 
 function ProjectLayout() {
 	const { companyId, projectId } = Route.useParams();
 	const { data: project, isLoading } = useProject(companyId, projectId);
+	const { data: openIssues } = useIssues(companyId, {
+		project_id: projectId,
+		status: NON_TERMINAL_STATUSES,
+		per_page: '1',
+	});
+	const openCount = openIssues?.meta.total ?? 0;
 	const matchRoute = useMatchRoute();
 	const params = { companyId, projectId };
 
@@ -44,6 +68,11 @@ function ProjectLayout() {
 							}`}
 						>
 							{tab.label}
+							{tab.key === 'issues' && openCount > 0 && (
+								<span className="ml-1 text-text-muted" data-testid="project-nav-issue-count">
+									({openCount})
+								</span>
+							)}
 						</Link>
 					);
 				})}

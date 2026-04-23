@@ -11,6 +11,7 @@ import { Toggle } from './ui/toggle';
 interface RepoSetupWizardProps {
 	companyId: string;
 	projectId: string;
+	issueId?: string;
 	open: boolean;
 	onOpenChange: (v: boolean) => void;
 	onComplete?: () => void;
@@ -19,6 +20,7 @@ interface RepoSetupWizardProps {
 export function RepoSetupWizard({
 	companyId,
 	projectId,
+	issueId,
 	open,
 	onOpenChange,
 	onComplete,
@@ -48,7 +50,7 @@ export function RepoSetupWizard({
 							onComplete={onComplete}
 						/>
 					) : (
-						<ConnectGithubStep companyId={companyId} />
+						<ConnectGithubStep companyId={companyId} issueId={issueId} />
 					)}
 				</Dialog.Content>
 			</Dialog.Portal>
@@ -56,10 +58,10 @@ export function RepoSetupWizard({
 	);
 }
 
-function ConnectGithubStep({ companyId }: { companyId: string }) {
+function ConnectGithubStep({ companyId, issueId }: { companyId: string; issueId?: string }) {
 	const start = useStartConnection(companyId);
 	async function handleConnect() {
-		const res = await start.mutateAsync('github');
+		const res = await start.mutateAsync(issueId ? { platform: 'github', issueId } : 'github');
 		window.location.href = res.auth_url;
 	}
 	return (

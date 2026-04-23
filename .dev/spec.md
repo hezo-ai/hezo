@@ -476,7 +476,7 @@ Agents can request updates to their own system prompts via `PATCH /agent-api/sel
 
 Role docs for different company templates frequently share boilerplate — the same "no designated repo means no run" rule appears in every code-touching role, the same hire workflow belongs on every CEO prompt regardless of template. To avoid drift we resolve **section-level partials** at bundle time.
 
-- Partials live under `.dev/agents/_partials/**/*.md`. They are plain Markdown with no frontmatter and are not seeded as role docs themselves.
+- Partials live under `agents/_partials/**/*.md`. They are plain Markdown with no frontmatter and are not seeded as role docs themselves.
 - A role doc pulls one in with a **whole-line** directive: `{{> partials/<name>}}` (leading whitespace tolerated; anything else on the line makes it literal text). The name mirrors the path under `_partials/` without the `.md` suffix.
 - Resolution runs in `scripts/bundle-agents.ts` before the bundle is zipped into `packages/server/src/db/agents-bundle.json`, and in the filesystem fallback (`loadAgentRoles` in `packages/server/src/db/agent-roles.ts`) used by tests and dev mode. The DB still stores fully expanded prompts; nothing reads partials at runtime.
 - Partials may include other partials; cycles and unknown refs hard-fail the bundler. Runtime variable substitutions (`{{company_name}}`, `{{kb_context}}`, …) are untouched — those happen later in `template-resolver.ts` per-run.
@@ -1134,8 +1134,8 @@ GitHub-style issue tracker. Issues are the primary interaction surface for the e
 | Priority | Yes | `urgent`, `high`, `medium`, `low` |
 | Labels | No | Free-form tags (JSONB array) |
 | Parent issue | No | For sub-issues / delegation |
-| Number | Auto | Per-company auto-incrementing (atomic) |
-| Identifier | Auto | Linear-style: `{prefix}-{number}` (e.g. `ACME-42`). Globally unique. |
+| Number | Auto | Per-project auto-incrementing (atomic) |
+| Identifier | Auto | Linear-style: `{project.issue_prefix}-{number}` (e.g. `OP-42`). Unique per company. |
 | Blocked by | No | References to other issues blocking this one (many-to-many via `issue_dependencies` table) |
 | Progress summary | No | Concise markdown summary of requirements, what's done, and what's next. Updated by agents when they start/finish work on the issue. Collapsed by default in UI. |
 | Progress summary updated at | Auto | Timestamp of last progress summary update |
@@ -1202,9 +1202,22 @@ Agents can create sub-issues and assign them to their direct reports or peers (a
 
 All inter-agent communication happens through @-mentions in issue comments — same as GitHub. No side channels, no direct messaging, no hidden state. Everything is on the record and fully traceable.
 
-An agent can `@architect` or `@engineer` in a comment. The mentioned agent receives a notification on its next heartbeat. The slug for @-mentions is derived from the agent title (lowercased, spaces → hyphens). Slugs are unique within a company.
+An agent can `@architect` or `@engineer` in a comment. The mentioned agent wakes immediately (see §Event-based triggers). The slug for @-mentions is derived from the agent title (lowercased, spaces → hyphens). Slugs are unique within a company.
 
 Repo short names can also be @-mentioned: `@frontend`, `@api` — these reference the repo, not an agent.
+
+**Handoff contract.** When an agent is woken by a mention, its run opens on the triggering ticket for *triage only* — not as new assigned work. The agent's task prompt is prepended with a Mention Handoff block showing the mentioner, the comment excerpt, and the agent's own open tickets. The expected behaviour is:
+
+- If one of the agent's open tickets already covers the topic of the mention, the agent updates that ticket's description, rules, or progress_summary to reflect what was communicated and references the triggering ticket so the handoff is traceable.
+- If no existing ticket covers it, the agent opens one via `create_issue`. The new ticket is the mentioned agent's own first-class work and may be shaped as a sub-issue of the triggering ticket, a sibling/peer, or a top-level ticket depending on context. The system records the triggering ticket as provenance automatically via `created_by_run_id`.
+- The agent then posts a single meaningful acknowledgement comment on the triggering ticket, optionally referencing the new ticket by identifier, and ends the turn. The next heartbeat picks up the agent's own ticket if any.
+- The only exception is when the mention is a direct question the mentioned agent can answer inline as the authority on the triggering ticket — in that case the agent replies in-thread and ends the turn.
+
+**Closing the loop.** Posting that acknowledgement comment fires a `reply`-source wakeup for the original mentioner (when the mentioner is an agent and `companies.settings.wake_mentioner_on_reply` is true — the default). The mentioner's next run opens with a "Reply Received" prompt block showing the responder, the reply excerpt, and any tickets the reply referenced. When a single comment @-mentions several agents and the mentioner prefers to batch their responses on a heartbeat instead of waking on every reply, disable the company setting.
+
+**Spawned-from provenance.** Any issue created during an agent run carries `created_by_run_id`. When the agent later picks the new ticket up, its task prompt is prefixed with a **Spawned from:** line (or, when the new ticket is structurally parented to the spawning ticket, a single **Parent ticket:** line) so the provenance chain is visible without the agent needing to encode it in the description.
+
+Self-mentions (an agent mentioning its own slug in a comment it authors) do not create a wakeup; this prevents infinite wake loops when agents quote their prior output. Mentions inside fenced code blocks are also ignored.
 
 Use cases: asking questions, requesting code reviews, escalating blockers, handing off context, coordinating cross-team work. All of it visible in the issue thread.
 
@@ -1495,6 +1508,9 @@ Every agent has a heartbeat interval. Default is **60 minutes**. Configurable pe
 
 ### Event-based triggers (immediate wakeup)
 
+Sources: `mention`, `reply`, `assignment`, `option_chosen`, `comment` (opt-in assignee wake), `on_demand`, `automation`. See `.dev/schema.md` for the full table of wakeup sources and payloads.
+
+
 In addition to scheduled heartbeats, agents are triggered **immediately** by:
 - Task assignment — issue assigned to them (on creation, update, or sub-issue creation)
 - @-mention in an issue comment
@@ -1504,9 +1520,11 @@ In addition to scheduled heartbeats, agents are triggered **immediately** by:
 
 Event-triggered wakeups do not wait for the next scheduled heartbeat — the agent subprocess is spawned immediately. Scheduled heartbeats are a fallback for idle agents with no pending events.
 
+Plain comments on an assigned ticket (with no `@`-mention targeting the assignee) do not fire an event-based wakeup; the assignee reconciles thread activity on its next scheduled heartbeat. Only explicit `@`-mentions — or other triggers in the list above — spawn a run.
+
 ### Wakeup queue and coalescing
 
-When multiple events fire for the same agent in quick succession (e.g. several @-mentions, assignment + comment), wakeups are coalesced into a single activation. The wakeup queue:
+When multiple events fire for the same agent in quick succession (e.g. several @-mentions, or assignment + option_chosen), wakeups are coalesced into a single activation. The wakeup queue:
 
 - Batches events within a short coalescing window (default: 10 seconds)
 - Delivers all pending events in a single heartbeat response
@@ -2187,7 +2205,7 @@ auth_provider:        github, gitlab
 
 ### Atomic functions
 
-**`next_issue_number(company_id)`** — Upsert + returning for gap-free per-company issue numbering.
+**`next_project_issue_number(project_id)`** — Upsert + returning for gap-free per-project issue numbering.
 
 **`debit_agent_budget(agent_id, amount_cents)`** — SELECT FOR UPDATE to row-lock, check agent budget AND company budget, debit both. Returns FALSE if either budget is exceeded.
 

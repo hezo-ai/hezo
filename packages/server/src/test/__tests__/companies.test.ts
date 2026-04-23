@@ -43,8 +43,13 @@ describe('companies CRUD', () => {
 		const body = await res.json();
 		expect(body.data.name).toBe('NoteGenius AI');
 		expect(body.data.slug).toBe('notegenius-ai');
-		expect(body.data.issue_prefix).toBe('NA');
 		expect(body.data.agent_count).toBe(11);
+
+		const opsPrefix = await db.query<{ issue_prefix: string }>(
+			"SELECT issue_prefix FROM projects WHERE company_id = $1 AND slug = 'operations'",
+			[body.data.id],
+		);
+		expect(opsPrefix.rows[0].issue_prefix).toBe('OP');
 
 		const kbRes = await app.request(`/api/companies/${body.data.id}/kb-docs`, {
 			headers: authHeader(token),
@@ -66,12 +71,10 @@ describe('companies CRUD', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Solo Project',
-				issue_prefix: 'SOLO',
 			}),
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.issue_prefix).toBe('SOLO');
 		expect(body.data.agent_count).toBe(2);
 
 		const agentsRes = await app.request(`/api/companies/${body.data.id}/agents`, {
@@ -80,18 +83,6 @@ describe('companies CRUD', () => {
 		const agents = (await agentsRes.json()).data;
 		const slugs = agents.map((a: any) => a.slug).sort();
 		expect(slugs).toEqual(['ceo', 'coach']);
-	});
-
-	it('rejects duplicate issue prefix', async () => {
-		const res = await app.request('/api/companies', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Another Company',
-				issue_prefix: 'SOLO',
-			}),
-		});
-		expect(res.status).toBe(409);
 	});
 
 	it('lists companies with counts', async () => {
@@ -141,7 +132,7 @@ describe('companies CRUD', () => {
 		const createRes = await app.request('/api/companies', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'To Delete', issue_prefix: 'DEL' }),
+			body: JSON.stringify({ name: 'To Delete' }),
 		});
 		const created = (await createRes.json()).data;
 
@@ -161,12 +152,12 @@ describe('companies CRUD', () => {
 		const res1 = await app.request('/api/companies', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Duplicate Name', issue_prefix: 'DN1' }),
+			body: JSON.stringify({ name: 'Duplicate Name' }),
 		});
 		const res2 = await app.request('/api/companies', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Duplicate Name', issue_prefix: 'DN2' }),
+			body: JSON.stringify({ name: 'Duplicate Name' }),
 		});
 		expect(res1.status).toBe(201);
 		expect(res2.status).toBe(201);
@@ -180,7 +171,7 @@ describe('companies CRUD', () => {
 		const res = await app.request('/api/companies', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Provision Test Co', issue_prefix: 'PTC' }),
+			body: JSON.stringify({ name: 'Provision Test Co' }),
 		});
 		expect(res.status).toBe(201);
 		const companyId = (await res.json()).data.id;
@@ -196,7 +187,7 @@ describe('companies CRUD', () => {
 		expect(opsProject.rows[0].container_status).not.toBeNull();
 	});
 
-	it('auto-derives issue prefix from company name', async () => {
+	it('seeds the Operations project with an OP issue prefix', async () => {
 		const res = await app.request('/api/companies', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -204,7 +195,11 @@ describe('companies CRUD', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.issue_prefix).toBe('ACI');
+		const opsPrefix = await db.query<{ issue_prefix: string }>(
+			"SELECT issue_prefix FROM projects WHERE company_id = $1 AND slug = 'operations'",
+			[body.data.id],
+		);
+		expect(opsPrefix.rows[0].issue_prefix).toBe('OP');
 	});
 });
 
@@ -237,7 +232,7 @@ describe('template-based company creation', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Research Co',
-				issue_prefix: 'RES',
+
 				template_id: templateId,
 			}),
 		});
@@ -259,7 +254,6 @@ describe('template-based company creation', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Blank Co',
-				issue_prefix: 'BLK',
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -285,7 +279,7 @@ describe('template-based company creation', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Blank Template Co',
-				issue_prefix: 'BTC',
+
 				template_id: blankType.id,
 			}),
 		});
@@ -307,7 +301,7 @@ describe('template-based company creation', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Full Template Co',
-				issue_prefix: 'FTC',
+
 				template_id: builtinTypeId,
 			}),
 		});
@@ -349,7 +343,7 @@ describe('template-based company creation', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Researcher Co',
-				issue_prefix: 'RSC',
+
 				template_id: templateId,
 			}),
 		});
@@ -371,7 +365,7 @@ describe('template-based company creation', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Join Table Co',
-				issue_prefix: 'JTC',
+
 				template_id: builtinTypeId,
 			}),
 		});
@@ -409,7 +403,7 @@ describe('template-based company creation', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Docs Co',
-				issue_prefix: 'DOC',
+
 				template_id: templateId,
 			}),
 		});
@@ -430,7 +424,7 @@ describe('template-based company creation', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'No Docs Co',
-				issue_prefix: 'NDC',
+
 				template_id: builtinTypeId,
 			}),
 		});

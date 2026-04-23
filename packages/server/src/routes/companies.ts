@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { AuthType, BUILTIN_AGENT_SLUGS, MemberType, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
-import { toIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
+import { toProjectIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -57,7 +57,6 @@ companiesRoutes.post('/companies', async (c) => {
 		name: string;
 		description?: string;
 		template_id?: string;
-		issue_prefix?: string;
 	}>();
 
 	if (!body.name?.trim()) {
@@ -66,14 +65,6 @@ companiesRoutes.post('/companies', async (c) => {
 
 	const db = c.get('db');
 	const auth = c.get('auth');
-	const issuePrefix = body.issue_prefix?.trim() || toIssuePrefix(body.name);
-
-	const prefixCheck = await db.query('SELECT id FROM companies WHERE issue_prefix = $1', [
-		issuePrefix,
-	]);
-	if (prefixCheck.rows.length > 0) {
-		return err(c, 'CONFLICT', `Issue prefix '${issuePrefix}' is already in use`, 409);
-	}
 
 	const slug = await uniqueSlug(toSlug(body.name), async (s) => {
 		const r = await db.query('SELECT 1 FROM companies WHERE slug = $1', [s]);
@@ -91,16 +82,12 @@ companiesRoutes.post('/companies', async (c) => {
 		const teamSummary = teamSummaryResult?.rows[0]?.default_team_summary ?? '';
 
 		const companyResult = await db.query(
-			`INSERT INTO companies (name, slug, description, team_summary, issue_prefix)
-       VALUES ($1, $2, $3, $4, $5)
+			`INSERT INTO companies (name, slug, description, team_summary)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
-			[body.name.trim(), slug, body.description ?? '', teamSummary, issuePrefix],
+			[body.name.trim(), slug, body.description ?? '', teamSummary],
 		);
 		const company = companyResult.rows[0] as { id: string; [key: string]: unknown };
-
-		await db.query('INSERT INTO company_issue_counters (company_id, next_number) VALUES ($1, 1)', [
-			company.id,
-		]);
 
 		// Auto-create board membership for the creator
 		if (auth.type === AuthType.Board) {
@@ -116,11 +103,15 @@ companiesRoutes.post('/companies', async (c) => {
 			]);
 		}
 
-		await db.query(
-			`INSERT INTO projects (company_id, name, slug, description, is_internal)
-			 VALUES ($1, 'Operations', $2, 'Administrative workspace for internal operations such as agent onboarding, team coordination, and company-wide tasks.', true)`,
-			[company.id, OPERATIONS_PROJECT_SLUG],
+		const opsProjectResult = await db.query<{ id: string }>(
+			`INSERT INTO projects (company_id, name, slug, issue_prefix, description, is_internal)
+			 VALUES ($1, 'Operations', $2, $3, 'Administrative workspace for internal operations such as agent onboarding, team coordination, and company-wide tasks.', true)
+			 RETURNING id`,
+			[company.id, OPERATIONS_PROJECT_SLUG, toProjectIssuePrefix('Operations')],
 		);
+		await db.query('INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)', [
+			opsProjectResult.rows[0].id,
+		]);
 
 		if (body.template_id) {
 			await db.query(
@@ -469,10 +460,10 @@ async function createKbDocsFromTemplate(
 	const docs = result.rows[0]?.kb_docs_config ?? [];
 	for (const doc of docs) {
 		await db.query(
-			`INSERT INTO kb_docs (company_id, title, slug, content)
-			 VALUES ($1, $2, $3, $4)
-			 ON CONFLICT (company_id, slug) DO NOTHING`,
-			[companyId, doc.title, doc.slug, doc.content],
+			`INSERT INTO documents (company_id, type, slug, title, content)
+			 VALUES ($1, 'kb_doc', $2, $3, $4)
+			 ON CONFLICT DO NOTHING`,
+			[companyId, doc.slug, doc.title, doc.content],
 		);
 	}
 }

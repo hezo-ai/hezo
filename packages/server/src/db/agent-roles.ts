@@ -52,7 +52,6 @@ export async function loadAgentRoles(): Promise<Record<string, string>> {
 			'..',
 			'..',
 			'..',
-			'.dev',
 			'agents',
 		);
 		const raw = await loadFilesystemAgentRoles(agentsDir);

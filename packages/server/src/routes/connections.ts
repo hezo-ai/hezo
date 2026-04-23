@@ -34,6 +34,7 @@ connectionsRoutes.post('/companies/:companyId/connections/:platform/start', asyn
 	const access = await requireCompanyAccess(c);
 	if (access instanceof Response) return access;
 
+	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const connectUrl = c.get('connectUrl');
 	const { companyId } = access;
@@ -47,7 +48,29 @@ connectionsRoutes.post('/companies/:companyId/connections/:platform/start', asyn
 		return err(c, 'CONNECT_UNAVAILABLE', 'Hezo Connect URL is not configured', 503);
 	}
 
-	const state = await signOAuthState({ company_id: companyId }, masterKeyManager);
+	let issueId: string | undefined;
+	if (c.req.header('content-type')?.includes('application/json')) {
+		try {
+			const body = await c.req.json<{ issue_id?: string }>();
+			if (body?.issue_id) {
+				const issueCheck = await db.query<{ id: string }>(
+					'SELECT id FROM issues WHERE id = $1 AND company_id = $2',
+					[body.issue_id, companyId],
+				);
+				if (issueCheck.rows.length === 0) {
+					return err(c, 'NOT_FOUND', 'Issue not found for this company', 404);
+				}
+				issueId = body.issue_id;
+			}
+		} catch {
+			// Ignore malformed body; issue_id is optional.
+		}
+	}
+
+	const state = await signOAuthState(
+		{ company_id: companyId, ...(issueId ? { issue_id: issueId } : {}) },
+		masterKeyManager,
+	);
 
 	// Derive the callback URL from the request origin
 	const origin = new URL(c.req.url).origin;

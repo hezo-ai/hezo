@@ -462,6 +462,8 @@ export class JobManager {
 			project_id: string;
 			rules: string | null;
 			runtime_type: AgentRuntime | null;
+			parent_issue_id: string | null;
+			created_by_run_id: string | null;
 		};
 
 		let issue: IssueRow | undefined;
@@ -472,7 +474,7 @@ export class JobManager {
 			typeof wakeupPayload?.issue_id === 'string' ? wakeupPayload.issue_id : undefined;
 		if (payloadIssueId) {
 			const payloadIssue = await db.query<IssueRow>(
-				'SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type FROM issues WHERE id = $1 AND company_id = $2',
+				'SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type, parent_issue_id, created_by_run_id FROM issues WHERE id = $1 AND company_id = $2',
 				[payloadIssueId, companyId],
 			);
 			if (payloadIssue.rows.length === 0) {
@@ -488,7 +490,7 @@ export class JobManager {
 			issue = payloadIssue.rows[0];
 		} else {
 			const issues = await db.query<IssueRow>(
-				`SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type
+				`SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type, parent_issue_id, created_by_run_id
 				 FROM issues
 				 WHERE assignee_id = $1 AND company_id = $2
 				   AND status NOT IN ($3, $4, $5)
@@ -737,6 +739,45 @@ export class JobManager {
 				`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
 				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
 			);
+		}
+
+		await this.chainNextIssueWakeup(memberId, issueId, companyId);
+	}
+
+	private async chainNextIssueWakeup(
+		memberId: string,
+		justCompletedIssueId: string,
+		companyId: string,
+	): Promise<void> {
+		const { db } = this.deps;
+		const next = await db.query<{ id: string }>(
+			`SELECT id FROM issues
+			 WHERE assignee_id = $1 AND company_id = $2 AND id != $3
+			   AND status NOT IN ($4::issue_status, $5::issue_status, $6::issue_status)
+			 ORDER BY
+			   CASE priority WHEN $7 THEN 0 WHEN $8 THEN 1 WHEN $9 THEN 2 WHEN $10 THEN 3 END,
+			   created_at ASC
+			 LIMIT 1`,
+			[
+				memberId,
+				companyId,
+				justCompletedIssueId,
+				...TERMINAL_ISSUE_STATUSES,
+				IssuePriority.Urgent,
+				IssuePriority.High,
+				IssuePriority.Medium,
+				IssuePriority.Low,
+			],
+		);
+		if (next.rows.length === 0) return;
+
+		try {
+			await createWakeup(db, memberId, companyId, WakeupSource.Timer, {
+				issue_id: next.rows[0].id,
+				reason: 'chain_after_completion',
+			});
+		} catch (e) {
+			log.error(`Failed to chain wakeup for agent ${memberId}:`, e);
 		}
 	}
 

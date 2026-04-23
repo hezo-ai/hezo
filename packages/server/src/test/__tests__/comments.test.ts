@@ -26,7 +26,7 @@ beforeAll(async () => {
 	const companyRes = await app.request('/api/companies', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Comment Co', issue_prefix: 'CC' }),
+		body: JSON.stringify({ name: 'Comment Co' }),
 	});
 	companyId = (await companyRes.json()).data.id;
 
@@ -248,7 +248,7 @@ describe('comment wakeups on assigned issues', () => {
 		await new Promise((r) => setTimeout(r, 100));
 	});
 
-	it('creates comment wakeup when board user comments on agent-assigned issue', async () => {
+	it('does not wake the assignee when a plain board comment is posted', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
 
 		const res = await app.request(
@@ -267,14 +267,13 @@ describe('comment wakeups on assigned issues', () => {
 		await new Promise((r) => setTimeout(r, 100));
 
 		const wakeups = await db.query(
-			"SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'comment'",
-			[agentId],
+			'SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND company_id = $2',
+			[agentId, companyId],
 		);
-		expect(wakeups.rows.length).toBe(1);
-		expect((wakeups.rows[0] as any).payload.issue_id).toBe(assignedIssueId);
+		expect(wakeups.rows.length).toBe(0);
 	});
 
-	it('does not double-notify when comment @-mentions the assigned agent', async () => {
+	it('wakes the assigned agent only on a mention-bearing comment (mention source, no comment source)', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
 
 		const res = await app.request(
@@ -305,7 +304,7 @@ describe('comment wakeups on assigned issues', () => {
 		expect(commentWakeups.rows.length).toBe(0);
 	});
 
-	it('propagates a per-comment effort override onto the wakeup payload', async () => {
+	it('propagates a per-comment effort override onto the mention wakeup payload', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
 
 		const res = await app.request(
@@ -315,7 +314,7 @@ describe('comment wakeups on assigned issues', () => {
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					content_type: 'text',
-					content: { text: 'Please think harder about this.' },
+					content: { text: `@${agentSlug} please think harder about this.` },
 					effort: 'max',
 				}),
 			},
@@ -325,7 +324,7 @@ describe('comment wakeups on assigned issues', () => {
 		await new Promise((r) => setTimeout(r, 100));
 
 		const wakeups = await db.query<{ payload: Record<string, unknown> }>(
-			"SELECT payload FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'comment'",
+			"SELECT payload FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'",
 			[agentId],
 		);
 		expect(wakeups.rows.length).toBe(1);
@@ -342,7 +341,7 @@ describe('comment wakeups on assigned issues', () => {
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					content_type: 'text',
-					content: { text: 'Typical effort' },
+					content: { text: `@${agentSlug} typical effort` },
 					effort: 'not-a-real-level',
 				}),
 			},
@@ -352,37 +351,10 @@ describe('comment wakeups on assigned issues', () => {
 		await new Promise((r) => setTimeout(r, 100));
 
 		const wakeups = await db.query<{ payload: Record<string, unknown> }>(
-			"SELECT payload FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'comment'",
+			"SELECT payload FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'",
 			[agentId],
 		);
 		expect(wakeups.rows.length).toBe(1);
 		expect(wakeups.rows[0].payload.effort).toBeUndefined();
-	});
-
-	it('does not self-notify when assigned agent comments on own issue', async () => {
-		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
-
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
-
-		const res = await app.request(
-			`/api/companies/${companyId}/issues/${assignedIssueId}/comments`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					content_type: 'text',
-					content: { text: 'I am working on this' },
-				}),
-			},
-		);
-		expect(res.status).toBe(201);
-
-		await new Promise((r) => setTimeout(r, 100));
-
-		const wakeups = await db.query(
-			"SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'comment'",
-			[agentId],
-		);
-		expect(wakeups.rows.length).toBe(0);
 	});
 });

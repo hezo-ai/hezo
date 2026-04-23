@@ -55,11 +55,36 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 			onAdd: () => setCreateProjectOpen(true),
 			addLabel: 'New project',
 			items: [],
-			children: sortedProjects.map((project) => ({
-				to: '/companies/$companyId/projects/$projectId',
-				params: { companyId, projectId: project.slug },
-				label: project.name,
-			})),
+			children: sortedProjects.map((project) => {
+				const projectParams = { companyId, projectId: project.slug };
+				return {
+					to: '/companies/$companyId/projects/$projectId',
+					params: projectParams,
+					label: project.name,
+					subItems: [
+						{
+							to: '/companies/$companyId/projects/$projectId/issues',
+							params: projectParams,
+							label: 'Issues',
+						},
+						{
+							to: '/companies/$companyId/projects/$projectId/documents',
+							params: projectParams,
+							label: 'Documents',
+						},
+						{
+							to: '/companies/$companyId/projects/$projectId/container',
+							params: projectParams,
+							label: 'Container',
+						},
+						{
+							to: '/companies/$companyId/projects/$projectId/settings',
+							params: projectParams,
+							label: 'Settings',
+						},
+					],
+				};
+			}),
 		},
 		{
 			title: 'Team',
