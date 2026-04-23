@@ -429,7 +429,7 @@ describe('MCP endpoint: tool call integration', () => {
 		const result = (await callUpdateIssueAsAgent({
 			company_id: companyId,
 			issue_id: created.id,
-			status: 'open',
+			status: 'backlog',
 		})) as { error?: string };
 		expect(result.error).toMatch(/board/i);
 

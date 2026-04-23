@@ -528,7 +528,7 @@ describe('issues CRUD', () => {
 		const reopenRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'open' }),
+			body: JSON.stringify({ status: 'backlog' }),
 		});
 		expect(reopenRes.status).toBe(403);
 		const body = await reopenRes.json();
@@ -565,10 +565,10 @@ describe('issues CRUD', () => {
 		const reopenRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'open' }),
+			body: JSON.stringify({ status: 'backlog' }),
 		});
 		expect(reopenRes.status).toBe(200);
-		expect((await reopenRes.json()).data.status).toBe('open');
+		expect((await reopenRes.json()).data.status).toBe('backlog');
 	});
 
 	it('allows agents to set non-terminal statuses via PATCH', async () => {

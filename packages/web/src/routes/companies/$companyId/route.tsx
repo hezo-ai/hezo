@@ -20,7 +20,7 @@ function CompanyLayout() {
 	return (
 		<div className="flex flex-col">
 			<ContainerStatusBanner companyId={companyId} />
-			<div className="max-w-[1000px] mx-auto w-full px-8 py-6">
+			<div className="max-w-[1000px] mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
 				<Outlet />
 			</div>
 		</div>

@@ -7,6 +7,16 @@ interface SidebarNavItem {
 	label: React.ReactNode;
 	count?: number;
 	subItems?: SidebarNavItem[];
+	testId?: string;
+}
+
+function CountBadge({ value }: { value: number | undefined }) {
+	if (!value) return null;
+	return (
+		<span className="ml-1.5 bg-bg-muted px-[7px] py-px rounded-full text-[11px] font-normal">
+			{value}
+		</span>
+	);
 }
 
 export interface SidebarNavSection {
@@ -43,6 +53,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 								key={item.to}
 								to={item.to}
 								params={item.params ?? {}}
+								data-testid={item.testId}
 								className={`block text-left text-[13px] px-3 py-1.5 rounded-radius-md transition-colors ${
 									isActive
 										? 'text-text font-medium bg-bg-subtle'
@@ -50,11 +61,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 								}`}
 							>
 								{item.label}
-								{item.count != null && (
-									<span className="ml-1.5 bg-bg-muted px-[7px] py-px rounded-full text-[11px] font-normal">
-										{item.count}
-									</span>
-								)}
+								<CountBadge value={item.count} />
 							</Link>
 						);
 					})}
@@ -86,6 +93,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 													key={`${subItem.to}-${JSON.stringify(subItem.params)}`}
 													to={subItem.to}
 													params={subItem.params ?? {}}
+													data-testid={subItem.testId}
 													className={`block text-left text-[13px] pl-8 pr-3 py-1 rounded-radius-md transition-colors ${
 														isSubActive
 															? 'text-text font-medium bg-bg-subtle'
@@ -93,6 +101,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 													}`}
 												>
 													{subItem.label}
+													<CountBadge value={subItem.count} />
 												</Link>
 											);
 										})}

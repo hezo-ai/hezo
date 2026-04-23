@@ -92,7 +92,7 @@ describe('goals CRUD', () => {
 		const issue = issueResult.rows[0];
 		expect(issue.assignee_id).toBe(ceoMemberId);
 		expect(issue.project_id).toBe(opsId);
-		expect(issue.status).toBe('open');
+		expect(issue.status).toBe('backlog');
 		expect(issue.priority).toBe('medium');
 		const labels = typeof issue.labels === 'string' ? JSON.parse(issue.labels) : issue.labels;
 		expect(labels).toContain('goal-update');

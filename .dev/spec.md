@@ -1130,7 +1130,7 @@ GitHub-style issue tracker. Issues are the primary interaction surface for the e
 | Description | No | Detailed markdown body |
 | Project | **Yes (enforced)** | Every issue must belong to a project |
 | Assignee | No | Agent or board member assigned to work on it (polymorphic: `assignee_type` + `assignee_id`) |
-| Status | Yes | `backlog`, `open`, `in_progress`, `review`, `blocked`, `done`, `closed`, `cancelled` |
+| Status | Yes | `backlog`, `in_progress`, `review`, `blocked`, `done`, `closed`, `cancelled` |
 | Priority | Yes | `urgent`, `high`, `medium`, `low` |
 | Labels | No | Free-form tags (JSONB array) |
 | Parent issue | No | For sub-issues / delegation |
@@ -1146,14 +1146,13 @@ GitHub-style issue tracker. Issues are the primary interaction surface for the e
 Not all status transitions are valid. The allowed transitions are:
 
 ```
-backlog → open
-open → in_progress, cancelled
+backlog → in_progress, cancelled
 in_progress → review, blocked, cancelled
 review → in_progress, done, cancelled
 blocked → in_progress, cancelled
 done → closed, in_progress (reopen)
-closed → open (reopen)
-cancelled → open (reopen)
+closed → backlog (reopen)
+cancelled → backlog (reopen)
 ```
 
 The system enforces these transitions. Invalid transitions return an error.
@@ -2187,7 +2186,7 @@ agent_runtime_status: active, idle
 agent_admin_status:   enabled, disabled, terminated
 member_role:          board, member
 container_status:     creating, running, stopping, stopped, error    (tracks project container status; `error` only fires on a verified terminal signal — HTTP 404 from `docker inspect` or a provisioning failure — never on transport errors like daemon unreachable / EPIPE, which leave the previous status untouched and retry next tick)
-issue_status:         backlog, open, in_progress, review, blocked, done, closed, cancelled
+issue_status:         backlog, in_progress, review, blocked, done, closed, cancelled
 issue_priority:       urgent, high, medium, low
 comment_author_type:  board, agent, system
 comment_content_type: text, options, preview, trace, system

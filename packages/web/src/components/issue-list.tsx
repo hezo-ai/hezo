@@ -1,4 +1,4 @@
-import { IssueStatus } from '@hezo/shared';
+import { IssueStatus, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
 import { useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Plus, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -13,7 +13,6 @@ import { MultiSelect, type MultiSelectOption } from './ui/multi-select';
 
 const statusColors: Record<string, string> = {
 	backlog: 'neutral',
-	open: 'info',
 	in_progress: 'warning',
 	review: 'purple',
 	approved: 'success',
@@ -30,7 +29,11 @@ const priorityColors: Record<string, string> = {
 	low: 'neutral',
 };
 
-const statusOptions: MultiSelectOption[] = Object.values(IssueStatus).map((s) => ({
+const ALL_STATUSES = Object.values(IssueStatus) as string[];
+const TERMINAL_STATUS_SET = new Set<string>(TERMINAL_ISSUE_STATUSES);
+const DEFAULT_OPEN_STATUSES: string[] = ALL_STATUSES.filter((s) => !TERMINAL_STATUS_SET.has(s));
+
+const statusOptions: MultiSelectOption[] = ALL_STATUSES.map((s) => ({
 	value: s,
 	label: s.replace('_', ' '),
 }));
@@ -38,10 +41,18 @@ const statusOptions: MultiSelectOption[] = Object.values(IssueStatus).map((s) =>
 type SortField = 'created_at' | 'updated_at';
 type SortDir = 'asc' | 'desc';
 
-const sortFieldLabels: Record<SortField, string> = {
-	created_at: 'Created',
-	updated_at: 'Updated',
+const sortLabels: Record<`${SortField}:${SortDir}`, string> = {
+	'created_at:desc': 'Newest first',
+	'created_at:asc': 'Oldest first',
+	'updated_at:desc': 'Recently updated',
+	'updated_at:asc': 'Oldest updates',
 };
+
+function isDefaultOpenSelection(values: string[]): boolean {
+	if (values.length !== DEFAULT_OPEN_STATUSES.length) return false;
+	const set = new Set(values);
+	return DEFAULT_OPEN_STATUSES.every((s) => set.has(s));
+}
 
 interface IssueRow {
 	id: string;
@@ -67,7 +78,7 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 	const [expanded, setExpanded] = useState(false);
 	const [search, setSearch] = useState('');
 	const [debouncedSearch, setDebouncedSearch] = useState('');
-	const [statusValues, setStatusValues] = useState<string[]>([]);
+	const [statusValues, setStatusValues] = useState<string[]>(() => [...DEFAULT_OPEN_STATUSES]);
 	const [ownerValues, setOwnerValues] = useState<string[]>([]);
 	const [sortField, setSortField] = useState<SortField>('created_at');
 	const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -107,19 +118,26 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 		return map;
 	}, [ownerOptions]);
 
+	const statusLabel: string | null = (() => {
+		if (statusValues.length === 0) return 'No statuses';
+		if (statusValues.length === ALL_STATUSES.length) return 'All statuses';
+		if (isDefaultOpenSelection(statusValues)) return 'Open issues';
+		if (statusValues.length === 1) return `Status: ${statusValues[0].replace('_', ' ')}`;
+		return `${statusValues.length} statuses`;
+	})();
+
+	const ownerLabel: string | null =
+		ownerValues.length === 0
+			? null
+			: ownerValues.length === 1
+				? `Owner: ${ownerLabelById.get(ownerValues[0]) ?? '1 owner'}`
+				: `${ownerValues.length} owners`;
+
 	const summaryBits: string[] = [
-		`${sortFieldLabels[sortField]} ${sortDir}`,
-		...(statusValues.length > 0 ? [`Status: ${statusValues.length}`] : []),
-		...(ownerValues.length > 0
-			? [
-					`Owner: ${
-						ownerValues.length === 1
-							? (ownerLabelById.get(ownerValues[0]) ?? '1')
-							: ownerValues.length
-					}`,
-				]
-			: []),
-		...(debouncedSearch ? [`"${debouncedSearch}"`] : []),
+		sortLabels[`${sortField}:${sortDir}`],
+		...(statusLabel ? [statusLabel] : []),
+		...(ownerLabel ? [ownerLabel] : []),
+		...(debouncedSearch ? [`Matching "${debouncedSearch}"`] : []),
 	];
 
 	function handleStatusChange(next: string[]) {
@@ -144,7 +162,7 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 
 	function resetFilters() {
 		setSearch('');
-		setStatusValues([]);
+		setStatusValues([...DEFAULT_OPEN_STATUSES]);
 		setOwnerValues([]);
 		setSortField('created_at');
 		setSortDir('desc');
@@ -182,6 +200,7 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 						key: 'project' as const,
 						header: 'Project',
 						width: '100px',
+						hideOnMobile: true,
 						render: (row: IssueRow) =>
 							row.project_name ? (
 								<Badge color="info">{row.project_name}</Badge>
@@ -202,6 +221,7 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 			key: 'priority',
 			header: 'Priority',
 			width: '80px',
+			hideOnMobile: true,
 			render: (row) => (
 				<Badge color={priorityColors[row.priority] as 'neutral'}>{row.priority}</Badge>
 			),
@@ -210,23 +230,24 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 			key: 'assignee',
 			header: 'Assignee',
 			width: '100px',
+			hideOnMobile: true,
 			render: (row) => <span className="text-text-muted">{row.assignee_name || '—'}</span>,
 		},
 	];
 
 	return (
 		<div>
-			<div
-				data-testid="issue-filter-bar"
-				className="mb-4 rounded-md border border-border bg-bg-elevated overflow-hidden"
-			>
-				<div className="flex items-center gap-2 px-3 py-2">
+			<div className="mb-4 flex flex-col sm:flex-row items-stretch sm:items-start gap-2">
+				<div
+					data-testid="issue-filter-bar"
+					className="flex-1 min-w-0 rounded-md border border-border bg-bg-elevated overflow-hidden"
+				>
 					<button
 						type="button"
 						onClick={() => setExpanded((e) => !e)}
 						aria-expanded={expanded}
 						data-testid="issue-filter-toggle"
-						className="flex items-center gap-2 flex-1 min-w-0 text-left cursor-pointer"
+						className="flex items-center gap-2 w-full text-left cursor-pointer px-3 py-2"
 					>
 						<ChevronDown
 							className={`w-3.5 h-3.5 text-text-subtle shrink-0 transition-transform ${
@@ -235,87 +256,96 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 						/>
 						<span className="truncate text-xs text-text-muted">{summaryBits.join(' · ')}</span>
 					</button>
-					<Button size="sm" onClick={() => setCreateOpen(true)} data-testid="issue-list-new-issue">
-						<Plus className="w-3.5 h-3.5" />
-						New issue
-					</Button>
-				</div>
-				{expanded && (
-					<div
-						data-testid="issue-filter-panel"
-						className="px-3 py-3 border-t border-border flex flex-wrap items-end gap-3 bg-bg-subtle"
-					>
-						<label className="flex flex-col gap-1 flex-1 min-w-[180px]">
-							<span className="text-[11px] uppercase tracking-wider text-text-subtle">Search</span>
-							<div className="relative">
-								<Search className="w-3.5 h-3.5 text-text-subtle absolute left-2.5 top-1/2 -translate-y-1/2" />
-								<input
-									type="text"
-									value={search}
-									onChange={(e) => setSearch(e.target.value)}
-									placeholder="Filter by title..."
-									data-testid="issue-filter-search"
-									className="w-full rounded-radius-md border border-border bg-bg pl-8 pr-2.5 py-1.5 text-xs text-text outline-none focus:border-border-hover"
+					{expanded && (
+						<div
+							data-testid="issue-filter-panel"
+							className="px-3 py-3 border-t border-border flex flex-wrap items-end gap-3 bg-bg-subtle"
+						>
+							<label className="flex flex-col gap-1 flex-1 min-w-0 sm:min-w-[180px]">
+								<span className="text-[11px] uppercase tracking-wider text-text-subtle">
+									Search
+								</span>
+								<div className="relative">
+									<Search className="w-3.5 h-3.5 text-text-subtle absolute left-2.5 top-1/2 -translate-y-1/2" />
+									<input
+										type="text"
+										value={search}
+										onChange={(e) => setSearch(e.target.value)}
+										placeholder="Filter by title..."
+										data-testid="issue-filter-search"
+										className="w-full rounded-radius-md border border-border bg-bg pl-8 pr-2.5 py-1.5 text-xs text-text outline-none focus:border-border-hover"
+									/>
+								</div>
+							</label>
+
+							<label className="flex flex-col gap-1">
+								<span className="text-[11px] uppercase tracking-wider text-text-subtle">Sort</span>
+								<div className="flex gap-1">
+									<select
+										value={sortField}
+										onChange={(e) => handleSortFieldChange(e.target.value as SortField)}
+										data-testid="issue-filter-sort-field"
+										className="rounded-radius-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none"
+									>
+										<option value="created_at">Created</option>
+										<option value="updated_at">Updated</option>
+									</select>
+									<select
+										value={sortDir}
+										onChange={(e) => handleSortDirChange(e.target.value as SortDir)}
+										data-testid="issue-filter-sort-dir"
+										className="rounded-radius-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none"
+									>
+										<option value="desc">desc</option>
+										<option value="asc">asc</option>
+									</select>
+								</div>
+							</label>
+
+							<div className="flex flex-col gap-1">
+								<span className="text-[11px] uppercase tracking-wider text-text-subtle">
+									Status
+								</span>
+								<MultiSelect
+									label="Status"
+									options={statusOptions}
+									value={statusValues}
+									onChange={handleStatusChange}
+									testId="issue-filter-status"
 								/>
 							</div>
-						</label>
 
-						<label className="flex flex-col gap-1">
-							<span className="text-[11px] uppercase tracking-wider text-text-subtle">Sort</span>
-							<div className="flex gap-1">
-								<select
-									value={sortField}
-									onChange={(e) => handleSortFieldChange(e.target.value as SortField)}
-									data-testid="issue-filter-sort-field"
-									className="rounded-radius-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none"
-								>
-									<option value="created_at">Created</option>
-									<option value="updated_at">Updated</option>
-								</select>
-								<select
-									value={sortDir}
-									onChange={(e) => handleSortDirChange(e.target.value as SortDir)}
-									data-testid="issue-filter-sort-dir"
-									className="rounded-radius-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none"
-								>
-									<option value="desc">desc</option>
-									<option value="asc">asc</option>
-								</select>
+							<div className="flex flex-col gap-1">
+								<span className="text-[11px] uppercase tracking-wider text-text-subtle">Owner</span>
+								<MultiSelect
+									label="Owner"
+									options={ownerOptions}
+									value={ownerValues}
+									onChange={handleOwnerChange}
+									testId="issue-filter-owner"
+								/>
 							</div>
-						</label>
 
-						<div className="flex flex-col gap-1">
-							<span className="text-[11px] uppercase tracking-wider text-text-subtle">Status</span>
-							<MultiSelect
-								label="Status"
-								options={statusOptions}
-								value={statusValues}
-								onChange={handleStatusChange}
-								testId="issue-filter-status"
-							/>
+							<Button
+								size="sm"
+								variant="ghost"
+								onClick={resetFilters}
+								data-testid="issue-filter-reset"
+							>
+								Reset
+							</Button>
 						</div>
-
-						<div className="flex flex-col gap-1">
-							<span className="text-[11px] uppercase tracking-wider text-text-subtle">Owner</span>
-							<MultiSelect
-								label="Owner"
-								options={ownerOptions}
-								value={ownerValues}
-								onChange={handleOwnerChange}
-								testId="issue-filter-owner"
-							/>
-						</div>
-
-						<Button
-							size="sm"
-							variant="ghost"
-							onClick={resetFilters}
-							data-testid="issue-filter-reset"
-						>
-							Reset
-						</Button>
-					</div>
-				)}
+					)}
+				</div>
+				<Button
+					size="sm"
+					onClick={() => setCreateOpen(true)}
+					data-testid="issue-list-new-issue"
+					className="sm:shrink-0"
+				>
+					<Plus className="w-3.5 h-3.5" />
+					New issue
+				</Button>
 			</div>
 
 			{isLoading ? (

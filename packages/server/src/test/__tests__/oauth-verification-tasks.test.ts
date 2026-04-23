@@ -89,7 +89,7 @@ describe('enqueueOAuthVerificationTask', () => {
 
 		expect(issue.labels).toEqual(expect.arrayContaining(['internal', 'oauth-verification']));
 		expect(issue.priority).toBe('high');
-		expect(issue.status).toBe('open');
+		expect(issue.status).toBe('backlog');
 		expect(issue.title).toContain('GitHub');
 		expect(issue.description).toContain('oauth-verify platform=github');
 		expect(issue.description).toContain('octocat');

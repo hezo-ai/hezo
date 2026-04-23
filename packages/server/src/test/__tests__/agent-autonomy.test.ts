@@ -426,9 +426,9 @@ describe('agent-runner: mention handoff prompt', () => {
 			authorName: 'CEO',
 			excerpt: 'Please update the spec to cover §6 and §11.',
 			openTickets: [
-				{ identifier: 'AUT-10', title: 'Draft spec', status: 'open', priority: 'high' },
+				{ identifier: 'AUT-10', title: 'Draft spec', status: 'backlog', priority: 'high' },
 				{ identifier: 'AUT-12', title: 'Review PRD', status: 'in_progress', priority: 'medium' },
-				{ identifier: 'AUT-15', title: 'ADR: runtime', status: 'backlog', priority: 'low' },
+				{ identifier: 'AUT-15', title: 'ADR: runtime', status: 'review', priority: 'low' },
 			],
 		};
 
@@ -439,9 +439,9 @@ describe('agent-runner: mention handoff prompt', () => {
 		expect(prompt).toContain('## Mention Handoff');
 		expect(prompt).toContain('You were mentioned by CEO in AUT-42');
 		expect(prompt).toContain('> Please update the spec to cover §6 and §11.');
-		expect(prompt).toContain('AUT-10 — Draft spec (open, high)');
+		expect(prompt).toContain('AUT-10 — Draft spec (backlog, high)');
 		expect(prompt).toContain('AUT-12 — Review PRD (in_progress, medium)');
-		expect(prompt).toContain('AUT-15 — ADR: runtime (backlog, low)');
+		expect(prompt).toContain('AUT-15 — ADR: runtime (review, low)');
 		expect(prompt).toContain('parent_issue_id = trig-uuid');
 		expect(prompt).toContain('brief, meaningful acknowledgement');
 		// Ensure the normal Current Task block still follows.
@@ -493,7 +493,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		const ctx = {
 			authorName: 'Engineer',
 			excerpt: 'Spec out of date.',
-			openTickets: [{ identifier: 'AUT-1', title: 'Spec', status: 'open', priority: 'high' }],
+			openTickets: [{ identifier: 'AUT-1', title: 'Spec', status: 'backlog', priority: 'high' }],
 		};
 		const payload = {
 			...mentionPayload,
@@ -537,7 +537,7 @@ describe('agent-runner: mention context loader', () => {
 				identifier: 'AUT-99',
 				title: 'x',
 				description: 'y',
-				status: 'open',
+				status: 'backlog',
 				priority: 'low',
 				project_id: 'p',
 				rules: null,

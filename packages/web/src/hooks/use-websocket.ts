@@ -7,7 +7,12 @@ const TABLE_TO_QUERY_KEY: Record<
 	string,
 	(companyId: string, row: Record<string, unknown>) => string[][]
 > = {
-	issues: (cid) => [['companies', cid, 'issues']],
+	issues: (cid) => [
+		['companies', cid, 'issues'],
+		['companies', cid],
+		['companies'],
+		['companies', cid, 'projects'],
+	],
 	heartbeat_runs: (cid, row) => {
 		const keys: string[][] = [['companies', cid, 'issues']];
 		if (row.member_id) {

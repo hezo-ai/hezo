@@ -1,6 +1,7 @@
 import { AgentAdminStatus, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
+import { useCompany } from '../hooks/use-companies';
 import { useProjects } from '../hooks/use-projects';
 import { useUiState, useUpdateUiState } from '../hooks/use-ui-state';
 import { AgentStatusLabel } from './agent-status-label';
@@ -15,6 +16,7 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 	const params = { companyId };
 	const { data: agents } = useAgents(companyId);
 	const { data: projects } = useProjects(companyId);
+	const { data: company } = useCompany(companyId);
 	const { data: uiState } = useUiState(companyId);
 	const updateUiState = useUpdateUiState(companyId);
 	const [createProjectOpen, setCreateProjectOpen] = useState(false);
@@ -39,7 +41,13 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 		{
 			title: 'Work',
 			items: [
-				{ to: '/companies/$companyId/issues', params, label: 'Issues' },
+				{
+					to: '/companies/$companyId/issues',
+					params,
+					label: 'Issues',
+					count: company?.open_issue_count,
+					testId: 'sidebar-link-issues',
+				},
 				{ to: '/companies/$companyId/goals', params, label: 'Goals' },
 			],
 		},
@@ -66,6 +74,7 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 							to: '/companies/$companyId/projects/$projectId/issues',
 							params: projectParams,
 							label: 'Issues',
+							count: project.open_issue_count,
 						},
 						{
 							to: '/companies/$companyId/projects/$projectId/documents',

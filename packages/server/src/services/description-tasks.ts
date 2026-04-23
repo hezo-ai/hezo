@@ -105,7 +105,7 @@ async function createDescriptionIssue(
 			identifier,
 			title,
 			description,
-			IssueStatus.Open,
+			IssueStatus.Backlog,
 			IssuePriority.Low,
 			JSON.stringify(['internal', DESCRIPTION_LABEL]),
 		],

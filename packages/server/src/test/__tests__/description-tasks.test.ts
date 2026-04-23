@@ -87,7 +87,7 @@ describe('enqueueAgentSummaryTask', () => {
 
 		expect(row.labels).toEqual(expect.arrayContaining(['internal', 'description-update']));
 		expect(row.priority).toBe('low');
-		expect(row.status).toBe('open');
+		expect(row.status).toBe('backlog');
 		expect(row.title).toContain('Engineer');
 		expect(row.description).toContain(engineerMemberId);
 		expect(row.description).toContain('get_agent_system_prompt');

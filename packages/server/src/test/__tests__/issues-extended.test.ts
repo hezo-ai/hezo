@@ -16,7 +16,7 @@ let memberId: string;
 // Issue IDs created in setup so individual tests can reference them
 let issueBacklogLow: string;
 let issueBacklogHigh: string;
-let issueOpenMedium: string;
+let issueReviewMedium: string;
 let issueInProgressUrgent: string;
 let issueDoneHigh: string;
 
@@ -105,10 +105,10 @@ beforeAll(async () => {
 		projectId,
 		'Authentication needs cleanup',
 	);
-	issueOpenMedium = await createIssue(
+	issueReviewMedium = await createIssue(
 		'Add dark mode support',
 		'medium',
-		'open',
+		'review',
 		otherProjectId,
 		'Users requested dark theme',
 	);
@@ -237,14 +237,14 @@ describe('issues list — status filter', () => {
 	});
 
 	it('filters using comma-separated multiple statuses', async () => {
-		const res = await app.request(`/api/companies/${companyId}/issues?status=open,in_progress`, {
+		const res = await app.request(`/api/companies/${companyId}/issues?status=review,in_progress`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(2);
-		expect(body.data.every((i: any) => ['open', 'in_progress'].includes(i.status))).toBe(true);
-		expect(body.data.some((i: any) => i.id === issueOpenMedium)).toBe(true);
+		expect(body.data.every((i: any) => ['review', 'in_progress'].includes(i.status))).toBe(true);
+		expect(body.data.some((i: any) => i.id === issueReviewMedium)).toBe(true);
 		expect(body.data.some((i: any) => i.id === issueInProgressUrgent)).toBe(true);
 	});
 
@@ -304,7 +304,7 @@ describe('issues list — project_id filter', () => {
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
 		expect(body.data.every((i: any) => i.project_id === projectId)).toBe(true);
 		// Issues from otherProjectId must not appear
-		expect(body.data.some((i: any) => i.id === issueOpenMedium)).toBe(false);
+		expect(body.data.some((i: any) => i.id === issueReviewMedium)).toBe(false);
 		expect(body.data.some((i: any) => i.id === issueInProgressUrgent)).toBe(false);
 	});
 
@@ -317,7 +317,7 @@ describe('issues list — project_id filter', () => {
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(2);
 		expect(body.data.every((i: any) => i.project_id === otherProjectId)).toBe(true);
-		expect(body.data.some((i: any) => i.id === issueOpenMedium)).toBe(true);
+		expect(body.data.some((i: any) => i.id === issueReviewMedium)).toBe(true);
 		expect(body.data.some((i: any) => i.id === issueInProgressUrgent)).toBe(true);
 	});
 
