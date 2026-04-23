@@ -7,7 +7,7 @@ import {
 } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Info, Loader2, Plus, Trash2 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -26,7 +26,7 @@ import {
 	useComments,
 	useCreateComment,
 } from '../../../../../../hooks/use-comments';
-import { useExecutionLock } from '../../../../../../hooks/use-execution-locks';
+import { type ExecutionLock, useExecutionLock } from '../../../../../../hooks/use-execution-locks';
 import {
 	useCreateSubIssue,
 	useIssue,
@@ -194,18 +194,7 @@ function IssueDetailPage() {
 				</div>
 
 				{lock && lock.locks.length > 0 && (
-					<div className="flex flex-col gap-1 mb-4">
-						{lock.locks.map((l) => (
-							<div
-								key={l.id}
-								className="flex items-center gap-2 rounded-radius-md bg-accent-blue-bg px-3 py-2 text-xs"
-							>
-								<span className="w-2 h-2 rounded-full bg-accent-blue animate-pulse" />
-								<span className="text-accent-blue-text font-medium">{l.member_name}</span>
-								<span className="text-text-muted">is running on this issue</span>
-							</div>
-						))}
-					</div>
+					<RunningAgentsLine locks={lock.locks} comments={comments ?? []} />
 				)}
 
 				{issue.description && (
@@ -468,7 +457,8 @@ function IssueDetailPage() {
 							return (
 								<div
 									key={c.id}
-									className="flex gap-2.5"
+									id={`comment-${c.id}`}
+									className="flex gap-2.5 scroll-mt-20"
 									data-testid="comment-item"
 									{...(isPendingSetupRepo ? { 'data-setup-repo-anchor': '' } : {})}
 								>
@@ -714,6 +704,81 @@ function IssueDetailPage() {
 					await updateIssue.mutateAsync({ status: IssueStatus.Open });
 				}}
 			/>
+		</div>
+	);
+}
+
+type RunCommentRef = { id: string; content_type: string; content: unknown };
+
+function RunningAgentsLine({
+	locks,
+	comments,
+}: {
+	locks: ExecutionLock[];
+	comments: RunCommentRef[];
+}) {
+	const runCommentIdByAgentId = new Map<string, string>();
+	for (const c of comments) {
+		if (c.content_type !== 'run') continue;
+		const agentId =
+			c.content && typeof c.content === 'object'
+				? (c.content as { agent_id?: string }).agent_id
+				: undefined;
+		if (agentId) runCommentIdByAgentId.set(agentId, c.id);
+	}
+
+	const ordered = [...locks].sort((a, b) => a.locked_at.localeCompare(b.locked_at));
+
+	const nameNodes = ordered.map((l) => {
+		const commentId = runCommentIdByAgentId.get(l.member_id);
+		if (!commentId) {
+			return (
+				<span key={l.id} className="text-accent-blue-text font-medium">
+					{l.member_name}
+				</span>
+			);
+		}
+		const targetId = `comment-${commentId}`;
+		return (
+			<a
+				key={l.id}
+				href={`#${targetId}`}
+				onClick={(e) => {
+					e.preventDefault();
+					document.getElementById(targetId)?.scrollIntoView({ block: 'center' });
+					window.history.replaceState(null, '', `#${targetId}`);
+				}}
+				className="text-accent-blue-text font-medium hover:underline"
+			>
+				{l.member_name}
+			</a>
+		);
+	});
+
+	const parts: { key: string; node: React.ReactNode }[] = [];
+	for (let i = 0; i < ordered.length; i++) {
+		if (i > 0) {
+			const isLastGap = i === ordered.length - 1;
+			const sep = ordered.length === 2 ? ' and ' : isLastGap ? ', and ' : ', ';
+			parts.push({ key: `sep-${ordered[i].id}`, node: sep });
+		}
+		parts.push({ key: `name-${ordered[i].id}`, node: nameNodes[i] });
+	}
+
+	const verb = ordered.length === 1 ? 'is' : 'are';
+
+	return (
+		<div
+			className="flex items-center flex-wrap gap-x-1.5 gap-y-1 rounded-radius-md bg-accent-blue-bg px-3 py-2 text-xs mb-4"
+			data-testid="running-agents-line"
+		>
+			<span className="w-2 h-2 rounded-full bg-accent-blue animate-pulse shrink-0" />
+			<span>
+				{parts.map((p) => (
+					<Fragment key={p.key}>{p.node}</Fragment>
+				))}{' '}
+				<span className="text-text-muted">{verb} running on this issue</span>
+			</span>
 		</div>
 	);
 }

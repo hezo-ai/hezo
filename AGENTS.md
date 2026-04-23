@@ -2,9 +2,16 @@
 
 ## Commands
 
-- `bun run test` — run all tests across all packages in parallel (unit, integration, and e2e)
-- `bun run test --skip-e2e` — run only unit/integration tests (no Playwright)
-- `bun run test --e2e` — run only Playwright e2e tests
+- `bun run test` — run all tests (unit + integration + e2e) in parallel
+- `bun run test --skip-e2e` — skip Playwright, unit/integration only
+- `bun run test --e2e` — Playwright only
+- `bun run test --pattern <substring>` — filter by file-path substring; works for both unit/integration (matched against `src/test/**/*.test.ts` paths) and e2e (passed to Playwright as a file filter). Combine with `--e2e` to narrow the e2e run, e.g. `bun run test --e2e --pattern issue-crud`.
+- `bun run test --package <server|connect>` — restrict unit/integration to one package
+- `bun run test --concurrency <n>` — override worker count (default 10)
+- `bun run test --bail` — stop on first failure
+
+The list above is exhaustive. `scripts/test.ts` is a commander CLI that rejects anything else with "too many arguments" — there is no `--` passthrough, no `--grep`, no vitest/Playwright flags. Do not invent flags.
+
 - `bun run build` — build all packages
 - `bun run check` — lint/format check (biome)
 - `bun run check:fix` — auto-fix lint/format issues
@@ -74,6 +81,8 @@ E2E tests verify full-stack user flows through the browser. They are included in
 All UI changes must include e2e tests covering the affected user flows. E2E test files use the `.spec.ts` extension and import helpers from `./helpers`. Use the `authenticate(page)` helper to bypass the master key gate in tests that don't specifically test authentication.
 
 Always run tests via `bun run test` (or `--e2e` / `--skip-e2e` variants) from the project root — never call `npx playwright` or `npx vitest` directly, as vitest's global `expect` conflicts with Playwright's `expect` outside the test runner.
+
+`scripts/test.ts` accepts only the flags listed under **Commands**. It does **not** forward arbitrary args to vitest or Playwright — there is no `--` passthrough, no `--grep`, no `--reporter`. To narrow a run, use `--pattern <substring>` (works for both unit/integration and e2e — the substring is matched against file paths). To filter by test *name* rather than file path, temporarily add `test.only` / `describe.only` to the spec and revert before committing. Trying `bun run test -- …` will fail with "too many arguments" and burn the test timeout.
 
 ## Type Safety
 

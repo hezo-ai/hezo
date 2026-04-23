@@ -121,6 +121,10 @@ html.dark {
 	border-color: var(--color-border);
 }
 
+html {
+	scroll-behavior: smooth;
+}
+
 body {
 	margin: 0;
 	background: var(--color-bg);
