@@ -146,9 +146,9 @@ describe('POST /companies/:companyId/docs/resolve', () => {
 });
 
 describe('GET /companies/:companyId/mentions/search', () => {
-	it('returns agents, issues, kb docs, and project docs', async () => {
+	it('returns agents, kb docs, and project docs when project_slug is provided', async () => {
 		const r = await app.request(
-			`/api/companies/${companyId}/mentions/search?q=&kind=all&limit=10`,
+			`/api/companies/${companyId}/mentions/search?q=&kind=all&limit=10&project_slug=${encodeURIComponent(projectSlug)}`,
 			{ headers: authHeader(token) },
 		);
 		expect(r.status).toBe(200);
@@ -166,10 +166,10 @@ describe('GET /companies/:companyId/mentions/search', () => {
 		expect(r.status).toBe(200);
 		const body = await r.json();
 		const handles = (body.data as Array<{ handle: string }>).map((row) => row.handle);
-		expect(handles).toContain('kb/onboarding-guide');
+		expect(handles).toContain('onboarding-guide');
 	});
 
-	it('prefers short-form handles when project_slug matches', async () => {
+	it('returns bare filenames for docs in the current project', async () => {
 		const r = await app.request(
 			`/api/companies/${companyId}/mentions/search?q=notes&kind=doc&project_slug=${encodeURIComponent(projectSlug)}`,
 			{ headers: authHeader(token) },
@@ -177,10 +177,10 @@ describe('GET /companies/:companyId/mentions/search', () => {
 		expect(r.status).toBe(200);
 		const body = await r.json();
 		const rows = body.data as Array<{ handle: string; kind: string }>;
-		expect(rows.some((row) => row.handle === 'doc/notes.md')).toBe(true);
+		expect(rows.some((row) => row.handle === 'notes.md')).toBe(true);
 	});
 
-	it('falls back to qualified handles for docs in other projects', async () => {
+	it('does not surface docs from other projects via bare search', async () => {
 		const r = await app.request(
 			`/api/companies/${companyId}/mentions/search?q=spec&kind=doc&project_slug=${encodeURIComponent(projectSlug)}`,
 			{ headers: authHeader(token) },
@@ -188,7 +188,17 @@ describe('GET /companies/:companyId/mentions/search', () => {
 		expect(r.status).toBe(200);
 		const body = await r.json();
 		const rows = body.data as Array<{ handle: string; kind: string }>;
-		expect(rows.some((row) => row.handle === `doc/${otherProjectSlug}/spec.md`)).toBe(true);
+		expect(rows.every((row) => row.handle !== 'spec.md')).toBe(true);
+	});
+
+	it('omits docs entirely when project_slug is absent', async () => {
+		const r = await app.request(`/api/companies/${companyId}/mentions/search?q=notes&kind=doc`, {
+			headers: authHeader(token),
+		});
+		expect(r.status).toBe(200);
+		const body = await r.json();
+		const rows = body.data as Array<{ handle: string; kind: string }>;
+		expect(rows).toHaveLength(0);
 	});
 
 	it('does not leak results across companies', async () => {
@@ -199,6 +209,6 @@ describe('GET /companies/:companyId/mentions/search', () => {
 		expect(r.status).toBe(200);
 		const body = await r.json();
 		const handles = (body.data as Array<{ handle: string }>).map((row) => row.handle);
-		expect(handles).not.toContain('kb/onboarding-guide');
+		expect(handles).not.toContain('onboarding-guide');
 	});
 });

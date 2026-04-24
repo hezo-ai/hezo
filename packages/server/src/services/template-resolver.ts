@@ -87,9 +87,7 @@ export async function resolveSystemPrompt(
 		);
 		const kbText =
 			docs.rows.length > 0
-				? docs.rows
-						.map((d) => `## ${d.title} (link: @kb/${d.slug})\n${d.content}`)
-						.join('\n\n---\n\n')
+				? docs.rows.map((d) => `## ${d.title} (link: ${d.slug})\n${d.content}`).join('\n\n---\n\n')
 				: 'No knowledge base documents available.';
 		resolved = resolved.replace(/\{\{kb_context\}\}/g, kbText);
 	}
@@ -129,7 +127,7 @@ export async function resolveSystemPrompt(
 			);
 			if (docs.rows.length > 0) {
 				docsText = docs.rows
-					.map((d) => `## ${d.filename} (link: @doc/${d.filename})\n${d.content}`)
+					.map((d) => `## ${d.filename} (link: ${d.filename})\n${d.content}`)
 					.join('\n\n---\n\n');
 			}
 		}

@@ -254,7 +254,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_issue',
-		'Create a new issue. Use parent_issue_id for sub-issues. Use assignee_slug as alternative to assignee_id. In title/description, reference other Hezo entities with @-mentions: @<agent-slug>, @<ISSUE-ID> (e.g. @op-42), @kb/<slug>, @doc/<filename>. Do not wrap these in backticks — that makes them inert.',
+		'Create a new issue. Use parent_issue_id for sub-issues. Use assignee_slug as alternative to assignee_id. In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/slug/filename (e.g. OP-42, coding-standards, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().describe('Project ID'),
@@ -341,7 +341,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_issue',
-		'Update an issue. Agents can use this to change status (including closing), update progress, set rules, and record branch names. Re-opening a closed issue is board-only — once an issue is `closed` only the board can change its status again. In description, progress_summary, and rules, reference other Hezo entities with @-mentions: @<agent-slug>, @<ISSUE-ID> (e.g. @op-42), @kb/<slug>, @doc/<filename>. Do not wrap these in backticks — that makes them inert.',
+		'Update an issue. Agents can use this to change status (including closing), update progress, set rules, and record branch names. Re-opening a closed issue is board-only — once an issue is `closed` only the board can change its status again. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/slug/filename (e.g. OP-42, coding-standards, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
@@ -668,7 +668,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to an issue. In content, reference other Hezo entities with @-mentions: @<agent-slug>, @<ISSUE-ID> (e.g. @op-42), @kb/<slug>, @doc/<filename>. Do not wrap these in backticks — that makes them inert.',
+		'Add a comment to an issue. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/slug/filename (e.g. OP-42, coding-standards, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
@@ -1018,7 +1018,7 @@ export function registerTools(
 	tool(
 		server,
 		'upsert_kb_doc',
-		'Create or update a knowledge base document. In content, reference other Hezo entities with @-mentions: @<agent-slug>, @<ISSUE-ID> (e.g. @op-42), @kb/<slug>, @doc/<filename>. Do not wrap these in backticks — that makes them inert.',
+		'Create or update a knowledge base document. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/slug/filename (e.g. OP-42, coding-standards, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			title: z.string().describe('Document title'),
@@ -1098,7 +1098,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_doc',
-		'Write a project documentation file. For high-level project context: PRD, spec, implementation plan, research. In content, reference other Hezo entities with @-mentions: @<agent-slug>, @<ISSUE-ID> (e.g. @op-42), @kb/<slug>, @doc/<filename>. Do not wrap these in backticks — that makes them inert.',
+		'Write a project documentation file. For high-level project context: PRD, spec, implementation plan, research. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/slug/filename (e.g. OP-42, coding-standards, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().describe('Project ID'),

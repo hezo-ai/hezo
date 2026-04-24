@@ -50,10 +50,17 @@ interface Options {
 	projectDocs: ProjectDocsMap;
 }
 
-const MENTION_RE = /(?<![\w@])@([a-z0-9][\w-]*(?:\/[a-z0-9][\w.-]*)*)/gi;
-const ISSUE_SHAPE_RE = /^[a-z0-9]+(-[a-z0-9]+)*-\d+$/i;
+const AGENT_RE_SRC = String.raw`(?<![\w@])@([a-z][\w-]*)(?![\w/])`;
+const ISSUE_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)(?![\w-])`;
+const PROJECT_DOC_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w/.-])`;
+const KB_DOC_RE_SRC = String.raw`(?<![\w/.-])([a-z][a-z0-9-]{2,})(?![\w/.-])`;
 
-const SKIP_TYPES = new Set(['code', 'inlineCode']);
+const MENTION_RE = new RegExp(
+	`${AGENT_RE_SRC}|${ISSUE_RE_SRC}|${PROJECT_DOC_RE_SRC}|${KB_DOC_RE_SRC}`,
+	'g',
+);
+
+const SKIP_TYPES = new Set(['code', 'inlineCode', 'link']);
 
 export function remarkMentions(opts: Options) {
 	return (tree: ParentNode) => {
@@ -96,8 +103,7 @@ function splitTextNode(node: TextNode, opts: Options): MdNode[] {
 	MENTION_RE.lastIndex = 0;
 	let match = MENTION_RE.exec(value);
 	while (match !== null) {
-		const token = match[1].toLowerCase();
-		const link = buildLink(token, match[0], opts);
+		const link = buildLink(match, opts);
 		if (!link) {
 			match = MENTION_RE.exec(value);
 			continue;
@@ -118,12 +124,73 @@ function splitTextNode(node: TextNode, opts: Options): MdNode[] {
 	return parts;
 }
 
-function buildLink(token: string, display: string, opts: Options): LinkNode | null {
+function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 	const { companyId, projectSlug, agents, issues, kbDocs, projectDocs } = opts;
+	const display = match[0];
+	const agentToken = match[1];
+	const issueToken = match[2];
+	const projectDocToken = match[3];
+	const kbDocToken = match[4];
 
-	if (token.startsWith('kb/')) {
-		const slug = token.slice(3);
-		if (!slug || slug.includes('/')) return null;
+	if (agentToken) {
+		const slug = agentToken.toLowerCase();
+		const data = agents.get(slug);
+		if (!data) return null;
+		return {
+			type: 'link',
+			url: `/companies/${companyId}/agents/${slug}`,
+			children: [{ type: 'text', value: display }],
+			data: {
+				hProperties: {
+					'data-mention-agent-slug': slug,
+					'data-mention-agent-title': data.title,
+				},
+			},
+		};
+	}
+
+	if (issueToken) {
+		const key = issueToken.toLowerCase();
+		const data = issues.get(key);
+		if (!data) return null;
+		return {
+			type: 'link',
+			url: `/companies/${companyId}/projects/${data.projectSlug}/issues/${key}`,
+			children: [{ type: 'text', value: display }],
+			data: {
+				hProperties: {
+					'data-mention-issue-identifier': key,
+					'data-mention-issue-title': data.title,
+					'data-mention-project-slug': data.projectSlug,
+				},
+			},
+		};
+	}
+
+	if (projectDocToken) {
+		if (!projectSlug) return null;
+		const slug = projectSlug.toLowerCase();
+		const perProject = projectDocs.get(slug);
+		if (!perProject) return null;
+		const data = perProject.get(projectDocToken);
+		if (!data) return null;
+		return {
+			type: 'link',
+			url: `/companies/${companyId}/projects/${slug}/documents?file=${encodeURIComponent(projectDocToken)}`,
+			children: [{ type: 'text', value: display }],
+			data: {
+				hProperties: {
+					'data-mention-doc-project-slug': slug,
+					'data-mention-doc-filename': projectDocToken,
+					'data-mention-size': String(data.size),
+					'data-mention-updated-at': data.updatedAt,
+				},
+			},
+		};
+	}
+
+	if (kbDocToken) {
+		const slug = kbDocToken.toLowerCase();
 		const data = kbDocs.get(slug);
 		if (!data) return null;
 		return {
@@ -141,78 +208,12 @@ function buildLink(token: string, display: string, opts: Options): LinkNode | nu
 		};
 	}
 
-	if (token.startsWith('doc/')) {
-		const rest = token.slice(4);
-		if (!rest) return null;
-		const segments = rest.split('/');
-		let docProjectSlug: string | null = null;
-		let filename: string | null = null;
-		if (segments.length === 1) {
-			if (!projectSlug) return null;
-			docProjectSlug = projectSlug.toLowerCase();
-			filename = segments[0];
-		} else if (segments.length === 2) {
-			docProjectSlug = segments[0];
-			filename = segments[1];
-		} else {
-			return null;
-		}
-		const perProject = projectDocs.get(docProjectSlug);
-		if (!perProject) return null;
-		const data = perProject.get(filename);
-		if (!data) return null;
-		return {
-			type: 'link',
-			url: `/companies/${companyId}/projects/${docProjectSlug}/documents?file=${encodeURIComponent(filename)}`,
-			children: [{ type: 'text', value: display }],
-			data: {
-				hProperties: {
-					'data-mention-doc-project-slug': docProjectSlug,
-					'data-mention-doc-filename': filename,
-					'data-mention-size': String(data.size),
-					'data-mention-updated-at': data.updatedAt,
-				},
-			},
-		};
-	}
-
-	if (ISSUE_SHAPE_RE.test(token) && issues.has(token)) {
-		const data = issues.get(token) as IssueMentionData;
-		return {
-			type: 'link',
-			url: `/companies/${companyId}/projects/${data.projectSlug}/issues/${token}`,
-			children: [{ type: 'text', value: display }],
-			data: {
-				hProperties: {
-					'data-mention-issue-identifier': token,
-					'data-mention-issue-title': data.title,
-					'data-mention-project-slug': data.projectSlug,
-				},
-			},
-		};
-	}
-
-	if (agents.has(token)) {
-		const data = agents.get(token) as AgentMentionData;
-		return {
-			type: 'link',
-			url: `/companies/${companyId}/agents/${token}`,
-			children: [{ type: 'text', value: display }],
-			data: {
-				hProperties: {
-					'data-mention-agent-slug': token,
-					'data-mention-agent-title': data.title,
-				},
-			},
-		};
-	}
-
 	return null;
 }
 
 export function extractIssueCandidates(value: string): string[] {
 	const stripped = stripCode(value);
-	const re = /(?<![\w@])@([a-z0-9][\w-]*-\d+)(?![\w/-])/gi;
+	const re = new RegExp(ISSUE_RE_SRC, 'g');
 	const out = new Set<string>();
 	let m = re.exec(stripped);
 	while (m !== null) {
@@ -230,38 +231,31 @@ export interface DocCandidates {
 export function extractDocCandidates(value: string, projectSlug?: string): DocCandidates {
 	const stripped = stripCode(value);
 	const kbSet = new Set<string>();
-	const docMap = new Map<string, { project_slug: string; filename: string }>();
-	MENTION_RE.lastIndex = 0;
-	let m = MENTION_RE.exec(stripped);
-	while (m !== null) {
-		const token = m[1].toLowerCase();
-		if (token.startsWith('kb/')) {
-			const slug = token.slice(3);
-			if (slug && !slug.includes('/')) kbSet.add(slug);
-		} else if (token.startsWith('doc/')) {
-			const rest = token.slice(4);
-			if (rest) {
-				const segs = rest.split('/');
-				let p: string | null = null;
-				let f: string | null = null;
-				if (segs.length === 1) {
-					if (projectSlug) {
-						p = projectSlug.toLowerCase();
-						f = segs[0];
-					}
-				} else if (segs.length === 2) {
-					p = segs[0];
-					f = segs[1];
-				}
-				if (p && f) {
-					const key = `${p}/${f}`;
-					if (!docMap.has(key)) docMap.set(key, { project_slug: p, filename: f });
-				}
-			}
-		}
-		m = MENTION_RE.exec(stripped);
+	const docSet = new Set<string>();
+
+	const kbRe = new RegExp(KB_DOC_RE_SRC, 'g');
+	let k = kbRe.exec(stripped);
+	while (k !== null) {
+		kbSet.add(k[1].toLowerCase());
+		k = kbRe.exec(stripped);
 	}
-	return { kbSlugs: Array.from(kbSet), projectDocs: Array.from(docMap.values()) };
+
+	const docRe = new RegExp(PROJECT_DOC_RE_SRC, 'g');
+	let d = docRe.exec(stripped);
+	while (d !== null) {
+		docSet.add(d[1]);
+		d = docRe.exec(stripped);
+	}
+
+	const projectDocs: Array<{ project_slug: string; filename: string }> = [];
+	if (projectSlug) {
+		const slug = projectSlug.toLowerCase();
+		for (const filename of docSet) {
+			projectDocs.push({ project_slug: slug, filename });
+		}
+	}
+
+	return { kbSlugs: Array.from(kbSet), projectDocs };
 }
 
 function stripCode(value: string): string {

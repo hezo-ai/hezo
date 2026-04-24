@@ -117,8 +117,9 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			expect(docs[key], `${key} should include the linking-syntax rule`).toContain(
 				'## Linking to Hezo entities',
 			);
-			expect(docs[key], `${key} should include an @doc/ example`).toContain('@doc/');
-			expect(docs[key], `${key} should include an @kb/ example`).toContain('@kb/');
+			expect(docs[key], `${key} should include a project-doc example`).toContain('spec.md');
+			expect(docs[key], `${key} should include a kb-slug example`).toContain('coding-standards');
+			expect(docs[key], `${key} should include an agent-mention example`).toContain('@engineer');
 		}
 
 		// Partial files themselves are stripped from the returned map

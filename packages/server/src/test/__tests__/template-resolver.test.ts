@@ -86,7 +86,7 @@ describe('template resolver', () => {
 		expect(result).toContain('No knowledge base documents available');
 	});
 
-	it('renders {{kb_context}} with @kb/<slug> link tokens when docs exist', async () => {
+	it('renders {{kb_context}} with bare-slug link tokens when docs exist', async () => {
 		const kbRes = await app.request(`/api/companies/${companyId}/kb-docs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -99,7 +99,7 @@ describe('template resolver', () => {
 		expect(kbRes.status).toBe(201);
 
 		const result = await resolveSystemPrompt(db, '{{kb_context}}', { companyId });
-		expect(result).toContain('## Coding Standards (link: @kb/coding-standards)');
+		expect(result).toContain('## Coding Standards (link: coding-standards)');
 		expect(result).toContain('Prefer early returns.');
 	});
 
@@ -118,7 +118,7 @@ describe('template resolver', () => {
 		expect(result).toContain('No project documentation available');
 	});
 
-	it('renders {{project_docs_context}} with @doc/<filename> link tokens when docs exist', async () => {
+	it('renders {{project_docs_context}} with bare-filename link tokens when docs exist', async () => {
 		const docRes = await app.request(
 			`/api/companies/${companyId}/projects/${projectId}/docs/spec.md`,
 			{
@@ -133,7 +133,7 @@ describe('template resolver', () => {
 			companyId,
 			projectId,
 		});
-		expect(result).toContain('## spec.md (link: @doc/spec.md)');
+		expect(result).toContain('## spec.md (link: spec.md)');
 		expect(result).toContain('Detailed spec.');
 	});
 
