@@ -166,8 +166,8 @@ describe('mention handoff prompt (integration)', () => {
 		expect(prompt).toContain(specTicket.identifier);
 		expect(prompt).toContain(prdTicket.identifier);
 		expect(prompt).toContain('> @architect please bring the spec up to date');
-		expect(prompt).toContain('create_issue');
-		expect(prompt).toContain('brief, meaningful acknowledgement');
+		expect(prompt).toContain('## Handling @-mentions');
+		expect(prompt).toContain('parent_issue_id');
 	});
 
 	it('renders "none" when the mentioned agent has no open tickets', async () => {
@@ -246,7 +246,7 @@ describe('mention handoff prompt (integration)', () => {
 		expect(prompt).toContain('### Your open tickets\nnone');
 	});
 
-	it('drops the mandated "Tracking this on" phrase but keeps the sub-issue/peer/top-level guidance', async () => {
+	it('keeps the sub-issue / peer / top-level guidance in the architect system prompt via the shared partial', async () => {
 		const { triggeringIssueId, triggeringIdentifier, commentId } =
 			await createTriggeringIssueWithComment('@architect review please');
 		const wakeupPayload = {
@@ -255,8 +255,15 @@ describe('mention handoff prompt (integration)', () => {
 			comment_id: commentId,
 		};
 		const ctx = await loadMentionContext(db, architectMemberId, companyId, wakeupPayload);
+
+		const architectPromptRes = await db.query<{ system_prompt: string }>(
+			'SELECT system_prompt FROM member_agents WHERE id = $1',
+			[architectMemberId],
+		);
+		const architectSystemPrompt = architectPromptRes.rows[0].system_prompt;
+
 		const prompt = buildTaskPrompt(
-			'System',
+			architectSystemPrompt,
 			{
 				...TRIGGERING_ISSUE,
 				id: triggeringIssueId,
@@ -267,8 +274,9 @@ describe('mention handoff prompt (integration)', () => {
 			{ mentionContext: ctx },
 		);
 		expect(prompt).not.toContain('"Tracking this on {your_ticket_identifier}."');
+		expect(prompt).toContain('## Handling @-mentions');
 		expect(prompt).toContain('sub-issue');
-		expect(prompt).toContain('peer-level');
+		expect(prompt).toContain('peer');
 		expect(prompt).toContain('top-level');
 	});
 

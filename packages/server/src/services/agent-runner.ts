@@ -771,12 +771,7 @@ function renderMentionHandoff(issue: IssueInfo, ctx: MentionContext): string[] {
 		ticketList,
 		'',
 		'### How to handle this mention',
-		`1. Decide which of your open tickets this mention pertains to. If one exists, use \`update_issue\` to fold what the mention communicates into the field that fits each piece of it: scope / domain context / what the ticket is about → \`description\`; in-flight status or what's been done → \`progress_summary\`; approach constraints or guardrails that shape how the work is done → \`rules\` (rules are for *how* the ticket should be worked on, not a back-channel for handing domain knowledge to the next agent). Reference ${issue.identifier} in the updated text so readers can trace the handoff.`,
-		`2. If none of your open tickets covers this, use \`create_issue\` to open one. The new ticket is your own first-class work; shape it as you see fit: a sub-issue (\`parent_issue_id = ${issue.id}\`) when the work clearly belongs underneath ${issue.identifier}, a peer-level ticket when it sits alongside, or a top-level ticket when it's broader. Assign it to yourself. The system already records ${issue.identifier} as provenance via \`created_by_run_id\`; you don't need to restate that linkage in the description unless it aids a reader.`,
-		`3. Post a single \`create_comment\` on ${issue.identifier} with a brief, meaningful acknowledgement of what you've done or are about to do. Reference your new ticket by identifier if you opened one; otherwise answer inline.`,
-		`4. End the turn. Do not modify ${issue.identifier} beyond that one comment. Your next heartbeat picks up your own ticket (if any) and continues work there.`,
-		'',
-		`If the mention is a direct question you can answer inline as the authority on ${issue.identifier}, reply via \`create_comment\` and end the turn.`,
+		`Follow the \`## Handling @-mentions\` rules defined in your system prompt. The triggering ticket referenced in those rules is ${issue.identifier}; when creating a sub-issue, use \`parent_issue_id = ${issue.id}\`.`,
 		'',
 		'---',
 		'',
@@ -944,7 +939,7 @@ export async function loadSpawnedFromIssue(
 	};
 }
 
-async function buildCoachReviewPrompt(
+export async function buildCoachReviewPrompt(
 	db: PGlite,
 	systemPrompt: string,
 	issue: IssueInfo,
@@ -1020,6 +1015,9 @@ async function buildCoachReviewPrompt(
 		'`propose_system_prompt_update` to propose a specific rule to add to their `## Learned Rules` section.',
 		'',
 		'If the ticket completed smoothly without significant rework or feedback, no changes are needed.',
+		'',
+		'### Final Step',
+		`Post the review summary comment on ${issue.identifier} now, following the format defined in your system prompt.`,
 	];
 
 	return parts.join('\n');

@@ -3,6 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
+import { buildCoachReviewPrompt, type IssueInfo } from '../../services/agent-runner';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 
@@ -134,6 +135,39 @@ describe('Coach wakeup on issue done', () => {
 		expect(wakeups.rows.length).toBe(1);
 		expect(wakeups.rows[0].payload.issue_id).toBe(issueId);
 		expect(wakeups.rows[0].payload.trigger).toBe('issue_done');
+	});
+});
+
+describe('Coach review prompt builder', () => {
+	it('prepends the system prompt and points the coach back to it for the final summary comment', async () => {
+		const issueRow = await db.query<IssueInfo>(
+			`SELECT id, identifier, title, description, status::text AS status,
+			        priority::text AS priority, project_id, rules,
+			        parent_issue_id, created_by_run_id
+			 FROM issues WHERE id = $1`,
+			[issueId],
+		);
+		expect(issueRow.rows.length).toBe(1);
+
+		const prompt = await buildCoachReviewPrompt(db, 'SYSTEM_PROMPT', issueRow.rows[0], companyId);
+
+		expect(prompt).toContain('SYSTEM_PROMPT');
+		expect(prompt).toContain(issueRow.rows[0].identifier);
+		expect(prompt).toMatch(/### Final Step/);
+		expect(prompt).toMatch(/review summary comment/i);
+		expect(prompt).toMatch(/following the format defined in your system prompt/i);
+	});
+
+	it('seeded coach system prompt contains the summary-comment rule from the partial', async () => {
+		const res = await db.query<{ system_prompt_template: string }>(
+			"SELECT system_prompt_template FROM agent_types WHERE slug = 'coach'",
+		);
+		expect(res.rows.length).toBe(1);
+		const template = res.rows[0].system_prompt_template;
+		expect(template).toContain('End every review with exactly one `create_comment`');
+		expect(template).toContain('(auto-applied)');
+		expect(template).toContain('(pending approval)');
+		expect(template).toMatch(/do not end the turn without posting it/i);
 	});
 });
 

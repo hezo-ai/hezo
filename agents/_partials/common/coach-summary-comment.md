@@ -1,0 +1,4 @@
+- **End every review with exactly one `create_comment` on the reviewed ticket** summarising what you did.
+  - If you proposed rule updates, include one line per proposal as `- @<agent-slug>: <one-line lesson> (auto-applied)` or `- @<agent-slug>: <one-line lesson> (pending approval)`, per the `applied` flag returned by `propose_system_prompt_update`.
+  - If you made no proposals, state that the ticket completed cleanly and no rule changes were warranted.
+  - Keep it concise (≤10 lines). This is the closing action of the review — do not end the turn without posting it.
