@@ -131,7 +131,7 @@ describe('MCP endpoint: tool registration', () => {
 		expect(toolNames).toContain('get_kb_doc');
 		expect(toolNames).toContain('get_costs');
 		expect(toolNames).toContain('get_agent_system_prompt');
-		expect(toolNames).toContain('propose_system_prompt_update');
+		expect(toolNames).toContain('update_agent_system_prompt');
 		expect(toolNames).toContain('upsert_kb_doc');
 		expect(toolNames).toContain('list_project_docs');
 		expect(toolNames).toContain('read_project_doc');
@@ -344,7 +344,7 @@ describe('MCP tool: skill file includes all tools', () => {
 		expect(text).toContain('list_agents');
 		expect(text).toContain('resolve_approval');
 		expect(text).toContain('get_agent_system_prompt');
-		expect(text).toContain('propose_system_prompt_update');
+		expect(text).toContain('update_agent_system_prompt');
 		expect(text).toContain('upsert_kb_doc');
 		expect(text).toContain('list_project_docs');
 		expect(text).toContain('read_project_doc');
@@ -569,13 +569,16 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 		expect(r.rows[0].total_cents).toBeDefined();
 	});
 
-	it('get_agent_system_prompt query returns prompt', async () => {
-		const r = await db.query(`SELECT ma.system_prompt FROM member_agents ma WHERE ma.id = $1`, [
-			agentId,
-		]);
-		expect(r.rows.length).toBe(1);
-		const prompt = (r.rows[0] as any).system_prompt;
-		expect(typeof prompt === 'string' || prompt === null).toBe(true);
+	it('get_agent_system_prompt query returns prompt from documents', async () => {
+		const r = await db.query(
+			`SELECT content FROM documents
+			 WHERE type = 'agent_system_prompt' AND company_id = $1 AND member_agent_id = $2`,
+			[companyId, agentId],
+		);
+		expect(r.rows.length).toBeLessThanOrEqual(1);
+		if (r.rows.length === 1) {
+			expect(typeof (r.rows[0] as any).content).toBe('string');
+		}
 	});
 
 	it('write_project_doc inserts correctly', async () => {

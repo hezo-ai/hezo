@@ -426,7 +426,6 @@ export class JobManager {
 			id: string;
 			title: string;
 			slug: string;
-			system_prompt: string;
 			admin_status: string;
 			heartbeat_interval_min: number;
 			default_effort: string;
@@ -434,7 +433,7 @@ export class JobManager {
 			model_override_provider: AiProvider | null;
 			model_override_model: string | null;
 		}>(
-			`SELECT id, title, slug, system_prompt, admin_status,
+			`SELECT id, title, slug, admin_status,
 			        heartbeat_interval_min, default_effort, touches_code,
 			        model_override_provider, model_override_model
 			 FROM member_agents WHERE id = $1`,
@@ -676,7 +675,6 @@ export class JobManager {
 						id: memberId,
 						title: agent.rows[0].title,
 						slug: agent.rows[0].slug,
-						system_prompt: agent.rows[0].system_prompt,
 						company_id: companyId,
 						default_effort: agent.rows[0].default_effort,
 						model_override_provider: agent.rows[0].model_override_provider,

@@ -154,71 +154,6 @@ describe('POST /companies/:companyId/approvals validation', () => {
 	});
 });
 
-describe('applyApprovalSideEffect — system_prompt_update', () => {
-	it('updates agent system_prompt and creates a system_prompt_revisions record on approval', async () => {
-		// Capture the agent's current system prompt before the approval
-		const agentBefore = await db.query<{ system_prompt: string }>(
-			'SELECT system_prompt FROM member_agents WHERE id = $1',
-			[agentId],
-		);
-		const oldPrompt = agentBefore.rows[0]?.system_prompt ?? '';
-
-		const newPrompt = 'Updated system prompt for testing purposes';
-
-		// Create a system_prompt_update approval
-		const createRes = await app.request(`/api/companies/${companyId}/approvals`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				type: ApprovalType.SystemPromptUpdate,
-				requested_by_member_id: agentId,
-				payload: {
-					member_id: agentId,
-					new_system_prompt: newPrompt,
-					reason: 'improvement',
-				},
-			}),
-		});
-		expect(createRes.status).toBe(201);
-		const approval = (await createRes.json()).data;
-
-		// Approve it
-		const resolveRes = await app.request(`/api/approvals/${approval.id}/resolve`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'approved', resolution_note: 'Looks good' }),
-		});
-		expect(resolveRes.status).toBe(200);
-		expect((await resolveRes.json()).data.status).toBe('approved');
-
-		// Verify the agent's system_prompt was updated
-		const agentAfter = await db.query<{ system_prompt: string }>(
-			'SELECT system_prompt FROM member_agents WHERE id = $1',
-			[agentId],
-		);
-		expect(agentAfter.rows[0].system_prompt).toBe(newPrompt);
-
-		// Verify a revision record was created
-		const revisions = await db.query<{
-			member_agent_id: string;
-			revision_number: number;
-			old_prompt: string;
-			new_prompt: string;
-			change_summary: string;
-			approval_id: string;
-		}>('SELECT * FROM system_prompt_revisions WHERE member_agent_id = $1 AND approval_id = $2', [
-			agentId,
-			approval.id,
-		]);
-		expect(revisions.rows.length).toBe(1);
-		const rev = revisions.rows[0];
-		expect(rev.old_prompt).toBe(oldPrompt);
-		expect(rev.new_prompt).toBe(newPrompt);
-		expect(rev.change_summary).toBe('improvement');
-		expect(rev.revision_number).toBeGreaterThanOrEqual(1);
-	});
-});
-
 describe('GET /companies/:companyId/approvals status filtering', () => {
 	let pendingApprovalId: string;
 	let approvedApprovalId: string;
@@ -291,32 +226,23 @@ describe('GET /companies/:companyId/approvals status filtering', () => {
 
 describe('Deny flow', () => {
 	it('sets status to denied and does NOT apply side effects', async () => {
-		// Capture prompt before
-		const agentBefore = await db.query<{ system_prompt: string }>(
-			'SELECT system_prompt FROM member_agents WHERE id = $1',
-			[agentId],
-		);
-		const promptBefore = agentBefore.rows[0]?.system_prompt ?? '';
-
-		const newPrompt = 'This prompt should NEVER be applied';
-
 		const createRes = await app.request(`/api/companies/${companyId}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				type: 'system_prompt_update',
+				type: 'kb_update',
 				requested_by_member_id: agentId,
 				payload: {
-					member_id: agentId,
-					new_system_prompt: newPrompt,
-					reason: 'should not apply',
+					slug: 'deny-test',
+					title: 'Deny Test',
+					content: 'should not be applied',
+					change_summary: 'testing deny flow',
 				},
 			}),
 		});
 		expect(createRes.status).toBe(201);
 		const approval = (await createRes.json()).data;
 
-		// Deny it
 		const resolveRes = await app.request(`/api/approvals/${approval.id}/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -325,19 +251,11 @@ describe('Deny flow', () => {
 		expect(resolveRes.status).toBe(200);
 		expect((await resolveRes.json()).data.status).toBe('denied');
 
-		// Verify the agent's system_prompt was NOT changed
-		const agentAfter = await db.query<{ system_prompt: string }>(
-			'SELECT system_prompt FROM member_agents WHERE id = $1',
-			[agentId],
+		const kbDoc = await db.query<{ id: string }>(
+			`SELECT id FROM documents WHERE type = 'kb_doc' AND company_id = $1 AND slug = $2`,
+			[companyId, 'deny-test'],
 		);
-		expect(agentAfter.rows[0].system_prompt).toBe(promptBefore);
-
-		// Verify no revision record was created for this approval
-		const revisions = await db.query<{ id: string }>(
-			'SELECT id FROM system_prompt_revisions WHERE approval_id = $1',
-			[approval.id],
-		);
-		expect(revisions.rows.length).toBe(0);
+		expect(kbDoc.rows.length).toBe(0);
 	});
 });
 

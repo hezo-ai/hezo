@@ -21,7 +21,12 @@ import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import { resolveProjectIssuePrefix } from '../routes/projects';
 import { fireCommentWakeups } from '../services/comment-wakeups';
-import { getDocument, listDocuments, upsertDocument } from '../services/documents';
+import {
+	getAgentSystemPrompt,
+	getDocument,
+	listDocuments,
+	upsertDocument,
+} from '../services/documents';
 import { triggerStatusAutomations } from '../services/issue-automation';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
@@ -828,7 +833,7 @@ export function registerTools(
 		db,
 	);
 
-	// System Prompt Management (Coach + self only)
+	// System Prompt Management — read: any agent/board in same company; write: coach only
 	tool(
 		server,
 		'get_agent_system_prompt',
@@ -841,27 +846,32 @@ export function registerTools(
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 
-			// Any agent or board user in the same company can read other agents' prompts
 			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
 				return { error: 'Access denied' };
 			}
 
-			const r = await db.query<{ title: string; slug: string; system_prompt: string }>(
-				`SELECT ma.title, ma.slug, ma.system_prompt
+			const agent = await db.query<{ title: string; slug: string }>(
+				`SELECT ma.title, ma.slug
 				 FROM member_agents ma JOIN members m ON m.id = ma.id
 				 WHERE ma.id = $1 AND m.company_id = $2`,
 				[args.agent_id, args.company_id],
 			);
-			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
-			return r.rows[0];
+			if (agent.rows.length === 0) return { error: 'Agent not found in this company' };
+
+			const system_prompt = await getAgentSystemPrompt(
+				db,
+				args.company_id as string,
+				args.agent_id as string,
+			);
+			return { ...agent.rows[0], system_prompt };
 		},
 		db,
 	);
 
 	tool(
 		server,
-		'propose_system_prompt_update',
-		'Propose or apply a system prompt change for an agent. Only accessible by the Coach agent or the agent itself.',
+		'update_agent_system_prompt',
+		'Apply a system prompt change for an agent. Only the Coach agent can call this. The change is applied immediately and a revision snapshot is stored so the board can restore previous versions.',
 		{
 			company_id: z.string().describe('Company ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -872,72 +882,30 @@ export function registerTools(
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 
-			if (!(await isCoachOrSelf(db, auth, args.agent_id as string))) {
-				return {
-					error: 'Access denied: only the Coach or the agent itself can update system prompts',
-				};
+			if (!(await isCoach(db, auth))) {
+				return { error: 'Access denied: only the Coach agent can update system prompts' };
 			}
 
-			// Verify agent exists in company
-			const agentCheck = await db.query<{ system_prompt: string }>(
-				`SELECT ma.system_prompt FROM member_agents ma JOIN members m ON m.id = ma.id
+			const agentCheck = await db.query<{ id: string }>(
+				`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
 				 WHERE ma.id = $1 AND m.company_id = $2`,
 				[args.agent_id, args.company_id],
 			);
 			if (agentCheck.rows.length === 0) return { error: 'Agent not found in this company' };
 
-			const company = await db.query<{ settings: Record<string, unknown> }>(
-				'SELECT settings FROM companies WHERE id = $1',
-				[args.company_id],
-			);
-			const autoApply = (company.rows[0]?.settings?.coach_auto_apply as boolean) ?? false;
-
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 
-			if (autoApply) {
-				// Direct apply + record revision
-				const oldPrompt = agentCheck.rows[0].system_prompt;
-				const revNum = await db.query<{ n: number }>(
-					'SELECT COALESCE(MAX(revision_number), 0) + 1 AS n FROM system_prompt_revisions WHERE member_agent_id = $1',
-					[args.agent_id],
-				);
-				await db.query('UPDATE member_agents SET system_prompt = $1 WHERE id = $2', [
-					args.new_system_prompt,
-					args.agent_id,
-				]);
-				await db.query(
-					`INSERT INTO system_prompt_revisions (member_agent_id, company_id, revision_number, old_prompt, new_prompt, change_summary, author_member_id)
-					 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-					[
-						args.agent_id,
-						args.company_id,
-						revNum.rows[0].n,
-						oldPrompt,
-						args.new_system_prompt,
-						args.change_summary,
-						callerMemberId,
-					],
-				);
-				return { applied: true, message: 'System prompt updated directly (auto-apply enabled)' };
-			}
-
-			// Create approval request
-			const result = await db.query<{ id: string; status: string }>(
-				`INSERT INTO approvals (company_id, type, requested_by_member_id, payload)
-				 VALUES ($1, $2::approval_type, $3, $4::jsonb)
-				 RETURNING id, status`,
-				[
-					args.company_id,
-					ApprovalType.SystemPromptUpdate,
-					callerMemberId,
-					JSON.stringify({
-						member_id: args.agent_id,
-						new_system_prompt: args.new_system_prompt,
-						reason: args.change_summary,
-					}),
-				],
-			);
-			return { applied: false, approval_id: result.rows[0].id, status: result.rows[0].status };
+			const doc = await upsertDocument(db, undefined, {
+				scope: {
+					type: DocumentType.AgentSystemPrompt,
+					companyId: args.company_id as string,
+					memberAgentId: args.agent_id as string,
+				},
+				content: args.new_system_prompt as string,
+				changeSummary: args.change_summary as string,
+				authorMemberId: callerMemberId,
+			});
+			return { applied: true, document_id: doc.id };
 		},
 		db,
 	);
@@ -1309,16 +1277,12 @@ export function registerTools(
 	return [...registeredTools];
 }
 
-async function isCoachOrSelf(db: PGlite, auth: AuthInfo, targetAgentId: string): Promise<boolean> {
-	if (auth.type === AuthType.Board) return true;
-	if (auth.type === AuthType.Agent) {
-		if (auth.memberId === targetAgentId) return true;
-		const coach = await db.query<{ slug: string }>('SELECT slug FROM member_agents WHERE id = $1', [
-			auth.memberId,
-		]);
-		return coach.rows[0]?.slug === COACH_AGENT_SLUG;
-	}
-	return false;
+async function isCoach(db: PGlite, auth: AuthInfo): Promise<boolean> {
+	if (auth.type !== AuthType.Agent) return false;
+	const r = await db.query<{ slug: string }>('SELECT slug FROM member_agents WHERE id = $1', [
+		auth.memberId,
+	]);
+	return r.rows[0]?.slug === COACH_AGENT_SLUG;
 }
 
 async function isCeoOfCompany(db: PGlite, auth: AuthInfo, companyId: string): Promise<boolean> {

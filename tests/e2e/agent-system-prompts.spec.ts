@@ -14,19 +14,57 @@ test('agents created from company type have system prompts via API', async ({ pa
 
 	expect(agents.length).toBe(11);
 
+	const getPrompt = async (agentId: string): Promise<string> => {
+		const res = await page.request.get(
+			`/api/companies/${company.id}/agents/${agentId}/system-prompt`,
+			{ headers: { Authorization: `Bearer ${token}` } },
+		);
+		return (((await res.json()) as any).data?.content ?? '') as string;
+	};
+
 	for (const agent of agents) {
-		expect(agent.system_prompt).toBeTruthy();
-		expect(agent.system_prompt.length).toBeGreaterThan(100);
+		const prompt = await getPrompt(agent.id);
+		expect(prompt).toBeTruthy();
+		expect(prompt.length).toBeGreaterThan(100);
 	}
 
 	const ceo = agents.find((a: any) => a.slug === 'ceo');
-	expect(ceo.system_prompt).toContain('You are the CEO of');
-	expect(ceo.system_prompt).toContain('{{company_name}}');
-	expect(ceo.system_prompt).toMatch(/##\s+Rules\b/);
+	const ceoPrompt = await getPrompt(ceo.id);
+	expect(ceoPrompt).toContain('You are the CEO of');
+	expect(ceoPrompt).toContain('{{company_name}}');
+	expect(ceoPrompt).toMatch(/##\s+Rules\b/);
 
 	const engineer = agents.find((a: any) => a.slug === 'engineer');
-	expect(engineer.system_prompt).toContain('You are an Engineer at');
-	expect(engineer.system_prompt).toContain('{{reports_to}}');
+	const engineerPrompt = await getPrompt(engineer.id);
+	expect(engineerPrompt).toContain('You are an Engineer at');
+	expect(engineerPrompt).toContain('{{reports_to}}');
+});
+
+test('system prompt revisions panel lists history after an edit', async ({ page }) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const agents = ((await agentsRes.json()) as any).data;
+	const engineer = agents.find((a: any) => a.slug === 'engineer');
+
+	await page.goto(`/companies/${company.id}/agents/${engineer.id}/settings`);
+
+	const promptTextarea = page.getByLabel('System Prompt');
+	await expect(promptTextarea).toBeVisible({ timeout: 5000 });
+
+	const original = await promptTextarea.inputValue();
+	await promptTextarea.fill(`${original}\n- New rule added by e2e test`);
+	await page.getByRole('button', { name: 'Save Changes' }).click();
+
+	await page.reload();
+	await expect(page.getByLabel('System Prompt')).toBeVisible({ timeout: 5000 });
+	await page.getByRole('button', { name: /Show revision history/i }).click();
+	await expect(page.getByText(/Rev \d+/)).toBeVisible();
 });
 
 test('agent detail page displays system prompt in textarea', async ({ page }) => {

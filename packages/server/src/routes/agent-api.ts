@@ -33,11 +33,10 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 		title: string;
 		runtime_status: string;
 		admin_status: string;
-		system_prompt: string;
 		monthly_budget_cents: number;
 		budget_used_cents: number;
 	}>(
-		`SELECT ma.id, ma.title, ma.runtime_status, ma.admin_status, ma.system_prompt,
+		`SELECT ma.id, ma.title, ma.runtime_status, ma.admin_status,
 		        ma.monthly_budget_cents, ma.budget_used_cents
 		 FROM member_agents ma
 		 WHERE ma.id = $1`,
@@ -133,7 +132,6 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 			title: agentRow.title,
 			runtime_status: agentRow.runtime_status,
 			admin_status: agentRow.admin_status,
-			system_prompt: agentRow.system_prompt,
 			budget_remaining_cents: budgetRemaining,
 		},
 		assigned_issues: issues.rows,
@@ -348,69 +346,4 @@ agentApiRoutes.get('/secrets/mine', async (c) => {
 	);
 
 	return ok(c, result.rows);
-});
-
-agentApiRoutes.get('/self/system-prompt', async (c) => {
-	const db = c.get('db');
-	const auth = c.get('auth');
-
-	if (auth.type !== AuthType.Agent) {
-		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
-	}
-
-	const result = await db.query(
-		`SELECT ma.system_prompt, ma.agent_type_id, at.system_prompt_template AS type_template
-		 FROM member_agents ma
-		 LEFT JOIN agent_types at ON at.id = ma.agent_type_id
-		 WHERE ma.id = $1`,
-		[auth.memberId],
-	);
-
-	if (result.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Agent not found', 404);
-	}
-
-	const row = result.rows[0] as {
-		system_prompt: string;
-		agent_type_id: string | null;
-		type_template: string | null;
-	};
-
-	return ok(c, {
-		system_prompt: row.system_prompt,
-		agent_type_id: row.agent_type_id,
-		type_template: row.type_template,
-	});
-});
-
-agentApiRoutes.patch('/self/system-prompt', async (c) => {
-	const db = c.get('db');
-	const auth = c.get('auth');
-
-	if (auth.type !== AuthType.Agent) {
-		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
-	}
-
-	const body = await c.req.json<{ system_prompt: string; reason: string }>();
-	if (!body.system_prompt || !body.reason) {
-		return err(c, 'INVALID_REQUEST', 'system_prompt and reason are required', 400);
-	}
-
-	const result = await db.query<{ id: string; status: string }>(
-		`INSERT INTO approvals (company_id, type, requested_by_member_id, payload)
-		 VALUES ($1, $2::approval_type, $3, $4::jsonb)
-		 RETURNING id, status`,
-		[
-			auth.companyId,
-			ApprovalType.SystemPromptUpdate,
-			auth.memberId,
-			JSON.stringify({
-				member_id: auth.memberId,
-				new_system_prompt: body.system_prompt,
-				reason: body.reason,
-			}),
-		],
-	);
-
-	return c.json({ data: { approval_id: result.rows[0].id, status: result.rows[0].status } }, 202);
 });

@@ -545,7 +545,7 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **Security Engineer** — owns security posture. Reviews code for vulnerabilities, validates auth flows, audits dependencies, and ensures security best practices. Reports to Architect.
 
-**Coach** — reviews completed tickets to extract lessons learned and proposes system prompt improvements for other agents. The Coach helps the team continuously improve by identifying patterns in what worked well and what didn't. Reports to no one (independent role). The `companies.settings.coach_auto_apply` field (default false) controls whether Coach-suggested system prompt improvements are auto-applied without board approval.
+**Coach** — reviews completed tickets to extract lessons learned and improves other agents' system prompts. The Coach is the only agent permitted to write system prompts (via the `update_agent_system_prompt` MCP tool); changes apply immediately and every write snapshots a revision into `document_revisions` so the board can roll back from the agent settings page. Reports to no one (independent role).
 
 ### AGENTS.md — two tiers
 

@@ -7,6 +7,7 @@ import {
 	AuthType,
 	CEO_AGENT_SLUG,
 	DEFAULT_EFFORT,
+	DocumentType,
 	IssuePriority,
 	IssueStatus,
 	isAgentEffort,
@@ -25,6 +26,13 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { enqueueAgentSummaryTask, enqueueTeamSummaryTask } from '../services/description-tasks';
+import {
+	getDocument,
+	initAgentSystemPrompt,
+	listRevisions,
+	restoreRevision,
+	upsertDocument,
+} from '../services/documents';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
@@ -36,7 +44,7 @@ export const agentsRoutes = new Hono<Env>();
  * `assigned_issue_count` requires the caller to bind terminal statuses via `terminalStatusParams`.
  */
 const AGENT_BASE_COLUMNS = `m.id, m.company_id, m.display_name, m.created_at,
-	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary, ma.system_prompt,
+	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
 	ma.default_effort,
 	ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
 	ma.touches_code,
@@ -154,14 +162,13 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 		const memberId = memberResult.rows[0].id;
 
 		await db.query(
-			`INSERT INTO member_agents (id, title, slug, role_description, system_prompt, reports_to, default_effort, heartbeat_interval_min, monthly_budget_cents, touches_code, mcp_servers)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, $10, $11::jsonb)`,
+			`INSERT INTO member_agents (id, title, slug, role_description, reports_to, default_effort, heartbeat_interval_min, monthly_budget_cents, touches_code, mcp_servers)
+       VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10::jsonb)`,
 			[
 				memberId,
 				body.title.trim(),
 				slug,
 				body.role_description ?? '',
-				body.system_prompt ?? '',
 				body.reports_to ?? null,
 				body.default_effort ?? DEFAULT_EFFORT,
 				body.heartbeat_interval_min ?? 60,
@@ -170,6 +177,8 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 				JSON.stringify(body.mcp_servers ?? []),
 			],
 		);
+
+		await initAgentSystemPrompt(db, companyId, memberId, body.system_prompt ?? '', null);
 
 		await db.query('COMMIT');
 
@@ -287,16 +296,15 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 			const memberId = memberResult.rows[0].id;
 
 			await db.query(
-				`INSERT INTO member_agents (id, title, slug, role_description, system_prompt,
+				`INSERT INTO member_agents (id, title, slug, role_description,
 				                            default_effort, heartbeat_interval_min, monthly_budget_cents,
 				                            touches_code, admin_status)
-				 VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10::agent_admin_status)`,
+				 VALUES ($1, $2, $3, $4, $5::agent_effort, $6, $7, $8, $9::agent_admin_status)`,
 				[
 					memberId,
 					proposal.title,
 					proposal.slug,
 					proposal.role_description,
-					proposal.system_prompt,
 					proposal.default_effort,
 					proposal.heartbeat_interval_min,
 					proposal.monthly_budget_cents,
@@ -304,6 +312,8 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 					AgentAdminStatus.Enabled,
 				],
 			);
+
+			await initAgentSystemPrompt(db, companyId, memberId, proposal.system_prompt, null);
 
 			await db.query('COMMIT');
 		} catch (e) {
@@ -461,6 +471,84 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
+agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const agentId = c.req.param('agentId');
+
+	const agent = await db.query(
+		'SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1 AND m.company_id = $2',
+		[agentId, companyId],
+	);
+	if (agent.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	}
+
+	const doc = await getDocument(db, {
+		type: DocumentType.AgentSystemPrompt,
+		companyId,
+		memberAgentId: agentId,
+	});
+	return ok(c, doc);
+});
+
+agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt/revisions', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const agentId = c.req.param('agentId');
+
+	const doc = await getDocument(db, {
+		type: DocumentType.AgentSystemPrompt,
+		companyId,
+		memberAgentId: agentId,
+	});
+	if (!doc) return err(c, 'NOT_FOUND', 'Agent system prompt not found', 404);
+
+	const revisions = await listRevisions(db, doc.id);
+	return ok(c, revisions);
+});
+
+agentsRoutes.post('/companies/:companyId/agents/:agentId/system-prompt/restore', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const auth = c.get('auth');
+	if (auth.type === AuthType.Agent) {
+		return err(c, 'FORBIDDEN', 'Only board members can restore revisions', 403);
+	}
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const agentId = c.req.param('agentId');
+
+	const body = await c.req.json<{ revision_number: number }>();
+	if (typeof body.revision_number !== 'number') {
+		return err(c, 'INVALID_REQUEST', 'revision_number is required', 400);
+	}
+
+	const doc = await getDocument(db, {
+		type: DocumentType.AgentSystemPrompt,
+		companyId,
+		memberAgentId: agentId,
+	});
+	if (!doc) return err(c, 'NOT_FOUND', 'Agent system prompt not found', 404);
+
+	const restored = await restoreRevision(db, c.get('wsManager'), {
+		documentId: doc.id,
+		revisionNumber: body.revision_number,
+		restoredByMemberId: null,
+	});
+	if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);
+
+	return ok(c, restored);
+});
+
 agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 	const access = await requireCompanyAccess(c);
 	if (access instanceof Response) return access;
@@ -481,6 +569,7 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		title?: string;
 		role_description?: string;
 		system_prompt?: string;
+		system_prompt_change_summary?: string;
 		reports_to?: string | null;
 		default_effort?: string;
 		heartbeat_interval_min?: number;
@@ -550,7 +639,6 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 	} = buildUpdateSet([
 		{ column: 'title', value: body.title?.trim() },
 		{ column: 'role_description', value: body.role_description },
-		{ column: 'system_prompt', value: body.system_prompt },
 		{ column: 'reports_to', value: body.reports_to },
 		{ column: 'default_effort', value: body.default_effort, cast: 'agent_effort' },
 		{ column: 'heartbeat_interval_min', value: body.heartbeat_interval_min },
@@ -562,22 +650,12 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 	]);
 	const idx = nextIdx;
 
-	if (sets.length === 0) {
+	if (sets.length === 0 && body.system_prompt === undefined) {
 		const result = await db.query(
 			`SELECT m.*, ma.* FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1`,
 			[agentId],
 		);
 		return ok(c, result.rows[0]);
-	}
-
-	// Capture old prompt before update for revision tracking
-	let oldSystemPrompt: string | null = null;
-	if (body.system_prompt !== undefined) {
-		const oldResult = await db.query<{ system_prompt: string }>(
-			'SELECT system_prompt FROM member_agents WHERE id = $1',
-			[agentId],
-		);
-		oldSystemPrompt = oldResult.rows[0]?.system_prompt ?? '';
 	}
 
 	if (body.title?.trim()) {
@@ -587,39 +665,33 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		]);
 	}
 
-	params.push(agentId);
-	const result = await db.query(
-		`UPDATE member_agents SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
-		params,
-	);
-
-	// Record system prompt revision if prompt was changed
-	if (body.system_prompt !== undefined && oldSystemPrompt !== null) {
-		const revNum = await db.query<{ n: number }>(
-			'SELECT COALESCE(MAX(revision_number), 0) + 1 AS n FROM system_prompt_revisions WHERE member_agent_id = $1',
-			[agentId],
+	let updatedRow: Record<string, unknown>;
+	if (sets.length > 0) {
+		params.push(agentId);
+		const result = await db.query(
+			`UPDATE member_agents SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
+			params,
 		);
-		await db.query(
-			`INSERT INTO system_prompt_revisions (member_agent_id, company_id, revision_number, old_prompt, new_prompt, change_summary)
-			 VALUES ($1, $2, $3, $4, $5, $6)`,
-			[
-				agentId,
-				companyId,
-				revNum.rows[0].n,
-				oldSystemPrompt,
-				body.system_prompt,
-				'Manual edit by board member',
-			],
-		);
+		updatedRow = result.rows[0] as Record<string, unknown>;
+	} else {
+		const result = await db.query(`SELECT * FROM member_agents WHERE id = $1`, [agentId]);
+		updatedRow = result.rows[0] as Record<string, unknown>;
 	}
 
-	broadcastChange(
-		c,
-		wsRoom.company(companyId),
-		'member_agents',
-		'UPDATE',
-		result.rows[0] as Record<string, unknown>,
-	);
+	if (body.system_prompt !== undefined) {
+		await upsertDocument(db, undefined, {
+			scope: {
+				type: DocumentType.AgentSystemPrompt,
+				companyId,
+				memberAgentId: agentId,
+			},
+			content: body.system_prompt,
+			changeSummary: body.system_prompt_change_summary ?? 'Manual edit by board member',
+			authorMemberId: null,
+		});
+	}
+
+	broadcastChange(c, wsRoom.company(companyId), 'member_agents', 'UPDATE', updatedRow);
 
 	if (body.system_prompt !== undefined || body.role_description !== undefined) {
 		const reason = body.system_prompt !== undefined ? 'prompt_updated' : 'role_updated';
@@ -631,7 +703,7 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		);
 	}
 
-	return ok(c, result.rows[0]);
+	return ok(c, updatedRow);
 });
 
 agentsRoutes.post('/companies/:companyId/agents/:agentId/disable', async (c) => {

@@ -7,6 +7,7 @@ export interface DocumentRow {
 	id: string;
 	company_id: string;
 	project_id: string | null;
+	member_agent_id: string | null;
 	type: DocumentType;
 	slug: string;
 	title: string;
@@ -52,9 +53,20 @@ interface ScopePreferences {
 	companyId: string;
 }
 
-export type DocumentScope = ScopeProjectDoc | ScopeKbDoc | ScopePreferences;
+interface ScopeAgentSystemPrompt {
+	type: typeof DocumentType.AgentSystemPrompt;
+	companyId: string;
+	memberAgentId: string;
+}
+
+export type DocumentScope =
+	| ScopeProjectDoc
+	| ScopeKbDoc
+	| ScopePreferences
+	| ScopeAgentSystemPrompt;
 
 const PREFERENCES_SLUG = 'preferences';
+const AGENT_SYSTEM_PROMPT_SLUG = 'system-prompt';
 
 function scopeWhere(scope: DocumentScope, alias = ''): { sql: string; params: unknown[] } {
 	const p = alias ? `${alias}.` : '';
@@ -68,6 +80,12 @@ function scopeWhere(scope: DocumentScope, alias = ''): { sql: string; params: un
 		return {
 			sql: `${p}type = $1 AND ${p}company_id = $2 AND ${p}slug = $3`,
 			params: [scope.type, scope.companyId, scope.slug],
+		};
+	}
+	if (scope.type === DocumentType.AgentSystemPrompt) {
+		return {
+			sql: `${p}type = $1 AND ${p}company_id = $2 AND ${p}member_agent_id = $3`,
+			params: [scope.type, scope.companyId, scope.memberAgentId],
 		};
 	}
 	return {
@@ -184,14 +202,16 @@ export async function upsertDocument(
 async function insertDocument(db: PGlite, input: UpsertDocumentInput): Promise<DocumentRow> {
 	const scope = input.scope;
 	const projectId = scope.type === DocumentType.ProjectDoc ? scope.projectId : null;
-	const slug = scope.type === DocumentType.CompanyPreferences ? PREFERENCES_SLUG : scope.slug;
+	const memberAgentId = scope.type === DocumentType.AgentSystemPrompt ? scope.memberAgentId : null;
+	const slug = resolveSlug(scope);
 	const result = await db.query<DocumentRow>(
-		`INSERT INTO documents (company_id, project_id, type, slug, title, content, last_updated_by_member_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO documents (company_id, project_id, member_agent_id, type, slug, title, content, last_updated_by_member_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING *`,
 		[
 			scope.companyId,
 			projectId,
+			memberAgentId,
 			scope.type,
 			slug,
 			input.title ?? '',
@@ -200,6 +220,12 @@ async function insertDocument(db: PGlite, input: UpsertDocumentInput): Promise<D
 		],
 	);
 	return result.rows[0];
+}
+
+function resolveSlug(scope: DocumentScope): string {
+	if (scope.type === DocumentType.CompanyPreferences) return PREFERENCES_SLUG;
+	if (scope.type === DocumentType.AgentSystemPrompt) return AGENT_SYSTEM_PROMPT_SLUG;
+	return scope.slug;
 }
 
 async function recordRevision(
@@ -315,4 +341,41 @@ export async function restoreRevision(
 		row as unknown as Record<string, unknown>,
 	);
 	return row;
+}
+
+export async function getAgentSystemPrompt(
+	db: PGlite,
+	companyId: string,
+	memberAgentId: string,
+): Promise<string> {
+	const doc = await getDocument(db, {
+		type: DocumentType.AgentSystemPrompt,
+		companyId,
+		memberAgentId,
+	});
+	return doc?.content ?? '';
+}
+
+/**
+ * Inserts the initial agent_system_prompt document without wrapping its own
+ * transaction. Safe to call inside a caller-managed BEGIN/COMMIT (seed,
+ * company bootstrap, initial agent creation). Subsequent updates must go
+ * through `upsertDocument` so that revision history is recorded.
+ */
+export async function initAgentSystemPrompt(
+	db: PGlite,
+	companyId: string,
+	memberAgentId: string,
+	content: string,
+	authorMemberId: string | null,
+): Promise<DocumentRow> {
+	return insertDocument(db, {
+		scope: {
+			type: DocumentType.AgentSystemPrompt,
+			companyId,
+			memberAgentId,
+		},
+		content,
+		authorMemberId,
+	});
 }

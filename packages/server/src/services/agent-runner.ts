@@ -24,6 +24,7 @@ import { signAgentJwt } from '../middleware/auth';
 import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
 import { type AiProviderCredential, getProviderCredentialAndModel } from './ai-provider-keys';
 import type { DockerClient, ExecLogChunk } from './docker';
+import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import { ensureIssueWorktree, fetchRepo } from './git';
 import type { LogStreamBroker } from './log-stream-broker';
@@ -38,7 +39,6 @@ export interface AgentInfo {
 	id: string;
 	title: string;
 	slug?: string | null;
-	system_prompt: string;
 	company_id: string;
 	default_effort?: string | null;
 	model_override_provider?: AiProvider | null;
@@ -151,7 +151,8 @@ async function buildRunContext(
 	heartbeatRunId: string,
 	modelOverride: string | null,
 ): Promise<RunContext> {
-	let resolvedPrompt = await resolveSystemPrompt(deps.db, agent.system_prompt, {
+	const storedPrompt = await getAgentSystemPrompt(deps.db, agent.company_id, agent.id);
+	let resolvedPrompt = await resolveSystemPrompt(deps.db, storedPrompt, {
 		companyId: agent.company_id,
 		projectId: project.id,
 		issueId: issue.id,
@@ -1017,15 +1018,17 @@ export async function buildCoachReviewPrompt(
 		'Review this completed ticket. Analyze the comment history for patterns where agents struggled,',
 		'received feedback, had work rejected, or needed multiple attempts. For each improvement opportunity,',
 		"use the `get_agent_system_prompt` tool to read the affected agent's current prompt, then use",
-		'`propose_system_prompt_update` to propose a specific rule to add to their `## Learned Rules` section.',
+		'`update_agent_system_prompt` to add a specific rule to their `## Learned Rules` section. Updates',
+		'apply immediately and a revision snapshot is recorded so the board can roll back from the agent',
+		'settings page if needed.',
 		'',
 		'If the ticket completed smoothly without significant rework or feedback, no changes are needed.',
 		'',
 		`### Final Step — Post a Review Summary Comment`,
-		`After you finish (whether or not you proposed any updates), call \`create_comment\` exactly once on ${issue.identifier} summarising this review. Required format:`,
+		`After you finish (whether or not you updated any prompts), call \`create_comment\` exactly once on ${issue.identifier} summarising this review. Required format:`,
 		'',
-		'- If you proposed rule updates: one line per proposal as `- @<agent-slug>: <one-line lesson> (auto-applied)` or `- @<agent-slug>: <one-line lesson> (pending approval)`, depending on the `applied` flag returned by `propose_system_prompt_update`.',
-		'- If you made no proposals: a single sentence stating that the ticket completed cleanly and no rule changes were warranted.',
+		'- If you updated any prompts: one line per change as `- @<agent-slug>: <one-line lesson>`.',
+		'- If you made no changes: a single sentence stating that the ticket completed cleanly and no rule changes were warranted.',
 		'',
 		'Keep the comment concise (≤10 lines). This is the closing action of the task — do not end the turn without posting it.',
 	];

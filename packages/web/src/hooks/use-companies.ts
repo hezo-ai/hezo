@@ -3,7 +3,6 @@ import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
 export interface CompanySettings {
-	coach_auto_apply?: boolean;
 	wake_mentioner_on_reply?: boolean;
 	[key: string]: unknown;
 }

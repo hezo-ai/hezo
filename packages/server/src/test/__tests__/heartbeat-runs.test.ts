@@ -158,7 +158,6 @@ describe('run comments', () => {
 		const agent: AgentInfo = {
 			id: agentId,
 			title: 'Test Runner',
-			system_prompt: '',
 			company_id: companyId,
 		};
 		const issue = {
@@ -209,7 +208,6 @@ describe('run comments', () => {
 		const agent: AgentInfo = {
 			id: agentId,
 			title: 'Test Runner',
-			system_prompt: '',
 			company_id: companyId,
 		};
 		const issue = {

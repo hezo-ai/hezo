@@ -237,63 +237,19 @@ describe('agent API - heartbeat edge cases', () => {
 	});
 });
 
-describe('agent API - self system prompt', () => {
-	it('gets own system prompt', async () => {
-		const res = await app.request('/agent-api/self/system-prompt', {
+describe('agent API - self system prompt (removed)', () => {
+	it('self system-prompt endpoints are gone', async () => {
+		const getRes = await app.request('/agent-api/self/system-prompt', {
 			headers: authHeader(agentToken),
 		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data).toHaveProperty('system_prompt');
-		expect(body.data).toHaveProperty('agent_type_id');
-		expect(body.data.agent_type_id).not.toBeNull();
-	});
+		expect(getRes.status).toBe(404);
 
-	it('requests system prompt update (creates approval)', async () => {
-		const res = await app.request('/agent-api/self/system-prompt', {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				system_prompt: 'Updated prompt for testing',
-				reason: 'Board asked me to focus on testing',
-			}),
-		});
-		expect(res.status).toBe(202);
-		const body = await res.json();
-		expect(body.data.approval_id).toBeTruthy();
-		expect(body.data.status).toBe('pending');
-	});
-
-	it('applies system prompt update when approval is approved', async () => {
 		const patchRes = await app.request('/agent-api/self/system-prompt', {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				system_prompt: 'New approved prompt',
-				reason: 'Board requested change',
-			}),
+			body: JSON.stringify({ system_prompt: 'x', reason: 'y' }),
 		});
-		const approvalId = (await patchRes.json()).data.approval_id;
-
-		const resolveRes = await app.request(`/api/approvals/${approvalId}/resolve`, {
-			method: 'POST',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'approved' }),
-		});
-		expect(resolveRes.status).toBe(200);
-
-		const promptRes = await app.request('/agent-api/self/system-prompt', {
-			headers: authHeader(agentToken),
-		});
-		const promptBody = await promptRes.json();
-		expect(promptBody.data.system_prompt).toBe('New approved prompt');
-	});
-
-	it('rejects board token for self endpoints', async () => {
-		const res = await app.request('/agent-api/self/system-prompt', {
-			headers: authHeader(boardToken),
-		});
-		expect(res.status).toBe(401);
+		expect(patchRes.status).toBe(404);
 	});
 });
 

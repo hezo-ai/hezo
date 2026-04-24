@@ -2,14 +2,18 @@ import { AgentAdminStatus, AI_PROVIDER_INFO, type AiProvider } from '@hezo/share
 import { createFileRoute } from '@tanstack/react-router';
 import { Loader2, Power, PowerOff } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { RevisionsPanel } from '../../../../../components/revisions-panel';
 import { Button } from '../../../../../components/ui/button';
 import { Input } from '../../../../../components/ui/input';
 import { Textarea } from '../../../../../components/ui/textarea';
 import {
 	useAgent,
+	useAgentSystemPrompt,
+	useAgentSystemPromptRevisions,
 	useAgents,
 	useDisableAgent,
 	useEnableAgent,
+	useRestoreAgentSystemPrompt,
 	useUpdateAgent,
 } from '../../../../../hooks/use-agents';
 import { useAiProviderModels, useAiProviders } from '../../../../../hooks/use-ai-providers';
@@ -18,6 +22,9 @@ function AgentSettingsPage() {
 	const { companyId, agentId } = Route.useParams();
 	const { data: agent, isLoading } = useAgent(companyId, agentId);
 	const { data: agents } = useAgents(companyId);
+	const { data: promptDoc } = useAgentSystemPrompt(companyId, agentId);
+	const { data: revisions } = useAgentSystemPromptRevisions(companyId, agentId);
+	const restorePrompt = useRestoreAgentSystemPrompt(companyId, agentId);
 	const updateAgent = useUpdateAgent(companyId, agentId);
 	const disableAgent = useDisableAgent(companyId);
 	const enableAgent = useEnableAgent(companyId);
@@ -36,7 +43,6 @@ function AgentSettingsPage() {
 		if (agent) {
 			setTitle(agent.title);
 			setRoleDesc(agent.role_description ?? '');
-			setSystemPrompt(agent.system_prompt ?? '');
 			setReportsTo(agent.reports_to ?? '');
 			setBudget(String(agent.monthly_budget_cents / 100));
 			setHeartbeat(String(agent.heartbeat_interval_min));
@@ -46,6 +52,10 @@ function AgentSettingsPage() {
 		}
 	}, [agent]);
 
+	useEffect(() => {
+		setSystemPrompt(promptDoc?.content ?? '');
+	}, [promptDoc?.content]);
+
 	if (isLoading || !agent) return <div className="text-text-muted text-sm">Loading...</div>;
 
 	const otherAgents =
@@ -53,10 +63,11 @@ function AgentSettingsPage() {
 
 	async function handleSave(e: React.FormEvent) {
 		e.preventDefault();
+		const promptChanged = systemPrompt !== (promptDoc?.content ?? '');
 		await updateAgent.mutateAsync({
 			title,
 			role_description: roleDesc || undefined,
-			system_prompt: systemPrompt || undefined,
+			system_prompt: promptChanged ? systemPrompt : undefined,
 			reports_to: reportsTo || null,
 			monthly_budget_cents: Math.round(Number.parseFloat(budget) * 100),
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
@@ -114,12 +125,19 @@ function AgentSettingsPage() {
 					value={roleDesc}
 					onChange={(e) => setRoleDesc(e.target.value)}
 				/>
-				<Textarea
-					label="System Prompt"
-					value={systemPrompt}
-					onChange={(e) => setSystemPrompt(e.target.value)}
-					className="min-h-[160px] font-mono text-xs"
-				/>
+				<div>
+					<Textarea
+						label="System Prompt"
+						value={systemPrompt}
+						onChange={(e) => setSystemPrompt(e.target.value)}
+						className="min-h-[160px] font-mono text-xs"
+					/>
+					<RevisionsPanel
+						revisions={revisions}
+						onRestore={(rev) => restorePrompt.mutateAsync(rev)}
+						isRestoring={restorePrompt.isPending}
+					/>
+				</div>
 
 				<label className="flex flex-col gap-1.5">
 					<span className="text-sm text-text-muted">Reports To</span>
