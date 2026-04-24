@@ -659,7 +659,7 @@ test('project badge and metadata label both link to the project page', async ({ 
 
 	await metadataLink.click();
 	await expect(page).toHaveURL(expectedHref + '/issues');
-	await expect(page.getByRole('heading', { name: 'Linkable Project' })).toBeVisible({
+	await expect(page.getByTestId('breadcrumb').getByText('Linkable Project')).toBeVisible({
 		timeout: 10000,
 	});
 });
