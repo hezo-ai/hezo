@@ -517,52 +517,25 @@ function IssueDetailPage() {
 							placeholder="Add a comment..."
 							className="min-h-[60px]"
 						/>
-						<div className="flex items-center justify-between gap-2">
-							<label className="flex items-center gap-2 text-[11px] text-text-muted">
-								<span>Effort</span>
-								<select
-									value={commentEffort ?? effectiveDefaultEffort}
-									onChange={(e) => setCommentEffort(e.target.value as AgentEffort)}
-									className="bg-background border border-border rounded-radius-md px-2 py-1 text-[11px]"
-									aria-label="Reasoning effort for the agent run triggered by this comment"
-								>
-									{EFFORT_LEVELS.map(({ value, label }) => (
-										<option key={value} value={value}>
-											{label}
-											{value === effectiveDefaultEffort ? ' (default)' : ''}
-										</option>
-									))}
-								</select>
-							</label>
-							<div className="flex items-center gap-3">
-								{issue.assignee_id && (
-									<label className="flex items-center gap-1.5 text-[11px] text-text-muted cursor-pointer select-none">
-										<input
-											type="checkbox"
-											checked={wakeAssignee}
-											onChange={(e) => setWakeAssignee(e.target.checked)}
-											className="rounded"
-											aria-label="Wake assignee on submit"
-										/>
-										Wake assignee
-									</label>
-								)}
-								<Button
-									type="submit"
-									size="sm"
-									disabled={!commentText.trim() || createComment.isPending}
-								>
-									{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-									Comment
-								</Button>
-							</div>
+						<div className="flex items-center justify-end gap-2">
+							<Button
+								type="submit"
+								size="sm"
+								disabled={!commentText.trim() || createComment.isPending}
+							>
+								{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+								Comment
+							</Button>
 						</div>
 					</form>
 				</div>
 			</div>
 
 			{/* Sidebar */}
-			<div className="flex flex-col gap-4 text-xs">
+			<div
+				data-testid="issue-sidebar"
+				className="flex flex-col gap-4 text-xs lg:sticky lg:top-0 lg:self-start"
+			>
 				<div>
 					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
 						Priority
@@ -665,6 +638,38 @@ function IssueDetailPage() {
 						{new Date(issue.created_at).toLocaleDateString()}
 					</span>
 				</div>
+
+				<div>
+					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
+						Effort
+					</span>
+					<select
+						value={commentEffort ?? effectiveDefaultEffort}
+						onChange={(e) => setCommentEffort(e.target.value as AgentEffort)}
+						className="w-full rounded-radius-md border border-border bg-bg px-2.5 py-1.5 text-xs text-text outline-none"
+						aria-label="Reasoning effort for the agent run triggered by this comment"
+					>
+						{EFFORT_LEVELS.map(({ value, label }) => (
+							<option key={value} value={value}>
+								{label}
+								{value === effectiveDefaultEffort ? ' (default)' : ''}
+							</option>
+						))}
+					</select>
+				</div>
+
+				{issue.assignee_id && (
+					<label className="flex items-center gap-2 text-[13px] text-text cursor-pointer select-none">
+						<input
+							type="checkbox"
+							checked={wakeAssignee}
+							onChange={(e) => setWakeAssignee(e.target.checked)}
+							className="rounded"
+							aria-label="Wake assignee on submit"
+						/>
+						<span>Wake assignee</span>
+					</label>
+				)}
 
 				<div className="mt-auto pt-4 border-t border-border">
 					{issue.status === IssueStatus.Closed ? (
