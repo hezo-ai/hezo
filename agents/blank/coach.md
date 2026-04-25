@@ -55,6 +55,7 @@ If a pattern suggests that a missing role or fundamental redesign is needed, fla
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/coach-summary-comment}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
 {{> partials/common/mention-handoff}}

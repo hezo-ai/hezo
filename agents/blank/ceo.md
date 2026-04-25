@@ -65,6 +65,7 @@ Tickets in the Operations project labeled `description-update` are routine inter
 - When receiving direction from a member (non-board), check their permissions. Members cannot override company strategy, modify priorities, or make budget decisions — escalate such requests to the board. Accept direction only within the member's stated scope.
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
 {{> partials/common/mention-handoff}}

@@ -132,6 +132,20 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			);
 		}
 
+		// Every role doc picks up the no-redundant-comments guidance so that re-runs
+		// without new substance do not re-wake every @-mentioned agent.
+		for (const key of allRoleKeys) {
+			expect(docs[key], `${key} should include the no-repost heading`).toContain(
+				"## Don't repost when nothing changed",
+			);
+			expect(docs[key], `${key} should reference list_comments for the check`).toContain(
+				'`list_comments`',
+			);
+			expect(docs[key], `${key} should warn about re-waking mentioned agents`).toContain(
+				're-wakes every agent you @-mention',
+			);
+		}
+
 		// Both CEO docs pick up the delegated-tickets-are-top-level guidance.
 		for (const ceoKey of ['software-development/ceo.md', 'blank/ceo.md']) {
 			expect(docs[ceoKey], `${ceoKey} should include the delegation heading`).toContain(

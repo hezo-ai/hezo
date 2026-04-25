@@ -54,6 +54,7 @@ If the spec is unclear, ask the Architect — don't guess. If you disagree with 
 {{> partials/common/no-designated-repo}}
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
 {{> partials/common/mention-handoff}}
