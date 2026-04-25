@@ -4,8 +4,11 @@ import { queryClient } from '../lib/query-client';
 
 export interface CompanySettings {
 	wake_mentioner_on_reply?: boolean;
+	subtask_page_size?: number;
 	[key: string]: unknown;
 }
+
+export const DEFAULT_SUBTASK_PAGE_SIZE = 10;
 
 export interface Company {
 	id: string;

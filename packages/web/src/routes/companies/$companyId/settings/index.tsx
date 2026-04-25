@@ -6,7 +6,11 @@ import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { useApiKeys, useCreateApiKey, useDeleteApiKey } from '../../../../hooks/use-api-keys';
-import { useCompany, useUpdateCompany } from '../../../../hooks/use-companies';
+import {
+	DEFAULT_SUBTASK_PAGE_SIZE,
+	useCompany,
+	useUpdateCompany,
+} from '../../../../hooks/use-companies';
 import {
 	useConnections,
 	useDeleteConnection,
@@ -142,9 +146,27 @@ function AutomationsSection({ companyId }: { companyId: string }) {
 	const { data: company } = useCompany(companyId);
 	const updateCompany = useUpdateCompany(companyId);
 	const wakeOnReply = company?.settings?.wake_mentioner_on_reply ?? true;
+	const savedPageSize = company?.settings?.subtask_page_size ?? DEFAULT_SUBTASK_PAGE_SIZE;
+	const [pageSizeInput, setPageSizeInput] = useState<string>(String(savedPageSize));
+
+	useEffect(() => {
+		setPageSizeInput(String(savedPageSize));
+	}, [savedPageSize]);
 
 	async function toggleWakeOnReply(next: boolean) {
 		await updateCompany.mutateAsync({ settings: { wake_mentioner_on_reply: next } });
+	}
+
+	async function commitPageSize() {
+		const parsed = Math.floor(Number(pageSizeInput));
+		if (!Number.isFinite(parsed) || parsed < 1) {
+			setPageSizeInput(String(savedPageSize));
+			return;
+		}
+		const clamped = Math.min(500, parsed);
+		setPageSizeInput(String(clamped));
+		if (clamped === savedPageSize) return;
+		await updateCompany.mutateAsync({ settings: { subtask_page_size: clamped } });
 	}
 
 	return (
@@ -171,6 +193,30 @@ function AutomationsSection({ companyId }: { companyId: string }) {
 					</span>
 				</span>
 			</label>
+			<div className="mt-5 pt-5 border-t border-border-subtle max-w-xl">
+				<label htmlFor="subtask-page-size" className="block text-[13px] font-medium">
+					Sub-issue page size
+				</label>
+				<p className="text-text-muted text-[13px] mt-0.5 mb-1.5">
+					How many sub-issues to show on an issue page before a "Show more" link is offered.
+				</p>
+				<Input
+					id="subtask-page-size"
+					type="number"
+					min={1}
+					max={500}
+					step={1}
+					value={pageSizeInput}
+					onChange={(e) => setPageSizeInput(e.target.value)}
+					onBlur={commitPageSize}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+					}}
+					disabled={!company || updateCompany.isPending}
+					className="w-24"
+					data-testid="subtask-page-size-input"
+				/>
+			</div>
 		</section>
 	);
 }

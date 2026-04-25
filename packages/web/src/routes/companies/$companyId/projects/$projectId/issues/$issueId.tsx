@@ -26,6 +26,7 @@ import {
 	useComments,
 	useCreateComment,
 } from '../../../../../../hooks/use-comments';
+import { DEFAULT_SUBTASK_PAGE_SIZE, useCompany } from '../../../../../../hooks/use-companies';
 import { type ExecutionLock, useExecutionLock } from '../../../../../../hooks/use-execution-locks';
 import {
 	useCreateSubIssue,
@@ -83,9 +84,14 @@ function IssueDetailPage() {
 	}, [issue?.identifier, issue?.project_slug, issueId, projectId, companyId, navigate]);
 	const { data: comments } = useComments(companyId, issueId);
 	const { data: deps } = useIssueDependencies(companyId, issueId);
+	const { data: company } = useCompany(companyId);
+	const subIssuePageSize = Math.max(
+		1,
+		company?.settings?.subtask_page_size ?? DEFAULT_SUBTASK_PAGE_SIZE,
+	);
 	const { data: subIssues } = useIssues(
 		companyId,
-		issue?.id ? { parent_issue_id: issue.id } : undefined,
+		issue?.id ? { parent_issue_id: issue.id, per_page: '200' } : undefined,
 		{ enabled: !!issue?.id },
 	);
 	const { data: agents } = useAgents(companyId);
@@ -102,7 +108,15 @@ function IssueDetailPage() {
 	const [wakeAssignee, setWakeAssignee] = useState(true);
 	const [subIssueTitle, setSubIssueTitle] = useState('');
 	const [showSubForm, setShowSubForm] = useState(false);
-	const [subIssuesOpen, setSubIssuesOpen] = useState(false);
+	const [subIssuesOpen, setSubIssuesOpen] = useState(true);
+	const [subIssuesShownState, setSubIssuesShownState] = useState<{
+		issueId: string;
+		count: number;
+	} | null>(null);
+	const subIssuesShown =
+		subIssuesShownState && subIssuesShownState.issueId === issue?.id
+			? subIssuesShownState.count
+			: subIssuePageSize;
 	const [editingSummary, setEditingSummary] = useState(false);
 	const [summaryText, setSummaryText] = useState('');
 	const [editingRules, setEditingRules] = useState(false);
@@ -396,7 +410,7 @@ function IssueDetailPage() {
 							{(subIssues?.data.length ?? 0) === 0 && !showSubForm && (
 								<span className="text-[13px] text-text-muted">No sub-issues.</span>
 							)}
-							{subIssues?.data.map((s) => (
+							{subIssues?.data.slice(0, subIssuesShown).map((s) => (
 								<Link
 									key={s.id}
 									to="/companies/$companyId/projects/$projectId/issues/$issueId"
@@ -415,6 +429,27 @@ function IssueDetailPage() {
 									<span className="truncate">{s.title}</span>
 								</Link>
 							))}
+							{subIssues && subIssues.data.length > subIssuesShown && (
+								<div className="flex justify-center pt-2 mt-0.5 border-t border-border-subtle">
+									<button
+										type="button"
+										onClick={() =>
+											setSubIssuesShownState({
+												issueId: issue?.id ?? '',
+												count: subIssuesShown + subIssuePageSize,
+											})
+										}
+										className="inline-flex items-center gap-1.5 text-[12px] text-text-subtle hover:text-text px-3 py-1 rounded-radius-md hover:bg-bg-subtle transition-colors cursor-pointer"
+										data-testid="sub-issues-show-more"
+									>
+										<ChevronDown className="w-3 h-3" />
+										Show more
+										<span className="text-text-subtle">
+											· {subIssues.data.length - subIssuesShown} hidden
+										</span>
+									</button>
+								</div>
+							)}
 						</div>
 					)}
 				</div>
