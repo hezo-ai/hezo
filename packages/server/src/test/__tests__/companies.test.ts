@@ -58,10 +58,10 @@ describe('companies CRUD', () => {
 		expect(kbBody.data.length).toBe(4);
 		const slugs = kbBody.data.map((d: any) => d.slug).sort();
 		expect(slugs).toEqual([
-			'architecture-guidelines',
-			'code-review-standards',
-			'company-overview',
-			'development-workflow',
+			'architecture-guidelines.md',
+			'code-review-standards.md',
+			'company-overview.md',
+			'development-workflow.md',
 		]);
 	});
 

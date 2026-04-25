@@ -53,7 +53,7 @@ kbDocsRoutes.post('/companies/:companyId/kb-docs', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'title is required', 400);
 	}
 
-	const slug = body.slug?.trim() || toSlug(body.title);
+	const slug = body.slug?.trim() || `${toSlug(body.title)}.md`;
 
 	const conflict = await getDocument(db, {
 		type: DocumentType.KbDoc,

@@ -428,8 +428,9 @@ Scoping is enforced by partial unique indexes:
 
 - `project_doc` — unique on `(project_id, slug)`. Slug holds the filename
   (e.g. `spec.md`); `title` is empty (the filename is the display label).
-- `kb_doc` — unique on `(company_id, slug)`. Slug derives from `title` via
-  `toSlug`; `title` carries the human label.
+- `kb_doc` — unique on `(company_id, slug)`. Slug is the Markdown filename
+  (e.g. `coding-standards.md`); auto-derived as `${toSlug(title)}.md` when
+  not provided. `title` carries the human label.
 - `company_preferences` — partial unique on `(company_id)` with slug fixed
   to `preferences`. Enforces one row per company.
 - `agent_system_prompt` — partial unique on `(member_agent_id)` with slug

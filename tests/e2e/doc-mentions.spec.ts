@@ -38,7 +38,7 @@ test('bare kb and project-doc references render as tooltip-ed links and navigate
 		data: {
 			project_id: project.id,
 			title: 'Doc mention host issue',
-			description: `See onboarding-guide and runbook.md for context.`,
+			description: `See onboarding-guide.md and runbook.md for context.`,
 			assignee_id: ceo.id,
 		},
 	});
@@ -51,7 +51,7 @@ test('bare kb and project-doc references render as tooltip-ed links and navigate
 
 	const kbLink = page.getByTestId('kb-mention-link').first();
 	await expect(kbLink).toBeVisible();
-	await expect(kbLink).toContainText('onboarding-guide');
+	await expect(kbLink).toContainText('onboarding-guide.md');
 	await kbLink.hover();
 	await expect(page.getByText('Onboarding Guide', { exact: true }).first()).toBeVisible();
 
@@ -60,7 +60,9 @@ test('bare kb and project-doc references render as tooltip-ed links and navigate
 	await expect(docLink).toContainText('runbook.md');
 
 	await kbLink.click();
-	await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/kb\\?slug=onboarding-guide`));
+	await expect(page).toHaveURL(
+		new RegExp(`/companies/${company.slug}/kb\\?slug=onboarding-guide(\\.md|%2Emd)`),
+	);
 });
 
 test('mention picker opens on @ and inserts the selected handle', async ({ page }) => {
@@ -108,7 +110,7 @@ test('mention picker opens on @ and inserts the selected handle', async ({ page 
 	await expect(option).toContainText('Picker Doc');
 	await option.click();
 
-	await expect(commentBox).toHaveValue(/(?<!@)picker-doc /);
+	await expect(commentBox).toHaveValue(/(?<!@)picker-doc\.md /);
 });
 
 test('rendered markdown autolinks only real entities and leaves look-alikes as text', async ({
@@ -128,7 +130,11 @@ test('rendered markdown autolinks only real entities and leaves look-alikes as t
 
 	await page.request.post(`/api/companies/${company.id}/kb-docs`, {
 		headers: json,
-		data: { title: 'Coding Standards', slug: 'coding-standards', content: 'Prefer early returns.' },
+		data: {
+			title: 'Coding Standards',
+			slug: 'coding-standards.md',
+			content: 'Prefer early returns.',
+		},
 	});
 	await page.request.put(`/api/companies/${company.id}/projects/${project.slug}/docs/spec.md`, {
 		headers: json,
@@ -151,7 +157,7 @@ test('rendered markdown autolinks only real entities and leaves look-alikes as t
 	).data;
 
 	const body = [
-		`See ${targetIssue.identifier} and spec.md and coding-standards with @ceo.`,
+		`See ${targetIssue.identifier} and spec.md and coding-standards.md with @ceo.`,
 		`Look-alikes that must stay plain text: UTF-8, ${targetIssue.identifier}x, \`${targetIssue.identifier}\` and \`spec.md\`.`,
 	].join('\n\n');
 

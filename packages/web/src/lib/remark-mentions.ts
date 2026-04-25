@@ -52,13 +52,9 @@ interface Options {
 
 const AGENT_RE_SRC = String.raw`(?<![\w@])@([a-z][\w-]*)(?![\w/])`;
 const ISSUE_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)(?![\w-])`;
-const PROJECT_DOC_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w/.-])`;
-const KB_DOC_RE_SRC = String.raw`(?<![\w/.-])([a-z][a-z0-9-]{2,})(?![\w/.-])`;
+const FILENAME_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w/.-])`;
 
-const MENTION_RE = new RegExp(
-	`${AGENT_RE_SRC}|${ISSUE_RE_SRC}|${PROJECT_DOC_RE_SRC}|${KB_DOC_RE_SRC}`,
-	'g',
-);
+const MENTION_RE = new RegExp(`${AGENT_RE_SRC}|${ISSUE_RE_SRC}|${FILENAME_RE_SRC}`, 'g');
 
 const SKIP_TYPES = new Set(['code', 'inlineCode', 'link']);
 
@@ -129,8 +125,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 	const display = match[0];
 	const agentToken = match[1];
 	const issueToken = match[2];
-	const projectDocToken = match[3];
-	const kbDocToken = match[4];
+	const filenameToken = match[3];
 
 	if (agentToken) {
 		const slug = agentToken.toLowerCase();
@@ -167,45 +162,45 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		};
 	}
 
-	if (projectDocToken) {
-		if (!projectSlug) return null;
-		const slug = projectSlug.toLowerCase();
-		const perProject = projectDocs.get(slug);
-		if (!perProject) return null;
-		const data = perProject.get(projectDocToken);
-		if (!data) return null;
-		return {
-			type: 'link',
-			url: `/companies/${companyId}/projects/${slug}/documents?file=${encodeURIComponent(projectDocToken)}`,
-			children: [{ type: 'text', value: display }],
-			data: {
-				hProperties: {
-					'data-mention-doc-project-slug': slug,
-					'data-mention-doc-filename': projectDocToken,
-					'data-mention-size': String(data.size),
-					'data-mention-updated-at': data.updatedAt,
-				},
-			},
-		};
-	}
+	if (filenameToken) {
+		if (projectSlug) {
+			const slug = projectSlug.toLowerCase();
+			const perProject = projectDocs.get(slug);
+			const data = perProject?.get(filenameToken);
+			if (data) {
+				return {
+					type: 'link',
+					url: `/companies/${companyId}/projects/${slug}/documents?file=${encodeURIComponent(filenameToken)}`,
+					children: [{ type: 'text', value: display }],
+					data: {
+						hProperties: {
+							'data-mention-doc-project-slug': slug,
+							'data-mention-doc-filename': filenameToken,
+							'data-mention-size': String(data.size),
+							'data-mention-updated-at': data.updatedAt,
+						},
+					},
+				};
+			}
+		}
 
-	if (kbDocToken) {
-		const slug = kbDocToken.toLowerCase();
-		const data = kbDocs.get(slug);
-		if (!data) return null;
-		return {
-			type: 'link',
-			url: `/companies/${companyId}/kb?slug=${encodeURIComponent(slug)}`,
-			children: [{ type: 'text', value: display }],
-			data: {
-				hProperties: {
-					'data-mention-kb-slug': slug,
-					'data-mention-kb-title': data.title,
-					'data-mention-size': String(data.size),
-					'data-mention-updated-at': data.updatedAt,
+		const kbKey = filenameToken.toLowerCase();
+		const kbData = kbDocs.get(kbKey);
+		if (kbData) {
+			return {
+				type: 'link',
+				url: `/companies/${companyId}/kb?slug=${encodeURIComponent(kbKey)}`,
+				children: [{ type: 'text', value: display }],
+				data: {
+					hProperties: {
+						'data-mention-kb-slug': kbKey,
+						'data-mention-kb-title': kbData.title,
+						'data-mention-size': String(kbData.size),
+						'data-mention-updated-at': kbData.updatedAt,
+					},
 				},
-			},
-		};
+			};
+		}
 	}
 
 	return null;
@@ -230,32 +225,25 @@ export interface DocCandidates {
 
 export function extractDocCandidates(value: string, projectSlug?: string): DocCandidates {
 	const stripped = stripCode(value);
-	const kbSet = new Set<string>();
-	const docSet = new Set<string>();
+	const filenameSet = new Set<string>();
 
-	const kbRe = new RegExp(KB_DOC_RE_SRC, 'g');
-	let k = kbRe.exec(stripped);
-	while (k !== null) {
-		kbSet.add(k[1].toLowerCase());
-		k = kbRe.exec(stripped);
+	const re = new RegExp(FILENAME_RE_SRC, 'g');
+	let m = re.exec(stripped);
+	while (m !== null) {
+		filenameSet.add(m[1]);
+		m = re.exec(stripped);
 	}
 
-	const docRe = new RegExp(PROJECT_DOC_RE_SRC, 'g');
-	let d = docRe.exec(stripped);
-	while (d !== null) {
-		docSet.add(d[1]);
-		d = docRe.exec(stripped);
-	}
-
+	const kbSlugs = Array.from(filenameSet, (f) => f.toLowerCase());
 	const projectDocs: Array<{ project_slug: string; filename: string }> = [];
 	if (projectSlug) {
 		const slug = projectSlug.toLowerCase();
-		for (const filename of docSet) {
+		for (const filename of filenameSet) {
 			projectDocs.push({ project_slug: slug, filename });
 		}
 	}
 
-	return { kbSlugs: Array.from(kbSet), projectDocs };
+	return { kbSlugs, projectDocs };
 }
 
 function stripCode(value: string): string {

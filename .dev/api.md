@@ -1443,7 +1443,7 @@ Response:
       "id": "uuid",
       "company_id": "uuid",
       "title": "Coding Standards",
-      "slug": "coding-standards",
+      "slug": "coding-standards.md",
       "last_updated_by_agent_id": "uuid | null",
       "last_updated_by_agent_title": "CTO",
       "created_at": "...",
@@ -1461,11 +1461,11 @@ Request:
 {
   "title": "Coding Standards",
   "content": "# Coding Standards\n\n## TypeScript\n- Always use strict mode...",
-  "slug": "coding-standards"
+  "slug": "coding-standards.md"
 }
 ```
 
-`slug` is optional — auto-derived from the title if not provided (lowercased, spaces → hyphens).
+`slug` is optional — auto-derived from the title if not provided (lowercased, spaces → hyphens, with a `.md` extension appended). KB docs are always stored as Markdown filenames.
 
 #### `GET /companies/:companyId/kb-docs/:slug`
 Get full document content.
@@ -2414,7 +2414,7 @@ Response:
     ],
     "mpp_enabled": true,
     "kb_docs": [
-      { "id": "uuid", "title": "Coding Standards", "slug": "coding-standards", "updated_at": "..." }
+      { "id": "uuid", "title": "Coding Standards", "slug": "coding-standards.md", "updated_at": "..." }
     ],
     "company_preferences": {
       "id": "uuid",

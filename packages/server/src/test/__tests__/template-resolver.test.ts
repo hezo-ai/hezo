@@ -86,20 +86,20 @@ describe('template resolver', () => {
 		expect(result).toContain('No knowledge base documents available');
 	});
 
-	it('renders {{kb_context}} with bare-slug link tokens when docs exist', async () => {
+	it('renders {{kb_context}} with bare-filename link tokens when docs exist', async () => {
 		const kbRes = await app.request(`/api/companies/${companyId}/kb-docs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				title: 'Coding Standards',
-				slug: 'coding-standards',
+				slug: 'coding-standards.md',
 				content: 'Prefer early returns.',
 			}),
 		});
 		expect(kbRes.status).toBe(201);
 
 		const result = await resolveSystemPrompt(db, '{{kb_context}}', { companyId });
-		expect(result).toContain('## Coding Standards (link: coding-standards)');
+		expect(result).toContain('## Coding Standards (link: coding-standards.md)');
 		expect(result).toContain('Prefer early returns.');
 	});
 

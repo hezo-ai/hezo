@@ -72,7 +72,7 @@ On heartbeats, audit the entire codebase across these areas:
 - Every route review must verify authorization enforcement: authenticated user's access validated server-side, nested resources have ownership checks, no cross-tenant data leakage. Authorization gaps are critical severity.
 - Reject code that uses hardcoded string literals for values that have defined constants or enums. All status comparisons, type checks, and enumerated values must reference shared constants. When the same string or numeric literal appears hardcoded in multiple places without an existing constant, reject the change and require a shared constant to be introduced before approval.
 - Verify `bun` is used as the package manager and `bunx` instead of `npx` in Node.js projects.
-- When QA findings lead to design changes or implementation pivots, update the relevant project docs via `write_project_doc` (`spec.md`, `implementation-plan.md`, etc.) to reflect the new state.
+- When QA findings lead to design changes or implementation pivots, update the relevant project docs via `write_project_doc` (spec.md, implementation-plan.md, etc.) to reflect the new state.
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. When you discover an operational issue or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review company preferences to align quality standards with the board's expectations. When you observe a new preference in board feedback, update the company preferences document.
 {{> partials/common/no-designated-repo}}

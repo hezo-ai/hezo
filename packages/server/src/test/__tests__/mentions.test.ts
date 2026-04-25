@@ -81,13 +81,13 @@ describe('POST /companies/:companyId/docs/resolve', () => {
 		const r = await app.request(`/api/companies/${companyId}/docs/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ kb_slugs: ['onboarding-guide'] }),
+			body: JSON.stringify({ kb_slugs: ['onboarding-guide.md'] }),
 		});
 		expect(r.status).toBe(200);
 		const body = await r.json();
 		expect(body.data.kb_docs).toHaveLength(1);
 		const doc = body.data.kb_docs[0];
-		expect(doc.slug).toBe('onboarding-guide');
+		expect(doc.slug).toBe('onboarding-guide.md');
 		expect(doc.title).toBe('Onboarding Guide');
 		expect(doc.size).toBe('Hello onboarding world'.length);
 		expect(typeof doc.updated_at).toBe('string');
@@ -124,7 +124,7 @@ describe('POST /companies/:companyId/docs/resolve', () => {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				kb_slugs: ['onboarding-guide'],
+				kb_slugs: ['onboarding-guide.md'],
 				project_docs: [{ project_slug: projectSlug, filename: 'notes.md' }],
 			}),
 		});
@@ -166,7 +166,7 @@ describe('GET /companies/:companyId/mentions/search', () => {
 		expect(r.status).toBe(200);
 		const body = await r.json();
 		const handles = (body.data as Array<{ handle: string }>).map((row) => row.handle);
-		expect(handles).toContain('onboarding-guide');
+		expect(handles).toContain('onboarding-guide.md');
 	});
 
 	it('returns bare filenames for docs in the current project', async () => {
@@ -209,6 +209,6 @@ describe('GET /companies/:companyId/mentions/search', () => {
 		expect(r.status).toBe(200);
 		const body = await r.json();
 		const handles = (body.data as Array<{ handle: string }>).map((row) => row.handle);
-		expect(handles).not.toContain('onboarding-guide');
+		expect(handles).not.toContain('onboarding-guide.md');
 	});
 });
