@@ -415,3 +415,173 @@ Current date: {{current_date}}
 		}
 	});
 });
+
+describe('project state block', () => {
+	let psCompanyId: string;
+	let psProjectId: string;
+	let psCeoMemberId: string;
+	let psArchitectMemberId: string;
+
+	beforeAll(async () => {
+		const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
+
+		const companyRes = await app.request('/api/companies', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Project State Co',
+				description: 'PS test company',
+				template_id: startup.id,
+			}),
+		});
+		psCompanyId = ((await companyRes.json()) as any).data.id;
+
+		const agentsRes = await app.request(`/api/companies/${psCompanyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = ((await agentsRes.json()) as any).data;
+		psCeoMemberId = agents.find((a: any) => a.slug === 'ceo').id;
+		psArchitectMemberId = agents.find((a: any) => a.slug === 'architect').id;
+
+		const projectRes = await app.request(`/api/companies/${psCompanyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'PS Project', description: 'Test' }),
+		});
+		psProjectId = ((await projectRes.json()).data as { id: string }).id;
+	});
+
+	it('omits Project State block when projectId is absent', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			companyId: psCompanyId,
+		});
+		expect(result).not.toContain('## Project State');
+	});
+
+	it('renders Project State header with active tickets when projectId is set', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			companyId: psCompanyId,
+			projectId: psProjectId,
+		});
+		expect(result).toContain('## Project State');
+		expect(result).toContain('### Active tickets');
+		// Startup-template projects auto-create a planning ticket assigned to CEO.
+		expect(result).toMatch(/- PP-\d+ — Draft execution plan/);
+		expect(result).toContain('assigned to CEO');
+	});
+
+	it('renders empty-state when the project has no active tickets', async () => {
+		// Cancel the auto-created planning ticket on a fresh project so it has no active tickets.
+		const projectRes = await app.request(`/api/companies/${psCompanyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Empty PS Project', description: 'Test' }),
+		});
+		const emptyProjectId = ((await projectRes.json()) as any).data.id;
+
+		await db.query(`UPDATE issues SET status = 'cancelled'::issue_status WHERE project_id = $1`, [
+			emptyProjectId,
+		]);
+
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			companyId: psCompanyId,
+			projectId: emptyProjectId,
+		});
+		expect(result).toContain('## Project State');
+		expect(result).toContain('No active tickets in this project.');
+	});
+
+	it('lists active tickets and excludes terminal-status ones', async () => {
+		const activeRes = await app.request(`/api/companies/${psCompanyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: psProjectId,
+				title: 'Active backlog item',
+				assignee_id: psArchitectMemberId,
+			}),
+		});
+		const active = ((await activeRes.json()) as any).data;
+
+		const doneRes = await app.request(`/api/companies/${psCompanyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: psProjectId,
+				title: 'Already finished item',
+				assignee_id: psArchitectMemberId,
+			}),
+		});
+		const done = ((await doneRes.json()) as any).data;
+		await app.request(`/api/companies/${psCompanyId}/issues/${done.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'done' }),
+		});
+
+		const result = await resolveSystemPrompt(db, 'X', {
+			companyId: psCompanyId,
+			projectId: psProjectId,
+		});
+		expect(result).toContain('## Project State');
+		expect(result).toContain(active.identifier);
+		expect(result).toContain('Active backlog item');
+		expect(result).toContain('assigned to Architect');
+		expect(result).not.toContain('Already finished item');
+	});
+
+	it('shows "Tickets you created" subsection scoped to the agent\'s prior runs', async () => {
+		const planningIssueRes = await app.request(`/api/companies/${psCompanyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: psProjectId,
+				title: 'CEO planning ticket',
+				assignee_id: psCeoMemberId,
+			}),
+		});
+		const planningIssue = ((await planningIssueRes.json()) as any).data;
+
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now())
+			 RETURNING id`,
+			[psCeoMemberId, psCompanyId, planningIssue.id],
+		);
+
+		const subRes = await db.query<{ identifier: string }>(
+			`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
+			 VALUES ($1, $2, $3, NULL, $4, next_project_issue_number($2), 'PS-CR-1', 'Delegated to architect by CEO', '', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
+			 RETURNING identifier`,
+			[psCompanyId, psProjectId, psArchitectMemberId, run.rows[0].id],
+		);
+
+		const result = await resolveSystemPrompt(db, 'X', {
+			companyId: psCompanyId,
+			projectId: psProjectId,
+			agentId: psCeoMemberId,
+		});
+		expect(result).toContain('### Tickets you created on prior runs');
+		expect(result).toContain(subRes.rows[0].identifier);
+		expect(result).toContain('Delegated to architect by CEO');
+	});
+
+	it('"Tickets you created" is empty for an agent that hasn\'t created any', async () => {
+		const result = await resolveSystemPrompt(db, 'X', {
+			companyId: psCompanyId,
+			projectId: psProjectId,
+			agentId: psArchitectMemberId,
+		});
+		expect(result).toContain('### Tickets you created on prior runs');
+		expect(result).toContain('You have not created any tickets in this project on prior runs');
+	});
+
+	it('omits "Tickets you created" subsection when agentId is absent', async () => {
+		const result = await resolveSystemPrompt(db, 'X', {
+			companyId: psCompanyId,
+			projectId: psProjectId,
+		});
+		expect(result).not.toContain('Tickets you created on prior runs');
+	});
+});

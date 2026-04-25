@@ -187,7 +187,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_issues',
-		'List issues for a company. Filter by assignee_id or assignee_slug to find your own open tickets (e.g. pass your own agent slug).',
+		'List issues for a company. Returns up to 50 issues ordered by creation date (newest first). Filter by project_id to scope to one project (the common case), and optionally by status (comma-separated) or assignee_id/assignee_slug to narrow further. The Project State block in your system prompt already gives you the active tickets in the current project — only call this if you need older or terminal tickets, a different project, or a specific status filter.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().optional().describe('Filter by project ID'),

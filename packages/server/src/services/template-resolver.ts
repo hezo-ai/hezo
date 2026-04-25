@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { terminalStatusParams } from '../lib/sql';
 
 interface ResolveContext {
 	companyId: string;
@@ -163,9 +164,106 @@ export async function resolveSystemPrompt(
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
 
 	resolved += buildRunContextBlock(ctx);
+	resolved += await buildProjectStateBlock(db, ctx);
 	resolved += SHARED_INSTRUCTIONS;
 
 	return resolved;
+}
+
+const PROJECT_STATE_RECENT_LIMIT = 20;
+const PROJECT_STATE_CREATED_LIMIT = 10;
+
+async function buildProjectStateBlock(db: PGlite, ctx: ResolveContext): Promise<string> {
+	if (!ctx.projectId) return '';
+
+	const terminal = terminalStatusParams(2, true);
+	const recent = await db.query<{
+		identifier: string;
+		title: string;
+		status: string;
+		priority: string;
+		assignee_name: string | null;
+	}>(
+		`SELECT i.identifier, i.title, i.status::text AS status, i.priority::text AS priority,
+		        m.display_name AS assignee_name
+		 FROM issues i
+		 LEFT JOIN members m ON m.id = i.assignee_id
+		 WHERE i.project_id = $1
+		   AND i.status NOT IN (${terminal.placeholders})
+		 ORDER BY i.updated_at DESC
+		 LIMIT ${PROJECT_STATE_RECENT_LIMIT}`,
+		[ctx.projectId, ...terminal.values],
+	);
+
+	const recentText =
+		recent.rows.length === 0
+			? '_No active tickets in this project._'
+			: recent.rows.map(formatRecentTicket).join('\n');
+
+	let createdSection = '';
+	if (ctx.agentId) {
+		const created = await db.query<{
+			identifier: string;
+			title: string;
+			status: string;
+			assignee_name: string | null;
+		}>(
+			`SELECT i.identifier, i.title, i.status::text AS status,
+			        m.display_name AS assignee_name
+			 FROM issues i
+			 JOIN heartbeat_runs r ON r.id = i.created_by_run_id
+			 LEFT JOIN members m ON m.id = i.assignee_id
+			 WHERE r.member_id = $1
+			   AND i.project_id = $2
+			 ORDER BY i.created_at DESC
+			 LIMIT ${PROJECT_STATE_CREATED_LIMIT}`,
+			[ctx.agentId, ctx.projectId],
+		);
+
+		const createdText =
+			created.rows.length === 0
+				? '_You have not created any tickets in this project on prior runs._'
+				: created.rows.map(formatCreatedTicket).join('\n');
+
+		createdSection = `
+
+### Tickets you created on prior runs (newest first)
+
+${createdText}`;
+	}
+
+	return `
+
+---
+
+## Project State
+
+A live snapshot of this project, regenerated every run from the database. Read this before calling \`list_issues\` — if a ticket is here, it already exists and you don't need to spawn a duplicate.
+
+### Active tickets (top ${PROJECT_STATE_RECENT_LIMIT}, most recently updated, non-terminal)
+
+${recentText}${createdSection}`;
+}
+
+function formatRecentTicket(t: {
+	identifier: string;
+	title: string;
+	status: string;
+	priority: string;
+	assignee_name: string | null;
+}): string {
+	const assignee = t.assignee_name ?? 'unassigned';
+	return `- ${t.identifier} — ${t.title} (${t.status}, ${t.priority}, assigned to ${assignee})`;
+}
+
+function formatCreatedTicket(t: {
+	identifier: string;
+	title: string;
+	status: string;
+	assignee_name: string | null;
+}): string {
+	const assignee = t.assignee_name ?? 'unassigned';
+	return `- ${t.identifier} — ${t.title} (${t.status}, assigned to ${assignee})`;
 }
 
 function buildRunContextBlock(ctx: ResolveContext): string {
