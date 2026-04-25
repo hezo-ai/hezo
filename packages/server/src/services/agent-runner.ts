@@ -7,6 +7,7 @@ import {
 	CommentContentType,
 	ContainerStatus,
 	HeartbeatRunStatus,
+	IssueStatus,
 	PROVIDER_TO_ENV_VAR,
 	PROVIDER_TO_RUNTIME,
 	RUNTIME_AUTO_APPROVE_ARGS,
@@ -54,6 +55,7 @@ export interface IssueInfo {
 	priority: string;
 	project_id: string;
 	rules: string | null;
+	assignee_id?: string | null;
 	runtime_type?: AgentRuntime | null;
 	parent_issue_id?: string | null;
 	created_by_run_id?: string | null;
@@ -1057,6 +1059,7 @@ export async function createHeartbeatRun(
 ): Promise<string> {
 	await db.query('BEGIN');
 	let runId: string;
+	let statusFlippedToInProgress = false;
 	try {
 		const runResult = await db.query<{ id: string }>(
 			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
@@ -1076,6 +1079,21 @@ export async function createHeartbeatRun(
 				JSON.stringify({ run_id: runId, agent_id: agent.id, agent_title: agent.title }),
 			],
 		);
+
+		if (issue.assignee_id === agent.id && issue.status === IssueStatus.Backlog) {
+			const updated = await db.query<{ id: string }>(
+				`UPDATE issues
+				    SET status = $1::issue_status, updated_at = now()
+				  WHERE id = $2 AND status = $3::issue_status
+				  RETURNING id`,
+				[IssueStatus.InProgress, issue.id, IssueStatus.Backlog],
+			);
+			if (updated.rows.length > 0) {
+				statusFlippedToInProgress = true;
+				issue.status = IssueStatus.InProgress;
+			}
+		}
+
 		await db.query('COMMIT');
 	} catch (e) {
 		await db.query('ROLLBACK');
@@ -1093,6 +1111,19 @@ export async function createHeartbeatRun(
 				issue_id: issue.id,
 			},
 		);
+		if (statusFlippedToInProgress) {
+			broadcastRowChange(
+				broadcast.wsManager,
+				wsRoom.company(broadcast.companyId),
+				'issues',
+				'UPDATE',
+				{
+					id: issue.id,
+					company_id: broadcast.companyId,
+					status: IssueStatus.InProgress,
+				},
+			);
+		}
 	}
 	return runId;
 }

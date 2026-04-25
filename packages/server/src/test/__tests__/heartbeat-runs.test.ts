@@ -246,6 +246,131 @@ describe('run comments', () => {
 	});
 });
 
+describe('issue status auto-transition on run start', () => {
+	async function createIssue(opts?: { assigneeId?: string; status?: string }): Promise<string> {
+		const res = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Auto-transition fixture',
+				assignee_id: opts?.assigneeId ?? agentId,
+			}),
+		});
+		const id = (await res.json()).data.id as string;
+		if (opts?.status && opts.status !== 'backlog') {
+			await db.query(`UPDATE issues SET status = $1::issue_status WHERE id = $2`, [
+				opts.status,
+				id,
+			]);
+		}
+		return id;
+	}
+
+	function buildIssue(localIssueId: string, overrides: Record<string, unknown> = {}) {
+		return {
+			id: localIssueId,
+			identifier: 'RT-X',
+			title: 'Auto-transition',
+			description: '',
+			status: 'backlog',
+			priority: 'medium',
+			project_id: projectId,
+			rules: null,
+			assignee_id: agentId,
+			...overrides,
+		};
+	}
+
+	const agent: AgentInfo = { id: '', title: 'Test Runner', company_id: '' };
+
+	beforeAll(() => {
+		agent.id = agentId;
+		agent.company_id = companyId;
+	});
+
+	it('flips backlog → in_progress when the running agent is the assignee', async () => {
+		const localIssueId = await createIssue();
+		const issue = buildIssue(localIssueId);
+
+		await createHeartbeatRun(db, agent, issue, {
+			companyId,
+			issueId: localIssueId,
+			memberId: agentId,
+		});
+
+		const row = await db.query<{ status: string }>(
+			'SELECT status::text AS status FROM issues WHERE id = $1',
+			[localIssueId],
+		);
+		expect(row.rows[0].status).toBe('in_progress');
+		expect(issue.status).toBe('in_progress');
+	});
+
+	it('does not flip status when the running agent is not the assignee', async () => {
+		const otherRes = await app.request(`/api/companies/${companyId}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Other Runner' }),
+		});
+		const otherAgentId = (await otherRes.json()).data.id as string;
+		const localIssueId = await createIssue({ assigneeId: otherAgentId });
+		const issue = buildIssue(localIssueId, { assignee_id: otherAgentId });
+
+		await createHeartbeatRun(db, agent, issue, {
+			companyId,
+			issueId: localIssueId,
+			memberId: agentId,
+		});
+
+		const row = await db.query<{ status: string }>(
+			'SELECT status::text AS status FROM issues WHERE id = $1',
+			[localIssueId],
+		);
+		expect(row.rows[0].status).toBe('backlog');
+	});
+
+	it('does not flip status when the issue is in a non-backlog status', async () => {
+		const localIssueId = await createIssue({ status: 'blocked' });
+		const issue = buildIssue(localIssueId, { status: 'blocked' });
+
+		await createHeartbeatRun(db, agent, issue, {
+			companyId,
+			issueId: localIssueId,
+			memberId: agentId,
+		});
+
+		const row = await db.query<{ status: string }>(
+			'SELECT status::text AS status FROM issues WHERE id = $1',
+			[localIssueId],
+		);
+		expect(row.rows[0].status).toBe('blocked');
+		expect(issue.status).toBe('blocked');
+	});
+
+	it('is idempotent across repeated runs on the same backlog issue', async () => {
+		const localIssueId = await createIssue();
+		const broadcast: HeartbeatRunBroadcast = {
+			companyId,
+			issueId: localIssueId,
+			memberId: agentId,
+		};
+
+		const run1 = await createHeartbeatRun(db, agent, buildIssue(localIssueId), broadcast);
+		const run2 = await createHeartbeatRun(db, agent, buildIssue(localIssueId), broadcast);
+
+		expect(run1).toBeTruthy();
+		expect(run2).toBeTruthy();
+		expect(run1).not.toBe(run2);
+
+		const row = await db.query<{ status: string }>(
+			'SELECT status::text AS status FROM issues WHERE id = $1',
+			[localIssueId],
+		);
+		expect(row.rows[0].status).toBe('in_progress');
+	});
+});
+
 describe('created_issues tracking', () => {
 	it('stamps created_by_run_id when an agent calls create_issue and returns it on the run', async () => {
 		const { token: agentToken, runId } = await mintAgentToken(

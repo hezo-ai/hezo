@@ -125,10 +125,17 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 		// Every role doc picks up the subtask-preference guidance.
 		for (const key of allRoleKeys) {
 			expect(docs[key], `${key} should include the sub-issue heading`).toContain(
-				'## Sub-issues for related work',
+				'## Sub-issues vs top-level tickets',
 			);
 			expect(docs[key], `${key} should mention the depth-2 cap`).toContain(
 				'capped at two levels deep',
+			);
+		}
+
+		// Both CEO docs pick up the delegated-tickets-are-top-level guidance.
+		for (const ceoKey of ['software-development/ceo.md', 'blank/ceo.md']) {
+			expect(docs[ceoKey], `${ceoKey} should include the delegation heading`).toContain(
+				'## Delegated tickets are top-level',
 			);
 		}
 

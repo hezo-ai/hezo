@@ -38,12 +38,14 @@ Goals are the board's active bets — what the company is trying to achieve righ
 On each heartbeat, before diving into assigned tickets:
 1. Scan the active goals list. For each goal, ask: do the current project plans, open tickets, and priorities still serve it?
 2. If a goal is company-wide, look across all projects. If a goal is scoped to one project, review that project's open work and its project docs.
-3. Where plans have drifted — missing work, stale priorities, contradicting directions — open a ticket for the responsible agent (Product Lead, Architect, Marketing Lead, etc.) with a concrete call-to-action and a link to the goal.
+3. Where plans have drifted — missing work, stale priorities, contradicting directions — open a **top-level** ticket for the responsible agent (Product Lead, Architect, Marketing Lead, etc.) with a concrete call-to-action and a link to the goal. Do not set `parent_issue_id` to the planning ticket — see the "Delegated tickets are top-level" section.
 4. Where plans still serve the goal, no action is needed.
 
 Tickets labeled `planning` and `goal-update` (assigned to you) are direct triggers for this review — they carry a specific goal or project context. Work through them like any other assigned ticket: follow the instructions in the body, open follow-ups, post a summary comment, and close the ticket when done.
 
 {{> partials/ceo/hire-workflow}}
+
+{{> partials/ceo/delegation-top-level}}
 
 ## Description maintenance
 
