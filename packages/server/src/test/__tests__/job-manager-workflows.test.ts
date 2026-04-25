@@ -532,12 +532,20 @@ describe('JobManager workflow methods', () => {
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).onAgentComplete(agentId, issueId, companyId, wakeupId, {
-				success: true,
-				exitCode: 0,
-				stdout: '',
-				stderr: '',
-			});
+			await (manager as any).onAgentComplete(
+				agentId,
+				'test-agent',
+				issueId,
+				companyId,
+				wakeupId,
+				undefined,
+				{
+					success: true,
+					exitCode: 0,
+					stdout: '',
+					stderr: '',
+				},
+			);
 
 			// Lock should be released
 			const lockResult = await db.query<{ released_at: string | null }>(
@@ -577,12 +585,20 @@ describe('JobManager workflow methods', () => {
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).onAgentComplete(agentId, issueId, companyId, wakeupId, {
-				success: false,
-				exitCode: 1,
-				stdout: '',
-				stderr: 'something went wrong',
-			});
+			await (manager as any).onAgentComplete(
+				agentId,
+				'test-agent',
+				issueId,
+				companyId,
+				wakeupId,
+				undefined,
+				{
+					success: false,
+					exitCode: 1,
+					stdout: '',
+					stderr: 'something went wrong',
+				},
+			);
 
 			// Wakeup should be failed
 			const wakeupResult = await db.query<{ status: string; completed_at: string | null }>(
@@ -608,12 +624,20 @@ describe('JobManager workflow methods', () => {
 			);
 
 			// Call without a wakeupId (heartbeat-triggered run scenario)
-			await (manager as any).onAgentComplete(agentId, issueId, companyId, undefined, {
-				success: true,
-				exitCode: 0,
-				stdout: '',
-				stderr: '',
-			});
+			await (manager as any).onAgentComplete(
+				agentId,
+				'test-agent',
+				issueId,
+				companyId,
+				undefined,
+				undefined,
+				{
+					success: true,
+					exitCode: 0,
+					stdout: '',
+					stderr: '',
+				},
+			);
 
 			// Lock should still be released
 			const lockResult = await db.query<{ released_at: string | null }>(
@@ -658,12 +682,20 @@ describe('JobManager workflow methods', () => {
 
 			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
-			await (manager as any).onAgentComplete(agentId, issueId, companyId, undefined, {
-				success: true,
-				exitCode: 0,
-				stdout: '',
-				stderr: '',
-			});
+			await (manager as any).onAgentComplete(
+				agentId,
+				'test-agent',
+				issueId,
+				companyId,
+				undefined,
+				undefined,
+				{
+					success: true,
+					exitCode: 0,
+					stdout: '',
+					stderr: '',
+				},
+			);
 
 			const chain = await db.query<{ source: string; payload: Record<string, unknown> }>(
 				`SELECT source, payload FROM agent_wakeup_requests
@@ -693,12 +725,20 @@ describe('JobManager workflow methods', () => {
 			);
 			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
 
-			await (manager as any).onAgentComplete(agentId, issueId, companyId, undefined, {
-				success: true,
-				exitCode: 0,
-				stdout: '',
-				stderr: '',
-			});
+			await (manager as any).onAgentComplete(
+				agentId,
+				'test-agent',
+				issueId,
+				companyId,
+				undefined,
+				undefined,
+				{
+					success: true,
+					exitCode: 0,
+					stdout: '',
+					stderr: '',
+				},
+			);
 
 			const chain = await db.query<{ id: string }>(
 				`SELECT id FROM agent_wakeup_requests
@@ -708,6 +748,116 @@ describe('JobManager workflow methods', () => {
 			);
 			expect(chain.rows.length).toBe(0);
 
+			manager.shutdown();
+		});
+	});
+
+	describe('coach auto-close', () => {
+		async function setIssueDone(): Promise<void> {
+			await db.query(`UPDATE issues SET status = $1::issue_status WHERE id = $2`, [
+				IssueStatus.Done,
+				issueId,
+			]);
+		}
+
+		async function readIssueStatus(): Promise<string> {
+			const r = await db.query<{ status: string }>(
+				'SELECT status::text AS status FROM issues WHERE id = $1',
+				[issueId],
+			);
+			return r.rows[0].status;
+		}
+
+		it('closes a Done issue after a successful coach run with issue_done trigger', async () => {
+			const manager = createJobManager();
+			await setIssueDone();
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'coach',
+				issueId,
+				companyId,
+				undefined,
+				{ trigger: 'issue_done', issue_id: issueId },
+				{ success: true, exitCode: 0, stdout: '', stderr: '' },
+			);
+
+			expect(await readIssueStatus()).toBe(IssueStatus.Closed);
+			manager.shutdown();
+		});
+
+		it('does not close when the coach run failed', async () => {
+			const manager = createJobManager();
+			await setIssueDone();
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'coach',
+				issueId,
+				companyId,
+				undefined,
+				{ trigger: 'issue_done', issue_id: issueId },
+				{ success: false, exitCode: 1, stdout: '', stderr: 'failed' },
+			);
+
+			expect(await readIssueStatus()).toBe(IssueStatus.Done);
+			manager.shutdown();
+		});
+
+		it('does not close when a non-coach agent completes on a Done issue', async () => {
+			const manager = createJobManager();
+			await setIssueDone();
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'engineer',
+				issueId,
+				companyId,
+				undefined,
+				{ trigger: 'issue_done', issue_id: issueId },
+				{ success: true, exitCode: 0, stdout: '', stderr: '' },
+			);
+
+			expect(await readIssueStatus()).toBe(IssueStatus.Done);
+			manager.shutdown();
+		});
+
+		it('does not close when the issue is no longer in Done', async () => {
+			const manager = createJobManager();
+			await db.query(`UPDATE issues SET status = $1::issue_status WHERE id = $2`, [
+				IssueStatus.Cancelled,
+				issueId,
+			]);
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'coach',
+				issueId,
+				companyId,
+				undefined,
+				{ trigger: 'issue_done', issue_id: issueId },
+				{ success: true, exitCode: 0, stdout: '', stderr: '' },
+			);
+
+			expect(await readIssueStatus()).toBe(IssueStatus.Cancelled);
+			manager.shutdown();
+		});
+
+		it('does not close when wakeup payload trigger is not issue_done', async () => {
+			const manager = createJobManager();
+			await setIssueDone();
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'coach',
+				issueId,
+				companyId,
+				undefined,
+				{ trigger: 'mention', issue_id: issueId },
+				{ success: true, exitCode: 0, stdout: '', stderr: '' },
+			);
+
+			expect(await readIssueStatus()).toBe(IssueStatus.Done);
 			manager.shutdown();
 		});
 	});
