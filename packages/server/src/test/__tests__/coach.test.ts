@@ -145,7 +145,7 @@ describe('Coach wakeup on issue done', () => {
 });
 
 describe('Coach review prompt builder', () => {
-	it('instructs the coach to post a single create_comment summarising the review', async () => {
+	it('prepends the system prompt and points the coach back to it for the final summary comment', async () => {
 		const issueRow = await db.query<IssueInfo>(
 			`SELECT id, identifier, title, description, status::text AS status,
 			        priority::text AS priority, project_id, rules,
@@ -157,10 +157,21 @@ describe('Coach review prompt builder', () => {
 
 		const prompt = await buildCoachReviewPrompt(db, 'SYSTEM_PROMPT', issueRow.rows[0], companyId);
 
-		expect(prompt).toContain('create_comment');
+		expect(prompt).toContain('SYSTEM_PROMPT');
 		expect(prompt).toContain(issueRow.rows[0].identifier);
-		expect(prompt).toMatch(/summar/i);
-		expect(prompt).toContain('no rule changes were warranted');
+		expect(prompt).toMatch(/### Final Step/);
+		expect(prompt).toMatch(/review summary comment/i);
+		expect(prompt).toMatch(/following the format defined in your system prompt/i);
+	});
+
+	it('seeded coach system prompt contains the summary-comment rule from the partial', async () => {
+		const res = await db.query<{ system_prompt_template: string }>(
+			"SELECT system_prompt_template FROM agent_types WHERE slug = 'coach'",
+		);
+		expect(res.rows.length).toBe(1);
+		const template = res.rows[0].system_prompt_template;
+		expect(template).toContain('End every review with exactly one `create_comment`');
+		expect(template).toMatch(/do not end the turn without posting it/i);
 	});
 });
 

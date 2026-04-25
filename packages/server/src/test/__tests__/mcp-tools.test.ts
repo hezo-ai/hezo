@@ -757,6 +757,43 @@ describe('MCP tool: operations project assignee restriction', () => {
 		expect(result.project_id).toBe(ops.rows[0].id);
 	});
 
+	it('create_issue caps sub-issue depth at 2', async () => {
+		const root = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Depth root',
+			assignee_id: agentId,
+		})) as { id: string; error?: string };
+		expect(root.error).toBeUndefined();
+
+		const sub = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Depth sub',
+			assignee_id: agentId,
+			parent_issue_id: root.id,
+		})) as { id: string; error?: string };
+		expect(sub.error).toBeUndefined();
+
+		const subSub = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Depth sub-sub',
+			assignee_id: agentId,
+			parent_issue_id: sub.id,
+		})) as { id: string; error?: string };
+		expect(subSub.error).toBeUndefined();
+
+		const tooDeep = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Depth too deep',
+			assignee_id: agentId,
+			parent_issue_id: subSub.id,
+		})) as { error?: string };
+		expect(tooDeep.error).toMatch(/2 levels deep/);
+	});
+
 	it('update_issue rejects reassigning Operations issue to non-CEO', async () => {
 		const ops = await db.query<{ id: string }>(
 			`SELECT id FROM projects WHERE company_id = $1 AND slug = 'operations'`,

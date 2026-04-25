@@ -64,6 +64,7 @@ Tickets in the Operations project labeled `description-update` are routine inter
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
 {{> partials/common/linking-syntax}}
+{{> partials/common/subtask-preference}}
 {{> partials/common/mention-handoff}}
 
 ---

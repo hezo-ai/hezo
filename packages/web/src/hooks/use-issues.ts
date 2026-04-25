@@ -131,6 +131,21 @@ export function useUpdateIssue(companyId: string, issueId: string) {
 	});
 }
 
+export interface IssueAncestor {
+	id: string;
+	identifier: string;
+	title: string;
+}
+
+export function useIssueAncestors(companyId: string, issueId: string | undefined) {
+	return useQuery({
+		queryKey: ['companies', companyId, 'issues', issueId, 'ancestors'],
+		queryFn: () =>
+			api.get<IssueAncestor[]>(`/api/companies/${companyId}/issues/${issueId}/ancestors`),
+		enabled: !!companyId && !!issueId,
+	});
+}
+
 export function useCreateSubIssue(companyId: string, parentIssueId: string) {
 	return useMutation({
 		mutationFn: (data: {
