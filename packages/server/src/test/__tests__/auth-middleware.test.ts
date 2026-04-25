@@ -267,7 +267,7 @@ describe('authMiddleware (via HTTP)', () => {
 
 	it('allows API requests with valid agent token', async () => {
 		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
-		const res = await app.request('/agent-api/self/system-prompt', {
+		const res = await app.request('/agent-api/secrets/mine', {
 			headers: authHeader(agentToken),
 		});
 		expect(res.status).toBe(200);

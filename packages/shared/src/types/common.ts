@@ -126,7 +126,6 @@ export const ApprovalType = {
 	PlanReview: 'plan_review',
 	DeployProduction: 'deploy_production',
 	OauthRequest: 'oauth_request',
-	SystemPromptUpdate: 'system_prompt_update',
 	SkillProposal: 'skill_proposal',
 } as const;
 export type ApprovalType = (typeof ApprovalType)[keyof typeof ApprovalType];
@@ -218,6 +217,7 @@ export const DocumentType = {
 	ProjectDoc: 'project_doc',
 	KbDoc: 'kb_doc',
 	CompanyPreferences: 'company_preferences',
+	AgentSystemPrompt: 'agent_system_prompt',
 } as const;
 export type DocumentType = (typeof DocumentType)[keyof typeof DocumentType];
 

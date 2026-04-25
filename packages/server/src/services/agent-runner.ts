@@ -7,6 +7,7 @@ import {
 	CommentContentType,
 	ContainerStatus,
 	HeartbeatRunStatus,
+	IssueStatus,
 	PROVIDER_TO_ENV_VAR,
 	PROVIDER_TO_RUNTIME,
 	RUNTIME_AUTO_APPROVE_ARGS,
@@ -24,6 +25,7 @@ import { signAgentJwt } from '../middleware/auth';
 import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
 import { type AiProviderCredential, getProviderCredentialAndModel } from './ai-provider-keys';
 import type { DockerClient, ExecLogChunk } from './docker';
+import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import { ensureIssueWorktree, fetchRepo } from './git';
 import type { LogStreamBroker } from './log-stream-broker';
@@ -38,7 +40,6 @@ export interface AgentInfo {
 	id: string;
 	title: string;
 	slug?: string | null;
-	system_prompt: string;
 	company_id: string;
 	default_effort?: string | null;
 	model_override_provider?: AiProvider | null;
@@ -54,6 +55,7 @@ export interface IssueInfo {
 	priority: string;
 	project_id: string;
 	rules: string | null;
+	assignee_id?: string | null;
 	runtime_type?: AgentRuntime | null;
 	parent_issue_id?: string | null;
 	created_by_run_id?: string | null;
@@ -151,7 +153,8 @@ async function buildRunContext(
 	heartbeatRunId: string,
 	modelOverride: string | null,
 ): Promise<RunContext> {
-	let resolvedPrompt = await resolveSystemPrompt(deps.db, agent.system_prompt, {
+	const storedPrompt = await getAgentSystemPrompt(deps.db, agent.company_id, agent.id);
+	let resolvedPrompt = await resolveSystemPrompt(deps.db, storedPrompt, {
 		companyId: agent.company_id,
 		projectId: project.id,
 		issueId: issue.id,
@@ -1012,7 +1015,9 @@ export async function buildCoachReviewPrompt(
 		'Review this completed ticket. Analyze the comment history for patterns where agents struggled,',
 		'received feedback, had work rejected, or needed multiple attempts. For each improvement opportunity,',
 		"use the `get_agent_system_prompt` tool to read the affected agent's current prompt, then use",
-		'`propose_system_prompt_update` to propose a specific rule to add to their `## Learned Rules` section.',
+		'`update_agent_system_prompt` to add a specific rule to their `## Learned Rules` section. Updates',
+		'apply immediately and a revision snapshot is recorded so the board can roll back from the agent',
+		'settings page if needed.',
 		'',
 		'If the ticket completed smoothly without significant rework or feedback, no changes are needed.',
 		'',
@@ -1054,6 +1059,7 @@ export async function createHeartbeatRun(
 ): Promise<string> {
 	await db.query('BEGIN');
 	let runId: string;
+	let statusFlippedToInProgress = false;
 	try {
 		const runResult = await db.query<{ id: string }>(
 			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
@@ -1073,6 +1079,21 @@ export async function createHeartbeatRun(
 				JSON.stringify({ run_id: runId, agent_id: agent.id, agent_title: agent.title }),
 			],
 		);
+
+		if (issue.assignee_id === agent.id && issue.status === IssueStatus.Backlog) {
+			const updated = await db.query<{ id: string }>(
+				`UPDATE issues
+				    SET status = $1::issue_status, updated_at = now()
+				  WHERE id = $2 AND status = $3::issue_status
+				  RETURNING id`,
+				[IssueStatus.InProgress, issue.id, IssueStatus.Backlog],
+			);
+			if (updated.rows.length > 0) {
+				statusFlippedToInProgress = true;
+				issue.status = IssueStatus.InProgress;
+			}
+		}
+
 		await db.query('COMMIT');
 	} catch (e) {
 		await db.query('ROLLBACK');
@@ -1090,6 +1111,19 @@ export async function createHeartbeatRun(
 				issue_id: issue.id,
 			},
 		);
+		if (statusFlippedToInProgress) {
+			broadcastRowChange(
+				broadcast.wsManager,
+				wsRoom.company(broadcast.companyId),
+				'issues',
+				'UPDATE',
+				{
+					id: issue.id,
+					company_id: broadcast.companyId,
+					status: IssueStatus.InProgress,
+				},
+			);
+		}
 	}
 	return runId;
 }

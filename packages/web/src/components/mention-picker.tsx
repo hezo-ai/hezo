@@ -83,7 +83,7 @@ export function MentionPicker({
 						<div className="flex min-w-0 flex-1 flex-col">
 							<span className="truncate text-text">{r.label}</span>
 							<span className="truncate text-[11px] text-text-subtle">
-								@{r.handle}
+								{r.kind === 'agent' ? `@${r.handle}` : r.handle}
 								{r.sublabel ? ` · ${r.sublabel}` : ''}
 							</span>
 						</div>

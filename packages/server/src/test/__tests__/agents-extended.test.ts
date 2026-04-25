@@ -103,9 +103,14 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 		);
 		expect(created).toBeDefined();
 		expect(created.admin_status).toBe('enabled');
-		expect(created.system_prompt).toBe('Draft prompt');
 		expect(created.monthly_budget_cents).toBe(7500);
 		expect(created.heartbeat_interval_min).toBe(45);
+
+		const promptRes = await app.request(
+			`/api/companies/${companyId}/agents/${created.id}/system-prompt`,
+			{ headers: authHeader(token) },
+		);
+		expect((await promptRes.json()).data.content).toBe('Draft prompt');
 
 		const issueRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
 			headers: authHeader(token),
@@ -324,18 +329,24 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 			body: JSON.stringify({ system_prompt: 'New system prompt for Architect.' }),
 		});
 		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data.system_prompt).toBe('New system prompt for Architect.');
 
-		// Verify a revision record was written to the DB
-		const revisions = await db.query<{ new_prompt: string; change_summary: string }>(
-			'SELECT new_prompt, change_summary FROM system_prompt_revisions WHERE member_agent_id = $1',
-			[agent.id],
+		const promptRes = await app.request(
+			`/api/companies/${companyId}/agents/${agent.id}/system-prompt`,
+			{ headers: authHeader(token) },
 		);
-		expect(revisions.rows.length).toBeGreaterThanOrEqual(1);
-		const rev = revisions.rows[revisions.rows.length - 1];
-		expect(rev.new_prompt).toBe('New system prompt for Architect.');
-		expect(rev.change_summary).toBe('Manual edit by board member');
+		const promptDoc = (await promptRes.json()).data;
+		expect(promptDoc.content).toBe('New system prompt for Architect.');
+
+		const revisionsRes = await app.request(
+			`/api/companies/${companyId}/agents/${agent.id}/system-prompt/revisions`,
+			{ headers: authHeader(token) },
+		);
+		const revisions = (await revisionsRes.json()).data as Array<{
+			content: string;
+			change_summary: string;
+		}>;
+		expect(revisions.length).toBeGreaterThanOrEqual(1);
+		expect(revisions[0].change_summary).toBe('Manual edit by board member');
 	});
 
 	it('updates title and syncs display_name on the members record', async () => {

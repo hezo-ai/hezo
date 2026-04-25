@@ -198,7 +198,7 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 	const kbDocsConfig = [
 		{
 			title: 'Company Overview',
-			slug: 'company-overview',
+			slug: 'company-overview.md',
 			content: `# Company Overview
 
 <!-- TODO: customize this document for your company -->
@@ -221,7 +221,7 @@ Describe your product, its target users, and key value propositions.
 		},
 		{
 			title: 'Development Workflow',
-			slug: 'development-workflow',
+			slug: 'development-workflow.md',
 			content: `# Development Workflow
 
 ## Issue Lifecycle
@@ -250,7 +250,7 @@ Issues progress through these statuses:
 		},
 		{
 			title: 'Architecture Guidelines',
-			slug: 'architecture-guidelines',
+			slug: 'architecture-guidelines.md',
 			content: `# Architecture Guidelines
 
 <!-- TODO: customize for your tech stack -->
@@ -280,7 +280,7 @@ Significant technical decisions should be documented with:
 		},
 		{
 			title: 'Code Review Standards',
-			slug: 'code-review-standards',
+			slug: 'code-review-standards.md',
 			content: `# Code Review Standards
 
 ## What Reviewers Check

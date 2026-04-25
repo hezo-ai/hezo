@@ -117,17 +117,25 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			expect(docs[key], `${key} should include the linking-syntax rule`).toContain(
 				'## Linking to Hezo entities',
 			);
-			expect(docs[key], `${key} should include an @doc/ example`).toContain('@doc/');
-			expect(docs[key], `${key} should include an @kb/ example`).toContain('@kb/');
+			expect(docs[key], `${key} should include a project-doc example`).toContain('spec.md');
+			expect(docs[key], `${key} should include a kb-doc example`).toContain('coding-standards.md');
+			expect(docs[key], `${key} should include an agent-mention example`).toContain('@engineer');
 		}
 
 		// Every role doc picks up the subtask-preference guidance.
 		for (const key of allRoleKeys) {
 			expect(docs[key], `${key} should include the sub-issue heading`).toContain(
-				'## Sub-issues for related work',
+				'## Sub-issues vs top-level tickets',
 			);
 			expect(docs[key], `${key} should mention the depth-2 cap`).toContain(
 				'capped at two levels deep',
+			);
+		}
+
+		// Both CEO docs pick up the delegated-tickets-are-top-level guidance.
+		for (const ceoKey of ['software-development/ceo.md', 'blank/ceo.md']) {
+			expect(docs[ceoKey], `${ceoKey} should include the delegation heading`).toContain(
+				'## Delegated tickets are top-level',
 			);
 		}
 

@@ -29,14 +29,13 @@
 | `approvals` | Pending board decisions. Polymorphic payload. | belongs to company, requested by member_agent |
 | `cost_entries` | Immutable spend records per agent per issue. | belongs to company + member_agent, optionally issue/project |
 | `audit_log` | Append-only. Never updated or deleted. | belongs to company |
-| `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `kb_doc` / `company_preferences`). Project docs scope by `(project_id, slug)` where slug is the filename; KB docs scope by `(company_id, slug)`; preferences enforce one row per company via partial unique index. Embeddings live on this table for KB and project docs. | belongs to company, optionally project |
-| `document_revisions` | Snapshot of prior content created on every change. `change_summary` captures intent; `Restored to revision N` is set automatically by the rollback path. | belongs to document |
+| `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `kb_doc` / `company_preferences` / `agent_system_prompt`). Project docs scope by `(project_id, slug)`; KB docs by `(company_id, slug)`; preferences by `(company_id)` (one per company); agent system prompts by `(member_agent_id)` (one per agent). Embeddings live on this table for KB and project docs. | belongs to company, optionally project or member_agent |
+| `document_revisions` | Snapshot of prior content created on every change. `change_summary` captures intent; `Restored to revision N` is set automatically by the rollback path. Shared by all document types — agent system prompt history lives here too. | belongs to document |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to company |
 | `company_ssh_keys` | Generated SSH key pairs per company. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to company |
 | `execution_locks` | Issue work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to issue + member_agent |
 | `skills` | Reusable instruction documents (DB-backed). Tags, content, source URL, creator tracking, embeddings. | belongs to company |
 | `skill_revisions` | Version history for skills. | belongs to skill |
-| `system_prompt_revisions` | History of agent system prompt changes. Tracks old/new prompt, change summary, author. Linked to approval if change required approval. | belongs to member_agent + company |
 | `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. | belongs to member_agent + company |
 | `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the issue being worked on via `issue_id`. | belongs to member_agent + company, optionally issue |
 | `agent_task_sessions` | Per-task session persistence for session compaction. | belongs to member_agent, keyed by task |
@@ -293,11 +292,11 @@ configuration.
 `companies.settings` is a JSONB object for company-level configuration:
 ```json
 {
-  "coach_auto_apply": false
+  "wake_mentioner_on_reply": true
 }
 ```
 
-- `coach_auto_apply` — when true, Coach-suggested system prompt improvements are auto-applied without board approval. Default false.
+- `wake_mentioner_on_reply` — when true, replying to an @-mention on a ticket wakes the original mentioner. Default true.
 
 Settings are merged on PATCH (`settings = settings || $1::jsonb`), so partial updates preserve existing keys.
 
@@ -404,35 +403,39 @@ Two MCP tools — `set_agent_summary` and `set_team_summary` — write the new
 text directly to the database. Only agents and board members within the
 company can set agent summaries; only the CEO agent can set the team summary.
 
-### Agent self-update of system prompts
+### Agent system prompts
 
-Agents can read and request updates to their own system prompts via the agent API:
-- `GET /agent-api/self/system-prompt` — returns current prompt, agent_type_id, and the type's original template
-- `PATCH /agent-api/self/system-prompt` — creates a `system_prompt_update` approval with the new prompt
-
-System prompt updates require board approval. When approved, the approval
-resolution handler applies the change by updating `member_agents.system_prompt`.
-
-### System prompt revisions
-
-`system_prompt_revisions` tracks the history of changes to agent system prompts. Each update records the old and new prompt text, a change summary, who authored the change, and optionally which approval authorized it. This enables auditability of prompt evolution and rollback if needed.
+Agent system prompts live as `agent_system_prompt` documents, one per agent,
+keyed by `(company_id, member_agent_id)`. Reads go through the unified
+`documents` service; history, restore, and WS broadcasts are inherited from
+the document revisioning machinery. There is no dedicated agent self-update
+endpoint — agents cannot change their own prompts. Only the Coach agent (via
+the `update_agent_system_prompt` MCP tool) and the board (via
+`PATCH /companies/:companyId/agents/:agentId` with a `system_prompt` field)
+can write. Coach writes apply immediately and a revision snapshot is recorded
+for undo; the board surface is the revisions panel on the agent settings page.
 
 ### Documents
 
-`documents` is a single table that backs three kinds of Markdown content,
+`documents` is a single table that backs four kinds of Markdown content,
 distinguished by the `type` column (`project_doc` / `kb_doc` /
-`company_preferences`). The same write path, revision capture, restore, embedding,
-and broadcast logic apply to all three; per-type quirks (URL surface, agent
-approval gates) live in thin route handlers.
+`company_preferences` / `agent_system_prompt`). The same write path, revision
+capture, restore, embedding, and broadcast logic apply to all of them;
+per-type quirks (URL surface, agent approval gates) live in thin route
+handlers.
 
 Scoping is enforced by partial unique indexes:
 
 - `project_doc` — unique on `(project_id, slug)`. Slug holds the filename
   (e.g. `spec.md`); `title` is empty (the filename is the display label).
-- `kb_doc` — unique on `(company_id, slug)`. Slug derives from `title` via
-  `toSlug`; `title` carries the human label.
+- `kb_doc` — unique on `(company_id, slug)`. Slug is the Markdown filename
+  (e.g. `coding-standards.md`); auto-derived as `${toSlug(title)}.md` when
+  not provided. `title` carries the human label.
 - `company_preferences` — partial unique on `(company_id)` with slug fixed
   to `preferences`. Enforces one row per company.
+- `agent_system_prompt` — partial unique on `(member_agent_id)` with slug
+  fixed to `system-prompt`. Enforces one row per agent; a CHECK constraint
+  requires `member_agent_id IS NOT NULL` for this type.
 
 Every content change snapshots the prior content into `document_revisions`
 with an auto-incremented `revision_number` per document, the change summary,
@@ -589,7 +592,6 @@ values).
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `coach_auto_apply` | `false` | When true, the coach agent's review recommendations are applied automatically. |
 | `wake_mentioner_on_reply` | `true` | When true, an agent's reply to a mention-triggered comment wakes the original mentioner. When false, the mentioner picks up replies on its next heartbeat — useful when one comment @-mentions several agents and the mentioner prefers to batch their responses. |
 
 ### Reasoning effort

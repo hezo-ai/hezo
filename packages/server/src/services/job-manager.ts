@@ -426,7 +426,6 @@ export class JobManager {
 			id: string;
 			title: string;
 			slug: string;
-			system_prompt: string;
 			admin_status: string;
 			heartbeat_interval_min: number;
 			default_effort: string;
@@ -434,7 +433,7 @@ export class JobManager {
 			model_override_provider: AiProvider | null;
 			model_override_model: string | null;
 		}>(
-			`SELECT id, title, slug, system_prompt, admin_status,
+			`SELECT id, title, slug, admin_status,
 			        heartbeat_interval_min, default_effort, touches_code,
 			        model_override_provider, model_override_model
 			 FROM member_agents WHERE id = $1`,
@@ -461,6 +460,7 @@ export class JobManager {
 			priority: string;
 			project_id: string;
 			rules: string | null;
+			assignee_id: string | null;
 			runtime_type: AgentRuntime | null;
 			parent_issue_id: string | null;
 			created_by_run_id: string | null;
@@ -474,7 +474,7 @@ export class JobManager {
 			typeof wakeupPayload?.issue_id === 'string' ? wakeupPayload.issue_id : undefined;
 		if (payloadIssueId) {
 			const payloadIssue = await db.query<IssueRow>(
-				'SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type, parent_issue_id, created_by_run_id FROM issues WHERE id = $1 AND company_id = $2',
+				'SELECT id, identifier, title, description, status, priority, project_id, rules, assignee_id, runtime_type, parent_issue_id, created_by_run_id FROM issues WHERE id = $1 AND company_id = $2',
 				[payloadIssueId, companyId],
 			);
 			if (payloadIssue.rows.length === 0) {
@@ -490,7 +490,7 @@ export class JobManager {
 			issue = payloadIssue.rows[0];
 		} else {
 			const issues = await db.query<IssueRow>(
-				`SELECT id, identifier, title, description, status, priority, project_id, rules, runtime_type, parent_issue_id, created_by_run_id
+				`SELECT id, identifier, title, description, status, priority, project_id, rules, assignee_id, runtime_type, parent_issue_id, created_by_run_id
 				 FROM issues
 				 WHERE assignee_id = $1 AND company_id = $2
 				   AND status NOT IN ($3, $4, $5)
@@ -676,7 +676,6 @@ export class JobManager {
 						id: memberId,
 						title: agent.rows[0].title,
 						slug: agent.rows[0].slug,
-						system_prompt: agent.rows[0].system_prompt,
 						company_id: companyId,
 						default_effort: agent.rows[0].default_effort,
 						model_override_provider: agent.rows[0].model_override_provider,

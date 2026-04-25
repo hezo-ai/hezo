@@ -52,7 +52,7 @@ CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace',
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'company');
-CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'strategy', 'kb_update', 'plan_review', 'deploy_production', 'oauth_request', 'system_prompt_update', 'skill_proposal');
+CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'strategy', 'kb_update', 'plan_review', 'deploy_production', 'oauth_request', 'skill_proposal');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
 CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
@@ -152,7 +152,7 @@ CREATE TABLE companies (
     budget_reset_at      TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
     mcp_servers          JSONB NOT NULL DEFAULT '[]'::jsonb,
     mpp_config           JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
-    settings             JSONB NOT NULL DEFAULT '{"coach_auto_apply": false, "wake_mentioner_on_reply": true}'::jsonb,
+    settings             JSONB NOT NULL DEFAULT '{"wake_mentioner_on_reply": true}'::jsonb,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -194,7 +194,6 @@ CREATE TABLE member_agents (
     slug                    TEXT NOT NULL,
     role_description        TEXT NOT NULL DEFAULT '',
     summary                 TEXT NOT NULL DEFAULT '',
-    system_prompt           TEXT NOT NULL DEFAULT '',
     default_effort          agent_effort NOT NULL DEFAULT 'medium',
     heartbeat_interval_min  INTEGER NOT NULL DEFAULT 60,
     monthly_budget_cents    INTEGER NOT NULL DEFAULT 3000,
@@ -583,12 +582,13 @@ CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 -- DOCUMENTS (unified: project docs, knowledge base, company preferences)
 -------------------------------------------------------------------------------
 
-CREATE TYPE document_type AS ENUM ('project_doc', 'kb_doc', 'company_preferences');
+CREATE TYPE document_type AS ENUM ('project_doc', 'kb_doc', 'company_preferences', 'agent_system_prompt');
 
 CREATE TABLE documents (
     id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id                UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     project_id                UUID REFERENCES projects(id) ON DELETE CASCADE,
+    member_agent_id           UUID REFERENCES member_agents(id) ON DELETE CASCADE,
     type                      document_type NOT NULL,
     slug                      TEXT NOT NULL,
     title                     TEXT NOT NULL DEFAULT '',
@@ -596,7 +596,9 @@ CREATE TABLE documents (
     last_updated_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
     embedding                 vector(384),
     created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT documents_agent_system_prompt_requires_member_agent
+        CHECK (type <> 'agent_system_prompt' OR member_agent_id IS NOT NULL)
 );
 
 CREATE UNIQUE INDEX idx_documents_project_doc
@@ -608,10 +610,14 @@ CREATE UNIQUE INDEX idx_documents_kb_doc
 CREATE UNIQUE INDEX idx_documents_company_preferences
     ON documents (company_id)
     WHERE type = 'company_preferences';
+CREATE UNIQUE INDEX idx_documents_agent_system_prompt
+    ON documents (member_agent_id)
+    WHERE type = 'agent_system_prompt';
 
 CREATE INDEX idx_documents_company ON documents (company_id);
 CREATE INDEX idx_documents_type_company ON documents (type, company_id);
 CREATE INDEX idx_documents_project ON documents (project_id) WHERE project_id IS NOT NULL;
+CREATE INDEX idx_documents_member_agent ON documents (member_agent_id) WHERE member_agent_id IS NOT NULL;
 CREATE INDEX idx_documents_embedding ON documents USING hnsw (embedding vector_cosine_ops);
 
 CREATE TABLE document_revisions (
@@ -747,27 +753,6 @@ CREATE TABLE skill_revisions (
 );
 
 CREATE INDEX idx_skill_revisions_skill ON skill_revisions(skill_id);
-
--------------------------------------------------------------------------------
--- SYSTEM PROMPT REVISIONS
--------------------------------------------------------------------------------
-
-CREATE TABLE system_prompt_revisions (
-    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    member_agent_id   UUID NOT NULL REFERENCES member_agents(id) ON DELETE CASCADE,
-    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    revision_number   INTEGER NOT NULL,
-    old_prompt        TEXT NOT NULL,
-    new_prompt        TEXT NOT NULL,
-    change_summary    TEXT NOT NULL DEFAULT '',
-    author_member_id  UUID REFERENCES members(id) ON DELETE SET NULL,
-    approval_id       UUID REFERENCES approvals(id) ON DELETE SET NULL,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (member_agent_id, revision_number)
-);
-
-CREATE INDEX idx_system_prompt_revisions_agent ON system_prompt_revisions(member_agent_id);
 
 -------------------------------------------------------------------------------
 -- AGENT WAKEUP REQUESTS

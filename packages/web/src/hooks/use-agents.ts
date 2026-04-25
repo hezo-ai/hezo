@@ -11,7 +11,6 @@ export interface Agent {
 	slug: string;
 	role_description: string | null;
 	summary: string | null;
-	system_prompt: string | null;
 	default_effort: AgentEffort;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
@@ -26,6 +25,24 @@ export interface Agent {
 	assigned_issue_count: number;
 	model_override_provider: string | null;
 	model_override_model: string | null;
+	created_at: string;
+}
+
+export interface AgentSystemPromptDoc {
+	id: string;
+	content: string;
+	title: string;
+	last_updated_by_member_id: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface AgentSystemPromptRevision {
+	id: string;
+	revision_number: number;
+	content: string;
+	change_summary: string;
+	author_name: string | null;
 	created_at: string;
 }
 
@@ -54,6 +71,7 @@ export function useUpdateAgent(companyId: string, agentId: string) {
 			title?: string;
 			role_description?: string;
 			system_prompt?: string;
+			system_prompt_change_summary?: string;
 			reports_to?: string | null;
 			monthly_budget_cents?: number;
 			heartbeat_interval_min?: number;
@@ -64,6 +82,45 @@ export function useUpdateAgent(companyId: string, agentId: string) {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] });
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents', agentId] });
+			queryClient.invalidateQueries({
+				queryKey: ['companies', companyId, 'agents', agentId, 'system-prompt'],
+			});
+		},
+	});
+}
+
+export function useAgentSystemPrompt(companyId: string, agentId: string) {
+	return useQuery({
+		queryKey: ['companies', companyId, 'agents', agentId, 'system-prompt'],
+		queryFn: () =>
+			api.get<AgentSystemPromptDoc | null>(
+				`/api/companies/${companyId}/agents/${agentId}/system-prompt`,
+			),
+		enabled: !!companyId && !!agentId,
+	});
+}
+
+export function useAgentSystemPromptRevisions(companyId: string, agentId: string) {
+	return useQuery({
+		queryKey: ['companies', companyId, 'agents', agentId, 'system-prompt', 'revisions'],
+		queryFn: () =>
+			api.get<AgentSystemPromptRevision[]>(
+				`/api/companies/${companyId}/agents/${agentId}/system-prompt/revisions`,
+			),
+		enabled: !!companyId && !!agentId,
+	});
+}
+
+export function useRestoreAgentSystemPrompt(companyId: string, agentId: string) {
+	return useMutation({
+		mutationFn: (revisionNumber: number) =>
+			api.post(`/api/companies/${companyId}/agents/${agentId}/system-prompt/restore`, {
+				revision_number: revisionNumber,
+			}),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: ['companies', companyId, 'agents', agentId, 'system-prompt'],
+			});
 		},
 	});
 }

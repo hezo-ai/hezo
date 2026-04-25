@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { authenticate, createCompanyWithAgents, createProjectAndClearPlanning } from './helpers';
 
-test('kb and project doc @-mentions render as tooltip-ed links and navigate to the doc editor', async ({
+test('bare kb and project-doc references render as tooltip-ed links and navigate to the doc editor', async ({
 	page,
 }) => {
 	await page.goto('/');
@@ -38,7 +38,7 @@ test('kb and project doc @-mentions render as tooltip-ed links and navigate to t
 		data: {
 			project_id: project.id,
 			title: 'Doc mention host issue',
-			description: `See @kb/onboarding-guide and @doc/runbook.md for context.`,
+			description: `See onboarding-guide.md and runbook.md for context.`,
 			assignee_id: ceo.id,
 		},
 	});
@@ -51,16 +51,18 @@ test('kb and project doc @-mentions render as tooltip-ed links and navigate to t
 
 	const kbLink = page.getByTestId('kb-mention-link').first();
 	await expect(kbLink).toBeVisible();
-	await expect(kbLink).toContainText('@kb/onboarding-guide');
+	await expect(kbLink).toContainText('onboarding-guide.md');
 	await kbLink.hover();
 	await expect(page.getByText('Onboarding Guide', { exact: true }).first()).toBeVisible();
 
 	const docLink = page.getByTestId('doc-mention-link').first();
 	await expect(docLink).toBeVisible();
-	await expect(docLink).toContainText('@doc/runbook.md');
+	await expect(docLink).toContainText('runbook.md');
 
 	await kbLink.click();
-	await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/kb\\?slug=onboarding-guide`));
+	await expect(page).toHaveURL(
+		new RegExp(`/companies/${company.slug}/kb\\?slug=onboarding-guide(\\.md|%2Emd)`),
+	);
 });
 
 test('mention picker opens on @ and inserts the selected handle', async ({ page }) => {
@@ -108,5 +110,75 @@ test('mention picker opens on @ and inserts the selected handle', async ({ page 
 	await expect(option).toContainText('Picker Doc');
 	await option.click();
 
-	await expect(commentBox).toHaveValue(/@kb\/picker-doc /);
+	await expect(commentBox).toHaveValue(/(?<!@)picker-doc\.md /);
+});
+
+test('rendered markdown autolinks only real entities and leaves look-alikes as text', async ({
+	page,
+}) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+	const json = { ...headers, 'Content-Type': 'application/json' };
+
+	const project = await createProjectAndClearPlanning(page, company.id, token, {
+		name: 'Mixed Mentions',
+		description: 'Host project for mixed-mention e2e.',
+	});
+
+	await page.request.post(`/api/companies/${company.id}/kb-docs`, {
+		headers: json,
+		data: {
+			title: 'Coding Standards',
+			slug: 'coding-standards.md',
+			content: 'Prefer early returns.',
+		},
+	});
+	await page.request.put(`/api/companies/${company.id}/projects/${project.slug}/docs/spec.md`, {
+		headers: json,
+		data: { content: 'Spec body.' },
+	});
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const ceo = agents.find((a) => a.slug === 'ceo');
+	if (!ceo) throw new Error('CEO agent not found');
+
+	const targetIssueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers: json,
+		data: { project_id: project.id, title: 'Target for mixed mentions', assignee_id: ceo.id },
+	});
+	const targetIssue = (
+		(await targetIssueRes.json()) as {
+			data: { id: string; identifier: string };
+		}
+	).data;
+
+	const body = [
+		`See ${targetIssue.identifier} and spec.md and coding-standards.md with @ceo.`,
+		`Look-alikes that must stay plain text: UTF-8, ${targetIssue.identifier}x, \`${targetIssue.identifier}\` and \`spec.md\`.`,
+	].join('\n\n');
+
+	const hostRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		headers: json,
+		data: {
+			project_id: project.id,
+			title: 'Host for mixed mentions',
+			description: body,
+			assignee_id: ceo.id,
+		},
+	});
+	const host = ((await hostRes.json()) as { data: { identifier: string } }).data;
+
+	await page.goto(
+		`/companies/${company.slug}/projects/${project.slug}/issues/${host.identifier.toLowerCase()}`,
+	);
+	await expect(page.getByRole('heading', { name: 'Host for mixed mentions' })).toBeVisible();
+
+	await expect(page.getByTestId('issue-mention-link')).toHaveCount(1);
+	await expect(page.getByTestId('doc-mention-link')).toHaveCount(1);
+	await expect(page.getByTestId('kb-mention-link')).toHaveCount(1);
+	await expect(page.getByTestId('agent-mention-link')).toHaveCount(1);
 });

@@ -14,7 +14,6 @@ const typeColors: Record<string, string> = {
 	hire: 'green',
 	plan_review: 'blue',
 	deploy_production: 'red',
-	system_prompt_update: 'purple',
 	skill_proposal: 'blue',
 };
 
@@ -42,31 +41,6 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 	const companySlug = approval.company_slug;
 
 	switch (approval.type) {
-		case ApprovalType.SystemPromptUpdate: {
-			const agentName = approval.payload_member_name ?? 'an agent';
-			const agentSlug = approval.payload_member_slug ?? (p.member_id as string);
-			return (
-				<>
-					<span>
-						Wants to update{' '}
-						{agentSlug ? (
-							<EntityLink
-								to="/companies/$companyId/agents/$agentId"
-								params={{ companyId: companySlug, agentId: agentSlug }}
-							>
-								{agentName}
-							</EntityLink>
-						) : (
-							<span className="font-medium">{agentName}</span>
-						)}
-						's system prompt
-					</span>
-					{p.reason && (
-						<span className="block text-xs text-text-muted mt-1">{p.reason as string}</span>
-					)}
-				</>
-			);
-		}
 		case ApprovalType.OauthRequest: {
 			const platform = (p.platform as string) ?? 'GitHub';
 			const reason = p.reason as string | undefined;

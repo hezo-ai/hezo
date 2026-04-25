@@ -545,7 +545,7 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **Security Engineer** — owns security posture. Reviews code for vulnerabilities, validates auth flows, audits dependencies, and ensures security best practices. Reports to Architect.
 
-**Coach** — reviews completed tickets to extract lessons learned and proposes system prompt improvements for other agents. The Coach helps the team continuously improve by identifying patterns in what worked well and what didn't. Reports to no one (independent role). The `companies.settings.coach_auto_apply` field (default false) controls whether Coach-suggested system prompt improvements are auto-applied without board approval.
+**Coach** — reviews completed tickets to extract lessons learned and improves other agents' system prompts. The Coach is the only agent permitted to write system prompts (via the `update_agent_system_prompt` MCP tool); changes apply immediately and every write snapshots a revision into `document_revisions` so the board can roll back from the agent settings page. Reports to no one (independent role).
 
 ### AGENTS.md — two tiers
 
@@ -1157,6 +1157,8 @@ cancelled → backlog (reopen)
 
 The system enforces these transitions. Invalid transitions return an error.
 
+**Auto-promotion on run start.** When an agent's heartbeat run starts on an issue assigned to that agent, the system promotes `backlog → in_progress` atomically as part of the run-creation transaction (see `createHeartbeatRun` in `services/agent-runner.ts`). The transition is gated on `assignee_id === agent.id` and `status === backlog` — mention-triage runs by non-assignees do not flip the column, and deliberate states (`review`, `blocked`, `approved`) are never overwritten by run start. The change is broadcast on the `issues` row channel so kanban surfaces update in real time.
+
 ### Issue list view
 
 - Every issue row shows its **project tag** prominently (color-coded) and its **identifier**
@@ -1195,7 +1197,13 @@ Comments in the thread can be:
 
 ### Delegation
 
-Agents can create sub-issues and assign them to their direct reports or peers (agents at the same level in the org chart). Delegation allows both downward and lateral assignment. Sub-issues inherit the parent's project.
+Agents can delegate work to direct reports or peers (agents at the same level in the org chart). Delegation allows both downward and lateral assignment.
+
+The choice between sub-issue and top-level ticket is governed by the **deliverable-feed test**: a sub-issue is for work whose output feeds into the parent ticket's deliverable (the parent isn't done until the sub-issue is). Independent work — including the canonical case of a CEO drafting a plan and creating tickets for direct reports — is opened as **top-level**, not as a sub-issue of the planning ticket. Each delegated ticket is the report's own first-class work, owned end-to-end by them.
+
+Use a sub-issue when the new work is a parallelisable slice of the parent's deliverable, a prerequisite blocking the parent, or a sub-task whose output rolls up into the parent. Sub-issues inherit the parent's project. Use a top-level ticket when the new work has its own lifecycle, lives in a different domain or project, or is a delegated deliverable owned by another agent.
+
+The hierarchy is capped at depth 2 — top-level tickets can have sub-issues, and each sub-issue can have its own sub-issues, but no further. The server enforces this on `POST .../sub-issues` and on MCP `create_issue` calls that set `parent_issue_id`.
 
 ### Agent-to-agent communication
 

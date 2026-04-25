@@ -168,7 +168,7 @@ mentionsRoutes.get('/companies/:companyId/mentions/search', async (c) => {
 		for (const row of r.rows) {
 			results.push({
 				kind: 'issue',
-				handle: row.identifier.toLowerCase(),
+				handle: row.identifier,
 				label: row.title,
 				sublabel: `${row.identifier} · ${row.project_slug}`,
 			});
@@ -188,31 +188,29 @@ mentionsRoutes.get('/companies/:companyId/mentions/search', async (c) => {
 		for (const row of r.rows) {
 			results.push({
 				kind: 'kb',
-				handle: `kb/${row.slug}`,
+				handle: row.slug,
 				label: row.title,
 				sublabel: 'KB doc',
 			});
 		}
 	}
 
-	if (kinds.includes('doc')) {
+	if (kinds.includes('doc') && projectSlug) {
 		const r = await db.query<{ filename: string; project_slug: string }>(
 			`SELECT pd.slug AS filename, p.slug AS project_slug
 			 FROM documents pd
 			 JOIN projects p ON p.id = pd.project_id
 			 WHERE pd.type = 'project_doc' AND pd.company_id = $1
-			   AND ($2 = '' OR pd.slug ILIKE $3 OR p.slug ILIKE $3)
-			 ORDER BY (CASE WHEN $4::text IS NOT NULL AND LOWER(p.slug) = LOWER($4) THEN 0 ELSE 1 END),
-			          p.slug, pd.slug
+			   AND LOWER(p.slug) = LOWER($4)
+			   AND ($2 = '' OR pd.slug ILIKE $3)
+			 ORDER BY pd.slug
 			 LIMIT $5`,
 			[companyId, q, pattern, projectSlug, perKind],
 		);
 		for (const row of r.rows) {
-			const isCurrent = projectSlug && row.project_slug.toLowerCase() === projectSlug.toLowerCase();
-			const handle = isCurrent ? `doc/${row.filename}` : `doc/${row.project_slug}/${row.filename}`;
 			results.push({
 				kind: 'doc',
-				handle,
+				handle: row.filename,
 				label: row.filename,
 				sublabel: `Project doc · ${row.project_slug}`,
 			});

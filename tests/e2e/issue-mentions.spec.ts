@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { authenticate, createCompanyWithAgents, createProjectAndClearPlanning } from './helpers';
 
-test('issue @-mention renders as a tooltip-ed link and navigates to the target issue', async ({
+test('bare ticket identifier renders as a tooltip-ed link and navigates to the target issue', async ({
 	page,
 }) => {
 	await page.goto('/');
@@ -41,7 +41,7 @@ test('issue @-mention renders as a tooltip-ed link and navigates to the target i
 		data: {
 			project_id: projA.id,
 			title: 'Source issue',
-			description: `See also @${target.identifier} for related work.`,
+			description: `See also ${target.identifier} for related work.`,
 			assignee_id: ceo.id,
 		},
 	});
@@ -54,7 +54,7 @@ test('issue @-mention renders as a tooltip-ed link and navigates to the target i
 
 	const mentionLink = page.getByTestId('issue-mention-link').first();
 	await expect(mentionLink).toBeVisible();
-	await expect(mentionLink).toContainText(`@${target.identifier}`);
+	await expect(mentionLink).toContainText(target.identifier);
 
 	await mentionLink.hover();
 	await expect(page.getByText(target.title, { exact: true })).toBeVisible();

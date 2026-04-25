@@ -8,6 +8,7 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess, requireSuperuser } from '../middleware/auth';
 import { type ProjectRow, provisionContainer } from '../services/containers';
+import { initAgentSystemPrompt } from '../services/documents';
 import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
 
 const log = logger.child('routes');
@@ -341,10 +342,9 @@ async function createAgentsFromTeamTypes(
 
 		await db.query(
 			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
-			                            system_prompt,
 			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
 			                            touches_code)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, $10)`,
 			[
 				memberId,
 				row.id,
@@ -352,13 +352,14 @@ async function createAgentsFromTeamTypes(
 				row.slug,
 				row.role_description,
 				row.default_summary ?? '',
-				row.system_prompt_template,
 				row.default_effort,
 				heartbeat,
 				budget,
 				row.touches_code ?? false,
 			],
 		);
+
+		await initAgentSystemPrompt(db, companyId, memberId, row.system_prompt_template, null);
 	}
 
 	for (const row of dedupedRows) {
@@ -427,10 +428,9 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 		);
 		await db.query(
 			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
-			                            system_prompt,
 			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
 			                            touches_code)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, $10)`,
 			[
 				memberResult.rows[0].id,
 				at.id,
@@ -438,12 +438,19 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 				at.slug,
 				at.role_description,
 				at.default_summary ?? '',
-				promptOverrides[at.slug] || at.system_prompt_template,
 				at.default_effort,
 				at.heartbeat_interval_min,
 				at.monthly_budget_cents,
 				at.touches_code ?? false,
 			],
+		);
+
+		await initAgentSystemPrompt(
+			db,
+			companyId,
+			memberResult.rows[0].id,
+			promptOverrides[at.slug] || at.system_prompt_template,
+			null,
 		);
 	}
 }

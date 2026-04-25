@@ -130,11 +130,20 @@ function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 	} as unknown as DockerClient;
 }
 
+async function setAgentPrompt(content: string) {
+	await db.query(
+		`INSERT INTO documents (company_id, member_agent_id, type, slug, content)
+		 VALUES ($1, $2, 'agent_system_prompt', 'system-prompt', $3)
+		 ON CONFLICT (member_agent_id) WHERE type = 'agent_system_prompt'
+		 DO UPDATE SET content = EXCLUDED.content`,
+		[companyId, agentId, content],
+	);
+}
+
 function makeAgent() {
 	return {
 		id: agentId,
 		title: 'Test Agent',
-		system_prompt: 'You are a helpful agent. Today is {{current_date}}.',
 		company_id: companyId,
 	};
 }
@@ -889,12 +898,8 @@ describe('runAgent', () => {
 			};
 
 			const hugeSystemPrompt = 'X'.repeat(256 * 1024);
-			const result = await runAgent(
-				deps,
-				{ ...makeAgent(), system_prompt: hugeSystemPrompt },
-				makeIssue(),
-				project,
-			);
+			await setAgentPrompt(hugeSystemPrompt);
+			const result = await runAgent(deps, makeAgent(), makeIssue(), project);
 
 			expect(result.success).toBe(true);
 			expect(capturedCmd[0]).toBe('sh');

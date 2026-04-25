@@ -84,7 +84,6 @@ describe('agents CRUD', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.title).toBe('CEO');
-		expect(body.data).toHaveProperty('system_prompt');
 		expect(body.data).toHaveProperty('mcp_servers');
 		expect(body.data).toHaveProperty('runtime_status');
 		expect(body.data).toHaveProperty('admin_status');
@@ -97,11 +96,11 @@ describe('agents CRUD', () => {
 		const agents = (await listRes.json()).data;
 		const architect = agents.find((a: Record<string, unknown>) => a.slug === 'architect');
 
-		const res = await app.request(`/api/companies/${companyId}/agents/${architect.id}`, {
-			headers: authHeader(token),
-		});
-		const body = await res.json();
-		const prompt = body.data.system_prompt as string;
+		const promptRes = await app.request(
+			`/api/companies/${companyId}/agents/${architect.id}/system-prompt`,
+			{ headers: authHeader(token) },
+		);
+		const prompt = (await promptRes.json()).data.content as string;
 
 		expect(prompt).toMatch(/read_project_doc/);
 		expect(prompt).toMatch(/prd\.md/);
@@ -116,11 +115,11 @@ describe('agents CRUD', () => {
 		const agents = (await listRes.json()).data;
 		const anyDevFolderRef = /\.dev\//;
 		for (const summary of agents) {
-			const res = await app.request(`/api/companies/${companyId}/agents/${summary.id}`, {
-				headers: authHeader(token),
-			});
-			const body = await res.json();
-			const prompt = body.data.system_prompt as string;
+			const promptRes = await app.request(
+				`/api/companies/${companyId}/agents/${summary.id}/system-prompt`,
+				{ headers: authHeader(token) },
+			);
+			const prompt = ((await promptRes.json()).data?.content ?? '') as string;
 			expect(prompt).not.toMatch(anyDevFolderRef);
 		}
 	});

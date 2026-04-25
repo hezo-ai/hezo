@@ -12,7 +12,7 @@ interface MentionTextareaProps extends TextareaProps {
 	onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
 }
 
-const TOKEN_RE = /@([a-z0-9][\w/.-]*)?$/i;
+const TOKEN_RE = /@([a-z0-9][\w-]*)?$/i;
 
 export function MentionTextarea({
 	companyId,
@@ -90,8 +90,9 @@ export function MentionTextarea({
 			const caret = el.selectionStart ?? el.value.length;
 			const before = value.slice(0, triggerStart);
 			const after = value.slice(caret);
-			const next = `${before}@${result.handle} ${after}`;
-			const nextCaret = before.length + result.handle.length + 2;
+			const insertion = result.kind === 'agent' ? `@${result.handle} ` : `${result.handle} `;
+			const next = `${before}${insertion}${after}`;
+			const nextCaret = before.length + insertion.length;
 			const synthetic = {
 				target: { ...el, value: next },
 				currentTarget: { ...el, value: next },

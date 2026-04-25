@@ -154,7 +154,7 @@ Request:
 {
   "name": "NoteGenius AI",
   "description": "Updated description",
-  "settings": { "coach_auto_apply": true },
+  "settings": { "wake_mentioner_on_reply": false },
   "mcp_servers": [
     { "name": "slack", "url": "https://mcp.slack.com/sse", "description": "Team Slack" }
   ],
@@ -1443,7 +1443,7 @@ Response:
       "id": "uuid",
       "company_id": "uuid",
       "title": "Coding Standards",
-      "slug": "coding-standards",
+      "slug": "coding-standards.md",
       "last_updated_by_agent_id": "uuid | null",
       "last_updated_by_agent_title": "CTO",
       "created_at": "...",
@@ -1461,11 +1461,11 @@ Request:
 {
   "title": "Coding Standards",
   "content": "# Coding Standards\n\n## TypeScript\n- Always use strict mode...",
-  "slug": "coding-standards"
+  "slug": "coding-standards.md"
 }
 ```
 
-`slug` is optional — auto-derived from the title if not provided (lowercased, spaces → hyphens).
+`slug` is optional — auto-derived from the title if not provided (lowercased, spaces → hyphens, with a `.md` extension appended). KB docs are always stored as Markdown filenames.
 
 #### `GET /companies/:companyId/kb-docs/:slug`
 Get full document content.
@@ -2272,44 +2272,64 @@ via API.
 
 ---
 
-### Self System Prompt
+### Agent system prompts
 
-#### `GET /self/system-prompt`
-Agent reads its own system prompt and agent type info.
+Agent system prompts live as `agent_system_prompt` documents in the unified
+`documents` table. Reads and writes are board-side; agents other than the
+Coach have no API access to any prompt. The Coach applies updates through the
+`update_agent_system_prompt` MCP tool (see MCP section).
+
+#### `GET /companies/:companyId/agents/:agentId/system-prompt`
+Read an agent's current system prompt document (content + metadata).
 
 Response:
 ```json
 {
   "data": {
-    "system_prompt": "You are the CEO of {{company_name}}...",
-    "agent_type_id": "uuid | null",
-    "type_template": "original template from agent type | null"
+    "id": "uuid",
+    "content": "You are the CEO of {{company_name}}...",
+    "member_agent_id": "uuid",
+    "last_updated_by_member_id": "uuid | null",
+    "created_at": "...",
+    "updated_at": "..."
   }
 }
 ```
+Returns `data: null` if no prompt document exists for the agent.
 
-#### `PATCH /self/system-prompt`
-Agent requests to update its own system prompt. Creates a `system_prompt_update` approval for board review.
+#### `GET /companies/:companyId/agents/:agentId/system-prompt/revisions`
+List historical revisions (newest first) for the agent's system prompt.
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "revision_number": 3,
+      "content": "prior prompt snapshot",
+      "change_summary": "Added rule about PR descriptions",
+      "author_name": "Coach | Board | null",
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /companies/:companyId/agents/:agentId/system-prompt/restore`
+Roll the agent's prompt back to a prior revision. Board-only. Inserts a new
+revision capturing the pre-restore content.
 
 Request:
 ```json
-{
-  "system_prompt": "Updated prompt text...",
-  "reason": "Board asked me to focus more on testing"
-}
+{ "revision_number": 2 }
 ```
 
-Response (202):
-```json
-{
-  "data": {
-    "approval_id": "uuid",
-    "status": "pending"
-  }
-}
-```
-
-When the board approves, the system prompt is updated automatically.
+#### `PATCH /companies/:companyId/agents/:agentId`
+Board edit path. Accepts a `system_prompt` field (optional) alongside the
+other agent fields. Setting it upserts the agent's prompt document and
+records a revision with `change_summary` defaulting to `"Manual edit by
+board member"`. Pass `system_prompt_change_summary` to override the summary.
 
 ---
 
@@ -2394,7 +2414,7 @@ Response:
     ],
     "mpp_enabled": true,
     "kb_docs": [
-      { "id": "uuid", "title": "Coding Standards", "slug": "coding-standards", "updated_at": "..." }
+      { "id": "uuid", "title": "Coding Standards", "slug": "coding-standards.md", "updated_at": "..." }
     ],
     "company_preferences": {
       "id": "uuid",
@@ -2701,8 +2721,8 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `get_kb_doc` | Get KB doc by slug | `company_id`, `slug` |
 | `upsert_kb_doc` | Create or update a KB document | `company_id`, `slug`, `title`, `content` |
 | `get_costs` | Get cost summary | `company_id`, `group_by?` (`agent`/`project`/`day`) |
-| `get_agent_system_prompt` | Read agent's system prompt | `company_id`, `agent_id` |
-| `propose_system_prompt_update` | Propose or auto-apply system prompt change | `company_id`, `agent_id`, `system_prompt`, `reason` |
+| `get_agent_system_prompt` | Read agent's system prompt. Any agent or board user in the same company. | `company_id`, `agent_id` |
+| `update_agent_system_prompt` | Apply a system prompt change. **Coach-only.** Writes immediately and snapshots a revision for board rollback. | `company_id`, `agent_id`, `new_system_prompt`, `change_summary` |
 | `list_project_docs` | List project docs | `company_id`, `project_id` |
 | `read_project_doc` | Read project doc by filename | `company_id`, `project_id`, `filename` |
 | `write_project_doc` | Write project doc | `company_id`, `project_id`, `filename`, `content` |

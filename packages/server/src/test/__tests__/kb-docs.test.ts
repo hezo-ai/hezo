@@ -41,7 +41,7 @@ describe('KB docs CRUD', () => {
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.title).toBe('Coding Standards');
-		expect(body.data.slug).toBe('coding-standards');
+		expect(body.data.slug).toBe('coding-standards.md');
 		expect(body.data.content).toBe('# Coding Standards\n\nUse TypeScript.');
 	});
 
@@ -57,7 +57,7 @@ describe('KB docs CRUD', () => {
 	});
 
 	it('gets a KB doc by slug', async () => {
-		const res = await app.request(`/api/companies/${companyId}/kb-docs/coding-standards`, {
+		const res = await app.request(`/api/companies/${companyId}/kb-docs/coding-standards.md`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -67,14 +67,14 @@ describe('KB docs CRUD', () => {
 	});
 
 	it('returns 404 for non-existent slug', async () => {
-		const res = await app.request(`/api/companies/${companyId}/kb-docs/non-existent`, {
+		const res = await app.request(`/api/companies/${companyId}/kb-docs/non-existent.md`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(404);
 	});
 
 	it('updates a KB doc and creates revision', async () => {
-		const res = await app.request(`/api/companies/${companyId}/kb-docs/coding-standards`, {
+		const res = await app.request(`/api/companies/${companyId}/kb-docs/coding-standards.md`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -88,7 +88,7 @@ describe('KB docs CRUD', () => {
 
 		// Check revision was created
 		const revRes = await app.request(
-			`/api/companies/${companyId}/kb-docs/coding-standards/revisions`,
+			`/api/companies/${companyId}/kb-docs/coding-standards.md/revisions`,
 			{ headers: authHeader(token) },
 		);
 		expect(revRes.status).toBe(200);
@@ -100,7 +100,7 @@ describe('KB docs CRUD', () => {
 
 	it('restores a KB doc to a previous revision', async () => {
 		// Update again to create a second revision
-		await app.request(`/api/companies/${companyId}/kb-docs/coding-standards`, {
+		await app.request(`/api/companies/${companyId}/kb-docs/coding-standards.md`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -111,7 +111,7 @@ describe('KB docs CRUD', () => {
 
 		// Restore to revision 1 (original content before first update)
 		const restoreRes = await app.request(
-			`/api/companies/${companyId}/kb-docs/coding-standards/restore`,
+			`/api/companies/${companyId}/kb-docs/coding-standards.md/restore`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -124,7 +124,7 @@ describe('KB docs CRUD', () => {
 
 		// Verify a new revision was created for the pre-restore content
 		const revRes = await app.request(
-			`/api/companies/${companyId}/kb-docs/coding-standards/revisions`,
+			`/api/companies/${companyId}/kb-docs/coding-standards.md/revisions`,
 			{ headers: authHeader(token) },
 		);
 		const revBody = await revRes.json();
@@ -134,11 +134,14 @@ describe('KB docs CRUD', () => {
 	});
 
 	it('returns 404 when restoring non-existent revision', async () => {
-		const res = await app.request(`/api/companies/${companyId}/kb-docs/coding-standards/restore`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ revision_number: 999 }),
-		});
+		const res = await app.request(
+			`/api/companies/${companyId}/kb-docs/coding-standards.md/restore`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ revision_number: 999 }),
+			},
+		);
 		expect(res.status).toBe(404);
 	});
 
@@ -150,14 +153,14 @@ describe('KB docs CRUD', () => {
 			body: JSON.stringify({ title: 'To Delete' }),
 		});
 
-		const deleteRes = await app.request(`/api/companies/${companyId}/kb-docs/to-delete`, {
+		const deleteRes = await app.request(`/api/companies/${companyId}/kb-docs/to-delete.md`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
 		expect(deleteRes.status).toBe(200);
 
 		// Verify it's gone
-		const getRes = await app.request(`/api/companies/${companyId}/kb-docs/to-delete`, {
+		const getRes = await app.request(`/api/companies/${companyId}/kb-docs/to-delete.md`, {
 			headers: authHeader(token),
 		});
 		expect(getRes.status).toBe(404);

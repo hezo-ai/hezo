@@ -92,7 +92,13 @@ describe('Coach agent provisioning', () => {
 		expect(coach).toBeTruthy();
 		expect(coach.title).toBe('Coach');
 		expect(coach.admin_status).toBe('enabled');
-		expect(coach.system_prompt).toBeTruthy();
+
+		const promptRes = await app.request(
+			`/api/companies/${companyId}/agents/${coach.id}/system-prompt`,
+			{ headers: authHeader(boardToken) },
+		);
+		const promptDoc = (await promptRes.json()).data;
+		expect(promptDoc?.content).toBeTruthy();
 	});
 
 	it('Coach agent type exists in agent_types', async () => {
@@ -165,14 +171,12 @@ describe('Coach review prompt builder', () => {
 		expect(res.rows.length).toBe(1);
 		const template = res.rows[0].system_prompt_template;
 		expect(template).toContain('End every review with exactly one `create_comment`');
-		expect(template).toContain('(auto-applied)');
-		expect(template).toContain('(pending approval)');
 		expect(template).toMatch(/do not end the turn without posting it/i);
 	});
 });
 
 describe('MCP tools registration', () => {
-	it('registers get_agent_system_prompt and propose_system_prompt_update tools', async () => {
+	it('registers get_agent_system_prompt and update_agent_system_prompt tools', async () => {
 		const res = await app.request('/mcp', {
 			method: 'POST',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
@@ -182,87 +186,51 @@ describe('MCP tools registration', () => {
 		const body = await res.json();
 		const toolNames = body.result.tools.map((t: any) => t.name);
 		expect(toolNames).toContain('get_agent_system_prompt');
-		expect(toolNames).toContain('propose_system_prompt_update');
+		expect(toolNames).toContain('update_agent_system_prompt');
 	});
 });
 
-describe('Agent self system-prompt endpoints', () => {
-	it('agent can read its own system prompt', async () => {
+describe('Agent system-prompt access', () => {
+	it('non-coach agents can no longer update prompts via /self endpoints', async () => {
 		const res = await app.request('/agent-api/self/system-prompt', {
 			headers: authHeader(engineerToken),
 		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data.system_prompt).toBeTruthy();
+		expect(res.status).toBe(404);
 	});
 
-	it('agent can request system prompt update (creates approval)', async () => {
-		const res = await app.request('/agent-api/self/system-prompt', {
-			method: 'PATCH',
+	it('non-coach agents cannot call update_agent_system_prompt via MCP', async () => {
+		const res = await app.request('/mcp', {
+			method: 'POST',
 			headers: { ...authHeader(engineerToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				system_prompt: 'Updated prompt with learned rules',
-				reason: 'Added rule about test coverage',
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				id: 1,
+				params: {
+					name: 'update_agent_system_prompt',
+					arguments: {
+						company_id: companyId,
+						agent_id: architectId,
+						new_system_prompt: 'hostile rewrite',
+						change_summary: 'unauthorized',
+					},
+				},
 			}),
 		});
-		expect(res.status).toBe(202);
+		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.approval_id).toBeTruthy();
-		expect(body.data.status).toBe('pending');
+		const content = body.result.content?.[0]?.text ?? '';
+		expect(content).toMatch(/Access denied/);
 	});
 });
 
 describe('System prompt revision tracking', () => {
-	it('records revision when approval is approved', async () => {
-		await db.query('UPDATE member_agents SET system_prompt = $1 WHERE id = $2', [
-			'Original prompt for revision test',
-			architectId,
-		]);
-
-		const { token: architectToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			architectId,
-			companyId,
-		);
-		const patchRes = await app.request('/agent-api/self/system-prompt', {
-			method: 'PATCH',
-			headers: { ...authHeader(architectToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				system_prompt: 'Revised prompt via approval',
-				reason: 'Self-improvement after feedback',
-			}),
-		});
-		expect(patchRes.status).toBe(202);
-		const approvalId = (await patchRes.json()).data.approval_id;
-
-		const resolveRes = await app.request(`/api/approvals/${approvalId}/resolve`, {
-			method: 'POST',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'approved' }),
-		});
-		expect(resolveRes.status).toBe(200);
-
-		const revisions = await db.query<{
-			old_prompt: string;
-			new_prompt: string;
-			change_summary: string;
-			approval_id: string;
-		}>(
-			'SELECT old_prompt, new_prompt, change_summary, approval_id FROM system_prompt_revisions WHERE member_agent_id = $1 ORDER BY revision_number DESC LIMIT 1',
-			[architectId],
-		);
-		expect(revisions.rows.length).toBeGreaterThanOrEqual(1);
-		expect(revisions.rows[0].old_prompt).toBe('Original prompt for revision test');
-		expect(revisions.rows[0].new_prompt).toBe('Revised prompt via approval');
-		expect(revisions.rows[0].approval_id).toBe(approvalId);
-	});
-
 	it('records revision on manual board edit', async () => {
-		await db.query('UPDATE member_agents SET system_prompt = $1 WHERE id = $2', [
-			'Before manual edit',
-			architectId,
-		]);
+		await app.request(`/api/companies/${companyId}/agents/${architectId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ system_prompt: 'Before manual edit' }),
+		});
 
 		const res = await app.request(`/api/companies/${companyId}/agents/${architectId}`, {
 			method: 'PATCH',
@@ -271,26 +239,27 @@ describe('System prompt revision tracking', () => {
 		});
 		expect(res.status).toBe(200);
 
-		const revisions = await db.query<{
-			old_prompt: string;
-			new_prompt: string;
-			change_summary: string;
-		}>(
-			'SELECT old_prompt, new_prompt, change_summary FROM system_prompt_revisions WHERE member_agent_id = $1 ORDER BY revision_number DESC LIMIT 1',
-			[architectId],
+		const revisionsRes = await app.request(
+			`/api/companies/${companyId}/agents/${architectId}/system-prompt/revisions`,
+			{ headers: authHeader(boardToken) },
 		);
-		expect(revisions.rows.length).toBeGreaterThanOrEqual(1);
-		expect(revisions.rows[0].old_prompt).toBe('Before manual edit');
-		expect(revisions.rows[0].new_prompt).toBe('After manual edit by board');
-		expect(revisions.rows[0].change_summary).toBe('Manual edit by board member');
+		const revisions = (await revisionsRes.json()).data as Array<{
+			content: string;
+			change_summary: string;
+			revision_number: number;
+		}>;
+		expect(revisions.length).toBeGreaterThanOrEqual(1);
+		const latest = revisions[0];
+		expect(latest.content).toBe('Before manual edit');
+		expect(latest.change_summary).toBe('Manual edit by board member');
 	});
 
 	it('revision numbers increment correctly', async () => {
-		// Do two consecutive edits
-		await db.query('UPDATE member_agents SET system_prompt = $1 WHERE id = $2', [
-			'Version A',
-			engineerId,
-		]);
+		await app.request(`/api/companies/${companyId}/agents/${engineerId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ system_prompt: 'Version A' }),
+		});
 		await app.request(`/api/companies/${companyId}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
@@ -302,13 +271,13 @@ describe('System prompt revision tracking', () => {
 			body: JSON.stringify({ system_prompt: 'Version C' }),
 		});
 
-		const revisions = await db.query<{ revision_number: number; new_prompt: string }>(
-			'SELECT revision_number, new_prompt FROM system_prompt_revisions WHERE member_agent_id = $1 ORDER BY revision_number ASC',
-			[engineerId],
+		const revisionsRes = await app.request(
+			`/api/companies/${companyId}/agents/${engineerId}/system-prompt/revisions`,
+			{ headers: authHeader(boardToken) },
 		);
-		expect(revisions.rows.length).toBeGreaterThanOrEqual(2);
-		const nums = revisions.rows.map((r) => r.revision_number);
-		// Each revision number should be greater than the previous
+		const revisions = (await revisionsRes.json()).data as Array<{ revision_number: number }>;
+		expect(revisions.length).toBeGreaterThanOrEqual(2);
+		const nums = [...revisions.map((r) => r.revision_number)].sort((a, b) => a - b);
 		for (let i = 1; i < nums.length; i++) {
 			expect(nums[i]).toBeGreaterThan(nums[i - 1]);
 		}
@@ -321,33 +290,10 @@ describe('company settings JSONB', () => {
 			headers: authHeader(boardToken),
 		});
 		const company = (await res.json()).data;
-		expect(company.settings).toEqual({ coach_auto_apply: false, wake_mentioner_on_reply: true });
-	});
-
-	it('can update coach_auto_apply via settings PATCH', async () => {
-		const res = await app.request(`/api/companies/${companyId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ settings: { coach_auto_apply: true } }),
-		});
-		expect(res.status).toBe(200);
-		const company = (await res.json()).data;
-		expect(company.settings.coach_auto_apply).toBe(true);
-
-		await app.request(`/api/companies/${companyId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ settings: { coach_auto_apply: false } }),
-		});
+		expect(company.settings).toEqual({ wake_mentioner_on_reply: true });
 	});
 
 	it('merges settings without clobbering existing keys', async () => {
-		await app.request(`/api/companies/${companyId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ settings: { coach_auto_apply: true } }),
-		});
-
 		const res = await app.request(`/api/companies/${companyId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
@@ -355,36 +301,7 @@ describe('company settings JSONB', () => {
 		});
 		expect(res.status).toBe(200);
 		const company = (await res.json()).data;
-		expect(company.settings.coach_auto_apply).toBe(true);
 		expect(company.settings.custom_key).toBe('hello');
-
-		await app.request(`/api/companies/${companyId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ settings: { coach_auto_apply: false } }),
-		});
-	});
-
-	it('preserves settings when patching other fields', async () => {
-		await app.request(`/api/companies/${companyId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ settings: { coach_auto_apply: true } }),
-		});
-
-		const res = await app.request(`/api/companies/${companyId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ description: 'updated desc' }),
-		});
-		expect(res.status).toBe(200);
-		const company = (await res.json()).data;
-		expect(company.settings.coach_auto_apply).toBe(true);
-
-		await app.request(`/api/companies/${companyId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ settings: { coach_auto_apply: false } }),
-		});
+		expect(company.settings.wake_mentioner_on_reply).toBe(true);
 	});
 });
