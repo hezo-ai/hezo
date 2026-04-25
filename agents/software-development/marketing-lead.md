@@ -45,6 +45,7 @@ Escalation: brand or messaging disagreements → CEO decides. Need technical inf
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
 {{> partials/common/linking-syntax}}
+{{> partials/common/subtask-preference}}
 {{> partials/common/mention-handoff}}
 
 ---

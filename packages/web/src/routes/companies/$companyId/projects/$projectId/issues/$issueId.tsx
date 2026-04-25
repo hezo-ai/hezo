@@ -162,9 +162,13 @@ function IssueDetailPage() {
 	async function handleSubIssue(e: React.FormEvent) {
 		e.preventDefault();
 		if (!subIssueTitle.trim()) return;
-		await createSubIssue.mutateAsync({ title: subIssueTitle });
-		setSubIssueTitle('');
-		setShowSubForm(false);
+		try {
+			await createSubIssue.mutateAsync({ title: subIssueTitle });
+			setSubIssueTitle('');
+			setShowSubForm(false);
+		} catch {
+			// error rendered below the form via createSubIssue.error
+		}
 	}
 
 	const issueProjectSlug = issue.project_slug ?? projectId;
@@ -368,18 +372,26 @@ function IssueDetailPage() {
 							data-testid="sub-issues-list"
 						>
 							{showSubForm && (
-								<form onSubmit={handleSubIssue} className="flex gap-2 mb-1">
-									<input
-										value={subIssueTitle}
-										onChange={(e) => setSubIssueTitle(e.target.value)}
-										placeholder="Sub-issue title"
-										className="flex-1 rounded-radius-md border border-border bg-bg px-3 py-1.5 text-[13px] text-text outline-none focus:border-border-hover"
-										data-testid="sub-issue-title-input"
-									/>
-									<Button type="submit" size="sm" disabled={!subIssueTitle.trim()}>
-										Create
-									</Button>
-								</form>
+								<>
+									<form onSubmit={handleSubIssue} className="flex gap-2 mb-1">
+										<input
+											value={subIssueTitle}
+											onChange={(e) => setSubIssueTitle(e.target.value)}
+											placeholder="Sub-issue title"
+											className="flex-1 rounded-radius-md border border-border bg-bg px-3 py-1.5 text-[13px] text-text outline-none focus:border-border-hover"
+											data-testid="sub-issue-title-input"
+										/>
+										<Button type="submit" size="sm" disabled={!subIssueTitle.trim()}>
+											Create
+										</Button>
+									</form>
+									{createSubIssue.error && (
+										<div className="text-[12px] text-red-500 mb-1" data-testid="sub-issue-error">
+											{(createSubIssue.error as { message?: string }).message ??
+												'Failed to create sub-issue'}
+										</div>
+									)}
+								</>
 							)}
 							{(subIssues?.data.length ?? 0) === 0 && !showSubForm && (
 								<span className="text-[13px] text-text-muted">No sub-issues.</span>

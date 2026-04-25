@@ -595,6 +595,116 @@ describe('issues CRUD', () => {
 	});
 });
 
+describe('sub-issue depth + ancestors', () => {
+	async function createIssue(parent_issue_id?: string) {
+		const res = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: parent_issue_id ? 'Child' : 'Root',
+				assignee_id: agentId,
+				...(parent_issue_id ? { parent_issue_id } : {}),
+			}),
+		});
+		return { res, body: await res.json() };
+	}
+
+	async function createSub(parentId: string) {
+		const res = await app.request(`/api/companies/${companyId}/issues/${parentId}/sub-issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Sub', assignee_id: agentId }),
+		});
+		return { res, body: await res.json() };
+	}
+
+	it('allows creating a depth-2 sub-issue (sub-issue of a sub-issue)', async () => {
+		const root = (await createIssue()).body.data;
+		const sub = (await createSub(root.id)).body.data;
+		const subSubViaRest = await createIssue(sub.id);
+		expect(subSubViaRest.res.status).toBe(201);
+		expect(subSubViaRest.body.data.parent_issue_id).toBe(sub.id);
+
+		const sub2 = (await createSub(root.id)).body.data;
+		const subSubViaSubRoute = await createSub(sub2.id);
+		expect(subSubViaSubRoute.res.status).toBe(201);
+		expect(subSubViaSubRoute.body.data.parent_issue_id).toBe(sub2.id);
+	});
+
+	it('rejects depth-3 creation via POST /issues with parent_issue_id', async () => {
+		const root = (await createIssue()).body.data;
+		const sub = (await createSub(root.id)).body.data;
+		const subSub = (await createSub(sub.id)).body.data;
+
+		const tooDeep = await createIssue(subSub.id);
+		expect(tooDeep.res.status).toBe(400);
+		expect(tooDeep.body.error.message).toMatch(/2 levels deep/);
+	});
+
+	it('rejects depth-3 creation via POST /issues/:id/sub-issues', async () => {
+		const root = (await createIssue()).body.data;
+		const sub = (await createSub(root.id)).body.data;
+		const subSub = (await createSub(sub.id)).body.data;
+
+		const tooDeep = await createSub(subSub.id);
+		expect(tooDeep.res.status).toBe(400);
+		expect(tooDeep.body.error.message).toMatch(/2 levels deep/);
+	});
+
+	it('returns ancestors in root-first order, excluding the current issue', async () => {
+		const root = (await createIssue()).body.data;
+		const sub = (await createSub(root.id)).body.data;
+		const subSub = (await createSub(sub.id)).body.data;
+
+		const rootRes = await app.request(`/api/companies/${companyId}/issues/${root.id}/ancestors`, {
+			headers: authHeader(token),
+		});
+		expect(rootRes.status).toBe(200);
+		expect((await rootRes.json()).data).toEqual([]);
+
+		const subRes = await app.request(`/api/companies/${companyId}/issues/${sub.id}/ancestors`, {
+			headers: authHeader(token),
+		});
+		expect(subRes.status).toBe(200);
+		const subAncestors = (await subRes.json()).data;
+		expect(subAncestors).toHaveLength(1);
+		expect(subAncestors[0].id).toBe(root.id);
+
+		const subSubRes = await app.request(
+			`/api/companies/${companyId}/issues/${subSub.id}/ancestors`,
+			{ headers: authHeader(token) },
+		);
+		expect(subSubRes.status).toBe(200);
+		const subSubAncestors = (await subSubRes.json()).data;
+		expect(subSubAncestors).toHaveLength(2);
+		expect(subSubAncestors[0].id).toBe(root.id);
+		expect(subSubAncestors[1].id).toBe(sub.id);
+	});
+
+	it('resolves identifier-based path for ancestors', async () => {
+		const root = (await createIssue()).body.data;
+		const sub = (await createSub(root.id)).body.data;
+
+		const res = await app.request(
+			`/api/companies/${companyId}/issues/${sub.identifier.toLowerCase()}/ancestors`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(200);
+		const ancestors = (await res.json()).data;
+		expect(ancestors).toHaveLength(1);
+		expect(ancestors[0].identifier).toBe(root.identifier);
+	});
+
+	it('returns 404 on ancestors for an unknown issue', async () => {
+		const res = await app.request(
+			`/api/companies/${companyId}/issues/00000000-0000-0000-0000-000000000000/ancestors`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(404);
+	});
+});
+
 describe('operations project assignee restriction', () => {
 	let operationsProjectId: string;
 	let ceoAgentId: string;

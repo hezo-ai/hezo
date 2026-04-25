@@ -15,6 +15,7 @@ import {
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { assertNoActiveRun } from '../lib/active-run';
+import { assertChildDepthAllowed } from '../lib/issue-depth';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import type { AuthInfo } from '../lib/types';
@@ -254,7 +255,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_issue',
-		'Create a new issue. Use parent_issue_id for sub-issues. Use assignee_slug as alternative to assignee_id. In title/description, reference other Hezo entities with @-mentions: @<agent-slug>, @<ISSUE-ID> (e.g. @op-42), @kb/<slug>, @doc/<filename>. Do not wrap these in backticks — that makes them inert.',
+		'Create a new issue. Use parent_issue_id for sub-issues — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-issues themselves can have sub-issues, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. In title/description, reference other Hezo entities with @-mentions: @<agent-slug>, @<ISSUE-ID> (e.g. @op-42), @kb/<slug>, @doc/<filename>. Do not wrap these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().describe('Project ID'),
@@ -266,7 +267,12 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe('Assignee agent slug (alternative to assignee_id)'),
-			parent_issue_id: z.string().optional().describe('Parent issue ID (creates a sub-issue)'),
+			parent_issue_id: z
+				.string()
+				.optional()
+				.describe(
+					'Parent issue ID (creates a sub-issue). Sub-issues can themselves have sub-issues, but no deeper — depth is capped at 2.',
+				),
 			runtime_type: z
 				.string()
 				.optional()
@@ -300,6 +306,15 @@ export function registerTools(
 				assigneeId,
 			);
 			if (!opsCheck.ok) return { error: opsCheck.message };
+
+			if (args.parent_issue_id) {
+				const depthCheck = await assertChildDepthAllowed(
+					db,
+					args.company_id as string,
+					args.parent_issue_id as string,
+				);
+				if (!depthCheck.ok) return { error: depthCheck.message };
+			}
 
 			const { number: num, identifier } = await allocateIssueIdentifier(
 				db,

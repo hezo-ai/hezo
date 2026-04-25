@@ -52,6 +52,7 @@ The Architect uses a four-stage planning workflow, gated on a finalised PRD.
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
 {{> partials/common/linking-syntax}}
+{{> partials/common/subtask-preference}}
 {{> partials/common/mention-handoff}}
 
 ---

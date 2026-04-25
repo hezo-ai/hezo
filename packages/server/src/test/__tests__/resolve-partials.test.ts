@@ -121,6 +121,16 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			expect(docs[key], `${key} should include an @kb/ example`).toContain('@kb/');
 		}
 
+		// Every role doc picks up the subtask-preference guidance.
+		for (const key of allRoleKeys) {
+			expect(docs[key], `${key} should include the sub-issue heading`).toContain(
+				'## Sub-issues for related work',
+			);
+			expect(docs[key], `${key} should mention the depth-2 cap`).toContain(
+				'capped at two levels deep',
+			);
+		}
+
 		// Partial files themselves are stripped from the returned map
 		expect(Object.keys(docs).some((k) => k.startsWith('_partials/'))).toBe(false);
 	});

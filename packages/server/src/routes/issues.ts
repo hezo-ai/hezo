@@ -14,6 +14,7 @@ import { Hono } from 'hono';
 import { assertNoActiveRun } from '../lib/active-run';
 import { auditLog } from '../lib/audit';
 import { broadcastChange } from '../lib/broadcast';
+import { assertChildDepthAllowed } from '../lib/issue-depth';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
@@ -184,6 +185,13 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 	const opsCheck = await assertOperationsAssignee(db, companyId, body.project_id, body.assignee_id);
 	if (!opsCheck.ok) {
 		return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
+	}
+
+	if (body.parent_issue_id) {
+		const depthCheck = await assertChildDepthAllowed(db, companyId, body.parent_issue_id);
+		if (!depthCheck.ok) {
+			return err(c, 'INVALID_REQUEST', depthCheck.message, 400);
+		}
 	}
 
 	const { number: issueNumber, identifier } = await allocateIssueIdentifier(db, body.project_id);
@@ -539,6 +547,11 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 		return err(c, 'NOT_FOUND', 'Parent issue not found', 404);
 	}
 
+	const depthCheck = await assertChildDepthAllowed(db, companyId, parentIssueId);
+	if (!depthCheck.ok) {
+		return err(c, 'INVALID_REQUEST', depthCheck.message, 400);
+	}
+
 	const body = await c.req.json<{
 		title: string;
 		description?: string;
@@ -595,6 +608,42 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 	broadcastChange(c, wsRoom.company(companyId), 'issues', 'INSERT', subIssue);
 	wakeAgentIfAssigned(db, body.assignee_id, companyId, subIssue.id as string);
 	return ok(c, subIssue, 201);
+});
+
+issuesRoutes.get('/companies/:companyId/issues/:issueId/ancestors', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+
+	const result = await db.query<{
+		id: string;
+		identifier: string;
+		title: string;
+		depth: number;
+	}>(
+		`WITH RECURSIVE chain AS (
+			SELECT id, parent_issue_id, identifier, title, 0 AS depth
+			FROM issues WHERE id = $1 AND company_id = $2
+			UNION ALL
+			SELECT i.id, i.parent_issue_id, i.identifier, i.title, c.depth + 1
+			FROM issues i
+			JOIN chain c ON c.parent_issue_id = i.id
+			WHERE i.company_id = $2 AND c.depth < 3
+		)
+		SELECT id, identifier, title, depth FROM chain ORDER BY depth DESC`,
+		[issueId, companyId],
+	);
+	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	return ok(
+		c,
+		result.rows
+			.filter((r) => r.depth > 0)
+			.map(({ id, identifier, title }) => ({ id, identifier, title })),
+	);
 });
 
 issuesRoutes.get('/companies/:companyId/issues/:issueId/dependencies', async (c) => {
