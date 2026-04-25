@@ -22,7 +22,7 @@ function AgentSettingsPage() {
 	const { companyId, agentId } = Route.useParams();
 	const { data: agent, isLoading } = useAgent(companyId, agentId);
 	const { data: agents } = useAgents(companyId);
-	const { data: promptDoc } = useAgentSystemPrompt(companyId, agentId);
+	const { data: promptDoc, isLoading: isPromptLoading } = useAgentSystemPrompt(companyId, agentId);
 	const { data: revisions } = useAgentSystemPromptRevisions(companyId, agentId);
 	const restorePrompt = useRestoreAgentSystemPrompt(companyId, agentId);
 	const updateAgent = useUpdateAgent(companyId, agentId);
@@ -56,7 +56,8 @@ function AgentSettingsPage() {
 		setSystemPrompt(promptDoc?.content ?? '');
 	}, [promptDoc?.content]);
 
-	if (isLoading || !agent) return <div className="text-text-muted text-sm">Loading...</div>;
+	if (isLoading || !agent || isPromptLoading)
+		return <div className="text-text-muted text-sm">Loading...</div>;
 
 	const otherAgents =
 		agents?.filter((a) => a.id !== agentId && a.admin_status !== AgentAdminStatus.Disabled) ?? [];
