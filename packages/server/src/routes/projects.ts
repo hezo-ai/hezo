@@ -282,8 +282,8 @@ ${projectDescription}${initialPrdNote}
 1. Read the description above. If anything is ambiguous, post a clarifying comment on this issue for the board.
 2. Use \`list_agents\` / \`get_agent_system_prompt\` to recall who is on the team.
 3. Break the work into 3-8 top-level milestones. Write a short scope note for each.
-4. Post the plan as a comment on this issue, then create child issues with \`create_issue\` (using \`parent_issue_id\` on this issue) for the first milestone, assigning each to the right agent.
-5. Move this issue to **done** once the first milestone's child issues have been created and assigned.
+4. Post the plan as a comment on this issue. Then for the first milestone, create the milestone tickets with \`create_issue\` — **top-level**: do NOT set \`parent_issue_id\` to this planning ticket. Each delegated milestone is the assignee's own first-class deliverable, not a slice of your plan. Assign each ticket to the right agent.
+5. Move this issue to **done** once the first milestone's tickets exist and are assigned. The Coach will close this planning ticket after its post-mortem.
 
 Container provisioning for this project is in progress. Focus on planning while the environment comes up — implementation agents can start work as soon as their tickets are ready.`;
 

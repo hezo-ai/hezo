@@ -275,6 +275,8 @@ describe('mention handoff prompt (integration)', () => {
 		expect(prompt).toContain('sub-issue');
 		expect(prompt).toContain('peer');
 		expect(prompt).toContain('top-level');
+		expect(prompt).toMatch(/planning.*goal-update/);
+		expect(prompt).toMatch(/always.*top-level/i);
 	});
 
 	it('truncates long comment excerpts and strips fenced code', async () => {

@@ -17,6 +17,7 @@ import {
 import { Cron } from 'cron-async';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
+import { assertChildrenAllClosed } from '../lib/issue-relationships';
 import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
 import {
@@ -757,20 +758,25 @@ export class JobManager {
 			result.success &&
 			wakeupPayload?.trigger === 'issue_done'
 		) {
-			const closed = await db.query<Record<string, unknown>>(
-				`UPDATE issues SET status = $1::issue_status, updated_at = now()
-				 WHERE id = $2 AND company_id = $3 AND status = $4::issue_status
-				 RETURNING *`,
-				[IssueStatus.Closed, issueId, companyId, IssueStatus.Done],
-			);
-			if (closed.rows[0]) {
-				broadcastRowChange(
-					this.deps.wsManager,
-					wsRoom.company(companyId),
-					'issues',
-					'UPDATE',
-					closed.rows[0],
+			const childrenCheck = await assertChildrenAllClosed(db, companyId, issueId);
+			if (!childrenCheck.ok) {
+				log.warn(`Skipping coach auto-close for issue ${issueId}: ${childrenCheck.message}`);
+			} else {
+				const closed = await db.query<Record<string, unknown>>(
+					`UPDATE issues SET status = $1::issue_status, updated_at = now()
+					 WHERE id = $2 AND company_id = $3 AND status = $4::issue_status
+					 RETURNING *`,
+					[IssueStatus.Closed, issueId, companyId, IssueStatus.Done],
 				);
+				if (closed.rows[0]) {
+					broadcastRowChange(
+						this.deps.wsManager,
+						wsRoom.company(companyId),
+						'issues',
+						'UPDATE',
+						closed.rows[0],
+					);
+				}
 			}
 		}
 

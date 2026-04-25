@@ -847,3 +847,158 @@ describe('operations project assignee restriction', () => {
 		expect(detail.project_slug).toBe('operations');
 	});
 });
+
+describe('closure rules — sub-issues must be closed before parent', () => {
+	async function createParent(): Promise<{ id: string; identifier: string }> {
+		const res = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Parent ticket',
+				assignee_id: agentId,
+			}),
+		});
+		expect(res.status).toBe(201);
+		return (await res.json()).data;
+	}
+
+	async function createChild(parentId: string): Promise<{ id: string; identifier: string }> {
+		const res = await app.request(`/api/companies/${companyId}/issues/${parentId}/sub-issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Child ticket', assignee_id: agentId }),
+		});
+		expect(res.status).toBe(201);
+		return (await res.json()).data;
+	}
+
+	async function setStatus(issueId: string, status: string): Promise<Response> {
+		return app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status }),
+		});
+	}
+
+	async function forceStatus(issueId: string, status: string): Promise<void> {
+		await db.query(`UPDATE issues SET status = $1::issue_status WHERE id = $2`, [status, issueId]);
+	}
+
+	it('rejects done on a parent while a sub-issue is still in_progress', async () => {
+		const parent = await createParent();
+		const child = await createChild(parent.id);
+		await forceStatus(child.id, 'in_progress');
+
+		const res = await setStatus(parent.id, 'done');
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.message).toContain(child.identifier);
+		expect(body.error.message).toMatch(/sub-issue/i);
+	});
+
+	it('rejects done on a parent while a sub-issue is in done (not yet closed)', async () => {
+		const parent = await createParent();
+		const child = await createChild(parent.id);
+		await forceStatus(child.id, 'done');
+
+		const res = await setStatus(parent.id, 'done');
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain(child.identifier);
+	});
+
+	it('rejects closed on a parent while a sub-issue is still open', async () => {
+		const parent = await createParent();
+		const child = await createChild(parent.id);
+		await forceStatus(child.id, 'in_progress');
+
+		const res = await setStatus(parent.id, 'closed');
+		expect(res.status).toBe(400);
+	});
+
+	it('allows done once every sub-issue is closed', async () => {
+		const parent = await createParent();
+		const child = await createChild(parent.id);
+		await forceStatus(child.id, 'closed');
+
+		const res = await setStatus(parent.id, 'done');
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.status).toBe('done');
+	});
+
+	it('allows done on a parent with no sub-issues', async () => {
+		const parent = await createParent();
+		const res = await setStatus(parent.id, 'done');
+		expect(res.status).toBe(200);
+	});
+});
+
+describe('closure rules — outstanding pinged-agent activity blocks done', () => {
+	async function createIssue(): Promise<{ id: string; identifier: string }> {
+		const res = await app.request(`/api/companies/${companyId}/issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Activity-guarded ticket',
+				assignee_id: agentId,
+			}),
+		});
+		return (await res.json()).data;
+	}
+
+	it('rejects done while a heartbeat_run for the issue is running', async () => {
+		const issue = await createIssue();
+		await db.query(
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())`,
+			[agentId, companyId, issue.id],
+		);
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'done' }),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toMatch(/run/i);
+	});
+
+	it('rejects done while a queued wakeup payload references the issue', async () => {
+		const issue = await createIssue();
+		await db.query(
+			`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, payload)
+			 VALUES ($1, $2, 'mention'::wakeup_source, 'queued'::wakeup_status, $3::jsonb)`,
+			[agentId, companyId, JSON.stringify({ issue_id: issue.id })],
+		);
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'done' }),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toMatch(/wakeup/i);
+	});
+
+	it('allows done once outstanding runs and wakeups have terminal statuses', async () => {
+		const issue = await createIssue();
+		await db.query(
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at, finished_at)
+			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now(), now())`,
+			[agentId, companyId, issue.id],
+		);
+		await db.query(
+			`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, payload, completed_at)
+			 VALUES ($1, $2, 'mention'::wakeup_source, 'completed'::wakeup_status, $3::jsonb, now())`,
+			[agentId, companyId, JSON.stringify({ issue_id: issue.id })],
+		);
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'done' }),
+		});
+		expect(res.status).toBe(200);
+	});
+});

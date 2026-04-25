@@ -510,9 +510,12 @@ Response:
 
 #### `POST /companies/:companyId/projects`
 Create a project. Container is auto-provisioned asynchronously. A planning issue titled
-`Draft execution plan for "{name}"` is opened and assigned to the company's enabled CEO
-agent — board users are redirected there so the CEO can draft the execution plan.
-Fails with 500 if no enabled CEO agent exists.
+`Draft execution plan for "{name}"` (labeled `planning`) is opened and assigned to the
+company's enabled CEO agent — board users are redirected there so the CEO can draft the
+execution plan. The planning ticket's body instructs the CEO to create the first
+milestone's tickets as **top-level** issues (no `parent_issue_id` pointing at the
+planning ticket) — each delegated milestone is the assignee's own first-class
+deliverable. Fails with 500 if no enabled CEO agent exists.
 
 Request: `name` and `description` are required. `docker_base_image` and `initial_prd`
 are optional. `docker_base_image` defaults to `hezo/agent-base:latest`. When
@@ -837,6 +840,12 @@ Update issue fields: title, description, status, priority, assignee_id, labels, 
 `assignee_id` cannot be set to null — every issue must have an assignee.
 Changing `assignee_id` triggers an event on the newly assigned agent, or a notification to the newly assigned board member.
 Changing `status` to `done` or `closed` triggers preview cleanup.
+
+Two server-enforced guards block the `→ done` and `→ closed` transitions when the ticket is not actually finished, returning `400 INVALID_REQUEST`:
+- **Sub-issues must be closed first.** `→ done` and `→ closed` both fail if any sub-issue is in any state other than `closed`. Sub-issues only reach `closed` after the Coach completes its post-mortem.
+- **No outstanding pinged-agent activity.** `→ done` fails if another agent (not the caller) has a `heartbeat_runs` row for the issue in `queued`/`running`, or any `mention`/`comment`/`reply`-source `agent_wakeup_requests` referencing the issue is `queued`/`claimed`/`deferred`. The caller's own activity and assignment/timer/automation wakeups are excluded.
+
+The error message names the blocking sub-issue or agent so the caller knows what to wait on.
 
 For issues whose project is Operations (`slug = 'operations'`, `is_internal = true`), `assignee_id` must be the CEO; any other value returns `400 INVALID_REQUEST`.
 

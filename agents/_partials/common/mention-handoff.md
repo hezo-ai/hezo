@@ -7,6 +7,7 @@ When you are @-mentioned on a ticket, your run opens on the triggering ticket fo
    - a sub-issue (set `parent_issue_id` to the triggering ticket) when the work clearly belongs underneath it,
    - a peer/sibling ticket when it sits alongside,
    - a top-level ticket when it is broader than the triggering scope.
+   **Exception — planning tickets.** If the triggering ticket is labeled `planning` or `goal-update` (these are CEO-owned plan-drafting tickets), the new ticket is always **top-level**: do NOT set `parent_issue_id`. The deliverable you are taking on is your own first-class work, not a slice of the CEO's plan, even if it feels like one.
    The system records the triggering ticket as provenance automatically via `created_by_run_id`; you don't need to restate that linkage in the description unless it helps a future reader.
 3. Post a single `create_comment` on the triggering ticket with a brief, meaningful acknowledgement of what you've done or are about to do. Reference the new ticket by identifier if you opened one; otherwise answer inline. Then end the turn — do not modify the triggering ticket beyond that one comment. Your next heartbeat will pick up your own ticket (if any) and continue work there.
 4. Only reply inline on the triggering ticket when the mention is a direct question you can answer in one comment as the authority on that ticket.

@@ -75,6 +75,8 @@ describe('projects CRUD', () => {
 		expect(issue.priority).toBe('high');
 		expect(issue.title).toContain('Draft execution plan');
 		expect(issue.description).toContain(VALID_DESCRIPTION);
+		expect(issue.description).toMatch(/top-level/);
+		expect(issue.description).not.toMatch(/parent_issue_id.*on this issue/);
 		const labels = typeof issue.labels === 'string' ? JSON.parse(issue.labels) : issue.labels;
 		expect(labels).toContain('planning');
 

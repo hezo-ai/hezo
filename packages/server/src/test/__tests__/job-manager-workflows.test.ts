@@ -860,6 +860,35 @@ describe('JobManager workflow methods', () => {
 			expect(await readIssueStatus()).toBe(IssueStatus.Done);
 			manager.shutdown();
 		});
+
+		it('does not close when an open sub-issue still blocks the parent', async () => {
+			const manager = createJobManager();
+			await setIssueDone();
+
+			const childResult = await db.query<{ id: string }>(
+				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, number, identifier,
+				                     title, description, status, priority)
+				 VALUES ($1, $2, $3, $4, 9999, 'TST-9999', 'Open child', '', 'in_progress'::issue_status, 'medium'::issue_priority)
+				 RETURNING id`,
+				[companyId, projectId, agentId, issueId],
+			);
+			const childId = childResult.rows[0].id;
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'coach',
+				issueId,
+				companyId,
+				undefined,
+				{ trigger: 'issue_done', issue_id: issueId },
+				{ success: true, exitCode: 0, stdout: '', stderr: '' },
+			);
+
+			expect(await readIssueStatus()).toBe(IssueStatus.Done);
+			manager.shutdown();
+
+			await db.query('DELETE FROM issues WHERE id = $1', [childId]);
+		});
 	});
 
 	describe('processScheduledHeartbeats', () => {
