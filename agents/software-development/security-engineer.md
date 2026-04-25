@@ -72,6 +72,7 @@ On heartbeats, audit the codebase across these areas:
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
 {{> partials/common/linking-syntax}}
+{{> partials/common/subtask-preference}}
 {{> partials/common/mention-handoff}}
 
 ---

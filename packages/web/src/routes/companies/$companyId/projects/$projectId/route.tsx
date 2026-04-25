@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet, useLocation, useParams, useSearch } from '@tanstack/react-router';
 import { Breadcrumb } from '../../../../../components/ui/breadcrumb';
+import { useIssueAncestors } from '../../../../../hooks/use-issues';
 import { useProject } from '../../../../../hooks/use-projects';
 
 const AGENTS_MD_KEY = '__agents_md__';
@@ -12,12 +13,18 @@ function ProjectLayout() {
 	const { pathname } = useLocation();
 
 	const base = `/companies/${companyId}/projects/${projectId}`;
+	const onIssueDetail = pathname.startsWith(`${base}/issues`) && Boolean(allParams.issueId);
+	const { data: ancestors } = useIssueAncestors(
+		companyId,
+		onIssueDetail ? allParams.issueId : undefined,
+	);
 	const projectParams = { companyId, projectId };
 
 	const items: Array<{
 		label: string;
 		to?: string;
 		params?: Record<string, string>;
+		key?: string;
 	}> = [
 		{ label: 'Projects', to: '/companies/$companyId/projects', params: { companyId } },
 		{
@@ -34,6 +41,14 @@ function ProjectLayout() {
 			params: projectParams,
 		});
 		if (allParams.issueId) {
+			for (const ancestor of ancestors ?? []) {
+				items.push({
+					key: `ancestor-${ancestor.id}`,
+					label: ancestor.identifier.toUpperCase(),
+					to: '/companies/$companyId/projects/$projectId/issues/$issueId',
+					params: { ...projectParams, issueId: ancestor.identifier },
+				});
+			}
 			items.push({ label: allParams.issueId.toUpperCase() });
 		}
 	} else if (pathname.startsWith(`${base}/documents`)) {

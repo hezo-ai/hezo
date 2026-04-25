@@ -60,6 +60,7 @@ Keep the research document updated as new findings emerge or earlier conclusions
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
 {{> partials/common/linking-syntax}}
+{{> partials/common/subtask-preference}}
 {{> partials/common/mention-handoff}}
 
 ---
