@@ -9,6 +9,7 @@ import {
 	loadReplyContext,
 	loadSpawnedFromIssue,
 } from '../../services/agent-runner';
+import { getAgentSystemPrompt } from '../../services/documents';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
@@ -256,11 +257,7 @@ describe('mention handoff prompt (integration)', () => {
 		};
 		const ctx = await loadMentionContext(db, architectMemberId, companyId, wakeupPayload);
 
-		const architectPromptRes = await db.query<{ system_prompt: string }>(
-			'SELECT system_prompt FROM member_agents WHERE id = $1',
-			[architectMemberId],
-		);
-		const architectSystemPrompt = architectPromptRes.rows[0].system_prompt;
+		const architectSystemPrompt = await getAgentSystemPrompt(db, companyId, architectMemberId);
 
 		const prompt = buildTaskPrompt(
 			architectSystemPrompt,
