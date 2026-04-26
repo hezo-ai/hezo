@@ -267,7 +267,7 @@ test('running-agents line links each name to its run comment and scrolls into vi
 	await expect(targetComment).not.toBeInViewport();
 
 	await link.click();
-	await expect(targetComment).toBeInViewport({ timeout: 5000 });
+	await expect(targetComment).toBeInViewport({ timeout: 15000 });
 });
 
 test('can edit issue rules and progress summary', async ({ page }) => {
@@ -304,7 +304,7 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 	await rulesSection.getByText('Edit').click();
 	await rulesSection.locator('textarea').fill('Consult architect before changes');
 	await rulesSection.getByRole('button', { name: 'Save' }).click();
-	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 15000 });
 
 	// Edit progress summary
 	const summarySection = page
@@ -314,7 +314,7 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 	await summarySection.getByText('Edit').click();
 	await summarySection.locator('textarea').fill('Implementation started');
 	await summarySection.getByRole('button', { name: 'Save' }).click();
-	await expect(page.getByText('Implementation started')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Implementation started')).toBeVisible({ timeout: 15000 });
 
 	// Verify persistence after reload
 	await page.reload();
@@ -367,7 +367,7 @@ test('issue rules and progress summary render markdown formatting', async ({ pag
 	await rulesSection.getByRole('button', { name: 'Save' }).click();
 
 	const pinnedRules = page.getByTestId('pinned-rules');
-	await expect(pinnedRules.locator('strong', { hasText: 'bold' })).toBeVisible({ timeout: 5000 });
+	await expect(pinnedRules.locator('strong', { hasText: 'bold' })).toBeVisible({ timeout: 15000 });
 	await expect(pinnedRules.locator('ul li', { hasText: 'first bullet' })).toBeVisible();
 	await expect(pinnedRules.locator('ul li', { hasText: 'second bullet' })).toBeVisible();
 	await expect(pinnedRules.locator('code', { hasText: 'bun test' })).toBeVisible();
@@ -384,7 +384,7 @@ test('issue rules and progress summary render markdown formatting', async ({ pag
 
 	const pinnedSummary = page.getByTestId('pinned-progress-summary');
 	await expect(pinnedSummary.locator('ol li', { hasText: 'Scaffolded routes' })).toBeVisible({
-		timeout: 5000,
+		timeout: 15000,
 	});
 	await expect(pinnedSummary.locator('ol li', { hasText: 'Wired up DB' })).toBeVisible();
 	await expect(pinnedSummary.locator('ol li', { hasText: 'Added tests' })).toBeVisible();

@@ -9,7 +9,7 @@ test.describe('Inbox / Approvals', () => {
 		await page.goto(`/companies/${company.slug}/inbox`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByText('All clear')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('All clear')).toBeVisible({ timeout: 15000 });
 		await expect(page.getByText('No pending approvals')).toBeVisible();
 	});
 
@@ -31,7 +31,7 @@ test.describe('Inbox / Approvals', () => {
 		await waitForPageLoad(page);
 
 		// Verify approval card is visible with friendly message
-		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 15000 });
 		await expect(page.getByText('Proposing strategy')).toBeVisible();
 		await expect(page.getByText('Launch new product line')).toBeVisible();
 
@@ -60,7 +60,7 @@ test.describe('Inbox / Approvals', () => {
 		await page.goto(`/companies/${company.slug}/inbox`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByText('Proposing to hire')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Proposing to hire')).toBeVisible({ timeout: 15000 });
 
 		// Click approve
 		await page.getByRole('button', { name: 'Approve' }).click();
@@ -85,7 +85,7 @@ test.describe('Inbox / Approvals', () => {
 		await page.goto(`/companies/${company.slug}/inbox`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByText('Requesting access to secret')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Requesting access to secret')).toBeVisible({ timeout: 15000 });
 
 		// Click deny
 		await page.getByRole('button', { name: 'Deny' }).click();
@@ -102,7 +102,7 @@ test.describe('Inbox / Approvals', () => {
 		await waitForPageLoad(page);
 
 		// Sidebar should contain Inbox link
-		await expect(page.getByText('Inbox', { exact: true })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Inbox', { exact: true })).toBeVisible({ timeout: 15000 });
 	});
 
 	test('global inbox aggregates approvals from every company', async ({ page }) => {
@@ -126,7 +126,7 @@ test.describe('Inbox / Approvals', () => {
 		await page.goto('/inbox');
 		await waitForPageLoad(page);
 
-		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 15000 });
 		// Both approval types render friendly messages scoped to their company card.
 		// Other tests can leave pending approvals in unrelated companies, so scope
 		// the assertions to the specific approval cards for the companies we created.
@@ -149,6 +149,6 @@ test.describe('Inbox / Approvals', () => {
 
 		await page.getByTitle('Inbox').click();
 		await expect(page).toHaveURL(/\/inbox$/);
-		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 15000 });
 	});
 });

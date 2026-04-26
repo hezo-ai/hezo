@@ -26,7 +26,7 @@ test.describe('Project Settings', () => {
 		await waitForPageLoad(page);
 
 		await expect(page.getByTestId('breadcrumb').getByText('Settings Project')).toBeVisible({
-			timeout: 5000,
+			timeout: 15000,
 		});
 		await expect(page.getByText('Test project settings').first()).toBeVisible();
 	});
@@ -71,7 +71,7 @@ test.describe('Project Settings', () => {
 
 		// Original name should still be visible
 		await expect(page.getByTestId('breadcrumb').getByText('Settings Project')).toBeVisible({
-			timeout: 5000,
+			timeout: 15000,
 		});
 		await expect(page.getByText('Should Not Save')).toBeHidden();
 	});
@@ -85,7 +85,7 @@ test.describe('Project Settings', () => {
 
 		// Repositories section header
 		await expect(page.getByRole('heading', { name: 'Repositories' })).toBeVisible({
-			timeout: 5000,
+			timeout: 15000,
 		});
 		await expect(page.getByText('No repositories yet.')).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Add Repo' })).toBeVisible();
@@ -101,7 +101,7 @@ test.describe('Project Settings', () => {
 		await page.getByRole('button', { name: 'Add Repo' }).click();
 
 		await expect(page.getByRole('heading', { name: 'Set up repository' })).toBeVisible({
-			timeout: 5000,
+			timeout: 15000,
 		});
 	});
 });

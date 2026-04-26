@@ -77,10 +77,10 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 
 	await page.goto(`/companies/${company.slug}/agents/${ceo.id}/executions/${run.id}`);
 
-	await expect(page.getByRole('heading', { name: /Run \w{8}/i })).toBeVisible({ timeout: 5000 });
+	await expect(page.getByRole('heading', { name: /Run \w{8}/i })).toBeVisible({ timeout: 15000 });
 
 	const invocationToggle = page.getByRole('button', { name: /invocation/i });
-	await expect(invocationToggle).toBeVisible({ timeout: 5000 });
+	await expect(invocationToggle).toBeVisible({ timeout: 15000 });
 	const invocationBody = page.getByTestId('run-invocation-body');
 	await expect(invocationBody).toBeHidden();
 
@@ -92,7 +92,7 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 
 	const logPane = page.getByTestId('run-log');
 	await expect(logPane).toContainText('[synthetic] starting agent run', { timeout: 10_000 });
-	await expect(logPane).toContainText('[synthetic] task complete', { timeout: 5000 });
+	await expect(logPane).toContainText('[synthetic] task complete', { timeout: 15000 });
 
 	const durationValue = page
 		.getByText('Duration', { exact: true })

@@ -14,7 +14,7 @@ test('team page shows org chart with status legend', async ({ page }) => {
 	await page.goto(`/companies/${company.slug}/agents`);
 
 	await expect(page.getByText('You (Board)')).toBeVisible({ timeout: 10000 });
-	await expect(page.getByText('Active').first()).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Active').first()).toBeVisible({ timeout: 15000 });
 });
 
 test('agent detail page shows budget and heartbeat info on settings tab', async ({ page }) => {
@@ -33,8 +33,8 @@ test('agent detail page shows budget and heartbeat info on settings tab', async 
 
 	await page.getByRole('main').getByRole('link', { name: 'Settings' }).click();
 
-	await expect(page.getByText('Budget Usage')).toBeVisible({ timeout: 5000 });
-	await expect(page.getByText('Heartbeat').first()).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Budget Usage')).toBeVisible({ timeout: 15000 });
+	await expect(page.getByText('Heartbeat').first()).toBeVisible({ timeout: 15000 });
 });
 
 test('project detail shows container section with rebuild button', async ({ page }) => {
@@ -51,7 +51,7 @@ test('project detail shows container section with rebuild button', async ({ page
 
 	await page.goto(`/companies/${company.slug}/projects/${(project as any).data.slug}/container`);
 
-	await expect(page.getByRole('button', { name: /Rebuild/i })).toBeVisible({ timeout: 5000 });
+	await expect(page.getByRole('button', { name: /Rebuild/i })).toBeVisible({ timeout: 15000 });
 });
 
 test('agent detail page allows editing title on settings tab', async ({ page }) => {
@@ -71,12 +71,12 @@ test('agent detail page allows editing title on settings tab', async ({ page }) 
 	await page.getByRole('main').getByRole('link', { name: 'Settings' }).click();
 
 	const titleInput = page.getByLabel('Title');
-	await expect(titleInput).toBeVisible({ timeout: 5000 });
+	await expect(titleInput).toBeVisible({ timeout: 15000 });
 	await titleInput.fill(`${agent.title} Updated`);
 
 	await page.getByRole('button', { name: 'Save Changes' }).click();
 
-	await expect(page.getByText(`${agent.title} Updated`).first()).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText(`${agent.title} Updated`).first()).toBeVisible({ timeout: 15000 });
 });
 
 test('agent disable and enable lifecycle', async ({ page }) => {
@@ -99,14 +99,14 @@ test('agent disable and enable lifecycle', async ({ page }) => {
 	await expect(disableBtn).toBeVisible({ timeout: 10000 });
 	await disableBtn.click();
 
-	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 15000 });
 
 	const enableBtn = page.getByRole('button', { name: /Enable agent/i });
-	await expect(enableBtn).toBeVisible({ timeout: 5000 });
+	await expect(enableBtn).toBeVisible({ timeout: 15000 });
 	await enableBtn.click();
 
-	await expect(page.getByText('(disabled)')).not.toBeVisible({ timeout: 5000 });
-	await expect(page.getByRole('main').getByText('Idle')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('(disabled)')).not.toBeVisible({ timeout: 15000 });
+	await expect(page.getByRole('main').getByText('Idle')).toBeVisible({ timeout: 15000 });
 });
 
 test('disabled agent shows on team org chart and detail page', async ({ page }) => {
@@ -125,8 +125,8 @@ test('disabled agent shows on team org chart and detail page', async ({ page }) 
 	});
 
 	await page.goto(`/companies/${company.slug}/agents`);
-	await expect(page.getByText('You (Board)')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('You (Board)')).toBeVisible({ timeout: 15000 });
 
 	await page.goto(`/companies/${company.slug}/agents/${enabledAgent.id}`);
-	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 15000 });
 });

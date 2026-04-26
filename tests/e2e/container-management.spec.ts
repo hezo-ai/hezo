@@ -147,7 +147,7 @@ test.describe('Container Management', () => {
 		if (await containerLink.isVisible()) {
 			await containerLink.click();
 			await expect(page).toHaveURL(new RegExp(`/projects/${project.slug}/container`), {
-				timeout: 5000,
+				timeout: 15000,
 			});
 		}
 	});

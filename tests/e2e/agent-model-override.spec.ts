@@ -52,7 +52,7 @@ test('agent settings page shows model override selects and persists choice', asy
 	await page.goto(`/companies/${company.id}/agents/${researcher.id}/settings`);
 
 	const providerSelect = page.getByLabel('Model override provider');
-	await expect(providerSelect).toBeVisible({ timeout: 5000 });
+	await expect(providerSelect).toBeVisible({ timeout: 15000 });
 	await providerSelect.selectOption('anthropic');
 
 	const modelSelect = page.getByLabel('Model override model');

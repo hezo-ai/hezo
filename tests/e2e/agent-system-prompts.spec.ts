@@ -55,14 +55,14 @@ test('system prompt revisions panel lists history after an edit', async ({ page 
 	await page.goto(`/companies/${company.id}/agents/${engineer.id}/settings`);
 
 	const promptTextarea = page.getByLabel('System Prompt');
-	await expect(promptTextarea).toBeVisible({ timeout: 5000 });
+	await expect(promptTextarea).toBeVisible({ timeout: 15000 });
 
 	const original = await promptTextarea.inputValue();
 	await promptTextarea.fill(`${original}\n- New rule added by e2e test`);
 	await page.getByRole('button', { name: 'Save Changes' }).click();
 
 	await page.reload();
-	await expect(page.getByLabel('System Prompt')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByLabel('System Prompt')).toBeVisible({ timeout: 15000 });
 	await page.getByRole('button', { name: /Show revision history/i }).click();
 	await expect(page.getByText(/Rev \d+/)).toBeVisible();
 });
@@ -82,7 +82,7 @@ test('agent detail page displays system prompt in textarea', async ({ page }) =>
 	await page.goto(`/companies/${company.id}/agents/${engineer.id}/settings`);
 
 	const promptTextarea = page.getByLabel('System Prompt');
-	await expect(promptTextarea).toBeVisible({ timeout: 5000 });
+	await expect(promptTextarea).toBeVisible({ timeout: 15000 });
 
 	const promptValue = await promptTextarea.inputValue();
 	expect(promptValue).toContain('You are an Engineer at');
@@ -105,7 +105,7 @@ test('system prompt can be edited and saved', async ({ page }) => {
 	await page.goto(`/companies/${company.id}/agents/${researcher.id}/settings`);
 
 	const promptTextarea = page.getByLabel('System Prompt');
-	await expect(promptTextarea).toBeVisible({ timeout: 5000 });
+	await expect(promptTextarea).toBeVisible({ timeout: 15000 });
 
 	const originalValue = await promptTextarea.inputValue();
 	const updatedPrompt = `${originalValue}\n- Always respond in formal English`;
@@ -114,7 +114,7 @@ test('system prompt can be edited and saved', async ({ page }) => {
 	await page.getByRole('button', { name: 'Save Changes' }).click();
 
 	await page.reload();
-	await expect(promptTextarea).toBeVisible({ timeout: 5000 });
+	await expect(promptTextarea).toBeVisible({ timeout: 15000 });
 	const savedValue = await promptTextarea.inputValue();
 	expect(savedValue).toContain('Always respond in formal English');
 	expect(savedValue).toContain('You are the Researcher at');

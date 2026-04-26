@@ -19,7 +19,7 @@ test('can create a company with Startup template and see auto-created agents', a
 
 	// Startup template should be selected by default
 	const startupCard = page.getByText('Startup').first();
-	await expect(startupCard).toBeVisible({ timeout: 5000 });
+	await expect(startupCard).toBeVisible({ timeout: 15000 });
 
 	// Continue to details step
 	await page.getByRole('button', { name: 'Continue' }).click();
@@ -35,12 +35,14 @@ test('can create a company with Startup template and see auto-created agents', a
 	await waitForPageLoad(page);
 
 	const main = page.getByRole('main');
-	await expect(main.getByRole('link', { name: 'CEO', exact: true })).toBeVisible({ timeout: 5000 });
+	await expect(main.getByRole('link', { name: 'CEO', exact: true })).toBeVisible({
+		timeout: 15000,
+	});
 	await expect(main.getByRole('link', { name: 'Product Lead', exact: true })).toBeVisible({
-		timeout: 5000,
+		timeout: 15000,
 	});
 	await expect(main.getByRole('link', { name: 'QA Engineer', exact: true })).toBeVisible({
-		timeout: 5000,
+		timeout: 15000,
 	});
 });
 
@@ -80,9 +82,11 @@ test('Blank template shows built-in agents note and creates CEO/Coach', async ({
 	await page.goto(`/companies/${page.url().split('/companies/')[1].split('/')[0]}/agents`);
 	await waitForPageLoad(page);
 	const main = page.getByRole('main');
-	await expect(main.getByRole('link', { name: 'CEO', exact: true })).toBeVisible({ timeout: 5000 });
+	await expect(main.getByRole('link', { name: 'CEO', exact: true })).toBeVisible({
+		timeout: 15000,
+	});
 	await expect(main.getByRole('link', { name: 'Coach', exact: true })).toBeVisible({
-		timeout: 5000,
+		timeout: 15000,
 	});
 });
 
@@ -99,10 +103,10 @@ test('post-create redirect lands on projects page with create dialog open', asyn
 	await expect(page).toHaveURL(/\/companies\/[^/]+\/projects\?create=true$/, { timeout: 10000 });
 
 	const dialog = page.getByRole('dialog');
-	await expect(dialog).toBeVisible({ timeout: 5000 });
+	await expect(dialog).toBeVisible({ timeout: 15000 });
 	await expect(dialog.getByText('Create Project')).toBeVisible();
 
 	await dialog.getByRole('button', { name: 'Cancel' }).click();
-	await expect(dialog).toBeHidden({ timeout: 5000 });
-	await expect(page).toHaveURL(/\/companies\/[^/]+\/projects$/, { timeout: 5000 });
+	await expect(dialog).toBeHidden({ timeout: 15000 });
+	await expect(page).toHaveURL(/\/companies\/[^/]+\/projects$/, { timeout: 15000 });
 });

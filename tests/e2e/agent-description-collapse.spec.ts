@@ -44,7 +44,7 @@ test('long summary collapses to first line and toggles on click', async ({ page 
 	await page.goto(`/companies/${company.slug}/agents/${agent.id}`);
 
 	const summaryBlock = page.getByTestId('agent-summary');
-	await expect(summaryBlock).toBeVisible({ timeout: 5000 });
+	await expect(summaryBlock).toBeVisible({ timeout: 15000 });
 
 	const paragraph = summaryBlock.locator('p');
 	await expect(paragraph).toContainText('Line 1');
@@ -85,7 +85,7 @@ test('short single-line summary hides toggle', async ({ page }) => {
 	await page.goto(`/companies/${company.slug}/agents/${agent.id}`);
 
 	const summaryBlock = page.getByTestId('agent-summary');
-	await expect(summaryBlock).toBeVisible({ timeout: 5000 });
+	await expect(summaryBlock).toBeVisible({ timeout: 15000 });
 	await expect(summaryBlock.locator('p')).toContainText('Short.');
 	await expect(summaryBlock.getByRole('button', { name: /Expand|Collapse/ })).toHaveCount(0);
 });

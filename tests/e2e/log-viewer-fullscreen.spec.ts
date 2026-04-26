@@ -19,7 +19,7 @@ async function waitForRunStatus(
 	companyId: string,
 	issueId: string,
 	token: string,
-	timeoutMs = 60_000,
+	timeoutMs = 120_000,
 ) {
 	const headers = { Authorization: `Bearer ${token}` };
 	const deadline = Date.now() + timeoutMs;

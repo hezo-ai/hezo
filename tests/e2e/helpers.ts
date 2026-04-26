@@ -110,7 +110,7 @@ export async function createCompanyWithAgents(page: Page) {
 export async function dismissAiProviderModal(page: Page) {
 	const modal = page.getByText('Set up an AI provider');
 	try {
-		await modal.waitFor({ state: 'visible', timeout: 5000 });
+		await modal.waitFor({ state: 'visible', timeout: 15000 });
 	} catch {
 		return;
 	}

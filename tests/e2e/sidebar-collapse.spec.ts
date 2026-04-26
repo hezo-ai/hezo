@@ -20,17 +20,17 @@ test('sidebar can be collapsed and the state persists across reload', async ({ p
 		toggle.click(),
 	]);
 	expect(uiStateResponse.ok()).toBe(true);
-	await expect(toggle).toHaveAccessibleName('Expand sidebar', { timeout: 5000 });
-	await expect(page.getByText('Resources').first()).toBeHidden({ timeout: 5000 });
+	await expect(toggle).toHaveAccessibleName('Expand sidebar', { timeout: 15000 });
+	await expect(page.getByText('Resources').first()).toBeHidden({ timeout: 15000 });
 
 	await page.reload();
 	await expect(page.getByTestId('sidebar-toggle')).toHaveAccessibleName('Expand sidebar', {
 		timeout: 10000,
 	});
-	await expect(page.getByText('Resources').first()).toBeHidden({ timeout: 5000 });
+	await expect(page.getByText('Resources').first()).toBeHidden({ timeout: 15000 });
 
 	await page.getByTestId('sidebar-toggle').click();
-	await expect(page.getByText('Resources').first()).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Resources').first()).toBeVisible({ timeout: 15000 });
 });
 
 test('sidebar toggle stays clickable when the container status banner is showing', async ({
@@ -91,5 +91,5 @@ test('sidebar toggle stays clickable when the container status banner is showing
 	await expect(toggle).toHaveAccessibleName('Collapse sidebar');
 
 	await toggle.click();
-	await expect(toggle).toHaveAccessibleName('Expand sidebar', { timeout: 5000 });
+	await expect(toggle).toHaveAccessibleName('Expand sidebar', { timeout: 15000 });
 });

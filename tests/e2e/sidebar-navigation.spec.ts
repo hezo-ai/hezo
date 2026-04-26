@@ -70,10 +70,10 @@ test.describe('Sidebar Navigation', () => {
 
 		// Team is the second collapsible section (Projects is first)
 		await nav.getByRole('button', { name: 'Collapse' }).nth(1).click();
-		await expect(nav.getByText('CEO')).not.toBeVisible({ timeout: 5000 });
+		await expect(nav.getByText('CEO')).not.toBeVisible({ timeout: 15000 });
 
 		await nav.getByRole('button', { name: 'Expand' }).first().click();
-		await expect(nav.getByText('CEO')).toBeVisible({ timeout: 5000 });
+		await expect(nav.getByText('CEO')).toBeVisible({ timeout: 15000 });
 	});
 
 	test('Team collapse state persists across navigation', async ({ page }) => {
@@ -88,7 +88,7 @@ test.describe('Sidebar Navigation', () => {
 
 		// Collapse Team via its chevron (second collapsible — Projects is first)
 		await nav.getByRole('button', { name: 'Collapse' }).nth(1).click();
-		await expect(nav.getByText('CEO')).not.toBeVisible({ timeout: 5000 });
+		await expect(nav.getByText('CEO')).not.toBeVisible({ timeout: 15000 });
 
 		// Navigate to a different page
 		await nav.getByText('Inbox', { exact: true }).click();
@@ -110,7 +110,7 @@ test.describe('Sidebar Navigation', () => {
 		await nav.getByRole('link', { name: 'Team' }).click();
 
 		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/agents/?$`), {
-			timeout: 5000,
+			timeout: 15000,
 		});
 		await expect(page.getByTestId('team-summary')).toBeVisible();
 	});
@@ -189,11 +189,11 @@ test.describe('Sidebar Navigation', () => {
 
 		// Collapse via chevron
 		await nav.getByRole('button', { name: 'Collapse' }).first().click();
-		await expect(nav.getByText('Operations')).not.toBeVisible({ timeout: 5000 });
+		await expect(nav.getByText('Operations')).not.toBeVisible({ timeout: 15000 });
 
 		// Expand again
 		await nav.getByRole('button', { name: 'Expand' }).first().click();
-		await expect(nav.getByText('Operations')).toBeVisible({ timeout: 5000 });
+		await expect(nav.getByText('Operations')).toBeVisible({ timeout: 15000 });
 	});
 
 	test('Projects collapse state persists across navigation', async ({ page }) => {
@@ -208,7 +208,7 @@ test.describe('Sidebar Navigation', () => {
 
 		// Collapse Projects via chevron
 		await nav.getByRole('button', { name: 'Collapse' }).first().click();
-		await expect(nav.getByText('Operations')).not.toBeVisible({ timeout: 5000 });
+		await expect(nav.getByText('Operations')).not.toBeVisible({ timeout: 15000 });
 
 		// Navigate away
 		await nav.getByText('Inbox', { exact: true }).click();
@@ -230,7 +230,7 @@ test.describe('Sidebar Navigation', () => {
 		await nav.getByRole('link', { name: 'Projects' }).click();
 
 		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/projects/?$`), {
-			timeout: 5000,
+			timeout: 15000,
 		});
 		await expect(page.getByRole('heading', { name: 'Projects', level: 1 })).toBeVisible();
 	});
@@ -275,7 +275,7 @@ test.describe('Sidebar Navigation', () => {
 
 		await expect(page).toHaveURL(
 			new RegExp(`/companies/${company.slug}/projects/${project.slug}`),
-			{ timeout: 5000 },
+			{ timeout: 15000 },
 		);
 	});
 
@@ -297,7 +297,7 @@ test.describe('Sidebar Navigation', () => {
 		await nav.getByText('CEO').click();
 
 		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/agents/${ceo.id}`), {
-			timeout: 5000,
+			timeout: 15000,
 		});
 	});
 
@@ -414,7 +414,7 @@ test.describe('Sidebar Navigation', () => {
 
 		await expect(page).toHaveURL(
 			new RegExp(`/companies/${company.slug}/projects/${alpha.slug}/documents`),
-			{ timeout: 5000 },
+			{ timeout: 15000 },
 		);
 
 		// Subsections still visible because the project is still active

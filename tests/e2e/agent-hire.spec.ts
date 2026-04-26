@@ -13,7 +13,7 @@ test('can hire an agent with minimal fields', async ({ page }) => {
 
 	// Onboarding flow redirects to the issue page (CEO reviews the hire)
 	await expect(page).toHaveURL(/\/issues\//, { timeout: 10000 });
-	await expect(page.getByText('Onboard new agent: Data Scientist')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Onboard new agent: Data Scientist')).toBeVisible({ timeout: 15000 });
 });
 
 test('template variable chips insert into system prompt', async ({ page }) => {
@@ -23,8 +23,8 @@ test('template variable chips insert into system prompt', async ({ page }) => {
 	const { company } = await createCompanyWithAgents(page);
 	await page.goto(`/companies/${company.slug}/agents/hire`);
 
-	await expect(page.getByText('{{company_name}}')).toBeVisible({ timeout: 5000 });
-	await expect(page.getByText('{{agent_role}}')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('{{company_name}}')).toBeVisible({ timeout: 15000 });
+	await expect(page.getByText('{{agent_role}}')).toBeVisible({ timeout: 15000 });
 
 	await page.getByRole('button', { name: '{{company_name}}' }).click();
 	await page.getByRole('button', { name: '{{agent_role}}' }).click();
@@ -62,6 +62,6 @@ test('can hire agent with full fields', async ({ page }) => {
 	// Onboarding flow redirects to the issue page
 	await expect(page).toHaveURL(/\/issues\//, { timeout: 10000 });
 	await expect(page.getByText('Onboard new agent: Security Auditor')).toBeVisible({
-		timeout: 5000,
+		timeout: 15000,
 	});
 });

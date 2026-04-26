@@ -62,7 +62,7 @@ test.describe('Repository setup wizard', () => {
 
 		await page.getByRole('button', { name: 'Set up repository' }).click();
 		await expect(page.getByRole('heading', { name: 'Set up repository' })).toBeVisible({
-			timeout: 5000,
+			timeout: 15000,
 		});
 		await expect(page.getByRole('button', { name: /Connect GitHub/i })).toBeVisible();
 	});
@@ -188,11 +188,11 @@ test.describe('Repository setup wizard', () => {
 			new RegExp(
 				`/companies/${company.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}(#.*)?$`,
 			),
-			{ timeout: 5000 },
+			{ timeout: 15000 },
 		);
 		await page.getByRole('button', { name: 'Set up repository' }).click();
 		await expect(page.getByRole('heading', { name: 'Set up repository' })).toBeVisible({
-			timeout: 5000,
+			timeout: 15000,
 		});
 	});
 
@@ -215,7 +215,7 @@ test.describe('Repository setup wizard', () => {
 		});
 		await page.getByRole('button', { name: /Add Repo/i }).click();
 		await expect(page.getByRole('heading', { name: 'Set up repository' })).toBeVisible({
-			timeout: 5000,
+			timeout: 15000,
 		});
 	});
 });

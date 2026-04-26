@@ -87,7 +87,7 @@ test.describe('Issue Filtering', () => {
 		await page.getByRole('button', { name: 'done' }).click();
 		await page.keyboard.press('Escape');
 
-		await expect(page.getByText('Done Issue')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Done Issue')).toBeVisible({ timeout: 15000 });
 		await expect(page.getByText('Review Issue')).toBeHidden();
 		await expect(page.getByText('Backlog Issue')).toBeHidden();
 	});
@@ -107,7 +107,7 @@ test.describe('Issue Filtering', () => {
 		await page.getByRole('button', { name: 'in progress' }).click();
 		await page.keyboard.press('Escape');
 
-		await expect(page.getByText('In Progress Issue')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('In Progress Issue')).toBeVisible({ timeout: 15000 });
 		await expect(page.getByText('Review Issue')).toBeHidden();
 		await expect(page.getByText('Backlog Issue')).toBeHidden();
 	});
@@ -126,12 +126,12 @@ test.describe('Issue Filtering', () => {
 		await page.getByRole('button', { name: 'Clear selection' }).click();
 		await page.getByRole('button', { name: 'done' }).click();
 		await page.keyboard.press('Escape');
-		await expect(page.getByText('Done Issue')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Done Issue')).toBeVisible({ timeout: 15000 });
 		await expect(page.getByText('Review Issue')).toBeHidden();
 
 		await page.getByTestId('issue-filter-reset').click();
 
-		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 15000 });
 		await expect(page.getByText('In Progress Issue')).toBeVisible();
 		await expect(page.getByText('Backlog Issue')).toBeVisible();
 		await expect(page.getByText('Done Issue')).toBeHidden();

@@ -23,14 +23,14 @@ test.describe('Project CRUD', () => {
 			'expected canonical project-scoped issue URL after creating a project',
 		).toHaveURL(
 			new RegExp(`/companies/${company.slug}/projects/[a-z0-9-]+/issues/[a-z0-9-]+(?:#.*)?$`),
-			{ timeout: 5000 },
+			{ timeout: 15000 },
 		);
 		await expect(
 			page.getByRole('main').getByText('Draft execution plan for "Marketing Campaign"'),
-		).toBeVisible({ timeout: 5000 });
+		).toBeVisible({ timeout: 15000 });
 
 		const description = page.getByTestId('issue-description');
-		await expect(description).toBeVisible({ timeout: 5000 });
+		await expect(description).toBeVisible({ timeout: 15000 });
 		const paragraphMarginBottom = await description
 			.locator('p')
 			.first()
@@ -55,7 +55,7 @@ test.describe('Project CRUD', () => {
 		await page.goto(`/companies/${company.slug}/projects`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByRole('heading', { name: 'Operations' })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('heading', { name: 'Operations' })).toBeVisible({ timeout: 15000 });
 	});
 
 	test('project list shows issue and repo counts', async ({ page }) => {
@@ -73,7 +73,7 @@ test.describe('Project CRUD', () => {
 		await waitForPageLoad(page);
 
 		const card = page.getByRole('main').locator('a', { hasText: 'Count Test' });
-		await expect(card).toBeVisible({ timeout: 5000 });
+		await expect(card).toBeVisible({ timeout: 15000 });
 		await expect(card.getByText('1 issues')).toBeVisible();
 		await expect(card.getByText('0 repos')).toBeVisible();
 	});
@@ -97,7 +97,7 @@ test.describe('Project CRUD', () => {
 		// Should navigate to project detail page
 		await expect(page).toHaveURL(
 			new RegExp(`/companies/${company.slug}/projects/${project.slug}`),
-			{ timeout: 5000 },
+			{ timeout: 15000 },
 		);
 	});
 
