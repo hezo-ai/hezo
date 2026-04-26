@@ -62,6 +62,7 @@ Keep the research document updated as new findings emerge or earlier conclusions
 {{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
+{{> partials/common/check-before-create}}
 {{> partials/common/mention-handoff}}
 
 ---

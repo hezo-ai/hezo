@@ -70,6 +70,10 @@ export class JobManager {
 	private runningTasks = new Map<string, RunningTask>();
 	private liveRuns = new Map<string, LiveRun>();
 	private guards = new Map<string, boolean>();
+	// Issues currently held by a dispatched run. Populated synchronously in activateAgent
+	// before launchTask, cleared in the launchTask finally. Closes the race window between
+	// dispatch and createHeartbeatRun where the DB-backed check is not yet authoritative.
+	private activeIssueRuns = new Set<string>();
 	private deps: JobManagerDeps;
 	private started = false;
 
@@ -337,6 +341,21 @@ export class JobManager {
 		}
 	}
 
+	private async isIssueBusy(payload: Record<string, unknown> | null | undefined): Promise<boolean> {
+		const issueId = typeof payload?.issue_id === 'string' ? payload.issue_id : null;
+		if (!issueId) return false;
+		if (this.activeIssueRuns.has(issueId)) return true;
+		const { db } = this.deps;
+		const active = await db.query(
+			`SELECT 1 FROM heartbeat_runs
+			 WHERE issue_id = $1
+			   AND status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)
+			 LIMIT 1`,
+			[issueId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
+		);
+		return active.rows.length > 0;
+	}
+
 	private async processWakeups(): Promise<void> {
 		const { db } = this.deps;
 		const coalescingCutoff = new Date(Date.now() - COALESCING_WINDOW_MS).toISOString();
@@ -364,6 +383,11 @@ export class JobManager {
 		for (const wakeup of wakeups.rows) {
 			if (this.isTaskRunning(wsRoom.agent(wakeup.member_id))) {
 				log.debug(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
+				continue;
+			}
+
+			if (await this.isIssueBusy(wakeup.payload)) {
+				log.debug(`Skipping wakeup ${wakeup.id} — target issue already has an active run`);
 				continue;
 			}
 
@@ -531,6 +555,24 @@ export class JobManager {
 			issue = issues.rows[0];
 		}
 
+		// Per-issue serialisation: only one agent runs on a given issue at a time. Most
+		// blocked wakeups are filtered earlier by processWakeups via isIssueBusy; this
+		// guard catches heartbeat-style wakeups (no payload.issue_id) where the chosen
+		// issue is determined here, plus any race where the issue became busy between
+		// the dispatcher check and now.
+		if (await this.isIssueBusy({ issue_id: issue.id })) {
+			log.debug(
+				`Issue ${issue.identifier} already has an active run — re-queuing wakeup for ${memberId}`,
+			);
+			if (wakeupId) {
+				await db.query(
+					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = NULL WHERE id = $2',
+					[WakeupStatus.Queued, wakeupId],
+				);
+			}
+			return;
+		}
+
 		const project = await db.query<{
 			id: string;
 			slug: string;
@@ -679,50 +721,63 @@ export class JobManager {
 
 		const projectId = project.rows[0].id;
 		const taskKey = wsRoom.agent(memberId);
+		const lockedIssueId = issue.id;
+		this.activeIssueRuns.add(lockedIssueId);
 
 		this.launchTask(
 			taskKey,
 			async (signal) => {
 				let registeredRunId: string | undefined;
-				const result = await runAgent(
-					deps,
-					{
-						id: memberId,
-						title: agent.rows[0].title,
-						slug: agent.rows[0].slug,
-						company_id: companyId,
-						default_effort: agent.rows[0].default_effort,
-						model_override_provider: agent.rows[0].model_override_provider,
-						model_override_model: agent.rows[0].model_override_model,
-					},
-					issue,
-					project.rows[0],
-					wakeupPayload,
-					signal,
-					(runId) => {
-						registeredRunId = runId;
-						this.registerLiveRun({
-							runId,
-							memberId,
-							issueId: issue.id,
-							projectId,
-							companyId,
-							taskKey,
-						});
-					},
-				);
+				try {
+					const result = await runAgent(
+						deps,
+						{
+							id: memberId,
+							title: agent.rows[0].title,
+							slug: agent.rows[0].slug,
+							company_id: companyId,
+							default_effort: agent.rows[0].default_effort,
+							model_override_provider: agent.rows[0].model_override_provider,
+							model_override_model: agent.rows[0].model_override_model,
+						},
+						issue,
+						project.rows[0],
+						wakeupPayload,
+						signal,
+						(runId) => {
+							registeredRunId = runId;
+							this.registerLiveRun({
+								runId,
+								memberId,
+								issueId: issue.id,
+								projectId,
+								companyId,
+								taskKey,
+							});
+						},
+					);
 
-				if (registeredRunId) this.unregisterLiveRun(registeredRunId);
-				await this.onAgentComplete(
-					memberId,
-					agent.rows[0].slug,
-					issue.id,
-					companyId,
-					wakeupId,
-					wakeupPayload,
-					result,
-				);
-				return result;
+					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
+					await this.onAgentComplete(
+						memberId,
+						agent.rows[0].slug,
+						issue.id,
+						companyId,
+						wakeupId,
+						wakeupPayload,
+						result,
+					);
+					return result;
+				} catch (err) {
+					// Background run errors must not become unhandled rejections — they
+					// most commonly fire when a test or shutdown closes the DB while a
+					// run is still cleaning up. Log and swallow.
+					log.error(`Background run for agent ${memberId} on issue ${issue.id} failed:`, err);
+					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
+					return null;
+				} finally {
+					this.activeIssueRuns.delete(lockedIssueId);
+				}
 			},
 			timeoutMs,
 		);

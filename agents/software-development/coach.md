@@ -58,6 +58,7 @@ If a pattern suggests a fundamental role redesign is needed, flag it to the boar
 {{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
+{{> partials/common/check-before-create}}
 {{> partials/common/mention-handoff}}
 
 ---

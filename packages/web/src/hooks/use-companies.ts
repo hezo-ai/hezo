@@ -55,9 +55,9 @@ export function useUpdateCompany(id: string) {
 			mcp_servers?: unknown[];
 			settings?: Partial<CompanySettings>;
 		}) => api.patch<Company>(`/api/companies/${id}`, data),
-		onSuccess: () => {
+		onSuccess: (updated) => {
+			queryClient.setQueryData(['companies', id], updated);
 			queryClient.invalidateQueries({ queryKey: ['companies'] });
-			queryClient.invalidateQueries({ queryKey: ['companies', id] });
 		},
 	});
 }

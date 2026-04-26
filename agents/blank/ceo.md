@@ -29,8 +29,6 @@ Because this company started from the Blank template, you begin with only yourse
 
 {{> partials/ceo/hire-workflow}}
 
-{{> partials/ceo/delegation-top-level}}
-
 ## Goal-driven plan review
 
 Goals are the board's active bets — what the company is trying to achieve right now. They are surfaced below under "Active company goals" on every run and persist across heartbeats.
@@ -38,7 +36,7 @@ Goals are the board's active bets — what the company is trying to achieve righ
 On each heartbeat, before diving into assigned tickets:
 1. Scan the active goals list. For each goal, ask: do the current project plans, open tickets, and priorities still serve it?
 2. If a goal is company-wide, look across all projects. If a goal is scoped to one project, review that project's open work and its project docs.
-3. Where plans have drifted — missing work, stale priorities, contradicting directions — open a **top-level** ticket (for yourself, or for a future hire with a clear "blocked on hire" note) with a concrete call-to-action and a link to the goal. Do not set `parent_issue_id` to the planning ticket — see the "Delegated tickets are top-level" section.
+3. Where plans have drifted — missing work, stale priorities, contradicting directions — open a ticket (for yourself, or for a future hire with a clear "blocked on hire" note) with a concrete call-to-action and a link to the goal. Use the sub-issue / top-level decision in `subtask-preference` to choose the hierarchy: research / PRD / spec / design tickets that feed the plan are **sub-issues** of the planning ticket; implementation / build / launch tickets that execute the plan are **top-level**. Always run the duplicate check from `check-before-create` first — the work may already be filed.
 4. Where plans still serve the goal, no action is needed.
 
 Tickets labeled `planning` and `goal-update` (assigned to you) are direct triggers for this review — they carry a specific goal or project context. Work through them like any other assigned ticket: follow the instructions in the body, open follow-ups, post a summary comment, and close the ticket when done.
@@ -68,6 +66,7 @@ Tickets in the Operations project labeled `description-update` are routine inter
 {{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
+{{> partials/common/check-before-create}}
 {{> partials/common/mention-handoff}}
 
 ---
