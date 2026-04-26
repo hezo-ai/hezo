@@ -230,6 +230,55 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 	});
 });
 
+describe('seeded agent system prompts', () => {
+	it('every Startup-template agent gets a non-empty system prompt with templating preserved', async () => {
+		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
+
+		const seededSlugs = [
+			'ceo',
+			'architect',
+			'product-lead',
+			'engineer',
+			'qa-engineer',
+			'ui-designer',
+			'devops-engineer',
+			'marketing-lead',
+			'researcher',
+			'security-engineer',
+			'coach',
+		];
+
+		const getPrompt = async (agentId: string): Promise<string> => {
+			const res = await app.request(`/api/companies/${companyId}/agents/${agentId}/system-prompt`, {
+				headers: authHeader(token),
+			});
+			return ((await res.json()).data?.content ?? '') as string;
+		};
+
+		for (const slug of seededSlugs) {
+			const agent = agents.find((a) => a.slug === slug);
+			expect(agent, `agent ${slug} should exist on the seeded company`).toBeDefined();
+			const prompt = await getPrompt(agent!.id);
+			expect(prompt, `agent ${slug} should have a system prompt`).toBeTruthy();
+			expect(prompt.length).toBeGreaterThan(100);
+		}
+
+		const ceo = agents.find((a) => a.slug === 'ceo')!;
+		const ceoPrompt = await getPrompt(ceo.id);
+		expect(ceoPrompt).toContain('You are the CEO of');
+		expect(ceoPrompt).toContain('{{company_name}}');
+		expect(ceoPrompt).toMatch(/##\s+Rules\b/);
+
+		const engineer = agents.find((a) => a.slug === 'engineer')!;
+		const engineerPrompt = await getPrompt(engineer.id);
+		expect(engineerPrompt).toContain('You are an Engineer at');
+		expect(engineerPrompt).toContain('{{reports_to}}');
+	});
+});
+
 describe('agent listing with admin_status filter', () => {
 	it('filters by multiple statuses with comma-separated query param', async () => {
 		// Disable one agent so we have both enabled and disabled agents

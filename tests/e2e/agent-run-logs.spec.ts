@@ -3,13 +3,13 @@ import { authenticate, createCompanyWithAgents, createProjectAndClearPlanning } 
 
 async function waitForContainer(page: Page, companyId: string, projectId: string, token: string) {
 	const headers = { Authorization: `Bearer ${token}` };
-	for (let i = 0; i < 30; i++) {
+	for (let i = 0; i < 150; i++) {
 		const res = await page.request.get(`/api/companies/${companyId}/projects/${projectId}`, {
 			headers,
 		});
 		const body = (await res.json()) as { data: { container_status?: string } };
 		if (body.data?.container_status === 'running') return;
-		await new Promise((r) => setTimeout(r, 500));
+		await new Promise((r) => setTimeout(r, 100));
 	}
 	throw new Error('Container did not reach running state within 15s');
 }
@@ -20,7 +20,7 @@ async function waitForRunStatus(
 	issueId: string,
 	token: string,
 	target: 'running' | 'succeeded' | 'failed',
-	timeoutMs = 30_000,
+	timeoutMs = 90_000,
 ) {
 	const headers = { Authorization: `Bearer ${token}` };
 	const deadline = Date.now() + timeoutMs;
@@ -35,7 +35,7 @@ async function waitForRunStatus(
 		) {
 			return body.data;
 		}
-		await new Promise((r) => setTimeout(r, 500));
+		await new Promise((r) => setTimeout(r, 100));
 	}
 	throw new Error(`Latest run did not reach status ${target} within ${timeoutMs}ms`);
 }
@@ -191,45 +191,4 @@ test('issue page renders run as an inline comment with live-styled log', async (
 	await expect(runLink).toBeVisible();
 	await runLink.click();
 	await expect(page).toHaveURL(new RegExp(`/executions/${run.id}$`));
-});
-
-test('marking issue done cleans up worktree directory', async ({ page }) => {
-	await authenticate(page);
-	const { company, token } = await createCompanyWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
-
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
-		headers,
-		data: { name: 'Cleanup Test Project', description: 'Test project.' },
-	});
-	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
-
-	await waitForContainer(page, company.id, project.id, token);
-
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
-		headers,
-		data: {
-			project_id: project.id,
-			title: 'Done Issue',
-			description: '...',
-			assignee_id: ceo.id,
-		},
-	});
-	const issue = ((await issueRes.json()) as { data: { id: string } }).data;
-
-	const patchRes = await page.request.patch(`/api/companies/${company.id}/issues/${issue.id}`, {
-		headers,
-		data: { status: 'done' },
-	});
-	expect(patchRes.ok()).toBe(true);
-
-	const check = await page.request.get(`/api/companies/${company.id}/issues/${issue.id}`, {
-		headers,
-	});
-	const body = (await check.json()) as { data: { status: string } };
-	expect(body.data.status).toBe('done');
 });

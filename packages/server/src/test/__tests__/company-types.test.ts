@@ -34,6 +34,45 @@ describe('company types CRUD', () => {
 		expect(builtin.agent_types).toHaveLength(11);
 	});
 
+	it('builtin Startup type seeds every agent with a substantive system prompt', async () => {
+		const res = await app.request('/api/company-types', {
+			headers: authHeader(token),
+		});
+		const types = (await res.json()).data;
+		const builtin = types.find((t: Record<string, unknown>) => t.name === 'Startup');
+
+		const expectedSlugs = [
+			'ceo',
+			'architect',
+			'product-lead',
+			'engineer',
+			'qa-engineer',
+			'ui-designer',
+			'devops-engineer',
+			'marketing-lead',
+			'researcher',
+			'security-engineer',
+			'coach',
+		];
+		for (const slug of expectedSlugs) {
+			const agent = builtin.agent_types.find((a: Record<string, unknown>) => a.slug === slug);
+			expect(agent, `agent slug ${slug} should be seeded`).toBeTruthy();
+			expect(typeof agent.system_prompt).toBe('string');
+			expect(agent.system_prompt.length).toBeGreaterThan(100);
+		}
+
+		const ceo = builtin.agent_types.find((a: Record<string, unknown>) => a.slug === 'ceo');
+		expect(ceo.system_prompt).toContain('You are the CEO of');
+		expect(ceo.system_prompt).toContain('{{company_name}}');
+		expect(ceo.system_prompt).toMatch(/##\s+Rules\b/);
+
+		const engineer = builtin.agent_types.find(
+			(a: Record<string, unknown>) => a.slug === 'engineer',
+		);
+		expect(engineer.system_prompt).toContain('You are an Engineer at');
+		expect(engineer.system_prompt).toContain('{{reports_to}}');
+	});
+
 	it('creates a custom company type', async () => {
 		const res = await app.request('/api/company-types', {
 			method: 'POST',

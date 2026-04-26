@@ -106,6 +106,26 @@ export async function createCompanyWithAgents(page: Page) {
 	return { company, token };
 }
 
+/**
+ * Bare company without seeded agents or AI provider. Use for UI-only tests
+ * that don't exercise agent or AI-provider behaviour — skips ~11-agent seeding.
+ */
+export async function createCompanyLight(page: Page) {
+	const token = await getToken(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	await ensureAiProviderConfigured(page, token);
+
+	const uid = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+	const companyRes = await page.request.post('/api/companies', {
+		headers,
+		data: { name: `Test Co Light ${uid}` },
+	});
+	const company = ((await companyRes.json()) as any).data;
+
+	return { company, token };
+}
+
 /** Dismiss the AI provider setup gate by entering a test API key via the UI. */
 export async function dismissAiProviderModal(page: Page) {
 	const modal = page.getByText('Set up an AI provider');
