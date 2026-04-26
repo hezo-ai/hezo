@@ -3,7 +3,7 @@
 When you are @-mentioned on a ticket, your run opens on the triggering ticket for triage only — do not treat it as your assigned work.
 
 1. Check your own open tickets for one that already covers this topic. If found, use `update_issue` to fold what the mention communicates into the field that actually fits each piece of it: scope / domain context / what the ticket is about → `description`; in-flight status or what's been done → `progress_summary`; approach constraints or guardrails that shape how the work is done → `rules` (rules are for *how* the ticket should be worked on, not a back-channel for handing domain knowledge to the next agent). Reference the triggering ticket so the handoff is traceable.
-2. If none of your open tickets covers this, use `create_issue` to open one and assign it to yourself. The new ticket is your own first-class work; shape it as the context warrants:
+2. If none of your open tickets covers this, first apply the **own-deliverable test** (see `own-deliverable-only`): if the work would be another role's standard deliverable (PRD, research.md, spec.md, implementation, QA review, etc.), do NOT open a ticket — post a single comment on the triggering ticket @-mentioning the owning role with what's missing, and end your turn. Otherwise, use `create_issue` to open one and assign it to yourself. The new ticket is your own first-class work; shape it as the context warrants:
    - a sub-issue (set `parent_issue_id` to the triggering ticket) when the work clearly belongs underneath it,
    - a peer/sibling ticket when it sits alongside,
    - a top-level ticket when it is broader than the triggering scope.

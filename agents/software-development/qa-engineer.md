@@ -81,6 +81,7 @@ On heartbeats, audit the entire codebase across these areas:
 {{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
+{{> partials/common/own-deliverable-only}}
 {{> partials/common/mention-handoff}}
 
 ---

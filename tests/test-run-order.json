@@ -1,1 +1,7 @@
-{}
+{
+  "packages/server/src/test/__tests__/resolve-partials.test.ts": 3615,
+  "packages/server/src/test/__tests__/runtime-resolver.test.ts": 4894,
+  "packages/server/src/test/__tests__/resolve.test.ts": 4935,
+  "packages/server/src/test/__tests__/issues-resolve.test.ts": 4976,
+  "packages/server/src/test/__tests__/template-resolver.test.ts": 5111
+}
