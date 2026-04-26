@@ -10,6 +10,7 @@ import {
 } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
+import { recordStatusChange } from './issue-events';
 import { OAUTH_VERIFICATION_LABEL } from './oauth-verification-tasks';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -107,9 +108,13 @@ export async function triggerStatusAutomations(
 	db: PGlite,
 	companyId: string,
 	issueId: string,
+	oldStatus: string,
 	newStatus: string,
+	actorMemberId: string | null,
 	wsManager?: WebSocketManager,
 ): Promise<void> {
+	await recordStatusChange(db, companyId, issueId, oldStatus, newStatus, actorMemberId, wsManager);
+
 	if (newStatus === IssueStatus.Done) {
 		const coach = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma

@@ -84,7 +84,15 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 			IssueStatus.Done,
 			verif!.issueId,
 		]);
-		await triggerStatusAutomations(db, companyId, verif!.issueId, IssueStatus.Done);
+		await triggerStatusAutomations(
+			db,
+			companyId,
+			verif!.issueId,
+			IssueStatus.Backlog,
+			IssueStatus.Done,
+			null,
+			undefined,
+		);
 
 		const comments = await db.query<{
 			content: { text?: string };
@@ -112,7 +120,15 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 			IssueStatus.Done,
 			verif!.issueId,
 		]);
-		await triggerStatusAutomations(db, companyId, verif!.issueId, IssueStatus.Done);
+		await triggerStatusAutomations(
+			db,
+			companyId,
+			verif!.issueId,
+			IssueStatus.Backlog,
+			IssueStatus.Done,
+			null,
+			undefined,
+		);
 
 		const commentsAfter = await db.query<{ count: string }>(
 			`SELECT count(*)::text AS count FROM issue_comments
@@ -133,12 +149,30 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 			IssueStatus.Done,
 			parentId,
 		]);
-		await triggerStatusAutomations(db, companyId, parentId, IssueStatus.Done);
+		await triggerStatusAutomations(
+			db,
+			companyId,
+			parentId,
+			IssueStatus.Backlog,
+			IssueStatus.Done,
+			null,
+			undefined,
+		);
 
 		const after = await db.query<{ count: string }>(
 			'SELECT count(*)::text AS count FROM issue_comments WHERE issue_id = $1',
 			[parentId],
 		);
-		expect(after.rows[0].count).toBe(before.rows[0].count);
+		expect(Number.parseInt(after.rows[0].count, 10)).toBe(
+			Number.parseInt(before.rows[0].count, 10) + 1,
+		);
+		const sysComment = await db.query<{ content: { kind?: string; from?: string; to?: string } }>(
+			`SELECT content FROM issue_comments
+			 WHERE issue_id = $1 AND content_type = 'system'
+			 ORDER BY created_at DESC LIMIT 1`,
+			[parentId],
+		);
+		expect(sysComment.rows[0]?.content.kind).toBe('status_change');
+		expect(sysComment.rows[0]?.content.to).toBe(IssueStatus.Done);
 	});
 });

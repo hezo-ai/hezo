@@ -33,6 +33,7 @@ import {
 	upsertDocument,
 } from '../services/documents';
 import { triggerStatusAutomations } from '../services/issue-automation';
+import { recordIssueLinks } from '../services/issue-events';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
 
@@ -357,6 +358,18 @@ export function registerTools(
 				}).catch((e) => log.error('Failed to wake agent:', e));
 			}
 
+			if (args.description) {
+				const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+				recordIssueLinks(
+					db,
+					args.company_id as string,
+					r.rows[0].id,
+					args.description as string,
+					actorMemberId,
+					wsManager,
+				).catch((e) => log.error('Failed to record issue links from description:', e));
+			}
+
 			return r.rows[0];
 		},
 		db,
@@ -398,14 +411,18 @@ export function registerTools(
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 
-			if (args.status !== undefined && auth.type === AuthType.Agent) {
-				const currentStatus = await db.query<{ status: string }>(
-					'SELECT status FROM issues WHERE id = $1 AND company_id = $2',
-					[args.issue_id, args.company_id],
-				);
-				if (currentStatus.rows[0]?.status === IssueStatus.Closed) {
-					return { error: 'Only board members can re-open a closed issue' };
-				}
+			const currentStatusResult = await db.query<{ status: string }>(
+				'SELECT status FROM issues WHERE id = $1 AND company_id = $2',
+				[args.issue_id, args.company_id],
+			);
+			const currentStatus = currentStatusResult.rows[0]?.status;
+
+			if (
+				args.status !== undefined &&
+				auth.type === AuthType.Agent &&
+				currentStatus === IssueStatus.Closed
+			) {
+				return { error: 'Only board members can re-open a closed issue' };
 			}
 
 			if (args.status === IssueStatus.Done || args.status === IssueStatus.Closed) {
@@ -488,13 +505,29 @@ export function registerTools(
 			);
 			if (!r.rows[0]) return null;
 
-			// Trigger status automations (e.g. Coach wakeup on Done)
-			if (args.status) {
+			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+
+			if (args.description !== undefined) {
+				recordIssueLinks(
+					db,
+					args.company_id as string,
+					args.issue_id as string,
+					args.description as string,
+					actorMemberId,
+					wsManager,
+				).catch((e) => log.error('Failed to record issue links from description:', e));
+			}
+
+			// Trigger status automations (e.g. Coach wakeup on Done) and record the change
+			if (args.status && currentStatus) {
 				triggerStatusAutomations(
 					db,
 					args.company_id as string,
 					args.issue_id as string,
+					currentStatus,
 					args.status as string,
+					actorMemberId,
+					wsManager,
 				).catch((e) => log.error('Failed to trigger status automations:', e));
 			}
 
@@ -741,6 +774,14 @@ export function registerTools(
 				authorMemberId,
 				authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
 			});
+			recordIssueLinks(
+				db,
+				args.company_id as string,
+				args.issue_id as string,
+				args.content as string,
+				authorMemberId,
+				wsManager,
+			).catch((e) => log.error('Failed to record issue links from comment:', e));
 			return r.rows[0];
 		},
 		db,

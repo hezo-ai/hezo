@@ -28,6 +28,7 @@ import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import { ensureIssueWorktree, fetchRepo } from './git';
+import { recordStatusChange } from './issue-events';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
 import { resolveRuntimeForIssue } from './runtime-resolver';
@@ -1124,6 +1125,17 @@ export async function createHeartbeatRun(
 				},
 			);
 		}
+	}
+	if (statusFlippedToInProgress) {
+		await recordStatusChange(
+			db,
+			broadcast.companyId,
+			issue.id,
+			IssueStatus.Backlog,
+			IssueStatus.InProgress,
+			agent.id,
+			broadcast.wsManager,
+		);
 	}
 	return runId;
 }

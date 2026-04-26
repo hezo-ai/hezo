@@ -978,6 +978,33 @@ Request:
 Sets `chosen_option` on the comment and posts a system comment recording the
 choice. Triggers the assigned agent.
 
+#### System events appended by the server
+
+The server automatically appends `system`-typed comments for two events:
+
+- **Status change** — fires whenever an issue's status changes, regardless of
+  the path that drove it (PATCH `/companies/:companyId/issues/:issueId`, MCP
+  `update_issue`, hire-approval auto-Done, agent-runner auto-flip
+  `backlog → in_progress`, Coach auto-close `done → closed`). A no-op PATCH
+  (status set to its current value) records nothing.
+  Body: `{ "kind": "status_change", "from": "<old>", "to": "<new>", "actor_id":
+  "<member_uuid|null>", "text": "<actor> changed status from <old> to <new>" }`.
+  `author_member_id` is the actor's member id (or `null` for unattributable
+  automations).
+- **Issue link** — fires on the **target** issue the first time a given source
+  issue mentions it. Sources are scanned in: descriptions on POST `/issues` and
+  PATCH `/issues/:issueId`, comments on POST `/issues/:issueId/comments`, and
+  the MCP equivalents (`create_issue`, `update_issue`, `create_comment`).
+  Subsequent mentions from the same source are silently deduped via the
+  `source_issue_id` JSONB key. Cross-company, self-, code-block, inline-code,
+  and unknown-identifier mentions are ignored.
+  Body: `{ "kind": "issue_link", "source_issue_id": "<uuid>",
+  "source_identifier": "<e.g. OP-42>", "actor_id": "<member_uuid|null>",
+  "text": "Linked from <source_identifier> by <actor>" }`.
+
+Both events broadcast over the company WebSocket as `RowChange` /
+`issue_comments` / `INSERT`, so live viewers see them without a refresh.
+
 ---
 
 ### Tool Calls

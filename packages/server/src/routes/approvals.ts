@@ -4,6 +4,7 @@ import {
 	AgentAdminStatus,
 	ApprovalStatus,
 	ApprovalType,
+	AuthType,
 	DocumentType,
 	IssueStatus,
 	MemberType,
@@ -17,6 +18,8 @@ import { logger } from '../logger';
 import { requireCompanyAccess, requireCompanyAccessForResource } from '../middleware/auth';
 import { enqueueAgentSummaryTask, enqueueTeamSummaryTask } from '../services/description-tasks';
 import { upsertDocument } from '../services/documents';
+import { recordStatusChange } from '../services/issue-events';
+import type { WebSocketManager } from '../services/ws';
 
 const log = logger.child('approvals');
 
@@ -30,6 +33,8 @@ async function applyApprovalSideEffect(
 	db: PGlite,
 	approval: Record<string, unknown>,
 	_dataDir: string,
+	actorMemberId: string | null,
+	wsManager: WebSocketManager | undefined,
 ): Promise<SideEffectBroadcast[]> {
 	const payload = approval.payload as Record<string, unknown>;
 	const broadcasts: SideEffectBroadcast[] = [];
@@ -94,13 +99,30 @@ async function applyApprovalSideEffect(
 			});
 
 			if (payload.issue_id) {
+				const issueId = payload.issue_id as string;
+				const prior = await db.query<{ status: string }>(
+					'SELECT status FROM issues WHERE id = $1',
+					[issueId],
+				);
+				const oldStatus = prior.rows[0]?.status;
 				const issueUpdate = await db.query<Record<string, unknown>>(
 					`UPDATE issues SET status = $1::issue_status, updated_at = now()
 					 WHERE id = $2 RETURNING *`,
-					[IssueStatus.Done, payload.issue_id as string],
+					[IssueStatus.Done, issueId],
 				);
 				if (issueUpdate.rows[0]) {
 					broadcasts.push({ table: 'issues', op: 'UPDATE', row: issueUpdate.rows[0] });
+					if (oldStatus) {
+						await recordStatusChange(
+							db,
+							companyId,
+							issueId,
+							oldStatus,
+							IssueStatus.Done,
+							actorMemberId,
+							wsManager,
+						);
+					}
 				}
 			}
 
@@ -330,7 +352,26 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 
 	if (body.status === ApprovalStatus.Approved) {
 		const dataDir = c.get('dataDir');
-		sideEffects = await applyApprovalSideEffect(db, row, dataDir);
+		const auth = c.get('auth');
+		let actorMemberId: string | null = null;
+		if (auth.type === AuthType.Agent) {
+			actorMemberId = auth.memberId;
+		} else if (auth.type === AuthType.Board) {
+			const r = await db.query<{ id: string }>(
+				`SELECT m.id FROM members m
+				   JOIN member_users mu ON mu.id = m.id
+				  WHERE mu.user_id = $1 AND m.company_id = $2`,
+				[auth.userId, existing.rows[0].company_id],
+			);
+			actorMemberId = r.rows[0]?.id ?? null;
+		}
+		sideEffects = await applyApprovalSideEffect(
+			db,
+			row,
+			dataDir,
+			actorMemberId,
+			c.get('wsManager'),
+		);
 	}
 
 	if (row.company_id) {

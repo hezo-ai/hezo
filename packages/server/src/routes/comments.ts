@@ -8,6 +8,7 @@ import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
+import { recordIssueLinks } from '../services/issue-events';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
@@ -123,6 +124,13 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		effort: commentEffort,
 		wakeAssignee,
 	});
+
+	const commentText = typeof body.content?.text === 'string' ? body.content.text : '';
+	if (commentText) {
+		recordIssueLinks(db, companyId, issueId, commentText, authorMemberId, c.get('wsManager')).catch(
+			(e) => log.error('Failed to record issue links from comment:', e),
+		);
+	}
 
 	broadcastChange(
 		c,
