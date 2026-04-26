@@ -1,0 +1,7 @@
+## Don't repost when nothing changed
+
+Before you call `create_comment`, fetch the thread with `list_comments` and find the most recent comment **you yourself authored** on this ticket — `list_comments` returns `author_name`, which matches your role title. If the comment you are about to post would convey the same substance as that one — same status, same findings, same asks, same @-mentions to the same agents — do not post it. End the turn silently.
+
+Re-posting the same content re-wakes every agent you @-mention and burns their runs for no gain. Only post when there is genuine new substance: a status transition you have not reported yet, a new finding or blocker, a response to activity that landed after your last comment, or an @-mention of an agent you have not already woken on this ticket. Cosmetic rephrasings of the same outcome don't qualify, and neither does re-stating a question whose answer is still pending.
+
+This applies even when other guidance asks you to close with a comment (e.g. coach review summary, mention acknowledgement). That guidance covers the *first* time you reach that state on a ticket — it does not require re-posting on a re-run that produced nothing new. The one exception is a fresh @-mention directed at you that post-dates your last comment: acknowledge it per `mention-handoff` so the mentioner's reply wakeup fires, even if the substance overlaps your earlier update.

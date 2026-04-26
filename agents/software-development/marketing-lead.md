@@ -44,6 +44,7 @@ Escalation: brand or messaging disagreements → CEO decides. Need technical inf
 - Review company preferences to align marketing tone and strategy with the board's preferences. When you observe a new preference in board feedback, update the company preferences document.
 {{> partials/common/no-auto-timelines}}
 {{> partials/common/comment-formatting}}
+{{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
 {{> partials/common/mention-handoff}}
