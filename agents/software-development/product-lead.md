@@ -51,7 +51,7 @@ You are the second step in the ticket workflow (after the Researcher).
 {{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
-{{> partials/common/own-deliverable-only}}
+{{> partials/common/check-before-create}}
 {{> partials/common/mention-handoff}}
 
 ---

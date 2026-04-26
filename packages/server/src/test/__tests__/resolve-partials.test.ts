@@ -130,6 +130,15 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			expect(docs[key], `${key} should mention the depth-2 cap`).toContain(
 				'capped at two levels deep',
 			);
+			expect(docs[key], `${key} should explain the parent-deliverable distinction`).toContain(
+				"## What counts as the parent's deliverable",
+			);
+			expect(docs[key], `${key} should call out the planning-ticket parent case`).toContain(
+				'**Planning ticket parent**',
+			);
+			expect(docs[key], `${key} should call out the implementation/feature parent case`).toContain(
+				'**Implementation / feature / bug-fix parent**',
+			);
 		}
 
 		// Every role doc picks up the no-redundant-comments guidance so that re-runs
@@ -146,10 +155,13 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			);
 		}
 
-		// Both CEO docs pick up the delegated-tickets-are-top-level guidance.
-		for (const ceoKey of ['software-development/ceo.md', 'blank/ceo.md']) {
-			expect(docs[ceoKey], `${ceoKey} should include the delegation heading`).toContain(
-				'## Delegated tickets are top-level',
+		// Every role doc picks up the duplicate-check guidance before opening a new ticket.
+		for (const key of allRoleKeys) {
+			expect(docs[key], `${key} should include the duplicate-check heading`).toContain(
+				'## Check before you create',
+			);
+			expect(docs[key], `${key} should reference list_issues for the duplicate check`).toContain(
+				'`list_issues`',
 			);
 		}
 

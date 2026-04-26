@@ -54,7 +54,7 @@ Escalation: infrastructure outages → @-mention the Architect and CEO immediate
 {{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
-{{> partials/common/own-deliverable-only}}
+{{> partials/common/check-before-create}}
 {{> partials/common/mention-handoff}}
 
 ---
