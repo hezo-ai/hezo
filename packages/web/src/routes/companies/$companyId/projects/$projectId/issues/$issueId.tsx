@@ -210,10 +210,6 @@ function IssueDetailPage() {
 					)}
 				</div>
 
-				{lock && lock.locks.length > 0 && (
-					<RunningAgentsLine locks={lock.locks} comments={comments ?? []} />
-				)}
-
 				{issue.description && (
 					<div
 						className="mb-5 rounded-md border border-border bg-bg-elevated overflow-hidden"
@@ -552,7 +548,21 @@ function IssueDetailPage() {
 							placeholder="Add a comment..."
 							className="min-h-[60px]"
 						/>
-						<div className="flex items-center justify-end gap-2">
+						<div className="flex items-center justify-between gap-2">
+							{issue.assignee_id ? (
+								<label className="flex items-center gap-2 text-[13px] text-text-muted cursor-pointer select-none">
+									<input
+										type="checkbox"
+										checked={wakeAssignee}
+										onChange={(e) => setWakeAssignee(e.target.checked)}
+										className="rounded"
+										aria-label="Wake assignee on submit"
+									/>
+									<span>Wake assignee</span>
+								</label>
+							) : (
+								<span />
+							)}
 							<Button
 								type="submit"
 								size="sm"
@@ -571,6 +581,10 @@ function IssueDetailPage() {
 				data-testid="issue-sidebar"
 				className="flex flex-col gap-4 text-xs lg:sticky lg:top-0 lg:self-start"
 			>
+				{lock && lock.locks.length > 0 && (
+					<RunningAgentsLine locks={lock.locks} comments={comments ?? []} />
+				)}
+
 				<div>
 					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
 						Priority
@@ -693,19 +707,6 @@ function IssueDetailPage() {
 					</select>
 				</div>
 
-				{issue.assignee_id && (
-					<label className="flex items-center gap-2 text-[13px] text-text cursor-pointer select-none">
-						<input
-							type="checkbox"
-							checked={wakeAssignee}
-							onChange={(e) => setWakeAssignee(e.target.checked)}
-							className="rounded"
-							aria-label="Wake assignee on submit"
-						/>
-						<span>Wake assignee</span>
-					</label>
-				)}
-
 				<div className="mt-auto pt-4 border-t border-border">
 					{issue.status === IssueStatus.Closed ? (
 						<Button
@@ -820,7 +821,7 @@ function RunningAgentsLine({
 
 	return (
 		<div
-			className="flex items-center flex-wrap gap-x-1.5 gap-y-1 rounded-radius-md bg-accent-blue-bg px-3 py-2 text-xs mb-4"
+			className="flex items-center flex-wrap gap-x-1.5 gap-y-1 rounded-radius-md bg-accent-blue-bg px-3 py-2 text-xs"
 			data-testid="running-agents-line"
 		>
 			<span className="w-2 h-2 rounded-full bg-accent-blue animate-pulse shrink-0" />
@@ -828,7 +829,7 @@ function RunningAgentsLine({
 				{parts.map((p) => (
 					<Fragment key={p.key}>{p.node}</Fragment>
 				))}{' '}
-				<span className="text-text-muted">{verb} running on this issue</span>
+				<span className="text-text-muted">{verb} running</span>
 			</span>
 		</div>
 	);

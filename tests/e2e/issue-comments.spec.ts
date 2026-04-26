@@ -215,8 +215,14 @@ test.describe('Issue Comments', () => {
 		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
-		const checkbox = page.getByRole('checkbox', { name: 'Wake assignee on submit' });
-		await expect(checkbox).toBeVisible({ timeout: 20000 });
+		const sidebar = page.getByTestId('issue-sidebar');
+		await expect(sidebar.getByRole('checkbox', { name: 'Wake assignee on submit' })).toHaveCount(0);
+
+		const textarea = page.getByPlaceholder('Add a comment...');
+		await expect(textarea).toBeVisible({ timeout: 20000 });
+		const commentForm = textarea.locator('xpath=ancestor::form');
+		const checkbox = commentForm.getByRole('checkbox', { name: 'Wake assignee on submit' });
+		await expect(checkbox).toBeVisible();
 		await expect(checkbox).toBeChecked();
 
 		const postBodies: Array<Record<string, unknown>> = [];
@@ -229,7 +235,6 @@ test.describe('Issue Comments', () => {
 			}
 		});
 
-		const textarea = page.getByPlaceholder('Add a comment...');
 		const submit = page.getByRole('button', { name: 'Comment', exact: true });
 
 		await textarea.fill('wake-assignee on');

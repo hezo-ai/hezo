@@ -258,7 +258,7 @@ test.describe('Issue detail — friendly URLs and mentions', () => {
 });
 
 test.describe('Issue detail — right sidebar', () => {
-	test('right sidebar floats sticky on desktop scroll and houses Effort + Wake-assignee controls', async ({
+	test('right sidebar floats sticky on desktop scroll and houses the Effort control while wake-assignee lives in the comment form', async ({
 		page,
 		freshWorkspace,
 	}) => {
@@ -317,8 +317,6 @@ test.describe('Issue detail — right sidebar', () => {
 		);
 		await expect(effort).toBeVisible();
 
-		const wake = sidebar.getByRole('checkbox', { name: 'Wake assignee on submit' });
-		await expect(wake).toBeVisible();
-		await expect(wake).toBeChecked();
+		await expect(sidebar.getByRole('checkbox', { name: 'Wake assignee on submit' })).toHaveCount(0);
 	});
 });
