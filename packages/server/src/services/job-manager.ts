@@ -772,10 +772,7 @@ export class JobManager {
 					// Background run errors must not become unhandled rejections — they
 					// most commonly fire when a test or shutdown closes the DB while a
 					// run is still cleaning up. Log and swallow.
-					log.error(
-						`Background run for agent ${memberId} on issue ${issue.id} failed:`,
-						err,
-					);
+					log.error(`Background run for agent ${memberId} on issue ${issue.id} failed:`, err);
 					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
 					return null;
 				} finally {

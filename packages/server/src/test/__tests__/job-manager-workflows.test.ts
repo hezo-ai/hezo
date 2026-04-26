@@ -1149,10 +1149,10 @@ describe('JobManager workflow methods', () => {
 			const busy = await (manager as any).isIssueBusy({ issue_id: issueId });
 			expect(busy).toBe(true);
 
-			await db.query("UPDATE heartbeat_runs SET status = 'succeeded', finished_at = now() WHERE issue_id = $1 AND member_id = $2", [
-				issueId,
-				agentId,
-			]);
+			await db.query(
+				"UPDATE heartbeat_runs SET status = 'succeeded', finished_at = now() WHERE issue_id = $1 AND member_id = $2",
+				[issueId, agentId],
+			);
 			const busyAfter = await (manager as any).isIssueBusy({ issue_id: issueId });
 			expect(busyAfter).toBe(false);
 
