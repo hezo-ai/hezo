@@ -373,7 +373,13 @@ export class JobManager {
 			);
 
 			try {
-				await this.activateAgent(wakeup.member_id, wakeup.company_id, wakeup.id, wakeup.payload);
+				await this.activateAgent(
+					wakeup.member_id,
+					wakeup.company_id,
+					wakeup.id,
+					wakeup.payload,
+					wakeup.source,
+				);
 			} catch (error) {
 				log.error(`activateAgent threw for wakeup ${wakeup.id}:`, error);
 				await db
@@ -422,6 +428,7 @@ export class JobManager {
 		companyId: string,
 		wakeupId?: string,
 		wakeupPayload?: Record<string, unknown>,
+		wakeupSource?: string,
 	): Promise<void> {
 		const { db, docker, masterKeyManager, serverPort } = this.deps;
 
@@ -554,7 +561,11 @@ export class JobManager {
 
 		const projectRow = project.rows[0];
 		const agentSlug = agent.rows[0].slug;
-		if (!projectRow.designated_repo_id && agent.rows[0].touches_code) {
+		const isConversationalWakeup =
+			wakeupSource === WakeupSource.Mention ||
+			wakeupSource === WakeupSource.Comment ||
+			wakeupSource === WakeupSource.Reply;
+		if (!isConversationalWakeup && !projectRow.designated_repo_id && agent.rows[0].touches_code) {
 			try {
 				const ensured = await ensureRepoSetupAction(db, {
 					companyId,

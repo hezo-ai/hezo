@@ -52,6 +52,29 @@ export async function resolveIssueId(
 	return result.rows[0]?.id ?? null;
 }
 
+export async function resolveAgentId(
+	db: PGlite,
+	companyId: string,
+	raw: string,
+): Promise<string | null> {
+	if (UUID_RE.test(raw)) {
+		const result = await db.query<{ id: string }>(
+			`SELECT m.id FROM members m
+			 JOIN member_agents ma ON ma.id = m.id
+			 WHERE m.company_id = $1 AND m.id = $2`,
+			[companyId, raw],
+		);
+		return result.rows[0]?.id ?? null;
+	}
+	const result = await db.query<{ id: string }>(
+		`SELECT m.id FROM members m
+		 JOIN member_agents ma ON ma.id = m.id
+		 WHERE m.company_id = $1 AND ma.slug = $2`,
+		[companyId, raw],
+	);
+	return result.rows[0]?.id ?? null;
+}
+
 export interface ProjectLocator {
 	id: string;
 	slug: string;

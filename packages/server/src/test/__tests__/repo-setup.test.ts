@@ -446,6 +446,167 @@ describe('JobManager repo-setup gate', () => {
 		manager.shutdown();
 	});
 
+	it('skips the gate for a code-touching agent woken via Mention on a non-owned ticket', async () => {
+		await db.query(
+			`DELETE FROM approvals WHERE company_id = $1 AND status = $2::approval_status
+			   AND payload->>'project_id' = $3 AND payload->>'reason' = $4`,
+			[companyId, ApprovalStatus.Pending, projectId, OAuthRequestReason.DesignatedRepo],
+		);
+		await db.query('UPDATE projects SET designated_repo_id = NULL WHERE id = $1', [projectId]);
+		await db.query(
+			"UPDATE projects SET container_id = NULL, container_status = 'stopped' WHERE id = $1",
+			[projectId],
+		);
+
+		const engineerId = await getEngineerAgentId();
+		const ceoRes = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1 AND ma.slug = 'ceo' LIMIT 1`,
+			[companyId],
+		);
+		const ceoId = ceoRes.rows[0].id;
+		const planningIssueId = await createIssue(ceoId, 'CEO planning ticket');
+
+		const manager = createJobManager();
+		const wakeupRes = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+			 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
+			 RETURNING id`,
+			[engineerId, companyId, JSON.stringify({ issue_id: planningIssueId })],
+		);
+		const wakeupId = wakeupRes.rows[0].id;
+
+		await (
+			manager as unknown as {
+				activateAgent: (
+					id: string,
+					cid: string,
+					wid: string,
+					p: Record<string, unknown>,
+					source?: string,
+				) => Promise<void>;
+			}
+		).activateAgent(engineerId, companyId, wakeupId, { issue_id: planningIssueId }, 'mention');
+
+		const wakeup = await db.query<{ status: string; payload: Record<string, unknown> }>(
+			'SELECT status, payload FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		expect(wakeup.rows[0].status).not.toBe(WakeupStatus.Deferred);
+		expect(wakeup.rows[0].payload.reason).not.toBe('awaiting_repo_setup');
+
+		const setupComments = await db.query<{ id: string }>(
+			`SELECT id FROM issue_comments
+			 WHERE issue_id = $1 AND content_type = $2::comment_content_type
+			   AND content->>'kind' = $3`,
+			[planningIssueId, CommentContentType.Action, ActionCommentKind.SetupRepo],
+		);
+		expect(setupComments.rows.length).toBe(0);
+
+		manager.shutdown();
+	});
+
+	it('skips the gate for a code-touching agent woken via Reply', async () => {
+		await db.query(
+			`DELETE FROM approvals WHERE company_id = $1 AND status = $2::approval_status
+			   AND payload->>'project_id' = $3 AND payload->>'reason' = $4`,
+			[companyId, ApprovalStatus.Pending, projectId, OAuthRequestReason.DesignatedRepo],
+		);
+		await db.query('UPDATE projects SET designated_repo_id = NULL WHERE id = $1', [projectId]);
+		await db.query(
+			"UPDATE projects SET container_id = NULL, container_status = 'stopped' WHERE id = $1",
+			[projectId],
+		);
+
+		const engineerId = await getEngineerAgentId();
+		const issueId = await createIssue(engineerId, 'reply wakeup');
+
+		const manager = createJobManager();
+		const wakeupRes = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+			 VALUES ($1, $2, 'reply', 'claimed', now() - interval '30 seconds', $3::jsonb)
+			 RETURNING id`,
+			[engineerId, companyId, JSON.stringify({ issue_id: issueId })],
+		);
+		const wakeupId = wakeupRes.rows[0].id;
+
+		await (
+			manager as unknown as {
+				activateAgent: (
+					id: string,
+					cid: string,
+					wid: string,
+					p: Record<string, unknown>,
+					source?: string,
+				) => Promise<void>;
+			}
+		).activateAgent(engineerId, companyId, wakeupId, { issue_id: issueId }, 'reply');
+
+		const wakeup = await db.query<{ status: string; payload: Record<string, unknown> }>(
+			'SELECT status, payload FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		expect(wakeup.rows[0].status).not.toBe(WakeupStatus.Deferred);
+		expect(wakeup.rows[0].payload.reason).not.toBe('awaiting_repo_setup');
+
+		const setupComments = await db.query<{ id: string }>(
+			`SELECT id FROM issue_comments
+			 WHERE issue_id = $1 AND content_type = $2::comment_content_type
+			   AND content->>'kind' = $3`,
+			[issueId, CommentContentType.Action, ActionCommentKind.SetupRepo],
+		);
+		expect(setupComments.rows.length).toBe(0);
+
+		manager.shutdown();
+	});
+
+	it('still gates an Assignment-source wakeup for a code-touching agent', async () => {
+		await db.query(
+			`DELETE FROM approvals WHERE company_id = $1 AND status = $2::approval_status
+			   AND payload->>'project_id' = $3 AND payload->>'reason' = $4`,
+			[companyId, ApprovalStatus.Pending, projectId, OAuthRequestReason.DesignatedRepo],
+		);
+		await db.query('UPDATE projects SET designated_repo_id = NULL WHERE id = $1', [projectId]);
+		await db.query(
+			"UPDATE projects SET container_id = NULL, container_status = 'stopped' WHERE id = $1",
+			[projectId],
+		);
+
+		const engineerId = await getEngineerAgentId();
+		const issueId = await createIssue(engineerId, 'assignment wakeup');
+
+		const manager = createJobManager();
+		const wakeupRes = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+			 VALUES ($1, $2, 'assignment', 'claimed', now() - interval '30 seconds', $3::jsonb)
+			 RETURNING id`,
+			[engineerId, companyId, JSON.stringify({ issue_id: issueId })],
+		);
+		const wakeupId = wakeupRes.rows[0].id;
+
+		await (
+			manager as unknown as {
+				activateAgent: (
+					id: string,
+					cid: string,
+					wid: string,
+					p: Record<string, unknown>,
+					source?: string,
+				) => Promise<void>;
+			}
+		).activateAgent(engineerId, companyId, wakeupId, { issue_id: issueId }, 'assignment');
+
+		const wakeup = await db.query<{ status: string; payload: Record<string, unknown> }>(
+			'SELECT status, payload FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		expect(wakeup.rows[0].status).toBe(WakeupStatus.Deferred);
+		expect(wakeup.rows[0].payload.reason).toBe('awaiting_repo_setup');
+
+		manager.shutdown();
+	});
+
 	it('gates a custom agent when touches_code=true, even though its slug is not builtin', async () => {
 		const createRes = await app.request(`/api/companies/${companyId}/agents`, {
 			method: 'POST',

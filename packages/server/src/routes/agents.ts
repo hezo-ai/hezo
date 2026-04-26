@@ -19,6 +19,7 @@ import {
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
+import { resolveAgentId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import { buildUpdateSet, terminalStatusParams } from '../lib/sql';
@@ -452,6 +453,8 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId', async (c) => {
 
 	const db = c.get('db');
 	const { companyId } = access;
+	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const ts2 = terminalStatusParams(3);
 	const result = await db.query(
@@ -461,12 +464,8 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId', async (c) => {
 		 FROM members m
 		 JOIN member_agents ma ON ma.id = m.id
 		 WHERE m.id = $1 AND m.company_id = $2`,
-		[c.req.param('agentId'), companyId, ...ts2.values],
+		[agentId, companyId, ...ts2.values],
 	);
-
-	if (result.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Agent not found', 404);
-	}
 
 	return ok(c, result.rows[0]);
 });
@@ -477,15 +476,8 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt', async (c
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const agentId = c.req.param('agentId');
-
-	const agent = await db.query(
-		'SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1 AND m.company_id = $2',
-		[agentId, companyId],
-	);
-	if (agent.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Agent not found', 404);
-	}
+	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const doc = await getDocument(db, {
 		type: DocumentType.AgentSystemPrompt,
@@ -501,7 +493,8 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt/revisions'
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const agentId = c.req.param('agentId');
+	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const doc = await getDocument(db, {
 		type: DocumentType.AgentSystemPrompt,
@@ -525,7 +518,8 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/system-prompt/restore',
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const agentId = c.req.param('agentId');
+	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const body = await c.req.json<{ revision_number: number }>();
 	if (typeof body.revision_number !== 'number') {
@@ -555,15 +549,8 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const agentId = c.req.param('agentId');
-
-	const existing = await db.query(
-		'SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1 AND m.company_id = $2',
-		[agentId, companyId],
-	);
-	if (existing.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Agent not found', 404);
-	}
+	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const body = await c.req.json<{
 		title?: string;
@@ -712,13 +699,13 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/disable', async (c) => 
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const agentId = c.req.param('agentId');
+	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const existing = await db.query<{ admin_status: string }>(
-		'SELECT ma.admin_status FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1 AND m.company_id = $2',
-		[agentId, companyId],
+		'SELECT admin_status FROM member_agents WHERE id = $1',
+		[agentId],
 	);
-	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 	if (existing.rows[0].admin_status === AgentAdminStatus.Disabled) {
 		return err(c, 'INVALID_STATE', 'Agent is already disabled', 409);
 	}
@@ -752,13 +739,13 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/enable', async (c) => {
 
 	const db = c.get('db');
 	const { companyId } = access;
-	const agentId = c.req.param('agentId');
+	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const existing = await db.query<{ admin_status: string }>(
-		'SELECT ma.admin_status FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1 AND m.company_id = $2',
-		[agentId, companyId],
+		'SELECT admin_status FROM member_agents WHERE id = $1',
+		[agentId],
 	);
-	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 	if (existing.rows[0].admin_status === AgentAdminStatus.Enabled) {
 		return err(c, 'INVALID_STATE', 'Agent is already enabled', 409);
 	}
@@ -823,7 +810,9 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs', async (
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const agentId = c.req.param('agentId');
+	const { companyId } = access;
+	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const result = await db.query(
 		`SELECT ${HEARTBEAT_RUN_COLUMNS}
@@ -844,7 +833,9 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs/:runId', 
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const agentId = c.req.param('agentId');
+	const { companyId } = access;
+	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 	const runId = c.req.param('runId');
 
 	const result = await db.query(
@@ -856,6 +847,6 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs/:runId', 
 		[runId, agentId],
 	);
 
-	if (result.rows.length === 0) return c.json({ error: 'Run not found' }, 404);
+	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Run not found', 404);
 	return ok(c, result.rows[0]);
 });

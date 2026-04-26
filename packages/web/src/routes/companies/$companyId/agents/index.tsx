@@ -54,7 +54,7 @@ function OrgNodeComponent({ node, companyId }: { node: OrgNode; companyId: strin
 		<div className="flex flex-col items-center">
 			<Link
 				to="/companies/$companyId/agents/$agentId"
-				params={{ companyId, agentId: node.id }}
+				params={{ companyId, agentId: node.slug }}
 				className="relative inline-flex items-center gap-2 rounded-radius-md border border-border bg-bg px-3.5 py-2 text-[13px] font-medium transition-[border-color] duration-150 hover:border-border-hover"
 			>
 				{status && <StatusDot status={status} />}

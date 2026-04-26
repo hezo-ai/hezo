@@ -110,7 +110,9 @@ test('issue detail shows execution lock banner when locked', async ({ page }) =>
 	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 
-	await expect(page.getByText('is running on this issue')).toBeVisible({ timeout: 15000 });
+	const sidebar = page.getByTestId('issue-sidebar');
+	await expect(sidebar.getByTestId('running-agents-line')).toBeVisible({ timeout: 15000 });
+	await expect(sidebar.getByText('is running')).toBeVisible();
 });
 
 test('issue detail lists every agent running concurrently on a ticket', async ({ page }) => {
@@ -169,9 +171,10 @@ test('issue detail lists every agent running concurrently on a ticket', async ({
 	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 
-	const runningLine = page.getByTestId('running-agents-line');
+	const sidebar = page.getByTestId('issue-sidebar');
+	const runningLine = sidebar.getByTestId('running-agents-line');
 	await expect(runningLine).toHaveCount(1, { timeout: 15000 });
-	await expect(runningLine).toContainText('are running on this issue');
+	await expect(runningLine).toContainText('are running');
 	await expect(runningLine).toContainText(firstAgent.title);
 	await expect(runningLine).toContainText(secondAgent.title);
 	await expect(runningLine).toContainText(' and ');

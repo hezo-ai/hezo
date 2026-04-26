@@ -89,6 +89,31 @@ describe('agents CRUD', () => {
 		expect(body.data).toHaveProperty('admin_status');
 	});
 
+	it('gets an agent by slug', async () => {
+		const res = await app.request(`/api/companies/${companyId}/agents/architect`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.slug).toBe('architect');
+	});
+
+	it('returns 404 for an unknown agent slug', async () => {
+		const res = await app.request(`/api/companies/${companyId}/agents/no-such-agent`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(404);
+	});
+
+	it('fetches the system prompt by agent slug', async () => {
+		const res = await app.request(`/api/companies/${companyId}/agents/architect/system-prompt`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(typeof body.data.content).toBe('string');
+	});
+
 	it('seeds the architect with a PRD gate instruction', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
 			headers: authHeader(token),

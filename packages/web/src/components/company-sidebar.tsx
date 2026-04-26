@@ -107,7 +107,7 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 			items: [],
 			children: activeAgents.map((agent) => ({
 				to: '/companies/$companyId/agents/$agentId',
-				params: { companyId, agentId: agent.id },
+				params: { companyId, agentId: agent.slug },
 				label: <AgentStatusLabel name={agent.title} runtimeStatus={agent.runtime_status} />,
 			})),
 		},

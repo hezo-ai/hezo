@@ -49,7 +49,7 @@ function HireAgentPage() {
 		} else if (result.agent) {
 			navigate({
 				to: '/companies/$companyId/agents/$agentId',
-				params: { companyId, agentId: result.agent.id },
+				params: { companyId, agentId: result.agent.slug },
 			});
 		} else {
 			navigate({ to: '/companies/$companyId/agents', params: { companyId } });
