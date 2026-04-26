@@ -118,6 +118,8 @@ test.describe('Mention handoff', () => {
 		await expect(page).toHaveURL(
 			new RegExp(`/companies/${company.slug}/agents/${architect.slug}(/|$)`),
 		);
+		await expect(page.getByTestId('agent-summary')).toBeVisible({ timeout: 15000 });
+		await expect(page.getByRole('heading', { name: architect.title })).toBeVisible();
 	});
 
 	test('mentioning multiple agents in one comment renders all mentions', async ({ page }) => {

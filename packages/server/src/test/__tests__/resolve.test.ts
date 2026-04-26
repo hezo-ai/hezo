@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { resolveCompanyId, resolveProjectId } from '../../lib/resolve';
+import { resolveAgentId, resolveCompanyId, resolveProjectId } from '../../lib/resolve';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
@@ -95,5 +95,45 @@ describe('resolveProjectId', () => {
 		const fakeUuid = '00000000-0000-0000-0000-000000000088';
 		const result = await resolveProjectId(db, companyId, fakeUuid);
 		expect(result).toBe(fakeUuid);
+	});
+});
+
+describe('resolveAgentId', () => {
+	let architectId: string;
+
+	beforeAll(async () => {
+		const row = await db.query<{ id: string }>(
+			'SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.company_id = $1 AND ma.slug = $2',
+			[companyId, 'architect'],
+		);
+		architectId = row.rows[0]?.id;
+		expect(architectId).toBeTruthy();
+	});
+
+	it('resolves a slug to the agent UUID', async () => {
+		const result = await resolveAgentId(db, companyId, 'architect');
+		expect(result).toBe(architectId);
+	});
+
+	it('returns the UUID directly when given a valid agent UUID for the company', async () => {
+		const result = await resolveAgentId(db, companyId, architectId);
+		expect(result).toBe(architectId);
+	});
+
+	it('returns null for an unknown slug', async () => {
+		const result = await resolveAgentId(db, companyId, 'definitely-not-a-real-slug');
+		expect(result).toBeNull();
+	});
+
+	it('returns null for a UUID that belongs to another company', async () => {
+		const otherCompany = '00000000-0000-0000-0000-000000000099';
+		const result = await resolveAgentId(db, otherCompany, architectId);
+		expect(result).toBeNull();
+	});
+
+	it('returns null for a slug that belongs to a different company', async () => {
+		const otherCompany = '00000000-0000-0000-0000-000000000099';
+		const result = await resolveAgentId(db, otherCompany, 'architect');
+		expect(result).toBeNull();
 	});
 });

@@ -88,7 +88,7 @@ test.describe('Sidebar — Team section', () => {
 		freshWorkspace,
 	}) => {
 		const { company, agents } = freshWorkspace;
-		const ceo = agents.find((a) => (a as { title?: string }).title === 'CEO') ?? agents[0];
+		const ceo = agents.find((a) => (a as { slug?: string }).slug === 'ceo') ?? agents[0];
 
 		await suppressAiModal(page);
 		await page.goto(`/companies/${company.slug}/issues`);
@@ -99,9 +99,10 @@ test.describe('Sidebar — Team section', () => {
 		await expect(nav.getByText('Architect')).toBeVisible();
 
 		await nav.getByText('CEO').click();
-		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/agents/${ceo.id}`), {
-			timeout: 15000,
-		});
+		await expect(page).toHaveURL(
+			new RegExp(`/companies/${company.slug}/agents/${(ceo as { slug: string }).slug}`),
+			{ timeout: 15000 },
+		);
 	});
 
 	test('Team section collapses, expands, and persists collapse state across navigation', async ({
