@@ -1159,6 +1159,13 @@ The system enforces these transitions. Invalid transitions return an error.
 
 **Auto-promotion on run start.** When an agent's heartbeat run starts on an issue assigned to that agent, the system promotes `backlog → in_progress` atomically as part of the run-creation transaction (see `createHeartbeatRun` in `services/agent-runner.ts`). The transition is gated on `assignee_id === agent.id` and `status === backlog` — mention-triage runs by non-assignees do not flip the column, and deliberate states (`review`, `blocked`, `approved`) are never overwritten by run start. The change is broadcast on the `issues` row channel so kanban surfaces update in real time.
 
+**Inviolable closure rules.** Two server-enforced guards block the `→ done` and `→ closed` transitions when the ticket is not actually finished:
+
+- **Sub-issues must be closed first.** A ticket with sub-issues cannot move to `done` or `closed` while any sub-issue is in any state other than `closed`. Sub-issues only reach `closed` after the Coach completes its post-mortem (see `services/job-manager.ts` — Coach success on an `issue_done` wakeup transitions the child `done → closed`). The guard is applied in the issue PATCH route, in the `update_issue` MCP tool, and as defense-in-depth in the Coach auto-close path itself. See `assertChildrenAllClosed` in `lib/issue-relationships.ts`.
+- **No outstanding pinged-agent activity.** A ticket cannot move to `done` while another agent (i.e. not the caller) has a `heartbeat_runs` row for it in `queued` / `running`, or while any `mention` / `comment` / `reply`-source `agent_wakeup_requests` referencing the ticket is `queued` / `claimed` / `deferred`. The caller's own runs/wakeups are excluded (an agent finishing its own ticket from inside its own run is fine), and `assignment` / `timer` / `automation` wakeups are excluded (those aren't pings). The guard is applied to `→ done` only; see `assertNoOutstandingActivity` in `lib/issue-relationships.ts`.
+
+Both guards return a 400 from the REST route and an `error` field from the MCP tool, with a message naming the blocking child or agent so the caller knows what to wait on.
+
 ### Issue list view
 
 - Every issue row shows its **project tag** prominently (color-coded) and its **identifier**
@@ -1204,6 +1211,8 @@ The choice between sub-issue and top-level ticket is governed by the **deliverab
 Use a sub-issue when the new work is a parallelisable slice of the parent's deliverable, a prerequisite blocking the parent, or a sub-task whose output rolls up into the parent. Sub-issues inherit the parent's project. Use a top-level ticket when the new work has its own lifecycle, lives in a different domain or project, or is a delegated deliverable owned by another agent.
 
 The hierarchy is capped at depth 2 — top-level tickets can have sub-issues, and each sub-issue can have its own sub-issues, but no further. The server enforces this on `POST .../sub-issues` and on MCP `create_issue` calls that set `parent_issue_id`.
+
+**Planning tickets are never parents.** Tickets labeled `planning` or `goal-update` (CEO-owned plan-drafting tickets — the auto-created "Draft execution plan for …" ticket on project creation, or a goal-driven plan-review ticket) are by convention never used as `parent_issue_id`. Milestone / report tickets spawned from a draft execution plan are top-level — each is the assignee's own first-class deliverable, not a slice of the plan. This convention is enforced in the agent prompts (`agents/_partials/common/mention-handoff.md`, `subtask-preference.md`, `ceo/delegation-top-level.md`) and in the body of the auto-created planning ticket itself (`routes/projects.ts`). The closure rules above make the consequence concrete: nesting a report's ticket under a planning ticket would freeze the planning ticket's lifecycle to every report's work.
 
 ### Agent-to-agent communication
 

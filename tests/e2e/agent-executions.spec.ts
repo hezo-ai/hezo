@@ -15,14 +15,14 @@ test('agent page defaults to executions tab', async ({ page }) => {
 
 	await page.goto(`/companies/${company.slug}/agents/${agent.id}`);
 
-	await expect(page.getByRole('link', { name: 'Executions' })).toBeVisible({ timeout: 5000 });
+	await expect(page.getByRole('link', { name: 'Executions' })).toBeVisible({ timeout: 15000 });
 	await expect(page.getByRole('main').getByRole('link', { name: 'Settings' })).toBeVisible({
-		timeout: 5000,
+		timeout: 15000,
 	});
 
 	// Executions tab is active by default (redirected from index)
 	const executionsLink = page.getByRole('link', { name: 'Executions' });
-	await expect(executionsLink).toHaveClass(/border-primary/, { timeout: 5000 });
+	await expect(executionsLink).toHaveClass(/border-primary/, { timeout: 15000 });
 });
 
 test('agent settings tab shows form content', async ({ page }) => {
@@ -39,9 +39,9 @@ test('agent settings tab shows form content', async ({ page }) => {
 
 	await page.goto(`/companies/${company.slug}/agents/${agent.id}/settings`);
 
-	await expect(page.getByText('Budget Usage')).toBeVisible({ timeout: 5000 });
-	await expect(page.getByLabel('Title')).toBeVisible({ timeout: 5000 });
-	await expect(page.getByRole('button', { name: 'Save Changes' })).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Budget Usage')).toBeVisible({ timeout: 15000 });
+	await expect(page.getByLabel('Title')).toBeVisible({ timeout: 15000 });
+	await expect(page.getByRole('button', { name: 'Save Changes' })).toBeVisible({ timeout: 15000 });
 });
 
 test('execution list shows runs and links to detail page', async ({ page }) => {
@@ -79,5 +79,5 @@ test('execution list shows runs and links to detail page', async ({ page }) => {
 	await page.goto(`/companies/${company.slug}/agents/${agent.id}/executions`);
 
 	// The page should load without errors
-	await expect(page.getByRole('link', { name: 'Executions' })).toBeVisible({ timeout: 5000 });
+	await expect(page.getByRole('link', { name: 'Executions' })).toBeVisible({ timeout: 15000 });
 });

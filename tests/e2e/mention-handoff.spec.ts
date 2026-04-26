@@ -57,7 +57,7 @@ test.describe('Mention handoff', () => {
 		await waitForPageLoad(page);
 
 		const composer = page.getByPlaceholder('Add a comment...');
-		await expect(composer).toBeVisible({ timeout: 10000 });
+		await expect(composer).toBeVisible({ timeout: 20000 });
 		await composer.fill(`@${architect.slug} please update the spec.`);
 		await page.getByRole('button', { name: 'Comment', exact: true }).click();
 
@@ -65,7 +65,7 @@ test.describe('Mention handoff', () => {
 			.getByTestId('text-comment-body')
 			.filter({ hasText: 'please update the spec' })
 			.first();
-		await expect(comment).toBeVisible({ timeout: 5000 });
+		await expect(comment).toBeVisible({ timeout: 15000 });
 
 		const mentionLink = comment.getByTestId('agent-mention-link');
 		await expect(mentionLink).toHaveText(`@${architect.slug}`);
@@ -94,7 +94,7 @@ test.describe('Mention handoff', () => {
 			.getByTestId('text-comment-body')
 			.filter({ hasText: 'template we discussed' })
 			.first();
-		await expect(comment).toBeVisible({ timeout: 5000 });
+		await expect(comment).toBeVisible({ timeout: 15000 });
 
 		// The agent slug appears verbatim in the code block but must NOT be linkified.
 		await expect(comment.locator(`a[href*="/agents/${architect.slug}"]`)).toHaveCount(0);

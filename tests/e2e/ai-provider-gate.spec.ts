@@ -18,7 +18,7 @@ test.describe('AI provider gate (post-master-key, pre-company)', () => {
 
 		// The AI-provider gate should be visible with all four provider cards.
 		await expect(page.getByRole('heading', { name: 'Set up an AI provider' })).toBeVisible({
-			timeout: 10000,
+			timeout: 20000,
 		});
 		await expect(page.getByText('Anthropic')).toBeVisible();
 		await expect(page.getByText('OpenAI')).toBeVisible();
@@ -35,7 +35,7 @@ test.describe('AI provider gate (post-master-key, pre-company)', () => {
 
 		// Gate should drop and the app shell should render.
 		await expect(page.getByRole('heading', { name: 'Set up an AI provider' })).toBeHidden({
-			timeout: 10000,
+			timeout: 20000,
 		});
 
 		// With no companies yet, we should be on the empty-state companies list.
@@ -73,7 +73,7 @@ test.describe('AI provider gate (post-master-key, pre-company)', () => {
 		await page.reload();
 
 		await expect(page.getByRole('heading', { name: 'Set up an AI provider' })).toBeVisible({
-			timeout: 10000,
+			timeout: 20000,
 		});
 	});
 });

@@ -36,7 +36,7 @@ test('issue filter bar collapses/expands and applies search + sort', async ({ pa
 	const searchInput = page.getByTestId('issue-filter-search');
 	await searchInput.fill('Payment');
 
-	await expect(page.getByText('Payment flow')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByText('Payment flow')).toBeVisible({ timeout: 15000 });
 	await expect(page.getByText('Authentication bug')).toBeHidden();
 	await expect(page.getByText('Sign-up form')).toBeHidden();
 

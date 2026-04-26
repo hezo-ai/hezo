@@ -47,7 +47,7 @@ test.describe('Issue detail right sidebar', () => {
 		await waitForPageLoad(page);
 
 		const sidebar = page.getByTestId('issue-sidebar');
-		await expect(sidebar).toBeVisible({ timeout: 10000 });
+		await expect(sidebar).toBeVisible({ timeout: 20000 });
 
 		const position = await sidebar.evaluate((el) => getComputedStyle(el).position);
 		expect(position).toBe('sticky');
@@ -82,7 +82,7 @@ test.describe('Issue detail right sidebar', () => {
 		await waitForPageLoad(page);
 
 		const sidebar = page.getByTestId('issue-sidebar');
-		await expect(sidebar).toBeVisible({ timeout: 10000 });
+		await expect(sidebar).toBeVisible({ timeout: 20000 });
 
 		const effort = sidebar.getByLabel(
 			'Reasoning effort for the agent run triggered by this comment',

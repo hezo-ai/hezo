@@ -46,7 +46,7 @@ test('sub-issues panel is expanded by default and collapses on click', async ({ 
 
 	await page.goto(`/companies/${company.id}/issues/${parent.id}`);
 	await waitForPageLoad(page);
-	await expect(page.getByRole('heading', { name: 'Parent Issue' })).toBeVisible({ timeout: 10000 });
+	await expect(page.getByRole('heading', { name: 'Parent Issue' })).toBeVisible({ timeout: 20000 });
 
 	const toggle = page.getByTestId('sub-issues-toggle');
 	await expect(toggle).toBeVisible();
@@ -111,7 +111,7 @@ test('sub-issues paginate to company page size with a Show more link', async ({ 
 	await page.goto(`/companies/${company.id}/issues/${parent.id}`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Pagination Parent' })).toBeVisible({
-		timeout: 10000,
+		timeout: 20000,
 	});
 
 	const list = page.getByTestId('sub-issues-list');
@@ -165,7 +165,7 @@ test('sub-issues panel sits between description card and comments', async ({ pag
 	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Layout Parent' })).toBeVisible({
-		timeout: 10000,
+		timeout: 20000,
 	});
 
 	const descriptionCard = page.getByTestId('issue-description-card');

@@ -15,8 +15,12 @@ import {
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { assertNoActiveRun } from '../lib/active-run';
-import { assertChildDepthAllowed } from '../lib/issue-depth';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
+import {
+	assertChildDepthAllowed,
+	assertChildrenAllClosed,
+	assertNoOutstandingActivity,
+} from '../lib/issue-relationships';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
@@ -183,7 +187,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_issues',
-		'List issues for a company. Filter by assignee_id or assignee_slug to find your own open tickets (e.g. pass your own agent slug).',
+		'List issues for a company. Returns up to 50 issues ordered by creation date (newest first). Filter by project_id to scope to one project (the common case), and optionally by status (comma-separated) or assignee_id/assignee_slug to narrow further. The Project State block in your system prompt already gives you the active tickets in the current project — only call this if you need older or terminal tickets, a different project, or a specific status filter.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().optional().describe('Filter by project ID'),
@@ -402,6 +406,24 @@ export function registerTools(
 				if (currentStatus.rows[0]?.status === IssueStatus.Closed) {
 					return { error: 'Only board members can re-open a closed issue' };
 				}
+			}
+
+			if (args.status === IssueStatus.Done || args.status === IssueStatus.Closed) {
+				const childrenCheck = await assertChildrenAllClosed(
+					db,
+					args.company_id as string,
+					args.issue_id as string,
+				);
+				if (!childrenCheck.ok) return { error: childrenCheck.message };
+			}
+			if (args.status === IssueStatus.Done) {
+				const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+				const activityCheck = await assertNoOutstandingActivity(
+					db,
+					args.issue_id as string,
+					callerMemberId,
+				);
+				if (!activityCheck.ok) return { error: activityCheck.message };
 			}
 
 			if (args.assignee_id) {

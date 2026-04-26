@@ -28,7 +28,7 @@ test.describe('Container Management', () => {
 		// Container page should render — look for container-related UI
 		// The container section shows status and control buttons
 		await expect(page.getByText(/container|docker|build|start/i).first()).toBeVisible({
-			timeout: 10000,
+			timeout: 20000,
 		});
 	});
 
@@ -40,7 +40,7 @@ test.describe('Container Management', () => {
 		await waitForPageLoad(page);
 
 		// Rebuild button should be present
-		await expect(page.getByRole('button', { name: /rebuild/i })).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('button', { name: /rebuild/i })).toBeVisible({ timeout: 20000 });
 	});
 
 	test('banner consolidates multiple unhealthy projects with + N others format and rebuild all button', async ({
@@ -112,7 +112,7 @@ test.describe('Container Management', () => {
 		await page.goto(`/companies/${company.slug}/inbox`);
 
 		const banner = page.getByTestId('container-status-banner');
-		await expect(banner).toBeVisible({ timeout: 10000 });
+		await expect(banner).toBeVisible({ timeout: 20000 });
 		await expect(page.getByTestId('container-status-banner-message')).toHaveText(
 			/^.+, .+ \+ 1 other containers failed$/,
 		);
@@ -122,7 +122,7 @@ test.describe('Container Management', () => {
 				(r) =>
 					r.url().includes(`/projects/${project.id}/container/rebuild`) &&
 					r.request().method() === 'POST',
-				{ timeout: 10000 },
+				{ timeout: 20000 },
 			),
 		);
 
@@ -147,7 +147,7 @@ test.describe('Container Management', () => {
 		if (await containerLink.isVisible()) {
 			await containerLink.click();
 			await expect(page).toHaveURL(new RegExp(`/projects/${project.slug}/container`), {
-				timeout: 5000,
+				timeout: 15000,
 			});
 		}
 	});

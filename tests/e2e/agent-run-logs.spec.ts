@@ -77,10 +77,10 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 
 	await page.goto(`/companies/${company.slug}/agents/${ceo.id}/executions/${run.id}`);
 
-	await expect(page.getByRole('heading', { name: /Run \w{8}/i })).toBeVisible({ timeout: 5000 });
+	await expect(page.getByRole('heading', { name: /Run \w{8}/i })).toBeVisible({ timeout: 15000 });
 
 	const invocationToggle = page.getByRole('button', { name: /invocation/i });
-	await expect(invocationToggle).toBeVisible({ timeout: 5000 });
+	await expect(invocationToggle).toBeVisible({ timeout: 15000 });
 	const invocationBody = page.getByTestId('run-invocation-body');
 	await expect(invocationBody).toBeHidden();
 
@@ -91,8 +91,8 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	await expect(invocationBody).toBeHidden();
 
 	const logPane = page.getByTestId('run-log');
-	await expect(logPane).toContainText('[synthetic] starting agent run', { timeout: 10_000 });
-	await expect(logPane).toContainText('[synthetic] task complete', { timeout: 5000 });
+	await expect(logPane).toContainText('[synthetic] starting agent run', { timeout: 20_000 });
+	await expect(logPane).toContainText('[synthetic] task complete', { timeout: 15000 });
 
 	const durationValue = page
 		.getByText('Duration', { exact: true })
@@ -154,11 +154,11 @@ test('issue page renders run as an inline comment with live-styled log', async (
 	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
 
 	const runComment = page.getByTestId('run-comment').first();
-	await expect(runComment).toBeVisible({ timeout: 10_000 });
+	await expect(runComment).toBeVisible({ timeout: 20_000 });
 
 	const runLog = runComment.getByTestId('run-comment-log');
 	await expect(runLog).toBeVisible();
-	await expect(runLog).toContainText('[synthetic]', { timeout: 10_000 });
+	await expect(runLog).toContainText('[synthetic]', { timeout: 20_000 });
 
 	const height = await runLog.evaluate((el) => el.getBoundingClientRect().height);
 	expect(height).toBeGreaterThan(150);

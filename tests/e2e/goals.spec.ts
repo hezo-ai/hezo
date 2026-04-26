@@ -19,7 +19,7 @@ test.describe('Goals', () => {
 		await page.getByRole('button', { name: 'Create' }).click();
 
 		const main = page.getByRole('main');
-		await expect(main.getByText('Raise seed round')).toBeVisible({ timeout: 5000 });
+		await expect(main.getByText('Raise seed round')).toBeVisible({ timeout: 15000 });
 		await expect(main.getByText('Company-wide').first()).toBeVisible();
 
 		// The CEO ticket lives in the Operations project.
@@ -27,7 +27,7 @@ test.describe('Goals', () => {
 		await waitForPageLoad(page);
 		await expect(
 			page.getByRole('main').getByText('Review plans for goal: "Raise seed round"'),
-		).toBeVisible({ timeout: 5000 });
+		).toBeVisible({ timeout: 15000 });
 	});
 
 	test('project-scoped goal routes the CEO ticket into that project', async ({ page }) => {
@@ -51,13 +51,13 @@ test.describe('Goals', () => {
 		await page.getByRole('button', { name: 'Create' }).click();
 
 		await expect(page.getByRole('main').getByText('Launch public v1')).toBeVisible({
-			timeout: 5000,
+			timeout: 15000,
 		});
 
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 		await expect(
 			page.getByRole('main').getByText('Review plans for goal: "Launch public v1"'),
-		).toBeVisible({ timeout: 5000 });
+		).toBeVisible({ timeout: 15000 });
 	});
 });

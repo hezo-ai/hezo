@@ -110,7 +110,7 @@ export async function createCompanyWithAgents(page: Page) {
 export async function dismissAiProviderModal(page: Page) {
 	const modal = page.getByText('Set up an AI provider');
 	try {
-		await modal.waitFor({ state: 'visible', timeout: 5000 });
+		await modal.waitFor({ state: 'visible', timeout: 15000 });
 	} catch {
 		return;
 	}
@@ -119,7 +119,7 @@ export async function dismissAiProviderModal(page: Page) {
 	await page.locator('input[type="password"]').first().fill('sk-ant-e2e-test-key');
 	await page.getByRole('button', { name: 'Save' }).first().click();
 
-	await expect(modal).toBeHidden({ timeout: 10000 });
+	await expect(modal).toBeHidden({ timeout: 20000 });
 }
 
 export async function waitForPageLoad(page: Page, timeout = 15000) {

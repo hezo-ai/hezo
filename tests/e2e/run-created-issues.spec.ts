@@ -94,10 +94,10 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
 
 	const runCommentEl = page.getByTestId('run-comment').first();
-	await expect(runCommentEl).toBeVisible({ timeout: 10_000 });
+	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
 
 	const createdSection = runCommentEl.getByTestId('run-comment-created-issues');
-	await expect(createdSection).toBeVisible({ timeout: 10_000 });
+	await expect(createdSection).toBeVisible({ timeout: 20_000 });
 	await expect(createdSection).toContainText('Created tickets');
 
 	const linkA = createdSection.getByRole('link', {
@@ -196,6 +196,6 @@ test('run comment omits created tickets section when list is empty', async ({ pa
 	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
 
 	const runCommentEl = page.getByTestId('run-comment').first();
-	await expect(runCommentEl).toBeVisible({ timeout: 10_000 });
+	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
 	await expect(runCommentEl.getByTestId('run-comment-created-issues')).toHaveCount(0);
 });

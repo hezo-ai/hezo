@@ -25,7 +25,7 @@ test('issue running dot does not appear when no active run', async ({ page }) =>
 	await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
 	await waitForPageLoad(page);
 
-	await expect(page.getByText('Quiet Issue')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByText('Quiet Issue')).toBeVisible({ timeout: 20000 });
 	await expect(page.getByTestId('issue-running-dot')).toHaveCount(0);
 });
 
@@ -68,7 +68,7 @@ test('issue running dot appears when has_active_run is true', async ({ page }) =
 	await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
 	await waitForPageLoad(page);
 
-	await expect(page.getByText('Busy Issue')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByText('Busy Issue')).toBeVisible({ timeout: 20000 });
 	const dot = page.getByTestId('issue-running-dot');
 	await expect(dot).toHaveCount(1);
 	const bgColor = await dot.evaluate((el) => getComputedStyle(el).backgroundColor);

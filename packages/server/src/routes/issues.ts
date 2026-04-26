@@ -14,8 +14,12 @@ import { Hono } from 'hono';
 import { assertNoActiveRun } from '../lib/active-run';
 import { auditLog } from '../lib/audit';
 import { broadcastChange } from '../lib/broadcast';
-import { assertChildDepthAllowed } from '../lib/issue-depth';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
+import {
+	assertChildDepthAllowed,
+	assertChildrenAllClosed,
+	assertNoOutstandingActivity,
+} from '../lib/issue-relationships';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import { getProjectLocator, resolveIssueId, resolveProjectId } from '../lib/resolve';
@@ -396,6 +400,20 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		existing.rows[0].status === IssueStatus.Closed
 	) {
 		return err(c, 'FORBIDDEN', 'Only board members can re-open a closed issue', 403);
+	}
+
+	if (body.status === IssueStatus.Done || body.status === IssueStatus.Closed) {
+		const childrenCheck = await assertChildrenAllClosed(db, companyId, issueId);
+		if (!childrenCheck.ok) {
+			return err(c, 'INVALID_REQUEST', childrenCheck.message, 400);
+		}
+	}
+	if (body.status === IssueStatus.Done) {
+		const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+		const activityCheck = await assertNoOutstandingActivity(db, issueId, callerMemberId);
+		if (!activityCheck.ok) {
+			return err(c, 'INVALID_REQUEST', activityCheck.message, 400);
+		}
 	}
 
 	const sets: string[] = [];

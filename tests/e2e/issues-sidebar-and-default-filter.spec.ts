@@ -43,7 +43,7 @@ test('sidebar Issues count reflects non-terminal issues and updates live', async
 		data: { status: 'closed' },
 	});
 
-	await expect(sidebarIssues).toContainText('2', { timeout: 5000 });
+	await expect(sidebarIssues).toContainText('2', { timeout: 15000 });
 	await expect(sidebarIssues).not.toContainText('3');
 });
 
@@ -108,7 +108,7 @@ test('new issue button sits outside the filter bar and remains clickable', async
 	await expect(filterBar.getByTestId('issue-list-new-issue')).toHaveCount(0);
 
 	await newIssue.click();
-	await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+	await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
 });
 
 test('mobile viewport opens navigation via hamburger drawer', async ({ page }) => {

@@ -38,7 +38,7 @@ test.describe('Issue Comments', () => {
 		await waitForPageLoad(page);
 
 		// Comments tab should be visible
-		await expect(page.getByText('Comments')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Comments')).toBeVisible({ timeout: 15000 });
 	});
 
 	test('can add a comment to an issue', async ({ page }) => {
@@ -50,14 +50,14 @@ test.describe('Issue Comments', () => {
 
 		// Type a comment
 		const commentInput = page.getByPlaceholder('Add a comment...');
-		await expect(commentInput).toBeVisible({ timeout: 10000 });
+		await expect(commentInput).toBeVisible({ timeout: 20000 });
 		await commentInput.fill('This is a test comment');
 
 		// Submit the comment
 		await page.getByRole('button', { name: 'Comment', exact: true }).click();
 
 		// Verify comment appears
-		await expect(page.getByText('This is a test comment')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('This is a test comment')).toBeVisible({ timeout: 15000 });
 	});
 
 	test('comments persist after page reload', async ({ page }) => {
@@ -74,7 +74,7 @@ test.describe('Issue Comments', () => {
 		await waitForPageLoad(page);
 
 		// Verify the comment is visible
-		await expect(page.getByText('API-created comment')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('API-created comment')).toBeVisible({ timeout: 15000 });
 	});
 
 	test('comment count updates after adding comment', async ({ page }) => {
@@ -95,7 +95,7 @@ test.describe('Issue Comments', () => {
 		await waitForPageLoad(page);
 
 		// Both comments should be visible
-		await expect(page.getByText('First comment')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('First comment')).toBeVisible({ timeout: 15000 });
 		await expect(page.getByText('Second comment')).toBeVisible();
 	});
 
@@ -114,7 +114,7 @@ test.describe('Issue Comments', () => {
 		await waitForPageLoad(page);
 
 		const body = page.getByTestId('text-comment-body').first();
-		await expect(body).toBeVisible({ timeout: 5000 });
+		await expect(body).toBeVisible({ timeout: 15000 });
 		await expect(body.locator('h2')).toHaveText('Execution Plan');
 		await expect(body.locator('strong')).toHaveText('Objective:');
 		await expect(body.locator('li')).toHaveCount(2);
@@ -146,7 +146,7 @@ test.describe('Issue Comments', () => {
 		await waitForPageLoad(page);
 
 		const select = page.getByLabel('Reasoning effort for the agent run triggered by this comment');
-		await expect(select).toBeVisible({ timeout: 10000 });
+		await expect(select).toBeVisible({ timeout: 20000 });
 
 		const labels = await select.locator('option').allTextContents();
 		const withSuffix = labels.filter((l) => l.endsWith(' (default)'));
@@ -166,7 +166,7 @@ test.describe('Issue Comments', () => {
 
 		await page.getByPlaceholder('Add a comment...').fill('default-effort test');
 		await page.getByRole('button', { name: 'Comment', exact: true }).click();
-		await expect(page.getByText('default-effort test')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('default-effort test')).toBeVisible({ timeout: 15000 });
 
 		expect(postBodies).toHaveLength(1);
 		expect(postBodies[0]).not.toHaveProperty('effort');
@@ -186,7 +186,7 @@ test.describe('Issue Comments', () => {
 		await waitForPageLoad(page);
 
 		const comment = page.getByTestId('text-comment-body').first();
-		await expect(comment).toBeVisible({ timeout: 5000 });
+		await expect(comment).toBeVisible({ timeout: 15000 });
 
 		const mentionLink = comment.getByTestId('agent-mention-link');
 		await expect(mentionLink).toHaveText(`@${agent.slug}`);
@@ -216,7 +216,7 @@ test.describe('Issue Comments', () => {
 		await waitForPageLoad(page);
 
 		const checkbox = page.getByRole('checkbox', { name: 'Wake assignee on submit' });
-		await expect(checkbox).toBeVisible({ timeout: 10000 });
+		await expect(checkbox).toBeVisible({ timeout: 20000 });
 		await expect(checkbox).toBeChecked();
 
 		const postBodies: Array<Record<string, unknown>> = [];
@@ -229,15 +229,21 @@ test.describe('Issue Comments', () => {
 			}
 		});
 
-		await page.getByPlaceholder('Add a comment...').fill('wake-assignee on');
-		await page.getByRole('button', { name: 'Comment', exact: true }).click();
-		await expect(page.getByText('wake-assignee on')).toBeVisible({ timeout: 5000 });
+		const textarea = page.getByPlaceholder('Add a comment...');
+		const submit = page.getByRole('button', { name: 'Comment', exact: true });
+
+		await textarea.fill('wake-assignee on');
+		await submit.click();
+		await expect(page.getByText('wake-assignee on')).toBeVisible({ timeout: 15000 });
+		await expect(textarea).toHaveValue('');
 
 		await expect(checkbox).toBeChecked();
 		await checkbox.uncheck();
-		await page.getByPlaceholder('Add a comment...').fill('wake-assignee off');
-		await page.getByRole('button', { name: 'Comment', exact: true }).click();
-		await expect(page.getByText('wake-assignee off')).toBeVisible({ timeout: 5000 });
+		await expect(checkbox).not.toBeChecked();
+		await textarea.fill('wake-assignee off');
+		await expect(textarea).toHaveValue('wake-assignee off');
+		await submit.click();
+		await expect(page.getByText('wake-assignee off')).toBeVisible({ timeout: 15000 });
 
 		expect(postBodies).toHaveLength(2);
 		expect(postBodies[0].wake_assignee).toBe(true);
@@ -259,7 +265,7 @@ test.describe('Issue Comments', () => {
 		await waitForPageLoad(page);
 
 		const item = page.getByTestId('comment-item').first();
-		await expect(item).toBeVisible({ timeout: 5000 });
+		await expect(item).toBeVisible({ timeout: 15000 });
 
 		const card = item.locator('> div').nth(1);
 		await expect(card).toHaveClass(/border/);

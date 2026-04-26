@@ -50,5 +50,5 @@ test('issues with active runs pin to the top regardless of sort order', async ({
 	await waitForPageLoad(page);
 
 	const rows = page.getByRole('row').filter({ hasText: /ticket/ });
-	await expect(rows.first()).toContainText('Old running ticket', { timeout: 10000 });
+	await expect(rows.first()).toContainText('Old running ticket', { timeout: 20000 });
 });

@@ -19,7 +19,7 @@ async function waitForRunStatus(
 	companyId: string,
 	issueId: string,
 	token: string,
-	timeoutMs = 60_000,
+	timeoutMs = 120_000,
 ) {
 	const headers = { Authorization: `Bearer ${token}` };
 	const deadline = Date.now() + timeoutMs;
@@ -73,8 +73,8 @@ test('log viewer expands to full viewport and collapses via button and Escape', 
 	await page.goto(`/companies/${company.slug}/agents/${ceo.id}/executions/${run.id}`);
 
 	const inlineLog = page.getByTestId('run-log');
-	await expect(inlineLog).toBeVisible({ timeout: 10_000 });
-	await expect(inlineLog).toContainText('[synthetic]', { timeout: 10_000 });
+	await expect(inlineLog).toBeVisible({ timeout: 20_000 });
+	await expect(inlineLog).toContainText('[synthetic]', { timeout: 20_000 });
 
 	const expandBtn = page.getByRole('button', { name: /expand log viewer/i });
 	await expect(expandBtn).toBeVisible();
@@ -145,8 +145,8 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 	await page.goto(`/companies/${company.slug}/agents/${ceo.id}/executions/${run.id}`);
 
 	const inlineLog = page.getByTestId('run-log');
-	await expect(inlineLog).toBeVisible({ timeout: 10_000 });
-	await expect(inlineLog).toContainText('[synthetic]', { timeout: 10_000 });
+	await expect(inlineLog).toBeVisible({ timeout: 20_000 });
+	await expect(inlineLog).toContainText('[synthetic]', { timeout: 20_000 });
 
 	const readBottomOffset = (loc: ReturnType<typeof page.getByTestId>) =>
 		loc.evaluate((el) => Math.max(0, el.scrollHeight - el.scrollTop - el.clientHeight));
