@@ -229,15 +229,20 @@ test.describe('Issue Comments', () => {
 			}
 		});
 
-		await page.getByPlaceholder('Add a comment...').fill('wake-assignee on');
-		await page.getByRole('button', { name: 'Comment', exact: true }).click();
+		const textarea = page.getByPlaceholder('Add a comment...');
+		const submit = page.getByRole('button', { name: 'Comment', exact: true });
+
+		await textarea.fill('wake-assignee on');
+		await submit.click();
 		await expect(page.getByText('wake-assignee on')).toBeVisible({ timeout: 15000 });
+		await expect(textarea).toHaveValue('');
 
 		await expect(checkbox).toBeChecked();
 		await checkbox.uncheck();
 		await expect(checkbox).not.toBeChecked();
-		await page.getByPlaceholder('Add a comment...').fill('wake-assignee off');
-		await page.getByRole('button', { name: 'Comment', exact: true }).click();
+		await textarea.fill('wake-assignee off');
+		await expect(textarea).toHaveValue('wake-assignee off');
+		await submit.click();
 		await expect(page.getByText('wake-assignee off')).toBeVisible({ timeout: 15000 });
 
 		expect(postBodies).toHaveLength(2);
