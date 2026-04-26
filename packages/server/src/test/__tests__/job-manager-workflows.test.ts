@@ -374,7 +374,7 @@ describe('JobManager workflow methods', () => {
 			);
 		});
 
-		it('allows a second agent to acquire an execution lock while another agent is running on the same issue', async () => {
+		it('serialises a second agent on the same issue: defers the wakeup back to queued and leaves only one execution lock', async () => {
 			const manager = createJobManager();
 
 			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
@@ -413,14 +413,22 @@ describe('JobManager workflow methods', () => {
 				issue_id: issueId,
 			});
 
+			// Per-issue serialisation: only the first agent should hold an execution lock.
 			const locks = await db.query<{ member_id: string }>(
 				`SELECT member_id FROM execution_locks
 				 WHERE issue_id = $1 AND released_at IS NULL
 				 ORDER BY locked_at`,
 				[issueId],
 			);
-			const holders = locks.rows.map((r) => r.member_id).sort();
-			expect(holders).toEqual([agentId, secondAgentId].sort());
+			const holders = locks.rows.map((r) => r.member_id);
+			expect(holders).toEqual([agentId]);
+
+			// The second wakeup should have been re-queued for a future tick.
+			const secondStatus = await db.query<{ status: string }>(
+				'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+				[secondWakeup.rows[0].id],
+			);
+			expect(secondStatus.rows[0].status).toBe(WakeupStatus.Queued);
 
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = ANY($1)', [
@@ -1078,6 +1086,81 @@ describe('JobManager workflow methods', () => {
 			expect(manager.getLiveRunIds()).toEqual(new Set(['run-1', 'run-3']));
 
 			manager.shutdown();
+		});
+	});
+
+	describe('per-issue serialisation', () => {
+		it('leaves a wakeup queued when another agent has an active run on the same issue', async () => {
+			const manager = createJobManager();
+
+			// Simulate an active run on the issue (from a different agent).
+			const otherAgentRes = await app.request(`/api/companies/${companyId}/agents`, {
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ title: 'Other Agent For Serialisation' }),
+			});
+			const otherAgentId = (await otherAgentRes.json()).data.id;
+
+			await db.query(
+				`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
+				[otherAgentId, companyId, issueId, HeartbeatRunStatus.Running],
+			);
+
+			const wakeupRes = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+				 VALUES ($1, $2, 'mention', 'queued', now() - interval '30 seconds', $3::jsonb)
+				 RETURNING id`,
+				[agentId, companyId, JSON.stringify({ issue_id: issueId })],
+			);
+			const wakeupId = wakeupRes.rows[0].id;
+
+			await (manager as any).processWakeups();
+
+			const result = await db.query<{ status: string }>(
+				'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+				[wakeupId],
+			);
+			expect(result.rows[0].status).toBe(WakeupStatus.Queued);
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE issue_id = $1 AND member_id = $2', [
+				issueId,
+				otherAgentId,
+			]);
+		});
+
+		it('isIssueBusy is false when payload has no issue_id', async () => {
+			const manager = createJobManager();
+			const busy = await (manager as any).isIssueBusy({});
+			expect(busy).toBe(false);
+			manager.shutdown();
+		});
+
+		it('isIssueBusy returns true while an active run exists', async () => {
+			const manager = createJobManager();
+			await db.query(
+				`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
+				[agentId, companyId, issueId, HeartbeatRunStatus.Running],
+			);
+
+			const busy = await (manager as any).isIssueBusy({ issue_id: issueId });
+			expect(busy).toBe(true);
+
+			await db.query("UPDATE heartbeat_runs SET status = 'succeeded', finished_at = now() WHERE issue_id = $1 AND member_id = $2", [
+				issueId,
+				agentId,
+			]);
+			const busyAfter = await (manager as any).isIssueBusy({ issue_id: issueId });
+			expect(busyAfter).toBe(false);
+
+			manager.shutdown();
+			await db.query('DELETE FROM heartbeat_runs WHERE issue_id = $1 AND member_id = $2', [
+				issueId,
+				agentId,
+			]);
 		});
 	});
 });
