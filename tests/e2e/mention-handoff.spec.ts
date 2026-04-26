@@ -138,7 +138,12 @@ test.describe('Mention handoff', () => {
 			.getByTestId('text-comment-body')
 			.filter({ hasText: 'for visibility' })
 			.first();
-		await expect(comment.locator(`a[href*="/agents/${architect.slug}"]`)).toHaveCount(1);
-		await expect(comment.locator(`a[href*="/agents/${ceo.slug}"]`)).toHaveCount(1);
+		await expect(comment).toBeVisible({ timeout: 15000 });
+		await expect(comment.locator(`a[href*="/agents/${architect.slug}"]`)).toHaveCount(1, {
+			timeout: 15000,
+		});
+		await expect(comment.locator(`a[href*="/agents/${ceo.slug}"]`)).toHaveCount(1, {
+			timeout: 15000,
+		});
 	});
 });

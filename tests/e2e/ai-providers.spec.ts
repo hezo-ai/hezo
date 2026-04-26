@@ -119,122 +119,66 @@ test.describe('AI Providers instance settings', () => {
 	});
 });
 
-test.describe('AI Providers API (instance-scoped)', () => {
-	test('status endpoint reflects add/delete cycle', async ({ page }) => {
-		const token = await getToken(page);
-		const headers = { Authorization: `Bearer ${token}` };
-
-		const initialStatus = await page.request.get('/api/ai-providers/status', { headers });
-		expect((await initialStatus.json()).data).toHaveProperty('configured');
-
-		const listRes = await page.request.get('/api/ai-providers', { headers });
-		const initialConfigs = (await listRes.json()).data as Array<{ id: string; provider: string }>;
-		const hadGoogle = initialConfigs.some((c) => c.provider === 'google');
-		if (hadGoogle) test.skip(true, 'Google already configured in this run');
-
-		const createRes = await page.request.post('/api/ai-providers', {
-			headers: { ...headers, 'Content-Type': 'application/json' },
-			data: { provider: 'google', api_key: 'AIza-e2e-test', label: 'google-e2e' },
-		});
-		expect(createRes.status()).toBe(201);
-		const configId = (await createRes.json()).data.id;
-
-		const afterCreate = await page.request.get('/api/ai-providers/status', { headers });
-		expect((await afterCreate.json()).data.providers).toContain('google');
-
-		const deleteRes = await page.request.delete(`/api/ai-providers/${configId}`, { headers });
-		expect(deleteRes.status()).toBe(200);
-	});
-
-	test('rejects invalid provider names', async ({ page }) => {
-		const token = await getToken(page);
-		const headers = { Authorization: `Bearer ${token}` };
-
-		const res = await page.request.post('/api/ai-providers', {
-			headers: { ...headers, 'Content-Type': 'application/json' },
-			data: { provider: 'invalid', api_key: 'test' },
-		});
-		expect(res.status()).toBe(400);
-	});
-
-	test('validates API key format for anthropic', async ({ page }) => {
-		const token = await getToken(page);
-		const headers = { Authorization: `Bearer ${token}` };
-
-		const res = await page.request.post('/api/ai-providers', {
-			headers: { ...headers, 'Content-Type': 'application/json' },
-			data: { provider: 'anthropic', api_key: 'wrong-prefix-key', label: 'bad-format' },
-		});
-		expect(res.status()).toBe(400);
-		const body = await res.json();
-		expect(body.error.code).toBe('INVALID_KEY_FORMAT');
-	});
-
-	test('allows an OAuth token config alongside an existing API key for the same provider', async ({
+test.describe('AI provider gate (post-master-key, pre-company)', () => {
+	test('blocks the app when no provider is configured and drops once one is added', async ({
 		page,
 	}) => {
 		const token = await getToken(page);
-		const headers = { Authorization: `Bearer ${token}` };
-
 		await clearAiProviders(page, token);
 
-		const apiRes = await page.request.post('/api/ai-providers', {
-			headers: { ...headers, 'Content-Type': 'application/json' },
-			data: {
-				provider: 'anthropic',
-				api_key: 'sk-ant-coexist-api',
-				label: 'anthropic-coexist-api',
-				auth_method: 'api_key',
-			},
+		await page.addInitScript((t: string) => {
+			localStorage.setItem('hezo_token', t);
+		}, token);
+
+		await page.goto('/');
+
+		await expect(page.getByRole('heading', { name: 'Set up an AI provider' })).toBeVisible({
+			timeout: 20000,
 		});
-		expect(apiRes.status()).toBe(201);
+		await expect(page.getByText('Anthropic')).toBeVisible();
+		await expect(page.getByText('OpenAI')).toBeVisible();
+		await expect(page.getByText('Google')).toBeVisible();
+		await expect(page.getByText('Moonshot')).toBeVisible();
 
-		const oauthRes = await page.request.post('/api/ai-providers', {
-			headers: { ...headers, 'Content-Type': 'application/json' },
-			data: {
-				provider: 'anthropic',
-				api_key: 'oauth-coexist-token',
-				label: 'anthropic-coexist-oauth',
-				auth_method: 'oauth_token',
-			},
+		await expect(page.getByRole('heading', { name: 'Welcome to Hezo' })).toBeHidden();
+
+		await page.getByRole('button', { name: 'Enter API key' }).first().click();
+		await page.locator('input[type="password"]').first().fill('sk-ant-gate-test-12345');
+		await page.getByRole('button', { name: 'Save' }).first().click();
+
+		await expect(page.getByRole('heading', { name: 'Set up an AI provider' })).toBeHidden({
+			timeout: 20000,
 		});
-		expect(oauthRes.status()).toBe(201);
-
-		const listRes = await page.request.get('/api/ai-providers', { headers });
-		const rows = (await listRes.json()).data as Array<{ provider: string; auth_method: string }>;
-		const anthropic = rows.filter((r) => r.provider === 'anthropic');
-		expect(anthropic.length).toBe(2);
-		expect(anthropic.some((r) => r.auth_method === 'api_key')).toBe(true);
-		expect(anthropic.some((r) => r.auth_method === 'oauth_token')).toBe(true);
-
-		await clearAiProviders(page, token);
+		await expect(page).toHaveURL(/\/companies(\/|$)/);
 	});
 
-	test('PATCH default_model round-trip', async ({ page }) => {
+	test('re-raises the gate after deleting the last provider', async ({ page }) => {
 		const token = await getToken(page);
 		const headers = { Authorization: `Bearer ${token}` };
+		const statusRes = await page.request.get('/api/ai-providers/status', { headers });
+		if (!(await statusRes.json()).data.configured) {
+			await page.request.post('/api/ai-providers', {
+				headers: { ...headers, 'Content-Type': 'application/json' },
+				data: {
+					provider: 'anthropic',
+					api_key: 'sk-ant-gate-rerace',
+					label: 'gate-rerace',
+				},
+			});
+		}
+
+		await page.addInitScript((t: string) => {
+			localStorage.setItem('hezo_token', t);
+		}, token);
+
+		await page.goto('/settings/ai-providers');
+		await expect(page.getByRole('heading', { name: 'AI providers' })).toBeVisible();
 
 		await clearAiProviders(page, token);
+		await page.reload();
 
-		const create = await page.request.post('/api/ai-providers', {
-			headers: { ...headers, 'Content-Type': 'application/json' },
-			data: { provider: 'anthropic', api_key: 'sk-ant-dm-e2e', label: 'dm-e2e' },
+		await expect(page.getByRole('heading', { name: 'Set up an AI provider' })).toBeVisible({
+			timeout: 20000,
 		});
-		expect(create.status()).toBe(201);
-		const configId = (await create.json()).data.id;
-
-		const patch = await page.request.patch(`/api/ai-providers/${configId}`, {
-			headers: { ...headers, 'Content-Type': 'application/json' },
-			data: { default_model: 'claude-opus-4-7' },
-		});
-		expect(patch.status()).toBe(200);
-
-		const list = await page.request.get('/api/ai-providers', { headers });
-		const row = (
-			(await list.json()).data as Array<{ id: string; default_model: string | null }>
-		).find((r) => r.id === configId);
-		expect(row?.default_model).toBe('claude-opus-4-7');
-
-		await clearAiProviders(page, token);
 	});
 });

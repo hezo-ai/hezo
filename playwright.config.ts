@@ -20,13 +20,13 @@ export default defineConfig({
 	projects: [
 		{
 			name: 'ai-provider-serial',
-			testMatch: /ai-providers?(-gate)?\.spec\.ts$/,
+			testMatch: /ai-providers\.spec\.ts$/,
 			fullyParallel: false,
 			workers: 1,
 		},
 		{
 			name: 'parallel',
-			testIgnore: /ai-providers?(-gate)?\.spec\.ts$/,
+			testIgnore: /ai-providers\.spec\.ts$/,
 			dependencies: ['ai-provider-serial'],
 		},
 	],

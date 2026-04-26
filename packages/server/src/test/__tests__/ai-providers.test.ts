@@ -460,3 +460,40 @@ describe('AI providers default-per-provider invariant', () => {
 		expect(anthropicConfigs.find((c) => c.id === firstId)?.is_default).toBe(false);
 	});
 });
+
+describe('AI providers auth_method coexistence', () => {
+	it('allows an OAuth token config alongside an existing API key for the same provider', async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+
+		const apiRes = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'anthropic',
+				api_key: 'sk-ant-coexist-api',
+				label: 'anthropic-coexist-api',
+				auth_method: 'api_key',
+			}),
+		});
+		expect(apiRes.status).toBe(201);
+
+		const oauthRes = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'anthropic',
+				api_key: 'oauth-coexist-token',
+				label: 'anthropic-coexist-oauth',
+				auth_method: 'oauth_token',
+			}),
+		});
+		expect(oauthRes.status).toBe(201);
+
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const rows = (await list.json()).data as Array<{ provider: string; auth_method: string }>;
+		const anthropic = rows.filter((r) => r.provider === 'anthropic');
+		expect(anthropic.length).toBe(2);
+		expect(anthropic.some((r) => r.auth_method === 'api_key')).toBe(true);
+		expect(anthropic.some((r) => r.auth_method === 'oauth_token')).toBe(true);
+	});
+});
