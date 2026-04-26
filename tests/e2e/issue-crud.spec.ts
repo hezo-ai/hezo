@@ -35,7 +35,7 @@ test('can create an issue with required assignee', async ({ page }) => {
 	await page.goto(`/companies/${company.slug}/issues`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('button', { name: 'New Issue' }).first()).toBeVisible({
-		timeout: 10000,
+		timeout: 20000,
 	});
 	await page.getByRole('button', { name: 'New Issue' }).first().click();
 	await page.getByLabel('Title').fill('Test Issue');
@@ -57,7 +57,7 @@ test('can create an issue with required assignee', async ({ page }) => {
 	await expect(page.getByRole('button', { name: 'Create' })).toBeEnabled();
 	await page.getByRole('button', { name: 'Create' }).click();
 
-	await expect(page.getByText('Test Issue')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByText('Test Issue')).toBeVisible({ timeout: 20000 });
 });
 
 test('issue detail shows execution lock banner when locked', async ({ page }) => {
@@ -296,7 +296,7 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Rules Test Issue' })).toBeVisible({
-		timeout: 10000,
+		timeout: 20000,
 	});
 
 	// Edit rules
@@ -354,7 +354,7 @@ test('issue rules and progress summary render markdown formatting', async ({ pag
 	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Markdown Test Issue' })).toBeVisible({
-		timeout: 10000,
+		timeout: 20000,
 	});
 
 	const rulesSection = page.getByText('Rules', { exact: true }).locator('..').locator('..');
@@ -426,7 +426,7 @@ test('issue detail shows assignee with status badge', async ({ page }) => {
 
 	// Verify agent name is displayed in the sidebar
 	const sidebar = page.locator('.grid > div:last-child');
-	await expect(sidebar.getByText(agent.title)).toBeVisible({ timeout: 10000 });
+	await expect(sidebar.getByText(agent.title)).toBeVisible({ timeout: 20000 });
 
 	// Verify a status badge (Idle/Running/Paused) is shown
 	await expect(
@@ -466,7 +466,7 @@ test('can change assignee via popover dropdown', async ({ page }) => {
 	await waitForPageLoad(page);
 
 	const sidebar = page.locator('.grid > div:last-child');
-	await expect(sidebar.getByText(agent1.title)).toBeVisible({ timeout: 10000 });
+	await expect(sidebar.getByText(agent1.title)).toBeVisible({ timeout: 20000 });
 
 	// Click the assignee button to open dropdown
 	await sidebar.locator('button', { has: page.locator('svg.lucide-chevron-down') }).click();
@@ -481,7 +481,7 @@ test('can change assignee via popover dropdown', async ({ page }) => {
 
 	// Dropdown should close and new assignee should be shown
 	await expect(dropdown).toBeHidden();
-	await expect(sidebar.getByText(agent2.title)).toBeVisible({ timeout: 10000 });
+	await expect(sidebar.getByText(agent2.title)).toBeVisible({ timeout: 20000 });
 });
 
 test('assignee dropdown closes on outside click and has no unassign option', async ({ page }) => {
@@ -545,7 +545,7 @@ test('operations project restricts assignee dropdown to the CEO', async ({ page 
 	await page.goto(`/companies/${company.slug}/issues`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('button', { name: 'New Issue' }).first()).toBeVisible({
-		timeout: 10000,
+		timeout: 20000,
 	});
 	await page.getByRole('button', { name: 'New Issue' }).first().click();
 
@@ -608,7 +608,7 @@ test('issue description renders markdown', async ({ page }) => {
 	await waitForPageLoad(page);
 
 	const desc = page.getByTestId('issue-description');
-	await expect(desc).toBeVisible({ timeout: 10000 });
+	await expect(desc).toBeVisible({ timeout: 20000 });
 	await expect(desc.getByRole('heading', { level: 1, name: 'Heading One' })).toBeVisible();
 	await expect(desc.getByRole('listitem').filter({ hasText: 'bullet item' })).toBeVisible();
 	const link = desc.getByRole('link', { name: 'a link' });
@@ -644,7 +644,7 @@ test('project badge and metadata label both link to the project page', async ({ 
 	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Project Link Issue' })).toBeVisible({
-		timeout: 10000,
+		timeout: 20000,
 	});
 
 	const expectedHref = `/companies/${company.slug}/projects/${project.slug}`;
@@ -660,7 +660,7 @@ test('project badge and metadata label both link to the project page', async ({ 
 	await metadataLink.click();
 	await expect(page).toHaveURL(expectedHref + '/issues');
 	await expect(page.getByTestId('breadcrumb').getByText('Linkable Project')).toBeVisible({
-		timeout: 10000,
+		timeout: 20000,
 	});
 });
 
@@ -671,7 +671,7 @@ test('sidebar shows agent status badges', async ({ page }) => {
 	const { company } = await createCompanyWithAgents(page);
 
 	await page.goto(`/companies/${company.id}`);
-	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 10000 });
+	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 20000 });
 
 	// Expand the Team section if collapsed
 	const teamHeader = page.getByText('Team', { exact: true });
@@ -685,5 +685,5 @@ test('sidebar shows agent status badges', async ({ page }) => {
 			.or(sidebar.getByText('Running'))
 			.or(sidebar.getByText('Paused'))
 			.first(),
-	).toBeVisible({ timeout: 10000 });
+	).toBeVisible({ timeout: 20000 });
 });

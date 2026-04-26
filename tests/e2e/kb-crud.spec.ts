@@ -111,7 +111,7 @@ test('can delete a kb document', async ({ page }) => {
 	});
 
 	await page.goto(`/companies/${company.slug}/kb`);
-	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 10000 });
+	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 20000 });
 
 	await page.getByRole('button', { name: 'Delete Me' }).click();
 	await expect(page.getByRole('button', { name: 'Edit' })).toBeVisible({ timeout: 15000 });

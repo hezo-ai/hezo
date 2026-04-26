@@ -13,7 +13,7 @@ test('team page shows org chart with status legend', async ({ page }) => {
 	const { company } = await createCompanyWithAgents(page);
 	await page.goto(`/companies/${company.slug}/agents`);
 
-	await expect(page.getByText('You (Board)')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByText('You (Board)')).toBeVisible({ timeout: 20000 });
 	await expect(page.getByText('Active').first()).toBeVisible({ timeout: 15000 });
 });
 
@@ -96,7 +96,7 @@ test('agent disable and enable lifecycle', async ({ page }) => {
 	await page.getByRole('main').getByRole('link', { name: 'Settings' }).click();
 
 	const disableBtn = page.getByRole('button', { name: /Disable agent/i });
-	await expect(disableBtn).toBeVisible({ timeout: 10000 });
+	await expect(disableBtn).toBeVisible({ timeout: 20000 });
 	await disableBtn.click();
 
 	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 15000 });

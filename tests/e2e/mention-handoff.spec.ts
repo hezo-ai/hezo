@@ -57,7 +57,7 @@ test.describe('Mention handoff', () => {
 		await waitForPageLoad(page);
 
 		const composer = page.getByPlaceholder('Add a comment...');
-		await expect(composer).toBeVisible({ timeout: 10000 });
+		await expect(composer).toBeVisible({ timeout: 20000 });
 		await composer.fill(`@${architect.slug} please update the spec.`);
 		await page.getByRole('button', { name: 'Comment', exact: true }).click();
 

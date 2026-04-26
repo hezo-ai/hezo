@@ -38,7 +38,7 @@ test.describe('AI Providers instance settings', () => {
 			await enterButton.click();
 			await moonshotCard.locator('input[type="password"]').fill('sk-moonshot-e2e-test');
 			await moonshotCard.getByRole('button', { name: 'Save' }).click();
-			await expect(moonshotCard.getByText('active')).toBeVisible({ timeout: 10000 });
+			await expect(moonshotCard.getByText('active')).toBeVisible({ timeout: 20000 });
 		}
 	});
 

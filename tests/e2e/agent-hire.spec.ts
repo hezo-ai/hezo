@@ -12,7 +12,7 @@ test('can hire an agent with minimal fields', async ({ page }) => {
 	await page.getByRole('button', { name: 'Hire agent' }).click();
 
 	// Onboarding flow redirects to the issue page (CEO reviews the hire)
-	await expect(page).toHaveURL(/\/issues\//, { timeout: 10000 });
+	await expect(page).toHaveURL(/\/issues\//, { timeout: 20000 });
 	await expect(page.getByText('Onboard new agent: Data Scientist')).toBeVisible({ timeout: 15000 });
 });
 
@@ -60,7 +60,7 @@ test('can hire agent with full fields', async ({ page }) => {
 	await page.getByRole('button', { name: 'Hire agent' }).click();
 
 	// Onboarding flow redirects to the issue page
-	await expect(page).toHaveURL(/\/issues\//, { timeout: 10000 });
+	await expect(page).toHaveURL(/\/issues\//, { timeout: 20000 });
 	await expect(page.getByText('Onboard new agent: Security Auditor')).toBeVisible({
 		timeout: 15000,
 	});

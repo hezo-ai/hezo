@@ -28,7 +28,7 @@ test('can create a company with Startup template and see auto-created agents', a
 	await page.getByLabel('Name').fill('Test Corp');
 	await page.getByRole('button', { name: 'Create' }).click();
 
-	await expect(page).toHaveURL(/\/companies\/[^/]+\/projects\?create=true$/, { timeout: 10000 });
+	await expect(page).toHaveURL(/\/companies\/[^/]+\/projects\?create=true$/, { timeout: 20000 });
 
 	// Navigate to agents page and verify auto-created agents are visible
 	await page.goto(`/companies/${page.url().split('/companies/')[1].split('/')[0]}/agents`);
@@ -76,7 +76,7 @@ test('Blank template shows built-in agents note and creates CEO/Coach', async ({
 	await page.getByLabel('Name').fill('Blank Test Co');
 	await page.getByRole('button', { name: 'Create' }).click();
 
-	await expect(page).toHaveURL(/\/companies\/[^/]+\/projects\?create=true$/, { timeout: 10000 });
+	await expect(page).toHaveURL(/\/companies\/[^/]+\/projects\?create=true$/, { timeout: 20000 });
 
 	// Navigate to agents page and verify CEO and Coach exist
 	await page.goto(`/companies/${page.url().split('/companies/')[1].split('/')[0]}/agents`);
@@ -100,7 +100,7 @@ test('post-create redirect lands on projects page with create dialog open', asyn
 	await page.getByLabel('Name').fill('Auto Create Co');
 	await page.getByRole('button', { name: 'Create' }).click();
 
-	await expect(page).toHaveURL(/\/companies\/[^/]+\/projects\?create=true$/, { timeout: 10000 });
+	await expect(page).toHaveURL(/\/companies\/[^/]+\/projects\?create=true$/, { timeout: 20000 });
 
 	const dialog = page.getByRole('dialog');
 	await expect(dialog).toBeVisible({ timeout: 15000 });

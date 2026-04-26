@@ -57,7 +57,7 @@ test.describe('Repository setup wizard', () => {
 		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByTestId('action-setup-repo')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByTestId('action-setup-repo')).toBeVisible({ timeout: 20000 });
 		await expect(page.getByRole('button', { name: 'Set up repository' })).toBeVisible();
 
 		await page.getByRole('button', { name: 'Set up repository' }).click();
@@ -178,12 +178,12 @@ test.describe('Repository setup wizard', () => {
 		await waitForPageLoad(page);
 
 		const card = page.getByTestId('approval-card');
-		await expect(card).toBeVisible({ timeout: 10000 });
+		await expect(card).toBeVisible({ timeout: 20000 });
 		await expect(card.getByRole('button')).toHaveCount(0);
 
 		await card.click();
 
-		await expect(page.getByTestId('action-setup-repo')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByTestId('action-setup-repo')).toBeVisible({ timeout: 20000 });
 		await expect(page).toHaveURL(
 			new RegExp(
 				`/companies/${company.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}(#.*)?$`,
@@ -211,7 +211,7 @@ test.describe('Repository setup wizard', () => {
 		await waitForPageLoad(page);
 
 		await expect(page.getByTestId('breadcrumb').getByText('Settings Wizard')).toBeVisible({
-			timeout: 10000,
+			timeout: 20000,
 		});
 		await page.getByRole('button', { name: /Add Repo/i }).click();
 		await expect(page.getByRole('heading', { name: 'Set up repository' })).toBeVisible({

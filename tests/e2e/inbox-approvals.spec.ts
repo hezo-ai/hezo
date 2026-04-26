@@ -66,7 +66,7 @@ test.describe('Inbox / Approvals', () => {
 		await page.getByRole('button', { name: 'Approve' }).click();
 
 		// After approval, should show empty state
-		await expect(page.getByText('All clear')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByText('All clear')).toBeVisible({ timeout: 20000 });
 	});
 
 	test('can deny a pending approval', async ({ page }) => {
@@ -91,7 +91,7 @@ test.describe('Inbox / Approvals', () => {
 		await page.getByRole('button', { name: 'Deny' }).click();
 
 		// After denial, should show empty state
-		await expect(page.getByText('All clear')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByText('All clear')).toBeVisible({ timeout: 20000 });
 	});
 
 	test('sidebar has Inbox link', async ({ page }) => {

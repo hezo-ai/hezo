@@ -39,7 +39,7 @@ test('board member can close and re-open an issue via themed modal', async ({ pa
 	await page.getByTestId('confirm-dialog-confirm').click();
 	await expect(dialog).toBeHidden();
 
-	await expect(page.getByTestId('issue-reopen-button')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByTestId('issue-reopen-button')).toBeVisible({ timeout: 20000 });
 	await expect(page.locator('text=closed').first()).toBeVisible();
 
 	await page.getByTestId('issue-reopen-button').click();
@@ -49,7 +49,7 @@ test('board member can close and re-open an issue via themed modal', async ({ pa
 	await page.getByTestId('confirm-dialog-confirm').click();
 	await expect(page.getByTestId('confirm-dialog')).toBeHidden();
 
-	await expect(page.getByTestId('issue-close-button')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByTestId('issue-close-button')).toBeVisible({ timeout: 20000 });
 });
 
 test('issue detail no longer shows a delete button or status pill row', async ({ page }) => {

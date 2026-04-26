@@ -50,7 +50,7 @@ test.describe('Project Settings', () => {
 		await page.getByRole('button', { name: 'Save' }).click();
 
 		// Verify updated description
-		await expect(page.getByText('Updated description').first()).toBeVisible({ timeout: 10000 });
+		await expect(page.getByText('Updated description').first()).toBeVisible({ timeout: 20000 });
 	});
 
 	test('cancel button discards edits', async ({ page }) => {

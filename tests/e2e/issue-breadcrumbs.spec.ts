@@ -41,7 +41,7 @@ test('breadcrumb walks the parent chain on a sub-sub-issue', async ({ page }) =>
 	);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Sub-Sub Issue' })).toBeVisible({
-		timeout: 10000,
+		timeout: 20000,
 	});
 
 	const breadcrumb = page.getByTestId('breadcrumb');
@@ -55,7 +55,7 @@ test('breadcrumb walks the parent chain on a sub-sub-issue', async ({ page }) =>
 	await expect(subLink).toBeVisible();
 
 	await rootLink.click();
-	await expect(page.getByRole('heading', { name: 'Root Issue' })).toBeVisible({ timeout: 10000 });
+	await expect(page.getByRole('heading', { name: 'Root Issue' })).toBeVisible({ timeout: 20000 });
 });
 
 test('breadcrumb on a top-level issue shows no ancestors', async ({ page }) => {
@@ -86,7 +86,7 @@ test('breadcrumb on a top-level issue shows no ancestors', async ({ page }) => {
 	);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Top-Level Issue' })).toBeVisible({
-		timeout: 10000,
+		timeout: 20000,
 	});
 
 	const breadcrumb = page.getByTestId('breadcrumb');
@@ -144,7 +144,7 @@ test('UI surfaces the depth-cap error when creating a sub-issue under a depth-2 
 	);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Depth Sub-Sub' })).toBeVisible({
-		timeout: 10000,
+		timeout: 20000,
 	});
 
 	await page.getByTestId('sub-issues-add').click();

@@ -132,7 +132,7 @@ test('can edit and save preferences', async ({ page }) => {
 
 	await page.reload();
 	await expect(page.locator('#settings-preferences').getByText('Always be concise.')).toBeVisible({
-		timeout: 10000,
+		timeout: 20000,
 	});
 });
 

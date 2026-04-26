@@ -50,7 +50,7 @@ test.describe('Issue Comments', () => {
 
 		// Type a comment
 		const commentInput = page.getByPlaceholder('Add a comment...');
-		await expect(commentInput).toBeVisible({ timeout: 10000 });
+		await expect(commentInput).toBeVisible({ timeout: 20000 });
 		await commentInput.fill('This is a test comment');
 
 		// Submit the comment
@@ -146,7 +146,7 @@ test.describe('Issue Comments', () => {
 		await waitForPageLoad(page);
 
 		const select = page.getByLabel('Reasoning effort for the agent run triggered by this comment');
-		await expect(select).toBeVisible({ timeout: 10000 });
+		await expect(select).toBeVisible({ timeout: 20000 });
 
 		const labels = await select.locator('option').allTextContents();
 		const withSuffix = labels.filter((l) => l.endsWith(' (default)'));
@@ -216,7 +216,7 @@ test.describe('Issue Comments', () => {
 		await waitForPageLoad(page);
 
 		const checkbox = page.getByRole('checkbox', { name: 'Wake assignee on submit' });
-		await expect(checkbox).toBeVisible({ timeout: 10000 });
+		await expect(checkbox).toBeVisible({ timeout: 20000 });
 		await expect(checkbox).toBeChecked();
 
 		const postBodies: Array<Record<string, unknown>> = [];

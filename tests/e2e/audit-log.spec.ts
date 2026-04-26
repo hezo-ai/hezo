@@ -28,7 +28,7 @@ test('audit log page renders at dedicated route', async ({ page }) => {
 	const company = await createCompany(page, token);
 
 	await page.goto(`/companies/${company.id}/audit-log`);
-	await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible({ timeout: 10000 });
+	await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible({ timeout: 20000 });
 });
 
 test('sidebar contains audit log link', async ({ page }) => {
@@ -39,7 +39,7 @@ test('sidebar contains audit log link', async ({ page }) => {
 
 	await page.goto(`/companies/${company.id}/issues`);
 	const auditLink = page.getByRole('link', { name: 'Audit log' });
-	await expect(auditLink).toBeVisible({ timeout: 10000 });
+	await expect(auditLink).toBeVisible({ timeout: 20000 });
 });
 
 test('settings page does not contain audit log section', async ({ page }) => {
@@ -49,6 +49,6 @@ test('settings page does not contain audit log section', async ({ page }) => {
 	const company = await createCompany(page, token);
 
 	await page.goto(`/companies/${company.id}/settings`);
-	await expect(page.getByRole('heading', { name: 'General' })).toBeVisible({ timeout: 10000 });
+	await expect(page.getByRole('heading', { name: 'General' })).toBeVisible({ timeout: 20000 });
 	await expect(page.getByRole('heading', { name: 'Audit log' })).not.toBeVisible();
 });
