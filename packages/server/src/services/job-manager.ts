@@ -847,11 +847,6 @@ export class JobManager {
 		}
 
 		await this.chainNextIssueWakeup(memberId, issueId, companyId);
-
-		// Drain any wakeups that were waiting on this issue to free up. Without this kick,
-		// they would wait up to one cron tick (~5s); with it, the next agent on the issue
-		// dispatches as soon as this run completes.
-		void this.guarded('wakeups', () => this.processWakeups());
 	}
 
 	private async chainNextIssueWakeup(
