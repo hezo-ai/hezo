@@ -6,6 +6,7 @@ import { Badge } from '../../../../../../components/ui/badge';
 import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
 import { useHeartbeatRun } from '../../../../../../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../../../../../../hooks/use-run-logs';
+import { formatTriggerReason } from '../../../../../../lib/run-trigger';
 
 function statusColor(status: string): string {
 	switch (status) {
@@ -56,6 +57,26 @@ function ExecutionDetailPage() {
 				<h2 className="text-sm font-medium">Run {run.id.slice(0, 8)}</h2>
 				<Badge color={statusColor(run.status) as 'green'}>{run.status}</Badge>
 			</div>
+
+			{(() => {
+				const trigger = formatTriggerReason(run, companyId);
+				return (
+					<div className="mb-4 text-xs" data-testid="run-trigger-reason">
+						<span className="text-text-subtle uppercase tracking-wider mr-2">Triggered by</span>
+						{trigger.href ? (
+							<a
+								href={trigger.href}
+								className="text-text hover:underline"
+								data-testid="run-trigger-link"
+							>
+								{trigger.text}
+							</a>
+						) : (
+							<span className="text-text">{trigger.text}</span>
+						)}
+					</div>
+				);
+			})()}
 
 			<div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
 				<div className="rounded-lg border border-border-subtle bg-bg p-3">

@@ -421,6 +421,20 @@ function exitReasonFromSignal(signal?: AbortSignal): ContainerExitAbortReason | 
 	return null;
 }
 
+async function createSyntheticOnDemandWakeup(
+	db: PGlite,
+	memberId: string,
+	companyId: string,
+): Promise<string> {
+	const r = await db.query<{ id: string }>(
+		`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, payload, claimed_at)
+		 VALUES ($1, $2, $3::wakeup_source, 'claimed'::wakeup_status, '{}'::jsonb, now())
+		 RETURNING id`,
+		[memberId, companyId, WakeupSource.OnDemand],
+	);
+	return r.rows[0].id;
+}
+
 export async function runAgent(
 	deps: RunnerDeps,
 	agent: AgentInfo,
@@ -429,6 +443,7 @@ export async function runAgent(
 	wakeupPayload?: Record<string, unknown>,
 	signal?: AbortSignal,
 	onRunRegistered?: (heartbeatRunId: string) => void,
+	wakeupId?: string,
 ): Promise<RunResult> {
 	const startTime = Date.now();
 
@@ -440,7 +455,15 @@ export async function runAgent(
 		issueId: issue.id,
 		memberId: agent.id,
 	};
-	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue, runBroadcast);
+	const effectiveWakeupId =
+		wakeupId ?? (await createSyntheticOnDemandWakeup(deps.db, agent.id, agent.company_id));
+	const heartbeatRunId = await createHeartbeatRun(
+		deps.db,
+		agent,
+		issue,
+		runBroadcast,
+		effectiveWakeupId,
+	);
 	onRunRegistered?.(heartbeatRunId);
 	const streamId = `run:${heartbeatRunId}`;
 
@@ -1243,16 +1266,17 @@ export async function createHeartbeatRun(
 	agent: AgentInfo,
 	issue: IssueInfo,
 	broadcast: HeartbeatRunBroadcast,
+	wakeupId: string,
 ): Promise<string> {
 	await db.query('BEGIN');
 	let runId: string;
 	let statusFlippedToInProgress = false;
 	try {
 		const runResult = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
-			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, wakeup_id, status, started_at)
+			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status, now())
 			 RETURNING id`,
-			[agent.id, agent.company_id, issue.id, HeartbeatRunStatus.Running],
+			[agent.id, agent.company_id, issue.id, wakeupId, HeartbeatRunStatus.Running],
 		);
 		runId = runResult.rows[0].id;
 

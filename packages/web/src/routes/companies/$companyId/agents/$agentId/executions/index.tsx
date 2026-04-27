@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { Badge } from '../../../../../../components/ui/badge';
 import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
 import { type HeartbeatRun, useHeartbeatRuns } from '../../../../../../hooks/use-heartbeat-runs';
+import { formatTriggerReason } from '../../../../../../lib/run-trigger';
 
 function statusColor(status: string): string {
 	switch (status) {
@@ -29,6 +30,7 @@ function ExecutionRow({
 	agentId: string;
 }) {
 	const elapsed = useElapsedDuration(run.started_at, run.finished_at);
+	const trigger = formatTriggerReason(run, companyId);
 
 	return (
 		<Link
@@ -49,6 +51,10 @@ function ExecutionRow({
 					{run.issue_title && <span className="font-sans ml-1.5 text-text">{run.issue_title}</span>}
 				</span>
 			)}
+
+			<span className="text-text-subtle truncate" title={trigger.text}>
+				{trigger.text}
+			</span>
 
 			<span className="text-text-muted ml-auto whitespace-nowrap">
 				{new Date(run.started_at).toLocaleString()}

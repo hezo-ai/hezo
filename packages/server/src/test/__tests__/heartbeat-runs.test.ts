@@ -20,6 +20,16 @@ let agentId: string;
 let projectId: string;
 let issueId: string;
 
+async function mintTestWakeup(memberId: string, cId: string): Promise<string> {
+	const r = await db.query<{ id: string }>(
+		`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, payload, claimed_at)
+		 VALUES ($1, $2, 'on_demand'::wakeup_source, 'claimed'::wakeup_status, '{}'::jsonb, now())
+		 RETURNING id`,
+		[memberId, cId],
+	);
+	return r.rows[0].id;
+}
+
 beforeAll(async () => {
 	const ctx = await createTestApp();
 	app = ctx.app;
@@ -176,7 +186,13 @@ describe('run comments', () => {
 			memberId: agentId,
 		};
 
-		const runId = await createHeartbeatRun(db, agent, issue, broadcast);
+		const runId = await createHeartbeatRun(
+			db,
+			agent,
+			issue,
+			broadcast,
+			await mintTestWakeup(agentId, companyId),
+		);
 		expect(runId).toBeTruthy();
 
 		const runRow = await db.query<{ id: string; status: string }>(
@@ -225,11 +241,17 @@ describe('run comments', () => {
 			[issueId],
 		);
 
-		const newRunId = await createHeartbeatRun(db, agent, issue, {
-			companyId,
-			issueId,
-			memberId: agentId,
-		});
+		const newRunId = await createHeartbeatRun(
+			db,
+			agent,
+			issue,
+			{
+				companyId,
+				issueId,
+				memberId: agentId,
+			},
+			await mintTestWakeup(agentId, companyId),
+		);
 
 		await db.query(
 			`UPDATE heartbeat_runs
@@ -293,11 +315,17 @@ describe('issue status auto-transition on run start', () => {
 		const localIssueId = await createIssue();
 		const issue = buildIssue(localIssueId);
 
-		await createHeartbeatRun(db, agent, issue, {
-			companyId,
-			issueId: localIssueId,
-			memberId: agentId,
-		});
+		await createHeartbeatRun(
+			db,
+			agent,
+			issue,
+			{
+				companyId,
+				issueId: localIssueId,
+				memberId: agentId,
+			},
+			await mintTestWakeup(agentId, companyId),
+		);
 
 		const row = await db.query<{ status: string }>(
 			'SELECT status::text AS status FROM issues WHERE id = $1',
@@ -317,11 +345,17 @@ describe('issue status auto-transition on run start', () => {
 		const localIssueId = await createIssue({ assigneeId: otherAgentId });
 		const issue = buildIssue(localIssueId, { assignee_id: otherAgentId });
 
-		await createHeartbeatRun(db, agent, issue, {
-			companyId,
-			issueId: localIssueId,
-			memberId: agentId,
-		});
+		await createHeartbeatRun(
+			db,
+			agent,
+			issue,
+			{
+				companyId,
+				issueId: localIssueId,
+				memberId: agentId,
+			},
+			await mintTestWakeup(agentId, companyId),
+		);
 
 		const row = await db.query<{ status: string }>(
 			'SELECT status::text AS status FROM issues WHERE id = $1',
@@ -334,11 +368,17 @@ describe('issue status auto-transition on run start', () => {
 		const localIssueId = await createIssue({ status: 'blocked' });
 		const issue = buildIssue(localIssueId, { status: 'blocked' });
 
-		await createHeartbeatRun(db, agent, issue, {
-			companyId,
-			issueId: localIssueId,
-			memberId: agentId,
-		});
+		await createHeartbeatRun(
+			db,
+			agent,
+			issue,
+			{
+				companyId,
+				issueId: localIssueId,
+				memberId: agentId,
+			},
+			await mintTestWakeup(agentId, companyId),
+		);
 
 		const row = await db.query<{ status: string }>(
 			'SELECT status::text AS status FROM issues WHERE id = $1',
@@ -356,8 +396,20 @@ describe('issue status auto-transition on run start', () => {
 			memberId: agentId,
 		};
 
-		const run1 = await createHeartbeatRun(db, agent, buildIssue(localIssueId), broadcast);
-		const run2 = await createHeartbeatRun(db, agent, buildIssue(localIssueId), broadcast);
+		const run1 = await createHeartbeatRun(
+			db,
+			agent,
+			buildIssue(localIssueId),
+			broadcast,
+			await mintTestWakeup(agentId, companyId),
+		);
+		const run2 = await createHeartbeatRun(
+			db,
+			agent,
+			buildIssue(localIssueId),
+			broadcast,
+			await mintTestWakeup(agentId, companyId),
+		);
 
 		expect(run1).toBeTruthy();
 		expect(run2).toBeTruthy();

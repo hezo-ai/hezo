@@ -944,6 +944,42 @@ describe('JobManager workflow methods', () => {
 			expect(ids).toContain(agentId);
 		});
 
+		it('creates a Heartbeat wakeup row before activating a due agent', async () => {
+			const manager = createJobManager();
+
+			// Sanity-check: clear any prior state and make this agent eligible.
+			await db.query(
+				"UPDATE member_agents SET admin_status = 'enabled', runtime_status = 'idle', last_heartbeat_at = now() - interval '2 hours', heartbeat_interval_min = 60 WHERE id = $1",
+				[agentId],
+			);
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+			const dueCheck = await db.query<{ id: string }>(
+				`SELECT ma.id
+				 FROM member_agents ma
+				 JOIN members m ON m.id = ma.id
+				 WHERE ma.admin_status = 'enabled'
+				   AND ma.runtime_status != 'paused'
+				   AND (ma.last_heartbeat_at IS NULL
+				        OR ma.last_heartbeat_at + (ma.heartbeat_interval_min || ' minutes')::interval < now())
+				   AND ma.id = $1`,
+				[agentId],
+			);
+			expect(dueCheck.rows.length).toBe(1);
+
+			await (manager as any).processScheduledHeartbeats();
+
+			const wakeups = await db.query<{ source: string; payload: Record<string, unknown> }>(
+				`SELECT source::text AS source, payload FROM agent_wakeup_requests
+				 WHERE member_id = $1 AND source = 'heartbeat'`,
+				[agentId],
+			);
+			expect(wakeups.rows.length).toBeGreaterThan(0);
+			expect(wakeups.rows[0].payload).toMatchObject({ reason: 'scheduled_heartbeat' });
+
+			manager.shutdown();
+		});
+
 		it('skips agents with null last_heartbeat_at that already have running tasks', async () => {
 			const manager = createJobManager();
 

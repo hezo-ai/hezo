@@ -427,8 +427,28 @@ Get agent execution history (last 50 runs). Each row includes timing
 - `project_id` — project the run belongs to, used by the UI to subscribe to
   the corresponding `project-runs:<projectId>` WebSocket room.
 
+Each row also includes resolved trigger fields so the UI can render a
+"Triggered by" line without follow-up requests:
+
+- `wakeup_id` — FK to the `agent_wakeup_requests` row that started the run
+  (nullable for legacy rows; production paths always populate it).
+- `trigger_source` — one of the `wakeup_source` enum values (`mention`,
+  `reply`, `assignment`, `option_chosen`, `comment`, `automation`,
+  `heartbeat`, `timer`, `on_demand`).
+- `trigger_payload` — the wakeup's `payload` JSONB, opaque shape per source.
+- `trigger_comment_id`, `trigger_actor_member_id`, `trigger_actor_slug`,
+  `trigger_actor_title`, `trigger_comment_issue_id`,
+  `trigger_comment_issue_identifier`, `trigger_comment_project_slug` —
+  resolved from `payload.comment_id` for sources that reference a comment
+  (`mention`, `reply`, `comment`, `option_chosen`). For `mention`, the actor
+  is the agent who posted the mentioning comment; for `reply`, the actor is
+  the agent who posted the replying comment. Null when the source has no
+  comment context (e.g. `assignment`, `heartbeat`, `timer`).
+
 #### `GET /companies/:companyId/agents/:agentId/heartbeat-runs/:runId`
-Get a single heartbeat run with issue metadata and the full fields listed above.
+Get a single heartbeat run with issue metadata, the full log/usage fields
+listed above, and the same resolved `trigger_*` fields used to render the
+"Triggered by" line on the run-detail page.
 
 #### `GET /companies/:companyId/issues/:issueId/latest-run`
 Returns the most recent `heartbeat_run` for the issue (or `null` if none).

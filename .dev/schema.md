@@ -36,8 +36,8 @@
 | `execution_locks` | Issue work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to issue + member_agent |
 | `skills` | Reusable instruction documents (DB-backed). Tags, content, source URL, creator tracking, embeddings. | belongs to company |
 | `skill_revisions` | Version history for skills. | belongs to skill |
-| `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. | belongs to member_agent + company |
-| `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the issue being worked on via `issue_id`. | belongs to member_agent + company, optionally issue |
+| `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. Every run row points back to the wakeup that triggered it via `heartbeat_runs.wakeup_id`. | belongs to member_agent + company |
+| `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the issue being worked on via `issue_id`, and to the wakeup that triggered the run via `wakeup_id`. | belongs to member_agent + company, optionally issue, optionally wakeup |
 | `agent_task_sessions` | Per-task session persistence for session compaction. | belongs to member_agent, keyed by task |
 | `assets` | Uploaded files. Provider, object key, content type, SHA-256 hash. | belongs to company |
 | `plugins` | Installed plugins. Manifest, status, config. | belongs to company |
@@ -577,9 +577,10 @@ events.
 
 | Source | Fires when |
 | --- | --- |
-| `timer` | Scheduled heartbeat tick (fallback for idle agents). |
+| `heartbeat` | Scheduled heartbeat tick (fallback for idle agents). Payload: `{ reason: 'scheduled_heartbeat' }`. |
+| `timer` | Recovery timer (orphan detector, container restart, retry of a failed run). Payload typically carries `{ reason, ... }` describing which recovery path fired it. |
 | `assignment` | Issue assigned to the agent (incl. `create_issue` tool). |
-| `on_demand` | Admin/API explicit wake. |
+| `on_demand` | Admin/API explicit wake. Also created synthetically when `runAgent` is invoked without an explicit wakeup (e.g., direct test harness calls), so every run is anchored to a wakeup row. |
 | `mention` | A comment contains `@<agent-slug>` referencing this agent. |
 | `automation` | Server-side automation rule. |
 | `option_chosen` | Board user resolved an options comment. |
@@ -633,6 +634,12 @@ for continuity.
 `heartbeat_runs` stores one row per agent execution with full traceability.
 Each row captures:
 
+- **Trigger**: `wakeup_id` references the `agent_wakeup_requests` row that
+  caused the run to start. Every run produced by the production paths (job
+  manager wakeup processing, scheduled heartbeats) is anchored to a wakeup
+  row, so "why did this run start?" is always answerable by joining
+  `heartbeat_runs` → `agent_wakeup_requests` and reading `source` + `payload`.
+  This is what powers the "Triggered by" line on the run-detail page.
 - **Timing**: `started_at` (`NOT NULL DEFAULT now()`), `finished_at`, `status`
   (`queued` → `running` → `succeeded` / `failed` / `cancelled` / `timed_out`),
   `exit_code`.

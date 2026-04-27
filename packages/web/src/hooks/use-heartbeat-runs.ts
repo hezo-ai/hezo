@@ -1,3 +1,4 @@
+import type { WakeupSource } from '@hezo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 
@@ -5,6 +6,7 @@ export interface HeartbeatRun {
 	id: string;
 	member_id: string;
 	company_id: string;
+	wakeup_id: string | null;
 	issue_id: string | null;
 	issue_identifier: string | null;
 	issue_title: string | null;
@@ -21,6 +23,15 @@ export interface HeartbeatRun {
 	invocation_command: string | null;
 	log_text: string | null;
 	working_dir: string | null;
+	trigger_source: WakeupSource | null;
+	trigger_payload: Record<string, unknown> | null;
+	trigger_comment_id: string | null;
+	trigger_actor_member_id: string | null;
+	trigger_actor_slug: string | null;
+	trigger_actor_title: string | null;
+	trigger_comment_issue_id: string | null;
+	trigger_comment_issue_identifier: string | null;
+	trigger_comment_project_slug: string | null;
 	created_issues: { id: string; identifier: string; title: string; project_slug: string }[];
 }
 

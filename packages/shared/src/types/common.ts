@@ -179,6 +179,7 @@ export const WakeupSource = {
 	OptionChosen: 'option_chosen',
 	Comment: 'comment',
 	Reply: 'reply',
+	Heartbeat: 'heartbeat',
 } as const;
 export type WakeupSource = (typeof WakeupSource)[keyof typeof WakeupSource];
 

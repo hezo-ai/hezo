@@ -59,6 +59,15 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.company_id, hr.wakeup_id,
 	hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
 	i.identifier AS issue_identifier, i.title AS issue_title,
 	i.project_id AS project_id, p.slug AS project_slug,
+	aw.source AS trigger_source,
+	aw.payload AS trigger_payload,
+	tic.id AS trigger_comment_id,
+	tic.author_member_id AS trigger_actor_member_id,
+	tama.slug AS trigger_actor_slug,
+	tama.title AS trigger_actor_title,
+	tii.id AS trigger_comment_issue_id,
+	tii.identifier AS trigger_comment_issue_identifier,
+	tip.slug AS trigger_comment_project_slug,
 	COALESCE(
 		(SELECT jsonb_agg(
 			jsonb_build_object(
@@ -74,6 +83,12 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.company_id, hr.wakeup_id,
 		WHERE ci.created_by_run_id = hr.id),
 		'[]'::jsonb
 	) AS created_issues`;
+
+const HEARTBEAT_RUN_TRIGGER_JOINS = `LEFT JOIN agent_wakeup_requests aw ON aw.id = hr.wakeup_id
+	LEFT JOIN issue_comments tic ON tic.id = NULLIF(aw.payload->>'comment_id', '')::uuid
+	LEFT JOIN member_agents tama ON tama.id = tic.author_member_id
+	LEFT JOIN issues tii ON tii.id = tic.issue_id
+	LEFT JOIN projects tip ON tip.id = tii.project_id`;
 
 agentsRoutes.get('/companies/:companyId/agents', async (c) => {
 	const access = await requireCompanyAccess(c);
@@ -819,6 +834,7 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs', async (
 		 FROM heartbeat_runs hr
 		 LEFT JOIN issues i ON i.id = hr.issue_id
 		 LEFT JOIN projects p ON p.id = i.project_id
+		 ${HEARTBEAT_RUN_TRIGGER_JOINS}
 		 WHERE hr.member_id = $1
 		 ORDER BY hr.started_at DESC
 		 LIMIT 50`,
@@ -843,6 +859,7 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs/:runId', 
 		 FROM heartbeat_runs hr
 		 LEFT JOIN issues i ON i.id = hr.issue_id
 		 LEFT JOIN projects p ON p.id = i.project_id
+		 ${HEARTBEAT_RUN_TRIGGER_JOINS}
 		 WHERE hr.id = $1 AND hr.member_id = $2`,
 		[runId, agentId],
 	);

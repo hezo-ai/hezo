@@ -444,16 +444,34 @@ export class JobManager {
 			if (this.isTaskRunning(wsRoom.agent(agent.id))) {
 				continue;
 			}
-			await this.activateAgent(agent.id, agent.company_id);
+			const payload = { reason: 'scheduled_heartbeat' };
+			const wakeupId = await createWakeup(
+				this.deps.db,
+				agent.id,
+				agent.company_id,
+				WakeupSource.Heartbeat,
+				payload,
+			);
+			await this.deps.db.query(
+				'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = now() WHERE id = $2',
+				[WakeupStatus.Claimed, wakeupId],
+			);
+			await this.activateAgent(
+				agent.id,
+				agent.company_id,
+				wakeupId,
+				payload,
+				WakeupSource.Heartbeat,
+			);
 		}
 	}
 
 	private async activateAgent(
 		memberId: string,
 		companyId: string,
-		wakeupId?: string,
-		wakeupPayload?: Record<string, unknown>,
-		wakeupSource?: string,
+		wakeupId: string,
+		wakeupPayload: Record<string, unknown>,
+		wakeupSource: string,
 	): Promise<void> {
 		const { db, docker, masterKeyManager, serverPort } = this.deps;
 
@@ -756,6 +774,7 @@ export class JobManager {
 								taskKey,
 							});
 						},
+						wakeupId,
 					);
 
 					if (registeredRunId) this.unregisterLiveRun(registeredRunId);

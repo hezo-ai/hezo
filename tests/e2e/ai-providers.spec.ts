@@ -27,30 +27,45 @@ test.describe('AI Providers instance settings', () => {
 	});
 
 	test('can add an Anthropic API key via the settings UI', async ({ page }) => {
-		const token = await getToken(page);
-		await clearAiProviders(page, token);
-
 		await authenticate(page);
+		const token = await getToken(page);
+		// `authenticate` re-adds a default provider via `ensureAiProviderConfigured`;
+		// clear afterwards so the gate modal renders and the "Enter API key" affordance
+		// is reachable instead of being hidden behind an existing API-key row.
+		await clearAiProviders(page, token);
 		await page.goto('/settings/ai-providers');
 
+		// With no providers configured the app renders the setup-gate modal in
+		// place of the settings page, so add the key from the modal card (p-4)
+		// rather than the settings section card (p-3).
 		const anthropicCard = page
-			.locator('div.border.border-border.rounded-radius-md.p-3', { hasText: 'Anthropic' })
+			.locator('div.border.border-border.rounded-radius-md.p-4', { hasText: 'Anthropic' })
 			.first();
 
 		await anthropicCard.getByRole('button', { name: 'Enter API key' }).click();
 		await anthropicCard.locator('input[type="password"]').fill('sk-ant-e2e-test-1234567890');
 		await anthropicCard.getByRole('button', { name: 'Save' }).click();
-		await expect(anthropicCard.getByText('active')).toBeVisible({ timeout: 20000 });
+
+		// Once a provider is configured the gate drops and the settings page renders.
+		await expect(
+			page
+				.locator('div.border.border-border.rounded-radius-md.p-3', { hasText: 'Anthropic' })
+				.first()
+				.getByText('active'),
+		).toBeVisible({ timeout: 20000 });
 
 		await clearAiProviders(page, token);
 	});
 
 	test('does not offer subscription auth for Anthropic', async ({ page }) => {
 		await authenticate(page);
+		const token = await getToken(page);
+		await clearAiProviders(page, token);
 		await page.goto('/settings/ai-providers');
 
+		// Same gate-modal substitution as above when no providers are configured.
 		const anthropicCard = page
-			.locator('div.border.border-border.rounded-radius-md.p-3', { hasText: 'Anthropic' })
+			.locator('div.border.border-border.rounded-radius-md.p-4', { hasText: 'Anthropic' })
 			.first();
 
 		await expect(anthropicCard.getByRole('button', { name: /Enter API key/i })).toBeVisible();
