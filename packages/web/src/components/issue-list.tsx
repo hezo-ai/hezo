@@ -254,7 +254,9 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 								expanded ? '' : '-rotate-90'
 							}`}
 						/>
-						<span className="truncate text-xs text-text-muted">{summaryBits.join(' · ')}</span>
+						<span className="truncate text-xs text-text-muted">
+							Showing {summaryBits.join(' · ')}
+						</span>
 					</button>
 					{expanded && (
 						<div

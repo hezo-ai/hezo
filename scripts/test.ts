@@ -1,16 +1,19 @@
 #!/usr/bin/env bun
 import { mkdirSync } from 'node:fs';
+import os from 'node:os';
 import { resolve } from 'node:path';
 import { Glob } from 'bun';
 import { Command } from 'commander';
 
 const ROOT = resolve(import.meta.dir, '..');
 
+const defaultConcurrency = process.env.CI ? 10 : Math.max(2, Math.floor(os.cpus().length / 2));
+
 const program = new Command()
 	.name('test')
 	.description('Run Hezo test suite across all packages')
 	.option('--bail', 'Stop on first test failure')
-	.option('--concurrency <n>', 'Number of parallel test workers', '10')
+	.option('--concurrency <n>', 'Number of parallel test workers', String(defaultConcurrency))
 	.option('--pattern <str>', 'Filter test files by substring match')
 	.option('--package <name>', 'Run tests only in a specific package')
 	.option('--skip-e2e', 'Skip Playwright e2e tests')
