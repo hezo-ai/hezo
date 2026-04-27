@@ -55,6 +55,7 @@ When disagreeing with the Engineer on design, the Architect decides. Accessibili
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
 {{> partials/common/check-before-create}}
+{{> partials/common/assignment-hierarchy}}
 {{> partials/common/mention-handoff}}
 
 ---

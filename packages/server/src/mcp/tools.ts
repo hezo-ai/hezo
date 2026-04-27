@@ -15,6 +15,7 @@ import {
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { assertNoActiveRun } from '../lib/active-run';
+import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import {
 	assertChildDepthAllowed,
@@ -265,7 +266,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_issue',
-		'Create a new issue. Use parent_issue_id for sub-issues — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-issues themselves can have sub-issues, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Create a new issue. Use parent_issue_id for sub-issues — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-issues themselves can have sub-issues, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().describe('Project ID'),
@@ -316,6 +317,11 @@ export function registerTools(
 				assigneeId,
 			);
 			if (!opsCheck.ok) return { error: opsCheck.message };
+
+			if (auth.type === AuthType.Agent) {
+				const hierarchyCheck = await assertSubordinateAssignee(db, auth.memberId, assigneeId);
+				if (!hierarchyCheck.ok) return { error: hierarchyCheck.message };
+			}
 
 			if (args.parent_issue_id) {
 				const depthCheck = await assertChildDepthAllowed(
@@ -378,7 +384,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_issue',
-		'Update an issue. Agents can use this to change status (including closing), update progress, set rules, and record branch names. Re-opening a closed issue is board-only — once an issue is `closed` only the board can change its status again. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Update an issue. Agents can use this to change status (including closing), update progress, set rules, and record branch names. Re-opening a closed issue is board-only — once an issue is `closed` only the board can change its status again. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
@@ -464,6 +470,15 @@ export function registerTools(
 						args.assignee_id as string,
 					);
 					if (!opsCheck.ok) return { error: opsCheck.message };
+
+					if (auth.type === AuthType.Agent && args.assignee_id !== row.assignee_id) {
+						const hierarchyCheck = await assertSubordinateAssignee(
+							db,
+							auth.memberId,
+							args.assignee_id as string,
+						);
+						if (!hierarchyCheck.ok) return { error: hierarchyCheck.message };
+					}
 				}
 			}
 
