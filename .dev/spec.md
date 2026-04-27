@@ -805,7 +805,7 @@ If a company has 3 projects, 3 containers run. If a project has multiple repos, 
 
 | Aspect | Configuration |
 |--------|-------------|
-| Base image | Configurable per project (default: `hezo/agent-base:latest`, built from `docker/Dockerfile.agent-base` with `claude`, `codex`, `gemini`, and `kimi` CLIs pre-installed) |
+| Base image | Configurable per project (default: `hezo/agent-base:latest`, built from `docker/Dockerfile.agent-base` with `claude`, `codex`, and `gemini` CLIs pre-installed) |
 | Project mount | Host `~/.hezo/companies/{company}/projects/{project}/` → Container `/workspace/` (rw) |
 | Worktrees mount | Host `~/.hezo/companies/{company}/projects/{project}/worktrees/` → Container `/worktrees/` (rw) |
 | SSH keys | Company-generated SSH key injected per subprocess (from secrets vault). Host `~/.ssh/` also mounted (ro) for fallback. |
@@ -1220,6 +1220,8 @@ All inter-agent communication happens through @-mentions in issue comments — s
 
 An agent can `@architect` or `@engineer` in a comment. The mentioned agent wakes immediately (see §Event-based triggers). The slug for @-mentions is derived from the agent title (lowercased, spaces → hyphens). Slugs are unique within a company.
 
+Every agent's resolved system prompt is auto-appended with a **Teammates** block listing each enabled peer in the company in `@<slug> — Title` form, sourced from `member_agents` filtered by `admin_status = 'enabled'` and excluding the running agent itself. This is the authoritative slug list at compose time — agents read it inline rather than calling `list_agents` on every reference. The block sits between the Project State block and the shared working guidelines.
+
 Repo short names can also be @-mentioned: `@frontend`, `@api` — these reference the repo, not an agent.
 
 **Handoff contract.** When an agent is woken by a mention, its run opens on the triggering ticket for *triage only* — not as new assigned work. The agent's task prompt is prepended with a Mention Handoff block showing the mentioner, the comment excerpt, and the agent's own open tickets. The expected behaviour is:
@@ -1555,7 +1557,7 @@ Every agent run picks a reasoning effort level (`minimal | low | medium | high |
 2. The agent's `default_effort` column (copied from the agent type when the agent is hired; editable per-agent).
 3. The global `medium` fallback.
 
-Each runtime translates the resolved level to its native knob: Claude Code appends `think`/`think hard`/`ultrathink` to the task prompt, Codex passes `-c model_reasoning_effort=<level>` (with `max` mapped to `high`), Gemini sets `GEMINI_REASONING_EFFORT` in the container env, and Kimi falls back to a prompt-only directive. The resolved level is also exposed as `HEZO_AGENT_EFFORT` so agent-side tooling can read it.
+Each runtime translates the resolved level to its native knob: Claude Code appends `think`/`think hard`/`ultrathink` to the task prompt, Codex passes `-c model_reasoning_effort=<level>` (with `max` mapped to `high`), and Gemini sets `GEMINI_REASONING_EFFORT` in the container env. The resolved level is also exposed as `HEZO_AGENT_EFFORT` so agent-side tooling can read it.
 
 Built-in defaults: CEO and Architect default to `max` (ultrathink) so their planning runs get the full thinking budget, the Product Lead / QA / Security / Researcher default to `high`, and implementer roles default to `medium`.
 

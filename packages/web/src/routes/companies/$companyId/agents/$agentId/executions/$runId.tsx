@@ -4,8 +4,9 @@ import { useMemo, useState } from 'react';
 import { LogViewer } from '../../../../../../components/log-viewer';
 import { Badge } from '../../../../../../components/ui/badge';
 import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
-import { useHeartbeatRun } from '../../../../../../hooks/use-heartbeat-runs';
+import { getRunWaitingMessage, useHeartbeatRun } from '../../../../../../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../../../../../../hooks/use-run-logs';
+import { formatTriggerReason } from '../../../../../../lib/run-trigger';
 
 function statusColor(status: string): string {
 	switch (status) {
@@ -15,6 +16,7 @@ function statusColor(status: string): string {
 		case 'timed_out':
 			return 'red';
 		case 'running':
+		case 'queued':
 			return 'yellow';
 		case 'cancelled':
 			return 'neutral';
@@ -38,6 +40,7 @@ function ExecutionDetailPage() {
 	);
 
 	const elapsed = useElapsedDuration(run?.started_at ?? '', run?.finished_at ?? null);
+	const elapsedDisplay = run?.started_at ? elapsed : '—';
 
 	if (isLoading) return <div className="text-text-muted text-sm">Loading...</div>;
 	if (!run) return <div className="text-text-muted text-sm">Run not found.</div>;
@@ -57,21 +60,47 @@ function ExecutionDetailPage() {
 				<Badge color={statusColor(run.status) as 'green'}>{run.status}</Badge>
 			</div>
 
+			{(() => {
+				const trigger = formatTriggerReason(run, companyId);
+				return (
+					<div className="mb-4 text-xs" data-testid="run-trigger-reason">
+						<span className="text-text-subtle uppercase tracking-wider mr-2">Triggered by</span>
+						{trigger.href ? (
+							<a
+								href={trigger.href}
+								className="text-text hover:underline"
+								data-testid="run-trigger-link"
+							>
+								{trigger.text}
+							</a>
+						) : (
+							<span className="text-text">{trigger.text}</span>
+						)}
+					</div>
+				);
+			})()}
+
 			<div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
 				<div className="rounded-lg border border-border-subtle bg-bg p-3">
 					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Duration</div>
-					<div className="text-sm font-medium">{elapsed}</div>
+					<div className="text-sm font-medium">{elapsedDisplay}</div>
 				</div>
 
 				<div className="rounded-lg border border-border-subtle bg-bg p-3">
 					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">When</div>
 					<div className="text-sm">
-						{new Date(run.started_at).toLocaleString()}
-						{run.finished_at && (
+						{run.started_at ? (
 							<>
-								<span className="text-text-subtle"> → </span>
-								{new Date(run.finished_at).toLocaleString()}
+								{new Date(run.started_at).toLocaleString()}
+								{run.finished_at && (
+									<>
+										<span className="text-text-subtle"> → </span>
+										{new Date(run.finished_at).toLocaleString()}
+									</>
+								)}
 							</>
+						) : (
+							<span className="text-text-subtle">Waiting to start…</span>
 						)}
 					</div>
 				</div>
@@ -169,7 +198,7 @@ function ExecutionDetailPage() {
 			<div className="mb-4">
 				<LogViewer
 					lines={lines}
-					emptyState={isActive ? 'Waiting for log output...' : 'No output captured.'}
+					emptyState={isActive ? getRunWaitingMessage(run.status) : 'No output captured.'}
 					liveLabel={isActive ? <span className="text-accent-amber">(live)</span> : null}
 					heightClassName="max-h-[60vh]"
 					testId="run-log"

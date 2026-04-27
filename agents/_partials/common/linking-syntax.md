@@ -12,6 +12,7 @@ When your markdown (ticket descriptions, `progress_summary`, comments, project d
 **Rules:**
 
 - Only teammates get the `@` prefix. Tickets, KB docs, and project docs are bare — the rendered UI detects them by shape (uppercase ID pattern for tickets, filename with extension for KB and project docs).
+- Always use the slug form for teammates, never the title. Write `@product-lead`, not `Product Lead` or `@Product Lead`. Slugs are lowercase, hyphenated, and unique; titles are display strings and don't resolve. The Teammates block injected at the end of your prompt is the authoritative slug list — even when a role section earlier in this prompt names a teammate by title, write the reference as `@<slug>`.
 - No other prefix is valid. Never write `#kb/<filename>`, `#doc/<filename>`, `kb/<filename>`, or `doc/<filename>` — those forms are not recognised. Just the bare filename or identifier.
 - Never wrap any of these in backticks or fence them in a code block — inline code suppresses the link. Write them as bare prose.
 - Only link entities that actually exist. Available targets come from: the KB block in your context, the project-docs block in your context, teammates (you can `list_agents`), and tickets you have read, created, or that the board has referenced. Do not guess identifiers.
@@ -21,3 +22,5 @@ When your markdown (ticket descriptions, `progress_summary`, comments, project d
 
 - Bad: See `prd.md` and ticket `BE-7` for the session-Grok design, assigned to `@engineer`.
 - Good: See prd.md and BE-7 for the session-Grok design, assigned to @engineer.
+- Bad: Delegating PRD work to Product Lead and research to Researcher.
+- Good: Delegating PRD work to @product-lead and research to @researcher.

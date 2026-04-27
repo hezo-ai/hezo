@@ -51,37 +51,51 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 		);
 	}
 
-	// Use in-memory transport for a simple request-response cycle
-	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-
-	const serverConnection = mcpServer.connect(serverTransport);
-
 	const body = await c.req.json();
 
-	// Create a temporary client to send the request through the in-memory transport
+	// JSON-RPC notifications have no `id` field. Per the MCP streamable-http
+	// transport contract the server must accept the notification with HTTP 202
+	// and an empty body. Returning a JSON-RPC response here breaks rmcp clients
+	// (Codex), which try to match the body against pending requests and abort.
+	if (body?.id === undefined) {
+		return c.body(null, 202);
+	}
+
+	// Handle initialize without a transport round-trip: the SDK proxy below
+	// would reject because connect() already negotiated initialization.
+	if (body.method === 'initialize') {
+		return c.json({
+			jsonrpc: '2.0',
+			id: body.id,
+			result: {
+				protocolVersion: '2025-03-26',
+				capabilities: { tools: {} },
+				serverInfo: { name: 'hezo', version: '0.1.0' },
+			},
+		});
+	}
+
+	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+	const serverConnection = mcpServer.connect(serverTransport);
 	const client = new Client({ name: 'hezo-proxy', version: '0.1.0' });
 	await client.connect(clientTransport);
 
-	let result: unknown;
 	try {
+		let result: unknown;
 		if (body.method === 'tools/list') {
 			result = await client.listTools();
 		} else if (body.method === 'tools/call') {
 			result = await authContext.run(auth, () => client.callTool(body.params));
-		} else if (body.method === 'initialize') {
-			// Already initialized via connect, return server info
-			result = {
-				protocolVersion: '2025-03-26',
-				capabilities: { tools: {} },
-				serverInfo: { name: 'hezo', version: '0.1.0' },
-			};
 		} else {
-			result = { error: { code: -32601, message: `Unknown method: ${body.method}` } };
+			return c.json({
+				jsonrpc: '2.0',
+				id: body.id,
+				error: { code: -32601, message: `Unknown method: ${body.method}` },
+			});
 		}
+		return c.json({ jsonrpc: '2.0', id: body.id, result });
 	} finally {
 		await client.close();
 		await serverConnection;
 	}
-
-	return c.json({ jsonrpc: '2.0', result, id: body.id ?? null });
 }

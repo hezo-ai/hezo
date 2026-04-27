@@ -227,11 +227,12 @@ Describe your product, its target users, and key value propositions.
 ## Issue Lifecycle
 
 Issues progress through these statuses:
-1. **Backlog** — captured but not yet prioritized
-2. **Open** — prioritized and ready for work
-3. **In Progress** — actively being worked on
-4. **Review** — implementation complete, awaiting QA review
-5. **Done** — reviewed and approved
+1. **Backlog** — captured but not yet picked up
+2. **In Progress** — actively being worked on
+3. **Review** — implementation complete, awaiting QA review
+4. **Approved** — QA-approved, ready to land
+5. **Done** — landed, awaiting Coach post-mortem
+6. **Closed** — Coach review complete
 
 ## Branching Strategy
 

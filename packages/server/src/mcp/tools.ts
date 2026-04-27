@@ -288,7 +288,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'Pin this issue to a specific AI runtime (claude_code, codex, gemini, kimi). Leave unset to use the instance default.',
+					'Pin this issue to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default.',
 				),
 		},
 		async (args, db, auth) => {
@@ -410,7 +410,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'Override the AI runtime for this issue (claude_code, codex, gemini, kimi). Pass an empty string to clear.',
+					'Override the AI runtime for this issue (claude_code, codex, gemini). Pass an empty string to clear.',
 				),
 		},
 		async (args, db, auth) => {

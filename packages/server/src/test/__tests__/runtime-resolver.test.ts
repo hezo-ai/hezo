@@ -39,24 +39,24 @@ describe('resolveRuntimeForIssue', () => {
 		await storeAiProviderKey(
 			db,
 			masterKeyManager,
-			AiProvider.Anthropic,
-			'sk-ant-api-key',
+			AiProvider.OpenAI,
+			'sk-openai-api',
 			AiAuthMethod.ApiKey,
-			'anthropic-api',
+			'openai-api',
 		);
-		const oauthId = await storeAiProviderKey(
+		const subscriptionId = await storeAiProviderKey(
 			db,
 			masterKeyManager,
-			AiProvider.Anthropic,
-			'oauth-token',
-			AiAuthMethod.OAuthToken,
-			'anthropic-oauth',
+			AiProvider.OpenAI,
+			JSON.stringify({ tokens: { refresh_token: 'rt-x' } }),
+			AiAuthMethod.Subscription,
+			'openai-subscription',
 		);
 
-		expect(await resolveRuntimeForIssue(db, null)).toBe(AgentRuntime.ClaudeCode);
+		expect(await resolveRuntimeForIssue(db, null)).toBe(AgentRuntime.Codex);
 
-		await setDefaultAiProvider(db, oauthId);
-		expect(await resolveRuntimeForIssue(db, null)).toBe(AgentRuntime.ClaudeCode);
+		await setDefaultAiProvider(db, subscriptionId);
+		expect(await resolveRuntimeForIssue(db, null)).toBe(AgentRuntime.Codex);
 	});
 
 	it('falls back to the oldest active provider when none is marked default', async () => {

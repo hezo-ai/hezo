@@ -107,7 +107,9 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
 	expect(clipboardText).toContain('[synthetic] starting agent run');
 
-	const issueLink = page.getByRole('link', { name: new RegExp(issue.identifier, 'i') });
+	const issueLink = page.getByRole('link', {
+		name: new RegExp(`^Issue: ${issue.identifier}`, 'i'),
+	});
 	await expect(issueLink).toBeVisible();
 	await issueLink.click();
 	await expect(page).toHaveURL(new RegExp(`/issues/${issue.identifier.toLowerCase()}$`));

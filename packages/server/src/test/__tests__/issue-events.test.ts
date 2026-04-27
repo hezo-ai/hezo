@@ -25,6 +25,10 @@ interface CommentRow {
 		kind?: string;
 		from?: string;
 		to?: string;
+		from_id?: string | null;
+		to_id?: string | null;
+		from_name?: string;
+		to_name?: string;
 		actor_id?: string | null;
 		source_issue_id?: string;
 		source_identifier?: string;
@@ -177,6 +181,125 @@ describe('status change system events', () => {
 		expect(res.status).toBe(200);
 
 		const after = await systemComments(issue.id, 'status_change');
+		expect(after.length).toBe(before);
+	});
+});
+
+describe('title change system events', () => {
+	it('records a board-authored title rename with from/to and "Test Admin" actor', async () => {
+		const issue = await createIssue('Original title');
+		const before = (await systemComments(issue.id, 'title_change')).length;
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Renamed title' }),
+		});
+		expect(res.status).toBe(200);
+
+		const after = await systemComments(issue.id, 'title_change');
+		expect(after.length).toBe(before + 1);
+		const ev = after[after.length - 1];
+		expect(ev.content.from).toBe('Original title');
+		expect(ev.content.to).toBe('Renamed title');
+		expect(ev.content.text).toContain('Test Admin');
+		expect(ev.content.text).toContain('Original title');
+		expect(ev.content.text).toContain('Renamed title');
+		expect(ev.author_member_id).not.toBeNull();
+	});
+
+	it('records an agent-authored title rename attributed to the agent', async () => {
+		const issue = await createIssue('Pre-rename');
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Bot rename' }),
+		});
+		expect(res.status).toBe(200);
+
+		const events = await systemComments(issue.id, 'title_change');
+		const ev = events[events.length - 1];
+		expect(ev.content.text).toContain('Status Bot');
+		expect(ev.content.actor_id).toBe(agentId);
+		expect(ev.author_member_id).toBe(agentId);
+	});
+
+	it('does not record an event when the title is unchanged', async () => {
+		const issue = await createIssue('Same title');
+		const before = (await systemComments(issue.id, 'title_change')).length;
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Same title' }),
+		});
+		expect(res.status).toBe(200);
+
+		const after = await systemComments(issue.id, 'title_change');
+		expect(after.length).toBe(before);
+	});
+
+	it('does not record an event for a whitespace-only diff', async () => {
+		const issue = await createIssue('Trim me');
+		const before = (await systemComments(issue.id, 'title_change')).length;
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: '  Trim me  ' }),
+		});
+		expect(res.status).toBe(200);
+
+		const after = await systemComments(issue.id, 'title_change');
+		expect(after.length).toBe(before);
+	});
+});
+
+describe('assignee change system events', () => {
+	it('records a board-authored reassignment with from/to ids and names', async () => {
+		const secondAgentRes = await app.request(`/api/companies/${companyId}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Second Bot' }),
+		});
+		const secondAgentId = (await secondAgentRes.json()).data.id;
+
+		const issue = await createIssue('Reassign me');
+		const before = (await systemComments(issue.id, 'assignee_change')).length;
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ assignee_id: secondAgentId }),
+		});
+		expect(res.status).toBe(200);
+
+		const after = await systemComments(issue.id, 'assignee_change');
+		expect(after.length).toBe(before + 1);
+		const ev = after[after.length - 1];
+		expect(ev.content.from_id).toBe(agentId);
+		expect(ev.content.to_id).toBe(secondAgentId);
+		expect(ev.content.from_name).toBe('Status Bot');
+		expect(ev.content.to_name).toBe('Second Bot');
+		expect(ev.content.text).toContain('Test Admin');
+		expect(ev.content.text).toContain('Status Bot');
+		expect(ev.content.text).toContain('Second Bot');
+	});
+
+	it('does not record an event when the assignee is unchanged', async () => {
+		const issue = await createIssue('Same assignee');
+		const before = (await systemComments(issue.id, 'assignee_change')).length;
+
+		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ assignee_id: agentId }),
+		});
+		expect(res.status).toBe(200);
+
+		const after = await systemComments(issue.id, 'assignee_change');
 		expect(after.length).toBe(before);
 	});
 });

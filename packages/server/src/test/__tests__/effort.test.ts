@@ -110,12 +110,3 @@ describe('applyEffortToRuntime — Gemini', () => {
 		expect(r.extraArgs).toEqual([]);
 	});
 });
-
-describe('applyEffortToRuntime — Kimi', () => {
-	it('only emits a prompt directive (no native knob)', () => {
-		const r = applyEffortToRuntime(AgentRuntime.Kimi, AgentEffort.Max);
-		expect(r.extraArgs).toEqual([]);
-		expect(r.extraEnv).toEqual([]);
-		expect(r.promptDirective).toContain('maximum reasoning');
-	});
-});

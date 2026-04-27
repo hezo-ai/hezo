@@ -394,7 +394,7 @@ baseline reasoning level applied to every run of this agent; an `@`-mentioning
 comment can override it per-run via the `effort` field — see
 [Reasoning effort](#reasoning-effort).
 
-`model_override_provider` (one of `anthropic | openai | google | moonshot`, or
+`model_override_provider` (one of `anthropic | openai | google`, or
 `null`) and `model_override_model` (free-form model id, e.g. `claude-opus-4-7`,
 or `null`) let this agent target a specific provider + model. When the
 provider is set, the runner uses this provider's credential instead of the
@@ -427,8 +427,28 @@ Get agent execution history (last 50 runs). Each row includes timing
 - `project_id` — project the run belongs to, used by the UI to subscribe to
   the corresponding `project-runs:<projectId>` WebSocket room.
 
+Each row also includes resolved trigger fields so the UI can render a
+"Triggered by" line without follow-up requests:
+
+- `wakeup_id` — FK to the `agent_wakeup_requests` row that started the run
+  (nullable for legacy rows; production paths always populate it).
+- `trigger_source` — one of the `wakeup_source` enum values (`mention`,
+  `reply`, `assignment`, `option_chosen`, `comment`, `automation`,
+  `heartbeat`, `timer`, `on_demand`).
+- `trigger_payload` — the wakeup's `payload` JSONB, opaque shape per source.
+- `trigger_comment_id`, `trigger_actor_member_id`, `trigger_actor_slug`,
+  `trigger_actor_title`, `trigger_comment_issue_id`,
+  `trigger_comment_issue_identifier`, `trigger_comment_project_slug` —
+  resolved from `payload.comment_id` for sources that reference a comment
+  (`mention`, `reply`, `comment`, `option_chosen`). For `mention`, the actor
+  is the agent who posted the mentioning comment; for `reply`, the actor is
+  the agent who posted the replying comment. Null when the source has no
+  comment context (e.g. `assignment`, `heartbeat`, `timer`).
+
 #### `GET /companies/:companyId/agents/:agentId/heartbeat-runs/:runId`
-Get a single heartbeat run with issue metadata and the full fields listed above.
+Get a single heartbeat run with issue metadata, the full log/usage fields
+listed above, and the same resolved `trigger_*` fields used to render the
+"Triggered by" line on the run-detail page.
 
 #### `GET /companies/:companyId/issues/:issueId/latest-run`
 Returns the most recent `heartbeat_run` for the issue (or `null` if none).
@@ -800,7 +820,7 @@ inbox and configured messaging channels.
 Issues in the auto-created Operations project (`slug = 'operations'`, `is_internal = true`) must be assigned to the CEO. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Operations project issues must be assigned to the CEO`.
 
 `runtime_type` is optional. It pins this issue to a specific AI adapter
-(`claude_code | codex | gemini | kimi`). When unset, the server picks the
+(`claude_code | codex | gemini`). When unset, the server picks the
 instance default — the single active AI provider if only one is configured,
 or the oldest/default active provider otherwise.
 
@@ -1373,9 +1393,9 @@ Request:
 }
 ```
 
-`provider` is one of: `anthropic`, `openai`, `google`, `moonshot`. `label` is optional; the server auto-derives one from the provider name if omitted. Returns 409 if a `(provider, label)` pair already exists.
+`provider` is one of: `anthropic`, `openai`, `google`. `label` is optional; the server auto-derives one from the provider name if omitted. Returns 409 if a `(provider, label)` pair already exists.
 
-Multiple configs per provider are permitted as long as `(provider, label)` stays unique. The typical case is one `api_key` row plus one `oauth_token` row per provider (so a user can keep their Anthropic API key *and* a Claude subscription OAuth token side-by-side). The runtime credential resolver picks whichever row is marked `is_default`; flip via `PATCH /ai-providers/:configId/default`. `auth_method` defaults to `api_key`; send `"oauth_token"` to skip the key-prefix check and live verification (OAuth tokens are written by the `/oauth/callback` flow but the field is accepted here for completeness).
+Multiple configs per provider are permitted as long as `(provider, label)` stays unique. The typical case is one `api_key` row plus one `subscription` row per provider (so a user can keep their OpenAI API key *and* a Codex/ChatGPT subscription credential side-by-side). The runtime credential resolver picks whichever row is marked `is_default`; flip via `PATCH /ai-providers/:configId/default`. `auth_method` defaults to `api_key`; send `"subscription"` along with the pasted contents of the vendor's auth file (`~/.codex/auth.json` for Codex, `~/.gemini/oauth_creds.json` for Gemini) to skip the key-prefix check and live verification. Anthropic does not support subscription auth.
 
 #### `DELETE /ai-providers/:configId`
 Remove a configuration.
@@ -2050,7 +2070,6 @@ Each runtime translates the resolved level to its native knob:
 | `claude_code` | Appends `think` / `think hard` / `ultrathink` to the task prompt. |
 | `codex` | Passes `-c model_reasoning_effort=<level>` (`max` → `high`). |
 | `gemini` | Sets `GEMINI_REASONING_EFFORT=<level>` in the container env. |
-| `kimi` | Prompt-only directive (no native knob). |
 
 The resolved level is also exposed as `HEZO_AGENT_EFFORT` in the container
 env so agent-side tooling can read it.
@@ -2177,6 +2196,14 @@ as GitHub. No side channels, no direct messaging. Everything is on the record.
 Text content can contain `@<agent-slug>` references. The slug is derived from
 the agent title (lowercased, spaces → hyphens, e.g. "Dev Engineer" → `dev-engineer`).
 Repo short names can also be referenced: `@frontend`, `@api`.
+
+The resolved system prompt every agent receives ends with a **Teammates** block
+listing each enabled peer in the company in `@<slug> — Title` form. This block
+is built by `template-resolver.ts` from `member_agents` (filtered to
+`admin_status = 'enabled'` and excluding the running agent), so agents see the
+live slug list inline at compose time and don't need to call `list_agents` for
+every teammate reference — the MCP tool remains the way to fetch a specific
+peer's description or reporting structure.
 
 On `POST /companies/:companyId/issues/:issueId/comments`, the server parses
 mentions out of the comment content (ignoring fenced code blocks and self-

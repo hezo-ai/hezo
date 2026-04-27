@@ -1,25 +1,14 @@
-import {
-	AiAuthMethod,
-	type AiProvider,
-	ALL_AI_PROVIDERS,
-	ApprovalStatus,
-	ApprovalType,
-	OAUTH_CALLBACK_PATH,
-	PlatformType,
-} from '@hezo/shared';
+import { ApprovalStatus, ApprovalType, OAUTH_CALLBACK_PATH, PlatformType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { verifyOAuthState } from '../crypto/state';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { storeAiProviderKey } from '../services/ai-provider-keys';
 import { registerSSHKeyOnGitHub } from '../services/github';
 import { enqueueOAuthVerificationTask } from '../services/oauth-verification-tasks';
 import { generateCompanySSHKey, getCompanySSHKey, updateGitHubKeyId } from '../services/ssh-keys';
 import { storeOAuthToken } from '../services/token-store';
 
 const log = logger.child('routes');
-
-const AI_PROVIDER_PLATFORMS = new Set<string>(ALL_AI_PROVIDERS);
 
 export const oauthCallbackRoutes = new Hono<Env>();
 
@@ -56,9 +45,8 @@ oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 	}
 
 	const companyId = statePayload.company_id;
-	const isAiProvider = AI_PROVIDER_PLATFORMS.has(platform);
 
-	if (!isAiProvider && !companyId) {
+	if (!companyId) {
 		return c.json(
 			{ error: { code: 'BAD_REQUEST', message: 'State missing company_id for platform flow' } },
 			400,
@@ -114,32 +102,6 @@ oauthCallbackRoutes.get(OAUTH_CALLBACK_PATH, async (c) => {
 	} catch {
 		return redirect(
 			`/error?message=${encodeURIComponent('Failed to exchange token with Connect service')}`,
-		);
-	}
-
-	// For AI provider platforms, store as ai_provider_config with oauth_token auth method
-	if (isAiProvider) {
-		try {
-			await storeAiProviderKey(
-				db,
-				masterKeyManager,
-				platform as AiProvider,
-				accessToken,
-				AiAuthMethod.OAuthToken,
-				metadata.email ? `${platform} (${metadata.email})` : platform,
-				metadata,
-			);
-		} catch (e) {
-			log.warn('AI provider config creation failed:', e instanceof Error ? e.message : e);
-		}
-
-		return redirect(`/settings/ai-providers?ai_provider_connected=${platform}`);
-	}
-
-	if (!companyId) {
-		return c.json(
-			{ error: { code: 'BAD_REQUEST', message: 'State missing company_id for platform flow' } },
-			400,
 		);
 	}
 

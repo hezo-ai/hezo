@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 export function ensureProjectWorkspace(
@@ -69,4 +69,41 @@ export function getPreviewsPath(
 	agentId: string,
 ): string {
 	return join(getProjectDir(dataDir, companySlug, projectSlug), '.previews', agentId);
+}
+
+export function clearAllProjectWorkspaces(dataDir: string): string[] {
+	if (!dataDir) return [];
+	const companiesRoot = join(dataDir, 'companies');
+	if (!existsSync(companiesRoot)) return [];
+
+	const cleared: string[] = [];
+	for (const companySlug of safeReaddir(companiesRoot)) {
+		const projectsRoot = join(companiesRoot, companySlug, 'projects');
+		if (!isDirectory(projectsRoot)) continue;
+
+		for (const projectSlug of safeReaddir(projectsRoot)) {
+			const workspaceDir = join(projectsRoot, projectSlug, 'workspace');
+			if (!isDirectory(workspaceDir)) continue;
+			rmSync(workspaceDir, { recursive: true, force: true });
+			mkdirSync(workspaceDir, { recursive: true });
+			cleared.push(workspaceDir);
+		}
+	}
+	return cleared;
+}
+
+function safeReaddir(path: string): string[] {
+	try {
+		return readdirSync(path);
+	} catch {
+		return [];
+	}
+}
+
+function isDirectory(path: string): boolean {
+	try {
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
+	}
 }

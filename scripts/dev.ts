@@ -3,6 +3,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { Command } from 'commander';
+import { clearAllProjectWorkspaces } from '../packages/server/src/services/workspace';
 
 const ROOT = resolve(import.meta.dir, '..');
 
@@ -18,13 +19,19 @@ const program = new Command()
 
 const opts = program.opts();
 
+const dataDir = opts.dataDir ? resolve(opts.dataDir) : resolve(homedir(), '.hezo');
+
 if (opts.reset) {
-	const dataDir = opts.dataDir ? resolve(opts.dataDir) : resolve(homedir(), '.hezo');
 	const pgDataPath = resolve(dataDir, 'pgdata');
 	if (existsSync(pgDataPath)) {
 		rmSync(pgDataPath, { recursive: true, force: true });
 		console.log(`Reset: removed ${pgDataPath}`);
 	}
+}
+
+const cleared = clearAllProjectWorkspaces(dataDir);
+if (cleared.length > 0) {
+	console.log(`Cleared ${cleared.length} project workspace(s) under ${dataDir}/companies`);
 }
 
 // Duplicated from @hezo/shared (DEFAULT_WEB_PORT) to avoid adding a root-level

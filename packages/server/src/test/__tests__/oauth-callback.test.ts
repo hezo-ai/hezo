@@ -101,7 +101,7 @@ describe('GET /oauth/callback (public, no auth required)', () => {
 		expect(location).toContain('/error');
 	});
 
-	it('rejects a non-AI-provider callback when state omits company_id', async () => {
+	it('rejects callbacks when state omits company_id', async () => {
 		const state = await signOAuthState({}, masterKeyManager);
 		const res = await app.request(
 			`/oauth/callback?state=${encodeURIComponent(state)}&platform=github&code=test_code`,
@@ -110,20 +110,6 @@ describe('GET /oauth/callback (public, no auth required)', () => {
 		const body = await res.json();
 		expect(body.error.code).toBe('BAD_REQUEST');
 		expect(body.error.message).toContain('company_id');
-	});
-
-	it('accepts an AI-provider callback without company_id (but still needs code exchange)', async () => {
-		// The state has no company_id — valid for AI-provider flows — but the exchange
-		// will still fail since Connect isn't running in this test app, triggering a
-		// redirect to /error. That's fine; the relevant assertion is that the handler
-		// does NOT reject with "company_id missing".
-		const state = await signOAuthState({ ai_provider: 'anthropic' }, masterKeyManager);
-		const res = await app.request(
-			`/oauth/callback?state=${encodeURIComponent(state)}&platform=anthropic&code=test_code`,
-		);
-		expect(res.status).toBe(302);
-		const location = res.headers.get('location');
-		expect(location).toContain('/error');
 	});
 
 	it('auto-resolves pending oauth_request approvals on success', async () => {
@@ -224,26 +210,6 @@ describe('GET /oauth/callback with webUrl configured (dev-mode behavior)', () =>
 		expect(res.status).toBe(302);
 		const location = res.headers.get('location') ?? '';
 		expect(location.startsWith(`${WEB_URL}/error`)).toBe(true);
-	});
-
-	it('prefixes the AI-provider success redirect with the web URL', async () => {
-		globalThis.fetch = vi.fn().mockResolvedValue({
-			ok: true,
-			json: async () => ({
-				access_token: 'sk_test',
-				scopes: '',
-				metadata: '',
-				platform: 'anthropic',
-			}),
-		}) as unknown as typeof fetch;
-
-		const state = await signOAuthState({ ai_provider: 'anthropic' }, devMasterKeyManager);
-		const res = await devApp.request(
-			`/oauth/callback?state=${encodeURIComponent(state)}&platform=anthropic&code=test_code`,
-		);
-		expect(res.status).toBe(302);
-		const location = res.headers.get('location') ?? '';
-		expect(location.startsWith(`${WEB_URL}/settings/ai-providers`)).toBe(true);
 	});
 
 	it('prefixes the platform success redirect with the web URL', async () => {

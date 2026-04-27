@@ -1,3 +1,4 @@
+import type { WakeupSource } from '@hezo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 
@@ -5,13 +6,14 @@ export interface HeartbeatRun {
 	id: string;
 	member_id: string;
 	company_id: string;
+	wakeup_id: string | null;
 	issue_id: string | null;
 	issue_identifier: string | null;
 	issue_title: string | null;
 	project_id: string | null;
 	project_slug: string | null;
 	status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
-	started_at: string;
+	started_at: string | null;
 	finished_at: string | null;
 	exit_code: number | null;
 	error: string | null;
@@ -21,6 +23,15 @@ export interface HeartbeatRun {
 	invocation_command: string | null;
 	log_text: string | null;
 	working_dir: string | null;
+	trigger_source: WakeupSource | null;
+	trigger_payload: Record<string, unknown> | null;
+	trigger_comment_id: string | null;
+	trigger_actor_member_id: string | null;
+	trigger_actor_slug: string | null;
+	trigger_actor_title: string | null;
+	trigger_comment_issue_id: string | null;
+	trigger_comment_issue_identifier: string | null;
+	trigger_comment_project_slug: string | null;
 	created_issues: { id: string; identifier: string; title: string; project_slug: string }[];
 }
 
@@ -28,6 +39,12 @@ export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancell
 
 export function isActiveRunStatus(status: RunStatus): boolean {
 	return status === 'running' || status === 'queued';
+}
+
+export function getRunWaitingMessage(status: RunStatus): string {
+	if (status === 'queued') return 'Queued — waiting for prior run on this credential…';
+	if (status === 'running') return 'Waiting for log output…';
+	return 'No output.';
 }
 
 export function useHeartbeatRuns(companyId: string, agentId: string) {

@@ -12,7 +12,12 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 import { AgentStatusLabel } from '../../../../../../components/agent-status-label';
-import { type CommentData, CommentRenderer } from '../../../../../../components/comment-renderers';
+import {
+	type CommentData,
+	CommentRenderer,
+	inlineEventIcon,
+	isInlineEventType,
+} from '../../../../../../components/comment-renderers';
 import { MarkdownProse } from '../../../../../../components/markdown-prose';
 import { MentionTextarea } from '../../../../../../components/mention-textarea';
 import { Avatar, avatarColorFromString } from '../../../../../../components/ui/avatar';
@@ -490,12 +495,43 @@ function IssueDetailPage() {
 
 					<div className="flex flex-col gap-4 mb-4">
 						{comments?.map((c) => {
+							const commentData = c as unknown as CommentData;
 							const authorName = c.author_name ?? 'Board';
 							const isAgent = c.author_type === 'agent';
 							const content =
 								typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
 							const isPendingSetupRepo =
 								c.content_type === 'action' && content?.kind === 'setup_repo' && !c.chosen_option;
+
+							if (isInlineEventType(c.content_type)) {
+								const Icon = inlineEventIcon(commentData);
+								return (
+									<div
+										key={c.id}
+										id={`comment-${c.id}`}
+										className="flex items-start gap-2.5 scroll-mt-20"
+										data-testid="comment-item"
+									>
+										<div className="w-[26px] h-[26px] flex items-center justify-center shrink-0 text-text-subtle">
+											<Icon className="w-3.5 h-3.5" />
+										</div>
+										<div className="flex-1 min-w-0">
+											<CommentRenderer
+												comment={commentData}
+												onChooseOption={(commentId, chosenId) =>
+													chooseOption.mutate({ commentId, chosen_id: chosenId })
+												}
+												companyId={companyId}
+												projectId={issue?.project_id ?? undefined}
+												projectSlug={issueProjectSlug}
+												issueId={issue?.id ?? undefined}
+												inline
+											/>
+										</div>
+									</div>
+								);
+							}
+
 							return (
 								<div
 									key={c.id}
@@ -523,7 +559,7 @@ function IssueDetailPage() {
 										</div>
 										<div className="px-3 py-2.5">
 											<CommentRenderer
-												comment={c as unknown as CommentData}
+												comment={commentData}
 												onChooseOption={(commentId, chosenId) =>
 													chooseOption.mutate({ commentId, chosen_id: chosenId })
 												}

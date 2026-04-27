@@ -81,14 +81,14 @@ describe('storeAiProviderKey', () => {
 		const configId = await storeAiProviderKey(
 			db,
 			masterKeyManager,
-			AiProvider.Moonshot,
-			'sk-moonshot-test',
+			AiProvider.OpenAI,
+			'sk-openai-default-label',
 			AiAuthMethod.ApiKey,
 		);
 		const configs = await listAiProviders(db);
 		const created = configs.find((c) => c.id === configId);
 		expect(created).toBeDefined();
-		expect(created?.label).toBe(AiProvider.Moonshot);
+		expect(created?.label).toBe(AiProvider.OpenAI);
 	});
 
 	it('stores metadata when provided', async () => {
@@ -202,36 +202,35 @@ describe('API key + OAuth coexistence for a single provider', () => {
 		const apiKeyId = await storeAiProviderKey(
 			db,
 			masterKeyManager,
-			AiProvider.Anthropic,
-			'sk-ant-api-key-value',
+			AiProvider.OpenAI,
+			'sk-openai-api-key-value',
 			AiAuthMethod.ApiKey,
-			'anthropic-api',
+			'openai-api',
 		);
-		const oauthId = await storeAiProviderKey(
+		const subscriptionId = await storeAiProviderKey(
 			db,
 			masterKeyManager,
-			AiProvider.Anthropic,
-			'oauth-token-value',
-			AiAuthMethod.OAuthToken,
-			'anthropic-oauth',
+			AiProvider.OpenAI,
+			JSON.stringify({ tokens: { refresh_token: 'rt-x' } }),
+			AiAuthMethod.Subscription,
+			'openai-subscription',
 		);
 
 		const configs = await listAiProviders(db);
-		const anthropic = configs.filter((c) => c.provider === AiProvider.Anthropic);
-		expect(anthropic.length).toBe(2);
-		expect(anthropic.filter((c) => c.is_default).length).toBe(1);
+		const openai = configs.filter((c) => c.provider === AiProvider.OpenAI);
+		expect(openai.length).toBe(2);
+		expect(openai.filter((c) => c.is_default).length).toBe(1);
 
-		const firstDefault = await getProviderCredential(db, masterKeyManager, AiProvider.Anthropic);
-		expect(firstDefault?.value).toBe('sk-ant-api-key-value');
+		const firstDefault = await getProviderCredential(db, masterKeyManager, AiProvider.OpenAI);
+		expect(firstDefault?.value).toBe('sk-openai-api-key-value');
 		expect(firstDefault?.authMethod).toBe(AiAuthMethod.ApiKey);
 
-		await setDefaultAiProvider(db, oauthId);
-		const oauthDefault = await getProviderCredential(db, masterKeyManager, AiProvider.Anthropic);
-		expect(oauthDefault?.value).toBe('oauth-token-value');
-		expect(oauthDefault?.authMethod).toBe(AiAuthMethod.OAuthToken);
+		await setDefaultAiProvider(db, subscriptionId);
+		const subDefault = await getProviderCredential(db, masterKeyManager, AiProvider.OpenAI);
+		expect(subDefault?.authMethod).toBe(AiAuthMethod.Subscription);
 
 		await setDefaultAiProvider(db, apiKeyId);
-		const apiKeyDefault = await getProviderCredential(db, masterKeyManager, AiProvider.Anthropic);
+		const apiKeyDefault = await getProviderCredential(db, masterKeyManager, AiProvider.OpenAI);
 		expect(apiKeyDefault?.authMethod).toBe(AiAuthMethod.ApiKey);
 	});
 });

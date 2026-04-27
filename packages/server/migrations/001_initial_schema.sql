@@ -41,7 +41,7 @@ CREATE INDEX idx_auth_methods_user ON user_auth_methods(user_id);
 -------------------------------------------------------------------------------
 
 CREATE TYPE member_type AS ENUM ('agent', 'user');
-CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini', 'kimi');
+CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini');
 CREATE TYPE agent_effort AS ENUM ('minimal', 'low', 'medium', 'high', 'max');
 CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
 CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled');
@@ -58,7 +58,7 @@ CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
 CREATE TYPE platform_type AS ENUM ('github', 'gmail', 'gitlab', 'stripe', 'posthog', 'railway', 'vercel', 'digitalocean', 'x', 'anthropic', 'openai', 'google');
 CREATE TYPE connection_status AS ENUM ('active', 'expired', 'disconnected');
-CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'comment', 'reply');
+CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'comment', 'reply', 'heartbeat');
 CREATE TYPE wakeup_status AS ENUM ('queued', 'claimed', 'completed', 'failed', 'skipped', 'coalesced', 'deferred', 'cancelled');
 CREATE TYPE heartbeat_run_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'timed_out');
 CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
@@ -67,8 +67,8 @@ CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
 CREATE TYPE company_type_source AS ENUM ('builtin', 'custom', 'marketplace');
 CREATE TYPE goal_status AS ENUM ('active', 'achieved', 'archived');
-CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'moonshot');
-CREATE TYPE ai_auth_method AS ENUM ('api_key', 'oauth_token');
+CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google');
+CREATE TYPE ai_auth_method AS ENUM ('api_key', 'subscription');
 
 -------------------------------------------------------------------------------
 -- AGENT TYPES
@@ -787,7 +787,7 @@ CREATE TABLE heartbeat_runs (
     wakeup_id                UUID REFERENCES agent_wakeup_requests(id) ON DELETE SET NULL,
     issue_id                 UUID REFERENCES issues(id) ON DELETE SET NULL,
     status                   heartbeat_run_status NOT NULL DEFAULT 'queued',
-    started_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at               TIMESTAMPTZ,
     finished_at              TIMESTAMPTZ,
     exit_code                INTEGER,
     error                    TEXT,

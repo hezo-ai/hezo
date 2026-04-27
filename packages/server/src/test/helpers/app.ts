@@ -79,12 +79,22 @@ export async function createAgentRun(
 	agentId: string,
 	companyId: string,
 	issueId?: string | null,
+	wakeupOpts?: { source?: string; payload?: Record<string, unknown> },
 ): Promise<string> {
-	const result = await db.query<{ id: string }>(
-		`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
-		 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())
+	const source = wakeupOpts?.source ?? 'on_demand';
+	const payload = wakeupOpts?.payload ?? {};
+	const wakeup = await db.query<{ id: string }>(
+		`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, payload, claimed_at)
+		 VALUES ($1, $2, $3::wakeup_source, 'claimed'::wakeup_status, $4::jsonb, now())
 		 RETURNING id`,
-		[agentId, companyId, issueId ?? null],
+		[agentId, companyId, source, JSON.stringify(payload)],
+	);
+	const wakeupId = wakeup.rows[0].id;
+	const result = await db.query<{ id: string }>(
+		`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, wakeup_id, status, started_at)
+		 VALUES ($1, $2, $3, $4, 'running'::heartbeat_run_status, now())
+		 RETURNING id`,
+		[agentId, companyId, issueId ?? null, wakeupId],
 	);
 	return result.rows[0].id;
 }

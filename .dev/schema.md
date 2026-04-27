@@ -36,8 +36,8 @@
 | `execution_locks` | Issue work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to issue + member_agent |
 | `skills` | Reusable instruction documents (DB-backed). Tags, content, source URL, creator tracking, embeddings. | belongs to company |
 | `skill_revisions` | Version history for skills. | belongs to skill |
-| `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. | belongs to member_agent + company |
-| `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the issue being worked on via `issue_id`. | belongs to member_agent + company, optionally issue |
+| `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. Every run row points back to the wakeup that triggered it via `heartbeat_runs.wakeup_id`. | belongs to member_agent + company |
+| `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the issue being worked on via `issue_id`, and to the wakeup that triggered the run via `wakeup_id`. | belongs to member_agent + company, optionally issue, optionally wakeup |
 | `agent_task_sessions` | Per-task session persistence for session compaction. | belongs to member_agent, keyed by task |
 | `assets` | Uploaded files. Provider, object key, content type, SHA-256 hash. | belongs to company |
 | `plugins` | Installed plugins. Manifest, status, config. | belongs to company |
@@ -47,7 +47,7 @@
 | `project_issue_counters` | Helper for atomic issue numbering per project. | belongs to project |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
 | `slack_connections` | Per-company Slack app config. Bot token encrypted in secrets. | belongs to company |
-| `ai_provider_configs` | Instance-level AI provider credentials shared across every company in the Hezo instance. Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription OAuth token. A partial unique index on `is_default` enforces one default per provider; `(provider, label)` is unique so multiple rows per provider coexist — typically one `api_key` and one `oauth_token` — and `getProviderCredential` / `resolveRuntimeForIssue` pick the `is_default` row at runtime. `default_model` (nullable) holds the CLI `--model` value applied to every run that uses this config when the agent has no explicit override. Agent runner decrypts at execution time and injects as env var. | instance-scoped |
+| `ai_provider_configs` | Instance-level AI provider credentials shared across every company in the Hezo instance. Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription credential blob. A partial unique index on `is_default` enforces one default per provider; `(provider, label)` is unique so multiple rows per provider coexist — typically one `api_key` and one `subscription` — and `getProviderCredential` / `resolveRuntimeForIssue` pick the `is_default` row at runtime. `default_model` (nullable) holds the CLI `--model` value applied to every run that uses this config when the agent has no explicit override. Agent runner decrypts at execution time and either injects as env var (api keys) or materialises to a per-run mount inside the container (subscriptions). | instance-scoped |
 
 ## Key design decisions
 
@@ -577,9 +577,10 @@ events.
 
 | Source | Fires when |
 | --- | --- |
-| `timer` | Scheduled heartbeat tick (fallback for idle agents). |
+| `heartbeat` | Scheduled heartbeat tick (fallback for idle agents). Payload: `{ reason: 'scheduled_heartbeat' }`. |
+| `timer` | Recovery timer (orphan detector, container restart, retry of a failed run). Payload typically carries `{ reason, ... }` describing which recovery path fired it. |
 | `assignment` | Issue assigned to the agent (incl. `create_issue` tool). |
-| `on_demand` | Admin/API explicit wake. |
+| `on_demand` | Admin/API explicit wake. Also created synthetically when `runAgent` is invoked without an explicit wakeup (e.g., direct test harness calls), so every run is anchored to a wakeup row. |
 | `mention` | A comment contains `@<agent-slug>` referencing this agent. |
 | `automation` | Server-side automation rule. |
 | `option_chosen` | Board user resolved an options comment. |
@@ -616,7 +617,6 @@ the resolved level to its native knob:
 - `claude_code` → appends `think` / `think hard` / `ultrathink` to the task prompt.
 - `codex` → passes `-c model_reasoning_effort=<level>` (with `max` mapped to `high`).
 - `gemini` → sets `GEMINI_REASONING_EFFORT` in the container env.
-- `kimi` → prompt directive only (no native knob).
 
 The resolved level is also exposed to the container as `HEZO_AGENT_EFFORT`
 so agent-side tooling can read it.
@@ -634,6 +634,12 @@ for continuity.
 `heartbeat_runs` stores one row per agent execution with full traceability.
 Each row captures:
 
+- **Trigger**: `wakeup_id` references the `agent_wakeup_requests` row that
+  caused the run to start. Every run produced by the production paths (job
+  manager wakeup processing, scheduled heartbeats) is anchored to a wakeup
+  row, so "why did this run start?" is always answerable by joining
+  `heartbeat_runs` → `agent_wakeup_requests` and reading `source` + `payload`.
+  This is what powers the "Triggered by" line on the run-detail page.
 - **Timing**: `started_at` (`NOT NULL DEFAULT now()`), `finished_at`, `status`
   (`queued` → `running` → `succeeded` / `failed` / `cancelled` / `timed_out`),
   `exit_code`.

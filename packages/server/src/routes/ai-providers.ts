@@ -3,12 +3,9 @@ import {
 	AiAuthMethod,
 	type AiProvider,
 	ALL_AI_PROVIDERS,
-	OAUTH_AI_PROVIDERS,
-	OAUTH_CALLBACK_PATH,
 	parseProviderModels,
 } from '@hezo/shared';
 import { Hono } from 'hono';
-import { signOAuthState } from '../crypto/state';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireSuperuser } from '../middleware/auth';
@@ -21,9 +18,9 @@ import {
 	setProviderDefaultModel,
 	storeAiProviderKey,
 } from '../services/ai-provider-keys';
+import { validateSubscriptionBlob } from '../services/subscription-auth';
 
 const VALID_PROVIDERS = new Set<string>(ALL_AI_PROVIDERS);
-const OAUTH_PROVIDERS = new Set<string>(OAUTH_AI_PROVIDERS);
 
 export const aiProvidersRoutes = new Hono<Env>();
 
@@ -78,6 +75,22 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 	const authMethod = (body.auth_method as AiAuthMethod) || AiAuthMethod.ApiKey;
 
 	const info = AI_PROVIDER_INFO[provider];
+
+	if (authMethod === AiAuthMethod.Subscription) {
+		if (!info.supportsSubscription) {
+			return err(
+				c,
+				'UNSUPPORTED_AUTH_METHOD',
+				`${info.name} does not support subscription auth — use an API key instead`,
+				400,
+			);
+		}
+		const validation = validateSubscriptionBlob(provider, body.api_key);
+		if (!validation.ok) {
+			return err(c, 'INVALID_SUBSCRIPTION_BLOB', validation.error ?? 'Invalid credential', 400);
+		}
+	}
+
 	if (
 		info.keyPrefix &&
 		authMethod === AiAuthMethod.ApiKey &&
@@ -162,33 +175,6 @@ aiProvidersRoutes.patch('/ai-providers/:configId/default', async (c) => {
 	}
 
 	return ok(c, { updated: true });
-});
-
-// Start OAuth flow for an AI provider (subscription mode)
-aiProvidersRoutes.post('/ai-providers/:provider/oauth/start', async (c) => {
-	const denied = requireSuperuser(c);
-	if (denied) return denied;
-
-	const masterKeyManager = c.get('masterKeyManager');
-	const connectUrl = c.get('connectUrl');
-	const provider = c.req.param('provider');
-
-	if (!OAUTH_PROVIDERS.has(provider)) {
-		return err(c, 'UNSUPPORTED', `OAuth is not supported for "${provider}"`, 400);
-	}
-
-	if (!connectUrl) {
-		return err(c, 'CONNECT_UNAVAILABLE', 'Hezo Connect URL is not configured', 503);
-	}
-
-	const state = await signOAuthState({ ai_provider: provider }, masterKeyManager);
-
-	const origin = new URL(c.req.url).origin;
-	const callbackUrl = `${origin}${OAUTH_CALLBACK_PATH}`;
-
-	const authUrl = `${connectUrl}/auth/${provider}/start?callback=${encodeURIComponent(callbackUrl)}&state=${encodeURIComponent(state)}`;
-
-	return ok(c, { auth_url: authUrl, state });
 });
 
 // Verify an AI provider key by making a lightweight API call
@@ -314,7 +300,7 @@ async function verifyProviderKey(
 	apiKey: string,
 	authMethod: string,
 ): Promise<boolean> {
-	if (authMethod === AiAuthMethod.OAuthToken) return true;
+	if (authMethod === AiAuthMethod.Subscription) return true;
 
 	const endpoint = AI_PROVIDER_INFO[provider]?.verifyEndpoint;
 	if (!endpoint) return false;

@@ -1,5 +1,5 @@
 import { AI_PROVIDER_INFO, AiAuthMethod, AiProvider } from '@hezo/shared';
-import { Check, ExternalLink, Key, Loader2, ShieldCheck, Trash2, X } from 'lucide-react';
+import { Check, ClipboardPaste, Key, Loader2, ShieldCheck, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import {
 	type AiProviderConfig,
@@ -8,10 +8,10 @@ import {
 	useCreateAiProvider,
 	useDeleteAiProvider,
 	useSetDefaultAiProvider,
-	useStartAiProviderOAuth,
 	useUpdateAiProviderConfig,
 	useVerifyAiProvider,
 } from '../hooks/use-ai-providers';
+import { SubscriptionPasteForm } from './subscription-paste-form';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -20,7 +20,6 @@ const AI_PROVIDERS_ORDER: AiProvider[] = [
 	AiProvider.Anthropic,
 	AiProvider.OpenAI,
 	AiProvider.Google,
-	AiProvider.Moonshot,
 ];
 
 export function AiProvidersSection() {
@@ -29,8 +28,8 @@ export function AiProvidersSection() {
 	const deleteProvider = useDeleteAiProvider();
 	const verifyProvider = useVerifyAiProvider();
 	const setDefaultProvider = useSetDefaultAiProvider();
-	const startOAuth = useStartAiProviderOAuth();
 	const [addingProvider, setAddingProvider] = useState<AiProvider | null>(null);
+	const [pastingProvider, setPastingProvider] = useState<AiProvider | null>(null);
 	const [apiKey, setApiKey] = useState('');
 	const [label, setLabel] = useState('');
 	const [verifyResult, setVerifyResult] = useState<
@@ -44,9 +43,13 @@ export function AiProvidersSection() {
 		setAddingProvider(null);
 	}
 
-	async function handleOAuth(provider: AiProvider) {
-		const result = await startOAuth.mutateAsync(provider);
-		window.location.href = result.auth_url;
+	async function handleSavePaste(provider: AiProvider, authJson: string) {
+		await createProvider.mutateAsync({
+			provider,
+			api_key: authJson,
+			auth_method: AiAuthMethod.Subscription,
+		});
+		setPastingProvider(null);
 	}
 
 	async function handleVerify(configId: string) {
@@ -67,10 +70,13 @@ export function AiProvidersSection() {
 					const info = AI_PROVIDER_INFO[provider];
 					const providerConfigs = configs?.filter((c) => c.provider === provider) ?? [];
 					const hasApiKey = providerConfigs.some((c) => c.auth_method === AiAuthMethod.ApiKey);
-					const hasOAuth = providerConfigs.some((c) => c.auth_method === AiAuthMethod.OAuthToken);
-					const canAddOAuth = info.supportsOAuth && !hasOAuth;
+					const hasSubscription = providerConfigs.some(
+						(c) => c.auth_method === AiAuthMethod.Subscription,
+					);
+					const canAddSubscription = info.supportsSubscription && !hasSubscription;
 					const canAddApiKey = !hasApiKey;
 					const isAdding = addingProvider === provider;
+					const isPasting = pastingProvider === provider;
 					const showMultipleControls = providerConfigs.length > 1;
 
 					return (
@@ -96,17 +102,15 @@ export function AiProvidersSection() {
 								/>
 							))}
 
-							{(canAddOAuth || canAddApiKey) && !isAdding && (
+							{(canAddSubscription || canAddApiKey) && !isAdding && !isPasting && (
 								<div className="flex items-center gap-2 mt-2">
-									{canAddOAuth && (
+									{canAddSubscription && (
 										<Button
 											variant="secondary"
 											size="sm"
-											onClick={() => handleOAuth(provider)}
-											disabled={startOAuth.isPending}
+											onClick={() => setPastingProvider(provider)}
 										>
-											{startOAuth.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-											<ExternalLink className="w-3 h-3" /> Connect via OAuth
+											<ClipboardPaste className="w-3 h-3" /> Use {info.runtimeLabel} subscription
 										</Button>
 									)}
 									{canAddApiKey && (
@@ -119,6 +123,15 @@ export function AiProvidersSection() {
 										</Button>
 									)}
 								</div>
+							)}
+
+							{isPasting && (
+								<SubscriptionPasteForm
+									provider={provider}
+									onSubmit={(authJson) => handleSavePaste(provider, authJson)}
+									onCancel={() => setPastingProvider(null)}
+									pending={createProvider.isPending}
+								/>
 							)}
 
 							{isAdding && (
@@ -166,11 +179,6 @@ export function AiProvidersSection() {
 					);
 				})}
 			</div>
-			{startOAuth.error && (
-				<p className="text-[13px] text-accent-red mt-2">
-					{(startOAuth.error as { message: string }).message}
-				</p>
-			)}
 		</section>
 	);
 }
@@ -200,7 +208,7 @@ function ConfigRow({
 		<div className="mt-2 border-t border-border pt-2">
 			<div className="flex items-center gap-2 flex-wrap">
 				<Badge color="neutral">
-					{config.auth_method === AiAuthMethod.OAuthToken ? 'OAuth' : 'API Key'}
+					{config.auth_method === AiAuthMethod.Subscription ? 'Subscription' : 'API Key'}
 				</Badge>
 				<Badge
 					color={

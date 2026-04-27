@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	AgentRuntime,
+	type AgentRuntime,
+	AiAuthMethod,
 	type AiProvider,
 	CommentContentType,
 	ContainerStatus,
@@ -12,6 +13,8 @@ import {
 	PROVIDER_TO_RUNTIME,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
+	RUNTIME_HEADLESS_PREFIX_ARGS,
+	RUNTIME_HEADLESS_SUFFIX_ARGS,
 	RUNTIME_STREAM_ARGS,
 	RUNTIME_TO_PROVIDER,
 	TERMINAL_ISSUE_STATUSES,
@@ -23,14 +26,28 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
 import { signAgentJwt } from '../middleware/auth';
 import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
-import { type AiProviderCredential, getProviderCredentialAndModel } from './ai-provider-keys';
+import {
+	type AiProviderCredential,
+	getProviderCredentialAndModel,
+	updateAiProviderCredential,
+} from './ai-provider-keys';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import { ensureIssueWorktree, fetchRepo } from './git';
 import { recordStatusChange } from './issue-events';
 import type { LogStreamBroker } from './log-stream-broker';
+import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
 import { ensureProjectRepos } from './repo-sync';
+import {
+	buildSubscriptionMount as buildSubscriptionMountImpl,
+	ensureRuntimeHomeDir,
+	getContainerSubscriptionRoot as getContainerSubscriptionRootImpl,
+	getHostSubscriptionRoot as getHostSubscriptionRootImpl,
+	type RuntimeHomeMount,
+	SUBSCRIPTION_LAYOUTS,
+	type SubscriptionMount as SubscriptionMountImpl,
+} from './runtime-home';
 import { resolveRuntimeForIssue } from './runtime-resolver';
 import { getCompanySSHKey } from './ssh-keys';
 import { resolveSystemPrompt } from './template-resolver';
@@ -100,11 +117,45 @@ interface RepoRow {
 /**
  * Build the env-var entries for a given provider/auth method. Only the matching
  * env var is set; agents that read a different var won't see the credential.
+ *
+ * Returns no env entries for subscription credentials, which are delivered via
+ * a file mount instead — see {@link buildSubscriptionMount}.
  */
 export function buildProviderEnv(provider: AiProvider, credential: AiProviderCredential): string[] {
 	const envVarName = PROVIDER_TO_ENV_VAR[provider]?.[credential.authMethod];
 	if (!envVarName) return [];
 	return [`${envVarName}=${credential.value}`];
+}
+
+// SUBSCRIPTION_LAYOUTS, SubscriptionMount, and the home-dir helpers live in
+// runtime-home.ts so per-runtime config conventions sit in one place. These
+// re-exports keep the public import surface stable for callers and tests.
+export type SubscriptionMount = SubscriptionMountImpl;
+export const buildSubscriptionMount = buildSubscriptionMountImpl;
+export const getContainerSubscriptionRoot = getContainerSubscriptionRootImpl;
+export const getHostSubscriptionRoot = getHostSubscriptionRootImpl;
+
+/**
+ * Some subscription credentials carry a single-use refresh token (Codex), so
+ * two parallel runs against the same credential would mutually invalidate
+ * each other. This in-process mutex serialises runs on the credential row's
+ * id when the provider's refresh token rotates.
+ */
+const credentialLocks = new Map<string, Promise<void>>();
+
+export async function acquireCredentialLock(configId: string): Promise<() => void> {
+	const previous = credentialLocks.get(configId) ?? Promise.resolve();
+	let release!: () => void;
+	const next = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const chain = previous.then(() => next);
+	credentialLocks.set(configId, chain);
+	await previous;
+	return () => {
+		release();
+		if (credentialLocks.get(configId) === chain) credentialLocks.delete(configId);
+	};
 }
 
 export interface RunContext {
@@ -116,6 +167,14 @@ export interface RunContext {
 	effort: string;
 	effortApplication: EffortRuntimeApplication;
 	agentJwt: string;
+	subscriptionMount: SubscriptionMount | null;
+	/**
+	 * Per-run runtime config dir. Reuses the subscription mount when present;
+	 * otherwise a freshly created dir for runtimes that need one (Codex, Gemini)
+	 * even when authenticating with an API key. Null when the runtime takes its
+	 * MCP config via CLI flags (Claude Code).
+	 */
+	homeMount: RuntimeHomeMount | null;
 }
 
 const CONTAINER_PROMPT_DIR = '/workspace/.hezo/prompts';
@@ -209,6 +268,46 @@ async function buildRunContext(
 
 	const promptFilePath = getContainerPromptPath(heartbeatRunId);
 
+	const subscriptionMount = buildSubscriptionMount(
+		deps.dataDir,
+		project.company_slug,
+		project.slug,
+		heartbeatRunId,
+		provider,
+		credential,
+	);
+
+	const adapter = MCP_ADAPTERS[runtimeType];
+	const homeMount: RuntimeHomeMount | null = adapter.capabilities.requiresHomeDir
+		? ensureRuntimeHomeDir(
+				runtimeType,
+				deps.dataDir,
+				project.company_slug,
+				project.slug,
+				heartbeatRunId,
+				subscriptionMount,
+			)
+		: null;
+
+	const mcpDescriptors: McpDescriptor[] = [
+		{
+			name: 'hezo',
+			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
+			bearerToken: agentJwt,
+		},
+	];
+
+	const mcpInjection = adapter.build(mcpDescriptors, {
+		hostHomeDir: homeMount?.hostDir ?? null,
+		containerHomeDir: homeMount?.containerDir ?? null,
+	});
+	validateInjection(adapter, mcpInjection);
+
+	for (const file of mcpInjection.files) {
+		mkdirSync(dirname(file.hostPath), { recursive: true, mode: 0o700 });
+		writeFileSync(file.hostPath, file.contents, { mode: file.mode });
+	}
+
 	const env: string[] = [
 		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
@@ -220,36 +319,25 @@ async function buildRunContext(
 		`HEZO_PROMPT_FILE=${promptFilePath}`,
 		...effortApplication.extraEnv,
 		...buildProviderEnv(provider, credential),
+		// Subscription mount sets the runtime HOME env var when present; otherwise
+		// fall through to the home-mount entry so the runtime CLI finds its
+		// per-run config dir even without a subscription credential.
+		...(subscriptionMount?.envEntries ?? (homeMount ? [homeMount.envEntry] : [])),
+		...mcpInjection.envEntries,
 	];
 
 	const cliCommand = RUNTIME_COMMANDS[runtimeType];
-	const mcpFlags =
-		runtimeType === AgentRuntime.ClaudeCode
-			? [
-					'--mcp-config',
-					JSON.stringify({
-						mcpServers: {
-							hezo: {
-								type: 'http',
-								url: `http://host.docker.internal:${deps.serverPort}/mcp`,
-								headers: { Authorization: `Bearer ${agentJwt}` },
-							},
-						},
-					}),
-					'--strict-mcp-config',
-				]
-			: [];
-
 	const modelArgs = modelOverride ? ['--model', modelOverride] : [];
 
 	const cmd = [
 		cliCommand,
-		...mcpFlags,
+		...RUNTIME_HEADLESS_PREFIX_ARGS[runtimeType],
+		...mcpInjection.cliArgs,
 		...RUNTIME_STREAM_ARGS[runtimeType],
 		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
 		...effortApplication.extraArgs,
 		...modelArgs,
-		'-p',
+		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
 	];
 
 	const execCmd = wrapExecCmd(cmd);
@@ -263,6 +351,8 @@ async function buildRunContext(
 		effort,
 		effortApplication,
 		agentJwt,
+		subscriptionMount,
+		homeMount,
 	};
 }
 
@@ -275,6 +365,20 @@ function exitReasonFromSignal(signal?: AbortSignal): ContainerExitAbortReason | 
 	return null;
 }
 
+async function createSyntheticOnDemandWakeup(
+	db: PGlite,
+	memberId: string,
+	companyId: string,
+): Promise<string> {
+	const r = await db.query<{ id: string }>(
+		`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, payload, claimed_at)
+		 VALUES ($1, $2, $3::wakeup_source, 'claimed'::wakeup_status, '{}'::jsonb, now())
+		 RETURNING id`,
+		[memberId, companyId, WakeupSource.OnDemand],
+	);
+	return r.rows[0].id;
+}
+
 export async function runAgent(
 	deps: RunnerDeps,
 	agent: AgentInfo,
@@ -283,6 +387,7 @@ export async function runAgent(
 	wakeupPayload?: Record<string, unknown>,
 	signal?: AbortSignal,
 	onRunRegistered?: (heartbeatRunId: string) => void,
+	wakeupId?: string,
 ): Promise<RunResult> {
 	const startTime = Date.now();
 
@@ -294,7 +399,15 @@ export async function runAgent(
 		issueId: issue.id,
 		memberId: agent.id,
 	};
-	const heartbeatRunId = await createHeartbeatRun(deps.db, agent, issue, runBroadcast);
+	const effectiveWakeupId =
+		wakeupId ?? (await createSyntheticOnDemandWakeup(deps.db, agent.id, agent.company_id));
+	const heartbeatRunId = await createHeartbeatRun(
+		deps.db,
+		agent,
+		issue,
+		runBroadcast,
+		effectiveWakeupId,
+	);
 	onRunRegistered?.(heartbeatRunId);
 	const streamId = `run:${heartbeatRunId}`;
 
@@ -404,6 +517,14 @@ export async function runAgent(
 
 	if (signal?.aborted) return finalizeAbort();
 
+	const layout = SUBSCRIPTION_LAYOUTS[provider];
+	const releaseCredentialLock =
+		credential.authMethod === AiAuthMethod.Subscription && layout?.rotates
+			? await acquireCredentialLock(credential.configId)
+			: null;
+
+	await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast);
+
 	const context = await buildRunContext(
 		deps,
 		agent,
@@ -417,7 +538,14 @@ export async function runAgent(
 		modelOverride,
 	);
 
-	if (signal?.aborted) return finalizeAbort();
+	if (signal?.aborted) {
+		releaseCredentialLock?.();
+		const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
+		if (dirToRemove) {
+			rmSync(dirToRemove, { recursive: true, force: true });
+		}
+		return finalizeAbort();
+	}
 
 	const prep = await prepareWorktrees(deps, project, issue, emit, signal);
 
@@ -442,8 +570,37 @@ export async function runAgent(
 
 	const parser = createAgentStreamParser(runtimeType);
 
-	const cleanupPromptFile = () => {
+	const persistRotatedAuth = async () => {
+		const mount = context.subscriptionMount;
+		if (!mount || !mount.rotates) return;
+		try {
+			if (existsSync(mount.hostAuthFile)) {
+				const rotated = readFileSync(mount.hostAuthFile, 'utf8');
+				if (rotated && rotated !== credential.value) {
+					await updateAiProviderCredential(
+						deps.db,
+						deps.masterKeyManager,
+						credential.configId,
+						rotated,
+					);
+				}
+			}
+		} catch (e) {
+			emit(
+				'stderr',
+				`[runner] failed to persist rotated subscription auth: ${(e as Error).message}\n`,
+			);
+		}
+	};
+
+	const cleanupRunArtifacts = async () => {
+		await persistRotatedAuth();
 		rmSync(hostPromptPath, { force: true });
+		const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
+		if (dirToRemove) {
+			rmSync(dirToRemove, { recursive: true, force: true });
+		}
+		releaseCredentialLock?.();
 	};
 
 	try {
@@ -484,7 +641,7 @@ export async function runAgent(
 			runBroadcast,
 		);
 
-		cleanupPromptFile();
+		await cleanupRunArtifacts();
 		return { success, exitCode: execInfo.ExitCode, stdout, stderr, durationMs, heartbeatRunId };
 	} catch (error) {
 		const durationMs = Date.now() - startTime;
@@ -512,7 +669,7 @@ export async function runAgent(
 			runBroadcast,
 		);
 
-		cleanupPromptFile();
+		await cleanupRunArtifacts();
 		return {
 			success: false,
 			exitCode: -1,
@@ -1057,16 +1214,17 @@ export async function createHeartbeatRun(
 	agent: AgentInfo,
 	issue: IssueInfo,
 	broadcast: HeartbeatRunBroadcast,
+	wakeupId: string,
 ): Promise<string> {
 	await db.query('BEGIN');
 	let runId: string;
 	let statusFlippedToInProgress = false;
 	try {
 		const runResult = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
-			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, wakeup_id, status)
+			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status)
 			 RETURNING id`,
-			[agent.id, agent.company_id, issue.id, HeartbeatRunStatus.Running],
+			[agent.id, agent.company_id, issue.id, wakeupId, HeartbeatRunStatus.Queued],
 		);
 		runId = runResult.rows[0].id;
 
@@ -1101,7 +1259,7 @@ export async function createHeartbeatRun(
 		throw e;
 	}
 
-	broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Running, 'INSERT');
+	broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Queued, 'INSERT');
 	if (broadcast.wsManager) {
 		broadcastRowChange(
 			broadcast.wsManager,
@@ -1140,6 +1298,23 @@ export async function createHeartbeatRun(
 	return runId;
 }
 
+async function markHeartbeatRunRunning(
+	db: PGlite,
+	runId: string,
+	broadcast: HeartbeatRunBroadcast,
+): Promise<void> {
+	const result = await db.query<{ id: string }>(
+		`UPDATE heartbeat_runs
+		    SET status = $1::heartbeat_run_status, started_at = now()
+		  WHERE id = $2 AND status = $3::heartbeat_run_status
+		  RETURNING id`,
+		[HeartbeatRunStatus.Running, runId, HeartbeatRunStatus.Queued],
+	);
+	if (result.rows.length > 0) {
+		broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Running, 'UPDATE');
+	}
+}
+
 async function updateHeartbeatRun(
 	db: PGlite,
 	runId: string,
@@ -1155,6 +1330,7 @@ async function updateHeartbeatRun(
 	await db.query(
 		`UPDATE heartbeat_runs
 		 SET status = $1::heartbeat_run_status,
+		     started_at = COALESCE(started_at, now()),
 		     finished_at = now(),
 		     exit_code = $2,
 		     error = COALESCE($3, error),
