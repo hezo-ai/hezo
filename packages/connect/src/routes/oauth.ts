@@ -8,10 +8,7 @@ import {
 	verifyState,
 } from '../crypto/state.js';
 import type { TokenCodeStore } from '../crypto/token-store.js';
-import * as anthropicProvider from '../providers/anthropic.js';
 import * as githubProvider from '../providers/github.js';
-import * as googleProvider from '../providers/google.js';
-import * as openaiProvider from '../providers/openai.js';
 
 export type FetchFn = typeof globalThis.fetch;
 
@@ -44,51 +41,6 @@ const PROVIDER_REGISTRY: Record<string, ProviderDefinition> = {
 					username: info.login,
 					avatar_url: info.avatar_url,
 					email: info.email,
-				}),
-			).toString('base64url');
-		},
-	},
-	anthropic: {
-		authUrl: 'https://console.anthropic.com/oauth/authorize',
-		scopes: 'openid profile email',
-		exchangeCode: anthropicProvider.exchangeCode,
-		fetchUserInfo: anthropicProvider.fetchUserInfo,
-		buildMetadata: (userInfo) => {
-			const info = userInfo as { email: string; name: string };
-			return Buffer.from(
-				JSON.stringify({
-					email: info.email,
-					name: info.name,
-				}),
-			).toString('base64url');
-		},
-	},
-	openai: {
-		authUrl: 'https://auth.openai.com/authorize',
-		scopes: 'openid profile email',
-		exchangeCode: openaiProvider.exchangeCode,
-		fetchUserInfo: openaiProvider.fetchUserInfo,
-		buildMetadata: (userInfo) => {
-			const info = userInfo as { email: string; name: string };
-			return Buffer.from(
-				JSON.stringify({
-					email: info.email,
-					name: info.name,
-				}),
-			).toString('base64url');
-		},
-	},
-	google: {
-		authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
-		scopes: 'openid email profile https://www.googleapis.com/auth/generative-language',
-		exchangeCode: googleProvider.exchangeCode,
-		fetchUserInfo: googleProvider.fetchUserInfo,
-		buildMetadata: (userInfo) => {
-			const info = userInfo as { email: string; name: string };
-			return Buffer.from(
-				JSON.stringify({
-					email: info.email,
-					name: info.name,
 				}),
 			).toString('base64url');
 		},
@@ -177,11 +129,6 @@ export function oauthRoutes(
 		authUrl.searchParams.set('redirect_uri', connectCallbackUrl.toString());
 		authUrl.searchParams.set('scope', provider.scopes);
 		authUrl.searchParams.set('state', signedState);
-
-		// Google requires response_type parameter
-		if (platform === 'google') {
-			authUrl.searchParams.set('response_type', 'code');
-		}
 
 		return c.redirect(authUrl.toString());
 	});

@@ -47,7 +47,7 @@
 | `project_issue_counters` | Helper for atomic issue numbering per project. | belongs to project |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
 | `slack_connections` | Per-company Slack app config. Bot token encrypted in secrets. | belongs to company |
-| `ai_provider_configs` | Instance-level AI provider credentials shared across every company in the Hezo instance. Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription OAuth token. A partial unique index on `is_default` enforces one default per provider; `(provider, label)` is unique so multiple rows per provider coexist — typically one `api_key` and one `oauth_token` — and `getProviderCredential` / `resolveRuntimeForIssue` pick the `is_default` row at runtime. `default_model` (nullable) holds the CLI `--model` value applied to every run that uses this config when the agent has no explicit override. Agent runner decrypts at execution time and injects as env var. | instance-scoped |
+| `ai_provider_configs` | Instance-level AI provider credentials shared across every company in the Hezo instance. Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription credential blob. A partial unique index on `is_default` enforces one default per provider; `(provider, label)` is unique so multiple rows per provider coexist — typically one `api_key` and one `subscription` — and `getProviderCredential` / `resolveRuntimeForIssue` pick the `is_default` row at runtime. `default_model` (nullable) holds the CLI `--model` value applied to every run that uses this config when the agent has no explicit override. Agent runner decrypts at execution time and either injects as env var (api keys) or materialises to a per-run mount inside the container (subscriptions). | instance-scoped |
 
 ## Key design decisions
 
@@ -616,7 +616,6 @@ the resolved level to its native knob:
 - `claude_code` → appends `think` / `think hard` / `ultrathink` to the task prompt.
 - `codex` → passes `-c model_reasoning_effort=<level>` (with `max` mapped to `high`).
 - `gemini` → sets `GEMINI_REASONING_EFFORT` in the container env.
-- `kimi` → prompt directive only (no native knob).
 
 The resolved level is also exposed to the container as `HEZO_AGENT_EFFORT`
 so agent-side tooling can read it.

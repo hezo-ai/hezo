@@ -13,6 +13,8 @@ import {
 	PROVIDER_TO_RUNTIME,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
+	RUNTIME_HEADLESS_PREFIX_ARGS,
+	RUNTIME_HEADLESS_SUFFIX_ARGS,
 	RUNTIME_STREAM_ARGS,
 	RUNTIME_TO_PROVIDER,
 	TERMINAL_ISSUE_STATUSES,
@@ -106,10 +108,8 @@ interface RepoRow {
  * Build the env-var entries for a given provider/auth method. Only the matching
  * env var is set; agents that read a different var won't see the credential.
  *
- * Returns no env entries when the credential is delivered via a file mount
- * instead of an env var (e.g. Codex/ChatGPT subscription auth, which lives in
- * `$CODEX_HOME/auth.json` — the file path is wired up separately by
- * {@link buildCodexHomeMount}).
+ * Returns no env entries for subscription credentials, which are delivered via
+ * a file mount instead — see {@link buildSubscriptionMount}.
  */
 export function buildProviderEnv(provider: AiProvider, credential: AiProviderCredential): string[] {
 	const envVarName = PROVIDER_TO_ENV_VAR[provider]?.[credential.authMethod];
@@ -117,70 +117,111 @@ export function buildProviderEnv(provider: AiProvider, credential: AiProviderCre
 	return [`${envVarName}=${credential.value}`];
 }
 
-const CONTAINER_CODEX_HOME_DIR = '/workspace/.hezo/codex';
+const CONTAINER_SUBSCRIPTION_DIR = '/workspace/.hezo/subscription';
 
-export function getContainerCodexHome(heartbeatRunId: string): string {
-	return `${CONTAINER_CODEX_HOME_DIR}/${heartbeatRunId}`;
+interface SubscriptionLayout {
+	dirName: string;
+	authFileRelative: string;
+	envVarName: string;
+	rotates: boolean;
 }
 
-export function getHostCodexHome(
+const SUBSCRIPTION_LAYOUTS: Partial<Record<AiProvider, SubscriptionLayout>> = {
+	[AiProvider.OpenAI]: {
+		dirName: 'codex',
+		authFileRelative: 'auth.json',
+		envVarName: 'CODEX_HOME',
+		rotates: true,
+	},
+	[AiProvider.Google]: {
+		dirName: 'gemini',
+		authFileRelative: '.gemini/oauth_creds.json',
+		envVarName: 'GEMINI_CLI_HOME',
+		rotates: false,
+	},
+};
+
+export function getContainerSubscriptionRoot(
+	provider: AiProvider,
+	heartbeatRunId: string,
+): string | null {
+	const layout = SUBSCRIPTION_LAYOUTS[provider];
+	if (!layout) return null;
+	return `${CONTAINER_SUBSCRIPTION_DIR}/${layout.dirName}/${heartbeatRunId}`;
+}
+
+export function getHostSubscriptionRoot(
+	provider: AiProvider,
 	dataDir: string,
 	companySlug: string,
 	projectSlug: string,
 	heartbeatRunId: string,
-): string {
+): string | null {
+	const layout = SUBSCRIPTION_LAYOUTS[provider];
+	if (!layout) return null;
 	return join(
 		getWorkspacePath(dataDir, companySlug, projectSlug),
 		'.hezo',
-		'codex',
+		'subscription',
+		layout.dirName,
 		heartbeatRunId,
 	);
 }
 
 /**
- * Materialise a codex auth.json blob to a per-run directory under the project
- * workspace (which is host-bind-mounted into the container) and return the env
- * entries that point codex at it. Returns null when the credential isn't a
- * codex subscription blob.
+ * Materialise a vendor subscription blob to a per-run directory under the
+ * project workspace (which is host-bind-mounted into the container) and
+ * return the env entries that point the agent CLI at it. Returns null when
+ * the credential isn't a subscription or the provider doesn't support one.
  */
-export interface CodexHomeMount {
+export interface SubscriptionMount {
 	hostDir: string;
 	hostAuthFile: string;
 	containerDir: string;
 	envEntries: string[];
+	rotates: boolean;
 }
 
-export function buildCodexHomeMount(
+export function buildSubscriptionMount(
 	dataDir: string,
 	companySlug: string,
 	projectSlug: string,
 	heartbeatRunId: string,
 	provider: AiProvider,
 	credential: AiProviderCredential,
-): CodexHomeMount | null {
-	if (provider !== AiProvider.OpenAI || credential.authMethod !== AiAuthMethod.OAuthToken) {
-		return null;
-	}
+): SubscriptionMount | null {
+	if (credential.authMethod !== AiAuthMethod.Subscription) return null;
 
-	const hostDir = getHostCodexHome(dataDir, companySlug, projectSlug, heartbeatRunId);
-	const hostAuthFile = join(hostDir, 'auth.json');
-	const containerDir = getContainerCodexHome(heartbeatRunId);
+	const layout = SUBSCRIPTION_LAYOUTS[provider];
+	if (!layout) return null;
 
-	mkdirSync(hostDir, { recursive: true, mode: 0o700 });
+	const hostDir = getHostSubscriptionRoot(
+		provider,
+		dataDir,
+		companySlug,
+		projectSlug,
+		heartbeatRunId,
+	) as string;
+	const containerDir = getContainerSubscriptionRoot(provider, heartbeatRunId) as string;
+	const hostAuthFile = join(hostDir, layout.authFileRelative);
+
+	mkdirSync(dirname(hostAuthFile), { recursive: true, mode: 0o700 });
 	writeFileSync(hostAuthFile, credential.value, { mode: 0o600 });
 
 	return {
 		hostDir,
 		hostAuthFile,
 		containerDir,
-		envEntries: [`CODEX_HOME=${containerDir}`],
+		envEntries: [`${layout.envVarName}=${containerDir}`],
+		rotates: layout.rotates,
 	};
 }
 
 /**
- * One refresh-token rotation per `auth.json` is single-use, so two parallel
- * codex runs against the same credential would mutually invalidate each other.
- * This in-process mutex serialises runs on the credential row's id.
+ * Some subscription credentials carry a single-use refresh token (Codex), so
+ * two parallel runs against the same credential would mutually invalidate
+ * each other. This in-process mutex serialises runs on the credential row's
+ * id when the provider's refresh token rotates.
  */
 const credentialLocks = new Map<string, Promise<void>>();
 
@@ -208,7 +249,7 @@ export interface RunContext {
 	effort: string;
 	effortApplication: EffortRuntimeApplication;
 	agentJwt: string;
-	codexHomeMount: CodexHomeMount | null;
+	subscriptionMount: SubscriptionMount | null;
 }
 
 const CONTAINER_PROMPT_DIR = '/workspace/.hezo/prompts';
@@ -302,7 +343,7 @@ async function buildRunContext(
 
 	const promptFilePath = getContainerPromptPath(heartbeatRunId);
 
-	const codexHomeMount = buildCodexHomeMount(
+	const subscriptionMount = buildSubscriptionMount(
 		deps.dataDir,
 		project.company_slug,
 		project.slug,
@@ -322,7 +363,7 @@ async function buildRunContext(
 		`HEZO_PROMPT_FILE=${promptFilePath}`,
 		...effortApplication.extraEnv,
 		...buildProviderEnv(provider, credential),
-		...(codexHomeMount?.envEntries ?? []),
+		...(subscriptionMount?.envEntries ?? []),
 	];
 
 	const cliCommand = RUNTIME_COMMANDS[runtimeType];
@@ -347,12 +388,13 @@ async function buildRunContext(
 
 	const cmd = [
 		cliCommand,
+		...RUNTIME_HEADLESS_PREFIX_ARGS[runtimeType],
 		...mcpFlags,
 		...RUNTIME_STREAM_ARGS[runtimeType],
 		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
 		...effortApplication.extraArgs,
 		...modelArgs,
-		'-p',
+		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
 	];
 
 	const execCmd = wrapExecCmd(cmd);
@@ -366,7 +408,7 @@ async function buildRunContext(
 		effort,
 		effortApplication,
 		agentJwt,
-		codexHomeMount,
+		subscriptionMount,
 	};
 }
 
@@ -508,8 +550,9 @@ export async function runAgent(
 
 	if (signal?.aborted) return finalizeAbort();
 
+	const layout = SUBSCRIPTION_LAYOUTS[provider];
 	const releaseCredentialLock =
-		provider === AiProvider.OpenAI && credential.authMethod === AiAuthMethod.OAuthToken
+		credential.authMethod === AiAuthMethod.Subscription && layout?.rotates
 			? await acquireCredentialLock(credential.configId)
 			: null;
 
@@ -528,8 +571,8 @@ export async function runAgent(
 
 	if (signal?.aborted) {
 		releaseCredentialLock?.();
-		if (context.codexHomeMount) {
-			rmSync(context.codexHomeMount.hostDir, { recursive: true, force: true });
+		if (context.subscriptionMount) {
+			rmSync(context.subscriptionMount.hostDir, { recursive: true, force: true });
 		}
 		return finalizeAbort();
 	}
@@ -558,8 +601,8 @@ export async function runAgent(
 	const parser = createAgentStreamParser(runtimeType);
 
 	const persistRotatedAuth = async () => {
-		const mount = context.codexHomeMount;
-		if (!mount) return;
+		const mount = context.subscriptionMount;
+		if (!mount || !mount.rotates) return;
 		try {
 			if (existsSync(mount.hostAuthFile)) {
 				const rotated = readFileSync(mount.hostAuthFile, 'utf8');
@@ -573,15 +616,18 @@ export async function runAgent(
 				}
 			}
 		} catch (e) {
-			emit('stderr', `[runner] failed to persist rotated codex auth: ${(e as Error).message}\n`);
+			emit(
+				'stderr',
+				`[runner] failed to persist rotated subscription auth: ${(e as Error).message}\n`,
+			);
 		}
 	};
 
 	const cleanupRunArtifacts = async () => {
 		await persistRotatedAuth();
 		rmSync(hostPromptPath, { force: true });
-		if (context.codexHomeMount) {
-			rmSync(context.codexHomeMount.hostDir, { recursive: true, force: true });
+		if (context.subscriptionMount) {
+			rmSync(context.subscriptionMount.hostDir, { recursive: true, force: true });
 		}
 		releaseCredentialLock?.();
 	};

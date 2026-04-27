@@ -11,10 +11,8 @@ ENV PATH="/root/.local/bin:${PATH}"
 #   @anthropic-ai/claude-code → claude
 #   @openai/codex             → codex
 #   @google/gemini-cli        → gemini
-#   kimi (via install script) → kimi
 RUN npm install -g @anthropic-ai/claude-code \
     && npm install -g @openai/codex \
-    && npm install -g @google/gemini-cli \
-    && curl -LsSf https://code.kimi.com/install.sh | bash
+    && npm install -g @google/gemini-cli
 
 WORKDIR /workspace

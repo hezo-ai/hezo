@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { authenticate, clearAiProviders, getToken, waitForPageLoad } from './helpers';
 
 test.describe('AI Providers instance settings', () => {
-	test('lists all four provider cards on /settings/ai-providers', async ({ page }) => {
+	test('lists all three provider cards on /settings/ai-providers', async ({ page }) => {
 		await authenticate(page);
 		await page.goto('/settings/ai-providers');
 
@@ -10,7 +10,8 @@ test.describe('AI Providers instance settings', () => {
 		await expect(page.getByText('Anthropic')).toBeVisible();
 		await expect(page.getByText('OpenAI')).toBeVisible();
 		await expect(page.getByText('Google')).toBeVisible();
-		await expect(page.getByText('Moonshot')).toBeVisible();
+		await expect(page.getByText('Moonshot')).toHaveCount(0);
+		await expect(page.getByRole('button', { name: /OAuth/i })).toHaveCount(0);
 	});
 
 	test('rail Settings icon opens global settings with AI providers section', async ({ page }) => {
@@ -25,24 +26,10 @@ test.describe('AI Providers instance settings', () => {
 		await expect(page.getByText('Anthropic')).toBeVisible();
 	});
 
-	test('can add a new provider key via the settings UI', async ({ page }) => {
-		await authenticate(page);
-		await page.goto('/settings/ai-providers');
+	test('can add an Anthropic API key via the settings UI', async ({ page }) => {
+		const token = await getToken(page);
+		await clearAiProviders(page, token);
 
-		const moonshotCard = page
-			.locator('div.border.border-border.rounded-radius-md.p-3', { hasText: 'Moonshot' })
-			.first();
-
-		const enterButton = moonshotCard.getByRole('button', { name: 'Enter API key' });
-		if (await enterButton.isVisible().catch(() => false)) {
-			await enterButton.click();
-			await moonshotCard.locator('input[type="password"]').fill('sk-moonshot-e2e-test');
-			await moonshotCard.getByRole('button', { name: 'Save' }).click();
-			await expect(moonshotCard.getByText('active')).toBeVisible({ timeout: 20000 });
-		}
-	});
-
-	test('does not offer subscription auth for Anthropic (ToS)', async ({ page }) => {
 		await authenticate(page);
 		await page.goto('/settings/ai-providers');
 
@@ -50,8 +37,23 @@ test.describe('AI Providers instance settings', () => {
 			.locator('div.border.border-border.rounded-radius-md.p-3', { hasText: 'Anthropic' })
 			.first();
 
-		await expect(anthropicCard.getByText('API Key')).toBeVisible();
-		await expect(anthropicCard.getByRole('button', { name: /Connect via OAuth/i })).toHaveCount(0);
+		await anthropicCard.getByRole('button', { name: 'Enter API key' }).click();
+		await anthropicCard.locator('input[type="password"]').fill('sk-ant-e2e-test-1234567890');
+		await anthropicCard.getByRole('button', { name: 'Save' }).click();
+		await expect(anthropicCard.getByText('active')).toBeVisible({ timeout: 20000 });
+
+		await clearAiProviders(page, token);
+	});
+
+	test('does not offer subscription auth for Anthropic', async ({ page }) => {
+		await authenticate(page);
+		await page.goto('/settings/ai-providers');
+
+		const anthropicCard = page
+			.locator('div.border.border-border.rounded-radius-md.p-3', { hasText: 'Anthropic' })
+			.first();
+
+		await expect(anthropicCard.getByRole('button', { name: /Enter API key/i })).toBeVisible();
 		await expect(
 			anthropicCard.getByRole('button', { name: /Use Claude Code subscription/i }),
 		).toHaveCount(0);
@@ -82,6 +84,37 @@ test.describe('AI Providers instance settings', () => {
 		await clearAiProviders(page, token);
 	});
 
+	test('offers Gemini subscription paste flow for Google', async ({ page }) => {
+		const token = await getToken(page);
+		await clearAiProviders(page, token);
+
+		await authenticate(page);
+		await page.goto('/settings/ai-providers');
+
+		const googleCard = page
+			.locator('div.border.border-border.rounded-radius-md.p-3', { hasText: 'Google' })
+			.first();
+
+		await googleCard.getByRole('button', { name: /Use Gemini subscription/i }).click();
+		await expect(googleCard.getByText(/oauth_creds\.json/i).first()).toBeVisible();
+		await googleCard.locator('textarea').fill(
+			JSON.stringify({
+				access_token: 'ya29.test',
+				refresh_token: '1//0g-rt-e2e',
+				token_type: 'Bearer',
+				scope: 'https://www.googleapis.com/auth/generative-language',
+				expiry_date: 1745780000000,
+			}),
+		);
+		await googleCard.getByRole('button', { name: 'Save' }).click();
+
+		await expect(googleCard.getByText('Subscription', { exact: true })).toBeVisible({
+			timeout: 20000,
+		});
+
+		await clearAiProviders(page, token);
+	});
+
 	test('renders API key + Subscription side-by-side and can flip the default', async ({ page }) => {
 		const token = await getToken(page);
 		const headers = { Authorization: `Bearer ${token}` };
@@ -105,7 +138,7 @@ test.describe('AI Providers instance settings', () => {
 				provider: 'openai',
 				api_key: JSON.stringify({ tokens: { refresh_token: 'rt-mix' } }),
 				label: 'openai-mix-subscription',
-				auth_method: 'oauth_token',
+				auth_method: 'subscription',
 			},
 		});
 		expect(subscriptionRes.status()).toBe(201);
@@ -143,7 +176,7 @@ test.describe('AI Providers instance settings', () => {
 			provider: string;
 		}>;
 		const defaultConfig = configs.find((c) => c.is_default && c.provider === 'openai');
-		expect(defaultConfig?.auth_method).toBe('oauth_token');
+		expect(defaultConfig?.auth_method).toBe('subscription');
 
 		await clearAiProviders(page, token);
 	});
@@ -168,7 +201,7 @@ test.describe('AI provider gate (post-master-key, pre-company)', () => {
 		await expect(page.getByText('Anthropic')).toBeVisible();
 		await expect(page.getByText('OpenAI')).toBeVisible();
 		await expect(page.getByText('Google')).toBeVisible();
-		await expect(page.getByText('Moonshot')).toBeVisible();
+		await expect(page.getByText('Moonshot')).toHaveCount(0);
 
 		await expect(page.getByRole('heading', { name: 'Welcome to Hezo' })).toBeHidden();
 

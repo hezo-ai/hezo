@@ -805,7 +805,7 @@ If a company has 3 projects, 3 containers run. If a project has multiple repos, 
 
 | Aspect | Configuration |
 |--------|-------------|
-| Base image | Configurable per project (default: `hezo/agent-base:latest`, built from `docker/Dockerfile.agent-base` with `claude`, `codex`, `gemini`, and `kimi` CLIs pre-installed) |
+| Base image | Configurable per project (default: `hezo/agent-base:latest`, built from `docker/Dockerfile.agent-base` with `claude`, `codex`, and `gemini` CLIs pre-installed) |
 | Project mount | Host `~/.hezo/companies/{company}/projects/{project}/` → Container `/workspace/` (rw) |
 | Worktrees mount | Host `~/.hezo/companies/{company}/projects/{project}/worktrees/` → Container `/worktrees/` (rw) |
 | SSH keys | Company-generated SSH key injected per subprocess (from secrets vault). Host `~/.ssh/` also mounted (ro) for fallback. |
@@ -1555,7 +1555,7 @@ Every agent run picks a reasoning effort level (`minimal | low | medium | high |
 2. The agent's `default_effort` column (copied from the agent type when the agent is hired; editable per-agent).
 3. The global `medium` fallback.
 
-Each runtime translates the resolved level to its native knob: Claude Code appends `think`/`think hard`/`ultrathink` to the task prompt, Codex passes `-c model_reasoning_effort=<level>` (with `max` mapped to `high`), Gemini sets `GEMINI_REASONING_EFFORT` in the container env, and Kimi falls back to a prompt-only directive. The resolved level is also exposed as `HEZO_AGENT_EFFORT` so agent-side tooling can read it.
+Each runtime translates the resolved level to its native knob: Claude Code appends `think`/`think hard`/`ultrathink` to the task prompt, Codex passes `-c model_reasoning_effort=<level>` (with `max` mapped to `high`), and Gemini sets `GEMINI_REASONING_EFFORT` in the container env. The resolved level is also exposed as `HEZO_AGENT_EFFORT` so agent-side tooling can read it.
 
 Built-in defaults: CEO and Architect default to `max` (ultrathink) so their planning runs get the full thinking budget, the Product Lead / QA / Security / Researcher default to `high`, and implementer roles default to `medium`.
 

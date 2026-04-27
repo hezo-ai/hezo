@@ -6,21 +6,6 @@ const PLATFORMS = [
 		name: 'GitHub',
 		scopes: ['repo', 'workflow', 'read:org'],
 	},
-	{
-		id: 'anthropic',
-		name: 'Anthropic',
-		scopes: [],
-	},
-	{
-		id: 'openai',
-		name: 'OpenAI',
-		scopes: ['openid', 'profile', 'email'],
-	},
-	{
-		id: 'google',
-		name: 'Google',
-		scopes: ['openid', 'email', 'profile', 'generative-language'],
-	},
 ] as const;
 
 export const platformRoutes = new Hono();

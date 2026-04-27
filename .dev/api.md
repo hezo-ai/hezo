@@ -394,7 +394,7 @@ baseline reasoning level applied to every run of this agent; an `@`-mentioning
 comment can override it per-run via the `effort` field — see
 [Reasoning effort](#reasoning-effort).
 
-`model_override_provider` (one of `anthropic | openai | google | moonshot`, or
+`model_override_provider` (one of `anthropic | openai | google`, or
 `null`) and `model_override_model` (free-form model id, e.g. `claude-opus-4-7`,
 or `null`) let this agent target a specific provider + model. When the
 provider is set, the runner uses this provider's credential instead of the
@@ -800,7 +800,7 @@ inbox and configured messaging channels.
 Issues in the auto-created Operations project (`slug = 'operations'`, `is_internal = true`) must be assigned to the CEO. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Operations project issues must be assigned to the CEO`.
 
 `runtime_type` is optional. It pins this issue to a specific AI adapter
-(`claude_code | codex | gemini | kimi`). When unset, the server picks the
+(`claude_code | codex | gemini`). When unset, the server picks the
 instance default — the single active AI provider if only one is configured,
 or the oldest/default active provider otherwise.
 
@@ -1373,9 +1373,9 @@ Request:
 }
 ```
 
-`provider` is one of: `anthropic`, `openai`, `google`, `moonshot`. `label` is optional; the server auto-derives one from the provider name if omitted. Returns 409 if a `(provider, label)` pair already exists.
+`provider` is one of: `anthropic`, `openai`, `google`. `label` is optional; the server auto-derives one from the provider name if omitted. Returns 409 if a `(provider, label)` pair already exists.
 
-Multiple configs per provider are permitted as long as `(provider, label)` stays unique. The typical case is one `api_key` row plus one `oauth_token` row per provider (so a user can keep their Anthropic API key *and* a Claude subscription OAuth token side-by-side). The runtime credential resolver picks whichever row is marked `is_default`; flip via `PATCH /ai-providers/:configId/default`. `auth_method` defaults to `api_key`; send `"oauth_token"` to skip the key-prefix check and live verification (OAuth tokens are written by the `/oauth/callback` flow but the field is accepted here for completeness).
+Multiple configs per provider are permitted as long as `(provider, label)` stays unique. The typical case is one `api_key` row plus one `subscription` row per provider (so a user can keep their OpenAI API key *and* a Codex/ChatGPT subscription credential side-by-side). The runtime credential resolver picks whichever row is marked `is_default`; flip via `PATCH /ai-providers/:configId/default`. `auth_method` defaults to `api_key`; send `"subscription"` along with the pasted contents of the vendor's auth file (`~/.codex/auth.json` for Codex, `~/.gemini/oauth_creds.json` for Gemini) to skip the key-prefix check and live verification. Anthropic does not support subscription auth.
 
 #### `DELETE /ai-providers/:configId`
 Remove a configuration.
@@ -2050,7 +2050,6 @@ Each runtime translates the resolved level to its native knob:
 | `claude_code` | Appends `think` / `think hard` / `ultrathink` to the task prompt. |
 | `codex` | Passes `-c model_reasoning_effort=<level>` (`max` → `high`). |
 | `gemini` | Sets `GEMINI_REASONING_EFFORT=<level>` in the container env. |
-| `kimi` | Prompt-only directive (no native knob). |
 
 The resolved level is also exposed as `HEZO_AGENT_EFFORT` in the container
 env so agent-side tooling can read it.

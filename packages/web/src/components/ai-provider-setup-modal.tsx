@@ -1,18 +1,13 @@
 import { AI_PROVIDER_INFO, AiAuthMethod, AiProvider } from '@hezo/shared';
 import { ClipboardPaste, Key, Loader2, Shield } from 'lucide-react';
 import { useState } from 'react';
-import { useCreateAiProvider, useStartAiProviderOAuth } from '../hooks/use-ai-providers';
-import { CodexAuthPasteForm } from './codex-auth-paste-form';
+import { useCreateAiProvider } from '../hooks/use-ai-providers';
+import { SubscriptionPasteForm } from './subscription-paste-form';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 
-const PROVIDERS = [
-	AiProvider.Anthropic,
-	AiProvider.OpenAI,
-	AiProvider.Google,
-	AiProvider.Moonshot,
-] as const;
+const PROVIDERS = [AiProvider.Anthropic, AiProvider.OpenAI, AiProvider.Google] as const;
 
 export function AiProviderSetupModal() {
 	return (
@@ -43,7 +38,6 @@ function ProviderCard({ provider }: { provider: AiProvider }) {
 	const [showPasteForm, setShowPasteForm] = useState(false);
 	const [apiKey, setApiKey] = useState('');
 	const createProvider = useCreateAiProvider();
-	const startOAuth = useStartAiProviderOAuth();
 
 	async function handleSubmitKey(e: React.FormEvent) {
 		e.preventDefault();
@@ -52,16 +46,11 @@ function ProviderCard({ provider }: { provider: AiProvider }) {
 		setShowKeyForm(false);
 	}
 
-	async function handleOAuth() {
-		const result = await startOAuth.mutateAsync(provider);
-		window.location.href = result.auth_url;
-	}
-
 	async function handleSubmitPaste(authJson: string) {
 		await createProvider.mutateAsync({
 			provider,
 			api_key: authJson,
-			auth_method: AiAuthMethod.OAuthToken,
+			auth_method: AiAuthMethod.Subscription,
 		});
 		setShowPasteForm(false);
 	}
@@ -96,26 +85,15 @@ function ProviderCard({ provider }: { provider: AiProvider }) {
 					</Button>
 				</form>
 			) : showPasteForm ? (
-				<CodexAuthPasteForm
-					providerName={info.name}
+				<SubscriptionPasteForm
+					provider={provider}
 					onSubmit={handleSubmitPaste}
 					onCancel={() => setShowPasteForm(false)}
 					pending={createProvider.isPending}
 				/>
 			) : (
 				<div className="flex gap-2 mt-2">
-					{info.subscriptionAuthMode === 'oauth' && (
-						<Button
-							variant="secondary"
-							size="sm"
-							onClick={handleOAuth}
-							disabled={startOAuth.isPending}
-						>
-							{startOAuth.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-							Connect via OAuth
-						</Button>
-					)}
-					{info.subscriptionAuthMode === 'paste' && (
+					{info.supportsSubscription && (
 						<Button variant="secondary" size="sm" onClick={() => setShowPasteForm(true)}>
 							<ClipboardPaste className="w-3 h-3" />
 							Use {info.runtimeLabel} subscription

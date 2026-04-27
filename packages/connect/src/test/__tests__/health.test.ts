@@ -30,12 +30,9 @@ describe('GET /platforms', () => {
 		const res = await ctx.app.request('/platforms');
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.platforms).toHaveLength(4);
+		expect(body.platforms).toHaveLength(1);
 		const ids = body.platforms.map((p: any) => p.id);
 		expect(ids).toContain('github');
-		expect(ids).toContain('anthropic');
-		expect(ids).toContain('openai');
-		expect(ids).toContain('google');
 	});
 });
 

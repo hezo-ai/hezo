@@ -41,7 +41,7 @@ CREATE INDEX idx_auth_methods_user ON user_auth_methods(user_id);
 -------------------------------------------------------------------------------
 
 CREATE TYPE member_type AS ENUM ('agent', 'user');
-CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini', 'kimi');
+CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini');
 CREATE TYPE agent_effort AS ENUM ('minimal', 'low', 'medium', 'high', 'max');
 CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
 CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled');
@@ -67,8 +67,8 @@ CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
 CREATE TYPE company_type_source AS ENUM ('builtin', 'custom', 'marketplace');
 CREATE TYPE goal_status AS ENUM ('active', 'achieved', 'archived');
-CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'moonshot');
-CREATE TYPE ai_auth_method AS ENUM ('api_key', 'oauth_token');
+CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google');
+CREATE TYPE ai_auth_method AS ENUM ('api_key', 'subscription');
 
 -------------------------------------------------------------------------------
 -- AGENT TYPES

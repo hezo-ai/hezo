@@ -77,13 +77,6 @@ export function useVerifyAiProvider() {
 	});
 }
 
-export function useStartAiProviderOAuth() {
-	return useMutation({
-		mutationFn: (provider: string) =>
-			api.post<{ auth_url: string; state: string }>(`/api/ai-providers/${provider}/oauth/start`),
-	});
-}
-
 export function useAiProviderModels(configId: string, options: { enabled?: boolean } = {}) {
 	return useQuery({
 		queryKey: ['ai-providers', configId, 'models'] as const,

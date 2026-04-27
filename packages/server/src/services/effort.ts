@@ -20,8 +20,6 @@
  *   - `codex`: the `-c model_reasoning_effort=<level>` CLI flag. Codex supports
  *     `minimal|low|medium|high`; `max` is mapped to `high`.
  *   - `gemini`: the `GEMINI_REASONING_EFFORT` env var.
- *   - `kimi`: no-op — no reasoning knob is exposed, so effort only influences
- *     the prompt directive.
  */
 
 import {
@@ -105,7 +103,5 @@ export function applyEffortToRuntime(
 				extraEnv: [`GEMINI_REASONING_EFFORT=${effort}`],
 				promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
 			};
-		case AgentRuntime.Kimi:
-			return { extraArgs: [], extraEnv: [], promptDirective: GENERIC_PROMPT_DIRECTIVE[effort] };
 	}
 }

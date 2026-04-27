@@ -472,17 +472,15 @@ UI:
 
 Backend:
 - `ai_provider_configs` table: instance-level AI provider credential storage, encrypted credential inlined on each row
-- `ai_provider` enum: anthropic, openai, google, moonshot
-- `ai_auth_method` enum: api_key, oauth_token (subscription mode)
-- `kimi` added to `agent_runtime` enum
+- `ai_provider` enum: anthropic, openai, google
+- `ai_auth_method` enum: api_key, subscription
 - Instance-level CRUD routes for AI provider configs (`/api/ai-providers`). Mutations require superuser.
 - Provider key verification endpoint (lightweight API call to provider)
 - AI provider status endpoint for setup detection
 - Agent runner injects provider-specific env vars per exec (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
-- Agent runner dispatches correct CLI command per runtime type (claude, codex, gemini, kimi)
-- Connect OAuth providers for Anthropic, OpenAI, Google (subscription token flow)
-- OAuth callback stores AI provider tokens with auth_method=oauth_token; OAuth state carries only `ai_provider` (no company_id)
-- Dockerfile.agent-base with all 4 AI CLIs pre-installed
+- Agent runner dispatches correct CLI command per runtime type (claude, codex, gemini)
+- Subscription credentials (Codex auth.json, Gemini oauth_creds.json) accepted via paste-flow and materialised to per-run mounts inside the agent container
+- Dockerfile.agent-base with all AI CLIs pre-installed
 
 UI:
 - Dedicated `/settings/ai-providers` route with per-provider cards
@@ -682,7 +680,7 @@ Backend:
 - `default_effort` column on `agent_types` and `member_agents`
 - Per-role seed defaults: CEO / Architect → `max`; Product Lead / QA / Security / Researcher → `high`; implementers → `medium`
 - Effort resolver service with precedence: wakeup payload override → agent default → `medium`
-- Runtime translation: Claude Code (`think`/`ultrathink` prompt keyword), Codex (`-c model_reasoning_effort=<level>`), Gemini (`GEMINI_REASONING_EFFORT` env), Kimi (prompt directive only)
+- Runtime translation: Claude Code (`think`/`ultrathink` prompt keyword), Codex (`-c model_reasoning_effort=<level>`), Gemini (`GEMINI_REASONING_EFFORT` env)
 - Resolved level exposed as `HEZO_AGENT_EFFORT` env var for agent-side tooling
 - Comments endpoint accepts `effort` field; forwards onto the mention/comment wakeup payload
 - Agent CRUD routes accept and validate `default_effort`

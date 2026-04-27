@@ -13,10 +13,10 @@ import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import {
 	acquireCredentialLock,
-	buildCodexHomeMount,
 	buildProviderEnv,
-	getHostCodexHome,
+	buildSubscriptionMount,
 	getHostPromptPath,
+	getHostSubscriptionRoot,
 	type RunnerDeps,
 	runAgent,
 	shellQuoteArg,
@@ -1057,6 +1057,10 @@ describe('runAgent', () => {
 
 			expect(capturedCmd).toContain('codex');
 			expect(capturedCmd).toContain('--dangerously-bypass-approvals-and-sandbox');
+			const codexIdx = capturedCmd.indexOf('codex');
+			expect(capturedCmd[codexIdx + 1]).toBe('exec');
+			expect(capturedCmd[capturedCmd.length - 1]).toBe('-');
+			expect(capturedCmd).not.toContain('-p');
 		});
 
 		it('passes --output-format stream-json --verbose for claude_code runtime', async () => {
@@ -1084,6 +1088,9 @@ describe('runAgent', () => {
 			const idx = capturedCmd.indexOf('--output-format');
 			expect(capturedCmd[idx + 1]).toBe('stream-json');
 			expect(capturedCmd).toContain('--verbose');
+			expect(capturedCmd).toContain('claude');
+			expect(capturedCmd[capturedCmd.length - 1]).toBe('-p');
+			expect(capturedCmd).not.toContain('exec');
 		});
 
 		it('does not pass --output-format for non-claude runtimes', async () => {
@@ -1114,6 +1121,53 @@ describe('runAgent', () => {
 
 			expect(capturedCmd).not.toContain('--output-format');
 			expect(capturedCmd).not.toContain('stream-json');
+			expect(capturedCmd).not.toContain('-p');
+		});
+
+		it('runs gemini headless with --yolo and no print/profile flag', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-gemini';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+			await app.request('/api/ai-providers', {
+				method: 'POST',
+				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					provider: 'google',
+					api_key: 'AIza-test-gemini-key',
+					label: 'google-gemini',
+				}),
+			});
+			globalThis.fetch = originalFetch;
+
+			await runAgent(
+				deps,
+				makeAgent(),
+				{ ...makeIssue(), runtime_type: 'gemini' as const },
+				makeProject(),
+			);
+
+			expect(capturedCmd).toContain('gemini');
+			expect(capturedCmd).toContain('--yolo');
+			expect(capturedCmd).not.toContain('-p');
+			expect(capturedCmd).not.toContain('exec');
+			const geminiIdx = capturedCmd.indexOf('gemini');
+			expect(capturedCmd.slice(geminiIdx + 1)).not.toContain('-');
 		});
 
 		it('parses stream-json events and persists usage from result event', async () => {
@@ -1411,7 +1465,7 @@ describe('runAgent', () => {
 				body: JSON.stringify({
 					provider: 'openai',
 					api_key: validAuthJson,
-					auth_method: AiAuthMethod.OAuthToken,
+					auth_method: AiAuthMethod.Subscription,
 					label,
 				}),
 			});
@@ -1419,10 +1473,10 @@ describe('runAgent', () => {
 			return (await res.json()).data.id;
 		}
 
-		it('does not inject any provider env var for openai+oauth_token', () => {
+		it('does not inject any provider env var for openai subscription', () => {
 			const env = buildProviderEnv(AiProvider.OpenAI, {
 				value: validAuthJson,
-				authMethod: AiAuthMethod.OAuthToken,
+				authMethod: AiAuthMethod.Subscription,
 			});
 			expect(env).toEqual([]);
 		});
@@ -1438,26 +1492,28 @@ describe('runAgent', () => {
 		it('writes auth.json to a per-run host path and points CODEX_HOME at it', () => {
 			const dataDir = `/tmp/codex-mount-${Date.now()}`;
 			const runId = 'run-mount-1';
-			const mount = buildCodexHomeMount(dataDir, 'co', 'pj', runId, AiProvider.OpenAI, {
+			const mount = buildSubscriptionMount(dataDir, 'co', 'pj', runId, AiProvider.OpenAI, {
 				value: validAuthJson,
-				authMethod: AiAuthMethod.OAuthToken,
+				authMethod: AiAuthMethod.Subscription,
 			});
 			expect(mount).not.toBeNull();
-			expect(mount!.containerDir).toBe(`/workspace/.hezo/codex/${runId}`);
-			expect(mount!.envEntries).toEqual([`CODEX_HOME=/workspace/.hezo/codex/${runId}`]);
+			expect(mount!.containerDir).toBe(`/workspace/.hezo/subscription/codex/${runId}`);
+			expect(mount!.envEntries).toEqual([
+				`CODEX_HOME=/workspace/.hezo/subscription/codex/${runId}`,
+			]);
 			expect(existsSync(mount!.hostAuthFile)).toBe(true);
 			expect(readFileSync(mount!.hostAuthFile, 'utf8')).toBe(validAuthJson);
 		});
 
 		it('returns null mount for providers without a paste flow', () => {
 			expect(
-				buildCodexHomeMount('/tmp', 'co', 'pj', 'r1', AiProvider.OpenAI, {
+				buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.OpenAI, {
 					value: 'sk-x',
 					authMethod: AiAuthMethod.ApiKey,
 				}),
 			).toBeNull();
 			expect(
-				buildCodexHomeMount('/tmp', 'co', 'pj', 'r1', AiProvider.Anthropic, {
+				buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Anthropic, {
 					value: 'sk-ant',
 					authMethod: AiAuthMethod.ApiKey,
 				}),
@@ -1476,7 +1532,13 @@ describe('runAgent', () => {
 					if (codexHomeEntry) {
 						const containerDir = codexHomeEntry.slice('CODEX_HOME='.length);
 						const runId = containerDir.split('/').pop()!;
-						stagedFile = `${getHostCodexHome('/tmp/test-data', 'runner-co', 'runner-project', runId)}/auth.json`;
+						stagedFile = `${getHostSubscriptionRoot(
+							AiProvider.OpenAI,
+							'/tmp/test-data',
+							'runner-co',
+							'runner-project',
+							runId,
+						)}/auth.json`;
 					}
 					return 'exec-codex-mount';
 				},
@@ -1526,7 +1588,13 @@ describe('runAgent', () => {
 					expect(codexHomeEntry).toBeDefined();
 					const containerDir = codexHomeEntry!.slice('CODEX_HOME='.length);
 					const runId = containerDir.split('/').pop()!;
-					const hostFile = `${getHostCodexHome('/tmp/test-data', 'runner-co', 'runner-project', runId)}/auth.json`;
+					const hostFile = `${getHostSubscriptionRoot(
+						AiProvider.OpenAI,
+						'/tmp/test-data',
+						'runner-co',
+						'runner-project',
+						runId,
+					)}/auth.json`;
 					// Simulate codex rotating the refresh token mid-run.
 					writeFileSync(hostFile, rotatedJson);
 					return 'exec-codex-rotate';

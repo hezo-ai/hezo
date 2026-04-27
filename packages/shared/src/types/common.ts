@@ -5,7 +5,6 @@ export const AgentRuntime = {
 	ClaudeCode: 'claude_code',
 	Codex: 'codex',
 	Gemini: 'gemini',
-	Kimi: 'kimi',
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
@@ -328,13 +327,12 @@ export const AiProvider = {
 	Anthropic: 'anthropic',
 	OpenAI: 'openai',
 	Google: 'google',
-	Moonshot: 'moonshot',
 } as const;
 export type AiProvider = (typeof AiProvider)[keyof typeof AiProvider];
 
 export const AiAuthMethod = {
 	ApiKey: 'api_key',
-	OAuthToken: 'oauth_token',
+	Subscription: 'subscription',
 } as const;
 export type AiAuthMethod = (typeof AiAuthMethod)[keyof typeof AiAuthMethod];
 
@@ -349,14 +347,12 @@ export const RUNTIME_TO_PROVIDER: Record<AgentRuntime, AiProvider> = {
 	[AgentRuntime.ClaudeCode]: AiProvider.Anthropic,
 	[AgentRuntime.Codex]: AiProvider.OpenAI,
 	[AgentRuntime.Gemini]: AiProvider.Google,
-	[AgentRuntime.Kimi]: AiProvider.Moonshot,
 };
 
 export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = {
 	[AiProvider.Anthropic]: AgentRuntime.ClaudeCode,
 	[AiProvider.OpenAI]: AgentRuntime.Codex,
 	[AiProvider.Google]: AgentRuntime.Gemini,
-	[AiProvider.Moonshot]: AgentRuntime.Kimi,
 };
 
 export const PROVIDER_TO_ENV_VAR: Record<AiProvider, Record<string, string>> = {
@@ -368,10 +364,6 @@ export const PROVIDER_TO_ENV_VAR: Record<AiProvider, Record<string, string>> = {
 	},
 	[AiProvider.Google]: {
 		[AiAuthMethod.ApiKey]: 'GOOGLE_API_KEY',
-		[AiAuthMethod.OAuthToken]: 'GEMINI_OAUTH_TOKEN',
-	},
-	[AiProvider.Moonshot]: {
-		[AiAuthMethod.ApiKey]: 'MOONSHOT_API_KEY',
 	},
 };
 
@@ -379,7 +371,6 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.ClaudeCode]: 'claude',
 	[AgentRuntime.Codex]: 'codex',
 	[AgentRuntime.Gemini]: 'gemini',
-	[AgentRuntime.Kimi]: 'kimi',
 };
 
 /**
@@ -391,7 +382,6 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	[AgentRuntime.ClaudeCode]: ['--dangerously-skip-permissions'],
 	[AgentRuntime.Codex]: ['--dangerously-bypass-approvals-and-sandbox'],
 	[AgentRuntime.Gemini]: ['--yolo'],
-	[AgentRuntime.Kimi]: [],
 };
 
 /**
@@ -405,7 +395,29 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: ['--output-format', 'stream-json', '--verbose'],
 	[AgentRuntime.Codex]: [],
 	[AgentRuntime.Gemini]: [],
-	[AgentRuntime.Kimi]: [],
+};
+
+/**
+ * Args inserted immediately after the runtime binary name. Some CLIs (Codex)
+ * gate non-interactive runs behind a subcommand that must precede global
+ * flags; others have nothing to add here.
+ */
+export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[]> = {
+	[AgentRuntime.ClaudeCode]: [],
+	[AgentRuntime.Codex]: ['exec'],
+	[AgentRuntime.Gemini]: [],
+};
+
+/**
+ * Trailing args that put each CLI into headless/print mode where the prompt
+ * arrives via stdin. Claude needs `-p` (print mode); Codex needs the `-`
+ * positional to read stdin as the prompt; Gemini auto-detects non-TTY stdin
+ * and needs no flag.
+ */
+export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[]> = {
+	[AgentRuntime.ClaudeCode]: ['-p'],
+	[AgentRuntime.Codex]: ['-'],
+	[AgentRuntime.Gemini]: [],
 };
 
 export interface AiProviderVerifyEndpoint {
@@ -413,22 +425,10 @@ export interface AiProviderVerifyEndpoint {
 	headers: Record<string, string> | ((apiKey: string) => Record<string, string>);
 }
 
-/**
- * How a provider's non-API-key credential is acquired.
- *
- * - `oauth`: standard OAuth dance brokered by Hezo Connect; the resulting
- *   access token is stored as the credential value.
- * - `paste`: the user runs the vendor's CLI locally to log in, then pastes
- *   the resulting credential file into Hezo. Used by Codex/ChatGPT, where
- *   subscription auth lives in `~/.codex/auth.json` and there is no
- *   server-side OAuth flow available.
- */
-export type SubscriptionAuthMode = 'oauth' | 'paste';
-
 export interface AiProviderInfo {
 	name: string;
 	runtimeLabel: string;
-	subscriptionAuthMode?: SubscriptionAuthMode;
+	supportsSubscription?: boolean;
 	keyPrefix?: string;
 	keyPlaceholder: string;
 	verifyEndpoint: AiProviderVerifyEndpoint;
@@ -448,7 +448,7 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	[AiProvider.OpenAI]: {
 		name: 'OpenAI',
 		runtimeLabel: 'Codex',
-		subscriptionAuthMode: 'paste',
+		supportsSubscription: true,
 		keyPrefix: 'sk-',
 		keyPlaceholder: 'sk-...',
 		verifyEndpoint: {
@@ -459,29 +459,16 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	[AiProvider.Google]: {
 		name: 'Google',
 		runtimeLabel: 'Gemini',
-		subscriptionAuthMode: 'oauth',
+		supportsSubscription: true,
 		keyPlaceholder: 'AIza...',
 		verifyEndpoint: {
 			url: (apiKey) => `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`,
 			headers: {},
 		},
 	},
-	[AiProvider.Moonshot]: {
-		name: 'Moonshot',
-		runtimeLabel: 'Kimi',
-		keyPlaceholder: 'sk-...',
-		verifyEndpoint: {
-			url: 'https://api.moonshot.cn/v1/models',
-			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
-		},
-	},
 };
 
 export const ALL_AI_PROVIDERS: ReadonlyArray<AiProvider> = Object.values(AiProvider);
-
-export const OAUTH_AI_PROVIDERS: ReadonlyArray<AiProvider> = ALL_AI_PROVIDERS.filter(
-	(p) => AI_PROVIDER_INFO[p].subscriptionAuthMode === 'oauth',
-);
 
 export interface AiProviderModel {
 	id: string;
