@@ -28,7 +28,11 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { triggerStatusAutomations } from '../services/issue-automation';
-import { recordIssueLinks } from '../services/issue-events';
+import {
+	recordAssigneeChange,
+	recordIssueLinks,
+	recordTitleChange,
+} from '../services/issue-events';
 import { removeIssueWorktrees } from '../services/repo-sync';
 import { createWakeup } from '../services/wakeup';
 
@@ -398,13 +402,14 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 
 	const existing = await db.query<{
 		id: string;
+		title: string;
 		status: string;
 		project_id: string;
 		assignee_id: string | null;
-	}>('SELECT id, status, project_id, assignee_id FROM issues WHERE id = $1 AND company_id = $2', [
-		issueId,
-		companyId,
-	]);
+	}>(
+		'SELECT id, title, status, project_id, assignee_id FROM issues WHERE id = $1 AND company_id = $2',
+		[issueId, companyId],
+	);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	}
@@ -546,6 +551,30 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 			actorMemberId,
 			c.get('wsManager'),
 		).catch((e) => log.error('Failed to record issue links from description:', e));
+	}
+
+	if (body.title !== undefined) {
+		recordTitleChange(
+			db,
+			companyId,
+			issueId,
+			existing.rows[0].title,
+			body.title.trim(),
+			actorMemberId,
+			c.get('wsManager'),
+		).catch((e) => log.error('Failed to record title change:', e));
+	}
+
+	if (body.assignee_id !== undefined && body.assignee_id !== existing.rows[0].assignee_id) {
+		recordAssigneeChange(
+			db,
+			companyId,
+			issueId,
+			existing.rows[0].assignee_id,
+			body.assignee_id,
+			actorMemberId,
+			c.get('wsManager'),
+		).catch((e) => log.error('Failed to record assignee change:', e));
 	}
 
 	if (body.status) {

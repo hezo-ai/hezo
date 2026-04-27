@@ -1,13 +1,19 @@
 import { Link } from '@tanstack/react-router';
 import {
 	ArrowRight,
+	ArrowRightLeft,
 	Check,
 	ChevronDown,
 	ChevronRight,
+	Dot,
 	ExternalLink,
 	GitBranch,
+	Link2,
+	Pencil,
 	Terminal,
+	UserRoundCog,
 } from 'lucide-react';
+import type { ComponentType, SVGProps } from 'react';
 import { useState } from 'react';
 import { isActiveRunStatus, useHeartbeatRun } from '../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../hooks/use-run-logs';
@@ -49,6 +55,11 @@ interface RenderProps {
 	projectId?: string;
 	projectSlug?: string;
 	issueId?: string;
+	inline?: boolean;
+}
+
+export function isInlineEventType(contentType: string): boolean {
+	return contentType === 'system' || contentType === 'run';
 }
 
 export function CommentRenderer({
@@ -58,10 +69,11 @@ export function CommentRenderer({
 	projectId,
 	projectSlug,
 	issueId,
+	inline,
 }: RenderProps) {
 	switch (comment.content_type) {
 		case 'run':
-			return <RunComment comment={comment} companyId={companyId} />;
+			return <RunComment comment={comment} companyId={companyId} inline={inline} />;
 		case 'trace':
 			return <TraceComment comment={comment} />;
 		case 'options':
@@ -82,6 +94,32 @@ export function CommentRenderer({
 		default:
 			return <TextComment comment={comment} companyId={companyId} projectSlug={projectSlug} />;
 	}
+}
+
+type LucideIcon = ComponentType<SVGProps<SVGSVGElement>>;
+
+function systemEventIcon(kind: string | undefined): LucideIcon {
+	switch (kind) {
+		case 'status_change':
+			return ArrowRightLeft;
+		case 'title_change':
+			return Pencil;
+		case 'assignee_change':
+			return UserRoundCog;
+		case 'issue_link':
+			return Link2;
+		default:
+			return Dot;
+	}
+}
+
+export function inlineEventIcon(comment: CommentData): LucideIcon {
+	if (comment.content_type === 'run') return Terminal;
+	if (comment.content_type === 'system') {
+		const content = typeof comment.content === 'object' ? comment.content : null;
+		return systemEventIcon(content?.kind);
+	}
+	return Dot;
 }
 
 function ActionComment({
@@ -162,7 +200,15 @@ function runStatusDotClass(status: string): string {
 	return 'bg-text-subtle';
 }
 
-function RunComment({ comment, companyId }: { comment: CommentData; companyId?: string }) {
+function RunComment({
+	comment,
+	companyId,
+	inline,
+}: {
+	comment: CommentData;
+	companyId?: string;
+	inline?: boolean;
+}) {
 	const content = typeof comment.content === 'object' ? comment.content : {};
 	const runId: string = content.run_id ?? '';
 	const agentId: string = content.agent_id ?? '';
@@ -182,6 +228,14 @@ function RunComment({ comment, companyId }: { comment: CommentData; companyId?: 
 
 	return (
 		<div className="flex flex-col gap-1.5" data-testid="run-comment">
+			{inline && (
+				<div className="flex items-baseline gap-2">
+					<span className="text-xs text-text-muted">{agentTitle} run</span>
+					<span className="text-[11px] text-text-subtle">
+						{new Date(comment.created_at).toLocaleString()}
+					</span>
+				</div>
+			)}
 			<LogViewer
 				lines={lines}
 				compact
@@ -252,7 +306,14 @@ function SystemComment({ comment }: { comment: CommentData }) {
 		typeof comment.content === 'object'
 			? comment.content.text || JSON.stringify(comment.content)
 			: String(comment.content);
-	return <p className="text-xs text-text-subtle italic">{text}</p>;
+	return (
+		<div className="flex items-baseline gap-2 leading-[26px]">
+			<span className="text-xs text-text-muted">{text}</span>
+			<span className="text-[11px] text-text-subtle">
+				{new Date(comment.created_at).toLocaleString()}
+			</span>
+		</div>
+	);
 }
 
 function TraceComment({ comment }: { comment: CommentData }) {
