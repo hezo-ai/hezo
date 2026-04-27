@@ -120,6 +120,12 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			expect(docs[key], `${key} should include a project-doc example`).toContain('spec.md');
 			expect(docs[key], `${key} should include a kb-doc example`).toContain('coding-standards.md');
 			expect(docs[key], `${key} should include an agent-mention example`).toContain('@engineer');
+			expect(docs[key], `${key} should require slug-not-title for teammate references`).toContain(
+				'Always use the slug form for teammates, never the title',
+			);
+			expect(docs[key], `${key} should reference the injected Teammates block`).toContain(
+				'Teammates block injected at the end of your prompt',
+			);
 		}
 
 		// Every role doc picks up the subtask-preference guidance.

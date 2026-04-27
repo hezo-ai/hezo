@@ -1220,6 +1220,8 @@ All inter-agent communication happens through @-mentions in issue comments — s
 
 An agent can `@architect` or `@engineer` in a comment. The mentioned agent wakes immediately (see §Event-based triggers). The slug for @-mentions is derived from the agent title (lowercased, spaces → hyphens). Slugs are unique within a company.
 
+Every agent's resolved system prompt is auto-appended with a **Teammates** block listing each enabled peer in the company in `@<slug> — Title` form, sourced from `member_agents` filtered by `admin_status = 'enabled'` and excluding the running agent itself. This is the authoritative slug list at compose time — agents read it inline rather than calling `list_agents` on every reference. The block sits between the Project State block and the shared working guidelines.
+
 Repo short names can also be @-mentioned: `@frontend`, `@api` — these reference the repo, not an agent.
 
 **Handoff contract.** When an agent is woken by a mention, its run opens on the triggering ticket for *triage only* — not as new assigned work. The agent's task prompt is prepended with a Mention Handoff block showing the mentioner, the comment excerpt, and the agent's own open tickets. The expected behaviour is:

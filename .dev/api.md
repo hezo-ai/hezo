@@ -2197,6 +2197,14 @@ Text content can contain `@<agent-slug>` references. The slug is derived from
 the agent title (lowercased, spaces → hyphens, e.g. "Dev Engineer" → `dev-engineer`).
 Repo short names can also be referenced: `@frontend`, `@api`.
 
+The resolved system prompt every agent receives ends with a **Teammates** block
+listing each enabled peer in the company in `@<slug> — Title` form. This block
+is built by `template-resolver.ts` from `member_agents` (filtered to
+`admin_status = 'enabled'` and excluding the running agent), so agents see the
+live slug list inline at compose time and don't need to call `list_agents` for
+every teammate reference — the MCP tool remains the way to fetch a specific
+peer's description or reporting structure.
+
 On `POST /companies/:companyId/issues/:issueId/comments`, the server parses
 mentions out of the comment content (ignoring fenced code blocks and self-
 mentions) and creates a `mention`-source wakeup for each distinct mentioned

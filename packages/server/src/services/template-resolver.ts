@@ -36,8 +36,7 @@ const SHARED_INSTRUCTIONS = `
 - Sub-agents are for work within YOUR run. For delegating work to other team members, use sub-issues.
 
 ### Sub-Issue Delegation
-- Use \`create_issue\` with \`parent_issue_id\` and \`assignee_slug\` to create sub-issues and delegate work to other agents.
-- Use \`list_agents\` to find available agents and their slugs.
+- Use \`create_issue\` with \`parent_issue_id\` and \`assignee_slug\` to create sub-issues and delegate work to other agents. The Teammates block above lists every enabled peer's slug — use \`list_agents\` only when you need details (description / reports_to) on a specific teammate.
 `;
 
 export async function resolveSystemPrompt(
@@ -165,9 +164,38 @@ export async function resolveSystemPrompt(
 
 	resolved += buildRunContextBlock(ctx);
 	resolved += await buildProjectStateBlock(db, ctx);
+	resolved += await buildTeammatesBlock(db, ctx);
 	resolved += SHARED_INSTRUCTIONS;
 
 	return resolved;
+}
+
+async function buildTeammatesBlock(db: PGlite, ctx: ResolveContext): Promise<string> {
+	const teammates = await db.query<{ slug: string; title: string }>(
+		`SELECT ma.slug, ma.title
+		 FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.company_id = $1
+		   AND ma.admin_status = 'enabled'
+		   AND ($2::uuid IS NULL OR ma.id <> $2::uuid)
+		 ORDER BY ma.title`,
+		[ctx.companyId, ctx.agentId ?? null],
+	);
+
+	const list =
+		teammates.rows.length === 0
+			? '_No other enabled teammates in this company._'
+			: teammates.rows.map((t) => `- @${t.slug} — ${t.title}`).join('\n');
+
+	return `
+
+---
+
+## Teammates
+
+Whenever you reference a teammate in any output you author (comments, ticket descriptions, progress summaries, project docs, KB docs, chat messages), write \`@<slug>\` from this list — not the role title. Bare titles do not linkify and do not wake the teammate. This applies even when a role section above names a teammate by title; the canonical reference form is the slug.
+
+${list}`;
 }
 
 const PROJECT_STATE_RECENT_LIMIT = 20;

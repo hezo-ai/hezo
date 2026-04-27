@@ -416,6 +416,116 @@ Current date: {{current_date}}
 	});
 });
 
+describe('teammates block', () => {
+	let tbCompanyId: string;
+	let tbCeoMemberId: string;
+	let tbEngineerMemberId: string;
+
+	beforeAll(async () => {
+		const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
+
+		const companyRes = await app.request('/api/companies', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Teammates Co',
+				description: 'Teammates block test company',
+				template_id: startup.id,
+			}),
+		});
+		tbCompanyId = ((await companyRes.json()) as any).data.id;
+
+		const agentsRes = await app.request(`/api/companies/${tbCompanyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = ((await agentsRes.json()) as any).data;
+		tbCeoMemberId = agents.find((a: any) => a.slug === 'ceo').id;
+		tbEngineerMemberId = agents.find((a: any) => a.slug === 'engineer').id;
+	});
+
+	it('appends a Teammates header and the slug-not-title directive to every prompt', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId: tbCompanyId });
+		expect(result).toContain('## Teammates');
+		expect(result).toContain('write `@<slug>` from this list');
+		expect(result).toContain('Bare titles do not linkify and do not wake the teammate');
+	});
+
+	it('lists every enabled peer in @<slug> — Title form, sorted by title', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId: tbCompanyId });
+		expect(result).toContain('- @architect — Architect');
+		expect(result).toContain('- @ceo — CEO');
+		expect(result).toContain('- @engineer — Engineer');
+		expect(result).toContain('- @product-lead — Product Lead');
+		expect(result).toContain('- @qa-engineer — QA Engineer');
+		expect(result).toContain('- @researcher — Researcher');
+
+		const block = result.slice(result.indexOf('## Teammates'));
+		const archIdx = block.indexOf('- @architect');
+		const ceoIdx = block.indexOf('- @ceo');
+		const engIdx = block.indexOf('- @engineer');
+		expect(archIdx).toBeGreaterThan(-1);
+		expect(archIdx).toBeLessThan(ceoIdx);
+		expect(ceoIdx).toBeLessThan(engIdx);
+	});
+
+	it('excludes the running agent from the teammates list', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			companyId: tbCompanyId,
+			agentId: tbCeoMemberId,
+		});
+		expect(result).toContain('## Teammates');
+		expect(result).not.toContain('- @ceo — CEO');
+		expect(result).toContain('- @architect — Architect');
+		expect(result).toContain('- @engineer — Engineer');
+	});
+
+	it('excludes agents with admin_status != enabled', async () => {
+		await db.query(
+			`UPDATE member_agents SET admin_status = 'disabled'::agent_admin_status WHERE id = $1`,
+			[tbEngineerMemberId],
+		);
+
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId: tbCompanyId });
+		expect(result).toContain('## Teammates');
+		expect(result).not.toContain('- @engineer — Engineer');
+		expect(result).toContain('- @architect — Architect');
+
+		await db.query(
+			`UPDATE member_agents SET admin_status = 'enabled'::agent_admin_status WHERE id = $1`,
+			[tbEngineerMemberId],
+		);
+	});
+
+	it('does not include agents from other companies', async () => {
+		const otherRes = await app.request('/api/companies', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Isolated Co', description: 'builtin agents only' }),
+		});
+		const otherId = ((await otherRes.json()) as any).data.id;
+
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId: otherId });
+		expect(result).toContain('## Teammates');
+		// Builtin CEO + Coach are seeded for every company, but the startup-template-only
+		// roles from the other test company must not bleed in.
+		expect(result).toContain('- @ceo — CEO');
+		expect(result).toContain('- @coach — Coach');
+		expect(result).not.toContain('- @architect — Architect');
+		expect(result).not.toContain('- @engineer — Engineer');
+		expect(result).not.toContain('- @product-lead — Product Lead');
+	});
+
+	it('renders before SHARED_INSTRUCTIONS and after the Project State block', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId: tbCompanyId });
+		const teammatesIdx = result.indexOf('## Teammates');
+		const guidelinesIdx = result.indexOf('## Working Guidelines');
+		expect(teammatesIdx).toBeGreaterThan(-1);
+		expect(guidelinesIdx).toBeGreaterThan(-1);
+		expect(teammatesIdx).toBeLessThan(guidelinesIdx);
+	});
+});
+
 describe('project state block', () => {
 	let psCompanyId: string;
 	let psProjectId: string;
