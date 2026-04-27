@@ -13,7 +13,7 @@ export interface HeartbeatRun {
 	project_id: string | null;
 	project_slug: string | null;
 	status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
-	started_at: string;
+	started_at: string | null;
 	finished_at: string | null;
 	exit_code: number | null;
 	error: string | null;
@@ -39,6 +39,12 @@ export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancell
 
 export function isActiveRunStatus(status: RunStatus): boolean {
 	return status === 'running' || status === 'queued';
+}
+
+export function getRunWaitingMessage(status: RunStatus): string {
+	if (status === 'queued') return 'Queued — waiting for prior run on this credential…';
+	if (status === 'running') return 'Waiting for log output…';
+	return 'No output.';
 }
 
 export function useHeartbeatRuns(companyId: string, agentId: string) {

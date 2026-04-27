@@ -12,6 +12,7 @@ function statusColor(status: string): string {
 		case 'timed_out':
 			return 'red';
 		case 'running':
+		case 'queued':
 			return 'yellow';
 		case 'cancelled':
 			return 'neutral';
@@ -29,7 +30,7 @@ function ExecutionRow({
 	companyId: string;
 	agentId: string;
 }) {
-	const elapsed = useElapsedDuration(run.started_at, run.finished_at);
+	const elapsed = useElapsedDuration(run.started_at ?? '', run.finished_at);
 	const trigger = formatTriggerReason(run, companyId);
 
 	return (
@@ -39,7 +40,7 @@ function ExecutionRow({
 			className="flex items-center gap-2 rounded-md border border-border-subtle bg-bg px-3 py-2.5 text-xs hover:bg-bg-subtle transition-colors"
 		>
 			<Badge color={statusColor(run.status) as 'green'}>
-				{run.status === 'running' && (
+				{(run.status === 'running' || run.status === 'queued') && (
 					<span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1" />
 				)}
 				{run.status}
@@ -57,7 +58,7 @@ function ExecutionRow({
 			</span>
 
 			<span className="text-text-muted ml-auto whitespace-nowrap">
-				{new Date(run.started_at).toLocaleString()}
+				{run.started_at ? new Date(run.started_at).toLocaleString() : 'queued'}
 			</span>
 
 			<span className="text-text-subtle whitespace-nowrap">{elapsed}</span>

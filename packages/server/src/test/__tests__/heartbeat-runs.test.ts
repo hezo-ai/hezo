@@ -199,7 +199,7 @@ describe('run comments', () => {
 			'SELECT id, status FROM heartbeat_runs WHERE id = $1',
 			[runId],
 		);
-		expect(runRow.rows[0].status).toBe('running');
+		expect(runRow.rows[0].status).toBe('queued');
 
 		const comments = await db.query<{
 			id: string;

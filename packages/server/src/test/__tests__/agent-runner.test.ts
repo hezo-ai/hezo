@@ -1907,6 +1907,82 @@ describe('runAgent', () => {
 			releaseA();
 			releaseB();
 		});
+
+		it('keeps the heartbeat run in queued state while the credential lock is held', async () => {
+			const configId = await configureCodexSubscription('codex-queue-run');
+
+			let execStarted = false;
+			const docker = createMockDocker({
+				execCreate: async () => {
+					execStarted = true;
+					return 'exec-codex-queue';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const broadcasts: Array<{ status: string; action: string }> = [];
+			const wsManager = {
+				broadcast: (_room: string, event: any) => {
+					if (event?.table === 'heartbeat_runs') {
+						broadcasts.push({ status: event.row.status, action: event.action });
+					}
+				},
+				subscribe: () => {},
+				unsubscribe: () => {},
+				unsubscribeAll: () => {},
+				getRoomSize: () => 0,
+				getTotalConnections: () => 0,
+			} as any;
+
+			const logs = new LogStreamBroker();
+			logs.setWsManager(wsManager);
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				wsManager,
+				logs,
+			};
+
+			const release = await acquireCredentialLock(configId);
+
+			const runPromise = runAgent(
+				deps,
+				makeAgent(),
+				{ ...makeIssue(), runtime_type: 'codex' as const },
+				makeProject(),
+			);
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			const queued = await db.query<{ id: string; status: string; started_at: string | null }>(
+				`SELECT id, status, started_at FROM heartbeat_runs
+				 WHERE member_id = $1 ORDER BY created_at DESC LIMIT 1`,
+				[agentId],
+			);
+			expect(queued.rows[0].status).toBe(HeartbeatRunStatus.Queued);
+			expect(queued.rows[0].started_at).toBeNull();
+			expect(execStarted).toBe(false);
+			expect(broadcasts.some((b) => b.action === 'INSERT' && b.status === 'queued')).toBe(true);
+			expect(broadcasts.some((b) => b.status === 'running')).toBe(false);
+
+			release();
+
+			const result = await runPromise;
+			expect(result.success).toBe(true);
+			expect(execStarted).toBe(true);
+
+			const finished = await db.query<{ status: string; started_at: string | null }>(
+				'SELECT status, started_at FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(finished.rows[0].status).toBe(HeartbeatRunStatus.Succeeded);
+			expect(finished.rows[0].started_at).not.toBeNull();
+			expect(broadcasts.some((b) => b.action === 'UPDATE' && b.status === 'running')).toBe(true);
+		});
 	});
 });
 

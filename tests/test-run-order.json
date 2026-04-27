@@ -1,1 +1,6 @@
-{}
+{
+  "packages/connect/src/test/__tests__/state.test.ts": 2589,
+  "packages/connect/src/test/__tests__/health.test.ts": 3262,
+  "packages/connect/src/test/__tests__/config.test.ts": 3265,
+  "packages/connect/src/test/__tests__/oauth.test.ts": 3347
+}

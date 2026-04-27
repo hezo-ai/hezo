@@ -15,7 +15,11 @@ import {
 } from 'lucide-react';
 import type { ComponentType, SVGProps } from 'react';
 import { useState } from 'react';
-import { isActiveRunStatus, useHeartbeatRun } from '../hooks/use-heartbeat-runs';
+import {
+	getRunWaitingMessage,
+	isActiveRunStatus,
+	useHeartbeatRun,
+} from '../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../hooks/use-run-logs';
 import { LogViewer } from './log-viewer';
 import { MarkdownProse } from './markdown-prose';
@@ -249,7 +253,7 @@ function RunComment({
 						</span>
 					</span>
 				}
-				emptyState={isActive ? 'Waiting for log output...' : 'No output.'}
+				emptyState={getRunWaitingMessage(status)}
 			/>
 			{createdIssues.length > 0 && (
 				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-issues">

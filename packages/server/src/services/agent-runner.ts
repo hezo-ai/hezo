@@ -523,6 +523,8 @@ export async function runAgent(
 			? await acquireCredentialLock(credential.configId)
 			: null;
 
+	await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast);
+
 	const context = await buildRunContext(
 		deps,
 		agent,
@@ -1219,10 +1221,10 @@ export async function createHeartbeatRun(
 	let statusFlippedToInProgress = false;
 	try {
 		const runResult = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, wakeup_id, status, started_at)
-			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status, now())
+			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, wakeup_id, status)
+			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status)
 			 RETURNING id`,
-			[agent.id, agent.company_id, issue.id, wakeupId, HeartbeatRunStatus.Running],
+			[agent.id, agent.company_id, issue.id, wakeupId, HeartbeatRunStatus.Queued],
 		);
 		runId = runResult.rows[0].id;
 
@@ -1257,7 +1259,7 @@ export async function createHeartbeatRun(
 		throw e;
 	}
 
-	broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Running, 'INSERT');
+	broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Queued, 'INSERT');
 	if (broadcast.wsManager) {
 		broadcastRowChange(
 			broadcast.wsManager,
@@ -1296,6 +1298,23 @@ export async function createHeartbeatRun(
 	return runId;
 }
 
+async function markHeartbeatRunRunning(
+	db: PGlite,
+	runId: string,
+	broadcast: HeartbeatRunBroadcast,
+): Promise<void> {
+	const result = await db.query<{ id: string }>(
+		`UPDATE heartbeat_runs
+		    SET status = $1::heartbeat_run_status, started_at = now()
+		  WHERE id = $2 AND status = $3::heartbeat_run_status
+		  RETURNING id`,
+		[HeartbeatRunStatus.Running, runId, HeartbeatRunStatus.Queued],
+	);
+	if (result.rows.length > 0) {
+		broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Running, 'UPDATE');
+	}
+}
+
 async function updateHeartbeatRun(
 	db: PGlite,
 	runId: string,
@@ -1311,6 +1330,7 @@ async function updateHeartbeatRun(
 	await db.query(
 		`UPDATE heartbeat_runs
 		 SET status = $1::heartbeat_run_status,
+		     started_at = COALESCE(started_at, now()),
 		     finished_at = now(),
 		     exit_code = $2,
 		     error = COALESCE($3, error),
