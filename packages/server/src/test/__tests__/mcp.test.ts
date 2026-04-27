@@ -143,6 +143,40 @@ describe('MCP endpoint', () => {
 		expect(Array.isArray(payload)).toBe(true);
 	});
 
+	it('returns 202 with no body for notifications/initialized (no id)', async () => {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+		});
+		expect(res.status).toBe(202);
+		expect(await res.text()).toBe('');
+	});
+
+	it('returns 202 with no body for unknown notifications', async () => {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled' }),
+		});
+		expect(res.status).toBe(202);
+		expect(await res.text()).toBe('');
+	});
+
+	it('returns a JSON-RPC error with the original id for unknown request methods', async () => {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ jsonrpc: '2.0', method: 'totally/unknown', id: 99 }),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.id).toBe(99);
+		expect(body.error.code).toBe(-32601);
+		expect(body.error.message).toContain('totally/unknown');
+		expect(body).not.toHaveProperty('result');
+	});
+
 	it('rejects an agent token once its run has finalized', async () => {
 		const { token: agentToken, runId } = await mintAgentToken(
 			db,
