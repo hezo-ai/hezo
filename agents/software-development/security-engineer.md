@@ -75,6 +75,7 @@ On heartbeats, audit the codebase across these areas:
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
 {{> partials/common/check-before-create}}
+{{> partials/common/assignment-hierarchy}}
 {{> partials/common/mention-handoff}}
 
 ---
