@@ -58,6 +58,7 @@ If the spec is unclear, ask the Architect — don't guess. If you disagree with 
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
 {{> partials/common/check-before-create}}
+{{> partials/common/assignment-hierarchy}}
 {{> partials/common/mention-handoff}}
 
 ---
