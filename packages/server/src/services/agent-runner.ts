@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { dirname, join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	AgentRuntime,
+	type AgentRuntime,
 	AiAuthMethod,
-	AiProvider,
+	type AiProvider,
 	CommentContentType,
 	ContainerStatus,
 	HeartbeatRunStatus,
@@ -37,7 +37,17 @@ import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } fr
 import { ensureIssueWorktree, fetchRepo } from './git';
 import { recordStatusChange } from './issue-events';
 import type { LogStreamBroker } from './log-stream-broker';
+import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
 import { ensureProjectRepos } from './repo-sync';
+import {
+	buildSubscriptionMount as buildSubscriptionMountImpl,
+	ensureRuntimeHomeDir,
+	getContainerSubscriptionRoot as getContainerSubscriptionRootImpl,
+	getHostSubscriptionRoot as getHostSubscriptionRootImpl,
+	type RuntimeHomeMount,
+	SUBSCRIPTION_LAYOUTS,
+	type SubscriptionMount as SubscriptionMountImpl,
+} from './runtime-home';
 import { resolveRuntimeForIssue } from './runtime-resolver';
 import { getCompanySSHKey } from './ssh-keys';
 import { resolveSystemPrompt } from './template-resolver';
@@ -117,105 +127,13 @@ export function buildProviderEnv(provider: AiProvider, credential: AiProviderCre
 	return [`${envVarName}=${credential.value}`];
 }
 
-const CONTAINER_SUBSCRIPTION_DIR = '/workspace/.hezo/subscription';
-
-interface SubscriptionLayout {
-	dirName: string;
-	authFileRelative: string;
-	envVarName: string;
-	rotates: boolean;
-}
-
-const SUBSCRIPTION_LAYOUTS: Partial<Record<AiProvider, SubscriptionLayout>> = {
-	[AiProvider.OpenAI]: {
-		dirName: 'codex',
-		authFileRelative: 'auth.json',
-		envVarName: 'CODEX_HOME',
-		rotates: true,
-	},
-	[AiProvider.Google]: {
-		dirName: 'gemini',
-		authFileRelative: '.gemini/oauth_creds.json',
-		envVarName: 'GEMINI_CLI_HOME',
-		rotates: false,
-	},
-};
-
-export function getContainerSubscriptionRoot(
-	provider: AiProvider,
-	heartbeatRunId: string,
-): string | null {
-	const layout = SUBSCRIPTION_LAYOUTS[provider];
-	if (!layout) return null;
-	return `${CONTAINER_SUBSCRIPTION_DIR}/${layout.dirName}/${heartbeatRunId}`;
-}
-
-export function getHostSubscriptionRoot(
-	provider: AiProvider,
-	dataDir: string,
-	companySlug: string,
-	projectSlug: string,
-	heartbeatRunId: string,
-): string | null {
-	const layout = SUBSCRIPTION_LAYOUTS[provider];
-	if (!layout) return null;
-	return join(
-		getWorkspacePath(dataDir, companySlug, projectSlug),
-		'.hezo',
-		'subscription',
-		layout.dirName,
-		heartbeatRunId,
-	);
-}
-
-/**
- * Materialise a vendor subscription blob to a per-run directory under the
- * project workspace (which is host-bind-mounted into the container) and
- * return the env entries that point the agent CLI at it. Returns null when
- * the credential isn't a subscription or the provider doesn't support one.
- */
-export interface SubscriptionMount {
-	hostDir: string;
-	hostAuthFile: string;
-	containerDir: string;
-	envEntries: string[];
-	rotates: boolean;
-}
-
-export function buildSubscriptionMount(
-	dataDir: string,
-	companySlug: string,
-	projectSlug: string,
-	heartbeatRunId: string,
-	provider: AiProvider,
-	credential: AiProviderCredential,
-): SubscriptionMount | null {
-	if (credential.authMethod !== AiAuthMethod.Subscription) return null;
-
-	const layout = SUBSCRIPTION_LAYOUTS[provider];
-	if (!layout) return null;
-
-	const hostDir = getHostSubscriptionRoot(
-		provider,
-		dataDir,
-		companySlug,
-		projectSlug,
-		heartbeatRunId,
-	) as string;
-	const containerDir = getContainerSubscriptionRoot(provider, heartbeatRunId) as string;
-	const hostAuthFile = join(hostDir, layout.authFileRelative);
-
-	mkdirSync(dirname(hostAuthFile), { recursive: true, mode: 0o700 });
-	writeFileSync(hostAuthFile, credential.value, { mode: 0o600 });
-
-	return {
-		hostDir,
-		hostAuthFile,
-		containerDir,
-		envEntries: [`${layout.envVarName}=${containerDir}`],
-		rotates: layout.rotates,
-	};
-}
+// SUBSCRIPTION_LAYOUTS, SubscriptionMount, and the home-dir helpers live in
+// runtime-home.ts so per-runtime config conventions sit in one place. These
+// re-exports keep the public import surface stable for callers and tests.
+export type SubscriptionMount = SubscriptionMountImpl;
+export const buildSubscriptionMount = buildSubscriptionMountImpl;
+export const getContainerSubscriptionRoot = getContainerSubscriptionRootImpl;
+export const getHostSubscriptionRoot = getHostSubscriptionRootImpl;
 
 /**
  * Some subscription credentials carry a single-use refresh token (Codex), so
@@ -250,6 +168,13 @@ export interface RunContext {
 	effortApplication: EffortRuntimeApplication;
 	agentJwt: string;
 	subscriptionMount: SubscriptionMount | null;
+	/**
+	 * Per-run runtime config dir. Reuses the subscription mount when present;
+	 * otherwise a freshly created dir for runtimes that need one (Codex, Gemini)
+	 * even when authenticating with an API key. Null when the runtime takes its
+	 * MCP config via CLI flags (Claude Code).
+	 */
+	homeMount: RuntimeHomeMount | null;
 }
 
 const CONTAINER_PROMPT_DIR = '/workspace/.hezo/prompts';
@@ -352,6 +277,37 @@ async function buildRunContext(
 		credential,
 	);
 
+	const adapter = MCP_ADAPTERS[runtimeType];
+	const homeMount: RuntimeHomeMount | null = adapter.capabilities.requiresHomeDir
+		? ensureRuntimeHomeDir(
+				runtimeType,
+				deps.dataDir,
+				project.company_slug,
+				project.slug,
+				heartbeatRunId,
+				subscriptionMount,
+			)
+		: null;
+
+	const mcpDescriptors: McpDescriptor[] = [
+		{
+			name: 'hezo',
+			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
+			bearerToken: agentJwt,
+		},
+	];
+
+	const mcpInjection = adapter.build(mcpDescriptors, {
+		hostHomeDir: homeMount?.hostDir ?? null,
+		containerHomeDir: homeMount?.containerDir ?? null,
+	});
+	validateInjection(adapter, mcpInjection);
+
+	for (const file of mcpInjection.files) {
+		mkdirSync(dirname(file.hostPath), { recursive: true, mode: 0o700 });
+		writeFileSync(file.hostPath, file.contents, { mode: file.mode });
+	}
+
 	const env: string[] = [
 		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
@@ -363,33 +319,20 @@ async function buildRunContext(
 		`HEZO_PROMPT_FILE=${promptFilePath}`,
 		...effortApplication.extraEnv,
 		...buildProviderEnv(provider, credential),
-		...(subscriptionMount?.envEntries ?? []),
+		// Subscription mount sets the runtime HOME env var when present; otherwise
+		// fall through to the home-mount entry so the runtime CLI finds its
+		// per-run config dir even without a subscription credential.
+		...(subscriptionMount?.envEntries ?? (homeMount ? [homeMount.envEntry] : [])),
+		...mcpInjection.envEntries,
 	];
 
 	const cliCommand = RUNTIME_COMMANDS[runtimeType];
-	const mcpFlags =
-		runtimeType === AgentRuntime.ClaudeCode
-			? [
-					'--mcp-config',
-					JSON.stringify({
-						mcpServers: {
-							hezo: {
-								type: 'http',
-								url: `http://host.docker.internal:${deps.serverPort}/mcp`,
-								headers: { Authorization: `Bearer ${agentJwt}` },
-							},
-						},
-					}),
-					'--strict-mcp-config',
-				]
-			: [];
-
 	const modelArgs = modelOverride ? ['--model', modelOverride] : [];
 
 	const cmd = [
 		cliCommand,
 		...RUNTIME_HEADLESS_PREFIX_ARGS[runtimeType],
-		...mcpFlags,
+		...mcpInjection.cliArgs,
 		...RUNTIME_STREAM_ARGS[runtimeType],
 		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
 		...effortApplication.extraArgs,
@@ -409,6 +352,7 @@ async function buildRunContext(
 		effortApplication,
 		agentJwt,
 		subscriptionMount,
+		homeMount,
 	};
 }
 
@@ -594,8 +538,9 @@ export async function runAgent(
 
 	if (signal?.aborted) {
 		releaseCredentialLock?.();
-		if (context.subscriptionMount) {
-			rmSync(context.subscriptionMount.hostDir, { recursive: true, force: true });
+		const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
+		if (dirToRemove) {
+			rmSync(dirToRemove, { recursive: true, force: true });
 		}
 		return finalizeAbort();
 	}
@@ -649,8 +594,9 @@ export async function runAgent(
 	const cleanupRunArtifacts = async () => {
 		await persistRotatedAuth();
 		rmSync(hostPromptPath, { force: true });
-		if (context.subscriptionMount) {
-			rmSync(context.subscriptionMount.hostDir, { recursive: true, force: true });
+		const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
+		if (dirToRemove) {
+			rmSync(dirToRemove, { recursive: true, force: true });
 		}
 		releaseCredentialLock?.();
 	};

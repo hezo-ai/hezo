@@ -857,6 +857,249 @@ describe('runAgent', () => {
 			expect(capturedCmd).not.toContain('--strict-mcp-config');
 		});
 
+		it('writes config.toml and sets HEZO_MCP_BEARER_TOKEN_HEZO for codex (api-key auth)', async () => {
+			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'openai'`);
+			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+			await app.request('/api/ai-providers', {
+				method: 'POST',
+				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					provider: 'openai',
+					api_key: 'sk-test-codex-mcp',
+					label: 'openai-codex-mcp',
+				}),
+			});
+			globalThis.fetch = originalFetch;
+
+			let capturedEnv: string[] = [];
+			let stagedTomlPath: string | null = null;
+			let stagedTomlContents: string | null = null;
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedEnv = opts.Env;
+					const codexHomeEntry = (opts.Env as string[]).find((e) => e.startsWith('CODEX_HOME='));
+					if (codexHomeEntry) {
+						const containerDir = codexHomeEntry.slice('CODEX_HOME='.length);
+						const runId = containerDir.split('/').pop()!;
+						stagedTomlPath = `${getHostSubscriptionRoot(
+							AiProvider.OpenAI,
+							'/tmp/test-data',
+							'runner-co',
+							'runner-project',
+							runId,
+						)}/config.toml`;
+						stagedTomlContents = readFileSync(stagedTomlPath, 'utf8');
+					}
+					return 'exec-codex-mcp';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			const result = await runAgent(
+				deps,
+				makeAgent(),
+				{ ...makeIssue(), runtime_type: 'codex' as const },
+				makeProject(),
+			);
+
+			expect(result.success).toBe(true);
+
+			// Codex MCP env var must be present and carry the actual JWT.
+			const tokenEntry = capturedEnv.find((e) => e.startsWith('HEZO_MCP_BEARER_TOKEN_HEZO='));
+			expect(tokenEntry).toBeDefined();
+			const token = tokenEntry!.slice('HEZO_MCP_BEARER_TOKEN_HEZO='.length);
+			expect(token.split('.').length).toBe(3); // looks like a JWT
+
+			// CODEX_HOME must be present exactly once.
+			const codexHomeEntries = capturedEnv.filter((e) => e.startsWith('CODEX_HOME='));
+			expect(codexHomeEntries.length).toBe(1);
+
+			// config.toml must have been staged with the right body and not contain the JWT.
+			expect(stagedTomlPath).not.toBeNull();
+			expect(stagedTomlContents).toContain('[mcp_servers.hezo]');
+			expect(stagedTomlContents).toContain('url = "http://host.docker.internal:3000/mcp"');
+			expect(stagedTomlContents).toContain('bearer_token_env_var = "HEZO_MCP_BEARER_TOKEN_HEZO"');
+			expect(stagedTomlContents).not.toContain(token);
+
+			// Per-run home dir is cleaned up after the run completes.
+			expect(existsSync(stagedTomlPath!)).toBe(false);
+		});
+
+		it('writes config.toml alongside auth.json for codex (subscription auth)', async () => {
+			const validAuthJson = JSON.stringify({
+				tokens: {
+					id_token: 'header.payload.sig',
+					access_token: 'header.payload.sig',
+					refresh_token: 'rt-mcp',
+					account_id: 'acct-mcp',
+				},
+			});
+			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'openai'`);
+			await app.request('/api/ai-providers', {
+				method: 'POST',
+				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					provider: 'openai',
+					api_key: validAuthJson,
+					auth_method: AiAuthMethod.Subscription,
+					label: 'openai-codex-sub-mcp',
+				}),
+			});
+
+			let capturedEnv: string[] = [];
+			let observedAuthFile: string | null = null;
+			let observedTomlFile: string | null = null;
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedEnv = opts.Env;
+					const codexHomeEntry = (opts.Env as string[]).find((e) => e.startsWith('CODEX_HOME='));
+					if (codexHomeEntry) {
+						const containerDir = codexHomeEntry.slice('CODEX_HOME='.length);
+						const runId = containerDir.split('/').pop()!;
+						const hostDir = getHostSubscriptionRoot(
+							AiProvider.OpenAI,
+							'/tmp/test-data',
+							'runner-co',
+							'runner-project',
+							runId,
+						);
+						observedAuthFile = `${hostDir}/auth.json`;
+						observedTomlFile = `${hostDir}/config.toml`;
+						expect(existsSync(observedAuthFile)).toBe(true);
+						expect(existsSync(observedTomlFile)).toBe(true);
+						expect(readFileSync(observedAuthFile, 'utf8')).toBe(validAuthJson);
+					}
+					return 'exec-codex-sub-mcp';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			const result = await runAgent(
+				deps,
+				makeAgent(),
+				{ ...makeIssue(), runtime_type: 'codex' as const },
+				makeProject(),
+			);
+			expect(result.success).toBe(true);
+
+			// Exactly one CODEX_HOME entry — subscription mount and home mount must
+			// not both contribute one.
+			expect(capturedEnv.filter((e) => e.startsWith('CODEX_HOME=')).length).toBe(1);
+			expect(capturedEnv.some((e) => e.startsWith('HEZO_MCP_BEARER_TOKEN_HEZO='))).toBe(true);
+
+			// Cleanup removes the whole per-run dir, taking config.toml + auth.json with it.
+			expect(observedTomlFile).not.toBeNull();
+			expect(existsSync(observedTomlFile!)).toBe(false);
+			expect(existsSync(observedAuthFile!)).toBe(false);
+
+			// Restore an api-key openai config so subsequent tests in the file
+			// (which assume api-key auth) keep working.
+			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'openai'`);
+			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+			await app.request('/api/ai-providers', {
+				method: 'POST',
+				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					provider: 'openai',
+					api_key: 'sk-test-codex-restore',
+					label: 'openai-codex-restore',
+				}),
+			});
+			globalThis.fetch = originalFetch;
+		});
+
+		it('writes .gemini/settings.json for gemini runtime', async () => {
+			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'google'`);
+			await app.request('/api/ai-providers', {
+				method: 'POST',
+				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					provider: 'google',
+					api_key: 'AIza-test-gemini-mcp',
+					label: 'google-gemini-mcp',
+				}),
+			});
+			globalThis.fetch = originalFetch;
+
+			let capturedCmd: string[] = [];
+			let capturedEnv: string[] = [];
+			let settingsPath: string | null = null;
+			let settingsContents: string | null = null;
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					capturedEnv = opts.Env;
+					const geminiHome = (opts.Env as string[]).find((e) => e.startsWith('GEMINI_CLI_HOME='));
+					if (geminiHome) {
+						const containerDir = geminiHome.slice('GEMINI_CLI_HOME='.length);
+						const runId = containerDir.split('/').pop()!;
+						settingsPath = `${getHostSubscriptionRoot(
+							AiProvider.Google,
+							'/tmp/test-data',
+							'runner-co',
+							'runner-project',
+							runId,
+						)}/.gemini/settings.json`;
+						settingsContents = readFileSync(settingsPath, 'utf8');
+					}
+					return 'exec-gemini-mcp';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			const result = await runAgent(
+				deps,
+				makeAgent(),
+				{ ...makeIssue(), runtime_type: 'gemini' as const },
+				makeProject(),
+			);
+			expect(result.success).toBe(true);
+
+			expect(capturedCmd).not.toContain('--mcp-config');
+			expect(capturedEnv.filter((e) => e.startsWith('GEMINI_CLI_HOME=')).length).toBe(1);
+
+			expect(settingsPath).not.toBeNull();
+			const parsed = JSON.parse(settingsContents!) as {
+				mcpServers: Record<string, { httpUrl: string; headers?: Record<string, string> }>;
+			};
+			expect(parsed.mcpServers.hezo.httpUrl).toBe('http://host.docker.internal:3000/mcp');
+			expect(parsed.mcpServers.hezo.headers?.Authorization).toMatch(/^Bearer /);
+
+			// Cleanup removes the per-run dir.
+			expect(existsSync(settingsPath!)).toBe(false);
+		});
+
 		it('persists invocation_command with JWT redacted', async () => {
 			const docker = createMockDocker({
 				execCreate: async () => 'exec-inv',

@@ -948,11 +948,20 @@ describe('JobManager workflow methods', () => {
 			const manager = createJobManager();
 
 			// Sanity-check: clear any prior state and make this agent eligible.
+			// Other seeded agents start with last_heartbeat_at = NULL and would
+			// also satisfy processScheduledHeartbeats's WHERE clause; with
+			// `LIMIT 5` on the query, this test's specific agent could be
+			// crowded out non-deterministically. Mark every other agent as
+			// recently heartbeated so this test's agent is the only due one.
 			await db.query(
 				"UPDATE member_agents SET admin_status = 'enabled', runtime_status = 'idle', last_heartbeat_at = now() - interval '2 hours', heartbeat_interval_min = 60 WHERE id = $1",
 				[agentId],
 			);
-			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			await db.query(
+				'UPDATE member_agents SET last_heartbeat_at = now(), heartbeat_interval_min = 60 WHERE id != $1',
+				[agentId],
+			);
+			await db.query('DELETE FROM agent_wakeup_requests');
 
 			const dueCheck = await db.query<{ id: string }>(
 				`SELECT ma.id

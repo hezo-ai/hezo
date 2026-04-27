@@ -7,7 +7,7 @@ import { Command } from 'commander';
 
 const ROOT = resolve(import.meta.dir, '..');
 
-const defaultConcurrency = process.env.CI ? 10 : 4;
+const defaultConcurrency = 10;
 
 const program = new Command()
 	.name('test')
