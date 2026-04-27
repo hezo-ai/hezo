@@ -10,7 +10,7 @@ import {
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
 import { assertNoActiveRun } from '../lib/active-run';
 import { auditLog } from '../lib/audit';
 import { broadcastChange } from '../lib/broadcast';
@@ -28,6 +28,7 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { triggerStatusAutomations } from '../services/issue-automation';
+import { recordIssueLinks } from '../services/issue-events';
 import { removeIssueWorktrees } from '../services/repo-sync';
 import { createWakeup } from '../services/wakeup';
 
@@ -46,6 +47,21 @@ async function wakeAgentIfAssigned(
 			issue_id: issueId,
 		}).catch((e) => log.error('Failed to create wakeup for assignment:', e));
 	}
+}
+
+async function resolveActorMemberId(c: Context<Env>, companyId: string): Promise<string | null> {
+	const auth = c.get('auth');
+	if (auth.type === AuthType.Agent) return auth.memberId;
+	if (auth.type === AuthType.Board) {
+		const r = await c.get('db').query<{ id: string }>(
+			`SELECT m.id FROM members m
+			   JOIN member_users mu ON mu.id = m.id
+			  WHERE mu.user_id = $1 AND m.company_id = $2`,
+			[auth.userId, companyId],
+		);
+		return r.rows[0]?.id ?? null;
+	}
+	return null;
 }
 
 export const issuesRoutes = new Hono<Env>();
@@ -248,6 +264,19 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 		},
 	).catch(() => {});
 	wakeAgentIfAssigned(db, body.assignee_id, companyId, issue.id as string);
+
+	if (body.description) {
+		const actorMemberId = await resolveActorMemberId(c, companyId);
+		recordIssueLinks(
+			db,
+			companyId,
+			issue.id as string,
+			body.description,
+			actorMemberId,
+			c.get('wsManager'),
+		).catch((e) => log.error('Failed to record issue links from description:', e));
+	}
+
 	return ok(c, issue, 201);
 });
 
@@ -506,10 +535,29 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 
 	wakeAgentIfAssigned(db, body.assignee_id, companyId, issueId);
 
+	const actorMemberId = await resolveActorMemberId(c, companyId);
+
+	if (body.description !== undefined) {
+		recordIssueLinks(
+			db,
+			companyId,
+			issueId,
+			body.description,
+			actorMemberId,
+			c.get('wsManager'),
+		).catch((e) => log.error('Failed to record issue links from description:', e));
+	}
+
 	if (body.status) {
-		triggerStatusAutomations(db, companyId, issueId, body.status, c.get('wsManager')).catch((e) =>
-			log.error('Failed to trigger status automations:', e),
-		);
+		triggerStatusAutomations(
+			db,
+			companyId,
+			issueId,
+			existing.rows[0].status,
+			body.status,
+			actorMemberId,
+			c.get('wsManager'),
+		).catch((e) => log.error('Failed to trigger status automations:', e));
 
 		if ((TERMINAL_ISSUE_STATUSES as readonly string[]).includes(body.status)) {
 			const dataDir = c.get('dataDir');

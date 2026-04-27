@@ -92,7 +92,9 @@ The `content_type` enum discriminates the shape:
 - `options` → `{ "prompt": "...", "options": [{ "id", "label", "description" }] }`
 - `preview` → `{ "filename": "...", "label": "...", "description": "..." }`
 - `trace` → `{ "summary": "4 tool calls" }` (detail lives in `tool_calls` table)
-- `system` → `{ "text": "Agent disabled — budget limit reached" }`
+- `system` → `{ "text": "...", "kind"?: "status_change" | "issue_link" | <other>, ... }`. Auto-generated timeline entries. The renderer shows `text`; `kind` plus per-kind fields let the server dedup and tooling filter without re-parsing prose.
+  - `status_change`: `{ "kind": "status_change", "from": "<old>", "to": "<new>", "actor_id": "<member_uuid|null>", "text": "<actor> changed status from <old> to <new>" }` — written for every issue status transition.
+  - `issue_link`: `{ "kind": "issue_link", "source_issue_id": "<uuid>", "source_identifier": "<e.g. OP-42>", "actor_id": "<member_uuid|null>", "text": "Linked from <source_identifier> by <actor>" }` — written on the **target** issue the first time a given source issue mentions it; subsequent mentions from the same source are deduped via the `source_issue_id` JSONB key.
 - `execution` → `{ "heartbeat_run_id", "agent_id", "agent_title", "status", "exit_code", "duration_ms", "stdout_preview" }` (auto-created on agent run completion)
 - `action` → `{ "kind": "setup_repo", "approval_id": "..." }` — surfaces a board-required action inline on the ticket. Resolves by setting `chosen_option` to `{ status: 'complete', result: {...} }`. Currently only `setup_repo` is defined, used by the designated-repo gate.
 

@@ -28,6 +28,7 @@ import {
 	syncAllContainerStatuses,
 } from './containers';
 import type { DockerClient } from './docker';
+import { recordStatusChange } from './issue-events';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans } from './orphan-detector';
 import { ensureRepoSetupAction } from './repo-setup';
@@ -841,6 +842,15 @@ export class JobManager {
 						'issues',
 						'UPDATE',
 						closed.rows[0],
+					);
+					await recordStatusChange(
+						db,
+						companyId,
+						issueId,
+						IssueStatus.Done,
+						IssueStatus.Closed,
+						memberId,
+						this.deps.wsManager,
 					);
 				}
 			}
