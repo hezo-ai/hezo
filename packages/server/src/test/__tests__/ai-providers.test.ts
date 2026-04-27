@@ -202,6 +202,118 @@ describe('AI providers key format validation', () => {
 	});
 });
 
+describe('AI providers subscription auth (oauth_token method)', () => {
+	beforeAll(async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+	});
+
+	const validAuthJson = JSON.stringify({
+		tokens: {
+			id_token: 'header.payload.sig',
+			access_token: 'header.payload.sig',
+			refresh_token: 'rt-test-token-1',
+			account_id: 'acct-123',
+		},
+	});
+
+	it('rejects oauth_token for anthropic (Claude subscription auth violates ToS)', async () => {
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'anthropic',
+				api_key: validAuthJson,
+				auth_method: 'oauth_token',
+			}),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.code).toBe('UNSUPPORTED_AUTH_METHOD');
+	});
+
+	it('rejects oauth_token for moonshot (no subscription auth supported)', async () => {
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'moonshot',
+				api_key: validAuthJson,
+				auth_method: 'oauth_token',
+			}),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.code).toBe('UNSUPPORTED_AUTH_METHOD');
+	});
+
+	it('rejects malformed auth.json for openai', async () => {
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openai',
+				api_key: 'not-json',
+				auth_method: 'oauth_token',
+			}),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.code).toBe('INVALID_AUTH_JSON');
+	});
+
+	it('rejects auth.json missing tokens.refresh_token for openai', async () => {
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openai',
+				api_key: JSON.stringify({ tokens: { access_token: 'just-access' } }),
+				auth_method: 'oauth_token',
+			}),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.code).toBe('INVALID_AUTH_JSON');
+	});
+
+	it('stores a valid codex auth.json blob for openai', async () => {
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openai',
+				api_key: validAuthJson,
+				auth_method: 'oauth_token',
+				label: 'chatgpt-pro',
+			}),
+		});
+		expect(res.status).toBe(201);
+
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const body = await list.json();
+		const stored = (body.data as Array<{ provider: string; auth_method: string }>).find(
+			(r) => r.provider === 'openai',
+		);
+		expect(stored?.auth_method).toBe('oauth_token');
+	});
+
+	it('skips api-key prefix validation when auth_method=oauth_token', async () => {
+		// Even though OpenAI's keyPrefix is 'sk-', the auth.json blob does not
+		// start with that — the prefix check must only run for ApiKey auth.
+		await db.query('DELETE FROM ai_provider_configs');
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openai',
+				api_key: validAuthJson,
+				auth_method: 'oauth_token',
+			}),
+		});
+		expect(res.status).toBe(201);
+	});
+});
+
 describe('AI providers key validation against provider API', () => {
 	it('rejects a key that the provider says is invalid', async () => {
 		globalThis.fetch = vi
@@ -462,16 +574,16 @@ describe('AI providers default-per-provider invariant', () => {
 });
 
 describe('AI providers auth_method coexistence', () => {
-	it('allows an OAuth token config alongside an existing API key for the same provider', async () => {
+	it('allows a subscription auth.json alongside an existing API key for openai', async () => {
 		await db.query('DELETE FROM ai_provider_configs');
 
 		const apiRes = await app.request('/api/ai-providers', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				provider: 'anthropic',
-				api_key: 'sk-ant-coexist-api',
-				label: 'anthropic-coexist-api',
+				provider: 'openai',
+				api_key: 'sk-coexist-api',
+				label: 'openai-coexist-api',
 				auth_method: 'api_key',
 			}),
 		});
@@ -481,9 +593,9 @@ describe('AI providers auth_method coexistence', () => {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				provider: 'anthropic',
-				api_key: 'oauth-coexist-token',
-				label: 'anthropic-coexist-oauth',
+				provider: 'openai',
+				api_key: JSON.stringify({ tokens: { refresh_token: 'rt-coexist' } }),
+				label: 'openai-coexist-subscription',
 				auth_method: 'oauth_token',
 			}),
 		});
@@ -491,9 +603,9 @@ describe('AI providers auth_method coexistence', () => {
 
 		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
 		const rows = (await list.json()).data as Array<{ provider: string; auth_method: string }>;
-		const anthropic = rows.filter((r) => r.provider === 'anthropic');
-		expect(anthropic.length).toBe(2);
-		expect(anthropic.some((r) => r.auth_method === 'api_key')).toBe(true);
-		expect(anthropic.some((r) => r.auth_method === 'oauth_token')).toBe(true);
+		const openai = rows.filter((r) => r.provider === 'openai');
+		expect(openai.length).toBe(2);
+		expect(openai.some((r) => r.auth_method === 'api_key')).toBe(true);
+		expect(openai.some((r) => r.auth_method === 'oauth_token')).toBe(true);
 	});
 });
