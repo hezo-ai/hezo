@@ -1,7 +1,8 @@
-import { AI_PROVIDER_INFO, AiProvider } from '@hezo/shared';
-import { Key, Loader2, Shield } from 'lucide-react';
+import { AI_PROVIDER_INFO, AiAuthMethod, AiProvider } from '@hezo/shared';
+import { ClipboardPaste, Key, Loader2, Shield } from 'lucide-react';
 import { useState } from 'react';
 import { useCreateAiProvider, useStartAiProviderOAuth } from '../hooks/use-ai-providers';
+import { CodexAuthPasteForm } from './codex-auth-paste-form';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -39,6 +40,7 @@ export function AiProviderSetupModal() {
 function ProviderCard({ provider }: { provider: AiProvider }) {
 	const info = AI_PROVIDER_INFO[provider];
 	const [showKeyForm, setShowKeyForm] = useState(false);
+	const [showPasteForm, setShowPasteForm] = useState(false);
 	const [apiKey, setApiKey] = useState('');
 	const createProvider = useCreateAiProvider();
 	const startOAuth = useStartAiProviderOAuth();
@@ -53,6 +55,15 @@ function ProviderCard({ provider }: { provider: AiProvider }) {
 	async function handleOAuth() {
 		const result = await startOAuth.mutateAsync(provider);
 		window.location.href = result.auth_url;
+	}
+
+	async function handleSubmitPaste(authJson: string) {
+		await createProvider.mutateAsync({
+			provider,
+			api_key: authJson,
+			auth_method: AiAuthMethod.OAuthToken,
+		});
+		setShowPasteForm(false);
 	}
 
 	return (
@@ -84,9 +95,16 @@ function ProviderCard({ provider }: { provider: AiProvider }) {
 						Cancel
 					</Button>
 				</form>
+			) : showPasteForm ? (
+				<CodexAuthPasteForm
+					providerName={info.name}
+					onSubmit={handleSubmitPaste}
+					onCancel={() => setShowPasteForm(false)}
+					pending={createProvider.isPending}
+				/>
 			) : (
 				<div className="flex gap-2 mt-2">
-					{info.supportsOAuth && (
+					{info.subscriptionAuthMode === 'oauth' && (
 						<Button
 							variant="secondary"
 							size="sm"
@@ -95,6 +113,12 @@ function ProviderCard({ provider }: { provider: AiProvider }) {
 						>
 							{startOAuth.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
 							Connect via OAuth
+						</Button>
+					)}
+					{info.subscriptionAuthMode === 'paste' && (
+						<Button variant="secondary" size="sm" onClick={() => setShowPasteForm(true)}>
+							<ClipboardPaste className="w-3 h-3" />
+							Use {info.runtimeLabel} subscription
 						</Button>
 					)}
 					<Button variant="secondary" size="sm" onClick={() => setShowKeyForm(true)}>

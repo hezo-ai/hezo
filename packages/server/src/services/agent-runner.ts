@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentRuntime,
-	type AiProvider,
+	AiAuthMethod,
+	AiProvider,
 	CommentContentType,
 	ContainerStatus,
 	HeartbeatRunStatus,
@@ -23,7 +24,11 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
 import { signAgentJwt } from '../middleware/auth';
 import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
-import { type AiProviderCredential, getProviderCredentialAndModel } from './ai-provider-keys';
+import {
+	type AiProviderCredential,
+	getProviderCredentialAndModel,
+	updateAiProviderCredential,
+} from './ai-provider-keys';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -100,11 +105,98 @@ interface RepoRow {
 /**
  * Build the env-var entries for a given provider/auth method. Only the matching
  * env var is set; agents that read a different var won't see the credential.
+ *
+ * Returns no env entries when the credential is delivered via a file mount
+ * instead of an env var (e.g. Codex/ChatGPT subscription auth, which lives in
+ * `$CODEX_HOME/auth.json` — the file path is wired up separately by
+ * {@link buildCodexHomeMount}).
  */
 export function buildProviderEnv(provider: AiProvider, credential: AiProviderCredential): string[] {
 	const envVarName = PROVIDER_TO_ENV_VAR[provider]?.[credential.authMethod];
 	if (!envVarName) return [];
 	return [`${envVarName}=${credential.value}`];
+}
+
+const CONTAINER_CODEX_HOME_DIR = '/workspace/.hezo/codex';
+
+export function getContainerCodexHome(heartbeatRunId: string): string {
+	return `${CONTAINER_CODEX_HOME_DIR}/${heartbeatRunId}`;
+}
+
+export function getHostCodexHome(
+	dataDir: string,
+	companySlug: string,
+	projectSlug: string,
+	heartbeatRunId: string,
+): string {
+	return join(
+		getWorkspacePath(dataDir, companySlug, projectSlug),
+		'.hezo',
+		'codex',
+		heartbeatRunId,
+	);
+}
+
+/**
+ * Materialise a codex auth.json blob to a per-run directory under the project
+ * workspace (which is host-bind-mounted into the container) and return the env
+ * entries that point codex at it. Returns null when the credential isn't a
+ * codex subscription blob.
+ */
+export interface CodexHomeMount {
+	hostDir: string;
+	hostAuthFile: string;
+	containerDir: string;
+	envEntries: string[];
+}
+
+export function buildCodexHomeMount(
+	dataDir: string,
+	companySlug: string,
+	projectSlug: string,
+	heartbeatRunId: string,
+	provider: AiProvider,
+	credential: AiProviderCredential,
+): CodexHomeMount | null {
+	if (provider !== AiProvider.OpenAI || credential.authMethod !== AiAuthMethod.OAuthToken) {
+		return null;
+	}
+
+	const hostDir = getHostCodexHome(dataDir, companySlug, projectSlug, heartbeatRunId);
+	const hostAuthFile = join(hostDir, 'auth.json');
+	const containerDir = getContainerCodexHome(heartbeatRunId);
+
+	mkdirSync(hostDir, { recursive: true, mode: 0o700 });
+	writeFileSync(hostAuthFile, credential.value, { mode: 0o600 });
+
+	return {
+		hostDir,
+		hostAuthFile,
+		containerDir,
+		envEntries: [`CODEX_HOME=${containerDir}`],
+	};
+}
+
+/**
+ * One refresh-token rotation per `auth.json` is single-use, so two parallel
+ * codex runs against the same credential would mutually invalidate each other.
+ * This in-process mutex serialises runs on the credential row's id.
+ */
+const credentialLocks = new Map<string, Promise<void>>();
+
+export async function acquireCredentialLock(configId: string): Promise<() => void> {
+	const previous = credentialLocks.get(configId) ?? Promise.resolve();
+	let release!: () => void;
+	const next = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const chain = previous.then(() => next);
+	credentialLocks.set(configId, chain);
+	await previous;
+	return () => {
+		release();
+		if (credentialLocks.get(configId) === chain) credentialLocks.delete(configId);
+	};
 }
 
 export interface RunContext {
@@ -116,6 +208,7 @@ export interface RunContext {
 	effort: string;
 	effortApplication: EffortRuntimeApplication;
 	agentJwt: string;
+	codexHomeMount: CodexHomeMount | null;
 }
 
 const CONTAINER_PROMPT_DIR = '/workspace/.hezo/prompts';
@@ -209,6 +302,15 @@ async function buildRunContext(
 
 	const promptFilePath = getContainerPromptPath(heartbeatRunId);
 
+	const codexHomeMount = buildCodexHomeMount(
+		deps.dataDir,
+		project.company_slug,
+		project.slug,
+		heartbeatRunId,
+		provider,
+		credential,
+	);
+
 	const env: string[] = [
 		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
@@ -220,6 +322,7 @@ async function buildRunContext(
 		`HEZO_PROMPT_FILE=${promptFilePath}`,
 		...effortApplication.extraEnv,
 		...buildProviderEnv(provider, credential),
+		...(codexHomeMount?.envEntries ?? []),
 	];
 
 	const cliCommand = RUNTIME_COMMANDS[runtimeType];
@@ -263,6 +366,7 @@ async function buildRunContext(
 		effort,
 		effortApplication,
 		agentJwt,
+		codexHomeMount,
 	};
 }
 
@@ -404,6 +508,11 @@ export async function runAgent(
 
 	if (signal?.aborted) return finalizeAbort();
 
+	const releaseCredentialLock =
+		provider === AiProvider.OpenAI && credential.authMethod === AiAuthMethod.OAuthToken
+			? await acquireCredentialLock(credential.configId)
+			: null;
+
 	const context = await buildRunContext(
 		deps,
 		agent,
@@ -417,7 +526,13 @@ export async function runAgent(
 		modelOverride,
 	);
 
-	if (signal?.aborted) return finalizeAbort();
+	if (signal?.aborted) {
+		releaseCredentialLock?.();
+		if (context.codexHomeMount) {
+			rmSync(context.codexHomeMount.hostDir, { recursive: true, force: true });
+		}
+		return finalizeAbort();
+	}
 
 	const prep = await prepareWorktrees(deps, project, issue, emit, signal);
 
@@ -442,8 +557,33 @@ export async function runAgent(
 
 	const parser = createAgentStreamParser(runtimeType);
 
-	const cleanupPromptFile = () => {
+	const persistRotatedAuth = async () => {
+		const mount = context.codexHomeMount;
+		if (!mount) return;
+		try {
+			if (existsSync(mount.hostAuthFile)) {
+				const rotated = readFileSync(mount.hostAuthFile, 'utf8');
+				if (rotated && rotated !== credential.value) {
+					await updateAiProviderCredential(
+						deps.db,
+						deps.masterKeyManager,
+						credential.configId,
+						rotated,
+					);
+				}
+			}
+		} catch (e) {
+			emit('stderr', `[runner] failed to persist rotated codex auth: ${(e as Error).message}\n`);
+		}
+	};
+
+	const cleanupRunArtifacts = async () => {
+		await persistRotatedAuth();
 		rmSync(hostPromptPath, { force: true });
+		if (context.codexHomeMount) {
+			rmSync(context.codexHomeMount.hostDir, { recursive: true, force: true });
+		}
+		releaseCredentialLock?.();
 	};
 
 	try {
@@ -484,7 +624,7 @@ export async function runAgent(
 			runBroadcast,
 		);
 
-		cleanupPromptFile();
+		await cleanupRunArtifacts();
 		return { success, exitCode: execInfo.ExitCode, stdout, stderr, durationMs, heartbeatRunId };
 	} catch (error) {
 		const durationMs = Date.now() - startTime;
@@ -512,7 +652,7 @@ export async function runAgent(
 			runBroadcast,
 		);
 
-		cleanupPromptFile();
+		await cleanupRunArtifacts();
 		return {
 			success: false,
 			exitCode: -1,

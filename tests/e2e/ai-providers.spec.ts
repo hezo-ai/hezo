@@ -42,7 +42,7 @@ test.describe('AI Providers instance settings', () => {
 		}
 	});
 
-	test('shows Connect via OAuth when API key is already configured', async ({ page }) => {
+	test('does not offer subscription auth for Anthropic (ToS)', async ({ page }) => {
 		await authenticate(page);
 		await page.goto('/settings/ai-providers');
 
@@ -51,11 +51,38 @@ test.describe('AI Providers instance settings', () => {
 			.first();
 
 		await expect(anthropicCard.getByText('API Key')).toBeVisible();
-		await expect(anthropicCard.getByRole('button', { name: /Connect via OAuth/i })).toBeVisible();
-		await expect(anthropicCard.getByRole('button', { name: 'Enter API key' })).toHaveCount(0);
+		await expect(anthropicCard.getByRole('button', { name: /Connect via OAuth/i })).toHaveCount(0);
+		await expect(
+			anthropicCard.getByRole('button', { name: /Use Claude Code subscription/i }),
+		).toHaveCount(0);
 	});
 
-	test('renders API key + OAuth side-by-side and can flip the default', async ({ page }) => {
+	test('offers ChatGPT subscription paste flow for OpenAI', async ({ page }) => {
+		const token = await getToken(page);
+		await clearAiProviders(page, token);
+
+		await authenticate(page);
+		await page.goto('/settings/ai-providers');
+
+		const openaiCard = page
+			.locator('div.border.border-border.rounded-radius-md.p-3', { hasText: 'OpenAI' })
+			.first();
+
+		await openaiCard.getByRole('button', { name: /Use Codex subscription/i }).click();
+		await expect(openaiCard.getByText(/codex login/i).first()).toBeVisible();
+		await openaiCard
+			.locator('textarea')
+			.fill(JSON.stringify({ tokens: { refresh_token: 'rt-e2e-paste' } }));
+		await openaiCard.getByRole('button', { name: 'Save' }).click();
+
+		await expect(openaiCard.getByText('Subscription', { exact: true })).toBeVisible({
+			timeout: 20000,
+		});
+
+		await clearAiProviders(page, token);
+	});
+
+	test('renders API key + Subscription side-by-side and can flip the default', async ({ page }) => {
 		const token = await getToken(page);
 		const headers = { Authorization: `Bearer ${token}` };
 
@@ -64,37 +91,39 @@ test.describe('AI Providers instance settings', () => {
 		const apiRes = await page.request.post('/api/ai-providers', {
 			headers: { ...headers, 'Content-Type': 'application/json' },
 			data: {
-				provider: 'anthropic',
-				api_key: 'sk-ant-mix-test',
-				label: 'anthropic-mix-api',
+				provider: 'openai',
+				api_key: 'sk-mix-test',
+				label: 'openai-mix-api',
 				auth_method: 'api_key',
 			},
 		});
 		expect(apiRes.status()).toBe(201);
 
-		const oauthRes = await page.request.post('/api/ai-providers', {
+		const subscriptionRes = await page.request.post('/api/ai-providers', {
 			headers: { ...headers, 'Content-Type': 'application/json' },
 			data: {
-				provider: 'anthropic',
-				api_key: 'oauth-mix-token',
-				label: 'anthropic-mix-oauth',
+				provider: 'openai',
+				api_key: JSON.stringify({ tokens: { refresh_token: 'rt-mix' } }),
+				label: 'openai-mix-subscription',
 				auth_method: 'oauth_token',
 			},
 		});
-		expect(oauthRes.status()).toBe(201);
+		expect(subscriptionRes.status()).toBe(201);
 
 		await authenticate(page);
 		await page.goto('/settings/ai-providers');
 
-		const anthropicCard = page
-			.locator('div.border.border-border.rounded-radius-md.p-3', { hasText: 'Anthropic' })
+		const openaiCard = page
+			.locator('div.border.border-border.rounded-radius-md.p-3', { hasText: 'OpenAI' })
 			.first();
 
-		await expect(anthropicCard.getByText('API Key', { exact: true })).toBeVisible();
-		await expect(anthropicCard.getByText('OAuth', { exact: true })).toBeVisible();
-		await expect(anthropicCard.getByText('Default', { exact: true })).toBeVisible();
-		await expect(anthropicCard.getByRole('button', { name: /Connect via OAuth/i })).toHaveCount(0);
-		await expect(anthropicCard.getByRole('button', { name: 'Enter API key' })).toHaveCount(0);
+		await expect(openaiCard.getByText('API Key', { exact: true })).toBeVisible();
+		await expect(openaiCard.getByText('Subscription', { exact: true })).toBeVisible();
+		await expect(openaiCard.getByText('Default', { exact: true })).toBeVisible();
+		await expect(openaiCard.getByRole('button', { name: /Use Codex subscription/i })).toHaveCount(
+			0,
+		);
+		await expect(openaiCard.getByRole('button', { name: 'Enter API key' })).toHaveCount(0);
 
 		const [setDefaultResponse] = await Promise.all([
 			page.waitForResponse(
@@ -102,7 +131,7 @@ test.describe('AI Providers instance settings', () => {
 					/\/api\/ai-providers\/.+\/default$/.test(resp.url()) &&
 					resp.request().method() === 'PATCH',
 			),
-			anthropicCard.getByRole('button', { name: 'Set default' }).click(),
+			openaiCard.getByRole('button', { name: 'Set default' }).click(),
 		]);
 		expect(setDefaultResponse.ok()).toBe(true);
 
@@ -111,8 +140,9 @@ test.describe('AI Providers instance settings', () => {
 			id: string;
 			auth_method: string;
 			is_default: boolean;
+			provider: string;
 		}>;
-		const defaultConfig = configs.find((c) => c.is_default);
+		const defaultConfig = configs.find((c) => c.is_default && c.provider === 'openai');
 		expect(defaultConfig?.auth_method).toBe('oauth_token');
 
 		await clearAiProviders(page, token);

@@ -362,11 +362,9 @@ export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = {
 export const PROVIDER_TO_ENV_VAR: Record<AiProvider, Record<string, string>> = {
 	[AiProvider.Anthropic]: {
 		[AiAuthMethod.ApiKey]: 'ANTHROPIC_API_KEY',
-		[AiAuthMethod.OAuthToken]: 'CLAUDE_CODE_OAUTH_TOKEN',
 	},
 	[AiProvider.OpenAI]: {
 		[AiAuthMethod.ApiKey]: 'OPENAI_API_KEY',
-		[AiAuthMethod.OAuthToken]: 'CODEX_OAUTH_TOKEN',
 	},
 	[AiProvider.Google]: {
 		[AiAuthMethod.ApiKey]: 'GOOGLE_API_KEY',
@@ -415,10 +413,22 @@ export interface AiProviderVerifyEndpoint {
 	headers: Record<string, string> | ((apiKey: string) => Record<string, string>);
 }
 
+/**
+ * How a provider's non-API-key credential is acquired.
+ *
+ * - `oauth`: standard OAuth dance brokered by Hezo Connect; the resulting
+ *   access token is stored as the credential value.
+ * - `paste`: the user runs the vendor's CLI locally to log in, then pastes
+ *   the resulting credential file into Hezo. Used by Codex/ChatGPT, where
+ *   subscription auth lives in `~/.codex/auth.json` and there is no
+ *   server-side OAuth flow available.
+ */
+export type SubscriptionAuthMode = 'oauth' | 'paste';
+
 export interface AiProviderInfo {
 	name: string;
 	runtimeLabel: string;
-	supportsOAuth: boolean;
+	subscriptionAuthMode?: SubscriptionAuthMode;
 	keyPrefix?: string;
 	keyPlaceholder: string;
 	verifyEndpoint: AiProviderVerifyEndpoint;
@@ -428,7 +438,6 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	[AiProvider.Anthropic]: {
 		name: 'Anthropic',
 		runtimeLabel: 'Claude Code',
-		supportsOAuth: true,
 		keyPrefix: 'sk-ant-',
 		keyPlaceholder: 'sk-ant-...',
 		verifyEndpoint: {
@@ -439,7 +448,7 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	[AiProvider.OpenAI]: {
 		name: 'OpenAI',
 		runtimeLabel: 'Codex',
-		supportsOAuth: true,
+		subscriptionAuthMode: 'paste',
 		keyPrefix: 'sk-',
 		keyPlaceholder: 'sk-...',
 		verifyEndpoint: {
@@ -450,7 +459,7 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	[AiProvider.Google]: {
 		name: 'Google',
 		runtimeLabel: 'Gemini',
-		supportsOAuth: true,
+		subscriptionAuthMode: 'oauth',
 		keyPlaceholder: 'AIza...',
 		verifyEndpoint: {
 			url: (apiKey) => `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`,
@@ -460,7 +469,6 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	[AiProvider.Moonshot]: {
 		name: 'Moonshot',
 		runtimeLabel: 'Kimi',
-		supportsOAuth: false,
 		keyPlaceholder: 'sk-...',
 		verifyEndpoint: {
 			url: 'https://api.moonshot.cn/v1/models',
@@ -472,7 +480,7 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 export const ALL_AI_PROVIDERS: ReadonlyArray<AiProvider> = Object.values(AiProvider);
 
 export const OAUTH_AI_PROVIDERS: ReadonlyArray<AiProvider> = ALL_AI_PROVIDERS.filter(
-	(p) => AI_PROVIDER_INFO[p].supportsOAuth,
+	(p) => AI_PROVIDER_INFO[p].subscriptionAuthMode === 'oauth',
 );
 
 export interface AiProviderModel {

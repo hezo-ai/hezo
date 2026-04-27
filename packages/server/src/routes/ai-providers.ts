@@ -1,7 +1,7 @@
 import {
 	AI_PROVIDER_INFO,
 	AiAuthMethod,
-	type AiProvider,
+	AiProvider,
 	ALL_AI_PROVIDERS,
 	OAUTH_AI_PROVIDERS,
 	OAUTH_CALLBACK_PATH,
@@ -21,6 +21,7 @@ import {
 	setProviderDefaultModel,
 	storeAiProviderKey,
 } from '../services/ai-provider-keys';
+import { validateCodexAuthJson } from '../services/codex-auth';
 
 const VALID_PROVIDERS = new Set<string>(ALL_AI_PROVIDERS);
 const OAUTH_PROVIDERS = new Set<string>(OAUTH_AI_PROVIDERS);
@@ -78,6 +79,24 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 	const authMethod = (body.auth_method as AiAuthMethod) || AiAuthMethod.ApiKey;
 
 	const info = AI_PROVIDER_INFO[provider];
+
+	if (authMethod === AiAuthMethod.OAuthToken) {
+		if (!info.subscriptionAuthMode) {
+			return err(
+				c,
+				'UNSUPPORTED_AUTH_METHOD',
+				`${info.name} does not support subscription auth — use an API key instead`,
+				400,
+			);
+		}
+		if (provider === AiProvider.OpenAI) {
+			const validation = validateCodexAuthJson(body.api_key);
+			if (!validation.ok) {
+				return err(c, 'INVALID_AUTH_JSON', validation.error ?? 'Invalid auth.json', 400);
+			}
+		}
+	}
+
 	if (
 		info.keyPrefix &&
 		authMethod === AiAuthMethod.ApiKey &&

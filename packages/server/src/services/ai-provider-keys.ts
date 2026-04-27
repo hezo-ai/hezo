@@ -70,6 +70,31 @@ export interface AiProviderCredentialAndModel extends AiProviderCredential {
 	defaultModel: string | null;
 }
 
+/**
+ * Replace the encrypted credential value on an existing config row.
+ * Used to persist refresh-token rotations after a Codex run mutates the
+ * mounted `auth.json` blob.
+ */
+export async function updateAiProviderCredential(
+	db: PGlite,
+	masterKeyManager: MasterKeyManager,
+	configId: string,
+	value: string,
+): Promise<boolean> {
+	const encryptionKey = masterKeyManager.getKey();
+	if (!encryptionKey) throw new Error('Master key not available');
+
+	const encryptedValue = encrypt(value, encryptionKey);
+	const result = await db.query<{ id: string }>(
+		`UPDATE ai_provider_configs
+		 SET encrypted_credential = $1, updated_at = now()
+		 WHERE id = $2
+		 RETURNING id`,
+		[encryptedValue, configId],
+	);
+	return result.rows.length > 0;
+}
+
 export async function getProviderCredentialAndModel(
 	db: PGlite,
 	masterKeyManager: MasterKeyManager,
