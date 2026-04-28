@@ -21,6 +21,7 @@ import {
 	useHeartbeatRun,
 } from '../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../hooks/use-run-logs';
+import { LazyMount } from './lazy-mount';
 import { LogViewer } from './log-viewer';
 import { MarkdownProse } from './markdown-prose';
 import { RepoSetupWizard } from './repo-setup-wizard';
@@ -218,17 +219,9 @@ function RunComment({
 	const agentId: string = content.agent_id ?? '';
 	const agentTitle: string = content.agent_title ?? 'Agent';
 
-	const runQuery = useHeartbeatRun(companyId ?? '', agentId, runId);
-	const run = runQuery.data;
-	const status = run?.status ?? 'queued';
-	const isActive = isActiveRunStatus(status);
-	const { lines } = useRunLogs(run?.project_id, runId, run?.log_text, isActive);
-
 	if (!companyId || !runId || !agentId) {
 		return <p className="text-xs text-text-subtle italic">Run reference missing.</p>;
 	}
-
-	const createdIssues = run?.created_issues ?? [];
 
 	return (
 		<div className="flex flex-col gap-1.5" data-testid="run-comment">
@@ -240,6 +233,38 @@ function RunComment({
 					</span>
 				</div>
 			)}
+			<LazyMount minHeight={210} testId="run-comment-lazy">
+				<RunCommentBody
+					companyId={companyId}
+					runId={runId}
+					agentId={agentId}
+					agentTitle={agentTitle}
+				/>
+			</LazyMount>
+		</div>
+	);
+}
+
+function RunCommentBody({
+	companyId,
+	runId,
+	agentId,
+	agentTitle,
+}: {
+	companyId: string;
+	runId: string;
+	agentId: string;
+	agentTitle: string;
+}) {
+	const runQuery = useHeartbeatRun(companyId, agentId, runId);
+	const run = runQuery.data;
+	const status = run?.status ?? 'queued';
+	const isActive = isActiveRunStatus(status);
+	const { lines } = useRunLogs(run?.project_id, runId, run?.log_text, isActive);
+	const createdIssues = run?.created_issues ?? [];
+
+	return (
+		<>
 			<LogViewer
 				lines={lines}
 				compact
@@ -281,7 +306,7 @@ function RunComment({
 			>
 				View full run <ArrowRight className="w-3 h-3" />
 			</Link>
-		</div>
+		</>
 	);
 }
 
