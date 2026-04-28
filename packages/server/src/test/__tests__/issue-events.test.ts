@@ -32,6 +32,7 @@ interface CommentRow {
 		actor_id?: string | null;
 		source_issue_id?: string;
 		source_identifier?: string;
+		source_project_slug?: string | null;
 	};
 	author_member_id: string | null;
 	created_at: string;
@@ -324,6 +325,11 @@ describe('issue link system events', () => {
 		expect(links[0].content.source_issue_id).toBe(source.id);
 		expect(links[0].content.source_identifier).toBe(source.identifier);
 		expect(links[0].content.text).toContain(`Linked from ${source.identifier}`);
+
+		const projects = await db.query<{ slug: string }>(`SELECT slug FROM projects WHERE id = $1`, [
+			projectId,
+		]);
+		expect(links[0].content.source_project_slug).toBe(projects.rows[0].slug);
 	});
 
 	it('does not create a second link comment for repeat mentions from the same source', async () => {

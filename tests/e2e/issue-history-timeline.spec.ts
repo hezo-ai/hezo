@@ -59,6 +59,16 @@ test('status changes and cross-issue mentions appear as system entries on the ti
 		.filter({ hasText: new RegExp(`Linked from ${source.identifier}`) });
 	await expect(linkEntry).toBeVisible({ timeout: 15000 });
 
+	const sourceUrl = `/companies/${company.slug}/projects/${project.slug}/issues/${source.identifier.toLowerCase()}`;
+	const identifierLink = linkEntry.getByRole('link', { name: source.identifier });
+	await expect(identifierLink).toHaveAttribute('href', sourceUrl);
+	await identifierLink.click();
+	await waitForPageLoad(page);
+	await expect(page).toHaveURL(sourceUrl);
+
+	await page.goto(targetUrl);
+	await waitForPageLoad(page);
+
 	await page.request.post(`/api/companies/${company.id}/issues/${source.id}/comments`, {
 		headers,
 		data: { content_type: 'text', content: { text: `still on ${target.identifier}` } },

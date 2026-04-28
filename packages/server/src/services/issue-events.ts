@@ -154,11 +154,15 @@ export async function recordIssueLinks(
 	);
 	if (targets.rows.length === 0) return;
 
-	const source = await db.query<{ identifier: string }>(
-		`SELECT identifier FROM issues WHERE id = $1`,
+	const source = await db.query<{ identifier: string; project_slug: string | null }>(
+		`SELECT i.identifier, p.slug AS project_slug
+		   FROM issues i
+		   LEFT JOIN projects p ON p.id = i.project_id
+		  WHERE i.id = $1`,
 		[sourceIssueId],
 	);
 	const sourceIdentifier = source.rows[0]?.identifier ?? '';
+	const sourceProjectSlug = source.rows[0]?.project_slug ?? null;
 	const actorName = await resolveActorName(db, actorMemberId);
 
 	for (const target of targets.rows) {
@@ -185,6 +189,7 @@ export async function recordIssueLinks(
 					kind: 'issue_link',
 					source_issue_id: sourceIssueId,
 					source_identifier: sourceIdentifier,
+					source_project_slug: sourceProjectSlug,
 					actor_id: actorMemberId,
 					text: linkText,
 				}),

@@ -13,7 +13,7 @@ import {
 	Terminal,
 	UserRoundCog,
 } from 'lucide-react';
-import type { ComponentType, SVGProps } from 'react';
+import type { ComponentType, ReactNode, SVGProps } from 'react';
 import { useState } from 'react';
 import {
 	getRunWaitingMessage,
@@ -85,7 +85,7 @@ export function CommentRenderer({
 		case 'preview':
 			return <PreviewComment comment={comment} />;
 		case 'system':
-			return <SystemComment comment={comment} />;
+			return <SystemComment comment={comment} companyId={companyId} />;
 		case 'action':
 			return (
 				<ActionComment
@@ -305,18 +305,50 @@ function TextComment({
 	);
 }
 
-function SystemComment({ comment }: { comment: CommentData }) {
-	const text =
-		typeof comment.content === 'object'
-			? comment.content.text || JSON.stringify(comment.content)
-			: String(comment.content);
+function SystemComment({ comment, companyId }: { comment: CommentData; companyId?: string }) {
+	const content = typeof comment.content === 'object' ? comment.content : null;
+	const text = content ? content.text || JSON.stringify(content) : String(comment.content);
+	const body = renderSystemCommentBody(text, content, companyId);
 	return (
 		<div className="flex items-baseline gap-2 leading-[26px]">
-			<span className="text-xs text-text-muted">{text}</span>
+			<span className="text-xs text-text-muted">{body}</span>
 			<span className="text-[11px] text-text-subtle">
 				{new Date(comment.created_at).toLocaleString()}
 			</span>
 		</div>
+	);
+}
+
+function renderSystemCommentBody(
+	text: string,
+	// biome-ignore lint/suspicious/noExplicitAny: system content shape varies by kind
+	content: any,
+	companyId: string | undefined,
+): ReactNode {
+	if (!content || content.kind !== 'issue_link') return text;
+	const identifier: string | undefined = content.source_identifier;
+	const projectSlug: string | undefined = content.source_project_slug;
+	if (!companyId || !identifier || !projectSlug) return text;
+	const idx = text.indexOf(identifier);
+	if (idx === -1) return text;
+	const before = text.slice(0, idx);
+	const after = text.slice(idx + identifier.length);
+	return (
+		<>
+			{before}
+			<Link
+				to="/companies/$companyId/projects/$projectId/issues/$issueId"
+				params={{
+					companyId,
+					projectId: projectSlug,
+					issueId: identifier.toLowerCase(),
+				}}
+				className="text-accent-blue-text hover:underline"
+			>
+				{identifier}
+			</Link>
+			{after}
+		</>
 	);
 }
 
