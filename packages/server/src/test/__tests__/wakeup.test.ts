@@ -107,6 +107,88 @@ describe('wakeup service', () => {
 		expect(id2).toBe(id1);
 	});
 
+	it('coalesces same-issue wakeups beyond the 2s window and promotes to stronger source', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		const assignmentId = await createWakeup(db, agentId, companyId, 'assignment', {
+			issue_id: 'cross-window-issue',
+		});
+
+		await db.query(
+			"UPDATE agent_wakeup_requests SET created_at = now() - interval '10 seconds' WHERE id = $1",
+			[assignmentId],
+		);
+
+		const mentionId = await createWakeup(db, agentId, companyId, 'mention', {
+			source: 'mention',
+			issue_id: 'cross-window-issue',
+			comment_id: 'comment-xyz',
+		});
+
+		expect(mentionId).toBe(assignmentId);
+
+		const rows = await db.query<{
+			source: string;
+			payload: { source?: string; comment_id?: string; issue_id?: string };
+			coalesced_count: number;
+		}>(
+			"SELECT source::text AS source, payload, coalesced_count FROM agent_wakeup_requests WHERE member_id = $1 AND status = 'queued'",
+			[agentId],
+		);
+		expect(rows.rows.length).toBe(1);
+		expect(rows.rows[0].source).toBe('mention');
+		expect(rows.rows[0].payload.source).toBe('mention');
+		expect(rows.rows[0].payload.comment_id).toBe('comment-xyz');
+		expect(rows.rows[0].payload.issue_id).toBe('cross-window-issue');
+		expect(rows.rows[0].coalesced_count).toBeGreaterThanOrEqual(1);
+	});
+
+	it('does not downgrade source when a weaker trigger arrives later', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		const mentionId = await createWakeup(db, agentId, companyId, 'mention', {
+			source: 'mention',
+			issue_id: 'no-downgrade-issue',
+			comment_id: 'first-mention',
+		});
+
+		await db.query(
+			"UPDATE agent_wakeup_requests SET created_at = now() - interval '10 seconds' WHERE id = $1",
+			[mentionId],
+		);
+
+		const assignmentId = await createWakeup(db, agentId, companyId, 'assignment', {
+			issue_id: 'no-downgrade-issue',
+		});
+
+		expect(assignmentId).toBe(mentionId);
+
+		const row = await db.query<{
+			source: string;
+			payload: { source?: string; comment_id?: string };
+		}>('SELECT source::text AS source, payload FROM agent_wakeup_requests WHERE id = $1', [
+			mentionId,
+		]);
+		expect(row.rows[0].source).toBe('mention');
+		expect(row.rows[0].payload.source).toBe('mention');
+		expect(row.rows[0].payload.comment_id).toBe('first-mention');
+	});
+
+	it('does not coalesce non-issue wakeups beyond the 2s window', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		const id1 = await createWakeup(db, agentId, companyId, 'heartbeat', {});
+
+		await db.query(
+			"UPDATE agent_wakeup_requests SET created_at = now() - interval '10 seconds' WHERE id = $1",
+			[id1],
+		);
+
+		const id2 = await createWakeup(db, agentId, companyId, 'heartbeat', {});
+
+		expect(id2).not.toBe(id1);
+	});
+
 	it('respects idempotency keys', async () => {
 		const id1 = await createWakeup(db, agentId, companyId, 'timer', {}, 'unique-key-1');
 		const id2 = await createWakeup(db, agentId, companyId, 'timer', {}, 'unique-key-1');

@@ -5,6 +5,7 @@ import {
 	AgentRuntimeStatus,
 	type AiProvider,
 	COACH_AGENT_SLUG,
+	CommentContentType,
 	ContainerStatus,
 	HeartbeatRunStatus,
 	IssuePriority,
@@ -887,7 +888,39 @@ export class JobManager {
 			}
 		}
 
-		await this.chainNextIssueWakeup(memberId, issueId, companyId);
+		const productive = await this.runProducedWork(result.heartbeatRunId);
+		if (productive) {
+			await this.chainNextIssueWakeup(memberId, issueId, companyId);
+		} else {
+			log.debug(
+				`Suppressed chain for member ${memberId} on issue ${issueId}: run produced no work`,
+			);
+		}
+	}
+
+	private async runProducedWork(runId: string | undefined): Promise<boolean> {
+		if (!runId) return true;
+		const { db } = this.deps;
+		const r = await db.query<{ id: string }>(
+			`SELECT c.id
+			   FROM heartbeat_runs r
+			   JOIN issue_comments c
+			     ON c.issue_id = r.issue_id
+			    AND c.author_member_id = r.member_id
+			    AND c.created_at >= COALESCE(r.started_at, r.created_at)
+			    AND c.content_type IN ($2::comment_content_type, $3::comment_content_type, $4::comment_content_type, $5::comment_content_type, $6::comment_content_type)
+			  WHERE r.id = $1
+			  LIMIT 1`,
+			[
+				runId,
+				CommentContentType.Text,
+				CommentContentType.Options,
+				CommentContentType.Preview,
+				CommentContentType.System,
+				CommentContentType.Action,
+			],
+		);
+		return r.rows.length > 0;
 	}
 
 	private async chainNextIssueWakeup(

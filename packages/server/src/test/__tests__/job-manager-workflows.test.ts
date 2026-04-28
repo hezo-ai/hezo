@@ -721,6 +721,150 @@ describe('JobManager workflow methods', () => {
 			await db.query('DELETE FROM issues WHERE id = $1', [nextIssueId]);
 		});
 
+		async function seedNextIssue(): Promise<string> {
+			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
+			await db.query(`UPDATE issues SET status = $1::issue_status WHERE id = $2`, [
+				IssueStatus.Backlog,
+				issueId,
+			]);
+			const meta = await db.query<{ issue_prefix: string; number: number }>(
+				`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
+				 FROM projects p WHERE p.id = $1`,
+				[projectId],
+			);
+			const nextNumber = meta.rows[0].number;
+			const nextInsert = await db.query<{ id: string }>(
+				`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
+				 VALUES ($1, $2, $3, $4, $5, $6, '', $7::issue_status, 'medium'::issue_priority, '[]'::jsonb)
+				 RETURNING id`,
+				[
+					companyId,
+					projectId,
+					agentId,
+					nextNumber,
+					`${meta.rows[0].issue_prefix}-${nextNumber}`,
+					'Next queued ticket',
+					IssueStatus.Backlog,
+				],
+			);
+			return nextInsert.rows[0].id;
+		}
+
+		async function insertRunningHeartbeatRun(targetIssueId: string): Promise<string> {
+			const r = await db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())
+				 RETURNING id`,
+				[agentId, companyId, targetIssueId, HeartbeatRunStatus.Running],
+			);
+			return r.rows[0].id;
+		}
+
+		async function insertComment(
+			targetIssueId: string,
+			authorId: string,
+			contentType: string,
+			content: Record<string, unknown>,
+		): Promise<void> {
+			await db.query(
+				`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+				 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
+				[targetIssueId, authorId, contentType, JSON.stringify(content)],
+			);
+		}
+
+		async function countChainWakeups(): Promise<number> {
+			const r = await db.query<{ id: string }>(
+				`SELECT id FROM agent_wakeup_requests
+				 WHERE member_id = $1 AND status = $2::wakeup_status
+				   AND source = 'timer' AND payload->>'reason' = 'chain_after_completion'`,
+				[agentId, WakeupStatus.Queued],
+			);
+			return r.rows.length;
+		}
+
+		it('suppresses chain when the run produced no agent-authored work', async () => {
+			const manager = createJobManager();
+			const nextIssueId = await seedNextIssue();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			const runId = await insertRunningHeartbeatRun(issueId);
+			await insertComment(issueId, agentId, 'run', { run_id: runId });
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'test-agent',
+				issueId,
+				companyId,
+				undefined,
+				undefined,
+				{ success: true, exitCode: 0, stdout: '', stderr: '', heartbeatRunId: runId },
+			);
+
+			expect(await countChainWakeups()).toBe(0);
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM issue_comments WHERE issue_id = $1', [issueId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [runId]);
+			await db.query('DELETE FROM issues WHERE id = $1', [nextIssueId]);
+		});
+
+		it('chains when the run posted a text comment', async () => {
+			const manager = createJobManager();
+			const nextIssueId = await seedNextIssue();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			const runId = await insertRunningHeartbeatRun(issueId);
+			await insertComment(issueId, agentId, 'text', { text: 'Working on it' });
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'test-agent',
+				issueId,
+				companyId,
+				undefined,
+				undefined,
+				{ success: true, exitCode: 0, stdout: '', stderr: '', heartbeatRunId: runId },
+			);
+
+			expect(await countChainWakeups()).toBe(1);
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM issue_comments WHERE issue_id = $1', [issueId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [runId]);
+			await db.query('DELETE FROM issues WHERE id = $1', [nextIssueId]);
+		});
+
+		it('chains when the run recorded a status change', async () => {
+			const manager = createJobManager();
+			const nextIssueId = await seedNextIssue();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			const runId = await insertRunningHeartbeatRun(issueId);
+			await insertComment(issueId, agentId, 'system', {
+				kind: 'status_change',
+				from: IssueStatus.InProgress,
+				to: IssueStatus.Done,
+			});
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'test-agent',
+				issueId,
+				companyId,
+				undefined,
+				undefined,
+				{ success: true, exitCode: 0, stdout: '', stderr: '', heartbeatRunId: runId },
+			);
+
+			expect(await countChainWakeups()).toBe(1);
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM issue_comments WHERE issue_id = $1', [issueId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [runId]);
+			await db.query('DELETE FROM issues WHERE id = $1', [nextIssueId]);
+		});
+
 		it('does not chain a wakeup when no other assigned issues exist', async () => {
 			const manager = createJobManager();
 

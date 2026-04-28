@@ -1,7 +1,23 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { type WakeupSource, WakeupStatus } from '@hezo/shared';
+import { WakeupSource, WakeupStatus } from '@hezo/shared';
 
 const COALESCING_WINDOW_MS = 2_000;
+
+const SOURCE_PRIORITY: Record<string, number> = {
+	[WakeupSource.Mention]: 90,
+	[WakeupSource.Reply]: 80,
+	[WakeupSource.OptionChosen]: 70,
+	[WakeupSource.Assignment]: 60,
+	[WakeupSource.Comment]: 50,
+	[WakeupSource.Automation]: 40,
+	[WakeupSource.OnDemand]: 30,
+	[WakeupSource.Heartbeat]: 20,
+	[WakeupSource.Timer]: 10,
+};
+
+function isStrongerSource(incoming: WakeupSource, existing: string): boolean {
+	return (SOURCE_PRIORITY[incoming] ?? 0) > (SOURCE_PRIORITY[existing] ?? 0);
+}
 
 export async function createWakeup(
 	db: PGlite,
@@ -24,27 +40,53 @@ export async function createWakeup(
 
 	const issueId = typeof payload.issue_id === 'string' ? payload.issue_id : null;
 	const coalescingCutoff = new Date(Date.now() - COALESCING_WINDOW_MS).toISOString();
-	const coalesceResult = await db.query<{ id: string; payload: Record<string, unknown> }>(
-		`SELECT id, payload FROM agent_wakeup_requests
-		 WHERE member_id = $1 AND status = $3::wakeup_status
-		   AND created_at > $2
-		   AND (($4::text IS NULL AND payload->>'issue_id' IS NULL)
-		     OR payload->>'issue_id' = $4::text)
-		 ORDER BY created_at DESC LIMIT 1`,
-		[memberId, coalescingCutoff, WakeupStatus.Queued, issueId],
-	);
+
+	const coalesceQuery = issueId
+		? {
+				sql: `SELECT id, source::text AS source, payload FROM agent_wakeup_requests
+				      WHERE member_id = $1 AND status = $2::wakeup_status
+				        AND payload->>'issue_id' = $3::text
+				      ORDER BY created_at ASC LIMIT 1`,
+				params: [memberId, WakeupStatus.Queued, issueId],
+			}
+		: {
+				sql: `SELECT id, source::text AS source, payload FROM agent_wakeup_requests
+				      WHERE member_id = $1 AND status = $2::wakeup_status
+				        AND created_at > $3
+				        AND payload->>'issue_id' IS NULL
+				      ORDER BY created_at DESC LIMIT 1`,
+				params: [memberId, WakeupStatus.Queued, coalescingCutoff],
+			};
+
+	const coalesceResult = await db.query<{
+		id: string;
+		source: string;
+		payload: Record<string, unknown>;
+	}>(coalesceQuery.sql, coalesceQuery.params);
 
 	if (coalesceResult.rows.length > 0) {
 		const existingRow = coalesceResult.rows[0];
 		const mergedPayload = mergePayloads(existingRow.payload, payload);
+		const promote = isStrongerSource(source, existingRow.source);
 
-		await db.query(
-			`UPDATE agent_wakeup_requests
-			 SET coalesced_count = coalesced_count + 1,
-			     payload = $1::jsonb
-			 WHERE id = $2`,
-			[JSON.stringify(mergedPayload), existingRow.id],
-		);
+		if (promote) {
+			await db.query(
+				`UPDATE agent_wakeup_requests
+				 SET coalesced_count = coalesced_count + 1,
+				     payload = $1::jsonb,
+				     source = $3::wakeup_source
+				 WHERE id = $2`,
+				[JSON.stringify(mergedPayload), existingRow.id, source],
+			);
+		} else {
+			await db.query(
+				`UPDATE agent_wakeup_requests
+				 SET coalesced_count = coalesced_count + 1,
+				     payload = $1::jsonb
+				 WHERE id = $2`,
+				[JSON.stringify(mergedPayload), existingRow.id],
+			);
+		}
 
 		return existingRow.id;
 	}
