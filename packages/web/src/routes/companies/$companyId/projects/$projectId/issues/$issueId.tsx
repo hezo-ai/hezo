@@ -145,8 +145,14 @@ function IssueDetailPage() {
 	useEffect(() => {
 		if (!comments || comments.length === 0) return;
 		if (typeof window === 'undefined') return;
-		if (window.location.hash !== '#setup-repo') return;
-		const target = document.querySelector('[data-setup-repo-anchor]');
+		const hash = window.location.hash;
+		if (!hash) return;
+		let target: Element | null = null;
+		if (hash === '#setup-repo') {
+			target = document.querySelector('[data-setup-repo-anchor]');
+		} else if (hash.startsWith('#comment-')) {
+			target = document.getElementById(hash.slice(1));
+		}
 		if (!target) return;
 		target.scrollIntoView({ behavior: 'smooth', block: 'center' });
 		window.history.replaceState(null, '', window.location.pathname + window.location.search);

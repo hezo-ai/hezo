@@ -58,7 +58,7 @@ function ExecutionRow({
 			</span>
 
 			<span className="text-text-muted ml-auto whitespace-nowrap">
-				{run.started_at ? new Date(run.started_at).toLocaleString() : 'queued'}
+				{new Date(run.started_at ?? run.created_at).toLocaleString()}
 			</span>
 
 			<span className="text-text-subtle whitespace-nowrap">{elapsed}</span>

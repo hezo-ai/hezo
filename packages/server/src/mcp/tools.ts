@@ -10,12 +10,16 @@ import {
 	DocumentType,
 	IssuePriority,
 	IssueStatus,
+	MembershipRole,
+	NotificationKind,
 	WakeupSource,
+	wsRoom,
 } from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { assertNoActiveRun } from '../lib/active-run';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
+import { broadcastRowChange } from '../lib/broadcast';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import {
 	assertChildDepthAllowed,
@@ -798,6 +802,103 @@ export function registerTools(
 				wsManager,
 			).catch((e) => log.error('Failed to record issue links from comment:', e));
 			return r.rows[0];
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'request_board_approval',
+		'Signal that this issue needs explicit board approval before downstream work can proceed. Posts a system entry on the issue timeline and notifies every board member in the company via their inbox. The board approves by replying with a comment as usual; this tool only raises the signal. Use it at gates such as PRD sign-off, security/UX review hand-off, and production deploys.',
+		{
+			company_id: z.string().describe('Company ID'),
+			issue_id: z.string().describe('Issue this approval gates'),
+			summary: z
+				.string()
+				.min(1)
+				.describe(
+					'Plain-language description of what the board is being asked to approve and why now. Shown verbatim in the inbox.',
+				),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			const companyId = args.company_id as string;
+			const issueId = args.issue_id as string;
+			const summary = (args.summary as string).trim();
+
+			const issueCheck = await db.query<{ identifier: string }>(
+				'SELECT identifier FROM issues WHERE id = $1 AND company_id = $2',
+				[issueId, companyId],
+			);
+			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
+
+			const requesterMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const requesterRow = requesterMemberId
+				? await db.query<{ name: string }>(
+						`SELECT COALESCE(ma.title, NULLIF(m.display_name, ''), 'Agent') AS name
+						   FROM members m LEFT JOIN member_agents ma ON ma.id = m.id
+						  WHERE m.id = $1`,
+						[requesterMemberId],
+					)
+				: null;
+			const requesterName = requesterRow?.rows[0]?.name ?? 'Board';
+
+			const commentInsert = await db.query<Record<string, unknown>>(
+				`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+				 VALUES ($1, $2, $3::comment_content_type, $4::jsonb) RETURNING *`,
+				[
+					issueId,
+					requesterMemberId,
+					CommentContentType.System,
+					JSON.stringify({
+						kind: 'board_approval_requested',
+						actor_id: requesterMemberId,
+						summary,
+						text: `${requesterName} requested board approval: ${summary}`,
+					}),
+				],
+			);
+			const commentRow = commentInsert.rows[0];
+			const commentId = commentRow.id as string;
+
+			const recipients = await db.query<{ id: string }>(
+				`SELECT mu.id FROM member_users mu
+				   JOIN members m ON m.id = mu.id
+				  WHERE m.company_id = $1 AND mu.role = $2::membership_role`,
+				[companyId, MembershipRole.Board],
+			);
+
+			const payloadJson = JSON.stringify({
+				issue_id: issueId,
+				comment_id: commentId,
+				requested_by_member_id: requesterMemberId,
+				summary,
+			});
+
+			const insertedNotifications: Record<string, unknown>[] = [];
+			for (const recipient of recipients.rows) {
+				const r = await db.query<Record<string, unknown>>(
+					`INSERT INTO notifications (company_id, recipient_member_user_id, kind, payload)
+					 VALUES ($1, $2, $3::notification_kind, $4::jsonb) RETURNING *`,
+					[companyId, recipient.id, NotificationKind.BoardApprovalRequested, payloadJson],
+				);
+				if (r.rows[0]) insertedNotifications.push(r.rows[0]);
+			}
+
+			if (wsManager) {
+				const room = wsRoom.company(companyId);
+				broadcastRowChange(wsManager, room, 'issue_comments', 'INSERT', commentRow);
+				for (const n of insertedNotifications) {
+					broadcastRowChange(wsManager, room, 'notifications', 'INSERT', n);
+				}
+			}
+
+			return {
+				comment_id: commentId,
+				notified: insertedNotifications.length,
+			};
 		},
 		db,
 	);

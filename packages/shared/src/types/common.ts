@@ -139,6 +139,28 @@ export type ApprovalStatus = (typeof ApprovalStatus)[keyof typeof ApprovalStatus
 export const MembershipRole = { Board: 'board', Member: 'member' } as const;
 export type MembershipRole = (typeof MembershipRole)[keyof typeof MembershipRole];
 
+export const NotificationKind = {
+	BoardApprovalRequested: 'board_approval_requested',
+} as const;
+export type NotificationKind = (typeof NotificationKind)[keyof typeof NotificationKind];
+
+export interface BoardApprovalRequestedPayload {
+	issue_id: string;
+	comment_id: string;
+	requested_by_member_id: string | null;
+	summary: string;
+}
+
+export interface Notification {
+	id: string;
+	company_id: string;
+	recipient_member_user_id: string;
+	kind: NotificationKind;
+	payload: Record<string, unknown>;
+	read_at: string | null;
+	created_at: string;
+}
+
 export const InviteStatus = {
 	Pending: 'pending',
 	Accepted: 'accepted',

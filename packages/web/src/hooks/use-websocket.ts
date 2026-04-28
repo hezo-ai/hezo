@@ -34,6 +34,10 @@ const TABLE_TO_QUERY_KEY: Record<
 	member_agents: (cid) => [['companies', cid, 'agents']],
 	projects: (cid) => [['companies', cid, 'projects']],
 	approvals: (cid) => [['companies', cid, 'approvals']],
+	notifications: (cid) => [
+		['companies', cid, 'notifications'],
+		['notifications', 'pending'],
+	],
 	documents: (cid, row) => {
 		switch (row.type) {
 			case 'project_doc':

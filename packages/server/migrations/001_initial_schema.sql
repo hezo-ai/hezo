@@ -917,6 +917,26 @@ CREATE TABLE notification_preferences (
 );
 
 -------------------------------------------------------------------------------
+-- INBOX NOTIFICATIONS
+-------------------------------------------------------------------------------
+
+CREATE TYPE notification_kind AS ENUM ('board_approval_requested');
+
+CREATE TABLE notifications (
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id               UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    recipient_member_user_id UUID NOT NULL REFERENCES member_users(id) ON DELETE CASCADE,
+    kind                     notification_kind NOT NULL,
+    payload                  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    read_at                  TIMESTAMPTZ,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_notifications_recipient_unread
+    ON notifications (recipient_member_user_id, read_at, created_at DESC);
+CREATE INDEX idx_notifications_company ON notifications (company_id);
+
+-------------------------------------------------------------------------------
 -- SLACK CONNECTIONS
 -------------------------------------------------------------------------------
 

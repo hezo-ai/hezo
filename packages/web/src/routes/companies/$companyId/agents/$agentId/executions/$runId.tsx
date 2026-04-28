@@ -99,8 +99,10 @@ function ExecutionDetailPage() {
 									</>
 								)}
 							</>
-						) : (
+						) : run.status === 'queued' ? (
 							<span className="text-text-subtle">Waiting to start…</span>
+						) : (
+							new Date(run.created_at).toLocaleString()
 						)}
 					</div>
 				</div>

@@ -161,6 +161,53 @@ describe('heartbeat-runs API', () => {
 		);
 		expect(verify.rows[0].issue_id).toBeNull();
 	});
+
+	it('orders runs by created_at DESC even when started_at is null', async () => {
+		const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Chrono Order Agent' }),
+		});
+		const chronoAgentId = (await agentRes.json()).data.id;
+
+		const oldestRun = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, company_id, status, created_at, started_at, finished_at, exit_code)
+			 VALUES ($1, $2, 'succeeded'::heartbeat_run_status,
+			   '2026-04-28T10:00:00Z', '2026-04-28T10:00:05Z', '2026-04-28T10:01:00Z', 0)
+			 RETURNING id`,
+			[chronoAgentId, companyId],
+		);
+
+		const middleFailedRun = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, company_id, status, created_at, started_at, finished_at, exit_code)
+			 VALUES ($1, $2, 'failed'::heartbeat_run_status,
+			   '2026-04-28T10:30:00Z', NULL, '2026-04-28T10:30:01Z', -1)
+			 RETURNING id`,
+			[chronoAgentId, companyId],
+		);
+
+		const newestRun = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, company_id, status, created_at, started_at)
+			 VALUES ($1, $2, 'running'::heartbeat_run_status,
+			   '2026-04-28T11:00:00Z', '2026-04-28T11:00:02Z')
+			 RETURNING id`,
+			[chronoAgentId, companyId],
+		);
+
+		const res = await app.request(
+			`/api/companies/${companyId}/agents/${chronoAgentId}/heartbeat-runs`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		const ids = body.data.map((r: { id: string }) => r.id);
+
+		expect(ids).toEqual([newestRun.rows[0].id, middleFailedRun.rows[0].id, oldestRun.rows[0].id]);
+
+		const failed = body.data.find((r: { id: string }) => r.id === middleFailedRun.rows[0].id);
+		expect(failed.started_at).toBeNull();
+		expect(failed.created_at).toBeTruthy();
+	});
 });
 
 describe('run comments', () => {

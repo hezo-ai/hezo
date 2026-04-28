@@ -34,6 +34,7 @@ import { healthRoutes } from './routes/health';
 import { issuesRoutes } from './routes/issues';
 import { kbDocsRoutes } from './routes/kb-docs';
 import { mentionsRoutes } from './routes/mentions';
+import { notificationsRoutes } from './routes/notifications';
 import { oauthCallbackRoutes } from './routes/oauth-callback';
 import { preferencesRoutes } from './routes/preferences';
 import { previewRoutes } from './routes/preview';
@@ -232,6 +233,7 @@ export function buildApp(
 	app.route('/api', commentsRoutes);
 	app.route('/api', secretsRoutes);
 	app.route('/api', approvalsRoutes);
+	app.route('/api', notificationsRoutes);
 	app.route('/api', costsRoutes);
 	app.route('/api', apiKeysRoutes);
 	app.route('/api', kbDocsRoutes);

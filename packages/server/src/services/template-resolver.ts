@@ -37,6 +37,10 @@ const SHARED_INSTRUCTIONS = `
 
 ### Sub-Issue Delegation
 - Use \`create_issue\` with \`parent_issue_id\` and \`assignee_slug\` to create sub-issues and delegate work to other agents. The Teammates block above lists every enabled peer's slug — use \`list_agents\` only when you need details (description / reports_to) on a specific teammate.
+
+### Board Approval Gates
+- Whenever your role's flow says you must wait for explicit board approval before proceeding (PRD sign-off, spec sign-off, security/UX review hand-off, production deploys, etc.), call \`request_board_approval\` with \`issue_id\` and a one-paragraph \`summary\` of what you need approved and why now. This drops a notification into every board member's inbox so the request actually surfaces — a freeform "blocked on board approval" comment will not.
+- The board still approves by replying on the ticket as usual; \`request_board_approval\` is the signal, not the resolution. Do not call it again for the same gate while the existing request is still unanswered.
 `;
 
 export async function resolveSystemPrompt(

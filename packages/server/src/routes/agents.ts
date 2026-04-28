@@ -53,7 +53,7 @@ const AGENT_BASE_COLUMNS = `m.id, m.company_id, m.display_name, m.created_at,
 	ma.mcp_servers, ma.model_override_provider, ma.model_override_model, ma.updated_at`;
 
 const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.company_id, hr.wakeup_id, hr.issue_id,
-	hr.status, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
+	hr.status, hr.created_at, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
 	hr.input_tokens, hr.output_tokens, hr.cost_cents,
 	hr.invocation_command, hr.log_text, hr.working_dir,
 	hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
@@ -836,7 +836,7 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs', async (
 		 LEFT JOIN projects p ON p.id = i.project_id
 		 ${HEARTBEAT_RUN_TRIGGER_JOINS}
 		 WHERE hr.member_id = $1
-		 ORDER BY hr.started_at DESC
+		 ORDER BY hr.created_at DESC
 		 LIMIT 50`,
 		[agentId],
 	);
