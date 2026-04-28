@@ -1,5 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { logger } from '../logger';
+
+const log = logger.child('workspace');
 
 export function ensureProjectWorkspace(
 	dataDir: string,
@@ -97,9 +100,7 @@ function clearDirectoryContents(dir: string): void {
 		try {
 			rmSync(entryPath, { recursive: true, force: true });
 		} catch (err) {
-			console.warn(
-				`[workspace] could not remove ${entryPath}: ${(err as Error).message}. Skipping.`,
-			);
+			log.warn(`could not remove ${entryPath}: ${(err as Error).message}. Skipping.`);
 		}
 	}
 }

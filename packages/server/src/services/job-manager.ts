@@ -37,6 +37,13 @@ import type { WebSocketManager } from './ws';
 
 const log = logger.child('job-manager');
 
+const cronLog = logger.child('jobs');
+const cronAdapter = {
+	trace: (msg: unknown) => cronLog.debug(msg),
+	debug: (msg: unknown) => cronLog.debug(msg),
+	error: (msg: unknown) => cronLog.error(msg),
+};
+
 interface RunningTask {
 	key: string;
 	abortController: AbortController;
@@ -132,22 +139,27 @@ export class JobManager {
 		this.started = true;
 		this.cron.createJob('wakeups', {
 			cron: '*/5 * * * * *',
+			log: cronAdapter,
 			onTick: () => this.guarded('wakeups', () => this.processWakeups()),
 		});
 		this.cron.createJob('heartbeats', {
 			cron: '*/5 * * * * *',
+			log: cronAdapter,
 			onTick: () => this.guarded('heartbeats', () => this.processScheduledHeartbeats()),
 		});
 		this.cron.createJob('orphan-detection', {
 			cron: '*/30 * * * * *',
+			log: cronAdapter,
 			onTick: () => this.guarded('orphan-detection', () => this.detectOrphanedRuns()),
 		});
 		this.cron.createJob('container-sync', {
 			cron: '* * * * * *',
+			log: cronAdapter,
 			onTick: () => this.guarded('container-sync', () => this.syncContainerStatuses()),
 		});
 		this.cron.createJob('embeddings', {
 			cron: '*/30 * * * * *',
+			log: cronAdapter,
 			onTick: () => this.guarded('embeddings', () => this.processEmbeddingQueue()),
 		});
 		log.info('Job manager started.');
