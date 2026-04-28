@@ -333,6 +333,12 @@ CREATE TABLE secrets (
     name            TEXT NOT NULL,
     encrypted_value TEXT NOT NULL,
     category        secret_category NOT NULL DEFAULT 'other',
+    -- Host allowlist for the agent secret proxy. Each entry is a lowercase
+    -- hostname pattern: exact match, or '*.<suffix>' to match one or more
+    -- leftmost labels. Empty list means the secret can never be used by the
+    -- proxy (the placeholder still expands inside the agent, but every
+    -- outbound request will be rejected as host_not_allowed).
+    host_allowlist  JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -813,6 +819,32 @@ ALTER TABLE issues
     FOREIGN KEY (created_by_run_id) REFERENCES heartbeat_runs(id) ON DELETE SET NULL;
 
 CREATE INDEX idx_issues_created_by_run ON issues(created_by_run_id) WHERE created_by_run_id IS NOT NULL;
+
+-------------------------------------------------------------------------------
+-- SECRET PROXY AUDIT
+-------------------------------------------------------------------------------
+
+-- Records every agent proxy request — both forwarded and rejected. Never
+-- contains header values, request bodies, or plaintext; only the metadata
+-- needed to reconstruct usage patterns and trace abuse.
+CREATE TABLE secret_proxy_audit (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    run_id          UUID NOT NULL REFERENCES heartbeat_runs(id) ON DELETE CASCADE,
+    member_id       UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    secret_ids      UUID[] NOT NULL,
+    target_host     TEXT NOT NULL,
+    target_method   TEXT NOT NULL,
+    status_code     INTEGER,
+    rejection_code  TEXT,
+    request_bytes   INTEGER NOT NULL DEFAULT 0,
+    response_bytes  INTEGER NOT NULL DEFAULT 0,
+    duration_ms     INTEGER,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_proxy_audit_run ON secret_proxy_audit(run_id);
+CREATE INDEX idx_proxy_audit_company_created ON secret_proxy_audit(company_id, created_at DESC);
 
 -------------------------------------------------------------------------------
 -- AGENT TASK SESSIONS

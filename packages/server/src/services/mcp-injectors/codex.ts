@@ -40,6 +40,12 @@ function renderServerBlock(descriptor: McpDescriptor): string {
 	const lines: string[] = [`[mcp_servers.${key}]`];
 	lines.push(`url = ${escapeTomlBasicString(descriptor.url)}`);
 	if (descriptor.bearerToken) {
+		// Codex's MCP transport config does not currently support arbitrary
+		// custom request headers, so the agent JWT stays on `Authorization:
+		// Bearer ...`. The auth middleware accepts this for board / API-key
+		// callers as a fallback, and Codex MCP traffic does not transit the
+		// secret-proxy substitution path (it goes to /mcp), so the conflict
+		// the proxy avoids does not apply here.
 		lines.push(
 			`bearer_token_env_var = ${escapeTomlBasicString(bearerEnvVarName(descriptor.name))}`,
 		);

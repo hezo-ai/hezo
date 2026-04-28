@@ -9,7 +9,10 @@ interface GeminiMcpServerEntry {
 function buildServerEntry(descriptor: McpDescriptor): GeminiMcpServerEntry {
 	const entry: GeminiMcpServerEntry = { httpUrl: descriptor.url };
 	if (descriptor.bearerToken) {
-		entry.headers = { Authorization: `Bearer ${descriptor.bearerToken}` };
+		// Hezo agent JWTs use a custom header so the upstream-bound
+		// `Authorization` header on agent-proxy requests can carry secret
+		// placeholders without colliding with our own auth.
+		entry.headers = { 'X-Hezo-Agent-Token': descriptor.bearerToken };
 	}
 	return entry;
 }

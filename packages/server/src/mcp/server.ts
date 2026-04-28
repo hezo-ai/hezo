@@ -26,10 +26,19 @@ export function getToolDefs(): ToolDef[] {
 }
 
 async function authenticateRequest(c: Context<Env>): Promise<AuthInfo | null> {
-	const header = c.req.header('Authorization');
-	if (!header?.startsWith('Bearer ')) return null;
-
-	const token = header.slice(7);
+	// Agent JWT travels on a Hezo-specific header for consistency with the
+	// agent-proxy route. Falls back to `Authorization: Bearer ...` for board
+	// JWTs and API keys called from outside an agent run (and for runtimes
+	// whose MCP transport config does not support custom headers).
+	const agentHeader = c.req.header('X-Hezo-Agent-Token');
+	let token: string | null = null;
+	if (agentHeader && agentHeader.length > 0) {
+		token = agentHeader;
+	} else {
+		const header = c.req.header('Authorization');
+		if (header?.startsWith('Bearer ')) token = header.slice(7);
+	}
+	if (!token) return null;
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	return verifyToken(token, db, masterKeyManager);
