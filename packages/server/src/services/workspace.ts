@@ -84,12 +84,24 @@ export function clearAllProjectWorkspaces(dataDir: string): string[] {
 		for (const projectSlug of safeReaddir(projectsRoot)) {
 			const workspaceDir = join(projectsRoot, projectSlug, 'workspace');
 			if (!isDirectory(workspaceDir)) continue;
-			rmSync(workspaceDir, { recursive: true, force: true });
-			mkdirSync(workspaceDir, { recursive: true });
+			clearDirectoryContents(workspaceDir);
 			cleared.push(workspaceDir);
 		}
 	}
 	return cleared;
+}
+
+function clearDirectoryContents(dir: string): void {
+	for (const entry of safeReaddir(dir)) {
+		const entryPath = join(dir, entry);
+		try {
+			rmSync(entryPath, { recursive: true, force: true });
+		} catch (err) {
+			console.warn(
+				`[workspace] could not remove ${entryPath}: ${(err as Error).message}. Skipping.`,
+			);
+		}
+	}
 }
 
 function safeReaddir(path: string): string[] {
