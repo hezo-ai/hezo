@@ -139,6 +139,25 @@ describe('issues CRUD', () => {
 		expect(body.data.every((i: any) => i.status === 'backlog')).toBe(true);
 	});
 
+	it('exposes project_slug on every list row', async () => {
+		const projectsRes = await app.request(`/api/companies/${companyId}/projects`, {
+			headers: authHeader(token),
+		});
+		const projects = (await projectsRes.json()).data as Array<{ id: string; slug: string }>;
+		const slugByProjectId = new Map(projects.map((p) => [p.id, p.slug]));
+
+		const res = await app.request(`/api/companies/${companyId}/issues`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.length).toBeGreaterThan(0);
+		for (const row of body.data) {
+			expect(typeof row.project_slug).toBe('string');
+			expect(row.project_slug).toBe(slugByProjectId.get(row.project_id));
+		}
+	});
+
 	it('gets an issue by id with computed fields', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
 			headers: authHeader(token),

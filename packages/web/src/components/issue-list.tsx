@@ -369,13 +369,12 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 					data={issues}
 					rowKey={(row) => row.id}
 					onRowClick={(row) => {
-						const rowProjectSlug = row.project_slug ?? projectId;
-						if (rowProjectSlug) {
+						if (row.project_slug) {
 							navigate({
 								to: '/companies/$companyId/projects/$projectId/issues/$issueId',
 								params: {
 									companyId,
-									projectId: rowProjectSlug,
+									projectId: row.project_slug,
 									issueId: row.identifier.toLowerCase(),
 								},
 							});

@@ -200,6 +200,51 @@ test.describe('Issue list — filtering', () => {
 	});
 });
 
+test.describe('Issue list — row navigation', () => {
+	test('clicking a row goes straight to the slug URL with no UUID redirect', async ({
+		page,
+		freshWorkspace,
+	}) => {
+		const { company, agents, token } = freshWorkspace;
+		const project = await createProject(page, company.id, token, 'Slug Direct Project');
+		const agentId = agents[0].id;
+
+		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+		const res = await page.request.post(`/api/companies/${company.id}/issues`, {
+			headers,
+			data: { project_id: project.id, title: 'Direct slug ticket', assignee_id: agentId },
+		});
+		const issue = ((await res.json()) as { data: { id: string; identifier: string } }).data;
+		const friendlyId = issue.identifier.toLowerCase();
+
+		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
+		await waitForPageLoad(page);
+		await expect(page.getByText('Direct slug ticket')).toBeVisible({ timeout: 20000 });
+
+		const visited: string[] = [];
+		page.on('framenavigated', (frame) => {
+			if (frame === page.mainFrame()) visited.push(frame.url());
+		});
+
+		await page.getByText('Direct slug ticket').click();
+		await page.waitForURL(
+			`**/companies/${company.slug}/projects/${project.slug}/issues/${friendlyId}`,
+			{ timeout: 10000 },
+		);
+
+		const uuidRe = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+		const offendingUrls = visited.filter((url) => {
+			const path = new URL(url).pathname;
+			const segments = path.split('/');
+			const projectsIdx = segments.indexOf('projects');
+			if (projectsIdx === -1) return false;
+			const projectSegment = segments[projectsIdx + 1] ?? '';
+			return uuidRe.test(projectSegment);
+		});
+		expect(offendingUrls).toEqual([]);
+	});
+});
+
 test.describe('Issue list — running indicator', () => {
 	test('running dot is hidden by default and shown when has_active_run is true', async ({
 		page,

@@ -157,7 +157,7 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
 		`SELECT i.id, i.company_id, i.project_id, i.assignee_id, i.parent_issue_id,
             i.number, i.identifier, i.title, i.description, i.status, i.priority,
             i.labels, i.created_at, i.updated_at,
-            p.name AS project_name,
+            p.name AS project_name, p.slug AS project_slug,
             COALESCE(ma.title, m.display_name) AS assignee_name,
             m.member_type AS assignee_type,
             EXISTS (
