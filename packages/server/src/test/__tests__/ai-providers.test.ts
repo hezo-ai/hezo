@@ -625,3 +625,47 @@ describe('AI providers auth_method coexistence', () => {
 		expect(openai.some((r) => r.auth_method === 'subscription')).toBe(true);
 	});
 });
+
+describe('AI providers DeepSeek', () => {
+	beforeAll(async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+	});
+
+	it('accepts a DeepSeek API key (no key prefix constraint)', async () => {
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'deepseek',
+				api_key: 'sk-deepseek-no-prefix-required',
+				label: 'deepseek-primary',
+			}),
+		});
+		expect(res.status).toBe(201);
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const rows = (await list.json()).data as Array<{ provider: string }>;
+		expect(rows.some((r) => r.provider === 'deepseek')).toBe(true);
+	});
+
+	it('rejects subscription auth for deepseek (Claude Code subscription is not a DeepSeek concept)', async () => {
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'deepseek',
+				api_key: JSON.stringify({ tokens: { refresh_token: 'rt' } }),
+				auth_method: 'subscription',
+			}),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.code).toBe('UNSUPPORTED_AUTH_METHOD');
+	});
+
+	it('reports deepseek under the configured providers status', async () => {
+		const res = await app.request('/api/ai-providers/status', { headers: authHeader(token) });
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.providers).toContain('deepseek');
+	});
+});

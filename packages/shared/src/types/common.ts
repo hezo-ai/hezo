@@ -328,6 +328,7 @@ export const AiProvider = {
 	Anthropic: 'anthropic',
 	OpenAI: 'openai',
 	Google: 'google',
+	DeepSeek: 'deepseek',
 } as const;
 export type AiProvider = (typeof AiProvider)[keyof typeof AiProvider];
 
@@ -344,29 +345,69 @@ export const AiProviderStatus = {
 } as const;
 export type AiProviderStatus = (typeof AiProviderStatus)[keyof typeof AiProviderStatus];
 
-export const RUNTIME_TO_PROVIDER: Record<AgentRuntime, AiProvider> = {
-	[AgentRuntime.ClaudeCode]: AiProvider.Anthropic,
-	[AgentRuntime.Codex]: AiProvider.OpenAI,
-	[AgentRuntime.Gemini]: AiProvider.Google,
-};
+/**
+ * Per-provider configuration that varies even when multiple providers share a
+ * runtime. Each provider declares the CLI runtime it's driven through, any
+ * static env entries (base URL, model defaults, …), and the env var that
+ * carries the credential value for each supported auth method. Runtime-only
+ * knobs (CLI binary, MCP injection, headless flags, effort mapping) live in
+ * the `RUNTIME_*` maps below and are shared across every provider on that
+ * runtime.
+ */
+export interface ProviderRuntimeAdapter {
+	runtime: AgentRuntime;
+	staticEnv?: Readonly<Record<string, string>>;
+	credentialEnvByAuthMethod: Partial<Record<AiAuthMethod, string>>;
+}
 
-export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = {
-	[AiProvider.Anthropic]: AgentRuntime.ClaudeCode,
-	[AiProvider.OpenAI]: AgentRuntime.Codex,
-	[AiProvider.Google]: AgentRuntime.Gemini,
-};
-
-export const PROVIDER_TO_ENV_VAR: Record<AiProvider, Record<string, string>> = {
+export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapter> = {
 	[AiProvider.Anthropic]: {
-		[AiAuthMethod.ApiKey]: 'ANTHROPIC_API_KEY',
+		runtime: AgentRuntime.ClaudeCode,
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_API_KEY' },
 	},
 	[AiProvider.OpenAI]: {
-		[AiAuthMethod.ApiKey]: 'OPENAI_API_KEY',
+		runtime: AgentRuntime.Codex,
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'OPENAI_API_KEY' },
 	},
 	[AiProvider.Google]: {
-		[AiAuthMethod.ApiKey]: 'GOOGLE_API_KEY',
+		runtime: AgentRuntime.Gemini,
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'GOOGLE_API_KEY' },
+	},
+	[AiProvider.DeepSeek]: {
+		runtime: AgentRuntime.ClaudeCode,
+		staticEnv: {
+			ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
+			ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-v4-pro',
+			ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-pro',
+			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash',
+			CLAUDE_CODE_SUBAGENT_MODEL: 'deepseek-v4-flash',
+		},
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
 	},
 };
+
+export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = Object.freeze(
+	(Object.keys(PROVIDER_RUNTIME_ADAPTERS) as AiProvider[]).reduce(
+		(acc, p) => {
+			acc[p] = PROVIDER_RUNTIME_ADAPTERS[p].runtime;
+			return acc;
+		},
+		{} as Record<AiProvider, AgentRuntime>,
+	),
+);
+
+export const PROVIDERS_BY_RUNTIME: Record<AgentRuntime, readonly AiProvider[]> = Object.freeze(
+	(Object.keys(PROVIDER_RUNTIME_ADAPTERS) as AiProvider[]).reduce(
+		(acc, p) => {
+			const r = PROVIDER_RUNTIME_ADAPTERS[p].runtime;
+			const list = acc[r] ?? [];
+			list.push(p);
+			acc[r] = list;
+			return acc;
+		},
+		{} as Record<AgentRuntime, AiProvider[]>,
+	),
+);
 
 export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.ClaudeCode]: 'claude',
@@ -465,6 +506,15 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 		verifyEndpoint: {
 			url: (apiKey) => `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`,
 			headers: {},
+		},
+	},
+	[AiProvider.DeepSeek]: {
+		name: 'DeepSeek',
+		runtimeLabel: 'Claude Code',
+		keyPlaceholder: 'sk-...',
+		verifyEndpoint: {
+			url: 'https://api.deepseek.com/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
 		},
 	},
 };

@@ -1986,6 +1986,32 @@ describe('runAgent', () => {
 	});
 });
 
+describe('buildProviderEnv (DeepSeek)', () => {
+	it('emits ANTHROPIC_BASE_URL, model defaults, and ANTHROPIC_AUTH_TOKEN for an api-key credential', () => {
+		const env = buildProviderEnv(AiProvider.DeepSeek, {
+			value: 'sk-deepseek-secret',
+			authMethod: AiAuthMethod.ApiKey,
+		});
+		expect(env).toContain('ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic');
+		expect(env).toContain('ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro');
+		expect(env).toContain('ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro');
+		expect(env).toContain('ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash');
+		expect(env).toContain('CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash');
+		expect(env).toContain('ANTHROPIC_AUTH_TOKEN=sk-deepseek-secret');
+		// must not leak Anthropic's primary env name — Claude Code would read it first
+		expect(env.some((e) => e.startsWith('ANTHROPIC_API_KEY='))).toBe(false);
+	});
+
+	it('still emits the static base URL and model defaults when subscription auth is used (no credential env)', () => {
+		const env = buildProviderEnv(AiProvider.DeepSeek, {
+			value: 'unused-blob',
+			authMethod: AiAuthMethod.Subscription,
+		});
+		expect(env).toContain('ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic');
+		expect(env.some((e) => e.startsWith('ANTHROPIC_AUTH_TOKEN='))).toBe(false);
+	});
+});
+
 describe('shellQuoteArg', () => {
 	it('leaves simple flags and identifiers unquoted', () => {
 		expect(shellQuoteArg('-p')).toBe('-p');

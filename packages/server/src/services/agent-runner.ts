@@ -9,14 +9,12 @@ import {
 	ContainerStatus,
 	HeartbeatRunStatus,
 	IssueStatus,
-	PROVIDER_TO_ENV_VAR,
-	PROVIDER_TO_RUNTIME,
+	PROVIDER_RUNTIME_ADAPTERS,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
 	RUNTIME_HEADLESS_PREFIX_ARGS,
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
 	RUNTIME_STREAM_ARGS,
-	RUNTIME_TO_PROVIDER,
 	TERMINAL_ISSUE_STATUSES,
 	WakeupSource,
 	WsMessageType,
@@ -115,16 +113,26 @@ interface RepoRow {
 }
 
 /**
- * Build the env-var entries for a given provider/auth method. Only the matching
- * env var is set; agents that read a different var won't see the credential.
+ * Build the env-var entries for a given provider/auth method. Composed from the
+ * provider's adapter: any static entries (base URL, model defaults) followed by
+ * the credential carried in the auth-method-specific env var. Agents that read
+ * a different var won't see the credential.
  *
- * Returns no env entries for subscription credentials, which are delivered via
- * a file mount instead — see {@link buildSubscriptionMount}.
+ * Returns only the static entries when the auth method is subscription-based,
+ * since the credential is delivered via a file mount instead — see
+ * {@link buildSubscriptionMount}.
  */
 export function buildProviderEnv(provider: AiProvider, credential: AiProviderCredential): string[] {
-	const envVarName = PROVIDER_TO_ENV_VAR[provider]?.[credential.authMethod];
-	if (!envVarName) return [];
-	return [`${envVarName}=${credential.value}`];
+	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
+	const out: string[] = [];
+	if (adapter.staticEnv) {
+		for (const [key, value] of Object.entries(adapter.staticEnv)) {
+			out.push(`${key}=${value}`);
+		}
+	}
+	const varName = adapter.credentialEnvByAuthMethod[credential.authMethod];
+	if (varName) out.push(`${varName}=${credential.value}`);
+	return out;
 }
 
 // SUBSCRIPTION_LAYOUTS, SubscriptionMount, and the home-dir helpers live in
@@ -280,7 +288,7 @@ async function buildRunContext(
 	const adapter = MCP_ADAPTERS[runtimeType];
 	const homeMount: RuntimeHomeMount | null = adapter.capabilities.requiresHomeDir
 		? ensureRuntimeHomeDir(
-				runtimeType,
+				provider,
 				deps.dataDir,
 				project.company_slug,
 				project.slug,
@@ -494,7 +502,7 @@ export async function runAgent(
 	let runtimeType: AgentRuntime;
 	if (agent.model_override_provider) {
 		provider = agent.model_override_provider;
-		runtimeType = PROVIDER_TO_RUNTIME[provider];
+		runtimeType = PROVIDER_RUNTIME_ADAPTERS[provider].runtime;
 	} else {
 		const resolved = await resolveRuntimeForIssue(deps.db, issue.runtime_type ?? null);
 		if (!resolved) {
@@ -502,8 +510,8 @@ export async function runAgent(
 				'No AI provider credentials configured at the instance level. Add one in Settings > AI Providers.',
 			);
 		}
-		runtimeType = resolved;
-		provider = RUNTIME_TO_PROVIDER[runtimeType];
+		runtimeType = resolved.runtime;
+		provider = resolved.provider;
 	}
 
 	const credential = await getProviderCredentialAndModel(deps.db, deps.masterKeyManager, provider);

@@ -20,6 +20,7 @@ const AI_PROVIDERS_ORDER: AiProvider[] = [
 	AiProvider.Anthropic,
 	AiProvider.OpenAI,
 	AiProvider.Google,
+	AiProvider.DeepSeek,
 ];
 
 export function AiProvidersSection() {

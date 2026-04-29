@@ -7,7 +7,12 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 
-const PROVIDERS = [AiProvider.Anthropic, AiProvider.OpenAI, AiProvider.Google] as const;
+const PROVIDERS = [
+	AiProvider.Anthropic,
+	AiProvider.OpenAI,
+	AiProvider.Google,
+	AiProvider.DeepSeek,
+] as const;
 
 export function AiProviderSetupModal() {
 	return (

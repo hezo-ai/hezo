@@ -67,7 +67,7 @@ CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
 CREATE TYPE company_type_source AS ENUM ('builtin', 'custom', 'marketplace');
 CREATE TYPE goal_status AS ENUM ('active', 'achieved', 'archived');
-CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google');
+CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'deepseek');
 CREATE TYPE ai_auth_method AS ENUM ('api_key', 'subscription');
 
 -------------------------------------------------------------------------------

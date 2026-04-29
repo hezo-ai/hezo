@@ -2216,10 +2216,14 @@ approval_type:        secret_access, hire, strategy, plan_review, kb_update, dep
 approval_status:      pending, approved, denied
 audit_actor_type:     board, agent, system
 repo_host_type:       github
-platform_type:        github, gmail, gitlab, stripe, posthog, railway, vercel, digitalocean, x
+platform_type:        github, gmail, gitlab, stripe, posthog, railway, vercel, digitalocean, x, anthropic, openai, google
+ai_provider:          anthropic, openai, google, deepseek
+ai_auth_method:       api_key, subscription
 connection_status:    active, expired, disconnected
 auth_provider:        github, gitlab
 ```
+
+`ai_provider` values map to a CLI runtime (and per-provider env contract) via `PROVIDER_RUNTIME_ADAPTERS` in `packages/shared/src/types/common.ts`. Multiple providers can share a runtime — both `anthropic` and `deepseek` drive `claude_code`, with DeepSeek's adapter injecting `ANTHROPIC_BASE_URL`, `ANTHROPIC_DEFAULT_*_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`, and the credential under `ANTHROPIC_AUTH_TOKEN` so Claude Code talks to DeepSeek's Anthropic-compatible gateway.
 
 ### Atomic functions
 
