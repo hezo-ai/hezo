@@ -26,13 +26,25 @@ beforeEach(async () => {
 
 describe('resolveRuntimeForIssue', () => {
 	it('returns null when no providers are configured', async () => {
-		const runtime = await resolveRuntimeForIssue(db, null);
-		expect(runtime).toBeNull();
+		expect(await resolveRuntimeForIssue(db, null)).toBeNull();
+		expect(await resolveRuntimeForIssue(db, AgentRuntime.Codex)).toBeNull();
 	});
 
-	it('honors the issue runtime_type when set', async () => {
-		const runtime = await resolveRuntimeForIssue(db, AgentRuntime.Codex);
-		expect(runtime).toBe(AgentRuntime.Codex);
+	it('returns runtime + provider when an explicit issue runtime matches a configured provider', async () => {
+		await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.OpenAI,
+			'sk-openai-api',
+			AiAuthMethod.ApiKey,
+			'openai-api',
+		);
+
+		expect(await resolveRuntimeForIssue(db, AgentRuntime.Codex)).toEqual({
+			runtime: AgentRuntime.Codex,
+			provider: AiProvider.OpenAI,
+		});
+		expect(await resolveRuntimeForIssue(db, AgentRuntime.ClaudeCode)).toBeNull();
 	});
 
 	it('picks the runtime whose provider is marked default when multiple configs coexist', async () => {
@@ -53,10 +65,10 @@ describe('resolveRuntimeForIssue', () => {
 			'openai-subscription',
 		);
 
-		expect(await resolveRuntimeForIssue(db, null)).toBe(AgentRuntime.Codex);
+		expect((await resolveRuntimeForIssue(db, null))?.runtime).toBe(AgentRuntime.Codex);
 
 		await setDefaultAiProvider(db, subscriptionId);
-		expect(await resolveRuntimeForIssue(db, null)).toBe(AgentRuntime.Codex);
+		expect((await resolveRuntimeForIssue(db, null))?.runtime).toBe(AgentRuntime.Codex);
 	});
 
 	it('falls back to the oldest active provider when none is marked default', async () => {
@@ -79,6 +91,45 @@ describe('resolveRuntimeForIssue', () => {
 
 		await db.query(`UPDATE ai_provider_configs SET is_default = false`);
 
-		expect(await resolveRuntimeForIssue(db, null)).toBe(AgentRuntime.Codex);
+		expect(await resolveRuntimeForIssue(db, null)).toEqual({
+			runtime: AgentRuntime.Codex,
+			provider: AiProvider.OpenAI,
+		});
+	});
+
+	it('disambiguates between providers that share a runtime by is_default and creation order', async () => {
+		await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Anthropic,
+			'sk-ant-key',
+			AiAuthMethod.ApiKey,
+			'anthropic-primary',
+		);
+		await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.DeepSeek,
+			'sk-deepseek',
+			AiAuthMethod.ApiKey,
+			'deepseek-primary',
+		);
+
+		// Both providers ship a default row of their own; tiebreak goes to whichever
+		// was added first under the same runtime.
+		expect(await resolveRuntimeForIssue(db, AgentRuntime.ClaudeCode)).toEqual({
+			runtime: AgentRuntime.ClaudeCode,
+			provider: AiProvider.Anthropic,
+		});
+
+		// Demote anthropic so deepseek wins on is_default DESC.
+		await db.query(
+			`UPDATE ai_provider_configs SET is_default = false WHERE provider = 'anthropic'`,
+		);
+
+		expect(await resolveRuntimeForIssue(db, AgentRuntime.ClaudeCode)).toEqual({
+			runtime: AgentRuntime.ClaudeCode,
+			provider: AiProvider.DeepSeek,
+		});
 	});
 });

@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { type AgentRuntime, AiAuthMethod, AiProvider, RUNTIME_TO_PROVIDER } from '@hezo/shared';
+import { AiAuthMethod, AiProvider } from '@hezo/shared';
 import type { AiProviderCredential } from './ai-provider-keys';
 import { getWorkspacePath } from './workspace';
 
@@ -105,21 +105,21 @@ export interface RuntimeHomeMount {
 }
 
 /**
- * Per-runtime home directory used to host MCP server config and other CLI state.
+ * Per-provider home directory used to host MCP server config and other CLI state.
  * Returns the existing subscription mount when one is provided, otherwise creates
  * a fresh per-run directory under the project workspace using the same layout
- * conventions as subscription mounts. Returns null for runtimes that do not need
- * a config home (e.g. Claude Code, which takes MCP config via CLI flags).
+ * conventions as subscription mounts. Returns null for providers whose runtime
+ * does not need a config home (e.g. Claude Code, which takes MCP config via CLI
+ * flags — both Anthropic and DeepSeek).
  */
 export function ensureRuntimeHomeDir(
-	runtime: AgentRuntime,
+	provider: AiProvider,
 	dataDir: string,
 	companySlug: string,
 	projectSlug: string,
 	heartbeatRunId: string,
 	existing: SubscriptionMount | null,
 ): RuntimeHomeMount | null {
-	const provider = RUNTIME_TO_PROVIDER[runtime];
 	const layout = SUBSCRIPTION_LAYOUTS[provider];
 	if (!layout) return null;
 

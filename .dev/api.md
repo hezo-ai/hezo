@@ -394,14 +394,15 @@ baseline reasoning level applied to every run of this agent; an `@`-mentioning
 comment can override it per-run via the `effort` field — see
 [Reasoning effort](#reasoning-effort).
 
-`model_override_provider` (one of `anthropic | openai | google`, or
-`null`) and `model_override_model` (free-form model id, e.g. `claude-opus-4-7`,
-or `null`) let this agent target a specific provider + model. When the
-provider is set, the runner uses this provider's credential instead of the
-instance default; when the model is set, it's passed to the CLI as `--model`,
-taking precedence over the provider config's `default_model`. Clearing the
-provider also clears the model. Setting the model alone requires that a
-provider is already stored on the agent.
+`model_override_provider` (one of `anthropic | openai | google | deepseek`, or
+`null`) and `model_override_model` (free-form model id, e.g. `claude-opus-4-7`
+or `deepseek-v4-pro`, or `null`) let this agent target a specific provider +
+model. When the provider is set, the runner uses this provider's credential
+instead of the instance default and derives the runtime from the provider's
+adapter (`PROVIDER_RUNTIME_ADAPTERS[provider].runtime`); when the model is set,
+it's passed to the CLI as `--model`, taking precedence over the provider
+config's `default_model`. Clearing the provider also clears the model. Setting
+the model alone requires that a provider is already stored on the agent.
 
 #### `POST /companies/:companyId/agents/:agentId/disable`
 Disable an agent. Stops heartbeats, kills subprocess if running. Does not affect the project container.
@@ -1393,9 +1394,11 @@ Request:
 }
 ```
 
-`provider` is one of: `anthropic`, `openai`, `google`. `label` is optional; the server auto-derives one from the provider name if omitted. Returns 409 if a `(provider, label)` pair already exists.
+`provider` is one of: `anthropic`, `openai`, `google`, `deepseek`. `label` is optional; the server auto-derives one from the provider name if omitted. Returns 409 if a `(provider, label)` pair already exists.
 
-Multiple configs per provider are permitted as long as `(provider, label)` stays unique. The typical case is one `api_key` row plus one `subscription` row per provider (so a user can keep their OpenAI API key *and* a Codex/ChatGPT subscription credential side-by-side). The runtime credential resolver picks whichever row is marked `is_default`; flip via `PATCH /ai-providers/:configId/default`. `auth_method` defaults to `api_key`; send `"subscription"` along with the pasted contents of the vendor's auth file (`~/.codex/auth.json` for Codex, `~/.gemini/oauth_creds.json` for Gemini) to skip the key-prefix check and live verification. Anthropic does not support subscription auth.
+Multiple configs per provider are permitted as long as `(provider, label)` stays unique. The typical case is one `api_key` row plus one `subscription` row per provider (so a user can keep their OpenAI API key *and* a Codex/ChatGPT subscription credential side-by-side). The runtime credential resolver picks whichever row is marked `is_default`; flip via `PATCH /ai-providers/:configId/default`. `auth_method` defaults to `api_key`; send `"subscription"` along with the pasted contents of the vendor's auth file (`~/.codex/auth.json` for Codex, `~/.gemini/oauth_creds.json` for Gemini) to skip the key-prefix check and live verification. Anthropic and DeepSeek do not support subscription auth.
+
+Multiple providers can share a runtime: both `anthropic` and `deepseek` drive the `claude_code` CLI. The provider value carries its own static env (e.g. DeepSeek injects `ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic` and the `ANTHROPIC_DEFAULT_*_MODEL` / `CLAUDE_CODE_SUBAGENT_MODEL` defaults so Claude Code routes traffic to DeepSeek's Anthropic-compatible gateway), plus the credential env var name (`ANTHROPIC_AUTH_TOKEN` for DeepSeek, `ANTHROPIC_API_KEY` for Anthropic). The mapping lives in `PROVIDER_RUNTIME_ADAPTERS` in `packages/shared/src/types/common.ts` — adding a new provider that targets an existing runtime is a single map entry.
 
 #### `DELETE /ai-providers/:configId`
 Remove a configuration.
@@ -1404,7 +1407,7 @@ Remove a configuration.
 Mark a config as the default for its provider (exactly one default per provider is enforced by a partial unique index).
 
 #### `POST /ai-providers/:provider/oauth/start`
-Initiate OAuth flow for a provider (`anthropic`, `openai`, `google`). Returns `auth_url` and `state`. State carries `ai_provider` only — no company context.
+Initiate OAuth flow for a provider (`anthropic`, `openai`, `google`). Returns `auth_url` and `state`. State carries `ai_provider` only — no company context. (DeepSeek has no OAuth flow — API key only.)
 
 #### `POST /ai-providers/:configId/verify`
 Verify a stored key by making a lightweight call to the provider. Updates config status to `invalid` if the key is bad.
