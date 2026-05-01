@@ -8,10 +8,10 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 
 const PROVIDERS = [
+	AiProvider.DeepSeek,
 	AiProvider.Anthropic,
 	AiProvider.OpenAI,
 	AiProvider.Google,
-	AiProvider.DeepSeek,
 ] as const;
 
 export function AiProviderSetupModal() {

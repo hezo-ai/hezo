@@ -17,10 +17,10 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 
 const AI_PROVIDERS_ORDER: AiProvider[] = [
+	AiProvider.DeepSeek,
 	AiProvider.Anthropic,
 	AiProvider.OpenAI,
 	AiProvider.Google,
-	AiProvider.DeepSeek,
 ];
 
 export function AiProvidersSection() {
