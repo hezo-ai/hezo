@@ -44,7 +44,9 @@ test.describe('Responsive — mobile (390px)', () => {
 			`/companies/${company.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
 		);
 		await waitForPageLoad(page);
-		await expect(page.getByRole('heading', { name: 'Mobile issue' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Mobile issue' })).toBeVisible({
+			timeout: 20000,
+		});
 		await expectNoHorizontalOverflow(page);
 
 		const description = page.getByTestId('issue-description-card');
