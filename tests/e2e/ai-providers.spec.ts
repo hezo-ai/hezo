@@ -220,9 +220,12 @@ test.describe('AI provider gate (post-master-key, pre-company)', () => {
 
 		await expect(page.getByRole('heading', { name: 'Welcome to Hezo' })).toBeHidden();
 
-		await page.getByRole('button', { name: 'Enter API key' }).first().click();
-		await page.locator('input[type="password"]').first().fill('sk-ant-gate-test-12345');
-		await page.getByRole('button', { name: 'Save' }).first().click();
+		const anthropicCard = page
+			.locator('div.border.border-border.rounded-radius-md.p-4', { hasText: 'Anthropic' })
+			.first();
+		await anthropicCard.getByRole('button', { name: 'Enter API key' }).click();
+		await anthropicCard.locator('input[type="password"]').fill('sk-ant-gate-test-12345');
+		await anthropicCard.getByRole('button', { name: 'Save' }).click();
 
 		await expect(page.getByRole('heading', { name: 'Set up an AI provider' })).toBeHidden({
 			timeout: 20000,

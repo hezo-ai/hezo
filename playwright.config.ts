@@ -34,7 +34,12 @@ export default defineConfig({
 		{
 			command: `bun run src/index.ts -- --port ${SERVER_PORT} --data-dir ${TEST_DATA_DIR} --connect-url http://localhost:${CONNECT_PORT} --master-key e2e-test-master-key-0123456789abcdef0123456789abcdef --reset`,
 			cwd: './packages/server',
-			port: SERVER_PORT,
+			// `Bun.serve` opens the port before `startup()` finishes registering
+			// routes, so a port-only check races against route mounting and the
+			// first /api/auth/token call sees Hono's default "404 Not Found".
+			// /api/status is only mounted inside startup, so polling it waits
+			// for full readiness.
+			url: `http://localhost:${SERVER_PORT}/api/status`,
 			reuseExistingServer: true,
 			env: {
 				SKIP_AI_KEY_VALIDATION: '1',
