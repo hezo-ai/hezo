@@ -4,6 +4,7 @@ import { FileText, Loader2, Upload, X } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 import { useCreateProject } from '../hooks/use-projects';
 import { Button } from './ui/button';
+import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 
@@ -85,8 +86,8 @@ export function CreateProjectDialog({ companyId, open, onOpenChange }: CreatePro
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
-				<Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg rounded-radius-lg border border-border bg-bg-elevated p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+				<Dialog.Overlay className={dialogOverlayClassName} />
+				<Dialog.Content className={dialogContentClassName.lg}>
 					<Dialog.Title className="text-base font-medium mb-1">Create Project</Dialog.Title>
 					<p className="text-sm text-text-muted mb-4">
 						The CEO will draft an execution plan from your description.

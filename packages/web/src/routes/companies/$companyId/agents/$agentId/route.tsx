@@ -28,10 +28,10 @@ function AgentLayout() {
 	const matchRoute = useMatchRoute();
 	const params = { companyId, agentId };
 
-	if (isLoading || !agent) return <div className="p-6 text-text-muted">Loading...</div>;
+	if (isLoading || !agent) return <div className="text-text-muted">Loading...</div>;
 
 	return (
-		<div className="p-6 max-w-3xl">
+		<div className="max-w-3xl">
 			<Link
 				to="/companies/$companyId/agents"
 				params={{ companyId }}

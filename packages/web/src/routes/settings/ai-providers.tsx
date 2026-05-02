@@ -4,7 +4,7 @@ import { AiProvidersSection } from '../../components/ai-providers-section';
 
 function AiProvidersPage() {
 	return (
-		<div className="max-w-[900px] mx-auto w-full px-8 py-6">
+		<div className="max-w-[900px] mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
 			<div className="flex items-center gap-3 mb-6">
 				<Link
 					to="/companies"

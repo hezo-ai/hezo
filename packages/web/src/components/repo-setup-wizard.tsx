@@ -5,6 +5,7 @@ import { useConnections, useStartConnection } from '../hooks/use-connections';
 import { useGithubOrgs, useGithubRepos } from '../hooks/use-github';
 import { useCreateRepo } from '../hooks/use-repos';
 import { Button } from './ui/button';
+import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 import { Input } from './ui/input';
 import { Toggle } from './ui/toggle';
 
@@ -33,8 +34,8 @@ export function RepoSetupWizard({
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
-				<Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-xl rounded-radius-lg border border-border bg-bg-elevated p-6 shadow-2xl">
+				<Dialog.Overlay className={dialogOverlayClassName} />
+				<Dialog.Content className={dialogContentClassName.xl}>
 					<Dialog.Title className="text-base font-medium mb-1 flex items-center gap-2">
 						<GitBranch className="w-4 h-4" />
 						Set up repository

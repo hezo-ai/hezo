@@ -54,7 +54,7 @@ function SettingsPage() {
 	}
 
 	return (
-		<div className="grid grid-cols-[160px_1fr] gap-6">
+		<div className="flex flex-col gap-4 md:grid md:grid-cols-[160px_1fr] md:gap-6">
 			<nav className="flex flex-col gap-0.5 sticky top-0">
 				{settingsNav.map((item) => (
 					<button
@@ -290,7 +290,7 @@ function SecretsSection({ companyId }: { companyId: string }) {
 				</Button>
 			</div>
 			{showForm && (
-				<form onSubmit={handleCreate} className="flex gap-2 mb-3">
+				<form onSubmit={handleCreate} className="flex flex-col sm:flex-row gap-2 mb-3">
 					<Input
 						placeholder="Name"
 						value={name}
@@ -387,7 +387,7 @@ function ApiKeysSection({ companyId }: { companyId: string }) {
 				</div>
 			)}
 			{showForm && (
-				<form onSubmit={handleCreate} className="flex gap-2 mb-3">
+				<form onSubmit={handleCreate} className="flex flex-col sm:flex-row gap-2 mb-3">
 					<Input
 						placeholder="Key name"
 						value={name}

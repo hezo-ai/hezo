@@ -29,7 +29,7 @@ function GoalsPage() {
 	}, [goals]);
 
 	return (
-		<div className="max-w-[900px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-6">
+		<div className="max-w-[900px] mx-auto w-full">
 			<div className="flex items-center justify-between mb-5">
 				<h1 className="text-[22px] font-medium">Goals</h1>
 				<Button onClick={() => setCreateOpen(true)}>

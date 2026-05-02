@@ -4,6 +4,7 @@ import { ArrowLeft, Check, FileText, Loader2, Users, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { dialogContentClassName, dialogOverlayClassName } from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
 import { useCreateCompany } from '../../hooks/use-companies';
 import type { CompanyType } from '../../hooks/use-company-types';
@@ -26,11 +27,13 @@ function NewCompanyPage() {
 	const selectedTemplate = types?.find((t) => t.id === selectedTemplateId) ?? null;
 
 	if (isLoading) {
-		return <div className="p-8 text-text-muted">Loading...</div>;
+		return (
+			<div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 text-text-muted">Loading...</div>
+		);
 	}
 
 	return (
-		<div className="max-w-[700px] mx-auto w-full px-8 py-8">
+		<div className="max-w-[700px] mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
 			{step === 'template' ? (
 				<TemplateStep
 					types={types ?? []}
@@ -233,12 +236,16 @@ function TemplateDetailModal({ type, onClose }: { type: CompanyType | null; onCl
 	return (
 		<Dialog.Root open={!!type} onOpenChange={(open) => !open && onClose()}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
-				<Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-xl border border-border bg-bg-elevated p-6 shadow-2xl">
+				<Dialog.Overlay className={dialogOverlayClassName} />
+				<Dialog.Content className={dialogContentClassName.lg}>
 					<div className="flex items-center justify-between mb-4">
 						<Dialog.Title className="text-lg font-semibold">{type.name}</Dialog.Title>
 						<Dialog.Close asChild>
-							<button type="button" className="text-text-muted hover:text-text">
+							<button
+								type="button"
+								className="text-text-muted hover:text-text p-2 -m-2"
+								aria-label="Close"
+							>
 								<X className="w-4 h-4" />
 							</button>
 						</Dialog.Close>

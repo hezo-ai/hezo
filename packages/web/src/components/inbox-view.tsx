@@ -12,7 +12,7 @@ export function InboxView({ companyIds, scope }: InboxViewProps) {
 	const { data: approvals, isLoading } = useAllPendingApprovals(companyIds);
 
 	if (isLoading) {
-		return <div className="p-8 text-text-muted">Loading...</div>;
+		return <div className="text-text-muted">Loading...</div>;
 	}
 
 	return (

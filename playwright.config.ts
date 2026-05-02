@@ -26,7 +26,13 @@ export default defineConfig({
 		},
 		{
 			name: 'parallel',
-			testIgnore: /ai-providers\.spec\.ts$/,
+			testIgnore: /(?:ai-providers|\.mobile)\.spec\.ts$/,
+			dependencies: ['ai-provider-serial'],
+		},
+		{
+			name: 'mobile',
+			testMatch: /\.mobile\.spec\.ts$/,
+			use: { viewport: { width: 390, height: 844 } },
 			dependencies: ['ai-provider-serial'],
 		},
 	],

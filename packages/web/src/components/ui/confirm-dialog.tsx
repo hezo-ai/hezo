@@ -1,6 +1,7 @@
 import * as AlertDialog from '@radix-ui/react-alert-dialog';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
+import { dialogContentClassName, dialogOverlayClassName } from './dialog';
 
 interface ConfirmDialogProps {
 	open: boolean;
@@ -47,11 +48,8 @@ export function ConfirmDialog({
 	return (
 		<AlertDialog.Root open={open} onOpenChange={onOpenChange}>
 			<AlertDialog.Portal>
-				<AlertDialog.Overlay className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" />
-				<AlertDialog.Content
-					data-testid="confirm-dialog"
-					className="fixed top-1/2 left-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-elevated p-6 shadow-2xl"
-				>
+				<AlertDialog.Overlay className={dialogOverlayClassName} />
+				<AlertDialog.Content data-testid="confirm-dialog" className={dialogContentClassName.sm}>
 					<AlertDialog.Title className="text-base font-semibold mb-2">{title}</AlertDialog.Title>
 					{description && (
 						<AlertDialog.Description className="text-[13px] text-text-muted mb-5 leading-relaxed">
