@@ -81,7 +81,7 @@ function AgentSettingsPage() {
 	return (
 		<div>
 			{/* Budget & Heartbeat */}
-			<div className="mb-6 grid grid-cols-2 gap-4">
+			<div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
 				<div className="rounded-lg border border-border-subtle bg-bg p-4">
 					<div className="text-xs text-text-muted mb-2">Budget Usage</div>
 					{(() => {
@@ -156,7 +156,7 @@ function AgentSettingsPage() {
 					</select>
 				</label>
 
-				<div className="grid grid-cols-2 gap-4">
+				<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 					<Input
 						label="Monthly Budget ($)"
 						type="number"

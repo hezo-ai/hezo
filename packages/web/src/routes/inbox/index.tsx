@@ -6,13 +6,15 @@ function GlobalInboxPage() {
 	const { data: companies, isLoading } = useCompanies();
 
 	if (isLoading) {
-		return <div className="p-8 text-text-muted">Loading...</div>;
+		return (
+			<div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 text-text-muted">Loading...</div>
+		);
 	}
 
 	const companyIds = companies?.map((c) => c.slug) ?? [];
 
 	return (
-		<div className="max-w-[900px] w-full px-8 py-6">
+		<div className="max-w-[900px] mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
 			<InboxView companyIds={companyIds} scope="global" />
 		</div>
 	);

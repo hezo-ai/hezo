@@ -86,7 +86,7 @@ function ShellLayout({ companyId }: { companyId: string | undefined }) {
 					onClick={() => setDrawerOpen(true)}
 					aria-label="Open navigation"
 					data-testid="mobile-nav-toggle"
-					className="lg:hidden fixed top-3 left-3 z-40 w-9 h-9 rounded-radius-md bg-bg-elevated border border-border flex items-center justify-center text-text-muted hover:text-text shadow-sm"
+					className="lg:hidden fixed top-3 left-3 md:left-[72px] z-40 w-9 h-9 rounded-radius-md bg-bg-elevated border border-border flex items-center justify-center text-text-muted hover:text-text shadow-sm"
 				>
 					<Menu className="w-4 h-4" />
 				</button>

@@ -121,7 +121,7 @@ function ContainerPage() {
 			)}
 
 			{/* Info */}
-			<div className="grid grid-cols-2 gap-4 text-sm">
+			<div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
 				<div>
 					<span className="text-text-muted">Image</span>
 					<p className="font-mono text-xs mt-0.5">{project.docker_base_image ?? 'none'}</p>

@@ -6,6 +6,7 @@ import { type GoalWithProject, useCreateGoal, useUpdateGoal } from '../hooks/use
 import { useProjects } from '../hooks/use-projects';
 import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
+import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 import { Input } from './ui/input';
 
 interface GoalDialogProps {
@@ -62,8 +63,8 @@ export function GoalDialog({ companyId, open, onOpenChange, goal }: GoalDialogPr
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
-				<Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg rounded-radius-lg border border-border bg-bg-elevated p-6 shadow-2xl">
+				<Dialog.Overlay className={dialogOverlayClassName} />
+				<Dialog.Content className={dialogContentClassName.lg}>
 					<Dialog.Title className="text-base font-medium mb-1">
 						{isEdit ? 'Edit goal' : 'New goal'}
 					</Dialog.Title>

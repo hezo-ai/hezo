@@ -193,7 +193,7 @@ function IssueDetailPage() {
 	const issueProjectSlug = issue.project_slug ?? projectId;
 
 	return (
-		<div className="grid grid-cols-[1fr_190px] gap-5">
+		<div className="grid grid-cols-1 lg:grid-cols-[1fr_190px] gap-5">
 			{/* Main content */}
 			<div className="min-w-0">
 				<div className="mb-1 text-[13px] font-mono text-text-muted">{issue.identifier}</div>

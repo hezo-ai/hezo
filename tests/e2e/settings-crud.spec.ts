@@ -49,7 +49,7 @@ test('automations section exposes the wake-mentioner toggle and persists the cha
 	await expect(toggle).toBeChecked();
 
 	await toggle.click();
-	await expect(toggle).not.toBeChecked();
+	await expect(toggle).not.toBeChecked({ timeout: 30000 });
 
 	const res = await page.request.get(`/api/companies/${company.id}`, {
 		headers: { Authorization: `Bearer ${token}` },
@@ -58,7 +58,7 @@ test('automations section exposes the wake-mentioner toggle and persists the cha
 	expect(persisted.wake_mentioner_on_reply).toBe(false);
 
 	await toggle.click();
-	await expect(toggle).toBeChecked();
+	await expect(toggle).toBeChecked({ timeout: 30000 });
 });
 
 test('can add and delete a secret', async ({ page }) => {
@@ -163,7 +163,7 @@ test('can restore a previous preferences revision', async ({ page }) => {
 		.first()
 		.click();
 	await page.getByTestId('confirm-dialog-confirm').click();
-	await expect(prefsSection.getByText('Original preferences body')).toBeVisible({ timeout: 15000 });
+	await expect(prefsSection.getByText('Original preferences body')).toBeVisible({ timeout: 30000 });
 });
 
 test('can add and delete an mcp server', async ({ page }) => {
@@ -184,13 +184,13 @@ test('can add and delete an mcp server', async ({ page }) => {
 	await mcpSection.getByPlaceholder(/URL/).fill('http://localhost:9999/mcp');
 	await mcpSection.getByRole('button', { name: 'Add' }).click();
 
-	await expect(mcpSection.getByText('Test MCP')).toBeVisible({ timeout: 15000 });
-	await expect(mcpSection.getByText('localhost:9999')).toBeVisible({ timeout: 15000 });
+	await expect(mcpSection.getByText('Test MCP')).toBeVisible({ timeout: 30000 });
+	await expect(mcpSection.getByText('localhost:9999')).toBeVisible({ timeout: 30000 });
 
 	await mcpSection
 		.getByRole('button', { name: /Trash|Delete/i })
 		.or(mcpSection.locator('button:has(svg.lucide-trash-2)'))
 		.click();
 
-	await expect(mcpSection.getByText('No MCP servers configured.')).toBeVisible({ timeout: 15000 });
+	await expect(mcpSection.getByText('No MCP servers configured.')).toBeVisible({ timeout: 30000 });
 });

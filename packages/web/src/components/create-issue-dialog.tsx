@@ -8,6 +8,7 @@ import { useCreateIssue } from '../hooks/use-issues';
 import { useProjects } from '../hooks/use-projects';
 import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
+import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 import { Input } from './ui/input';
 
 interface CreateIssueDialogProps {
@@ -86,12 +87,16 @@ export function CreateIssueDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
-				<Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg rounded-xl border border-border bg-bg-elevated p-6 shadow-2xl">
+				<Dialog.Overlay className={dialogOverlayClassName} />
+				<Dialog.Content className={dialogContentClassName.lg}>
 					<div className="flex items-center justify-between mb-4">
 						<Dialog.Title className="text-lg font-semibold">Create Issue</Dialog.Title>
 						<Dialog.Close asChild>
-							<button type="button" className="text-text-muted hover:text-text">
+							<button
+								type="button"
+								className="text-text-muted hover:text-text p-2 -m-2"
+								aria-label="Close"
+							>
 								<X className="w-4 h-4" />
 							</button>
 						</Dialog.Close>
@@ -130,7 +135,7 @@ export function CreateIssueDialog({
 							</select>
 						</label>
 
-						<div className="grid grid-cols-2 gap-4">
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 							<label className="flex flex-col gap-1.5">
 								<span className="text-sm text-text-muted">Priority</span>
 								<select

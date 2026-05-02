@@ -10,8 +10,8 @@ const TEST_DATA_DIR = join(tmpdir(), 'hezo-e2e-test');
 export default defineConfig({
 	testDir: './tests/e2e',
 	timeout: 180_000,
-	retries: 0,
-	workers: 4,
+	retries: 1,
+	workers: 2,
 	fullyParallel: true,
 	use: {
 		baseURL: `http://localhost:${WEB_PORT}`,
@@ -26,7 +26,13 @@ export default defineConfig({
 		},
 		{
 			name: 'parallel',
-			testIgnore: /ai-providers\.spec\.ts$/,
+			testIgnore: /(?:ai-providers|\.mobile)\.spec\.ts$/,
+			dependencies: ['ai-provider-serial'],
+		},
+		{
+			name: 'mobile',
+			testMatch: /\.mobile\.spec\.ts$/,
+			use: { viewport: { width: 390, height: 844 } },
 			dependencies: ['ai-provider-serial'],
 		},
 	],

@@ -63,7 +63,7 @@ function HireAgentPage() {
 	return (
 		<div>
 			<form onSubmit={handleSubmit} className="flex flex-col gap-5">
-				<div className="grid grid-cols-2 gap-4 max-w-[500px]">
+				<div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-[500px]">
 					<Input
 						label="Role title"
 						value={title}

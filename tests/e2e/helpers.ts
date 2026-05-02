@@ -2,12 +2,33 @@ import { expect, type Page } from '@playwright/test';
 
 const TEST_MASTER_KEY = 'e2e-test-master-key-0123456789abcdef0123456789abcdef';
 
+// Bun's webserver starts listening before Hono routes are mounted, so the very
+// first request during cold start can hit the default 404 ("404 Not Found"
+// plain text) and crash res.json(). Retry until we get a real JSON body.
+async function requestToken(page: Page): Promise<string> {
+	const deadline = Date.now() + 30_000;
+	let lastError: unknown = null;
+	while (Date.now() < deadline) {
+		try {
+			const res = await page.request.post('/api/auth/token', {
+				data: { master_key: TEST_MASTER_KEY },
+			});
+			if (res.ok()) {
+				const json = (await res.json()) as { data?: { token: string }; token?: string };
+				const token = json.data?.token ?? json.token;
+				if (token) return token;
+			}
+			lastError = new Error(`Unexpected ${res.status()} from /api/auth/token`);
+		} catch (err) {
+			lastError = err;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 250));
+	}
+	throw lastError ?? new Error('Timed out waiting for /api/auth/token');
+}
+
 export async function authenticate(page: Page) {
-	const res = await page.request.post('/api/auth/token', {
-		data: { master_key: TEST_MASTER_KEY },
-	});
-	const json = await res.json();
-	const token = json.data?.token ?? json.token;
+	const token = await requestToken(page);
 
 	await page.addInitScript((t: string) => {
 		localStorage.setItem('hezo_token', t);
@@ -21,11 +42,7 @@ export async function authenticate(page: Page) {
 }
 
 export async function getToken(page: Page): Promise<string> {
-	const tokenRes = await page.request.post('/api/auth/token', {
-		data: { master_key: TEST_MASTER_KEY },
-	});
-	const json = await tokenRes.json();
-	return json.data?.token ?? json.token;
+	return requestToken(page);
 }
 
 /** Ensure at least one instance-level AI provider is configured. Idempotent. */

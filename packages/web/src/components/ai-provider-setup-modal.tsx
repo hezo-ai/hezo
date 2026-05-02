@@ -5,6 +5,7 @@ import { useCreateAiProvider } from '../hooks/use-ai-providers';
 import { SubscriptionPasteForm } from './subscription-paste-form';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { dialogContentClassName } from './ui/dialog';
 import { Input } from './ui/input';
 
 const PROVIDERS = [
@@ -16,8 +17,8 @@ const PROVIDERS = [
 
 export function AiProviderSetupModal() {
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-			<div className="bg-bg border border-border rounded-radius-lg shadow-lg w-full max-w-xl mx-4 p-6 max-h-[90vh] overflow-y-auto">
+		<div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+			<div className={dialogContentClassName.xl}>
 				<div className="flex items-center gap-2 mb-1">
 					<Shield className="w-5 h-5 text-text-muted" />
 					<h2 className="text-lg font-semibold">Set up an AI provider</h2>
@@ -72,7 +73,7 @@ function ProviderCard({ provider }: { provider: AiProvider }) {
 			</div>
 
 			{showKeyForm ? (
-				<form onSubmit={handleSubmitKey} className="flex gap-2 mt-2">
+				<form onSubmit={handleSubmitKey} className="flex flex-col sm:flex-row gap-2 mt-2">
 					<Input
 						type="password"
 						placeholder={info.keyPlaceholder}
