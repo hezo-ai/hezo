@@ -63,13 +63,15 @@ Mixing the two — UUID in a query key, or slug in a room name — silently brea
 
 ## UX
 
-Mobile-first, three breakpoints:
+**All UI must be mobile-first and use a responsive layout.** No exceptions. Build the mobile layout first, then enhance for larger screens with `sm:`/`md:`/`lg:` — never the reverse. Desktop-only or fixed-width components are not acceptable.
+
+Three breakpoints:
 
 - **Mobile** (<768px): single-column, hamburger drawer, stacked fields, near full-screen dialogs, 16px padding.
 - **Tablet** (768–1023px): company rail visible (60px), text sidebar hidden, 2-column form grids at `sm:`, centered modals, 24px padding.
 - **Desktop** (1024px+): full rail + sidebar (260px), all table columns, 2–3 column grids, 32px padding.
 
-Base Tailwind targets mobile; use `sm:`/`md:`/`lg:` to enhance. Every UI change must work at all three.
+Base Tailwind targets mobile; use `sm:`/`md:`/`lg:` to enhance. Every UI change must work at all three breakpoints, and every e2e test for a UI change must verify the mobile layout.
 
 ## Database transactions
 
