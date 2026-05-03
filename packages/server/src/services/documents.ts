@@ -94,7 +94,12 @@ function scopeWhere(scope: DocumentScope, alias = ''): { sql: string; params: un
 	};
 }
 
-const SELECT_WITH_AUTHOR = `SELECT d.*, COALESCE(ma.title, m.display_name) AS last_updated_by_name
+// Explicit column list — `embedding` (vector(384)) is server-internal and
+// adds ~4KB of float noise per row in JSON responses for zero downstream value.
+const SELECT_WITH_AUTHOR = `SELECT d.id, d.company_id, d.project_id, d.member_agent_id,
+	        d.type, d.slug, d.title, d.content,
+	        d.last_updated_by_member_id, d.created_at, d.updated_at,
+	        COALESCE(ma.title, m.display_name) AS last_updated_by_name
 	 FROM documents d
 	 LEFT JOIN members m ON m.id = d.last_updated_by_member_id
 	 LEFT JOIN member_agents ma ON ma.id = d.last_updated_by_member_id`;

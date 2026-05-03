@@ -50,6 +50,95 @@ export interface ToolDef {
 
 const registeredTools: ToolDef[] = [];
 
+// Explicit column lists keep the `embedding` vector(384) out of MCP responses
+// (~4KB per row of float noise that the LLM caller can't use) and let us
+// audit projections at a glance.
+const ISSUE_COLUMNS = `i.id, i.company_id, i.project_id, i.assignee_id, i.parent_issue_id,
+	i.created_by_member_id, i.created_by_run_id,
+	i.number, i.identifier, i.title, i.description, i.rules,
+	i.status, i.priority, i.labels,
+	i.progress_summary, i.progress_summary_updated_at, i.progress_summary_updated_by,
+	i.branch_name, i.runtime_type,
+	i.created_at, i.updated_at`;
+
+const ISSUE_COLUMNS_BARE = ISSUE_COLUMNS.replace(/\bi\./g, '');
+
+const SKILL_COLUMNS = `id, company_id, name, slug, description, content, source_url,
+	content_hash, created_by_member_id, tags, is_active, created_at, updated_at`;
+
+const APPROVAL_COLUMNS = `id, company_id, type, status, requested_by_member_id,
+	resolution_note, resolved_at, created_at, payload`;
+
+// Cap MCP tool result payloads at 24 000 bytes — comfortably under the
+// Claude Code harness's ~25k-token tool-result limit. Oversized results would
+// otherwise be persisted to disk by the harness and become unreadable for the
+// agent (the persisted file itself trips the same cap).
+export const MCP_RESULT_BYTE_LIMIT = 24_000;
+
+export interface Excerpt {
+	excerpt: string | null;
+	truncated: boolean;
+	length: number;
+}
+
+/**
+ * Excerpt the leading paragraph of `text`, capped at `maxChars` with a
+ * word-boundary cut. Returns `null` excerpt for null/empty input.
+ */
+export function excerpt(text: string | null | undefined, maxChars: number): Excerpt {
+	if (text == null) return { excerpt: null, truncated: false, length: 0 };
+	const length = text.length;
+	if (length === 0) return { excerpt: '', truncated: false, length: 0 };
+	const firstPara = text.split(/\n\s*\n/, 1)[0] ?? text;
+	if (firstPara.length <= maxChars) {
+		return { excerpt: firstPara, truncated: firstPara !== text, length };
+	}
+	const slice = firstPara.slice(0, maxChars);
+	const lastSpace = slice.lastIndexOf(' ');
+	const cut = lastSpace > maxChars * 0.5 ? slice.slice(0, lastSpace) : slice;
+	return { excerpt: cut, truncated: true, length };
+}
+
+/**
+ * Spread an Excerpt into a row under `<field>_excerpt`/`_truncated`/`_length`.
+ */
+function applyExcerpt<T extends Record<string, unknown>>(
+	row: T,
+	field: string,
+	maxChars: number,
+): T {
+	const value = row[field];
+	const ex = excerpt(typeof value === 'string' ? value : null, maxChars);
+	const next = { ...row } as Record<string, unknown>;
+	delete next[field];
+	next[`${field}_excerpt`] = ex.excerpt;
+	next[`${field}_truncated`] = ex.truncated;
+	next[`${field}_length`] = ex.length;
+	return next as T;
+}
+
+/**
+ * Excerpt long string fields inside an approval payload (most importantly the
+ * `content` markdown of a skill_proposal). Leaves short fields and non-string
+ * fields untouched.
+ */
+function excerptApprovalPayload<T extends Record<string, unknown>>(row: T, maxChars: number): T {
+	const payload = row.payload;
+	if (!payload || typeof payload !== 'object') return row;
+	const next: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+		if (typeof value !== 'string' || value.length <= maxChars) {
+			next[key] = value;
+			continue;
+		}
+		const ex = excerpt(value, maxChars);
+		next[`${key}_excerpt`] = ex.excerpt;
+		next[`${key}_truncated`] = ex.truncated;
+		next[`${key}_length`] = ex.length;
+	}
+	return { ...row, payload: next };
+}
+
 function tool(
 	server: McpServer,
 	name: string,
@@ -76,7 +165,23 @@ function tool(
 			};
 		}
 		const result = await handler(args, db, auth);
-		return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+		const text = JSON.stringify(result, null, 2);
+		const sizeBytes = Buffer.byteLength(text, 'utf8');
+		if (sizeBytes > MCP_RESULT_BYTE_LIMIT) {
+			const guard = JSON.stringify(
+				{
+					error: 'result_too_large',
+					tool: name,
+					size_bytes: sizeBytes,
+					limit_bytes: MCP_RESULT_BYTE_LIMIT,
+					hint: 'Narrow the query — add filters, fetch a single resource via get_*, paginate with `before` (where supported), or pass `excerpt_chars: 300` to truncate long fields.',
+				},
+				null,
+				2,
+			);
+			return { content: [{ type: 'text' as const, text: guard }] };
+		}
+		return { content: [{ type: 'text' as const, text }] };
 	});
 }
 
@@ -189,7 +294,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_issues',
-		'List issues for a company. Returns up to 50 issues ordered by creation date (newest first). Filter by project_id to scope to one project (the common case), and optionally by status (comma-separated) or assignee_id/assignee_slug to narrow further. The Project State block in your system prompt already gives you the active tickets in the current project — only call this if you need older or terminal tickets, a different project, or a specific status filter.',
+		'List issues for a company. Returns up to 50 issues ordered by creation date (newest first). Filter by project_id to scope to one project (the common case), and optionally by status (comma-separated) or assignee_id/assignee_slug to narrow further. The Project State block in your system prompt already gives you the active tickets in the current project — only call this if you need older or terminal tickets, a different project, or a specific status filter. Pass excerpt_chars (e.g. 300) to truncate description and rules to triage-sized excerpts; omit for full content.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().optional().describe('Filter by project ID'),
@@ -199,6 +304,14 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe('Filter by assignee agent slug (alternative to assignee_id)'),
+			excerpt_chars: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'When set, replaces description and rules with first-paragraph excerpts capped at this many characters, plus _truncated and _length companion fields',
+				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -235,10 +348,19 @@ export function registerTools(
 				idx++;
 			}
 			const r = await db.query(
-				`SELECT i.*, p.name AS project_name FROM issues i JOIN projects p ON p.id = i.project_id WHERE ${conditions.join(' AND ')} ORDER BY i.created_at DESC LIMIT 50`,
+				`SELECT ${ISSUE_COLUMNS}, p.name AS project_name
+				 FROM issues i JOIN projects p ON p.id = i.project_id
+				 WHERE ${conditions.join(' AND ')}
+				 ORDER BY i.created_at DESC LIMIT 50`,
 				params,
 			);
-			return r.rows;
+			const max = args.excerpt_chars as number | undefined;
+			if (max == null) return r.rows;
+			return r.rows.map((row) => {
+				let next = applyExcerpt(row as Record<string, unknown>, 'description', max);
+				next = applyExcerpt(next, 'rules', max);
+				return next;
+			});
 		},
 		db,
 	);
@@ -254,10 +376,10 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const r = await db.query('SELECT * FROM issues WHERE id = $1 AND company_id = $2', [
-				args.issue_id,
-				args.company_id,
-			]);
+			const r = await db.query(
+				`SELECT ${ISSUE_COLUMNS_BARE} FROM issues i WHERE i.id = $1 AND i.company_id = $2`,
+				[args.issue_id, args.company_id],
+			);
 			return r.rows[0] ?? null;
 		},
 		db,
@@ -339,7 +461,7 @@ export function registerTools(
 			const createdByRunId = auth.type === AuthType.Agent ? auth.runId : null;
 			const r = await db.query<{ id: string }>(
 				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, runtime_type)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::issue_status, $11::issue_priority, $12::agent_runtime) RETURNING *`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::issue_status, $11::issue_priority, $12::agent_runtime) RETURNING ${ISSUE_COLUMNS_BARE}`,
 				[
 					args.company_id,
 					args.project_id,
@@ -515,7 +637,7 @@ export function registerTools(
 			if (sets.length === 0) return { unchanged: true };
 			params.push(args.issue_id, args.company_id);
 			const r = await db.query(
-				`UPDATE issues SET ${sets.join(', ')} WHERE id = $${idx} AND company_id = $${idx + 1} RETURNING *`,
+				`UPDATE issues SET ${sets.join(', ')} WHERE id = $${idx} AND company_id = $${idx + 1} RETURNING ${ISSUE_COLUMNS_BARE}`,
 				params,
 			);
 			if (!r.rows[0]) return null;
@@ -659,7 +781,7 @@ export function registerTools(
 
 			const updated = await db.query<Record<string, unknown>>(
 				`UPDATE approvals SET payload = payload || $1::jsonb
-				 WHERE id = $2 RETURNING *`,
+				 WHERE id = $2 RETURNING ${APPROVAL_COLUMNS}`,
 				[JSON.stringify(patch), args.approval_id],
 			);
 			return updated.rows[0] ?? null;
@@ -671,17 +793,27 @@ export function registerTools(
 	tool(
 		server,
 		'list_projects',
-		'List projects for a company',
+		'List projects for a company. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.',
 		{
 			company_id: z.string().describe('Company ID'),
+			excerpt_chars: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('When set, truncates description and adds description_truncated/_length'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const r = await db.query('SELECT * FROM projects WHERE company_id = $1 ORDER BY name', [
-				args.company_id,
-			]);
-			return r.rows;
+			const r = await db.query<Record<string, unknown>>(
+				`SELECT id, company_id, name, slug, issue_prefix, description, created_at, updated_at
+				 FROM projects WHERE company_id = $1 ORDER BY name`,
+				[args.company_id],
+			);
+			const max = args.excerpt_chars as number | undefined;
+			if (max == null) return r.rows;
+			return r.rows.map((row) => applyExcerpt(row, 'description', max));
 		},
 		db,
 	);
@@ -730,27 +862,65 @@ export function registerTools(
 	tool(
 		server,
 		'list_comments',
-		'List comments for an issue',
+		'List comments for an issue. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/issue_link) are always returned whole.',
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
+			before: z
+				.string()
+				.optional()
+				.describe('Comment ID — return only comments created before this one'),
+			excerpt_chars: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'When set, truncates content.text on text-typed comments to this many characters and adds text_truncated/text_length',
+				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			// Verify issue belongs to company
 			const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
 				args.issue_id,
 				args.company_id,
 			]);
 			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
-			const r = await db.query(
-				`SELECT ic.*, COALESCE(ma.title, m.display_name, 'Board') AS author_name
-			 FROM issue_comments ic LEFT JOIN members m ON m.id = ic.author_member_id LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
-			 WHERE ic.issue_id = $1 ORDER BY ic.created_at ASC`,
-				[args.issue_id],
+			const conditions = ['ic.issue_id = $1'];
+			const params: unknown[] = [args.issue_id];
+			if (args.before) {
+				params.push(args.before);
+				conditions.push(
+					`ic.created_at < (SELECT created_at FROM issue_comments WHERE id = $${params.length})`,
+				);
+			}
+			const r = await db.query<Record<string, unknown>>(
+				`SELECT ic.id, ic.issue_id, ic.author_member_id, ic.content_type, ic.content,
+				        ic.chosen_option, ic.created_at,
+				        COALESCE(ma.title, m.display_name, 'Board') AS author_name
+				 FROM issue_comments ic
+				 LEFT JOIN members m ON m.id = ic.author_member_id
+				 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
+				 WHERE ${conditions.join(' AND ')}
+				 ORDER BY ic.created_at DESC LIMIT 50`,
+				params,
 			);
-			return r.rows;
+			const max = args.excerpt_chars as number | undefined;
+			if (max == null) return r.rows;
+			return r.rows.map((row) => {
+				if (row.content_type !== CommentContentType.Text) return row;
+				const content = row.content as { text?: string } | null;
+				const text = content?.text;
+				if (typeof text !== 'string' || text.length <= max) return row;
+				const ex = excerpt(text, max);
+				return {
+					...row,
+					content: { ...content, text: ex.excerpt },
+					text_truncated: ex.truncated,
+					text_length: ex.length,
+				};
+			});
 		},
 		db,
 	);
@@ -806,18 +976,30 @@ export function registerTools(
 	tool(
 		server,
 		'list_approvals',
-		'List pending approvals',
+		'List pending approvals. Pass excerpt_chars (e.g. 500) to truncate long fields inside payload (e.g. skill-proposal content); omit for full payload.',
 		{
 			company_id: z.string().describe('Company ID'),
+			excerpt_chars: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'When set, truncates long string fields inside payload (e.g. skill-proposal content) and adds *_truncated/_length companions',
+				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
-			const r = await db.query(
-				`SELECT * FROM approvals WHERE company_id = $1 AND status = $2::approval_status ORDER BY created_at DESC`,
+			const r = await db.query<Record<string, unknown>>(
+				`SELECT ${APPROVAL_COLUMNS} FROM approvals
+				 WHERE company_id = $1 AND status = $2::approval_status
+				 ORDER BY created_at DESC`,
 				[args.company_id, ApprovalStatus.Pending],
 			);
-			return r.rows;
+			const max = args.excerpt_chars as number | undefined;
+			if (max == null) return r.rows;
+			return r.rows.map((row) => excerptApprovalPayload(row, max));
 		},
 		db,
 	);
@@ -843,7 +1025,7 @@ export function registerTools(
 			const denied = await verifyCompanyAccess(db, auth, existing.rows[0].company_id);
 			if (denied) return { error: denied };
 			const r = await db.query(
-				`UPDATE approvals SET status = $1::approval_status, resolution_note = $2, resolved_at = now() WHERE id = $3 RETURNING *`,
+				`UPDATE approvals SET status = $1::approval_status, resolution_note = $2, resolved_at = now() WHERE id = $3 RETURNING ${APPROVAL_COLUMNS}`,
 				[args.status, args.resolution_note ?? null, args.approval_id],
 			);
 			return r.rows[0] ?? null;
@@ -1300,10 +1482,10 @@ export function registerTools(
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 
-			const result = await db.query('SELECT * FROM skills WHERE company_id = $1 AND slug = $2', [
-				args.company_id,
-				args.slug,
-			]);
+			const result = await db.query(
+				`SELECT ${SKILL_COLUMNS} FROM skills WHERE company_id = $1 AND slug = $2`,
+				[args.company_id, args.slug],
+			);
 			if (result.rows.length === 0) return { error: 'Skill not found' };
 			return result.rows[0];
 		},

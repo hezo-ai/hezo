@@ -820,3 +820,174 @@ describe('MCP tool: operations project assignee restriction', () => {
 		expect(result.error).toContain('CEO');
 	});
 });
+
+describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard', () => {
+	it('list_issues never returns the embedding column', async () => {
+		const rows = (await callToolViaMcp('list_issues', {
+			company_id: companyId,
+			project_id: projectId,
+		})) as Array<Record<string, unknown>>;
+		expect(Array.isArray(rows)).toBe(true);
+		expect(rows.length).toBeGreaterThan(0);
+		for (const row of rows) {
+			expect(row).not.toHaveProperty('embedding');
+			expect(row).toHaveProperty('description');
+			expect(row).toHaveProperty('progress_summary');
+		}
+	});
+
+	it('get_issue never returns the embedding column', async () => {
+		const issue = (await callToolViaMcp('get_issue', {
+			company_id: companyId,
+			issue_id: issueId,
+		})) as Record<string, unknown>;
+		expect(issue).not.toHaveProperty('embedding');
+		expect(issue).toHaveProperty('description');
+	});
+
+	it('list_issues with excerpt_chars returns the excerpt/truncated/length triple', async () => {
+		const longBody = `Paragraph one is the headline.\n\n${'detail '.repeat(200)}`;
+		const created = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Excerpt target',
+			description: longBody,
+			assignee_id: agentId,
+		})) as { id: string };
+
+		const rows = (await callToolViaMcp('list_issues', {
+			company_id: companyId,
+			project_id: projectId,
+			excerpt_chars: 50,
+		})) as Array<Record<string, unknown>>;
+		const target = rows.find((r) => r.id === created.id) as Record<string, unknown>;
+		expect(target).toBeDefined();
+		expect(target).not.toHaveProperty('description');
+		expect(target.description_excerpt).toBe('Paragraph one is the headline.');
+		expect(target.description_truncated).toBe(true);
+		expect(target.description_length).toBe(longBody.length);
+	});
+
+	it('list_issues without excerpt_chars returns the full description', async () => {
+		const body = 'Single short body.';
+		const created = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Full body target',
+			description: body,
+			assignee_id: agentId,
+		})) as { id: string };
+
+		const rows = (await callToolViaMcp('list_issues', {
+			company_id: companyId,
+			project_id: projectId,
+		})) as Array<Record<string, unknown>>;
+		const target = rows.find((r) => r.id === created.id) as Record<string, unknown>;
+		expect(target.description).toBe(body);
+		expect(target).not.toHaveProperty('description_excerpt');
+	});
+
+	it('list_comments caps at 50, walks backward via `before`, and truncates with excerpt_chars', async () => {
+		const issue = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Comment pagination target',
+			assignee_id: agentId,
+		})) as { id: string };
+
+		for (let i = 0; i < 60; i++) {
+			await db.query(
+				`INSERT INTO issue_comments (issue_id, content_type, content)
+				 VALUES ($1, 'text'::comment_content_type, $2::jsonb)`,
+				[issue.id, JSON.stringify({ text: `comment ${i}` })],
+			);
+		}
+
+		const first = (await callToolViaMcp('list_comments', {
+			company_id: companyId,
+			issue_id: issue.id,
+		})) as Array<Record<string, unknown>>;
+		expect(first.length).toBe(50);
+		expect((first[0].content as { text: string }).text).toBe('comment 59');
+
+		const oldest = first[first.length - 1] as { id: string };
+		const next = (await callToolViaMcp('list_comments', {
+			company_id: companyId,
+			issue_id: issue.id,
+			before: oldest.id,
+		})) as Array<Record<string, unknown>>;
+		expect(next.length).toBeGreaterThan(0);
+		expect(next.length).toBeLessThanOrEqual(50);
+		for (const row of next) {
+			expect(row.id).not.toBe(oldest.id);
+		}
+
+		const longText = 'x'.repeat(5000);
+		await db.query(
+			`INSERT INTO issue_comments (issue_id, content_type, content)
+			 VALUES ($1, 'text'::comment_content_type, $2::jsonb)`,
+			[issue.id, JSON.stringify({ text: longText })],
+		);
+		const truncated = (await callToolViaMcp('list_comments', {
+			company_id: companyId,
+			issue_id: issue.id,
+			excerpt_chars: 100,
+		})) as Array<Record<string, unknown>>;
+		const longRow = truncated[0] as {
+			content: { text: string };
+			text_truncated?: boolean;
+			text_length?: number;
+		};
+		expect(longRow.content.text.length).toBeLessThanOrEqual(100);
+		expect(longRow.text_truncated).toBe(true);
+		expect(longRow.text_length).toBe(longText.length);
+	});
+
+	it('returns a structured result_too_large error when serialised output exceeds the byte cap', async () => {
+		const fatProjectRes = await app.request(`/api/companies/${companyId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Fat Result Project', description: 'fatness' }),
+		});
+		const fatProjectId = (await fatProjectRes.json()).data.id;
+
+		const fatBody = 'lorem '.repeat(800);
+		for (let i = 0; i < 8; i++) {
+			await callToolViaMcp('create_issue', {
+				company_id: companyId,
+				project_id: fatProjectId,
+				title: `Fat ticket ${i}`,
+				description: fatBody,
+				assignee_id: agentId,
+			});
+		}
+
+		const result = (await callToolViaMcp('list_issues', {
+			company_id: companyId,
+			project_id: fatProjectId,
+		})) as {
+			error?: string;
+			tool?: string;
+			size_bytes?: number;
+			limit_bytes?: number;
+			hint?: string;
+		};
+		expect(result.error).toBe('result_too_large');
+		expect(result.tool).toBe('list_issues');
+		expect(result.size_bytes).toBeGreaterThan(result.limit_bytes ?? 0);
+		expect(result.hint).toContain('excerpt_chars');
+
+		const slim = (await callToolViaMcp('list_issues', {
+			company_id: companyId,
+			project_id: fatProjectId,
+			excerpt_chars: 200,
+		})) as Array<Record<string, unknown>>;
+		expect(Array.isArray(slim)).toBe(true);
+		expect(slim.length).toBeGreaterThanOrEqual(8);
+		for (const row of slim) {
+			expect(row).toHaveProperty('description_excerpt');
+			expect(row).toHaveProperty('description_truncated');
+			expect(row).toHaveProperty('description_length');
+		}
+	});
+});
