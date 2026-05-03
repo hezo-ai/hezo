@@ -897,9 +897,10 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 
 		for (let i = 0; i < 60; i++) {
 			await db.query(
-				`INSERT INTO issue_comments (issue_id, content_type, content)
-				 VALUES ($1, 'text'::comment_content_type, $2::jsonb)`,
-				[issue.id, JSON.stringify({ text: `comment ${i}` })],
+				`INSERT INTO issue_comments (issue_id, content_type, content, created_at)
+				 VALUES ($1, 'text'::comment_content_type, $2::jsonb,
+				         now() + ($3 || ' milliseconds')::interval)`,
+				[issue.id, JSON.stringify({ text: `comment ${i}` }), i],
 			);
 		}
 
@@ -924,8 +925,9 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 
 		const longText = 'x'.repeat(5000);
 		await db.query(
-			`INSERT INTO issue_comments (issue_id, content_type, content)
-			 VALUES ($1, 'text'::comment_content_type, $2::jsonb)`,
+			`INSERT INTO issue_comments (issue_id, content_type, content, created_at)
+			 VALUES ($1, 'text'::comment_content_type, $2::jsonb,
+			         now() + interval '1 hour')`,
 			[issue.id, JSON.stringify({ text: longText })],
 		);
 		const truncated = (await callToolViaMcp('list_comments', {

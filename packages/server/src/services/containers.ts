@@ -335,6 +335,31 @@ export async function stopContainerGracefully(
 	await broadcastProjectUpdate(db, wsManager, companyId, projectId);
 }
 
+/**
+ * Verify that the container's `/workspace` bind mount is reachable from inside.
+ * Docker Desktop on macOS can leave a container in a state where it inspects as
+ * Running but its bind mounts have gone stale — `docker exec` then fails with
+ * "current working directory is outside of container mount namespace root". Doing
+ * a cheap exec catches that case where `inspectContainer` cannot.
+ */
+export async function verifyContainerWorkspace(
+	docker: DockerClient,
+	containerId: string,
+): Promise<boolean> {
+	try {
+		const execId = await docker.execCreate(containerId, {
+			Cmd: ['ls', '/workspace'],
+			AttachStdout: true,
+			AttachStderr: true,
+		});
+		await docker.execStart(execId);
+		const info = await docker.execInspect(execId);
+		return info.ExitCode === 0;
+	} catch {
+		return false;
+	}
+}
+
 export async function rebuildContainer(
 	deps: ContainerDeps,
 	project: ProjectRow,

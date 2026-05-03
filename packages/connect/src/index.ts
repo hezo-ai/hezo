@@ -1,6 +1,13 @@
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 
+process.on('unhandledRejection', (reason) => {
+	console.error('[connect] unhandledRejection', reason);
+});
+process.on('uncaughtException', (err) => {
+	console.error('[connect] uncaughtException', err);
+});
+
 const config = loadConfig();
 const app = createApp(config);
 

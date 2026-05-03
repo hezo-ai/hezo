@@ -25,7 +25,9 @@ import {
 	type ContainerExitReason,
 	type ContainerTransition,
 	failProjectRuns,
+	rebuildContainer,
 	syncAllContainerStatuses,
+	verifyContainerWorkspace,
 } from './containers';
 import type { DockerClient } from './docker';
 import { recordStatusChange } from './issue-events';
@@ -292,6 +294,64 @@ export class JobManager {
 		}
 
 		await this.selfHealErroredContainers(docker);
+		await this.repairStaleContainerMounts(docker);
+	}
+
+	/**
+	 * Containers that survived a server restart can have stale bind mounts on
+	 * macOS Docker Desktop — they inspect as Running but every exec fails with
+	 * "current working directory is outside of container mount namespace root".
+	 * Probe each running container's `/workspace` and rebuild the broken ones
+	 * so wakeups don't loop on an unrecoverable exec error.
+	 */
+	private async repairStaleContainerMounts(docker: DockerClient): Promise<void> {
+		const { db } = this.deps;
+
+		const running = await db.query<{
+			id: string;
+			company_id: string;
+			slug: string;
+			company_slug: string;
+			container_id: string;
+			container_status: string | null;
+			docker_base_image: string;
+			dev_ports: Array<{ container: number; host: number }>;
+		}>(
+			`SELECT p.id, p.company_id, p.slug, c.slug AS company_slug,
+			        p.container_id, p.container_status, p.docker_base_image, p.dev_ports
+			 FROM projects p
+			 JOIN companies c ON c.id = p.company_id
+			 WHERE p.container_status = $1::container_status AND p.container_id IS NOT NULL`,
+			[ContainerStatus.Running],
+		);
+
+		for (const row of running.rows) {
+			if (!row.container_id) continue;
+			const ok = await verifyContainerWorkspace(docker, row.container_id);
+			if (ok) continue;
+
+			log.warn(
+				`Container ${row.container_id.slice(0, 12)} for project ${row.id} has unreachable /workspace mount — rebuilding`,
+			);
+			try {
+				await rebuildContainer(
+					this.buildContainerDeps(),
+					{
+						id: row.id,
+						company_id: row.company_id,
+						slug: row.slug,
+						docker_base_image: row.docker_base_image,
+						container_id: row.container_id,
+						container_status: row.container_status,
+						dev_ports: row.dev_ports ?? [],
+					},
+					row.company_slug,
+				);
+				log.info(`Rebuilt container for project ${row.id} after stale-mount detection`);
+			} catch (err) {
+				log.error(`Failed to rebuild stale container for project ${row.id}:`, err);
+			}
+		}
 	}
 
 	private async selfHealErroredContainers(docker: DockerClient): Promise<void> {

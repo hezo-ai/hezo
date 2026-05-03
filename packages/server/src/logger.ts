@@ -13,5 +13,5 @@ const minLevel: LogLevel =
 
 export const logger = new Logger({
 	minLevel,
-	transports: [new ConsoleTransport()],
+	transports: [new ConsoleTransport({ showTimestamps: true })],
 });

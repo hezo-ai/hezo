@@ -174,6 +174,11 @@ export function buildApp(
 	const app = new Hono<Env>();
 	logs.setWsManager(wsManager);
 
+	app.onError((err, c) => {
+		log.error(`Unhandled route error on ${c.req.method} ${c.req.path}:`, err);
+		return c.text('Internal Server Error', 500);
+	});
+
 	app.use('*', async (c, next) => {
 		c.set('db', db);
 		c.set('masterKeyManager', masterKeyManager);

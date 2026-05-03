@@ -13,6 +13,11 @@ export function createApp(config: ConnectConfig, fetchFn?: FetchFn): Hono {
 	const nonceStore = new NonceStore();
 	const tokenCodeStore = new TokenCodeStore();
 
+	app.onError((err, c) => {
+		console.error(`[connect] Unhandled route error on ${c.req.method} ${c.req.path}:`, err);
+		return c.text('Internal Server Error', 500);
+	});
+
 	app.route('/', healthRoutes);
 	app.route('/', platformRoutes);
 	app.route('/', signingKeyRoutes(config));

@@ -892,7 +892,7 @@ export function registerTools(
 			if (args.before) {
 				params.push(args.before);
 				conditions.push(
-					`ic.created_at < (SELECT created_at FROM issue_comments WHERE id = $${params.length})`,
+					`(ic.created_at, ic.id) < (SELECT created_at, id FROM issue_comments WHERE id = $${params.length})`,
 				);
 			}
 			const r = await db.query<Record<string, unknown>>(
@@ -903,7 +903,7 @@ export function registerTools(
 				 LEFT JOIN members m ON m.id = ic.author_member_id
 				 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
 				 WHERE ${conditions.join(' AND ')}
-				 ORDER BY ic.created_at DESC LIMIT 50`,
+				 ORDER BY ic.created_at DESC, ic.id DESC LIMIT 50`,
 				params,
 			);
 			const max = args.excerpt_chars as number | undefined;
