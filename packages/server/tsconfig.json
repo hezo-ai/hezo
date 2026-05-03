@@ -2,10 +2,7 @@
 	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
 		"outDir": "dist",
-		"rootDir": "src",
-		"paths": {
-			"@hezo/shared": ["../shared/dist/index.d.ts"]
-		}
+		"rootDir": "src"
 	},
 	"include": ["src"]
 }
