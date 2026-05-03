@@ -162,9 +162,16 @@ test('issue page renders run as an inline comment with live-styled log', async (
 	await expect(runLog).toBeVisible();
 	await expect(runLog).toContainText('[synthetic]', { timeout: 20_000 });
 
+	// LazyMount swaps a 210px placeholder for the 180px log body once the row
+	// intersects the viewport — poll instead of snapshotting so the transition
+	// has time to land on a slow CI runner.
+	await expect
+		.poll(() => runLog.evaluate((el) => el.getBoundingClientRect().height), {
+			timeout: 5_000,
+		})
+		.toBeLessThan(220);
 	const height = await runLog.evaluate((el) => el.getBoundingClientRect().height);
 	expect(height).toBeGreaterThan(150);
-	expect(height).toBeLessThan(220);
 
 	await expect(page.getByTestId('issue-run-log-tail')).toHaveCount(0);
 

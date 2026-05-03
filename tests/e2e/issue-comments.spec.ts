@@ -309,18 +309,23 @@ test.describe('Issue Comments', () => {
 		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
-		// Wait for at least the first comment to render so we know the query resolved.
+		// Wait for the comments list and at least one row to mount — without a
+		// concrete "comments rendered" signal a slow page can race the
+		// assertions below and leave us asserting on an empty document.
+		await expect(page.getByTestId('comments-list')).toBeVisible({ timeout: 20_000 });
 		const items = page.getByTestId('comment-item');
 		await expect(items.first()).toBeVisible({ timeout: 20_000 });
-		await expect(page.getByText('seeded-comment-0')).toBeVisible({ timeout: 20_000 });
 
-		// Virtualization: only a window of rows is mounted at first paint —
-		// the total in-DOM count is well below TOTAL, and a late-thread row
-		// is not yet rendered.
-		const initialCount = await items.count();
-		expect(initialCount).toBeGreaterThan(0);
-		expect(initialCount).toBeLessThan(TOTAL);
+		// Virtualization: only a window of rows is mounted once Virtuoso settles.
+		// Poll instead of snapshotting so a slow CI runner can shrink the initial
+		// over-render window before we assert on it.
+		await expect.poll(() => items.count(), { timeout: 10_000 }).toBeLessThan(TOTAL);
+		await expect.poll(() => items.count()).toBeGreaterThan(0);
 		await expect(page.getByText(`seeded-comment-${TOTAL - 1}`)).toHaveCount(0);
+		// A late-thread comment well outside the initial render window also
+		// must not be in the DOM. We check `seeded-comment-${TOTAL - 5}` too
+		// in case Virtuoso's overscan happens to include the very last row.
+		await expect(page.getByText(`seeded-comment-${TOTAL - 5}`)).toHaveCount(0);
 
 		// Hash deep-link to a comment that is past the initial viewport:
 		// Virtuoso must mount and scroll to it. We pick an index near the
