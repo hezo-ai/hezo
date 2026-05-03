@@ -1,5 +1,3 @@
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
@@ -17,8 +15,9 @@ import type { DockerClient } from './docker';
 import { ensureImage } from './ensure-image';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
+import type { SshAgentServer } from './ssh-agent';
 import { createWakeup } from './wakeup';
-import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
+import { ensureProjectRunDir, ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
 import type { WebSocketManager } from './ws';
 
 export type ContainerExitReason = 'container_error' | 'container_stopped';
@@ -49,6 +48,7 @@ export interface ContainerDeps {
 	wsManager?: WebSocketManager;
 	masterKeyManager?: MasterKeyManager;
 	logs?: LogStreamBroker;
+	sshAgentServer?: SshAgentServer | null;
 }
 
 const PROVISION_CAP_BYTES = 64 * 1024;
@@ -143,21 +143,14 @@ export async function provisionContainer(
 		const worktreesPath = join(projectDir, 'worktrees');
 		const previewsPath = join(projectDir, '.previews');
 
+		const runDir = ensureProjectRunDir(dataDir, companySlug, project.slug);
+
 		const binds = [
 			`${workspacePath}:/workspace:rw`,
 			`${worktreesPath}:/worktrees:rw`,
 			`${previewsPath}:/workspace/.previews:rw`,
+			`${runDir}:/run/hezo:rw`,
 		];
-
-		const gitconfigPath = join(homedir(), '.gitconfig');
-		if (existsSync(gitconfigPath)) {
-			binds.push(`${gitconfigPath}:/root/.gitconfig:ro`);
-		}
-
-		const sshAuthSock = process.env.SSH_AUTH_SOCK;
-		if (sshAuthSock) {
-			binds.push(`${sshAuthSock}:/tmp/ssh-agent.sock`);
-		}
 
 		const portBindings: Record<string, Array<{ HostPort: string }>> = {};
 		const exposedPorts: Record<string, object> = {};
@@ -182,9 +175,6 @@ export async function provisionContainer(
 		const extraHosts = ['host.docker.internal:host-gateway'];
 
 		const env = ['HEZO_API_URL=http://host.docker.internal:3100/agent-api'];
-		if (sshAuthSock) {
-			env.push('SSH_AUTH_SOCK=/tmp/ssh-agent.sock');
-		}
 
 		emit('stdout', `→ Resolving image ${project.docker_base_image}`);
 		await ensureImage(docker, project.docker_base_image, {
@@ -231,6 +221,7 @@ export async function provisionContainer(
 					projectSlug: project.slug,
 				},
 				dataDir,
+				deps.sshAgentServer ?? null,
 				(stream, text) => emit(stream, text),
 			);
 			if (syncRes.failed.length > 0) {

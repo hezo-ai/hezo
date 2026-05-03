@@ -47,9 +47,9 @@ import {
 	type SubscriptionMount as SubscriptionMountImpl,
 } from './runtime-home';
 import { resolveRuntimeForIssue } from './runtime-resolver';
-import { getCompanySSHKey } from './ssh-keys';
+import type { SshAgentServer } from './ssh-agent';
 import { resolveSystemPrompt } from './template-resolver';
-import { getWorkspacePath, getWorktreesPath } from './workspace';
+import { getProjectRunDir, getWorkspacePath, getWorktreesPath } from './workspace';
 import type { WebSocketManager } from './ws';
 
 export interface AgentInfo {
@@ -104,6 +104,7 @@ export interface RunnerDeps {
 	dataDir: string;
 	wsManager?: WebSocketManager;
 	logs: LogStreamBroker;
+	sshAgentServer?: SshAgentServer;
 }
 
 interface RepoRow {
@@ -220,6 +221,7 @@ async function buildRunContext(
 	runtimeType: AgentRuntime,
 	heartbeatRunId: string,
 	modelOverride: string | null,
+	sshSocketContainerPath: string | null,
 ): Promise<RunContext> {
 	const storedPrompt = await getAgentSystemPrompt(deps.db, agent.company_id, agent.id);
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, storedPrompt, {
@@ -333,6 +335,9 @@ async function buildRunContext(
 		...(subscriptionMount?.envEntries ?? (homeMount ? [homeMount.envEntry] : [])),
 		...mcpInjection.envEntries,
 	];
+	if (sshSocketContainerPath) {
+		env.push(`SSH_AUTH_SOCK=${sshSocketContainerPath}`);
+	}
 
 	const cliCommand = RUNTIME_COMMANDS[runtimeType];
 	const modelArgs = modelOverride ? ['--model', modelOverride] : [];
@@ -533,6 +538,19 @@ export async function runAgent(
 
 	await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast);
 
+	let sshSocketContainerPath: string | null = null;
+	let sshSocketHostPath: string | null = null;
+	if (deps.sshAgentServer) {
+		const runDir = getProjectRunDir(deps.dataDir, project.company_slug, project.slug);
+		sshSocketHostPath = join(runDir, `${heartbeatRunId}.sock`);
+		await deps.sshAgentServer.allocateRunSocket(
+			heartbeatRunId,
+			{ companyId: agent.company_id, agentId: agent.id },
+			sshSocketHostPath,
+		);
+		sshSocketContainerPath = `/run/hezo/${heartbeatRunId}.sock`;
+	}
+
 	const context = await buildRunContext(
 		deps,
 		agent,
@@ -544,6 +562,7 @@ export async function runAgent(
 		runtimeType,
 		heartbeatRunId,
 		modelOverride,
+		sshSocketContainerPath,
 	);
 
 	if (signal?.aborted) {
@@ -552,10 +571,13 @@ export async function runAgent(
 		if (dirToRemove) {
 			rmSync(dirToRemove, { recursive: true, force: true });
 		}
+		if (deps.sshAgentServer) {
+			await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
+		}
 		return finalizeAbort();
 	}
 
-	const prep = await prepareWorktrees(deps, project, issue, emit, signal);
+	const prep = await prepareWorktrees(deps, project, issue, emit, sshSocketHostPath, signal);
 
 	const hostPromptPath = getHostPromptPath(
 		deps.dataDir,
@@ -607,6 +629,9 @@ export async function runAgent(
 		const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
 		if (dirToRemove) {
 			rmSync(dirToRemove, { recursive: true, force: true });
+		}
+		if (deps.sshAgentServer) {
+			await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
 		}
 		releaseCredentialLock?.();
 	};
@@ -708,6 +733,7 @@ async function prepareWorktrees(
 	project: ProjectInfo,
 	issue: IssueInfo,
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
+	sshSocketHostPath: string | null,
 	signal?: AbortSignal,
 ): Promise<{ workingDir: string; designatedRepo: RepoRow | null }> {
 	const repos = await deps.db.query<RepoRow>(
@@ -732,6 +758,7 @@ async function prepareWorktrees(
 			projectSlug: project.slug,
 		},
 		deps.dataDir,
+		deps.sshAgentServer ?? null,
 		(stream, text) => emit(stream, `${text}\n`),
 	);
 	if (syncRes.cloned.length > 0) {
@@ -739,8 +766,6 @@ async function prepareWorktrees(
 	}
 
 	if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
-
-	const companySshKey = await getCompanySSHKey(deps.db, project.company_id, deps.masterKeyManager);
 
 	const workspaceRoot = getWorkspacePath(deps.dataDir, project.company_slug, project.slug);
 	const worktreesRoot = getWorktreesPath(deps.dataDir, project.company_slug, project.slug);
@@ -759,9 +784,9 @@ async function prepareWorktrees(
 			continue;
 		}
 
-		if (companySshKey) {
+		if (sshSocketHostPath) {
 			emit('stdout', `git fetch ${repo.short_name}...\n`);
-			const fetchRes = await fetchRepo(repoDir, companySshKey.privateKey);
+			const fetchRes = await fetchRepo(repoDir, sshSocketHostPath);
 			if (fetchRes.success) {
 				emit('stdout', `git fetch ${repo.short_name} done\n`);
 			} else {

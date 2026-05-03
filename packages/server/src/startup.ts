@@ -47,6 +47,7 @@ import { uiStateRoutes } from './routes/ui-state';
 import { DockerClient } from './services/docker';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
+import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
 
 export type { HezoConfig };
@@ -70,6 +71,7 @@ export interface StartupResult {
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
 	logs: LogStreamBroker;
+	sshAgentServer: SshAgentServer;
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
@@ -110,6 +112,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
+	const sshAgentServer = new SshAgentServer({ db, masterKeyManager });
+	await cleanupOrphanRunSockets(db, config.dataDir);
 	const jobManager = new JobManager({
 		db,
 		docker,
@@ -118,6 +122,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		dataDir: config.dataDir,
 		wsManager,
 		logs,
+		sshAgentServer,
 	});
 
 	masterKeyManager.onUnlock(() => {
@@ -147,6 +152,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		wsManager,
 		jobManager,
 		logs,
+		sshAgentServer,
 	);
 
 	return {
@@ -159,6 +165,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker,
 		masterKeyManager,
 		logs,
+		sshAgentServer,
 	};
 }
 
@@ -170,6 +177,7 @@ export function buildApp(
 	wsManager: WebSocketManager = new WebSocketManager(),
 	jobManager?: JobManager,
 	logs: LogStreamBroker = new LogStreamBroker(),
+	sshAgentServer: SshAgentServer | null = null,
 ): Hono<Env> {
 	const app = new Hono<Env>();
 	logs.setWsManager(wsManager);
@@ -190,11 +198,12 @@ export function buildApp(
 		c.set('connectUrl', config.connectUrl);
 		c.set('connectPublicKey', config.connectPublicKey);
 		c.set('webUrl', config.webUrl);
+		c.set('sshAgentServer', sshAgentServer);
 		return next();
 	});
 
 	// Initialize MCP server
-	initMcpServer(db, config.dataDir, wsManager);
+	initMcpServer(db, config.dataDir, masterKeyManager, wsManager);
 
 	// Public routes
 	app.route('/', healthRoutes);
@@ -298,6 +307,36 @@ export function buildApp(
 	}
 
 	return app;
+}
+
+async function cleanupOrphanRunSockets(db: PGlite, dataDir: string): Promise<void> {
+	const fs = await import('node:fs/promises');
+	const { join } = await import('node:path');
+	const companiesDir = join(dataDir, 'companies');
+	if (!existsSync(companiesDir)) return;
+
+	const liveRunIds = new Set<string>();
+	try {
+		const live = await db.query<{ id: string }>(
+			"SELECT id FROM heartbeat_runs WHERE status = 'running'",
+		);
+		for (const row of live.rows) liveRunIds.add(row.id);
+	} catch {
+		return;
+	}
+
+	for (const company of await fs.readdir(companiesDir).catch(() => [])) {
+		const projectsDir = join(companiesDir, company, 'projects');
+		for (const project of await fs.readdir(projectsDir).catch(() => [])) {
+			const runDir = join(projectsDir, project, 'run');
+			for (const entry of await fs.readdir(runDir).catch(() => [])) {
+				if (!entry.endsWith('.sock')) continue;
+				const runId = entry.replace(/\.sock$/, '').replace(/^bootstrap-/, '');
+				if (liveRunIds.has(runId)) continue;
+				await fs.rm(join(runDir, entry), { force: true }).catch(() => undefined);
+			}
+		}
+	}
 }
 
 async function fetchConnectPublicKey(connectUrl: string): Promise<string> {

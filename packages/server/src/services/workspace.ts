@@ -34,6 +34,24 @@ export function ensureProjectWorkspace(
 	return projectDir;
 }
 
+export function ensureProjectRunDir(
+	dataDir: string,
+	companySlug: string,
+	projectSlug: string,
+): string {
+	const runDir = join(getProjectDir(dataDir, companySlug, projectSlug), 'run');
+	mkdirSync(runDir, { recursive: true, mode: 0o700 });
+	return runDir;
+}
+
+export function getProjectRunDir(
+	dataDir: string,
+	companySlug: string,
+	projectSlug: string,
+): string {
+	return join(getProjectDir(dataDir, companySlug, projectSlug), 'run');
+}
+
 export function removeProjectWorkspace(
 	dataDir: string,
 	companySlug: string,

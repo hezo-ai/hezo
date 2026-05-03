@@ -236,6 +236,7 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 					projectSlug: locator.slug,
 				},
 				dataDir,
+				c.get('sshAgentServer'),
 			);
 			const failed = syncRes.failed.find((f) => f.short_name === insertedRepo.short_name);
 			if (failed) {

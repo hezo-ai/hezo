@@ -1,11 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { logger } from '../logger';
 import { cloneRepo } from './git';
+import type { SshAgentServer } from './ssh-agent';
 import { getCompanySSHKey } from './ssh-keys';
-import { getWorkspacePath, getWorktreesPath } from './workspace';
+import { ensureProjectRunDir, getWorkspacePath, getWorktreesPath } from './workspace';
 
 const log = logger.child('repo-sync');
 
@@ -29,6 +31,7 @@ export async function ensureProjectRepos(
 	masterKeyManager: MasterKeyManager,
 	project: ProjectIdentity,
 	dataDir: string,
+	sshAgentServer: SshAgentServer | null,
 	logEmit?: LogEmitter,
 ): Promise<RepoSyncResult> {
 	const result: RepoSyncResult = { cloned: [], skipped: [], failed: [] };
@@ -66,19 +69,41 @@ export async function ensureProjectRepos(
 		return result;
 	}
 
-	for (const r of pending) {
-		const targetDir = join(workspacePath, r.short_name);
-		logEmit?.('stdout', `→ Cloning ${r.repo_identifier} into ${r.short_name}/`);
-		const clone = await cloneRepo(r.repo_identifier, targetDir, sshKey.privateKey);
-		if (clone.success) {
-			logEmit?.('stdout', `✓ Cloned ${r.short_name}`);
-			result.cloned.push(r.short_name);
-		} else {
-			const errMsg = clone.error ?? 'unknown error';
-			logEmit?.('stderr', `✗ Clone failed for ${r.short_name}: ${errMsg}`);
-			result.failed.push({ short_name: r.short_name, error: errMsg });
-			log.error(`Failed to clone ${r.repo_identifier}`, errMsg);
+	if (!sshAgentServer) {
+		const msg = 'SSH agent server not available — cannot clone repositories';
+		logEmit?.('stderr', `✗ ${msg}`);
+		for (const r of pending) {
+			result.failed.push({ short_name: r.short_name, error: msg });
 		}
+		return result;
+	}
+
+	const bootstrapRunId = `bootstrap-${randomUUID()}`;
+	const runDir = ensureProjectRunDir(dataDir, project.companySlug, project.projectSlug);
+	const sshSocketHostPath = join(runDir, `${bootstrapRunId}.sock`);
+	await sshAgentServer.allocateRunSocket(
+		bootstrapRunId,
+		{ companyId: project.company_id, agentId: project.id },
+		sshSocketHostPath,
+	);
+
+	try {
+		for (const r of pending) {
+			const targetDir = join(workspacePath, r.short_name);
+			logEmit?.('stdout', `→ Cloning ${r.repo_identifier} into ${r.short_name}/`);
+			const clone = await cloneRepo(r.repo_identifier, targetDir, sshSocketHostPath);
+			if (clone.success) {
+				logEmit?.('stdout', `✓ Cloned ${r.short_name}`);
+				result.cloned.push(r.short_name);
+			} else {
+				const errMsg = clone.error ?? 'unknown error';
+				logEmit?.('stderr', `✗ Clone failed for ${r.short_name}: ${errMsg}`);
+				result.failed.push({ short_name: r.short_name, error: errMsg });
+				log.error(`Failed to clone ${r.repo_identifier}`, errMsg);
+			}
+		}
+	} finally {
+		await sshAgentServer.releaseRunSocket(bootstrapRunId);
 	}
 
 	return result;

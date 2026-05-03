@@ -34,6 +34,7 @@ import { recordStatusChange } from './issue-events';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans } from './orphan-detector';
 import { ensureRepoSetupAction } from './repo-setup';
+import type { SshAgentServer } from './ssh-agent';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -70,6 +71,7 @@ export interface JobManagerDeps {
 	dataDir: string;
 	wsManager: WebSocketManager;
 	logs: LogStreamBroker;
+	sshAgentServer?: SshAgentServer;
 }
 
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
@@ -806,6 +808,7 @@ export class JobManager {
 			dataDir: this.deps.dataDir,
 			wsManager: this.deps.wsManager,
 			logs: this.deps.logs,
+			sshAgentServer: this.deps.sshAgentServer,
 		};
 		const timeoutMs = agent.rows[0].heartbeat_interval_min * 60 * 1000;
 

@@ -48,7 +48,7 @@ CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopping', 'stopped', 'error');
 CREATE TYPE issue_status AS ENUM ('backlog', 'in_progress', 'review', 'approved', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');
-CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run', 'action');
+CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run', 'action', 'credential_request');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'company');
@@ -58,7 +58,7 @@ CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
 CREATE TYPE platform_type AS ENUM ('github', 'gmail', 'gitlab', 'stripe', 'posthog', 'railway', 'vercel', 'digitalocean', 'x', 'anthropic', 'openai', 'google');
 CREATE TYPE connection_status AS ENUM ('active', 'expired', 'disconnected');
-CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'comment', 'reply', 'heartbeat');
+CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'credential_provided', 'comment', 'reply', 'heartbeat');
 CREATE TYPE wakeup_status AS ENUM ('queued', 'claimed', 'completed', 'failed', 'skipped', 'coalesced', 'deferred', 'cancelled');
 CREATE TYPE heartbeat_run_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'timed_out');
 CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
@@ -327,14 +327,16 @@ ALTER TABLE projects ADD CONSTRAINT fk_projects_designated_repo
 -------------------------------------------------------------------------------
 
 CREATE TABLE secrets (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    project_id      UUID REFERENCES projects(id) ON DELETE CASCADE,
-    name            TEXT NOT NULL,
-    encrypted_value TEXT NOT NULL,
-    category        secret_category NOT NULL DEFAULT 'other',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id       UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    project_id       UUID REFERENCES projects(id) ON DELETE CASCADE,
+    name             TEXT NOT NULL,
+    encrypted_value  TEXT NOT NULL,
+    category         secret_category NOT NULL DEFAULT 'other',
+    allowed_hosts    TEXT[] NOT NULL DEFAULT '{}',
+    allow_all_hosts  BOOLEAN NOT NULL DEFAULT false,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     UNIQUE (company_id, project_id, name)
 );

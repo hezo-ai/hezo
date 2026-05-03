@@ -1,7 +1,5 @@
 import { execFile } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
 
@@ -45,45 +43,26 @@ export function buildGitSshUrl(hostType: RepoHostType, repoIdentifier: string): 
 	return `${host}:${repoIdentifier}.git`;
 }
 
-function sshEnvWithKey(sshPrivateKeyPem: string): {
-	env: Record<string, string>;
-	cleanup: () => void;
-} {
-	const keyFile = join(tmpdir(), `hezo-ssh-${randomBytes(8).toString('hex')}`);
-	writeFileSync(keyFile, sshPrivateKeyPem, { mode: 0o600 });
-	chmodSync(keyFile, 0o600);
+function sshEnvWithSocket(sshAuthSock: string): Record<string, string> {
 	return {
-		env: {
-			GIT_SSH_COMMAND: `ssh -i ${keyFile} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10`,
-		},
-		cleanup: () => {
-			try {
-				unlinkSync(keyFile);
-			} catch {
-				// Best effort
-			}
-		},
+		SSH_AUTH_SOCK: sshAuthSock,
+		GIT_SSH_COMMAND: `ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10`,
 	};
 }
 
 export async function cloneRepo(
 	repoIdentifier: string,
 	targetDir: string,
-	sshPrivateKeyPem: string,
+	sshAuthSock: string,
 	hostType: RepoHostType = RepoHostType.GitHub,
 ): Promise<{ success: boolean; error?: string }> {
 	const sshUrl = buildGitSshUrl(hostType, repoIdentifier);
-	const { env, cleanup } = sshEnvWithKey(sshPrivateKeyPem);
-	try {
-		const { exitCode, stderr } = await spawn('git', ['clone', sshUrl, targetDir], {
-			env,
-			timeout: 120_000,
-		});
-		if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
-		return { success: true };
-	} finally {
-		cleanup();
-	}
+	const { exitCode, stderr } = await spawn('git', ['clone', sshUrl, targetDir], {
+		env: sshEnvWithSocket(sshAuthSock),
+		timeout: 120_000,
+	});
+	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
+	return { success: true };
 }
 
 export async function createWorktree(
@@ -103,20 +82,15 @@ export async function createWorktree(
 
 export async function fetchRepo(
 	repoDir: string,
-	sshPrivateKeyPem: string,
+	sshAuthSock: string,
 ): Promise<{ success: boolean; error?: string }> {
-	const { env, cleanup } = sshEnvWithKey(sshPrivateKeyPem);
-	try {
-		const { exitCode, stderr } = await spawn('git', ['fetch', '--all', '--prune'], {
-			cwd: repoDir,
-			env,
-			timeout: 60_000,
-		});
-		if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
-		return { success: true };
-	} finally {
-		cleanup();
-	}
+	const { exitCode, stderr } = await spawn('git', ['fetch', '--all', '--prune'], {
+		cwd: repoDir,
+		env: sshEnvWithSocket(sshAuthSock),
+		timeout: 60_000,
+	});
+	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
+	return { success: true };
 }
 
 export async function ensureIssueWorktree(

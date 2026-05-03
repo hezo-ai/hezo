@@ -88,8 +88,26 @@ export const CommentContentType = {
 	System: 'system',
 	Run: 'run',
 	Action: 'action',
+	CredentialRequest: 'credential_request',
 } as const;
 export type CommentContentType = (typeof CommentContentType)[keyof typeof CommentContentType];
+
+export const CredentialKind = {
+	ApiKey: 'api_key',
+	SshPrivateKey: 'ssh_private_key',
+	GithubPat: 'github_pat',
+	OauthToken: 'oauth_token',
+	WebhookSecret: 'webhook_secret',
+	Other: 'other',
+} as const;
+export type CredentialKind = (typeof CredentialKind)[keyof typeof CredentialKind];
+
+export const CredentialInputType = {
+	Text: 'text',
+	Textarea: 'textarea',
+	File: 'file',
+} as const;
+export type CredentialInputType = (typeof CredentialInputType)[keyof typeof CredentialInputType];
 
 export const ActionCommentKind = {
 	SetupRepo: 'setup_repo',
@@ -177,6 +195,7 @@ export const WakeupSource = {
 	Mention: 'mention',
 	Automation: 'automation',
 	OptionChosen: 'option_chosen',
+	CredentialProvided: 'credential_provided',
 	Comment: 'comment',
 	Reply: 'reply',
 	Heartbeat: 'heartbeat',
