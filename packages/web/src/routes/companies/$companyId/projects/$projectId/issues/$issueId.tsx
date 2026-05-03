@@ -7,7 +7,8 @@ import {
 } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Info, Loader2, Plus, Trash2 } from 'lucide-react';
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -130,6 +131,18 @@ function IssueDetailPage() {
 	const [closeOpen, setCloseOpen] = useState(false);
 	const [reopenOpen, setReopenOpen] = useState(false);
 	const assigneeRef = useRef<HTMLDivElement>(null);
+	const virtuosoRef = useRef<VirtuosoHandle>(null);
+	const didScrollToHashRef = useRef(false);
+	// The app shell wraps the route in `<main className="flex-1 overflow-auto">`
+	// (see __root.tsx). The window never scrolls — that <main> does — so
+	// Virtuoso needs `customScrollParent` pointing at it for measurement and
+	// scroll restoration to work. Resolve before paint so Virtuoso's first
+	// mount is wired to the right scroll container.
+	const [scrollParent, setScrollParent] = useState<HTMLElement | null>(null);
+	useLayoutEffect(() => {
+		if (typeof document === 'undefined') return;
+		setScrollParent(document.querySelector('main'));
+	}, []);
 
 	useEffect(() => {
 		if (!assigneeOpen) return;
@@ -145,11 +158,53 @@ function IssueDetailPage() {
 	useEffect(() => {
 		if (!comments || comments.length === 0) return;
 		if (typeof window === 'undefined') return;
-		if (window.location.hash !== '#setup-repo') return;
-		const target = document.querySelector('[data-setup-repo-anchor]');
-		if (!target) return;
-		target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-		window.history.replaceState(null, '', window.location.pathname + window.location.search);
+
+		// Resolve the current hash (a specific comment via `#comment-<id>`, or
+		// the unresolved setup-repo action card via `#setup-repo`) to its
+		// index in the loaded comments list and tell Virtuoso to scroll there.
+		// `scrollToIndex` is computed off estimated row heights, so iterate a
+		// few times: each pass mounts more rows, grows the measured document,
+		// and the next call lands closer to the target.
+		const scrollToHash = () => {
+			const hash = window.location.hash;
+			let idx = -1;
+			if (hash.startsWith('#comment-')) {
+				const targetId = hash.slice('#comment-'.length);
+				idx = comments.findIndex((c) => c.id === targetId);
+			} else if (hash === '#setup-repo') {
+				idx = comments.findIndex((c) => {
+					if (c.content_type !== 'action') return false;
+					const content = typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
+					return content?.kind === 'setup_repo' && !c.chosen_option;
+				});
+			}
+			if (idx < 0) return [] as ReturnType<typeof setTimeout>[];
+			const out: ReturnType<typeof setTimeout>[] = [];
+			for (const delay of [16, 200, 600, 1500]) {
+				out.push(
+					setTimeout(() => {
+						virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center' });
+					}, delay),
+				);
+			}
+			if (hash === '#setup-repo') {
+				window.history.replaceState(null, '', window.location.pathname + window.location.search);
+			}
+			return out;
+		};
+
+		const initialTimers = didScrollToHashRef.current ? [] : scrollToHash();
+		didScrollToHashRef.current = true;
+
+		const allTimers: ReturnType<typeof setTimeout>[] = [...initialTimers];
+		const onHashChange = () => {
+			allTimers.push(...scrollToHash());
+		};
+		window.addEventListener('hashchange', onHashChange);
+		return () => {
+			window.removeEventListener('hashchange', onHashChange);
+			for (const t of allTimers) clearTimeout(t);
+		};
 	}, [comments]);
 
 	const assignedAgent = agents?.find((a) => a.id === issue?.assignee_id);
@@ -493,86 +548,97 @@ function IssueDetailPage() {
 						</span>
 					</div>
 
-					<div className="flex flex-col gap-4 mb-4">
-						{comments?.map((c) => {
-							const commentData = c as unknown as CommentData;
-							const authorName = c.author_name ?? 'Board';
-							const isAgent = c.author_type === 'agent';
-							const content =
-								typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
-							const isPendingSetupRepo =
-								c.content_type === 'action' && content?.kind === 'setup_repo' && !c.chosen_option;
+					<div className="mb-4" data-testid="comments-list">
+						{scrollParent && (
+							<Virtuoso
+								ref={virtuosoRef}
+								customScrollParent={scrollParent}
+								data={comments ?? []}
+								computeItemKey={(_, c) => c.id}
+								followOutput="auto"
+								defaultItemHeight={120}
+								increaseViewportBy={{ top: 600, bottom: 600 }}
+								itemContent={(_, c) => {
+									const commentData = c as unknown as CommentData;
+									const authorName = c.author_name ?? 'Board';
+									const isAgent = c.author_type === 'agent';
+									const content =
+										typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
+									const isPendingSetupRepo =
+										c.content_type === 'action' &&
+										content?.kind === 'setup_repo' &&
+										!c.chosen_option;
 
-							if (isInlineEventType(c.content_type)) {
-								const Icon = inlineEventIcon(commentData);
-								return (
-									<div
-										key={c.id}
-										id={`comment-${c.id}`}
-										className="flex items-start gap-2.5 scroll-mt-20"
-										data-testid="comment-item"
-									>
-										<div className="w-[26px] h-[26px] flex items-center justify-center shrink-0 text-text-subtle">
-											<Icon className="w-3.5 h-3.5" />
-										</div>
-										<div className="flex-1 min-w-0">
-											<CommentRenderer
-												comment={commentData}
-												onChooseOption={(commentId, chosenId) =>
-													chooseOption.mutate({ commentId, chosen_id: chosenId })
-												}
-												companyId={companyId}
-												projectId={issue?.project_id ?? undefined}
-												projectSlug={issueProjectSlug}
-												issueId={issue?.id ?? undefined}
-												inline
-											/>
-										</div>
-									</div>
-								);
-							}
-
-							return (
-								<div
-									key={c.id}
-									id={`comment-${c.id}`}
-									className="flex gap-2.5 scroll-mt-20"
-									data-testid="comment-item"
-									{...(isPendingSetupRepo ? { 'data-setup-repo-anchor': '' } : {})}
-								>
-									<Avatar
-										initials={authorName.slice(0, 2)}
-										size="sm"
-										color={avatarColorFromString(authorName)}
-									/>
-									<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-elevated overflow-hidden">
-										<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-muted">
-											<span
-												className={`text-xs font-medium ${isAgent ? 'text-text' : 'text-text-muted'}`}
-												data-testid="comment-author"
+									if (isInlineEventType(c.content_type)) {
+										const Icon = inlineEventIcon(commentData);
+										return (
+											<div
+												id={`comment-${c.id}`}
+												className="flex items-start gap-2.5 scroll-mt-20 pb-4"
+												data-testid="comment-item"
 											>
-												{authorName}
-											</span>
-											<span className="text-[11px] text-text-subtle">
-												{new Date(c.created_at).toLocaleString()}
-											</span>
-										</div>
-										<div className="px-3 py-2.5">
-											<CommentRenderer
-												comment={commentData}
-												onChooseOption={(commentId, chosenId) =>
-													chooseOption.mutate({ commentId, chosen_id: chosenId })
-												}
-												companyId={companyId}
-												projectId={issue?.project_id ?? undefined}
-												projectSlug={issueProjectSlug}
-												issueId={issue?.id ?? undefined}
+												<div className="w-[26px] h-[26px] flex items-center justify-center shrink-0 text-text-subtle">
+													<Icon className="w-3.5 h-3.5" />
+												</div>
+												<div className="flex-1 min-w-0">
+													<CommentRenderer
+														comment={commentData}
+														onChooseOption={(commentId, chosenId) =>
+															chooseOption.mutate({ commentId, chosen_id: chosenId })
+														}
+														companyId={companyId}
+														projectId={issue?.project_id ?? undefined}
+														projectSlug={issueProjectSlug}
+														issueId={issue?.id ?? undefined}
+														inline
+													/>
+												</div>
+											</div>
+										);
+									}
+
+									return (
+										<div
+											id={`comment-${c.id}`}
+											className="flex gap-2.5 scroll-mt-20 pb-4"
+											data-testid="comment-item"
+											{...(isPendingSetupRepo ? { 'data-setup-repo-anchor': '' } : {})}
+										>
+											<Avatar
+												initials={authorName.slice(0, 2)}
+												size="sm"
+												color={avatarColorFromString(authorName)}
 											/>
+											<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-elevated overflow-hidden">
+												<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-muted">
+													<span
+														className={`text-xs font-medium ${isAgent ? 'text-text' : 'text-text-muted'}`}
+														data-testid="comment-author"
+													>
+														{authorName}
+													</span>
+													<span className="text-[11px] text-text-subtle">
+														{new Date(c.created_at).toLocaleString()}
+													</span>
+												</div>
+												<div className="px-3 py-2.5">
+													<CommentRenderer
+														comment={commentData}
+														onChooseOption={(commentId, chosenId) =>
+															chooseOption.mutate({ commentId, chosen_id: chosenId })
+														}
+														companyId={companyId}
+														projectId={issue?.project_id ?? undefined}
+														projectSlug={issueProjectSlug}
+														issueId={issue?.id ?? undefined}
+													/>
+												</div>
+											</div>
 										</div>
-									</div>
-								</div>
-							);
-						})}
+									);
+								}}
+							/>
+						)}
 					</div>
 
 					<form onSubmit={handleComment} className="flex flex-col gap-2">
@@ -832,9 +898,18 @@ function RunningAgentsLine({
 				key={l.id}
 				href={`#${targetId}`}
 				onClick={(e) => {
+					// Drive scroll via the hash so the issue page's hashchange handler
+					// can ask Virtuoso to mount and scroll to the row even when it
+					// isn't currently in the DOM. Falling back to scrollIntoView
+					// alone silently fails for off-screen virtualized rows.
 					e.preventDefault();
-					document.getElementById(targetId)?.scrollIntoView({ block: 'center' });
-					window.history.replaceState(null, '', `#${targetId}`);
+					const next = `#${targetId}`;
+					if (window.location.hash === next) {
+						window.dispatchEvent(new HashChangeEvent('hashchange'));
+					} else {
+						window.history.pushState(null, '', next);
+						window.dispatchEvent(new HashChangeEvent('hashchange'));
+					}
 				}}
 				className="text-accent-blue-text font-medium hover:underline"
 			>

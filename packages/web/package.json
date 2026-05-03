@@ -29,6 +29,7 @@
 		"react": "^19",
 		"react-dom": "^19",
 		"react-markdown": "^10",
+		"react-virtuoso": "^4",
 		"reconnecting-websocket": "^4.4.0",
 		"remark-gfm": "^4"
 	},
