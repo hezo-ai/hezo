@@ -4,6 +4,7 @@ import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireCompanyAccess } from '../middleware/auth';
+import { isValidHostPattern } from '../services/secret-proxy';
 
 export const secretsRoutes = new Hono<Env>();
 
@@ -16,7 +17,7 @@ secretsRoutes.get('/companies/:companyId/secrets', async (c) => {
 	const projectId = c.req.query('project_id');
 
 	let query = `
-    SELECT s.id, s.company_id, s.project_id, s.name, s.category, s.created_at, s.updated_at,
+    SELECT s.id, s.company_id, s.project_id, s.name, s.category, s.host_allowlist, s.created_at, s.updated_at,
            p.name AS project_name,
            (SELECT count(*) FROM secret_grants sg WHERE sg.secret_id = s.id AND sg.revoked_at IS NULL)::int AS grant_count
     FROM secrets s
@@ -47,10 +48,22 @@ secretsRoutes.post('/companies/:companyId/secrets', async (c) => {
 		value: string;
 		project_id?: string;
 		category?: string;
+		host_allowlist?: string[];
 	}>();
 
 	if (!body.name?.trim() || !body.value) {
 		return err(c, 'INVALID_REQUEST', 'name and value are required', 400);
+	}
+
+	if (body.host_allowlist !== undefined) {
+		if (!Array.isArray(body.host_allowlist)) {
+			return err(c, 'INVALID_REQUEST', 'host_allowlist must be an array of strings', 400);
+		}
+		for (const entry of body.host_allowlist) {
+			if (!isValidHostPattern(entry)) {
+				return err(c, 'INVALID_REQUEST', 'host_allowlist contains an invalid pattern', 400);
+			}
+		}
 	}
 
 	const key = masterKeyManager.getKey();
@@ -62,15 +75,16 @@ secretsRoutes.post('/companies/:companyId/secrets', async (c) => {
 	const encryptedValue = encrypt(body.value, key);
 
 	const result = await db.query(
-		`INSERT INTO secrets (company_id, project_id, name, encrypted_value, category)
-     VALUES ($1, $2, $3, $4, $5::secret_category)
-     RETURNING id, company_id, project_id, name, category, created_at, updated_at`,
+		`INSERT INTO secrets (company_id, project_id, name, encrypted_value, category, host_allowlist)
+     VALUES ($1, $2, $3, $4, $5::secret_category, $6::jsonb)
+     RETURNING id, company_id, project_id, name, category, host_allowlist, created_at, updated_at`,
 		[
 			companyId,
 			body.project_id ?? null,
 			body.name.trim(),
 			encryptedValue,
 			body.category ?? SecretCategory.Other,
+			JSON.stringify(body.host_allowlist ?? []),
 		],
 	);
 
@@ -104,6 +118,7 @@ secretsRoutes.patch('/companies/:companyId/secrets/:secretId', async (c) => {
 	const body = await c.req.json<{
 		value?: string;
 		category?: string;
+		host_allowlist?: string[];
 	}>();
 
 	const sets: string[] = [];
@@ -127,6 +142,20 @@ secretsRoutes.patch('/companies/:companyId/secrets/:secretId', async (c) => {
 		idx++;
 	}
 
+	if (body.host_allowlist !== undefined) {
+		if (!Array.isArray(body.host_allowlist)) {
+			return err(c, 'INVALID_REQUEST', 'host_allowlist must be an array of strings', 400);
+		}
+		for (const entry of body.host_allowlist) {
+			if (!isValidHostPattern(entry)) {
+				return err(c, 'INVALID_REQUEST', 'host_allowlist contains an invalid pattern', 400);
+			}
+		}
+		sets.push(`host_allowlist = $${idx}::jsonb`);
+		params.push(JSON.stringify(body.host_allowlist));
+		idx++;
+	}
+
 	if (sets.length === 0) {
 		return ok(c, existing.rows[0]);
 	}
@@ -134,7 +163,7 @@ secretsRoutes.patch('/companies/:companyId/secrets/:secretId', async (c) => {
 	params.push(secretId);
 	const result = await db.query(
 		`UPDATE secrets SET ${sets.join(', ')} WHERE id = $${idx}
-     RETURNING id, company_id, project_id, name, category, created_at, updated_at`,
+     RETURNING id, company_id, project_id, name, category, host_allowlist, created_at, updated_at`,
 		params,
 	);
 

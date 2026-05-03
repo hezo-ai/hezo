@@ -85,15 +85,29 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 	if (PUBLIC_PATHS.includes(path)) return next();
 	if (!path.startsWith('/api') && !path.startsWith('/agent-api')) return next();
 
-	const header = c.req.header('Authorization');
-	if (!header?.startsWith('Bearer ')) {
+	// Agent JWT travels on a Hezo-specific header so the upstream-bound
+	// `Authorization` header on proxy requests is free for placeholder
+	// substitution. Falls back to `Authorization: Bearer ...` for board JWTs
+	// and API keys, which never collide with upstream-bound credentials.
+	const agentHeader = c.req.header('X-Hezo-Agent-Token');
+	const authHeader = c.req.header('Authorization');
+
+	let token: string | null = null;
+	let agentOnly = false;
+	if (agentHeader && agentHeader.length > 0) {
+		token = agentHeader;
+		agentOnly = true;
+	} else if (authHeader?.startsWith('Bearer ')) {
+		token = authHeader.slice(7);
+	}
+
+	if (!token) {
 		return c.json(
 			{ error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' } },
 			401,
 		);
 	}
 
-	const token = header.slice(7);
 	const masterKeyManager = c.get('masterKeyManager');
 
 	if (masterKeyManager.getState() !== 'unlocked') {
@@ -107,6 +121,9 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 	const auth = await verifyToken(token, db, masterKeyManager);
 	if (!auth) {
 		return c.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' } }, 401);
+	}
+	if (agentOnly && auth.type !== AuthType.Agent) {
+		return c.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid agent token' } }, 401);
 	}
 
 	c.set('auth', auth);

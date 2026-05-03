@@ -54,7 +54,8 @@ describe('claude-code adapter', () => {
 		};
 		expect(blob.mcpServers.hezo.type).toBe('http');
 		expect(blob.mcpServers.hezo.url).toBe(URL);
-		expect(blob.mcpServers.hezo.headers?.Authorization).toBe(`Bearer ${TOKEN}`);
+		expect(blob.mcpServers.hezo.headers?.['X-Hezo-Agent-Token']).toBe(TOKEN);
+		expect(blob.mcpServers.hezo.headers?.Authorization).toBeUndefined();
 	});
 
 	it('emits no MCP args for an empty descriptor list', () => {
@@ -151,7 +152,8 @@ describe('gemini adapter', () => {
 			mcpServers: Record<string, { httpUrl: string; headers?: Record<string, string> }>;
 		};
 		expect(parsed.mcpServers.hezo.httpUrl).toBe(URL);
-		expect(parsed.mcpServers.hezo.headers?.Authorization).toBe(`Bearer ${TOKEN}`);
+		expect(parsed.mcpServers.hezo.headers?.['X-Hezo-Agent-Token']).toBe(TOKEN);
+		expect(parsed.mcpServers.hezo.headers?.Authorization).toBeUndefined();
 	});
 
 	it('throws when no host home dir is provided', () => {

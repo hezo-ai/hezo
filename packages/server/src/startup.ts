@@ -15,6 +15,7 @@ import { getToolDefs, handleMcpRequest, initMcpServer } from './mcp/server';
 import { generateSkillFile } from './mcp/skill-file';
 import { authMiddleware } from './middleware/auth';
 import { agentApiRoutes } from './routes/agent-api';
+import { agentProxyRoutes } from './routes/agent-proxy';
 import { agentTypesRoutes } from './routes/agent-types';
 import { agentsRoutes } from './routes/agents';
 import { aiProvidersRoutes } from './routes/ai-providers';
@@ -220,6 +221,7 @@ export function buildApp(
 
 	// Agent API routes
 	app.route('/agent-api', agentApiRoutes);
+	app.route('/agent-api', agentProxyRoutes);
 
 	// CRUD routes
 	app.route('/api', agentTypesRoutes);

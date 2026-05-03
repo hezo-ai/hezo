@@ -810,10 +810,10 @@ describe('runAgent', () => {
 			};
 			expect(parsed.mcpServers.hezo.type).toBe('http');
 			expect(parsed.mcpServers.hezo.url).toBe('http://host.docker.internal:3100/mcp');
-			const authHeaderValue = parsed.mcpServers.hezo.headers.Authorization;
-			expect(authHeaderValue).toMatch(/^Bearer /);
+			const token = parsed.mcpServers.hezo.headers['X-Hezo-Agent-Token'];
+			expect(typeof token).toBe('string');
+			expect(token.length).toBeGreaterThan(0);
 
-			const token = authHeaderValue.slice('Bearer '.length);
 			const payloadBase64 = token.split('.')[1];
 			const payload = JSON.parse(Buffer.from(payloadBase64, 'base64url').toString('utf8')) as {
 				member_id: string;
@@ -1094,7 +1094,9 @@ describe('runAgent', () => {
 				mcpServers: Record<string, { httpUrl: string; headers?: Record<string, string> }>;
 			};
 			expect(parsed.mcpServers.hezo.httpUrl).toBe('http://host.docker.internal:3000/mcp');
-			expect(parsed.mcpServers.hezo.headers?.Authorization).toMatch(/^Bearer /);
+			const token = parsed.mcpServers.hezo.headers?.['X-Hezo-Agent-Token'];
+			expect(typeof token).toBe('string');
+			expect((token ?? '').length).toBeGreaterThan(0);
 
 			// Cleanup removes the per-run dir.
 			expect(existsSync(settingsPath!)).toBe(false);
@@ -1122,8 +1124,8 @@ describe('runAgent', () => {
 				[result.heartbeatRunId],
 			);
 			expect(row.rows[0].invocation_command).toBeTruthy();
-			expect(row.rows[0].invocation_command!).toMatch(/Bearer \*\*\*/);
-			expect(row.rows[0].invocation_command!).not.toMatch(/Bearer eyJ/);
+			expect(row.rows[0].invocation_command!).toMatch(/"X-Hezo-Agent-Token":\s*"\*\*\*"/);
+			expect(row.rows[0].invocation_command!).not.toMatch(/eyJ[a-zA-Z0-9_-]{10,}/);
 		});
 
 		it('sends a large system prompt via stdin file, keeping every argv element small', async () => {

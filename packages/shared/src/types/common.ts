@@ -117,6 +117,15 @@ export type SecretCategory = (typeof SecretCategory)[keyof typeof SecretCategory
 export const GrantScope = { Single: 'single', Project: 'project', Company: 'company' } as const;
 export type GrantScope = (typeof GrantScope)[keyof typeof GrantScope];
 
+export const ProxyRejectionCode = {
+	HostNotAllowed: 'host_not_allowed',
+	UngrantedSecret: 'ungranted_secret',
+	BodyTooLarge: 'body_too_large',
+	Locked: 'locked',
+	InvalidTarget: 'invalid_target',
+} as const;
+export type ProxyRejectionCode = (typeof ProxyRejectionCode)[keyof typeof ProxyRejectionCode];
+
 export const ApprovalType = {
 	SecretAccess: 'secret_access',
 	Hire: 'hire',

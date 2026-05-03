@@ -135,6 +135,21 @@ export function buildProviderEnv(provider: AiProvider, credential: AiProviderCre
 	return out;
 }
 
+/**
+ * Build env entries that expose stable placeholder strings for every secret
+ * granted to the agent. The container only ever sees the placeholder; the
+ * server's secret proxy substitutes the plaintext at egress time.
+ */
+export async function buildSecretPlaceholderEnv(db: PGlite, memberId: string): Promise<string[]> {
+	const result = await db.query<{ name: string }>(
+		`SELECT s.name FROM secret_grants sg
+		   JOIN secrets s ON s.id = sg.secret_id
+		  WHERE sg.member_id = $1 AND sg.revoked_at IS NULL`,
+		[memberId],
+	);
+	return result.rows.map(({ name }) => `HEZO_SECRET_${name}=__HEZO_SECRET_${name}__`);
+}
+
 // SUBSCRIPTION_LAYOUTS, SubscriptionMount, and the home-dir helpers live in
 // runtime-home.ts so per-runtime config conventions sit in one place. These
 // re-exports keep the public import surface stable for callers and tests.
@@ -316,8 +331,11 @@ async function buildRunContext(
 		writeFileSync(file.hostPath, file.contents, { mode: file.mode });
 	}
 
+	const secretPlaceholderEnv = await buildSecretPlaceholderEnv(deps.db, agent.id);
+
 	const env: string[] = [
 		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
+		`HEZO_PROXY_URL=http://host.docker.internal:${deps.serverPort}/agent-api/proxy/`,
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
 		`HEZO_AGENT_ID=${agent.id}`,
 		`HEZO_COMPANY_ID=${agent.company_id}`,
@@ -327,6 +345,7 @@ async function buildRunContext(
 		`HEZO_PROMPT_FILE=${promptFilePath}`,
 		...effortApplication.extraEnv,
 		...buildProviderEnv(provider, credential),
+		...secretPlaceholderEnv,
 		// Subscription mount sets the runtime HOME env var when present; otherwise
 		// fall through to the home-mount entry so the runtime CLI finds its
 		// per-run config dir even without a subscription credential.
@@ -566,7 +585,11 @@ export async function runAgent(
 	mkdirSync(dirname(hostPromptPath), { recursive: true });
 	writeFileSync(hostPromptPath, context.taskPrompt);
 
-	const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
+	const redactedCmd = context.cmd.map((arg) =>
+		arg
+			.replace(/Bearer [^"\s]+/g, 'Bearer ***')
+			.replace(/("X-Hezo-Agent-Token":\s*)"[^"]+"/g, '$1"***"'),
+	);
 	const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')} < ${context.promptFilePath}`;
 
 	await deps.db.query(
