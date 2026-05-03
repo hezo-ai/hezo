@@ -13,6 +13,13 @@ import { startup } from './startup';
 
 const log = logger.child('server');
 
+process.on('unhandledRejection', (reason) => {
+	log.error('unhandledRejection', reason);
+});
+process.on('uncaughtException', (err) => {
+	log.error('uncaughtException', err);
+});
+
 interface WsConnectionData extends WsData {
 	_token?: string;
 }

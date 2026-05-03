@@ -37,6 +37,12 @@ import type { WebSocketManager } from './ws';
 
 const log = logger.child('job-manager');
 
+const cronLog = {
+	trace: (msg: unknown) => log.debug(msg),
+	debug: (msg: unknown) => log.debug(msg),
+	error: (msg: unknown) => log.error(msg),
+};
+
 interface RunningTask {
 	key: string;
 	abortController: AbortController;
@@ -132,22 +138,27 @@ export class JobManager {
 		this.started = true;
 		this.cron.createJob('wakeups', {
 			cron: '*/5 * * * * *',
+			log: cronLog,
 			onTick: () => this.guarded('wakeups', () => this.processWakeups()),
 		});
 		this.cron.createJob('heartbeats', {
 			cron: '*/5 * * * * *',
+			log: cronLog,
 			onTick: () => this.guarded('heartbeats', () => this.processScheduledHeartbeats()),
 		});
 		this.cron.createJob('orphan-detection', {
 			cron: '*/30 * * * * *',
+			log: cronLog,
 			onTick: () => this.guarded('orphan-detection', () => this.detectOrphanedRuns()),
 		});
 		this.cron.createJob('container-sync', {
 			cron: '* * * * * *',
+			log: cronLog,
 			onTick: () => this.guarded('container-sync', () => this.syncContainerStatuses()),
 		});
 		this.cron.createJob('embeddings', {
 			cron: '*/30 * * * * *',
+			log: cronLog,
 			onTick: () => this.guarded('embeddings', () => this.processEmbeddingQueue()),
 		});
 		log.info('Job manager started.');
