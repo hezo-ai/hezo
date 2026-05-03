@@ -6,7 +6,7 @@ import {
 	OPERATIONS_PROJECT_SLUG,
 } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { ChevronDown, Info, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ChevronDown, Info, Loader2, Plus, Trash2 } from 'lucide-react';
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
@@ -143,6 +143,44 @@ function IssueDetailPage() {
 		if (typeof document === 'undefined') return;
 		setScrollParent(document.querySelector('main'));
 	}, []);
+
+	const lastResetIssueIdRef = useRef<string | null>(null);
+	useLayoutEffect(() => {
+		if (!scrollParent) return;
+		if (lastResetIssueIdRef.current === issueId) return;
+		const hash = typeof window !== 'undefined' ? window.location.hash : '';
+		const hasJumpHash = hash.startsWith('#comment-') || hash === '#setup-repo';
+		if (!hasJumpHash) scrollParent.scrollTop = 0;
+		lastResetIssueIdRef.current = issueId;
+	}, [issueId, scrollParent]);
+
+	const [atBottom, setAtBottom] = useState(false);
+	useEffect(() => {
+		if (!scrollParent) return;
+		const check = () => {
+			setAtBottom(
+				scrollParent.scrollTop + scrollParent.clientHeight >= scrollParent.scrollHeight - 200,
+			);
+		};
+		check();
+		scrollParent.addEventListener('scroll', check, { passive: true });
+		const ro = new ResizeObserver(check);
+		ro.observe(scrollParent);
+		for (const child of Array.from(scrollParent.children)) ro.observe(child);
+		return () => {
+			scrollParent.removeEventListener('scroll', check);
+			ro.disconnect();
+		};
+	}, [scrollParent]);
+
+	const scrollToBottom = () => {
+		if (!scrollParent) return;
+		const target = scrollParent;
+		target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
+		for (const delay of [200, 500, 900, 1400]) {
+			setTimeout(() => target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' }), delay);
+		}
+	};
 
 	useEffect(() => {
 		if (!assigneeOpen) return;
@@ -555,7 +593,6 @@ function IssueDetailPage() {
 								customScrollParent={scrollParent}
 								data={comments ?? []}
 								computeItemKey={(_, c) => c.id}
-								followOutput="auto"
 								defaultItemHeight={120}
 								increaseViewportBy={{ top: 600, bottom: 600 }}
 								itemContent={(_, c) => {
@@ -832,6 +869,18 @@ function IssueDetailPage() {
 						</Button>
 					)}
 				</div>
+
+				{!atBottom && (
+					<button
+						type="button"
+						onClick={scrollToBottom}
+						data-testid="issue-scroll-to-bottom"
+						aria-label="Scroll to bottom"
+						className="fixed bottom-4 right-4 z-30 w-9 h-9 rounded-full border border-border bg-bg-elevated text-text-muted hover:text-text shadow-md flex items-center justify-center"
+					>
+						<ArrowDown className="w-4 h-4" />
+					</button>
+				)}
 			</div>
 
 			<ConfirmDialog

@@ -320,3 +320,100 @@ test.describe('Issue detail — right sidebar', () => {
 		await expect(sidebar.getByRole('checkbox', { name: 'Wake assignee on submit' })).toHaveCount(0);
 	});
 });
+
+test.describe('Issue detail — initial scroll and scroll-to-bottom button', () => {
+	test('lands at top of ticket page and floating button scrolls to bottom on demand', async ({
+		page,
+		freshWorkspace,
+	}) => {
+		const { company, agents, token } = freshWorkspace;
+		await page.setViewportSize({ width: 1280, height: 720 });
+
+		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+		const project = await createProjectViaApi(
+			page,
+			company.id,
+			token,
+			'Scroll Project',
+			'Scroll behavior test.',
+		);
+		const issue = await createIssueViaApi(page, company.id, token, {
+			project_id: project.id,
+			title: 'Scroll Test Issue',
+			assignee_id: agents[0].id,
+			description: 'A short description so the page header stays compact.',
+		});
+
+		for (let i = 0; i < 30; i++) {
+			await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+				headers,
+				data: {
+					content_type: 'text',
+					content: { text: `Filler comment ${i}. ${'lorem ipsum '.repeat(30)}` },
+				},
+			});
+		}
+
+		await page.goto(
+			`/companies/${company.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
+		);
+		await waitForPageLoad(page);
+		await expect(page.getByRole('heading', { name: 'Scroll Test Issue' })).toBeInViewport();
+
+		const main = page.locator('main').first();
+		await expect.poll(() => main.evaluate((el) => el.scrollTop), { timeout: 10000 }).toBe(0);
+
+		const button = page.getByTestId('issue-scroll-to-bottom');
+		await expect(button).toBeVisible();
+
+		await button.click();
+
+		await expect(button).toBeHidden({ timeout: 10000 });
+		await expect(page.getByPlaceholder('Add a comment...')).toBeInViewport();
+	});
+
+	test('button is also functional at mobile viewport', async ({ page, freshWorkspace }) => {
+		const { company, agents, token } = freshWorkspace;
+		await page.setViewportSize({ width: 375, height: 720 });
+
+		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+		const project = await createProjectViaApi(
+			page,
+			company.id,
+			token,
+			'Mobile Scroll Project',
+			'Mobile scroll behavior test.',
+		);
+		const issue = await createIssueViaApi(page, company.id, token, {
+			project_id: project.id,
+			title: 'Mobile Scroll Issue',
+			assignee_id: agents[0].id,
+		});
+
+		for (let i = 0; i < 30; i++) {
+			await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+				headers,
+				data: {
+					content_type: 'text',
+					content: { text: `Mobile filler ${i}. ${'lorem ipsum '.repeat(30)}` },
+				},
+			});
+		}
+
+		await page.goto(
+			`/companies/${company.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
+		);
+		await waitForPageLoad(page);
+		await expect(page.getByRole('heading', { name: 'Mobile Scroll Issue' })).toBeInViewport();
+
+		const main = page.locator('main').first();
+		await expect.poll(() => main.evaluate((el) => el.scrollTop), { timeout: 10000 }).toBe(0);
+
+		const button = page.getByTestId('issue-scroll-to-bottom');
+		await expect(button).toBeVisible();
+		await button.click();
+
+		await expect(button).toBeHidden({ timeout: 10000 });
+		await expect(page.getByPlaceholder('Add a comment...')).toBeInViewport();
+	});
+});
