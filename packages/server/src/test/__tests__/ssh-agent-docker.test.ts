@@ -1,13 +1,17 @@
 /**
  * Full Docker integration test for the SSH signing server.
  *
- * Spins up a real test container, mounts the per-run SSH agent socket, and
- * exercises the agent protocol from inside the container — same wire-up the
- * production agent runtime uses. Catches socket permission, bind-mount, and
- * Unix socket forwarding issues that mocked tests miss.
+ * Spins up a real test container, runs the in-container socat bridge and
+ * exercises the agent protocol from inside the container — same wire-up
+ * the production agent runtime uses. Catches regressions in the bridge
+ * scripts, token auth on the host TCP listener, and the host networking
+ * path that mocked tests miss.
  *
- * Skipped automatically when Docker is unavailable or HEZO_SKIP_DOCKER is set,
- * so CI without Docker still passes.
+ * Skipped automatically when Docker is unavailable or HEZO_SKIP_DOCKER is
+ * set, so CI without Docker still passes. Runs on both macOS dev (where
+ * the socat bridge is required because Docker Desktop does not forward
+ * AF_UNIX bind mounts) and Linux production (where the same bridge works
+ * unchanged).
  */
 import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -22,19 +26,17 @@ import { safeClose } from '../helpers';
 import { createTestApp } from '../helpers/app';
 
 const dockerAvailable = await checkDocker();
-let skipReason: string | null = null;
-if (process.env.HEZO_SKIP_DOCKER || !dockerAvailable) {
-	skipReason = 'Docker not available or HEZO_SKIP_DOCKER set';
-} else if (process.platform === 'darwin') {
-	// Docker Desktop on macOS cannot bind-mount a host Unix socket into a Linux
-	// container — the socket appears as an empty directory because the gRPC-FUSE
-	// virtio bridge does not forward AF_UNIX. Production Linux Docker (where
-	// Hezo actually runs) has no such limitation. The protocol-level tests in
-	// ssh-agent-server.test.ts cover the same code path without Docker.
-	// macOS dev workaround for actually running agents is a TCP-relay sidecar
-	// (TODO: track in Phase 6 polish).
-	skipReason = 'Docker Desktop on macOS does not forward AF_UNIX bind mounts';
-}
+const skipReason =
+	!dockerAvailable || process.env.HEZO_SKIP_DOCKER
+		? 'Docker not available or HEZO_SKIP_DOCKER set'
+		: null;
+
+const BRIDGE_IMAGE = 'hezo/agent-base:latest';
+const bridgeImageReady = skipReason ? false : await imageExists(BRIDGE_IMAGE);
+const imageSkipReason = bridgeImageReady
+	? null
+	: `${BRIDGE_IMAGE} not built locally — run \`docker build -t ${BRIDGE_IMAGE} -f docker/Dockerfile.agent-base docker\``;
+const finalSkipReason = skipReason ?? imageSkipReason;
 
 let db: PGlite;
 let masterKeyManager: MasterKeyManager;
@@ -45,7 +47,7 @@ let server: SshAgentServer;
 let socketDir: string;
 
 beforeAll(async () => {
-	if (skipReason) return;
+	if (finalSkipReason) return;
 	const ctx = await createTestApp();
 	db = ctx.db;
 	masterKeyManager = ctx.masterKeyManager;
@@ -72,23 +74,33 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
-	if (skipReason) return;
+	if (finalSkipReason) return;
 	await server.releaseAll();
 	await safeClose(db);
 });
 
-describe.skipIf(skipReason !== null)('SSH agent — Docker integration', () => {
-	it('agent socket bind-mounted into a real container surfaces the company key via ssh-add -L', async () => {
+describe.skipIf(finalSkipReason !== null)('SSH agent — Docker integration', () => {
+	it('agent protocol over the in-container socat bridge surfaces the company key via ssh-add -L', async () => {
 		const runId = `docker-run-${Date.now()}`;
 		const socketHostPath = join(socketDir, `${runId}.sock`);
-		await server.allocateRunSocket(runId, { companyId, agentId }, socketHostPath);
+		const allocated = await server.allocateRunSocket(runId, { companyId, agentId }, socketHostPath);
 
-		const containerSocketPath = '/run/hezo/agent.sock';
+		const containerSocketPath = `/run/hezo/${runId}.sock`;
 		const result = await runInContainer({
-			image: 'alpine:3.19',
-			binds: [`${socketHostPath}:${containerSocketPath}:rw`],
+			image: BRIDGE_IMAGE,
 			env: { SSH_AUTH_SOCK: containerSocketPath },
-			command: ['sh', '-c', 'apk add --no-cache openssh-client > /dev/null 2>&1 && ssh-add -L'],
+			extraHosts: ['host.docker.internal:host-gateway'],
+			command: [
+				'/usr/local/bin/hezo-run-with-bridge',
+				containerSocketPath,
+				'root',
+				allocated.tokenHex,
+				`host.docker.internal:${allocated.tcpHostPort}`,
+				'--',
+				'sh',
+				'-c',
+				'ssh-add -L',
+			],
 			timeoutMs: 60_000,
 		});
 
@@ -106,19 +118,24 @@ describe.skipIf(skipReason !== null)('SSH agent — Docker integration', () => {
 	it('container has no private key file in the SSH config or temp dirs after the run', async () => {
 		const runId = `docker-leak-${Date.now()}`;
 		const socketHostPath = join(socketDir, `${runId}.sock`);
-		await server.allocateRunSocket(runId, { companyId, agentId }, socketHostPath);
+		const allocated = await server.allocateRunSocket(runId, { companyId, agentId }, socketHostPath);
 
-		const containerSocketPath = '/run/hezo/agent.sock';
+		const containerSocketPath = `/run/hezo/${runId}.sock`;
 		const result = await runInContainer({
-			image: 'alpine:3.19',
-			binds: [`${socketHostPath}:${containerSocketPath}:rw`],
+			image: BRIDGE_IMAGE,
 			env: { SSH_AUTH_SOCK: containerSocketPath },
+			extraHosts: ['host.docker.internal:host-gateway'],
 			command: [
+				'/usr/local/bin/hezo-run-with-bridge',
+				containerSocketPath,
+				'root',
+				allocated.tokenHex,
+				`host.docker.internal:${allocated.tcpHostPort}`,
+				'--',
 				'sh',
 				'-c',
-				'apk add --no-cache openssh-client > /dev/null 2>&1; ' +
-					'ssh-add -L > /dev/null 2>&1; ' +
-					'find / -name "id_ed25519" -o -name "hezo-ssh-*" 2>/dev/null; true',
+				'ssh-add -L > /dev/null 2>&1; ' +
+					'find / -path "/proc" -prune -o \\( -name "id_ed25519" -o -name "id_ed25519.pub" \\) -print 2>/dev/null; true',
 			],
 			timeoutMs: 60_000,
 		});
@@ -132,20 +149,25 @@ describe.skipIf(skipReason !== null)('SSH agent — Docker integration', () => {
 	it('signs ssh-keygen -Y sign challenges from inside the container and verifies on the host', async () => {
 		const runId = `docker-sign-${Date.now()}`;
 		const socketHostPath = join(socketDir, `${runId}.sock`);
-		await server.allocateRunSocket(runId, { companyId, agentId }, socketHostPath);
+		const allocated = await server.allocateRunSocket(runId, { companyId, agentId }, socketHostPath);
 
-		const containerSocketPath = '/run/hezo/agent.sock';
+		const containerSocketPath = `/run/hezo/${runId}.sock`;
 		const containerPubFile = '/tmp/key.pub';
 		const containerDataFile = '/tmp/payload';
 		const result = await runInContainer({
-			image: 'alpine:3.19',
-			binds: [`${socketHostPath}:${containerSocketPath}:rw`],
+			image: BRIDGE_IMAGE,
 			env: { SSH_AUTH_SOCK: containerSocketPath },
+			extraHosts: ['host.docker.internal:host-gateway'],
 			command: [
+				'/usr/local/bin/hezo-run-with-bridge',
+				containerSocketPath,
+				'root',
+				allocated.tokenHex,
+				`host.docker.internal:${allocated.tcpHostPort}`,
+				'--',
 				'sh',
 				'-c',
 				[
-					'apk add --no-cache openssh-keygen openssh-client > /dev/null 2>&1',
 					`echo "${publicKey}" > ${containerPubFile}`,
 					`echo "verify-payload" > ${containerDataFile}`,
 					`ssh-keygen -Y sign -f ${containerPubFile} -n git ${containerDataFile} > /dev/null 2>&1`,
@@ -192,18 +214,18 @@ describe.skipIf(skipReason !== null)('SSH agent — Docker integration', () => {
 
 interface RunInContainerArgs {
 	image: string;
-	binds: string[];
 	env: Record<string, string>;
 	command: string[];
 	timeoutMs: number;
+	extraHosts?: string[];
 }
 
 async function runInContainer(
 	args: RunInContainerArgs,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
 	const dockerArgs = ['run', '--rm', '-i'];
-	for (const bind of args.binds) {
-		dockerArgs.push('-v', bind);
+	for (const host of args.extraHosts ?? []) {
+		dockerArgs.push('--add-host', host);
 	}
 	for (const [k, v] of Object.entries(args.env)) {
 		dockerArgs.push('-e', `${k}=${v}`);
@@ -254,4 +276,9 @@ async function checkDocker(): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+async function imageExists(image: string): Promise<boolean> {
+	const result = await runCommand('docker', ['image', 'inspect', image], {});
+	return result.code === 0;
 }

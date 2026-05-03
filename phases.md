@@ -6,7 +6,9 @@ Companion to `/Users/ram/.claude/plans/we-want-to-get-frolicking-muffin.md`. Pha
 
 ## P2-followup — macOS Docker Desktop SSH socket relay (blocker)
 
-**Status:** required before P3, because dev happens on macOS and Docker Desktop's gRPC-FUSE bridge does **not** forward `AF_UNIX` bind mounts. Symptom: container sees `/run/hezo/<runId>.sock` as an empty directory and `ssh-add -L` returns exit 2 ("could not connect to authentication agent"). Linux production is unaffected; this is purely a Docker Desktop on macOS limitation.
+**Status:** ✅ Shipped 2026-05-03.
+
+**Status (historical):** required before P3, because dev happens on macOS and Docker Desktop's gRPC-FUSE bridge does **not** forward `AF_UNIX` bind mounts. Symptom: container sees `/run/hezo/<runId>.sock` as an empty directory and `ssh-add -L` returns exit 2 ("could not connect to authentication agent"). Linux production is unaffected; this is purely a Docker Desktop on macOS limitation.
 
 ### Design
 
@@ -313,9 +315,9 @@ Test commands:
 |-------|--------|--------|
 | P1 | shipped | ✅ commit `9fa5be6` |
 | P2 | shipped | ✅ commit `9fa5be6` |
-| P2-followup (macOS SSH relay) | 1 day | blocker — needed before P3 lands on macOS dev |
+| P2-followup (macOS SSH relay) | 1 day | ✅ shipped 2026-05-04 |
 | P3 (HTTPS MITM proxy) | 5 days | not started |
 | P4 (MCP connections) | 3 days | not started |
 | P5 (delete connect) | 2 days | not started |
 | P6 (polish + docs) | 2–3 days | not started |
-| **Total remaining** | **~13–14 days** | |
+| **Total remaining** | **~12–13 days** | |

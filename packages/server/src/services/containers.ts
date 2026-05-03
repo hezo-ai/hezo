@@ -143,13 +143,16 @@ export async function provisionContainer(
 		const worktreesPath = join(projectDir, 'worktrees');
 		const previewsPath = join(projectDir, '.previews');
 
-		const runDir = ensureProjectRunDir(dataDir, companySlug, project.slug);
+		// Host-side SSH agent socket lives in this dir for host-side git operations.
+		// In-container SSH socket is allocated fresh by the per-run socat bridge so
+		// no bind-mount is required, which sidesteps Docker Desktop's lack of
+		// AF_UNIX bind-mount forwarding on macOS.
+		ensureProjectRunDir(dataDir, companySlug, project.slug);
 
 		const binds = [
 			`${workspacePath}:/workspace:rw`,
 			`${worktreesPath}:/worktrees:rw`,
 			`${previewsPath}:/workspace/.previews:rw`,
-			`${runDir}:/run/hezo:rw`,
 		];
 
 		const portBindings: Record<string, Array<{ HostPort: string }>> = {};

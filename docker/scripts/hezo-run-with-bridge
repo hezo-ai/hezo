@@ -1,0 +1,36 @@
+#!/bin/sh
+# Wrapper that starts the SSH agent socket bridge before launching the
+# headless agent CLI. socat listens on the in-container Unix socket and
+# spawns a hezo-ssh-bridge child per connection. When the wrapped command
+# exits the trap kills socat so the run leaves no stragglers behind.
+#
+# Args: <socket_path> <socket_user> <token_hex> <host:port> -- <cmd> [args...]
+SOCKET="$1"; shift
+SOCK_USER="$1"; shift
+TOKEN="$1"; shift
+HOST_PORT="$1"; shift
+if [ "$1" = "--" ]; then shift; fi
+
+HOST="${HOST_PORT%:*}"
+PORT="${HOST_PORT##*:}"
+
+mkdir -p "$(dirname "$SOCKET")"
+
+socat "UNIX-LISTEN:$SOCKET,fork,reuseaddr,unlink-early,mode=0600,user=$SOCK_USER" \
+      "EXEC:/usr/local/bin/hezo-ssh-bridge $TOKEN $HOST $PORT" &
+BRIDGE_PID=$!
+trap 'kill "$BRIDGE_PID" 2>/dev/null' EXIT INT TERM HUP
+
+i=0
+while [ "$i" -lt 60 ] && [ ! -S "$SOCKET" ]; do
+    sleep 0.05
+    i=$((i + 1))
+done
+
+if [ -n "${HEZO_PROMPT_FILE:-}" ] && [ -r "$HEZO_PROMPT_FILE" ]; then
+    "$@" < "$HEZO_PROMPT_FILE"
+else
+    "$@"
+fi
+EXIT_CODE=$?
+exit "$EXIT_CODE"

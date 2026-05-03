@@ -2,7 +2,7 @@ FROM node:24-slim
 
 # Install common development tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl jq openssh-client ca-certificates python3 \
+    git curl jq openssh-client ca-certificates python3 socat \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/root/.local/bin:${PATH}"
@@ -14,5 +14,12 @@ ENV PATH="/root/.local/bin:${PATH}"
 RUN npm install -g @anthropic-ai/claude-code \
     && npm install -g @openai/codex \
     && npm install -g @google/gemini-cli
+
+# SSH agent bridge: in-container Unix socket relayed to host TCP. Used so
+# the same wire-up runs on macOS Docker Desktop (which does not forward
+# AF_UNIX bind mounts) and Linux production with no platform branching.
+COPY scripts/hezo-ssh-bridge /usr/local/bin/hezo-ssh-bridge
+COPY scripts/hezo-run-with-bridge /usr/local/bin/hezo-run-with-bridge
+RUN chmod +x /usr/local/bin/hezo-ssh-bridge /usr/local/bin/hezo-run-with-bridge
 
 WORKDIR /workspace

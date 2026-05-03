@@ -14,5 +14,7 @@ export {
 	MSG_SIGN_RESPONSE,
 } from './protocol';
 export type { KeyEntry, RegistryEntry, RunIdentity } from './registry';
+export type { BridgeRunnerArgs } from './relay';
+export { BRIDGE_HELPER_BINARY, BRIDGE_RUNNER_BINARY, buildBridgeRunnerArgv } from './relay';
 export type { AllocatedSocket, SshAgentServerDeps } from './server';
 export { SshAgentServer, sshPublicKeyToBlob } from './server';

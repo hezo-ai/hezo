@@ -1,0 +1,20 @@
+#!/bin/sh
+# SSH agent bridge: forwards a single in-container Unix-socket connection
+# to a host TCP socket, prepending the per-run authentication token so the
+# host listener (SshAgentServer TCP gate) accepts the stream.
+#
+# Stdin  = bytes from the in-container client.
+# Stdout = bytes from the host server back to the in-container client.
+#
+# Args:
+#   $1  token in lowercase hex (32 chars = 16 bytes)
+#   $2  host name (e.g. host.docker.internal) — passed separately because
+#       socat's EXEC address sub-arg parser eats colons
+#   $3  TCP port number
+TOKEN_HEX="$1"
+HOST="$2"
+PORT="$3"
+# /usr/bin/printf (coreutils) supports \xHH escapes which the dash shell
+# builtin does not, so call it explicitly rather than the shell builtin.
+ESCAPED=$(/usr/bin/printf '%s' "$TOKEN_HEX" | sed 's/../\\x&/g')
+{ /usr/bin/printf '%b' "$ESCAPED"; cat; } | socat - "TCP:$HOST:$PORT"

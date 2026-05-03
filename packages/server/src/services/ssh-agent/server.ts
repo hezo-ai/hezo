@@ -1,6 +1,6 @@
-import { createPrivateKey } from 'node:crypto';
+import { createPrivateKey, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdir, rm } from 'node:fs/promises';
-import type { Server, Socket } from 'node:net';
+import type { AddressInfo, Server, Socket } from 'node:net';
 import { createServer } from 'node:net';
 import { dirname } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
@@ -24,6 +24,9 @@ import { type KeyEntry, Registry, type RunIdentity } from './registry';
 
 const log = logger.child('ssh-agent');
 
+const TCP_TOKEN_BYTES = 16;
+const TCP_LISTEN_HOST = '127.0.0.1';
+
 export interface SshAgentServerDeps {
 	db: PGlite;
 	masterKeyManager: MasterKeyManager;
@@ -31,11 +34,15 @@ export interface SshAgentServerDeps {
 
 export interface AllocatedSocket {
 	socketHostPath: string;
+	tcpHostPort: number;
+	tokenHex: string;
 }
 
 export class SshAgentServer {
 	private readonly registry = new Registry();
 	private readonly listeners = new Map<string, Server>();
+	private readonly tcpListeners = new Map<string, Server>();
+	private readonly tokens = new Map<string, Buffer>();
 
 	constructor(private readonly deps: SshAgentServerDeps) {}
 
@@ -48,31 +55,61 @@ export class SshAgentServer {
 		await rm(socketHostPath, { force: true });
 
 		const fullIdentity: RunIdentity = { runId, ...identity };
+		const tokenBytes = randomBytes(TCP_TOKEN_BYTES);
+		this.tokens.set(runId, tokenBytes);
 		this.registry.set(runId, {
 			identity: fullIdentity,
 			socketHostPath,
 			resolveKeys: () => this.loadKeysForCompany(identity.companyId),
 		});
 
-		const server = createServer((socket) => {
-			this.handleConnection(socket, runId).catch((e) => {
+		const unixServer = createServer((socket) => {
+			this.handleAuthenticatedConnection(socket, runId).catch((e) => {
 				log.error('ssh-agent connection error', { runId, error: (e as Error).message });
 				socket.destroy();
 			});
 		});
-		server.on('error', (e) => log.error('ssh-agent listener error', { runId, error: e.message }));
-
+		unixServer.on('error', (e) =>
+			log.error('ssh-agent listener error', { runId, error: e.message }),
+		);
 		await new Promise<void>((resolve, reject) => {
-			server.once('error', reject);
-			server.listen(socketHostPath, () => {
-				server.removeListener('error', reject);
+			unixServer.once('error', reject);
+			unixServer.listen(socketHostPath, () => {
+				unixServer.removeListener('error', reject);
 				resolve();
 			});
 		});
+		this.listeners.set(runId, unixServer);
 
-		this.listeners.set(runId, server);
-		log.debug('ssh-agent socket allocated', { runId, socketHostPath });
-		return { socketHostPath };
+		const tcpServer = createServer((socket) => {
+			this.handleTcpConnection(socket, runId).catch((e) => {
+				log.error('ssh-agent tcp connection error', {
+					runId,
+					error: (e as Error).message,
+				});
+				socket.destroy();
+			});
+		});
+		tcpServer.on('error', (e) =>
+			log.error('ssh-agent tcp listener error', { runId, error: e.message }),
+		);
+		await new Promise<void>((resolve, reject) => {
+			tcpServer.once('error', reject);
+			tcpServer.listen({ host: TCP_LISTEN_HOST, port: 0 }, () => {
+				tcpServer.removeListener('error', reject);
+				resolve();
+			});
+		});
+		this.tcpListeners.set(runId, tcpServer);
+		const tcpHostPort = (tcpServer.address() as AddressInfo).port;
+		const tokenHex = tokenBytes.toString('hex');
+
+		log.debug('ssh-agent socket allocated', {
+			runId,
+			socketHostPath,
+			tcpHostPort,
+		});
+		return { socketHostPath, tcpHostPort, tokenHex };
 	}
 
 	async releaseRunSocket(runId: string): Promise<void> {
@@ -81,6 +118,12 @@ export class SshAgentServer {
 			await new Promise<void>((resolve) => server.close(() => resolve()));
 			this.listeners.delete(runId);
 		}
+		const tcpServer = this.tcpListeners.get(runId);
+		if (tcpServer) {
+			await new Promise<void>((resolve) => tcpServer.close(() => resolve()));
+			this.tcpListeners.delete(runId);
+		}
+		this.tokens.delete(runId);
 		const entry = this.registry.get(runId);
 		if (entry) {
 			await rm(entry.socketHostPath, { force: true });
@@ -90,13 +133,13 @@ export class SshAgentServer {
 	}
 
 	async releaseAll(): Promise<void> {
-		const runIds = [...this.listeners.keys()];
+		const runIds = new Set([...this.listeners.keys(), ...this.tcpListeners.keys()]);
 		for (const runId of runIds) {
 			await this.releaseRunSocket(runId);
 		}
 	}
 
-	private async handleConnection(socket: Socket, runId: string): Promise<void> {
+	private async handleAuthenticatedConnection(socket: Socket, runId: string): Promise<void> {
 		const entry = this.registry.get(runId);
 		if (!entry) {
 			socket.destroy();
@@ -108,6 +151,51 @@ export class SshAgentServer {
 			frames.push(chunk);
 			void this.processFrames(frames, socket, entry.identity, entry.resolveKeys);
 		});
+	}
+
+	private async handleTcpConnection(socket: Socket, runId: string): Promise<void> {
+		const entry = this.registry.get(runId);
+		const expectedToken = this.tokens.get(runId);
+		if (!entry || !expectedToken) {
+			socket.destroy();
+			return;
+		}
+
+		const tokenChunks: Buffer[] = [];
+		let collected = 0;
+		let authenticated = false;
+		const frames = new FrameReader();
+
+		const onData = (chunk: Buffer) => {
+			if (authenticated) {
+				frames.push(chunk);
+				void this.processFrames(frames, socket, entry.identity, entry.resolveKeys);
+				return;
+			}
+			tokenChunks.push(chunk);
+			collected += chunk.length;
+			if (collected < TCP_TOKEN_BYTES) return;
+
+			const all = Buffer.concat(tokenChunks);
+			const candidate = all.subarray(0, TCP_TOKEN_BYTES);
+			const remainder = all.subarray(TCP_TOKEN_BYTES);
+			if (candidate.length !== expectedToken.length || !timingSafeEqual(candidate, expectedToken)) {
+				log.warn('ssh-agent tcp auth failed', { runId });
+				try {
+					socket.write(encodeFailure());
+				} catch {
+					/* socket may already be closed */
+				}
+				socket.destroy();
+				return;
+			}
+			authenticated = true;
+			if (remainder.length > 0) {
+				frames.push(remainder);
+				void this.processFrames(frames, socket, entry.identity, entry.resolveKeys);
+			}
+		};
+		socket.on('data', onData);
 	}
 
 	private async processFrames(

@@ -47,7 +47,7 @@ import {
 	type SubscriptionMount as SubscriptionMountImpl,
 } from './runtime-home';
 import { resolveRuntimeForIssue } from './runtime-resolver';
-import type { SshAgentServer } from './ssh-agent';
+import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { resolveSystemPrompt } from './template-resolver';
 import { getProjectRunDir, getWorkspacePath, getWorktreesPath } from './workspace';
 import type { WebSocketManager } from './ws';
@@ -206,7 +206,10 @@ export function getHostPromptPath(
 	);
 }
 
-function wrapExecCmd(cmd: string[]): string[] {
+function wrapExecCmd(cmd: string[], bridge: BridgeRunnerArgs | null): string[] {
+	if (bridge) {
+		return [...buildBridgeRunnerArgv(bridge), ...cmd];
+	}
 	return ['sh', '-c', 'exec "$@" < "$HEZO_PROMPT_FILE"', 'sh', ...cmd];
 }
 
@@ -222,6 +225,7 @@ async function buildRunContext(
 	heartbeatRunId: string,
 	modelOverride: string | null,
 	sshSocketContainerPath: string | null,
+	bridge: BridgeRunnerArgs | null,
 ): Promise<RunContext> {
 	const storedPrompt = await getAgentSystemPrompt(deps.db, agent.company_id, agent.id);
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, storedPrompt, {
@@ -353,7 +357,7 @@ async function buildRunContext(
 		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
 	];
 
-	const execCmd = wrapExecCmd(cmd);
+	const execCmd = wrapExecCmd(cmd, bridge);
 
 	return {
 		cmd,
@@ -540,15 +544,23 @@ export async function runAgent(
 
 	let sshSocketContainerPath: string | null = null;
 	let sshSocketHostPath: string | null = null;
+	let bridge: BridgeRunnerArgs | null = null;
 	if (deps.sshAgentServer) {
 		const runDir = getProjectRunDir(deps.dataDir, project.company_slug, project.slug);
 		sshSocketHostPath = join(runDir, `${heartbeatRunId}.sock`);
-		await deps.sshAgentServer.allocateRunSocket(
+		const allocated = await deps.sshAgentServer.allocateRunSocket(
 			heartbeatRunId,
 			{ companyId: agent.company_id, agentId: agent.id },
 			sshSocketHostPath,
 		);
 		sshSocketContainerPath = `/run/hezo/${heartbeatRunId}.sock`;
+		bridge = {
+			socketPath: sshSocketContainerPath,
+			socketUser: 'node',
+			tokenHex: allocated.tokenHex,
+			hostName: 'host.docker.internal',
+			hostPort: allocated.tcpHostPort,
+		};
 	}
 
 	const context = await buildRunContext(
@@ -563,6 +575,7 @@ export async function runAgent(
 		heartbeatRunId,
 		modelOverride,
 		sshSocketContainerPath,
+		bridge,
 	);
 
 	if (signal?.aborted) {

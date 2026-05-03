@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import {
 	FrameReader,
+	MSG_FAILURE,
 	MSG_IDENTITIES_ANSWER,
 	MSG_REQUEST_IDENTITIES,
 	MSG_SIGN_REQUEST,
@@ -100,6 +101,41 @@ describe('SshAgentServer integration', () => {
 		await server.releaseRunSocket(runId);
 	});
 
+	it('serves the same protocol on the per-run TCP listener after token auth', async () => {
+		const runId = 'run-tcp-ok';
+		const socketPath = join(socketDir, `${runId}.sock`);
+		const allocated = await server.allocateRunSocket(runId, { companyId, agentId }, socketPath);
+
+		const tokenBytes = Buffer.from(allocated.tokenHex, 'hex');
+		const reply = await sendOverTcp(
+			allocated.tcpHostPort,
+			Buffer.concat([tokenBytes, frame(Buffer.from([MSG_REQUEST_IDENTITIES]))]),
+		);
+		expect(reply[0]).toBe(MSG_IDENTITIES_ANSWER);
+		const nkeys = reply.readUInt32BE(1);
+		expect(nkeys).toBe(1);
+		const keyLen = reply.readUInt32BE(5);
+		const keyBlob = reply.subarray(9, 9 + keyLen);
+		expect(keyBlob).toEqual(sshPublicKeyToBlob(publicKey));
+
+		await server.releaseRunSocket(runId);
+	});
+
+	it('rejects TCP connections that present the wrong token with SSH_AGENT_FAILURE', async () => {
+		const runId = 'run-tcp-bad';
+		const socketPath = join(socketDir, `${runId}.sock`);
+		const allocated = await server.allocateRunSocket(runId, { companyId, agentId }, socketPath);
+
+		const wrongToken = Buffer.alloc(16, 0xff);
+		const reply = await sendOverTcp(
+			allocated.tcpHostPort,
+			Buffer.concat([wrongToken, frame(Buffer.from([MSG_REQUEST_IDENTITIES]))]),
+		);
+		expect(reply[0]).toBe(MSG_FAILURE);
+
+		await server.releaseRunSocket(runId);
+	});
+
 	it('signs through ssh-keygen -Y sign and is verifiable', async () => {
 		if (!(await hasCommand('ssh-keygen'))) return;
 		const runId = 'run-keygen-sign';
@@ -179,6 +215,24 @@ async function sendAndReceive(socketPath: string, framed: Buffer): Promise<Buffe
 				resolve(next);
 			}
 		});
+		sock.on('error', reject);
+	});
+}
+
+async function sendOverTcp(port: number, framed: Buffer): Promise<Buffer> {
+	return new Promise((resolve, reject) => {
+		const reader = new FrameReader();
+		const sock = connect({ host: '127.0.0.1', port });
+		sock.on('connect', () => sock.write(framed));
+		sock.on('data', (chunk) => {
+			reader.push(chunk);
+			const next = reader.next();
+			if (next) {
+				sock.end();
+				resolve(next);
+			}
+		});
+		sock.on('close', () => reject(new Error('closed before reply')));
 		sock.on('error', reject);
 	});
 }
