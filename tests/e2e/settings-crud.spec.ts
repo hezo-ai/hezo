@@ -72,8 +72,9 @@ test('can add and delete a secret', async ({ page }) => {
 	await expect(secretsSection.getByText('Secrets vault')).toBeVisible({ timeout: 15000 });
 
 	await secretsSection.getByRole('button', { name: 'Add' }).click();
-	await secretsSection.getByPlaceholder('Name').fill('MY_SECRET');
+	await secretsSection.getByPlaceholder(/^Name/).fill('MY_SECRET');
 	await secretsSection.getByPlaceholder('Value').fill('supersecret');
+	await secretsSection.getByPlaceholder(/Allowed hosts/).fill('example.com');
 	await secretsSection.locator('form').getByRole('button', { name: 'Add' }).click();
 
 	await expect(secretsSection.getByText('MY_SECRET')).toBeVisible({ timeout: 15000 });
