@@ -282,6 +282,19 @@ With the replacement in place across P1–P4, remove the old surface.
 
 ## P6 — Polish + docs
 
+**Status:** ✅ Shipped 2026-05-04 (docs + MCP UI; remaining UI polish for the audit log and credentials list deferred).
+
+**Implementation notes:**
+- Created `.dev/credentials.md`, `.dev/egress.md`, `.dev/mcp.md`, `.dev/ssh-signing.md`.
+- Added the credentials section to `AGENTS.md` security guidance.
+- Added Phase 13 entry to `.dev/implementation-phases.md` summarising P1–P5.
+- Replaced the company-settings MCP servers section with one backed by `mcp_connections` (saas/local + headers/env in JSON), via the new `use-mcp-connections` hook.
+
+**Deferred (nice-to-haves):**
+- Dedicated audit log filter for `entity_type='egress_request'` events (the existing audit log route returns them; a tab is the only missing piece).
+- Credentials list page at `/companies/:slug/credentials` (the secrets section in settings already lists them; the dedicated page would add `last_used_at` from the audit log and a per-secret revocation flow).
+- Defense-in-depth: container egress firewall rules, per-run pinned `known_hosts`.
+
 ### Operator UI
 
 - Audit log UI: new tab on company settings showing egress events (host, secret name used, request count, timestamp, status code) — operator visibility on what the agents are calling.
@@ -345,5 +358,5 @@ Test commands:
 | P3 (HTTPS MITM proxy) | 5 days | not started |
 | P4 (MCP connections) | 3 days | ✅ shipped 2026-05-04 |
 | P5 (delete connect) | 2 days | ✅ shipped 2026-05-04 |
-| P6 (polish + docs) | 2–3 days | not started |
+| P6 (polish + docs) | 2–3 days | ✅ shipped 2026-05-04 |
 | **Total remaining** | **~12–13 days** | |

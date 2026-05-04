@@ -29,9 +29,8 @@ All enums use the `as const` object pattern (not TypeScript `enum`):
 | Constant | Value |
 |----------|-------|
 | `DEFAULT_PORT` | `3100` |
-| `DEFAULT_CONNECT_PORT` | `4100` |
+| `DEFAULT_WEB_PORT` | `5173` |
 | `DEFAULT_DATA_DIR` | `~/.hezo` |
-| `DEFAULT_CONNECT_URL` | `http://localhost:4100` |
 | `CANARY_PLAINTEXT` | `CANARY` |
 
 ## Scripts

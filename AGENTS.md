@@ -81,6 +81,18 @@ Wrap any multi-write sequence that must succeed/fail together in `BEGIN`/`COMMIT
 
 Never expose raw secrets, private keys, or signing keys via endpoints or logs. Use asymmetric crypto for cross-service verification, encrypt sensitive data at rest, and use `timingSafeEqual` for all hash/token/signature comparisons (never `===`).
 
+### Credentials
+
+Agents reference secrets by **placeholder**, never by literal value. The pattern is `__HEZO_SECRET_<NAME>__` in any header or URL the agent emits; the egress proxy substitutes the real value at request time. Background and full lifecycle: `.dev/credentials.md`. Egress proxy details: `.dev/egress.md`.
+
+When you wire a new agent integration that needs a credential:
+
+- Don't put the real value in the agent's container env. Put the placeholder there. The real value lives in the `secrets` table with `allowed_hosts` constraining which upstream hosts the substitution may fire for.
+- If the agent needs to obtain a credential at runtime, it calls `request_credential` (MCP tool) and the human pastes the value via the issue thread.
+- For GitHub repos: the `setup_github_repo` MCP tool generates / reuses the company's single Ed25519 deploy key and prompts the human to add the public key on the named repo. SSH signing flow: `.dev/ssh-signing.md`.
+
+The egress audit log records substitution events by **secret name** only, never the value. No-op requests (no placeholder anywhere) are not audited.
+
 ### Route authorization
 
 Every route enforces authorization — never trust URL params alone.

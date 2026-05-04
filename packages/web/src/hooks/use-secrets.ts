@@ -8,10 +8,21 @@ export interface Secret {
 	project_id: string | null;
 	name: string;
 	category: string;
+	allowed_hosts: string[];
+	allow_all_hosts: boolean;
 	created_at: string;
 	updated_at: string;
 	project_name: string | null;
 	grant_count: number;
+}
+
+export interface CreateSecretPayload {
+	name: string;
+	value: string;
+	project_id?: string;
+	category?: string;
+	allowed_hosts?: string[];
+	allow_all_hosts?: boolean;
 }
 
 export function useSecrets(companyId: string) {
@@ -23,8 +34,25 @@ export function useSecrets(companyId: string) {
 
 export function useCreateSecret(companyId: string) {
 	return useMutation({
-		mutationFn: (data: { name: string; value: string; project_id?: string; category?: string }) =>
+		mutationFn: (data: CreateSecretPayload) =>
 			api.post<Secret>(`/api/companies/${companyId}/secrets`, data),
+		onSuccess: () =>
+			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'secrets'] }),
+	});
+}
+
+export function useUpdateSecret(companyId: string) {
+	return useMutation({
+		mutationFn: ({
+			secretId,
+			...data
+		}: {
+			secretId: string;
+			value?: string;
+			category?: string;
+			allowed_hosts?: string[];
+			allow_all_hosts?: boolean;
+		}) => api.patch<Secret>(`/api/companies/${companyId}/secrets/${secretId}`, data),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'secrets'] }),
 	});
