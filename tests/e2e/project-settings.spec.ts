@@ -91,7 +91,7 @@ test.describe('Project Settings', () => {
 		await expect(page.getByRole('button', { name: 'Add Repo' })).toBeVisible();
 	});
 
-	test('"Add Repo" opens the setup wizard', async ({ page }) => {
+	test('"Add Repo" reveals the inline form fields', async ({ page }) => {
 		await authenticate(page);
 		const { company, project } = await createProject(page);
 
@@ -100,8 +100,7 @@ test.describe('Project Settings', () => {
 
 		await page.getByRole('button', { name: 'Add Repo' }).click();
 
-		await expect(page.getByRole('heading', { name: 'Set up repository' })).toBeVisible({
-			timeout: 15000,
-		});
+		await expect(page.getByLabel('Short name')).toBeVisible({ timeout: 15000 });
+		await expect(page.getByLabel('GitHub URL or owner/repo')).toBeVisible();
 	});
 });
