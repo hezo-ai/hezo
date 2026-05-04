@@ -1,6 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	AgentAdminStatus,
 	AgentRuntimeStatus,
 	HeartbeatRunStatus,
 	IssueStatus,

@@ -1,4 +1,3 @@
-import { generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,15 +9,6 @@ import { signAgentJwt, signBoardJwt } from '../../middleware/auth';
 import type { DockerClient } from '../../services/docker';
 import { buildApp } from '../../startup';
 import { createTestDbWithMigrations } from './db';
-
-// Generate a test Ed25519 keypair for Connect state verification
-const testKeyPair = generateKeyPairSync('ed25519', {
-	privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
-	publicKeyEncoding: { type: 'spki', format: 'pem' },
-});
-
-export const TEST_CONNECT_PRIVATE_KEY = testKeyPair.privateKey;
-export const TEST_CONNECT_PUBLIC_KEY = testKeyPair.publicKey;
 
 export function createStubDocker(): DockerClient {
 	return {
@@ -56,8 +46,6 @@ export async function createTestApp(opts: { webUrl?: string } = {}) {
 		masterKeyManager,
 		{
 			dataDir,
-			connectUrl: 'http://localhost:4100',
-			connectPublicKey: TEST_CONNECT_PUBLIC_KEY,
 			webUrl: opts.webUrl ?? '',
 		},
 		createStubDocker(),

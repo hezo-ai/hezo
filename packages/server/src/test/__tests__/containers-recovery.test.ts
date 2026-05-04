@@ -1,10 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	AgentRuntimeStatus,
-	ContainerStatus,
-	HeartbeatRunStatus,
-	WakeupStatus,
-} from '@hezo/shared';
+import { AgentRuntimeStatus, HeartbeatRunStatus, WakeupStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';

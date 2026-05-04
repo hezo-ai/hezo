@@ -223,7 +223,22 @@ CREATE TABLE mcp_connections (
 
 ## P5 — Delete `packages/connect` and the OAuth code paths
 
+**Status:** ✅ Shipped 2026-05-04 (connect package + OAuth flow gone; `ai_provider_configs` migration deferred to a follow-up since AI provider keys can stay in the container env).
+
 With the replacement in place across P1–P4, remove the old surface.
+
+**Implementation notes:**
+- Deleted entirely: `packages/connect/`, `routes/oauth-callback.ts`, `routes/connections.ts`, `routes/github.ts`, `services/token-store.ts`, `services/github` API helpers (only `parseGitHubUrl` remains), `services/ssh-keys.updateGitHubKeyId`, `web/hooks/use-connections.ts`, `web/components/repo-setup-wizard.tsx`, all OAuth-related test files (oauth-callback, connections, github, repo-setup, github-extended, token-store).
+- `repos.ts` simplified to URL-only entry; agent-driven `setup_github_repo` MCP tool handles deploy-key onboarding.
+- `connectUrl` / `connectPublicKey` removed from app context, `cli.ts`, `startup.ts`, `lib/types.ts`, `playwright.config.ts`, `scripts/dev.ts`, `test/helpers/app.ts`, all tests.
+- `DEFAULT_CONNECT_URL`, `DEFAULT_CONNECT_PORT`, `OAUTH_CALLBACK_PATH` removed from `@hezo/shared/constants`.
+- Schema dropped `connected_platforms`, `slack_connections` tables, `github_key_id` column, `trg_connected_platforms_updated` trigger.
+- Project settings UI gains an inline "Add Repo" form (URL + short_name).
+- Comment renderer for the `setup_repo` action prompts the user to open project settings instead of hosting an inline OAuth wizard.
+
+**Deferred:**
+- `ai_provider_configs` migration to `secrets`. Provider API keys can remain in the container env per the user's clarification, so the existing `ai_provider_configs` flow keeps working unchanged.
+- `oauth_request` approval-type enum value still exists; the repo-setup gate uses it as a generic "designated-repo-needed" approval. Renaming is cosmetic and can land in P6.
 
 ### Delete
 
@@ -329,6 +344,6 @@ Test commands:
 | P2-followup (macOS SSH relay) | 1 day | ✅ shipped 2026-05-04 |
 | P3 (HTTPS MITM proxy) | 5 days | not started |
 | P4 (MCP connections) | 3 days | ✅ shipped 2026-05-04 |
-| P5 (delete connect) | 2 days | not started |
+| P5 (delete connect) | 2 days | ✅ shipped 2026-05-04 |
 | P6 (polish + docs) | 2–3 days | not started |
 | **Total remaining** | **~12–13 days** | |

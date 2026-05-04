@@ -671,7 +671,7 @@ export async function runAgent(
 
 	const persistRotatedAuth = async () => {
 		const mount = context.subscriptionMount;
-		if (!mount || !mount.rotates) return;
+		if (!mount?.rotates) return;
 		try {
 			if (existsSync(mount.hostAuthFile)) {
 				const rotated = readFileSync(mount.hostAuthFile, 'utf8');

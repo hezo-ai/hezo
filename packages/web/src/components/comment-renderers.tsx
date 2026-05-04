@@ -26,7 +26,6 @@ import { useRunLogs } from '../hooks/use-run-logs';
 import { LazyMount } from './lazy-mount';
 import { LogViewer } from './log-viewer';
 import { MarkdownProse } from './markdown-prose';
-import { RepoSetupWizard } from './repo-setup-wizard';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 
@@ -135,7 +134,6 @@ function ActionComment({
 	comment,
 	companyId,
 	projectId,
-	issueId,
 }: {
 	comment: CommentData;
 	companyId?: string;
@@ -148,8 +146,6 @@ function ActionComment({
 		typeof comment.chosen_option === 'object' &&
 		comment.chosen_option &&
 		comment.chosen_option.status === 'complete';
-
-	const [wizardOpen, setWizardOpen] = useState(false);
 
 	if (kind !== 'setup_repo') {
 		return <p className="text-xs text-text-subtle italic">Unknown action: {kind}</p>;
@@ -177,22 +173,18 @@ function ActionComment({
 			<div className="flex items-center gap-2 text-sm">
 				<GitBranch className="w-4 h-4 text-accent-blue-text" />
 				<span>
-					This project has no designated repository yet. Connect GitHub and pick a repo to unblock
-					work on this ticket.
+					This project has no designated repository yet. Add a repo URL in project settings, then
+					this ticket will resume.
 				</span>
 			</div>
 			<div>
-				<Button size="sm" onClick={() => setWizardOpen(true)}>
-					Set up repository
-				</Button>
+				<Link
+					to="/companies/$companyId/projects/$projectId/settings"
+					params={{ companyId, projectId }}
+				>
+					<Button size="sm">Open project settings</Button>
+				</Link>
 			</div>
-			<RepoSetupWizard
-				companyId={companyId}
-				projectId={projectId}
-				issueId={issueId}
-				open={wizardOpen}
-				onOpenChange={setWizardOpen}
-			/>
 		</div>
 	);
 }

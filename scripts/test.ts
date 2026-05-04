@@ -25,7 +25,7 @@ const packageFilter = opts.package as string | undefined;
 const skipE2E = opts.skipE2e as boolean;
 const e2eFlag = opts.e2e as boolean;
 
-const TEST_PACKAGES = ['packages/server', 'packages/connect'];
+const TEST_PACKAGES = ['packages/server'];
 
 async function buildShared() {
 	console.log('Building shared...');

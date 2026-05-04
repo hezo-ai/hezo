@@ -23,8 +23,6 @@ export type Env = {
 		logs: LogStreamBroker;
 		auth: AuthInfo;
 		dataDir: string;
-		connectUrl: string;
-		connectPublicKey: string;
 		webUrl: string;
 		sshAgentServer: SshAgentServer | null;
 		egressProxy: EgressProxy | null;

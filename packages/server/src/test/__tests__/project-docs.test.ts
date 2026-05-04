@@ -30,12 +30,7 @@ beforeAll(async () => {
 	const masterKeyHex = generateMasterKey();
 	await masterKeyManager.initialize(db, masterKeyHex);
 	await seedBuiltins(db, await loadAgentRoles());
-	app = buildApp(
-		db,
-		masterKeyManager,
-		{ dataDir: tempDataDir, connectUrl: '', connectPublicKey: '', webUrl: '' },
-		createStubDocker(),
-	);
+	app = buildApp(db, masterKeyManager, { dataDir: tempDataDir, webUrl: '' }, createStubDocker());
 	const userResult = await db.query<{ id: string }>(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('Test Admin', true) RETURNING id",
 	);

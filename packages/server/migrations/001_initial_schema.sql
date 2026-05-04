@@ -411,7 +411,6 @@ CREATE TABLE company_ssh_keys (
     public_key            TEXT NOT NULL,
     fingerprint           TEXT,
     private_key_secret_id UUID REFERENCES secrets(id) ON DELETE SET NULL,
-    github_key_id         INTEGER,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (company_id)
 );
@@ -674,28 +673,6 @@ CREATE TABLE document_revisions (
 CREATE INDEX idx_document_revisions_document ON document_revisions(document_id);
 
 -------------------------------------------------------------------------------
--- CONNECTED PLATFORMS
--------------------------------------------------------------------------------
-
-CREATE TABLE connected_platforms (
-    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id              UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    platform                platform_type NOT NULL,
-    status                  connection_status NOT NULL DEFAULT 'active',
-    access_token_secret_id  UUID REFERENCES secrets(id) ON DELETE SET NULL,
-    refresh_token_secret_id UUID REFERENCES secrets(id) ON DELETE SET NULL,
-    scopes                  TEXT NOT NULL DEFAULT '',
-    metadata                JSONB NOT NULL DEFAULT '{}'::jsonb,
-    token_expires_at        TIMESTAMPTZ,
-    connected_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (company_id, platform)
-);
-
-CREATE INDEX idx_connected_platforms_company ON connected_platforms(company_id);
-
--------------------------------------------------------------------------------
 -- AI PROVIDER CONFIGS
 -------------------------------------------------------------------------------
 
@@ -956,21 +933,6 @@ CREATE TABLE notification_preferences (
 );
 
 -------------------------------------------------------------------------------
--- SLACK CONNECTIONS
--------------------------------------------------------------------------------
-
-CREATE TABLE slack_connections (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    bot_token_secret_id UUID NOT NULL REFERENCES secrets(id),
-    team_id             TEXT NOT NULL,
-    team_name           TEXT NOT NULL,
-    installed_by        UUID NOT NULL REFERENCES users(id),
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (company_id)
-);
-
--------------------------------------------------------------------------------
 -- TRIGGERS: auto-update updated_at
 -------------------------------------------------------------------------------
 
@@ -1010,9 +972,6 @@ CREATE TRIGGER trg_mcp_connections_updated BEFORE UPDATE ON mcp_connections
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_documents_updated BEFORE UPDATE ON documents
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TRIGGER trg_connected_platforms_updated BEFORE UPDATE ON connected_platforms
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_users_updated BEFORE UPDATE ON users

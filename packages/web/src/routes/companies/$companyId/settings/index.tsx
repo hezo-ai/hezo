@@ -11,11 +11,6 @@ import {
 	useCompany,
 	useUpdateCompany,
 } from '../../../../hooks/use-companies';
-import {
-	useConnections,
-	useDeleteConnection,
-	useStartConnection,
-} from '../../../../hooks/use-connections';
 import { useCosts } from '../../../../hooks/use-costs';
 import {
 	usePreferenceRevisions,
@@ -34,7 +29,6 @@ import {
 const settingsNav = [
 	{ id: 'general', label: 'General' },
 	{ id: 'automations', label: 'Automations' },
-	{ id: 'connections', label: 'Connected platforms' },
 	{ id: 'secrets', label: 'Secrets vault' },
 	{ id: 'api-keys', label: 'API keys' },
 	{ id: 'mcp', label: 'MCP servers' },
@@ -78,9 +72,6 @@ function SettingsPage() {
 				</div>
 				<div id="settings-automations">
 					<AutomationsSection companyId={companyId} />
-				</div>
-				<div id="settings-connections">
-					<ConnectionsSection companyId={companyId} />
 				</div>
 				<div id="settings-secrets">
 					<SecretsSection companyId={companyId} />
@@ -217,50 +208,6 @@ function AutomationsSection({ companyId }: { companyId: string }) {
 					data-testid="subtask-page-size-input"
 				/>
 			</div>
-		</section>
-	);
-}
-
-function ConnectionsSection({ companyId }: { companyId: string }) {
-	const { data: connections } = useConnections(companyId);
-	const startConn = useStartConnection(companyId);
-	const deleteConn = useDeleteConnection(companyId);
-
-	async function handleConnect(platform: string) {
-		const result = await startConn.mutateAsync(platform);
-		window.location.href = result.auth_url;
-	}
-
-	const github = connections?.find((c) => c.platform === 'github');
-
-	return (
-		<section>
-			<SectionHeader title="Connected platforms" desc="External services linked to this company." />
-			{github ? (
-				<div className="border border-border rounded-radius-md p-3 flex items-center justify-between">
-					<div className="flex items-center gap-2">
-						<span className="text-[13px] font-medium">GitHub</span>
-						<Badge color={github.status === 'active' ? 'success' : 'danger'}>{github.status}</Badge>
-					</div>
-					<Button variant="danger-text" size="sm" onClick={() => deleteConn.mutate(github.id)}>
-						<Trash2 className="w-3.5 h-3.5" /> Disconnect
-					</Button>
-				</div>
-			) : (
-				<Button
-					variant="secondary"
-					onClick={() => handleConnect('github')}
-					disabled={startConn.isPending}
-				>
-					{startConn.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-					<ExternalLink className="w-3.5 h-3.5" /> Connect GitHub
-				</Button>
-			)}
-			{startConn.error && (
-				<p className="text-[13px] text-accent-red mt-2">
-					{(startConn.error as { message: string }).message}
-				</p>
-			)}
 		</section>
 	);
 }

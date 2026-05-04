@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import { defineConfig } from '@playwright/test';
 
 const SERVER_PORT = 3101;
-const CONNECT_PORT = 4101;
 const WEB_PORT = 5174;
 const TEST_DATA_DIR = join(tmpdir(), 'hezo-e2e-test');
 
@@ -38,7 +37,7 @@ export default defineConfig({
 	],
 	webServer: [
 		{
-			command: `bun run src/index.ts -- --port ${SERVER_PORT} --data-dir ${TEST_DATA_DIR} --connect-url http://localhost:${CONNECT_PORT} --master-key e2e-test-master-key-0123456789abcdef0123456789abcdef --reset`,
+			command: `bun run src/index.ts -- --port ${SERVER_PORT} --data-dir ${TEST_DATA_DIR} --master-key e2e-test-master-key-0123456789abcdef0123456789abcdef --reset`,
 			cwd: './packages/server',
 			// `Bun.serve` opens the port before `startup()` finishes registering
 			// routes, so a port-only check races against route mounting and the
@@ -51,15 +50,6 @@ export default defineConfig({
 				SKIP_AI_KEY_VALIDATION: '1',
 				HEZO_SKIP_DOCKER: '1',
 				HEZO_WAKEUP_COALESCING_MS: '100',
-			},
-		},
-		{
-			command: 'bun run src/index.ts',
-			cwd: './packages/connect',
-			port: CONNECT_PORT,
-			reuseExistingServer: true,
-			env: {
-				HEZO_CONNECT_PORT: String(CONNECT_PORT),
 			},
 		},
 		{

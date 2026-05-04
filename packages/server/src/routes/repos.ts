@@ -1,4 +1,4 @@
-import { ApprovalType, OAuthRequestReason, PlatformType, wsRoom } from '@hezo/shared';
+import { wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { getProjectLocator, resolveProjectId } from '../lib/resolve';
@@ -7,15 +7,9 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { provisionContainer } from '../services/containers';
-import {
-	createGitHubRepo,
-	listUserOrgs,
-	parseGitHubUrl,
-	validateRepoAccess,
-} from '../services/github';
+import { parseGitHubUrl } from '../services/github';
 import { enqueueRepoSetupResumeWakeups, finalizePendingRepoSetup } from '../services/repo-setup';
 import { ensureProjectRepos, removeRepoFromWorkspace } from '../services/repo-sync';
-import { getOAuthToken } from '../services/token-store';
 
 const log = logger.child('routes');
 
@@ -43,6 +37,12 @@ reposRoutes.get('/companies/:companyId/projects/:projectId/repos', async (c) => 
 	return ok(c, result.rows);
 });
 
+/**
+ * Add a GitHub repository to the project. The user supplies a GitHub URL
+ * (HTTPS or SSH form, or `owner/repo`); the server records the repo, lets
+ * the agent's `setup_github_repo` MCP tool drive deploy-key onboarding,
+ * and clones over SSH using the per-run signing socket.
+ */
 reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) => {
 	const access = await requireCompanyAccess(c);
 	if (access instanceof Response) return access;
@@ -55,111 +55,26 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 
 	const body = await c.req.json<{
 		short_name: string;
-		mode?: 'link' | 'create';
-		url?: string;
-		owner?: string;
-		name?: string;
-		private?: boolean;
+		url: string;
 	}>();
 
-	const mode = body.mode ?? 'link';
-	if (!body.short_name) return err(c, 'INVALID_REQUEST', 'short_name is required', 400);
-
-	if (mode === 'link') {
-		if (!body.url) return err(c, 'INVALID_REQUEST', 'url is required for mode=link', 400);
-		if (!parseGitHubUrl(body.url)) {
-			return err(c, 'INVALID_URL', 'URL must be a valid GitHub repository URL', 400);
-		}
-	} else if (mode === 'create') {
-		if (!body.owner || !body.name) {
-			return err(c, 'INVALID_REQUEST', 'owner and name are required for mode=create', 400);
-		}
+	if (!body.short_name?.trim()) {
+		return err(c, 'INVALID_REQUEST', 'short_name is required', 400);
+	}
+	if (!body.url?.trim()) {
+		return err(c, 'INVALID_REQUEST', 'url is required', 400);
 	}
 
-	const connection = await db.query<{
-		id: string;
-		metadata: { username?: string };
-	}>(
-		`SELECT id, metadata FROM connected_platforms
-		 WHERE company_id = $1 AND platform = $2 AND status = 'active'`,
-		[companyId, PlatformType.GitHub],
-	);
-
-	if (connection.rows.length === 0) {
-		await db.query(
-			`INSERT INTO approvals (company_id, type, payload)
-			 VALUES ($1, $2::approval_type, $3::jsonb)`,
-			[
-				companyId,
-				ApprovalType.OauthRequest,
-				JSON.stringify({
-					platform: PlatformType.GitHub,
-					reason: OAuthRequestReason.RepoAdd,
-					project_id: projectId,
-				}),
-			],
-		);
-
+	const parsed = parseGitHubUrl(body.url);
+	if (!parsed) {
 		return err(
 			c,
-			'GITHUB_NOT_CONNECTED',
-			'Connect GitHub in company settings before adding repos',
-			422,
+			'INVALID_URL',
+			'url must be a valid GitHub repository URL (https://github.com/owner/repo or git@github.com:owner/repo.git or owner/repo)',
+			400,
 		);
 	}
-
-	const token = await getOAuthToken(db, masterKeyManager, companyId, PlatformType.GitHub);
-	if (!token) {
-		return err(c, 'GITHUB_NOT_CONNECTED', 'GitHub token not found', 422);
-	}
-
-	let repoOwner: string;
-	let repoName: string;
-
-	if (mode === 'create') {
-		const owner = body.owner ?? '';
-		const name = body.name ?? '';
-		const orgs = await listUserOrgs(token);
-		const ownerAllowed = orgs.some((o) => o.login.toLowerCase() === owner.toLowerCase());
-		if (!ownerAllowed) {
-			return err(
-				c,
-				'OWNER_NOT_ACCESSIBLE',
-				`The authenticated GitHub user cannot create repos under ${owner}`,
-				403,
-			);
-		}
-
-		try {
-			const created = await createGitHubRepo(owner, name, body.private !== false, token);
-			repoOwner = created.owner;
-			repoName = created.name;
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : 'Failed to create GitHub repo';
-			return err(c, 'REPO_CREATE_FAILED', msg, 422);
-		}
-	} else {
-		const parsed = parseGitHubUrl(body.url ?? '');
-		if (!parsed) {
-			return err(c, 'INVALID_URL', 'URL must be a valid GitHub repository URL', 400);
-		}
-
-		const repoAccess = await validateRepoAccess(parsed.owner, parsed.repo, token);
-		if (!repoAccess.accessible) {
-			const username = connection.rows[0].metadata?.username || 'the connected account';
-			return err(
-				c,
-				'REPO_ACCESS_FAILED',
-				`Cannot access this repo — the GitHub user '${username}' needs to be added to ${parsed.owner}/${parsed.repo}`,
-				422,
-			);
-		}
-
-		repoOwner = parsed.owner;
-		repoName = parsed.repo;
-	}
-
-	const repoIdentifier = `${repoOwner}/${repoName}`;
+	const repoIdentifier = `${parsed.owner}/${parsed.repo}`;
 
 	let insertedRepo: {
 		id: string;
@@ -189,7 +104,7 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 			`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
 			 VALUES ($1, $2, $3, 'github'::repo_host_type)
 			 RETURNING id, project_id, short_name, repo_identifier, host_type, created_at`,
-			[projectId, body.short_name, repoIdentifier],
+			[projectId, body.short_name.trim(), repoIdentifier],
 		);
 		insertedRepo = insertRes.rows[0];
 
@@ -342,6 +257,8 @@ async function ensureProjectContainerUp(c: Context<Env>, projectId: string): Pro
 	const masterKeyManager = c.get('masterKeyManager');
 	const wsManager = c.get('wsManager');
 	const logs = c.get('logs');
+	const sshAgentServer = c.get('sshAgentServer');
+	const egressProxy = c.get('egressProxy');
 
 	if (!docker || !dataDir) return;
 
@@ -362,25 +279,25 @@ async function ensureProjectContainerUp(c: Context<Env>, projectId: string): Pro
 		[projectId],
 	);
 	if (projectRes.rows.length === 0) return;
-	const project = projectRes.rows[0];
-
-	if (project.container_status === 'running' && project.container_id) return;
+	const proj = projectRes.rows[0];
+	if (proj.container_status === 'running') return;
 
 	try {
 		await provisionContainer(
-			{ db, docker, dataDir, wsManager, masterKeyManager, logs },
 			{
-				id: project.id,
-				company_id: project.company_id,
-				slug: project.slug,
-				docker_base_image: project.docker_base_image,
-				container_id: project.container_id,
-				container_status: project.container_status,
-				dev_ports: project.dev_ports,
+				db,
+				docker,
+				dataDir,
+				wsManager,
+				masterKeyManager,
+				logs,
+				sshAgentServer,
+				egressCAPath: egressProxy?.caCertPath ?? null,
 			},
-			project.company_slug,
+			proj,
+			proj.company_slug,
 		);
 	} catch (e) {
-		log.error(`Failed to provision container for project ${projectId}:`, e);
+		log.error('Failed to auto-start container after repo add:', e);
 	}
 }

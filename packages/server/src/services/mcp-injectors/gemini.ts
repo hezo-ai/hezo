@@ -1,6 +1,5 @@
 import { join } from 'node:path';
 import type {
-	McpDescriptor,
 	McpHttpDescriptor,
 	McpInjection,
 	McpStdioDescriptor,
