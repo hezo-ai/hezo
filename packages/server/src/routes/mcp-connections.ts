@@ -3,7 +3,11 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
+import { installLocalMcpById } from '../services/mcp-installer';
+
+const log = logger.child('mcp-connections-route');
 
 export const mcpConnectionsRoutes = new Hono<Env>();
 
@@ -85,15 +89,59 @@ mcpConnectionsRoutes.post('/companies/:companyId/mcp-connections', async (c) => 
 		],
 	);
 
-	broadcastChange(
-		c,
-		wsRoom.company(companyId),
-		'mcp_connections',
-		'INSERT',
-		result.rows[0] as Record<string, unknown>,
-	);
-	return ok(c, result.rows[0], 201);
+	const inserted = result.rows[0] as Record<string, unknown>;
+	broadcastChange(c, wsRoom.company(companyId), 'mcp_connections', 'INSERT', inserted);
+
+	// Kick off install for local MCPs against any running project containers.
+	// We don't block the response — the route returns immediately and the
+	// install_status flips via broadcast on completion.
+	if (body.kind === McpConnectionKind.Local) {
+		void kickoffLocalInstall(c, companyId, body.project_id ?? null, inserted.id as string).catch(
+			(e) => log.warn('local mcp install kickoff failed', { error: (e as Error).message }),
+		);
+	}
+
+	return ok(c, inserted, 201);
 });
+
+async function kickoffLocalInstall(
+	c: import('hono').Context<Env>,
+	companyId: string,
+	projectId: string | null,
+	rowId: string,
+): Promise<void> {
+	const db = c.get('db');
+	const docker = c.get('docker');
+
+	const candidates = await db.query<{ id: string; container_id: string | null }>(
+		`SELECT id, container_id FROM projects
+		 WHERE company_id = $1 AND container_id IS NOT NULL AND container_status = 'running'
+		   ${projectId ? 'AND id = $2' : ''}`,
+		projectId ? [companyId, projectId] : [companyId],
+	);
+
+	for (const project of candidates.rows) {
+		if (!project.container_id) continue;
+		try {
+			const result = await installLocalMcpById(
+				{ db, docker, containerId: project.container_id, companyId, projectId: project.id },
+				rowId,
+			);
+			if (result) {
+				broadcastChange(c, wsRoom.company(companyId), 'mcp_connections', 'UPDATE', {
+					id: rowId,
+					install_status: result.status,
+					install_error: result.error ?? null,
+				});
+			}
+		} catch (e) {
+			log.warn('local mcp install per-project failed', {
+				project: project.id,
+				error: (e as Error).message,
+			});
+		}
+	}
+}
 
 mcpConnectionsRoutes.delete('/companies/:companyId/mcp-connections/:id', async (c) => {
 	const access = await requireCompanyAccess(c);

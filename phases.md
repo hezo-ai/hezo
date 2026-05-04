@@ -366,9 +366,12 @@ Test commands:
 Tracked here so they don't get lost; none block the v1 release that this plan was scoped against:
 
 - `ai_provider_configs` migration to `secrets`. AI provider API keys can stay in container env per the user's clarification, so the existing flow keeps working unchanged.
-- On-demand local-MCP installer that runs `npm install` / `uv tool install` inside the container at provision and on `mcp_connections` insert. The descriptor + dispatch contract is in place and tested; only the auto-install step is missing.
-- Renaming the `oauth_request` approval-type enum value to a neutral `designated_repo_request`. The repo-setup gate still uses the old name as a generic "designated-repo-needed" approval.
-- Audit log UI tab dedicated to `entity_type='egress_request'` events.
-- `/companies/:slug/credentials` page combining the secrets list with `last_used_at` from the audit log and a per-secret revoke flow. The settings-page secrets section already exists with full CRUD; the dedicated page would surface usage history.
 - Defense-in-depth: container egress firewall rules pinning outbound traffic to the proxy + agent API, and per-run pinned `known_hosts` files for git over SSH.
 - mockttp → bun TLS fix. We swapped to `http-mitm-proxy` because mockttp's TLS server is incompatible with Bun. If mockttp lands a fix, switching back gets us native HTTP/2 + WebSocket inspection.
+
+### Completed follow-ups (2026-05-04)
+
+- ✅ On-demand local-MCP installer (`services/mcp-installer.ts`). Runs `npm install --no-audit --no-fund <package>` inside the project container at provision and after `add_mcp_connection`; marks `install_status`/`install_error`. Idempotent (skips already-installed rows), shell-injection guarded (rejects unsafe package/connection names without invoking npm), 5-min timeout. 7 unit tests with a fake docker.
+- ✅ Renamed `oauth_request` approval-type enum value to `designated_repo_request` across schema (enum + dependent unique index), shared `ApprovalType.DesignatedRepoRequest`, `services/repo-setup.ts`, and `web/components/approval-card.tsx` (color map + switch case + render predicate).
+- ✅ Audit log UI tab for `entity_type='egress_request'` events (`web/routes/companies/$companyId/audit-log.tsx`). Tabbed view: All vs Outbound traffic; egress columns show host, method+path, status (response code or error code as a danger badge), secret names used, and the agent that triggered the request.
+- ✅ `/companies/:slug/credentials` page (`web/routes/companies/$companyId/credentials.tsx`). New `GET /api/companies/:companyId/credentials` endpoint joins each secret with the most recent `egress_request` audit row that named it (lateral subquery for `last_used_at`, `use_count`, `last_host`). Page lists secrets sorted by recency, surfaces allow-list policy with badges, and has a confirm-prompted Revoke button. Linked from the company sidebar Resources section.

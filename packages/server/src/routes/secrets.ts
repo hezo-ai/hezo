@@ -7,6 +7,49 @@ import { requireCompanyAccess } from '../middleware/auth';
 
 export const secretsRoutes = new Hono<Env>();
 
+/**
+ * Augmented secrets list joined with the most recent egress-request audit
+ * row that named each secret. `last_used_at` is null for secrets that have
+ * never been substituted on an outbound request — useful for spotting
+ * stale credentials safe to revoke.
+ */
+secretsRoutes.get('/companies/:companyId/credentials', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+
+	const result = await db.query(
+		`SELECT s.id, s.company_id, s.project_id, s.name, s.category,
+		        s.allowed_hosts, s.allow_all_hosts, s.created_at, s.updated_at,
+		        p.name AS project_name,
+		        usage.last_used_at,
+		        usage.use_count,
+		        usage.last_host
+		 FROM secrets s
+		 LEFT JOIN projects p ON p.id = s.project_id
+		 LEFT JOIN LATERAL (
+		     SELECT max(al.created_at) AS last_used_at,
+		            count(*)::int AS use_count,
+		            (SELECT al2.details->>'host'
+		             FROM audit_log al2
+		             WHERE al2.company_id = $1
+		               AND al2.entity_type = 'egress_request'
+		               AND al2.details->'secret_names_used' ? s.name
+		             ORDER BY al2.created_at DESC LIMIT 1) AS last_host
+		     FROM audit_log al
+		     WHERE al.company_id = $1
+		       AND al.entity_type = 'egress_request'
+		       AND al.details->'secret_names_used' ? s.name
+		 ) usage ON TRUE
+		 WHERE s.company_id = $1
+		 ORDER BY usage.last_used_at DESC NULLS LAST, s.name ASC`,
+		[companyId],
+	);
+	return ok(c, result.rows);
+});
+
 secretsRoutes.get('/companies/:companyId/secrets', async (c) => {
 	const access = await requireCompanyAccess(c);
 	if (access instanceof Response) return access;

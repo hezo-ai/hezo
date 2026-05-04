@@ -52,7 +52,7 @@ CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace',
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'company');
-CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'strategy', 'kb_update', 'plan_review', 'deploy_production', 'oauth_request', 'skill_proposal');
+CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'strategy', 'kb_update', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
 CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
@@ -571,7 +571,7 @@ CREATE INDEX idx_approvals_status ON approvals(company_id, status);
 -- their own action comments on their respective issues.
 CREATE UNIQUE INDEX idx_one_pending_repo_setup
     ON approvals (company_id, (payload->>'project_id'))
-    WHERE type = 'oauth_request'
+    WHERE type = 'designated_repo_request'
       AND status = 'pending'
       AND payload->>'reason' = 'designated_repo';
 

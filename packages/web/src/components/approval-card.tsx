@@ -9,7 +9,7 @@ import { Button } from './ui/button';
 const typeColors: Record<string, string> = {
 	kb_update: 'blue',
 	strategy: 'purple',
-	oauth_request: 'yellow',
+	designated_repo_request: 'yellow',
 	secret_access: 'red',
 	hire: 'green',
 	plan_review: 'blue',
@@ -41,7 +41,7 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 	const companySlug = approval.company_slug;
 
 	switch (approval.type) {
-		case ApprovalType.OauthRequest: {
+		case ApprovalType.DesignatedRepoRequest: {
 			const platform = (p.platform as string) ?? 'GitHub';
 			const reason = p.reason as string | undefined;
 			const projectName = approval.payload_project_name;
@@ -254,7 +254,7 @@ function resolveOauthDestination(approval: Approval) {
 export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProps) {
 	const resolveApproval = useResolveApproval();
 
-	if (approval.type === ApprovalType.OauthRequest) {
+	if (approval.type === ApprovalType.DesignatedRepoRequest) {
 		const dest = resolveOauthDestination(approval);
 		return (
 			<Link

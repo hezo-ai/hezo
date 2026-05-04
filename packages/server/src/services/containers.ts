@@ -257,6 +257,28 @@ export async function provisionContainer(
 			}
 		}
 
+		emit('stdout', '→ Installing pending local MCP servers');
+		try {
+			const { installPendingLocalMcps } = await import('./mcp-installer');
+			const results = await installPendingLocalMcps({
+				db,
+				docker,
+				containerId: Id,
+				companyId,
+				projectId: project.id,
+				emit,
+			});
+			const failed = results.filter((r) => r.status === 'failed');
+			if (failed.length > 0) {
+				emit(
+					'stderr',
+					`⚠ ${failed.length} MCP server install(s) failed; check the connection's install_error in settings`,
+				);
+			}
+		} catch (e) {
+			emit('stderr', `⚠ MCP installer step failed: ${(e as Error).message}`);
+		}
+
 		emit('stdout', '✓ Container ready');
 		await broadcastProjectUpdate(db, wsManager, companyId, project.id);
 

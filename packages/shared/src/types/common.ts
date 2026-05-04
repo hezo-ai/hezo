@@ -142,7 +142,7 @@ export const ApprovalType = {
 	KbUpdate: 'kb_update',
 	PlanReview: 'plan_review',
 	DeployProduction: 'deploy_production',
-	OauthRequest: 'oauth_request',
+	DesignatedRepoRequest: 'designated_repo_request',
 	SkillProposal: 'skill_proposal',
 } as const;
 export type ApprovalType = (typeof ApprovalType)[keyof typeof ApprovalType];
