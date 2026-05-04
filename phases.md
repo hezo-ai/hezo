@@ -352,11 +352,23 @@ Test commands:
 
 | Phase | Effort | Status |
 |-------|--------|--------|
-| P1 | shipped | ✅ commit `9fa5be6` |
-| P2 | shipped | ✅ commit `9fa5be6` |
-| P2-followup (macOS SSH relay) | 1 day | ✅ shipped 2026-05-04 |
-| P3 (HTTPS MITM proxy) | 5 days | not started |
-| P4 (MCP connections) | 3 days | ✅ shipped 2026-05-04 |
-| P5 (delete connect) | 2 days | ✅ shipped 2026-05-04 |
-| P6 (polish + docs) | 2–3 days | ✅ shipped 2026-05-04 |
-| **Total remaining** | **~12–13 days** | |
+| P1 (request_credential MCP tool) | shipped | ✅ commit `9fa5be6` |
+| P2 (SSH signing server) | shipped | ✅ commit `9fa5be6` |
+| P2-followup (macOS SSH relay) | 1 day | ✅ shipped 2026-05-04, commit `c9b9be9` |
+| P3 (HTTPS MITM proxy) | 5 days | ✅ shipped 2026-05-04, commit `98d63de` |
+| P4 (MCP connections) | 3 days | ✅ shipped 2026-05-04, commit `d1c3f97` |
+| P5 (delete connect) | 2 days | ✅ shipped 2026-05-04, commit `1b6387a` |
+| P6 (polish + docs) | 2–3 days | ✅ shipped 2026-05-04, commit `33f4f63` |
+| **Total remaining** | **0 days — all phases shipped** | |
+
+### Deferred follow-ups
+
+Tracked here so they don't get lost; none block the v1 release that this plan was scoped against:
+
+- `ai_provider_configs` migration to `secrets`. AI provider API keys can stay in container env per the user's clarification, so the existing flow keeps working unchanged.
+- On-demand local-MCP installer that runs `npm install` / `uv tool install` inside the container at provision and on `mcp_connections` insert. The descriptor + dispatch contract is in place and tested; only the auto-install step is missing.
+- Renaming the `oauth_request` approval-type enum value to a neutral `designated_repo_request`. The repo-setup gate still uses the old name as a generic "designated-repo-needed" approval.
+- Audit log UI tab dedicated to `entity_type='egress_request'` events.
+- `/companies/:slug/credentials` page combining the secrets list with `last_used_at` from the audit log and a per-secret revoke flow. The settings-page secrets section already exists with full CRUD; the dedicated page would surface usage history.
+- Defense-in-depth: container egress firewall rules pinning outbound traffic to the proxy + agent API, and per-run pinned `known_hosts` files for git over SSH.
+- mockttp → bun TLS fix. We swapped to `http-mitm-proxy` because mockttp's TLS server is incompatible with Bun. If mockttp lands a fix, switching back gets us native HTTP/2 + WebSocket inspection.
