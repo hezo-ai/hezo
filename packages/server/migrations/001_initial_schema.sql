@@ -304,17 +304,19 @@ CREATE UNIQUE INDEX idx_projects_company_issue_prefix ON projects(company_id, is
 -------------------------------------------------------------------------------
 
 CREATE TABLE repos (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    short_name      TEXT NOT NULL,
-    repo_identifier TEXT NOT NULL,
-    host_type       repo_host_type NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id           UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    short_name           TEXT NOT NULL,
+    repo_identifier      TEXT NOT NULL,
+    host_type            repo_host_type NOT NULL,
+    oauth_connection_id  UUID,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     UNIQUE (project_id, short_name)
 );
 
 CREATE INDEX idx_repos_project ON repos(project_id);
+CREATE INDEX idx_repos_oauth_connection ON repos(oauth_connection_id) WHERE oauth_connection_id IS NOT NULL;
 
 -- Deferred FK: projects.designated_repo_id → repos(id) (repos defined after projects)
 -- RESTRICT: the designated repo cannot be deleted directly; project cascade still
@@ -345,6 +347,46 @@ CREATE INDEX idx_secrets_company ON secrets(company_id);
 CREATE INDEX idx_secrets_project ON secrets(project_id);
 
 -------------------------------------------------------------------------------
+-- OAUTH CONNECTIONS
+-------------------------------------------------------------------------------
+
+-- One row per (company, provider, provider_account_id). Tokens are encrypted
+-- and stored in `secrets`; the FKs here point at those rows. The egress proxy
+-- substitutes the access token at request time via the standard placeholder
+-- mechanism (`__HEZO_SECRET_<NAME>__`), so no token value ever reaches the
+-- agent container.
+--
+-- `provider`     — short identifier: 'github', 'datocms', 'linear', 'generic'.
+-- `provider_account_id` — stable upstream id (GitHub user id, DatoCMS workspace
+--                  id, …). Together with provider+company this is the natural
+--                  key.
+-- `metadata`     — provider-specific bag (avatar_url, account_email,
+--                  discovered_authorize_url, discovered_token_endpoint, …).
+CREATE TABLE oauth_connections (
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id               UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    provider                 TEXT NOT NULL,
+    provider_account_id      TEXT NOT NULL,
+    provider_account_label   TEXT NOT NULL,
+    access_token_secret_id   UUID NOT NULL REFERENCES secrets(id) ON DELETE RESTRICT,
+    refresh_token_secret_id  UUID REFERENCES secrets(id) ON DELETE SET NULL,
+    scopes                   TEXT[] NOT NULL DEFAULT '{}',
+    expires_at               TIMESTAMPTZ,
+    metadata                 JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (company_id, provider, provider_account_id)
+);
+
+CREATE INDEX idx_oauth_connections_company ON oauth_connections(company_id);
+CREATE INDEX idx_oauth_connections_provider ON oauth_connections(company_id, provider);
+
+-- Deferred FK: repos.oauth_connection_id → oauth_connections(id)
+ALTER TABLE repos ADD CONSTRAINT fk_repos_oauth_connection
+    FOREIGN KEY (oauth_connection_id) REFERENCES oauth_connections(id) ON DELETE SET NULL;
+
+-------------------------------------------------------------------------------
 -- MCP CONNECTIONS
 -------------------------------------------------------------------------------
 
@@ -364,22 +406,24 @@ CREATE TYPE mcp_install_status AS ENUM ('pending', 'installed', 'failed');
 --                   `package` is the npm/pypi spec the installer uses to
 --                   provision the server under /workspace/.hezo/mcp/<name>/.
 CREATE TABLE mcp_connections (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    project_id      UUID REFERENCES projects(id) ON DELETE CASCADE,
-    name            TEXT NOT NULL,
-    kind            mcp_connection_kind NOT NULL,
-    config          JSONB NOT NULL DEFAULT '{}'::jsonb,
-    install_status  mcp_install_status NOT NULL DEFAULT 'pending',
-    install_error   TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id           UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
+    name                 TEXT NOT NULL,
+    kind                 mcp_connection_kind NOT NULL,
+    config               JSONB NOT NULL DEFAULT '{}'::jsonb,
+    oauth_connection_id  UUID REFERENCES oauth_connections(id) ON DELETE SET NULL,
+    install_status       mcp_install_status NOT NULL DEFAULT 'pending',
+    install_error        TEXT,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     UNIQUE (company_id, project_id, name)
 );
 
 CREATE INDEX idx_mcp_connections_company ON mcp_connections(company_id);
 CREATE INDEX idx_mcp_connections_project ON mcp_connections(project_id);
+CREATE INDEX idx_mcp_connections_oauth ON mcp_connections(oauth_connection_id) WHERE oauth_connection_id IS NOT NULL;
 
 -------------------------------------------------------------------------------
 -- GOALS
@@ -969,6 +1013,9 @@ CREATE TRIGGER trg_secrets_updated BEFORE UPDATE ON secrets
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_mcp_connections_updated BEFORE UPDATE ON mcp_connections
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_oauth_connections_updated BEFORE UPDATE ON oauth_connections
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_documents_updated BEFORE UPDATE ON documents

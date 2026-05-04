@@ -61,7 +61,6 @@ describe('ensureProjectRepos', () => {
 			masterKeyManager,
 			{ id: projectId, company_id: companyId, companySlug, projectSlug },
 			dataDir,
-			null,
 		);
 		expect(result.cloned).toEqual([]);
 		expect(result.skipped).toEqual([]);
@@ -94,7 +93,6 @@ describe('ensureProjectRepos', () => {
 			masterKeyManager,
 			{ id: projectId, company_id: companyId, companySlug, projectSlug },
 			dataDir,
-			null,
 			(stream, text) => logs.push({ stream, text }),
 		);
 		expect(result.skipped).toContain('preexisting');

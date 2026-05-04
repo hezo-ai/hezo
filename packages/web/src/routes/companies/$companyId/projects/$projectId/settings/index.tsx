@@ -5,6 +5,7 @@ import { Badge } from '../../../../../../components/ui/badge';
 import { Button } from '../../../../../../components/ui/button';
 import { Input } from '../../../../../../components/ui/input';
 import { Textarea } from '../../../../../../components/ui/textarea';
+import { useOAuthConnections } from '../../../../../../hooks/use-oauth-connections';
 import { useProject, useUpdateProject } from '../../../../../../hooks/use-projects';
 import { useCreateRepo, useDeleteRepo, useRepos } from '../../../../../../hooks/use-repos';
 
@@ -15,10 +16,13 @@ function ProjectSettingsPage() {
 	const createRepo = useCreateRepo(companyId, projectId);
 	const deleteRepo = useDeleteRepo(companyId, projectId);
 	const updateProject = useUpdateProject(companyId, projectId);
+	const { data: oauthConnections = [] } = useOAuthConnections(companyId);
+	const githubConnections = oauthConnections.filter((c) => c.provider === 'github');
 
 	const [showAddRepo, setShowAddRepo] = useState(false);
 	const [repoShortName, setRepoShortName] = useState('');
 	const [repoUrl, setRepoUrl] = useState('');
+	const [oauthConnectionId, setOauthConnectionId] = useState<string>('');
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [editing, setEditing] = useState(false);
@@ -43,9 +47,12 @@ function ProjectSettingsPage() {
 
 	async function handleAddRepo(e: React.FormEvent) {
 		e.preventDefault();
+		const conn = oauthConnectionId || githubConnections[0]?.id;
+		if (!conn) return;
 		await createRepo.mutateAsync({
 			short_name: repoShortName.trim(),
 			url: repoUrl.trim(),
+			oauth_connection_id: conn,
 		});
 		setRepoShortName('');
 		setRepoUrl('');
@@ -122,8 +129,8 @@ function ProjectSettingsPage() {
 				<p className="text-xs text-text-subtle mb-3">
 					The designated repository is where primary source code and per-project{' '}
 					<code>AGENTS.md</code> live. It is set on the first repo you link and cannot be changed
-					later. The agent will request a deploy key via the issue thread the first time it accesses
-					a new repo.
+					later. Repos clone over HTTPS using the GitHub OAuth connection — connect a GitHub account
+					on the company Connections page first.
 				</p>
 				{showAddRepo && (
 					<form
@@ -139,13 +146,37 @@ function ProjectSettingsPage() {
 						/>
 						<Input
 							label="GitHub URL or owner/repo"
-							placeholder="git@github.com:owner/repo.git or owner/repo"
+							placeholder="https://github.com/owner/repo or owner/repo"
 							value={repoUrl}
 							onChange={(e) => setRepoUrl(e.target.value)}
 							required
 						/>
+						{githubConnections.length === 0 ? (
+							<p className="text-xs text-accent-red">
+								No GitHub connection. Add one in Connections (company sidebar).
+							</p>
+						) : (
+							<label className="text-xs text-text-muted">
+								GitHub account
+								<select
+									className="mt-1 block w-full rounded border border-border-subtle bg-bg px-2 py-1 text-sm"
+									value={oauthConnectionId || githubConnections[0]?.id}
+									onChange={(e) => setOauthConnectionId(e.target.value)}
+								>
+									{githubConnections.map((c) => (
+										<option key={c.id} value={c.id}>
+											{c.provider_account_label}
+										</option>
+									))}
+								</select>
+							</label>
+						)}
 						<div className="flex gap-2">
-							<Button type="submit" size="sm" disabled={createRepo.isPending}>
+							<Button
+								type="submit"
+								size="sm"
+								disabled={createRepo.isPending || githubConnections.length === 0}
+							>
 								{createRepo.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Add'}
 							</Button>
 							<Button type="button" variant="ghost" size="sm" onClick={() => setShowAddRepo(false)}>

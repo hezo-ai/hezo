@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { decrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
+import { refreshExpiringTokensForCompany } from '../oauth/token-resolver';
 
 /**
  * Token agents emit in headers and URLs in place of real secret values.
@@ -57,6 +58,11 @@ export async function loadSecretsForScope(
 		err.name = 'MasterKeyLocked';
 		throw err;
 	}
+
+	await refreshExpiringTokensForCompany(
+		{ db: scope.db, masterKeyManager: scope.masterKeyManager },
+		scope.companyId,
+	);
 
 	const params: unknown[] = [scope.companyId];
 	let where = 'company_id = $1';

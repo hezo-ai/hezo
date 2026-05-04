@@ -1,13 +1,11 @@
-import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
+import { decrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { logger } from '../logger';
 import { cloneRepo } from './git';
-import type { SshAgentServer } from './ssh-agent';
-import { getCompanySSHKey } from './ssh-keys';
-import { ensureProjectRunDir, getWorkspacePath, getWorktreesPath } from './workspace';
+import { getWorkspacePath, getWorktreesPath } from './workspace';
 
 const log = logger.child('repo-sync');
 
@@ -31,13 +29,12 @@ export async function ensureProjectRepos(
 	masterKeyManager: MasterKeyManager,
 	project: ProjectIdentity,
 	dataDir: string,
-	sshAgentServer: SshAgentServer | null,
 	logEmit?: LogEmitter,
 ): Promise<RepoSyncResult> {
 	const result: RepoSyncResult = { cloned: [], skipped: [], failed: [] };
 
 	const repos = await db.query<RepoRow>(
-		`SELECT short_name, repo_identifier FROM repos
+		`SELECT short_name, repo_identifier, oauth_connection_id FROM repos
 		 WHERE project_id = $1 ORDER BY created_at ASC`,
 		[project.id],
 	);
@@ -59,59 +56,68 @@ export async function ensureProjectRepos(
 
 	if (pending.length === 0) return result;
 
-	const sshKey = await getCompanySSHKey(db, project.company_id, masterKeyManager);
-	if (!sshKey) {
-		const msg = 'No company SSH key configured';
-		logEmit?.('stderr', `✗ ${msg}`);
-		for (const r of pending) {
+	const tokenCache = new Map<string, string>();
+
+	for (const r of pending) {
+		if (!r.oauth_connection_id) {
+			const msg = 'Repo has no OAuth connection — cannot clone';
+			logEmit?.('stderr', `✗ ${msg}`);
 			result.failed.push({ short_name: r.short_name, error: msg });
+			continue;
 		}
-		return result;
-	}
 
-	if (!sshAgentServer) {
-		const msg = 'SSH agent server not available — cannot clone repositories';
-		logEmit?.('stderr', `✗ ${msg}`);
-		for (const r of pending) {
-			result.failed.push({ short_name: r.short_name, error: msg });
-		}
-		return result;
-	}
-
-	const bootstrapRunId = `bootstrap-${randomUUID()}`;
-	const runDir = ensureProjectRunDir(dataDir, project.companySlug, project.projectSlug);
-	const sshSocketHostPath = join(runDir, `${bootstrapRunId}.sock`);
-	await sshAgentServer.allocateRunSocket(
-		bootstrapRunId,
-		{ companyId: project.company_id, agentId: project.id },
-		sshSocketHostPath,
-	);
-
-	try {
-		for (const r of pending) {
-			const targetDir = join(workspacePath, r.short_name);
-			logEmit?.('stdout', `→ Cloning ${r.repo_identifier} into ${r.short_name}/`);
-			const clone = await cloneRepo(r.repo_identifier, targetDir, sshSocketHostPath);
-			if (clone.success) {
-				logEmit?.('stdout', `✓ Cloned ${r.short_name}`);
-				result.cloned.push(r.short_name);
-			} else {
-				const errMsg = clone.error ?? 'unknown error';
-				logEmit?.('stderr', `✗ Clone failed for ${r.short_name}: ${errMsg}`);
-				result.failed.push({ short_name: r.short_name, error: errMsg });
-				log.error(`Failed to clone ${r.repo_identifier}`, errMsg);
+		let token = tokenCache.get(r.oauth_connection_id);
+		if (!token) {
+			const resolved = await resolveAccessToken(db, masterKeyManager, r.oauth_connection_id);
+			if (!resolved) {
+				const msg = `OAuth connection ${r.oauth_connection_id} unavailable (locked or revoked)`;
+				logEmit?.('stderr', `✗ ${msg}`);
+				result.failed.push({ short_name: r.short_name, error: msg });
+				continue;
 			}
+			token = resolved;
+			tokenCache.set(r.oauth_connection_id, token);
 		}
-	} finally {
-		await sshAgentServer.releaseRunSocket(bootstrapRunId);
+
+		const targetDir = join(workspacePath, r.short_name);
+		logEmit?.('stdout', `→ Cloning ${r.repo_identifier} into ${r.short_name}/`);
+		const clone = await cloneRepo(r.repo_identifier, targetDir, token);
+		if (clone.success) {
+			logEmit?.('stdout', `✓ Cloned ${r.short_name}`);
+			result.cloned.push(r.short_name);
+		} else {
+			const errMsg = clone.error ?? 'unknown error';
+			logEmit?.('stderr', `✗ Clone failed for ${r.short_name}: ${errMsg}`);
+			result.failed.push({ short_name: r.short_name, error: errMsg });
+			log.error(`Failed to clone ${r.repo_identifier}`, errMsg);
+		}
 	}
 
 	return result;
 }
 
+async function resolveAccessToken(
+	db: PGlite,
+	masterKeyManager: MasterKeyManager,
+	oauthConnectionId: string,
+): Promise<string | null> {
+	const key = masterKeyManager.getKey();
+	if (!key) return null;
+	const result = await db.query<{ encrypted_value: string }>(
+		`SELECT s.encrypted_value
+		 FROM oauth_connections oc
+		 JOIN secrets s ON s.id = oc.access_token_secret_id
+		 WHERE oc.id = $1`,
+		[oauthConnectionId],
+	);
+	if (result.rows.length === 0) return null;
+	return decrypt(result.rows[0].encrypted_value, key);
+}
+
 interface RepoRow {
 	short_name: string;
 	repo_identifier: string;
+	oauth_connection_id: string | null;
 }
 
 export function removeRepoFromWorkspace(

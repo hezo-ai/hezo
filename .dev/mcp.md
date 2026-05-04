@@ -9,16 +9,17 @@ CREATE TYPE mcp_connection_kind AS ENUM ('saas', 'local');
 CREATE TYPE mcp_install_status AS ENUM ('pending', 'installed', 'failed');
 
 CREATE TABLE mcp_connections (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    project_id      UUID REFERENCES projects(id) ON DELETE CASCADE,
-    name            TEXT NOT NULL,
-    kind            mcp_connection_kind NOT NULL,
-    config          JSONB NOT NULL DEFAULT '{}'::jsonb,
-    install_status  mcp_install_status NOT NULL DEFAULT 'pending',
-    install_error   TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id           UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
+    name                 TEXT NOT NULL,
+    kind                 mcp_connection_kind NOT NULL,
+    config               JSONB NOT NULL DEFAULT '{}'::jsonb,
+    oauth_connection_id  UUID REFERENCES oauth_connections(id) ON DELETE SET NULL,
+    install_status       mcp_install_status NOT NULL DEFAULT 'pending',
+    install_error        TEXT,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (company_id, project_id, name)
 );
 ```
@@ -39,6 +40,8 @@ CREATE TABLE mcp_connections (
 ```
 
 Header values may contain `__HEZO_SECRET_*__` placeholders. The egress proxy substitutes them at request time exactly the same way it substitutes any other header. SaaS rows install instantly: `install_status='installed'` on insert.
+
+For SaaS MCPs that require OAuth (DatoCMS, Linear, Notion, …), set `oauth_connection_id` to the id of an `oauth_connections` row created via the OAuth auth-code flow (`.dev/oauth.md`). At descriptor build time the loader replaces any user-supplied `Authorization` header with `Bearer __HEZO_SECRET_OAUTH_<PROVIDER>_<HEX>__` and the egress proxy substitutes the live token at request time. The proxy's `loadSecretsForScope` calls `refreshExpiringTokensForCompany` first, so an expiring OAuth token is silently refreshed via its provider before the substitution fires.
 
 `kind = 'local'`:
 

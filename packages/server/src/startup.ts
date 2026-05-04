@@ -33,6 +33,7 @@ import { issuesRoutes } from './routes/issues';
 import { kbDocsRoutes } from './routes/kb-docs';
 import { mcpConnectionsRoutes } from './routes/mcp-connections';
 import { mentionsRoutes } from './routes/mentions';
+import { oauthRoutes } from './routes/oauth';
 import { preferencesRoutes } from './routes/preferences';
 import { previewRoutes } from './routes/preview';
 import { projectDocsRoutes } from './routes/project-docs';
@@ -258,6 +259,7 @@ export function buildApp(
 	app.route('/api', executionLocksRoutes);
 	app.route('/api', auditLogRoutes);
 	app.route('/api', mcpConnectionsRoutes);
+	app.route('/api', oauthRoutes);
 	app.route('/api', previewRoutes);
 	app.route('/api', searchRoutes);
 

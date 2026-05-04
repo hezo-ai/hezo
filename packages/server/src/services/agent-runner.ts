@@ -646,7 +646,7 @@ export async function runAgent(
 		return finalizeAbort();
 	}
 
-	const prep = await prepareWorktrees(deps, project, issue, emit, sshSocketHostPath, signal);
+	const prep = await prepareWorktrees(deps, project, issue, emit, signal);
 
 	const hostPromptPath = getHostPromptPath(
 		deps.dataDir,
@@ -786,6 +786,24 @@ export async function runAgent(
 	}
 }
 
+async function loadOAuthAccessToken(
+	deps: RunnerDeps,
+	oauthConnectionId: string,
+): Promise<string | null> {
+	const key = deps.masterKeyManager.getKey();
+	if (!key) return null;
+	const result = await deps.db.query<{ encrypted_value: string }>(
+		`SELECT s.encrypted_value
+		 FROM oauth_connections oc
+		 JOIN secrets s ON s.id = oc.access_token_secret_id
+		 WHERE oc.id = $1`,
+		[oauthConnectionId],
+	);
+	if (result.rows.length === 0) return null;
+	const { decrypt } = await import('../crypto/encryption');
+	return decrypt(result.rows[0].encrypted_value, key);
+}
+
 function failedResult(stderr: string, startTime: number): RunResult {
 	return { success: false, exitCode: -1, stdout: '', stderr, durationMs: Date.now() - startTime };
 }
@@ -805,11 +823,10 @@ async function prepareWorktrees(
 	project: ProjectInfo,
 	issue: IssueInfo,
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
-	sshSocketHostPath: string | null,
 	signal?: AbortSignal,
 ): Promise<{ workingDir: string; designatedRepo: RepoRow | null }> {
-	const repos = await deps.db.query<RepoRow>(
-		`SELECT id, short_name, repo_identifier FROM repos
+	const repos = await deps.db.query<RepoRow & { oauth_connection_id: string | null }>(
+		`SELECT id, short_name, repo_identifier, oauth_connection_id FROM repos
 		 WHERE project_id = $1 ORDER BY created_at ASC`,
 		[project.id],
 	);
@@ -830,7 +847,6 @@ async function prepareWorktrees(
 			projectSlug: project.slug,
 		},
 		deps.dataDir,
-		deps.sshAgentServer ?? null,
 		(stream, text) => emit(stream, `${text}\n`),
 	);
 	if (syncRes.cloned.length > 0) {
@@ -856,13 +872,16 @@ async function prepareWorktrees(
 			continue;
 		}
 
-		if (sshSocketHostPath) {
-			emit('stdout', `git fetch ${repo.short_name}...\n`);
-			const fetchRes = await fetchRepo(repoDir, sshSocketHostPath);
-			if (fetchRes.success) {
-				emit('stdout', `git fetch ${repo.short_name} done\n`);
-			} else {
-				emit('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
+		if (repo.oauth_connection_id) {
+			const token = await loadOAuthAccessToken(deps, repo.oauth_connection_id);
+			if (token) {
+				emit('stdout', `git fetch ${repo.short_name}...\n`);
+				const fetchRes = await fetchRepo(repoDir, token);
+				if (fetchRes.success) {
+					emit('stdout', `git fetch ${repo.short_name} done\n`);
+				} else {
+					emit('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
+				}
 			}
 		}
 

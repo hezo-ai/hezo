@@ -42,17 +42,11 @@ The agent's next env emits `STRIPE_API_KEY=__HEZO_SECRET_STRIPE_API_KEY__` (or w
 - **Use** — proxy substitutes the placeholder when the agent's request hits an allowlisted host.
 - **Revoke** — board user deletes the secret via `DELETE /api/companies/:companyId/secrets/:secretId`. Existing in-flight runs see `unknown_secret` (400) on the next outbound call.
 
-## SSH deploy keys for GitHub repos
+## OAuth-issued credentials
 
-GitHub repos use a different shape because Hezo signs git operations with the company's SSH key (one key reused across every repo for the company). The agent's MCP tool `setup_github_repo`:
+GitHub access (clone/fetch/push) and SaaS-MCP authentication go through OAuth, not `request_credential`. The full design is in `.dev/oauth.md`. Mechanically, an OAuth connection persists its access token (and any refresh token) into the same `secrets` table — name pattern `OAUTH_<PROVIDER>_<8 hex>`, automatically `allowed_hosts`-locked to the provider's hosts. From the egress proxy's perspective, OAuth tokens are just secrets like any other; the placeholder substitution path is identical, the audit log records them by name, and revoking the OAuth connection deletes the underlying secret rows.
 
-1. Reads or generates the company's Ed25519 SSH key (one row in `company_ssh_keys`, private key encrypted in `secrets`).
-2. Posts a `credential_request` comment with `kind='ssh_private_key'` containing the **public** key and step-by-step instructions for adding it as a deploy key on the named repo.
-3. Returns immediately with `status='pending'`. The agent ends its turn.
-4. Human follows the instructions on GitHub, clicks confirm.
-5. Agent gets a `credential_provided` wakeup and retries the git operation. Git uses `SSH_AUTH_SOCK` pointing at the per-run signing socket; `.dev/ssh-signing.md` covers that path.
-
-There is no GitHub API token involved — Hezo never asks the user to grant repo-write permissions to a Hezo OAuth app. The deploy key is the entire authorisation surface for any given repo.
+The egress proxy's `loadSecretsForScope` calls `refreshExpiringTokensForCompany` on every outbound request — tokens within 60s of expiry refresh through their provider's registered refresh function before the substitution fires.
 
 ## Why placeholders, not real values in env
 

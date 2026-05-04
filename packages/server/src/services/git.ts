@@ -33,36 +33,57 @@ function formatGitError(stderr: string): string {
 	return trimmed;
 }
 
-const SSH_HOSTS: Record<RepoHostType, string> = {
-	[RepoHostType.GitHub]: 'git@github.com',
+const HTTPS_HOSTS: Record<RepoHostType, string> = {
+	[RepoHostType.GitHub]: 'github.com',
 };
 
-export function buildGitSshUrl(hostType: RepoHostType, repoIdentifier: string): string {
-	const host = SSH_HOSTS[hostType];
+export function buildGitHttpsUrl(hostType: RepoHostType, repoIdentifier: string): string {
+	const host = HTTPS_HOSTS[hostType];
 	if (!host) throw new Error(`Unsupported repo host type: ${hostType}`);
-	return `${host}:${repoIdentifier}.git`;
+	return `https://${host}/${repoIdentifier}.git`;
 }
 
-function sshEnvWithSocket(sshAuthSock: string): Record<string, string> {
+function httpsEnvWithToken(token: string): Record<string, string> {
 	return {
-		SSH_AUTH_SOCK: sshAuthSock,
-		GIT_SSH_COMMAND: `ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10`,
+		GIT_TERMINAL_PROMPT: '0',
+		GIT_ASKPASS: '/bin/echo',
+		GIT_HTTP_EXTRAHEADER: `Authorization: bearer ${token}`,
 	};
 }
 
 export async function cloneRepo(
 	repoIdentifier: string,
 	targetDir: string,
-	sshAuthSock: string,
+	accessToken: string,
 	hostType: RepoHostType = RepoHostType.GitHub,
 ): Promise<{ success: boolean; error?: string }> {
-	const sshUrl = buildGitSshUrl(hostType, repoIdentifier);
-	const { exitCode, stderr } = await spawn('git', ['clone', sshUrl, targetDir], {
-		env: sshEnvWithSocket(sshAuthSock),
-		timeout: 120_000,
-	});
-	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
+	const url = buildGitHttpsUrl(hostType, repoIdentifier);
+	const { exitCode, stderr } = await spawn(
+		'git',
+		[
+			'-c',
+			`http.${url}.extraHeader=Authorization: bearer ${token(accessToken)}`,
+			'clone',
+			url,
+			targetDir,
+		],
+		{
+			env: httpsEnvWithToken(accessToken),
+			timeout: 120_000,
+		},
+	);
+	if (exitCode !== 0)
+		return { success: false, error: redactToken(formatGitError(stderr), accessToken) };
 	return { success: true };
+}
+
+function token(t: string): string {
+	return t;
+}
+
+function redactToken(text: string, accessToken: string): string {
+	if (!accessToken) return text;
+	return text.split(accessToken).join('***');
 }
 
 export async function createWorktree(
@@ -82,14 +103,15 @@ export async function createWorktree(
 
 export async function fetchRepo(
 	repoDir: string,
-	sshAuthSock: string,
+	accessToken: string,
 ): Promise<{ success: boolean; error?: string }> {
 	const { exitCode, stderr } = await spawn('git', ['fetch', '--all', '--prune'], {
 		cwd: repoDir,
-		env: sshEnvWithSocket(sshAuthSock),
+		env: httpsEnvWithToken(accessToken),
 		timeout: 60_000,
 	});
-	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
+	if (exitCode !== 0)
+		return { success: false, error: redactToken(formatGitError(stderr), accessToken) };
 	return { success: true };
 }
 

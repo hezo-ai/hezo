@@ -27,7 +27,7 @@ mcpConnectionsRoutes.get('/companies/:companyId/mcp-connections', async (c) => {
 	}
 	const result = await db.query(
 		`SELECT id, company_id, project_id, name, kind::text AS kind,
-		        config, install_status::text AS install_status, install_error,
+		        config, oauth_connection_id, install_status::text AS install_status, install_error,
 		        created_at, updated_at
 		 FROM mcp_connections
 		 WHERE ${where}
@@ -49,6 +49,7 @@ mcpConnectionsRoutes.post('/companies/:companyId/mcp-connections', async (c) => 
 		kind: 'saas' | 'local';
 		config: Record<string, unknown>;
 		project_id?: string;
+		oauth_connection_id?: string | null;
 	}>();
 
 	if (!body.name?.trim()) {
@@ -66,18 +67,29 @@ mcpConnectionsRoutes.post('/companies/:companyId/mcp-connections', async (c) => 
 		return err(c, 'INVALID_REQUEST', 'local connections require config.command (string)', 400);
 	}
 
+	if (body.oauth_connection_id) {
+		const ownership = await db.query<{ id: string }>(
+			`SELECT id FROM oauth_connections WHERE id = $1 AND company_id = $2`,
+			[body.oauth_connection_id, companyId],
+		);
+		if (ownership.rows.length === 0) {
+			return err(c, 'NOT_FOUND', 'oauth_connection_id does not belong to this company', 404);
+		}
+	}
+
 	const initialStatus = body.kind === McpConnectionKind.Saas ? 'installed' : 'pending';
 	const result = await db.query(
-		`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
-		 VALUES ($1, $2, $3, $4::mcp_connection_kind, $5::jsonb, $6::mcp_install_status)
+		`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, oauth_connection_id, install_status)
+		 VALUES ($1, $2, $3, $4::mcp_connection_kind, $5::jsonb, $6, $7::mcp_install_status)
 		 ON CONFLICT (company_id, project_id, name) DO UPDATE
 		 SET kind = EXCLUDED.kind,
 		     config = EXCLUDED.config,
+		     oauth_connection_id = EXCLUDED.oauth_connection_id,
 		     install_status = EXCLUDED.install_status,
 		     install_error = NULL,
 		     updated_at = now()
 		 RETURNING id, company_id, project_id, name, kind::text AS kind,
-		           config, install_status::text AS install_status, install_error,
+		           config, oauth_connection_id, install_status::text AS install_status, install_error,
 		           created_at, updated_at`,
 		[
 			companyId,
@@ -85,6 +97,7 @@ mcpConnectionsRoutes.post('/companies/:companyId/mcp-connections', async (c) => 
 			body.name.trim(),
 			body.kind,
 			JSON.stringify(body.config),
+			body.oauth_connection_id ?? null,
 			initialStatus,
 		],
 	);

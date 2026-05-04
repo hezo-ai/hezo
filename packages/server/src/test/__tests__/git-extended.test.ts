@@ -5,9 +5,6 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { cloneRepo } from '../../services/git';
 
 const testDir = mkdtempSync(join(tmpdir(), 'hezo-test-git-extended-'));
-// Socket path that doesn't exist — git clone will fail to authenticate, which
-// is enough to exercise the failure paths without needing a real SSH server.
-const NONEXISTENT_SOCKET = join(testDir, 'nonexistent-ssh-agent.sock');
 
 afterAll(() => {
 	rmSync(testDir, { recursive: true, force: true });
@@ -19,7 +16,7 @@ describe('cloneRepo', { timeout: 30_000 }, () => {
 		const result = await cloneRepo(
 			'nonexistent-org-hezo-test/nonexistent-repo-xyz',
 			targetDir,
-			NONEXISTENT_SOCKET,
+			'invalid-token-for-test',
 		);
 
 		expect(result.success).toBe(false);
@@ -30,7 +27,11 @@ describe('cloneRepo', { timeout: 30_000 }, () => {
 	it('does not throw on clone failure', async () => {
 		const targetDir = join(testDir, 'clone-no-throw');
 		await expect(
-			cloneRepo('nonexistent-org-hezo-test/nonexistent-repo-xyz', targetDir, NONEXISTENT_SOCKET),
+			cloneRepo(
+				'nonexistent-org-hezo-test/nonexistent-repo-xyz',
+				targetDir,
+				'invalid-token-for-test',
+			),
 		).resolves.not.toThrow();
 	});
 
@@ -39,7 +40,7 @@ describe('cloneRepo', { timeout: 30_000 }, () => {
 		const result = await cloneRepo(
 			'nonexistent-org-hezo-test/nonexistent-repo-xyz',
 			targetDir,
-			NONEXISTENT_SOCKET,
+			'invalid-token-for-test',
 		);
 
 		expect(result.success).toBe(false);

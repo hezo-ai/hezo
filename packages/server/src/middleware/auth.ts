@@ -10,7 +10,7 @@ import type { AuthInfo, Env } from '../lib/types';
 
 const AGENT_JWT_TTL_SECONDS = 60 * 60 * 4;
 
-const PUBLIC_PATHS = ['/health', '/api/status', '/api/auth/token', '/'];
+const PUBLIC_PATHS = ['/health', '/api/status', '/api/auth/token', '/', '/api/oauth/callback'];
 
 /**
  * Shared token verification used by HTTP middleware, MCP, and WebSocket auth.

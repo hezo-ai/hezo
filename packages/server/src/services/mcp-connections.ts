@@ -1,5 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { McpConnectionKind, type McpInstallStatus } from '@hezo/shared';
+import { credentialPlaceholder } from '../lib/credential-placeholder';
 import { logger } from '../logger';
 import type { McpDescriptor } from './mcp-injectors';
 
@@ -26,6 +27,7 @@ export interface McpConnectionRow {
 	name: string;
 	kind: McpConnectionKind;
 	config: McpConnectionConfig;
+	oauth_connection_id: string | null;
 	install_status: McpInstallStatus;
 	install_error: string | null;
 	created_at: string;
@@ -44,7 +46,7 @@ export async function loadMcpConnectionsForRun(
 ): Promise<McpConnectionRow[]> {
 	const result = await db.query<McpConnectionRow>(
 		`SELECT id, company_id, project_id, name, kind::text AS kind,
-		        config, install_status::text AS install_status, install_error,
+		        config, oauth_connection_id, install_status::text AS install_status, install_error,
 		        created_at::text, updated_at::text
 		 FROM mcp_connections
 		 WHERE company_id = $1
@@ -58,6 +60,36 @@ export async function loadMcpConnectionsForRun(
 	return [...out.values()];
 }
 
+interface OAuthSecretLookup {
+	connectionId: string;
+	secretName: string;
+}
+
+/**
+ * Build a lookup map oauthConnectionId → access token secret name. Used by
+ * the descriptor builder so each MCP injection can substitute the correct
+ * placeholder header at proxy time.
+ */
+async function loadOAuthSecretNamesForCompany(
+	db: PGlite,
+	companyId: string,
+): Promise<Map<string, string>> {
+	const out = new Map<string, string>();
+	const result = await db.query<OAuthSecretLookup>(
+		`SELECT oc.id AS connection_id, s.name AS secret_name
+		 FROM oauth_connections oc
+		 JOIN secrets s ON s.id = oc.access_token_secret_id
+		 WHERE oc.company_id = $1`,
+		[companyId],
+	);
+	for (const row of result.rows) {
+		const connectionId = (row as unknown as { connection_id: string }).connection_id;
+		const secretName = (row as unknown as { secret_name: string }).secret_name;
+		out.set(connectionId, secretName);
+	}
+	return out;
+}
+
 /**
  * Map persisted connection rows into runtime descriptors. Local MCPs whose
  * install hasn't completed are skipped with a warning so the agent run still
@@ -69,6 +101,7 @@ export async function loadMcpConnectionDescriptors(
 	projectId: string,
 ): Promise<McpDescriptor[]> {
 	const rows = await loadMcpConnectionsForRun(db, companyId, projectId);
+	const oauthSecretNames = await loadOAuthSecretNamesForCompany(db, companyId);
 	const descriptors: McpDescriptor[] = [];
 	for (const row of rows) {
 		if (row.kind === McpConnectionKind.Saas) {
@@ -77,11 +110,25 @@ export async function loadMcpConnectionDescriptors(
 				log.warn('skipping saas mcp connection with no url', { id: row.id, name: row.name });
 				continue;
 			}
+			let headers = { ...(config.headers ?? {}) };
+			if (row.oauth_connection_id) {
+				const secretName = oauthSecretNames.get(row.oauth_connection_id);
+				if (secretName) {
+					headers = stripExistingAuth(headers);
+					headers.Authorization = `Bearer ${credentialPlaceholder(secretName)}`;
+				} else {
+					log.warn('mcp connection references missing oauth_connection_id; skipping', {
+						id: row.id,
+						oauth_connection_id: row.oauth_connection_id,
+					});
+					continue;
+				}
+			}
 			descriptors.push({
 				kind: 'http',
 				name: row.name,
 				url: config.url,
-				headers: config.headers,
+				headers,
 			});
 		} else if (row.kind === McpConnectionKind.Local) {
 			if (row.install_status !== 'installed') {
@@ -107,4 +154,12 @@ export async function loadMcpConnectionDescriptors(
 		}
 	}
 	return descriptors;
+}
+
+function stripExistingAuth(headers: Record<string, string>): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(headers)) {
+		if (k.toLowerCase() !== 'authorization') out[k] = v;
+	}
+	return out;
 }

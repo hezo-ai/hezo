@@ -1,10 +1,10 @@
 # SSH signing
 
-A per-run SSH agent server that holds the company's Ed25519 private key and answers SSH agent-protocol requests over both a Unix socket (host-side git operations) and a loopback TCP listener (in-container access via a socat bridge). Lets agents do git over SSH without ever seeing the private key.
+A per-run SSH agent server that holds the company's Ed25519 private key and answers SSH agent-protocol requests over both a Unix socket (host-side operations) and a loopback TCP listener (in-container access via a socat bridge). The key is used **only for git commit signing** — agents never see the private key, and GitHub repo access goes through OAuth (see `.dev/oauth.md`), not SSH deploy keys.
 
 ## Why two listeners
 
-- **Host Unix socket** at `<runDir>/<runId>.sock` — used by host-side `git fetch` invocations during worktree preparation. Standard ssh-agent protocol, no auth (filesystem permissions are the gate).
+- **Host Unix socket** at `<runDir>/<runId>.sock` — host-side signing operations. Standard ssh-agent protocol, no auth (filesystem permissions are the gate).
 - **Loopback TCP** on `127.0.0.1:<port>` — used by the in-container agent because Docker Desktop on macOS does not forward `AF_UNIX` bind mounts. Same protocol but every connection must prefix the agent-protocol bytes with a 16-byte per-run authentication token (timing-safe compared); a wrong token returns `SSH_AGENT_FAILURE` and the connection is closed.
 
 The TCP listener is the same on macOS dev and Linux production — the per-run socat bridge always runs, no platform branching.
@@ -60,22 +60,15 @@ When `deps.sshAgentServer` is present the runner allocates a socket per run and 
   ...agentCmd ]
 ```
 
-`SSH_AUTH_SOCK=/run/hezo/<runId>.sock` is set in the container env. Anything that uses ssh-agent (git, ssh, ssh-keygen -Y sign) goes through the bridge → host TCP → SshAgentServer → key-blob match → signature.
+`SSH_AUTH_SOCK=/run/hezo/<runId>.sock` is set in the container env. Tools that consult ssh-agent (`git commit -S`, `ssh-keygen -Y sign`) go through the bridge → host TCP → SshAgentServer → key-blob match → signature. `git fetch`/`git push` do **not** consult the socket; they use HTTPS+OAuth (egress proxy substitutes the bearer token, see `.dev/oauth.md`).
 
 There is no in-container Unix-socket bind-mount from the host. The previous `<runDir>:/run/hezo:rw` bind-mount has been removed; the in-container socket lives purely in the container's overlay filesystem and is created fresh by socat at run start.
 
-## GitHub deploy-key bootstrap
+## Verified-on-GitHub bootstrap
 
-The first time a project needs a repo:
+The same Ed25519 key the agent runner uses for in-container signing is auto-registered on GitHub as a signing key on first OAuth connect (`POST /user/ssh_signing_keys` against the GitHub API, see `.dev/oauth.md`). That makes commits agents push from worktree-runs show up as `Verified` in the GitHub UI without any manual setup. One key per company; reused across every GitHub OAuth connection the company adds.
 
-1. Agent calls `setup_github_repo({ company_id, issue_id, repo_url })` MCP tool.
-2. Server reuses or generates the company's Ed25519 SSH key pair (one row per company in `company_ssh_keys`; private key encrypted in `secrets`).
-3. Posts a `credential_request` comment on the issue containing the public key plus instructions ("Add this as a deploy key on `owner/repo` at https://github.com/owner/repo/settings/keys/new").
-4. Agent ends its turn.
-5. Human follows the link, pastes the key, marks the comment confirmed.
-6. Agent gets a `credential_provided` wakeup. Retries `git clone` using `SSH_AUTH_SOCK`. The signing socket answers, github authenticates the deploy key, clone succeeds.
-
-One key per company is reused as the deploy key on every repo the company pulls. There is no per-repo key generation and no GitHub API token (Hezo never asks the user to grant repo-write to a Hezo OAuth app).
+Repo *access* (clone, fetch, push) does **not** use this key. It uses an OAuth token bound to a GitHub connection, threaded as an `Authorization: bearer …` header on the HTTPS request to GitHub.
 
 ## Tests
 

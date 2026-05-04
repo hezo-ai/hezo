@@ -39,7 +39,6 @@ import {
 } from '../services/documents';
 import { triggerStatusAutomations } from '../services/issue-automation';
 import { recordIssueLinks } from '../services/issue-events';
-import { generateCompanySSHKey, getCompanySSHKey } from '../services/ssh-keys';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
 
@@ -219,7 +218,7 @@ export function registerTools(
 	server: McpServer,
 	db: PGlite,
 	_dataDir: string,
-	masterKeyManager: MasterKeyManager,
+	_masterKeyManager: MasterKeyManager,
 	wsManager?: WebSocketManager,
 ): ToolDef[] {
 	registeredTools.length = 0;
@@ -1683,107 +1682,6 @@ export function registerTools(
 
 	tool(
 		server,
-		'setup_github_repo',
-		'Generate (or reuse) the company SSH deploy key for GitHub access and post a credential_request comment asking the human to add the public key as a deploy key on the named repo. Returns the placeholder for the SSH socket path the agent should use; once the human confirms the key is added, a credential_provided wakeup fires and the agent can clone/fetch.',
-		{
-			company_id: z.string().describe('Company ID'),
-			issue_id: z.string().describe('Issue ID — the request comment is posted here'),
-			repo_url: z
-				.string()
-				.describe(
-					'Full git SSH URL or owner/repo identifier (e.g. git@github.com:owner/repo.git or owner/repo).',
-				),
-		},
-		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
-			if (denied) return { error: denied };
-
-			const companyId = args.company_id as string;
-			const issueId = args.issue_id as string;
-			const repoUrl = String(args.repo_url ?? '').trim();
-			if (!repoUrl) return { error: 'repo_url is required' };
-
-			const repoIdentifier = parseRepoIdentifier(repoUrl);
-			if (!repoIdentifier) {
-				return {
-					error:
-						'repo_url must be either git@github.com:owner/repo.git or owner/repo (got: ' +
-						repoUrl +
-						')',
-				};
-			}
-
-			const issueRow = await db.query<{ id: string }>(
-				'SELECT id FROM issues WHERE id = $1 AND company_id = $2',
-				[issueId, companyId],
-			);
-			if (issueRow.rows.length === 0) return { error: 'Issue not found in this company' };
-
-			const existing = await getCompanySSHKey(db, companyId, masterKeyManager);
-			const ssh = existing
-				? existing
-				: await generateCompanySSHKey(db, companyId, masterKeyManager);
-			const publicKey = ssh.publicKey;
-			const settingsUrl = `https://github.com/${repoIdentifier}/settings/keys/new`;
-			const placeholder = '/run/hezo/<runId>.sock';
-
-			const existingComment = await db.query<{ id: string }>(
-				`SELECT id FROM issue_comments
-				 WHERE issue_id = $1
-				   AND content_type = 'credential_request'::comment_content_type
-				   AND chosen_option IS NULL
-				   AND content->>'name' = $2
-				 ORDER BY created_at ASC LIMIT 1`,
-				[issueId, `GITHUB_DEPLOY_KEY_${repoIdentifier.replace(/[^A-Z0-9]/gi, '_').toUpperCase()}`],
-			);
-			if (existingComment.rows.length > 0) {
-				return {
-					comment_id: existingComment.rows[0].id,
-					ssh_socket: placeholder,
-					public_key: publicKey,
-					status: 'pending',
-					reused: true,
-				};
-			}
-
-			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const credentialName = `GITHUB_DEPLOY_KEY_${repoIdentifier.replace(/[^A-Z0-9]/gi, '_').toUpperCase()}`;
-			const content = {
-				name: credentialName,
-				kind: CredentialKind.SshPrivateKey,
-				instructions: `Add this Hezo-generated public key as a deploy key on **${repoIdentifier}**:\n\n\`\`\`\n${publicKey}\n\`\`\`\n\nGo to ${settingsUrl} → paste the key → check "Allow write access" if you want the agent to push → save. Then click Confirm below.`,
-				input_type: null,
-				confirmation_text: `I've added the public key as a deploy key on ${repoIdentifier}.`,
-				allowed_hosts: ['github.com', 'api.github.com'],
-				scope: 'company',
-				project_id: null,
-				placeholder,
-				public_key: publicKey,
-				repo_identifier: repoIdentifier,
-			};
-
-			const inserted = await db.query<{ id: string }>(
-				`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
-				 VALUES ($1, $2, 'credential_request'::comment_content_type, $3::jsonb)
-				 RETURNING id`,
-				[issueId, authorMemberId, JSON.stringify(content)],
-			);
-
-			return {
-				comment_id: inserted.rows[0].id,
-				ssh_socket: placeholder,
-				public_key: publicKey,
-				status: 'pending',
-				reused: false,
-				next_steps:
-					"Wait for the credential_provided wakeup, then retry the git operation. The agent's SSH_AUTH_SOCK env is already set; just run git clone/fetch.",
-			};
-		},
-		db,
-	);
-
-	tool(
-		server,
 		'list_mcp_connections',
 		'List MCP server connections registered for the company (and optionally a project). Returns name, kind (saas|local), config (URL or command), and install_status.',
 		{
@@ -1914,16 +1812,6 @@ export function registerTools(
 	);
 
 	return [...registeredTools];
-}
-
-function parseRepoIdentifier(input: string): string | null {
-	const trimmed = input.trim().replace(/\.git$/, '');
-	const sshMatch = trimmed.match(/^git@github\.com:(.+)$/);
-	if (sshMatch) return sshMatch[1];
-	const httpsMatch = trimmed.match(/^https?:\/\/github\.com\/(.+)$/);
-	if (httpsMatch) return httpsMatch[1];
-	if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(trimmed)) return trimmed;
-	return null;
 }
 
 async function isCoach(db: PGlite, auth: AuthInfo): Promise<boolean> {
