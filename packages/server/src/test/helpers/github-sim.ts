@@ -18,9 +18,26 @@ export interface GitHubSimOrg {
 }
 
 export interface GitHubSimUser {
+	id: number;
 	login: string;
 	avatar_url: string;
 	email: string | null;
+}
+
+export interface DeviceFlowEntry {
+	deviceCode: string;
+	userCode: string;
+	clientId: string;
+	scopes: string;
+	/** When set to a token, polling resolves with that token. Until then, polling returns authorization_pending. */
+	approvedToken: string | null;
+	expiresAt: number;
+}
+
+export interface SigningKey {
+	id: number;
+	title: string;
+	key: string;
 }
 
 export interface GitHubSimState {
@@ -28,14 +45,16 @@ export interface GitHubSimState {
 	user: GitHubSimUser;
 	orgs: GitHubSimOrg[];
 	repos: GitHubSimRepo[];
-	keys: Array<{ id: number; title: string; key: string }>;
+	signingKeys: SigningKey[];
+	deviceFlows: Map<string, DeviceFlowEntry>;
 	oauthCodes: Map<string, string>;
 }
 
 export interface GitHubSim {
 	baseUrl: string;
 	state: GitHubSimState;
-	seed(partial: Partial<Omit<GitHubSimState, 'oauthCodes'>>): void;
+	seed(partial: Partial<Omit<GitHubSimState, 'deviceFlows' | 'oauthCodes'>>): void;
+	approveDeviceFlow(userCode: string, accessToken?: string): void;
 	addCode(code: string, accessToken?: string): void;
 	destroy(): Promise<void>;
 }
@@ -43,20 +62,65 @@ export interface GitHubSim {
 export async function createGitHubSim(): Promise<GitHubSim> {
 	const state: GitHubSimState = {
 		token: 'gho_sim_test_token',
-		user: { login: 'sim-user', avatar_url: '', email: 'sim@hezo.test' },
+		user: { id: 9001, login: 'sim-user', avatar_url: '', email: 'sim@hezo.test' },
 		orgs: [],
 		repos: [],
-		keys: [],
+		signingKeys: [],
+		deviceFlows: new Map(),
 		oauthCodes: new Map(),
 	};
 
 	let nextRepoId = 10_000;
-	let nextKeyId = 100;
+	let nextSigningKeyId = 200;
 
 	const app = new Hono();
 
 	const isAuthed = (header: string | undefined) =>
-		typeof header === 'string' && header === `Bearer ${state.token}`;
+		typeof header === 'string' &&
+		(header === `Bearer ${state.token}` || header === `token ${state.token}`);
+
+	app.post('/login/device/code', async (c) => {
+		const body = await c.req.parseBody();
+		const clientId = String(body.client_id ?? '');
+		const scopes = String(body.scope ?? '');
+		const userCode = `USR-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+		const deviceCode = `dev-${Math.random().toString(36).slice(2, 14)}`;
+		state.deviceFlows.set(deviceCode, {
+			deviceCode,
+			userCode,
+			clientId,
+			scopes,
+			approvedToken: null,
+			expiresAt: Date.now() + 900_000,
+		});
+		return c.json({
+			device_code: deviceCode,
+			user_code: userCode,
+			verification_uri: `${baseUrl}/login/device`,
+			expires_in: 900,
+			interval: 5,
+		});
+	});
+
+	app.post('/login/oauth/access_token', async (c) => {
+		const body = await c.req.parseBody();
+		const grantType = String(body.grant_type ?? '');
+		if (grantType === 'urn:ietf:params:oauth:grant-type:device_code') {
+			const deviceCode = String(body.device_code ?? '');
+			const flow = state.deviceFlows.get(deviceCode);
+			if (!flow) return c.json({ error: 'expired_token' });
+			if (flow.expiresAt < Date.now()) return c.json({ error: 'expired_token' });
+			if (!flow.approvedToken) return c.json({ error: 'authorization_pending' });
+			return c.json({
+				access_token: flow.approvedToken,
+				token_type: 'bearer',
+				scope: flow.scopes,
+			});
+		}
+		const code = String(body.code ?? '');
+		const token = state.oauthCodes.get(code) ?? state.token;
+		return c.json({ access_token: token, token_type: 'bearer', scope: 'repo,read:org' });
+	});
 
 	app.get('/user', (c) => {
 		if (!isAuthed(c.req.header('Authorization'))) return c.json({ message: 'Unauthorized' }, 401);
@@ -104,29 +168,20 @@ export async function createGitHubSim(): Promise<GitHubSim> {
 		return c.json(repo, 201);
 	});
 
-	app.post('/user/keys', async (c) => {
+	app.post('/user/ssh_signing_keys', async (c) => {
 		if (!isAuthed(c.req.header('Authorization'))) return c.json({ message: 'Unauthorized' }, 401);
 		const body = await c.req.json<{ title: string; key: string }>();
-		const id = nextKeyId++;
-		state.keys.push({ id, title: body.title, key: body.key });
-		return c.json({ id, title: body.title, key: body.key }, 201);
+		const id = nextSigningKeyId++;
+		const entry = { id, title: body.title, key: body.key };
+		state.signingKeys.push(entry);
+		return c.json(entry, 201);
 	});
 
-	app.delete('/user/keys/:id', (c) => {
+	app.delete('/user/ssh_signing_keys/:id', (c) => {
 		if (!isAuthed(c.req.header('Authorization'))) return c.json({ message: 'Unauthorized' }, 401);
 		const id = Number(c.req.param('id'));
-		state.keys = state.keys.filter((k) => k.id !== id);
+		state.signingKeys = state.signingKeys.filter((k) => k.id !== id);
 		return c.body(null, 204);
-	});
-
-	app.post('/login/oauth/access_token', async (c) => {
-		const body = await c.req.json<{ code: string }>();
-		const token = state.oauthCodes.get(body.code) ?? state.token;
-		return c.json({
-			access_token: token,
-			token_type: 'bearer',
-			scope: 'repo,read:org',
-		});
 	});
 
 	function makeRepo(owner: string, name: string, isPrivate: boolean): GitHubSimRepo {
@@ -180,7 +235,16 @@ export async function createGitHubSim(): Promise<GitHubSim> {
 			if (partial.user) state.user = partial.user;
 			if (partial.orgs) state.orgs = partial.orgs;
 			if (partial.repos) state.repos = partial.repos;
-			if (partial.keys) state.keys = partial.keys;
+			if (partial.signingKeys) state.signingKeys = partial.signingKeys;
+		},
+		approveDeviceFlow(userCode, accessToken) {
+			for (const flow of state.deviceFlows.values()) {
+				if (flow.userCode === userCode) {
+					flow.approvedToken = accessToken ?? state.token;
+					return;
+				}
+			}
+			throw new Error(`device flow user_code not found: ${userCode}`);
 		},
 		addCode(code, accessToken) {
 			state.oauthCodes.set(code, accessToken ?? state.token);

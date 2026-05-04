@@ -32,8 +32,7 @@ hezo                              # Start with defaults
 hezo --port 3100                  # Custom port (default: 3100)
 hezo --data-dir /path/to/dir     # Custom data directory (default: ~/.hezo/)
 hezo --master-key <key>          # Provide master key for unlock
-hezo --connect-url <url>         # Hezo Connect URL (default: http://localhost:4100)
-hezo --connect-api-key <key>     # API key for centrally hosted Connect
+hezo --web-url <url>             # Web UI base URL for redirects (default: same origin)
 hezo --reset                      # Wipe database and start fresh
 ```
 
@@ -50,7 +49,7 @@ Tests use Vitest with in-memory PGlite instances — no external database needed
 ```
 packages/
   server/    — Main application server (Hono + PGlite)
-  connect/   — OAuth gateway for GitHub
+  web/       — React frontend (bundled into the server binary at build time)
   shared/    — Shared TypeScript types and constants
 ```
 
@@ -61,9 +60,7 @@ packages/
 | http://localhost:3100 | Hezo Server |
 | http://localhost:3100/health | Server health check |
 | http://localhost:3100/api/status | Server status (master key state) |
-| http://localhost:4100 | Hezo Connect |
-| http://localhost:4100/health | Connect health check |
-| http://localhost:4100/platforms | Supported OAuth platforms |
+| http://localhost:5173 | Vite dev server (web UI) |
 
 ## Scripts
 

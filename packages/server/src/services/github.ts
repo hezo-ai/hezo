@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from './oauth/provider-github';
+
 export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface RepoAccessResult {
@@ -30,10 +32,6 @@ export interface CreateRepoResult {
 	default_branch: string;
 }
 
-export function getGitHubApiBase(): string {
-	return process.env.GITHUB_API_BASE_URL || 'https://api.github.com';
-}
-
 const authHeaders = (accessToken: string) => ({
 	Authorization: `Bearer ${accessToken}`,
 	Accept: 'application/vnd.github+json',
@@ -41,12 +39,17 @@ const authHeaders = (accessToken: string) => ({
 });
 
 export function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
-	const httpsMatch = url.match(
+	const trimmed = url.trim().replace(/\.git$/, '');
+
+	const sshMatch = trimmed.match(/^git@github\.com:([a-zA-Z0-9._-]+)\/([a-zA-Z0-9._-]+)$/);
+	if (sshMatch) return { owner: sshMatch[1], repo: sshMatch[2] };
+
+	const httpsMatch = trimmed.match(
 		/^(?:https?:\/\/)?github\.com\/([a-zA-Z0-9._-]+)\/([a-zA-Z0-9._-]+)\/?$/,
 	);
 	if (httpsMatch) return { owner: httpsMatch[1], repo: httpsMatch[2] };
 
-	const shortMatch = url.match(/^([a-zA-Z0-9._-]+)\/([a-zA-Z0-9._-]+)$/);
+	const shortMatch = trimmed.match(/^([a-zA-Z0-9._-]+)\/([a-zA-Z0-9._-]+)$/);
 	if (shortMatch) return { owner: shortMatch[1], repo: shortMatch[2] };
 
 	return null;
@@ -58,53 +61,17 @@ export async function validateRepoAccess(
 	accessToken: string,
 	fetchFn: FetchFn = globalThis.fetch,
 ): Promise<RepoAccessResult> {
-	const res = await fetchFn(`${getGitHubApiBase()}/repos/${owner}/${repo}`, {
+	const res = await fetchFn(`${getApiBaseUrl()}/repos/${owner}/${repo}`, {
 		headers: authHeaders(accessToken),
 	});
 	return { accessible: res.status === 200, status: res.status };
-}
-
-export async function registerSSHKeyOnGitHub(
-	publicKey: string,
-	title: string,
-	accessToken: string,
-	fetchFn: FetchFn = globalThis.fetch,
-): Promise<{ id: number }> {
-	const res = await fetchFn(`${getGitHubApiBase()}/user/keys`, {
-		method: 'POST',
-		headers: { ...authHeaders(accessToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title, key: publicKey }),
-	});
-
-	if (!res.ok) {
-		const body = await res.text();
-		throw new Error(`Failed to register SSH key on GitHub (${res.status}): ${body}`);
-	}
-
-	const data = (await res.json()) as { id: number };
-	return { id: data.id };
-}
-
-export async function removeSSHKeyFromGitHub(
-	keyId: number,
-	accessToken: string,
-	fetchFn: FetchFn = globalThis.fetch,
-): Promise<void> {
-	const res = await fetchFn(`${getGitHubApiBase()}/user/keys/${keyId}`, {
-		method: 'DELETE',
-		headers: authHeaders(accessToken),
-	});
-
-	if (!res.ok && res.status !== 404) {
-		throw new Error(`Failed to remove SSH key from GitHub (${res.status})`);
-	}
 }
 
 export async function fetchAuthenticatedUser(
 	accessToken: string,
 	fetchFn: FetchFn = globalThis.fetch,
 ): Promise<{ login: string; avatar_url: string } | null> {
-	const res = await fetchFn(`${getGitHubApiBase()}/user`, { headers: authHeaders(accessToken) });
+	const res = await fetchFn(`${getApiBaseUrl()}/user`, { headers: authHeaders(accessToken) });
 	if (!res.ok) return null;
 	return (await res.json()) as { login: string; avatar_url: string };
 }
@@ -118,7 +85,7 @@ export async function listUserOrgs(
 		? [{ login: user.login, avatar_url: user.avatar_url, is_personal: true }]
 		: [];
 
-	const res = await fetchFn(`${getGitHubApiBase()}/user/orgs?per_page=100`, {
+	const res = await fetchFn(`${getApiBaseUrl()}/user/orgs?per_page=100`, {
 		headers: authHeaders(accessToken),
 	});
 	if (!res.ok) return personal;
@@ -143,7 +110,7 @@ export async function listAccessibleRepos(
 		? `/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator`
 		: `/orgs/${owner}/repos?per_page=100&sort=updated`;
 
-	const res = await fetchFn(`${getGitHubApiBase()}${path}`, { headers: authHeaders(accessToken) });
+	const res = await fetchFn(`${getApiBaseUrl()}${path}`, { headers: authHeaders(accessToken) });
 	if (!res.ok) return [];
 
 	const repos = (await res.json()) as GitHubRepoSummary[];
@@ -164,7 +131,7 @@ export async function createGitHubRepo(
 	const isPersonal = user?.login.toLowerCase() === owner.toLowerCase();
 
 	const path = isPersonal ? '/user/repos' : `/orgs/${owner}/repos`;
-	const res = await fetchFn(`${getGitHubApiBase()}${path}`, {
+	const res = await fetchFn(`${getApiBaseUrl()}${path}`, {
 		method: 'POST',
 		headers: { ...authHeaders(accessToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name, private: isPrivate, auto_init: true }),

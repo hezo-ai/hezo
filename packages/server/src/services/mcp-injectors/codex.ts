@@ -1,12 +1,19 @@
 import { join } from 'node:path';
-import type { McpDescriptor, McpInjection, RuntimeMcpAdapter } from './types';
+import type {
+	McpDescriptor,
+	McpHttpDescriptor,
+	McpInjection,
+	McpStdioDescriptor,
+	RuntimeMcpAdapter,
+} from './types';
 
 const TOML_KEY_RE = /^[A-Za-z0-9_-]+$/;
 
 function escapeTomlBasicString(value: string): string {
 	let out = '';
 	for (const ch of value) {
-		const code = ch.codePointAt(0)!;
+		const code = ch.codePointAt(0);
+		if (code === undefined) continue;
 		if (ch === '\\') out += '\\\\';
 		else if (ch === '"') out += '\\"';
 		else if (ch === '\n') out += '\\n';
@@ -18,11 +25,19 @@ function escapeTomlBasicString(value: string): string {
 	return `"${out}"`;
 }
 
-/**
- * Sanitize a descriptor name for use as a TOML bare key and as the suffix in
- * the bearer-token env var name. Only [A-Za-z0-9_-] survive; everything else
- * becomes "_". Names that would collapse to empty fall back to a stable hash.
- */
+function tomlArray(values: readonly string[]): string {
+	return `[${values.map(escapeTomlBasicString).join(', ')}]`;
+}
+
+function tomlInlineTable(entries: Record<string, string>): string {
+	const parts: string[] = [];
+	for (const [k, v] of Object.entries(entries)) {
+		const key = TOML_KEY_RE.test(k) ? k : escapeTomlBasicString(k);
+		parts.push(`${key} = ${escapeTomlBasicString(v)}`);
+	}
+	return `{ ${parts.join(', ')} }`;
+}
+
 function safeName(name: string): string {
 	const cleaned = name.replace(/[^A-Za-z0-9_-]/g, '_');
 	return cleaned.length > 0 ? cleaned : '_';
@@ -32,18 +47,31 @@ function bearerEnvVarName(descriptorName: string): string {
 	return `HEZO_MCP_BEARER_TOKEN_${safeName(descriptorName).toUpperCase()}`;
 }
 
-function renderServerBlock(descriptor: McpDescriptor): string {
-	const key = safeName(descriptor.name);
+function renderHttpBlock(d: McpHttpDescriptor): string {
+	const key = safeName(d.name);
 	if (!TOML_KEY_RE.test(key)) {
-		throw new Error(`mcp descriptor name produced invalid TOML key: ${descriptor.name}`);
+		throw new Error(`mcp descriptor name produced invalid TOML key: ${d.name}`);
 	}
 	const lines: string[] = [`[mcp_servers.${key}]`];
-	lines.push(`url = ${escapeTomlBasicString(descriptor.url)}`);
-	if (descriptor.bearerToken) {
-		lines.push(
-			`bearer_token_env_var = ${escapeTomlBasicString(bearerEnvVarName(descriptor.name))}`,
-		);
+	lines.push(`url = ${escapeTomlBasicString(d.url)}`);
+	if (d.bearerToken) {
+		lines.push(`bearer_token_env_var = ${escapeTomlBasicString(bearerEnvVarName(d.name))}`);
 	}
+	if (d.headers && Object.keys(d.headers).length > 0) {
+		lines.push(`headers = ${tomlInlineTable(d.headers)}`);
+	}
+	return lines.join('\n');
+}
+
+function renderStdioBlock(d: McpStdioDescriptor): string {
+	const key = safeName(d.name);
+	if (!TOML_KEY_RE.test(key)) {
+		throw new Error(`mcp descriptor name produced invalid TOML key: ${d.name}`);
+	}
+	const lines: string[] = [`[mcp_servers.${key}]`];
+	lines.push(`command = ${escapeTomlBasicString(d.command)}`);
+	if (d.args && d.args.length > 0) lines.push(`args = ${tomlArray(d.args)}`);
+	if (d.env && Object.keys(d.env).length > 0) lines.push(`env = ${tomlInlineTable(d.env)}`);
 	return lines.join('\n');
 }
 
@@ -53,7 +81,7 @@ export const codexAdapter: RuntimeMcpAdapter = {
 		bearerTokenStorage: 'env-var',
 		requiresHomeDir: true,
 	},
-	build(descriptors, ctx): McpInjection {
+	build(descriptors: readonly McpDescriptor[], ctx): McpInjection {
 		if (descriptors.length === 0) {
 			return { cliArgs: [], envEntries: [], files: [] };
 		}
@@ -61,13 +89,15 @@ export const codexAdapter: RuntimeMcpAdapter = {
 			throw new Error('codex mcp adapter requires hostHomeDir');
 		}
 
-		const blocks = descriptors.map(renderServerBlock);
+		const blocks = descriptors.map((d) =>
+			d.kind === 'http' ? renderHttpBlock(d) : renderStdioBlock(d),
+		);
 		const contents = `${blocks.join('\n\n')}\n`;
 
 		const envEntries: string[] = [];
-		for (const descriptor of descriptors) {
-			if (descriptor.bearerToken) {
-				envEntries.push(`${bearerEnvVarName(descriptor.name)}=${descriptor.bearerToken}`);
+		for (const d of descriptors) {
+			if (d.kind === 'http' && d.bearerToken) {
+				envEntries.push(`${bearerEnvVarName(d.name)}=${d.bearerToken}`);
 			}
 		}
 

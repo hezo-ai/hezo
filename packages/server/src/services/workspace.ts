@@ -1,5 +1,23 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+
+export function forceRmRecursive(path: string): void {
+	if (!existsSync(path)) return;
+	try {
+		rmSync(path, { recursive: true, force: true });
+		return;
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException)?.code;
+		if (code !== 'EACCES' && code !== 'EPERM') throw err;
+	}
+	// macOS Docker Desktop tags container-mountpoint phantom dirs with a
+	// `deny delete` ACL that rmSync cannot override. Strip ACLs and retry.
+	if (process.platform === 'darwin') {
+		spawnSync('chmod', ['-RN', path]);
+	}
+	rmSync(path, { recursive: true, force: true });
+}
 
 export function ensureProjectWorkspace(
 	dataDir: string,
@@ -16,6 +34,24 @@ export function ensureProjectWorkspace(
 	return projectDir;
 }
 
+export function ensureProjectRunDir(
+	dataDir: string,
+	companySlug: string,
+	projectSlug: string,
+): string {
+	const runDir = join(getProjectDir(dataDir, companySlug, projectSlug), 'run');
+	mkdirSync(runDir, { recursive: true, mode: 0o700 });
+	return runDir;
+}
+
+export function getProjectRunDir(
+	dataDir: string,
+	companySlug: string,
+	projectSlug: string,
+): string {
+	return join(getProjectDir(dataDir, companySlug, projectSlug), 'run');
+}
+
 export function removeProjectWorkspace(
 	dataDir: string,
 	companySlug: string,
@@ -23,9 +59,7 @@ export function removeProjectWorkspace(
 ): void {
 	if (!dataDir || !companySlug || !projectSlug) return;
 	const projectDir = getProjectDir(dataDir, companySlug, projectSlug);
-	if (existsSync(projectDir)) {
-		rmSync(projectDir, { recursive: true, force: true });
-	}
+	forceRmRecursive(projectDir);
 }
 
 export function getProjectDir(dataDir: string, companySlug: string, projectSlug: string): string {
@@ -84,7 +118,7 @@ export function clearAllProjectWorkspaces(dataDir: string): string[] {
 		for (const projectSlug of safeReaddir(projectsRoot)) {
 			const workspaceDir = join(projectsRoot, projectSlug, 'workspace');
 			if (!isDirectory(workspaceDir)) continue;
-			rmSync(workspaceDir, { recursive: true, force: true });
+			forceRmRecursive(workspaceDir);
 			mkdirSync(workspaceDir, { recursive: true });
 			cleared.push(workspaceDir);
 		}

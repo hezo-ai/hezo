@@ -7,6 +7,49 @@ import { requireCompanyAccess } from '../middleware/auth';
 
 export const secretsRoutes = new Hono<Env>();
 
+/**
+ * Augmented secrets list joined with the most recent egress-request audit
+ * row that named each secret. `last_used_at` is null for secrets that have
+ * never been substituted on an outbound request — useful for spotting
+ * stale credentials safe to revoke.
+ */
+secretsRoutes.get('/companies/:companyId/credentials', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+
+	const result = await db.query(
+		`SELECT s.id, s.company_id, s.project_id, s.name, s.category,
+		        s.allowed_hosts, s.allow_all_hosts, s.created_at, s.updated_at,
+		        p.name AS project_name,
+		        usage.last_used_at,
+		        usage.use_count,
+		        usage.last_host
+		 FROM secrets s
+		 LEFT JOIN projects p ON p.id = s.project_id
+		 LEFT JOIN LATERAL (
+		     SELECT max(al.created_at) AS last_used_at,
+		            count(*)::int AS use_count,
+		            (SELECT al2.details->>'host'
+		             FROM audit_log al2
+		             WHERE al2.company_id = $1
+		               AND al2.entity_type = 'egress_request'
+		               AND al2.details->'secret_names_used' ? s.name
+		             ORDER BY al2.created_at DESC LIMIT 1) AS last_host
+		     FROM audit_log al
+		     WHERE al.company_id = $1
+		       AND al.entity_type = 'egress_request'
+		       AND al.details->'secret_names_used' ? s.name
+		 ) usage ON TRUE
+		 WHERE s.company_id = $1
+		 ORDER BY usage.last_used_at DESC NULLS LAST, s.name ASC`,
+		[companyId],
+	);
+	return ok(c, result.rows);
+});
+
 secretsRoutes.get('/companies/:companyId/secrets', async (c) => {
 	const access = await requireCompanyAccess(c);
 	if (access instanceof Response) return access;
@@ -16,7 +59,8 @@ secretsRoutes.get('/companies/:companyId/secrets', async (c) => {
 	const projectId = c.req.query('project_id');
 
 	let query = `
-    SELECT s.id, s.company_id, s.project_id, s.name, s.category, s.created_at, s.updated_at,
+    SELECT s.id, s.company_id, s.project_id, s.name, s.category,
+           s.allowed_hosts, s.allow_all_hosts, s.created_at, s.updated_at,
            p.name AS project_name,
            (SELECT count(*) FROM secret_grants sg WHERE sg.secret_id = s.id AND sg.revoked_at IS NULL)::int AS grant_count
     FROM secrets s
@@ -47,6 +91,8 @@ secretsRoutes.post('/companies/:companyId/secrets', async (c) => {
 		value: string;
 		project_id?: string;
 		category?: string;
+		allowed_hosts?: string[];
+		allow_all_hosts?: boolean;
 	}>();
 
 	if (!body.name?.trim() || !body.value) {
@@ -61,16 +107,21 @@ secretsRoutes.post('/companies/:companyId/secrets', async (c) => {
 	const { encrypt } = await import('../crypto/encryption');
 	const encryptedValue = encrypt(body.value, key);
 
+	const allowedHosts = Array.isArray(body.allowed_hosts) ? body.allowed_hosts : [];
+	const allowAllHosts = !!body.allow_all_hosts;
+
 	const result = await db.query(
-		`INSERT INTO secrets (company_id, project_id, name, encrypted_value, category)
-     VALUES ($1, $2, $3, $4, $5::secret_category)
-     RETURNING id, company_id, project_id, name, category, created_at, updated_at`,
+		`INSERT INTO secrets (company_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
+     VALUES ($1, $2, $3, $4, $5::secret_category, $6, $7)
+     RETURNING id, company_id, project_id, name, category, allowed_hosts, allow_all_hosts, created_at, updated_at`,
 		[
 			companyId,
 			body.project_id ?? null,
 			body.name.trim(),
 			encryptedValue,
 			body.category ?? SecretCategory.Other,
+			allowedHosts,
+			allowAllHosts,
 		],
 	);
 
@@ -104,6 +155,8 @@ secretsRoutes.patch('/companies/:companyId/secrets/:secretId', async (c) => {
 	const body = await c.req.json<{
 		value?: string;
 		category?: string;
+		allowed_hosts?: string[];
+		allow_all_hosts?: boolean;
 	}>();
 
 	const sets: string[] = [];
@@ -127,6 +180,21 @@ secretsRoutes.patch('/companies/:companyId/secrets/:secretId', async (c) => {
 		idx++;
 	}
 
+	if (body.allowed_hosts !== undefined) {
+		if (!Array.isArray(body.allowed_hosts)) {
+			return err(c, 'INVALID_REQUEST', 'allowed_hosts must be an array of strings', 400);
+		}
+		sets.push(`allowed_hosts = $${idx}`);
+		params.push(body.allowed_hosts);
+		idx++;
+	}
+
+	if (body.allow_all_hosts !== undefined) {
+		sets.push(`allow_all_hosts = $${idx}`);
+		params.push(!!body.allow_all_hosts);
+		idx++;
+	}
+
 	if (sets.length === 0) {
 		return ok(c, existing.rows[0]);
 	}
@@ -134,7 +202,7 @@ secretsRoutes.patch('/companies/:companyId/secrets/:secretId', async (c) => {
 	params.push(secretId);
 	const result = await db.query(
 		`UPDATE secrets SET ${sets.join(', ')} WHERE id = $${idx}
-     RETURNING id, company_id, project_id, name, category, created_at, updated_at`,
+     RETURNING id, company_id, project_id, name, category, allowed_hosts, allow_all_hosts, created_at, updated_at`,
 		params,
 	);
 

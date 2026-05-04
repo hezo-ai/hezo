@@ -3,17 +3,36 @@
  * adapters translate a list of these into the spawn artifacts (CLI args,
  * env entries, on-disk config files) that the runtime CLI will pick up.
  *
- * Today the runner emits exactly one descriptor (the built-in Hezo server).
- * The contract is shaped as a list so per-agent / per-company MCP servers
- * can be added later without changing the adapter signature.
+ * The runner always emits the built-in Hezo server (HTTP) plus zero or
+ * more per-company / per-project descriptors loaded from `mcp_connections`.
  */
-export interface McpDescriptor {
+export type McpDescriptor = McpHttpDescriptor | McpStdioDescriptor;
+
+export interface McpHttpDescriptor {
+	kind: 'http';
 	/** Stable identifier used as the MCP server name in the runtime config. */
 	name: string;
 	/** Streamable-HTTP endpoint URL. */
 	url: string;
-	/** Optional bearer token sent as Authorization: Bearer <token>. */
+	/** Headers to send with each request to this MCP server. Values may
+	 * contain `__HEZO_SECRET_*__` placeholders that the egress proxy
+	 * substitutes at request time. */
+	headers?: Record<string, string>;
+	/** Convenience: bearer token added as `Authorization: Bearer <token>`. */
 	bearerToken?: string;
+}
+
+export interface McpStdioDescriptor {
+	kind: 'stdio';
+	/** Stable identifier used as the MCP server name in the runtime config. */
+	name: string;
+	/** Absolute path or PATH-resolvable binary the runtime spawns. */
+	command: string;
+	/** Args passed to the command. */
+	args?: string[];
+	/** Env entries set on the spawned MCP process. Values may contain
+	 * `__HEZO_SECRET_*__` placeholders. */
+	env?: Record<string, string>;
 }
 
 export interface McpInjectionFile {

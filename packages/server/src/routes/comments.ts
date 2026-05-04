@@ -1,6 +1,8 @@
-import { AuthType, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
+import { AuthType, CommentContentType, GrantScope, WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { encrypt } from '../crypto/encryption';
 import { broadcastChange } from '../lib/broadcast';
+import { validateCredentialValue } from '../lib/credential-validator';
 import { resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -219,3 +221,172 @@ commentsRoutes.post(
 		return ok(c, result.rows[0]);
 	},
 );
+
+commentsRoutes.post(
+	'/companies/:companyId/issues/:issueId/comments/:commentId/fulfill-credential',
+	async (c) => {
+		const access = await requireCompanyAccess(c);
+		if (access instanceof Response) return access;
+
+		const db = c.get('db');
+		const masterKeyManager = c.get('masterKeyManager');
+		const { companyId } = access;
+		const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+		if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+		const commentId = c.req.param('commentId');
+
+		const body = await c.req.json<{ value?: string; confirmed?: boolean }>();
+
+		const existing = await db.query<{
+			content_type: string;
+			issue_id: string;
+			content: Record<string, unknown>;
+			chosen_option: Record<string, unknown> | null;
+			author_member_id: string | null;
+		}>(
+			'SELECT content_type, issue_id, content, chosen_option, author_member_id FROM issue_comments WHERE id = $1 AND issue_id = $2',
+			[commentId, issueId],
+		);
+		if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Comment not found', 404);
+		const row = existing.rows[0];
+		if (row.content_type !== CommentContentType.CredentialRequest) {
+			return err(c, 'INVALID_REQUEST', 'Comment is not a credential request', 400);
+		}
+		if (row.chosen_option !== null) {
+			return err(c, 'INVALID_REQUEST', 'Credential request already fulfilled', 400);
+		}
+
+		const requestContent = row.content;
+		const name = String(requestContent.name ?? '');
+		const kind = String(requestContent.kind ?? '');
+		const scope = String(requestContent.scope ?? 'company');
+		const projectId =
+			scope === 'project' && typeof requestContent.project_id === 'string'
+				? requestContent.project_id
+				: null;
+		const allowedHosts = Array.isArray(requestContent.allowed_hosts)
+			? (requestContent.allowed_hosts as string[])
+			: [];
+		const requestingAgentId = row.author_member_id;
+
+		const isConfirmation = typeof requestContent.confirmation_text === 'string';
+		let storedValue: string | null = null;
+
+		if (isConfirmation) {
+			if (body.confirmed !== true) {
+				return err(c, 'INVALID_REQUEST', 'confirmed must be true', 400);
+			}
+			storedValue = '';
+		} else {
+			const value = body.value;
+			if (typeof value !== 'string') {
+				return err(c, 'INVALID_REQUEST', 'value is required', 400);
+			}
+			const validation = validateCredentialValue(kind, value);
+			if (!validation.valid) {
+				return err(c, 'INVALID_REQUEST', validation.error, 400);
+			}
+			storedValue = value;
+		}
+
+		const encryptionKey = masterKeyManager.getKey();
+		if (!encryptionKey) {
+			return err(c, 'LOCKED', 'Master key not available', 503);
+		}
+
+		await db.query('BEGIN');
+		let secretId: string;
+		let updatedComment: Record<string, unknown>;
+		try {
+			const encryptedValue = isConfirmation ? '' : encrypt(storedValue as string, encryptionKey);
+			const category = pickSecretCategory(kind);
+
+			const upsert = await db.query<{ id: string }>(
+				`INSERT INTO secrets (company_id, project_id, name, encrypted_value, category, allowed_hosts)
+				 VALUES ($1, $2, $3, $4, $5::secret_category, $6::text[])
+				 ON CONFLICT (company_id, project_id, name)
+				 DO UPDATE SET encrypted_value = EXCLUDED.encrypted_value,
+				               category = EXCLUDED.category,
+				               allowed_hosts = EXCLUDED.allowed_hosts,
+				               updated_at = now()
+				 RETURNING id`,
+				[companyId, projectId, name, encryptedValue, category, allowedHosts],
+			);
+			secretId = upsert.rows[0].id;
+
+			if (requestingAgentId) {
+				await db.query(
+					`INSERT INTO secret_grants (secret_id, member_id, scope)
+					 VALUES ($1, $2, $3::grant_scope)
+					 ON CONFLICT (secret_id, member_id) DO NOTHING`,
+					[secretId, requestingAgentId, GrantScope.Single],
+				);
+			}
+
+			const updated = await db.query(
+				`UPDATE issue_comments
+				   SET chosen_option = $1::jsonb
+				 WHERE id = $2
+				 RETURNING *`,
+				[
+					JSON.stringify({ secret_id: secretId, fulfilled_at: new Date().toISOString() }),
+					commentId,
+				],
+			);
+			updatedComment = updated.rows[0] as Record<string, unknown>;
+
+			await db.query(
+				`INSERT INTO issue_comments (issue_id, content_type, content)
+				 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
+				[
+					issueId,
+					JSON.stringify({
+						text: isConfirmation
+							? `Confirmed: ${name}`
+							: `Credential provided: ${name} (stored as secret, value not shown)`,
+					}),
+				],
+			);
+			await db.query('COMMIT');
+		} catch (e) {
+			await db.query('ROLLBACK');
+			throw e;
+		}
+
+		if (requestingAgentId) {
+			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
+				requestingAgentId,
+			]);
+			if (isAgent.rows.length > 0) {
+				try {
+					await createWakeup(db, requestingAgentId, companyId, WakeupSource.CredentialProvided, {
+						issue_id: issueId,
+						comment_id: commentId,
+						secret_id: secretId,
+						name,
+					});
+				} catch (e) {
+					log.error('Failed to create credential_provided wakeup:', e);
+				}
+			}
+		}
+
+		broadcastChange(c, wsRoom.company(companyId), 'issue_comments', 'UPDATE', updatedComment);
+		return ok(c, { secret_id: secretId, comment_id: commentId });
+	},
+);
+
+function pickSecretCategory(kind: string): string {
+	switch (kind) {
+		case 'ssh_private_key':
+			return 'ssh_key';
+		case 'github_pat':
+		case 'oauth_token':
+			return 'api_token';
+		case 'api_key':
+		case 'webhook_secret':
+			return 'credential';
+		default:
+			return 'other';
+	}
+}

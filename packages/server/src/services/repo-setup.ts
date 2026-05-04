@@ -46,7 +46,7 @@ export async function ensureRepoSetupAction(
 					 RETURNING id`,
 					[
 						ctx.companyId,
-						ApprovalType.OauthRequest,
+						ApprovalType.DesignatedRepoRequest,
 						ApprovalStatus.Pending,
 						JSON.stringify({
 							platform: PlatformType.GitHub,
@@ -130,7 +130,7 @@ async function findPendingApproval(
 		 LIMIT 1`,
 		[
 			companyId,
-			ApprovalType.OauthRequest,
+			ApprovalType.DesignatedRepoRequest,
 			ApprovalStatus.Pending,
 			projectId,
 			OAuthRequestReason.DesignatedRepo,

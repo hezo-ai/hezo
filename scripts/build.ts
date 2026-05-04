@@ -25,17 +25,16 @@ async function run(pkg: string, cmd: string[]) {
 	}
 }
 
-// shared must build first (dependency of server and connect)
+// shared must build first (dependency of server)
 await run('packages/shared', ['bun', 'run', 'build']);
 
-// server and connect build in parallel
+// server and web build in parallel
 await Promise.all([
 	(async () => {
 		await run('packages/server', ['bun', 'run', 'build']);
 		await run('packages/server', ['bun', 'run', 'build:migrations']);
 		await run('packages/server', ['bun', 'run', 'build:agents']);
 	})(),
-	run('packages/connect', ['bun', 'run', 'build']),
 	run('packages/web', ['bun', 'run', 'build']),
 ]);
 

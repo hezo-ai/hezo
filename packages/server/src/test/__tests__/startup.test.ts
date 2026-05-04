@@ -12,7 +12,6 @@ function baseConfig(overrides: Partial<HezoConfig> = {}): HezoConfig {
 	return {
 		port: 0,
 		dataDir: overrides.dataDir ?? makeTempDir(),
-		connectUrl: 'https://connect.test',
 		webUrl: '',
 		reset: false,
 		open: false,

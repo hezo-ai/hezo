@@ -11,9 +11,7 @@ describe('parseArgs', () => {
 		const config = parseArgs(argv());
 		expect(config.port).toBe(3100);
 		expect(config.dataDir).toBe(resolve(homedir(), '.hezo'));
-		expect(config.connectUrl).toBe('http://localhost:4100');
 		expect(config.masterKey).toBeUndefined();
-		expect(config.connectApiKey).toBeUndefined();
 		expect(config.reset).toBe(false);
 		expect(config.open).toBe(false);
 	});
@@ -50,16 +48,6 @@ describe('parseArgs', () => {
 		expect(config.masterKey).toBe('mykey');
 	});
 
-	it('parses --connect-url', () => {
-		const config = parseArgs(argv('--connect-url', 'https://custom.example.com'));
-		expect(config.connectUrl).toBe('https://custom.example.com');
-	});
-
-	it('parses --connect-api-key', () => {
-		const config = parseArgs(argv('--connect-api-key', 'hc_abc123'));
-		expect(config.connectApiKey).toBe('hc_abc123');
-	});
-
 	it('parses --reset', () => {
 		const config = parseArgs(argv('--reset'));
 		expect(config.reset).toBe(true);
@@ -79,10 +67,6 @@ describe('parseArgs', () => {
 				'/tmp/hezo',
 				'--master-key',
 				'secret',
-				'--connect-url',
-				'https://connect.hezo.dev',
-				'--connect-api-key',
-				'hc_xyz',
 				'--reset',
 				'--open',
 			),
@@ -90,8 +74,6 @@ describe('parseArgs', () => {
 		expect(config.port).toBe(9000);
 		expect(config.dataDir).toBe('/tmp/hezo');
 		expect(config.masterKey).toBe('secret');
-		expect(config.connectUrl).toBe('https://connect.hezo.dev');
-		expect(config.connectApiKey).toBe('hc_xyz');
 		expect(config.reset).toBe(true);
 		expect(config.open).toBe(true);
 	});

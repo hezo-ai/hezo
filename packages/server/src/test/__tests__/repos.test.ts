@@ -1,8 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { MasterKeyManager } from '../../crypto/master-key';
-import { signOAuthState } from '../../crypto/state';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
@@ -10,7 +8,6 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let masterKeyManager: MasterKeyManager;
 let companyId: string;
 let projectId: string;
 
@@ -19,7 +16,6 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;
-	masterKeyManager = ctx.masterKeyManager;
 
 	// Create company
 	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
@@ -63,27 +59,6 @@ describe('repos CRUD', () => {
 		expect(body.data).toEqual([]);
 	});
 
-	it('returns GITHUB_NOT_CONNECTED when no GitHub connection', async () => {
-		const res = await app.request(`/api/companies/${companyId}/projects/${projectId}/repos`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ short_name: 'frontend', url: 'https://github.com/acme/frontend' }),
-		});
-		expect(res.status).toBe(422);
-		const body = await res.json();
-		expect(body.error.code).toBe('GITHUB_NOT_CONNECTED');
-	});
-
-	it('creates an oauth_request approval when GitHub not connected', async () => {
-		const approvalsRes = await app.request(`/api/companies/${companyId}/approvals?status=pending`, {
-			headers: authHeader(token),
-		});
-		const approvals = (await approvalsRes.json()).data;
-		const oauthApprovals = approvals.filter((a: any) => a.type === 'oauth_request');
-		expect(oauthApprovals.length).toBeGreaterThan(0);
-		expect(oauthApprovals[0].payload.platform).toBe('github');
-	});
-
 	it('returns INVALID_URL for bad URLs', async () => {
 		const res = await app.request(`/api/companies/${companyId}/projects/${projectId}/repos`, {
 			method: 'POST',
@@ -102,68 +77,6 @@ describe('repos CRUD', () => {
 			body: JSON.stringify({ short_name: 'x' }),
 		});
 		expect(res.status).toBe(400);
-	});
-
-	describe('with GitHub connected', () => {
-		beforeAll(async () => {
-			// Simulate a connection via OAuth callback with mocked Connect exchange
-			const state = await signOAuthState({ company_id: companyId }, masterKeyManager);
-			const metadata = Buffer.from(
-				JSON.stringify({ username: 'repo-test-bot', email: 'bot@test.com' }),
-			).toString('base64url');
-
-			const originalFetch = globalThis.fetch;
-			vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-				const url =
-					typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-				if (url.includes('/auth/exchange')) {
-					return new Response(
-						JSON.stringify({
-							access_token: 'gho_test_repo_token',
-							scopes: 'repo',
-							metadata,
-							platform: 'github',
-						}),
-						{ status: 200, headers: { 'Content-Type': 'application/json' } },
-					);
-				}
-				return originalFetch(input, init);
-			});
-
-			await app.request(
-				`/oauth/callback?platform=github&code=test-code&state=${encodeURIComponent(state)}`,
-			);
-			vi.restoreAllMocks();
-		});
-
-		it('returns REPO_ACCESS_FAILED when GitHub returns 404', async () => {
-			// Mock the GitHub API to simulate repo not accessible
-			const originalFetch = globalThis.fetch;
-			vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-				const url =
-					typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-				if (url.includes('api.github.com/repos/')) {
-					return new Response(JSON.stringify({ message: 'Not Found' }), {
-						status: 404,
-						headers: { 'Content-Type': 'application/json' },
-					});
-				}
-				return originalFetch(input, init);
-			});
-
-			const res = await app.request(`/api/companies/${companyId}/projects/${projectId}/repos`, {
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					short_name: 'frontend',
-					url: 'https://github.com/acme/frontend',
-				}),
-			});
-			expect(res.status).toBe(422);
-			const body = await res.json();
-			expect(body.error.code).toBe('REPO_ACCESS_FAILED');
-			expect(body.error.message).toContain('repo-test-bot');
-		});
 	});
 
 	it('deletes a repo', async () => {

@@ -55,12 +55,6 @@ if (bundle.exitCode !== 0) {
 }
 
 const procs = [
-	Bun.spawn(['bun', 'run', '--watch', 'src/index.ts'], {
-		cwd: resolve(ROOT, 'packages/connect'),
-		stdout: 'inherit',
-		stderr: 'inherit',
-		env: { ...process.env },
-	}),
 	Bun.spawn(['bun', 'run', '--watch', 'src/index.ts', ...serverArgs], {
 		cwd: resolve(ROOT, 'packages/server'),
 		stdout: 'inherit',

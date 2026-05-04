@@ -786,6 +786,41 @@ After successful container provisioning or rebuild, runs that died with `error='
 
 ---
 
+## Phase 13: Agent-Driven Credentials & Backend-Mediated Egress
+
+**Status:** Done (2026-05)
+
+**Goal:** Replace the OAuth-driven Hezo Connect flow with an agent-driven credential request model and a per-run HTTPS MITM egress proxy. Agents reference secrets by placeholder; the proxy substitutes real values at request time, never letting the agent see the literal secret.
+
+**What's included:**
+
+- **P1 — `request_credential` MCP tool** (commit `9fa5be6`). Agent posts a `credential_request` comment on an issue; human pastes the value via the issue thread; server encrypts to `secrets`; agent receives a `credential_provided` wakeup. Generic for any kind: API key, SSH key, OAuth token, database URL, webhook secret.
+- **P2 — SSH signing server** (commit `9fa5be6`). Per-run `SshAgentServer` with Unix-socket + loopback-TCP listeners. Agents do `git clone` over SSH using the company's Ed25519 deploy key; private key never leaves the server. `setup_github_repo` MCP tool surfaces the public key in a credential_request comment for one-time human deploy-key onboarding.
+- **P2-followup — macOS Docker SSH socket relay** (commit `c9b9be9`). Adds a per-run `socat` bridge baked into the agent base image so the same wire-up works on macOS Docker Desktop (which does not forward `AF_UNIX` bind mounts) and Linux production. Token-authenticated TCP listener on the host; `hezo-run-with-bridge` wrapper inside the container.
+- **P3 — HTTPS MITM egress proxy** (commit `98d63de`). Per-run `http-mitm-proxy` instance allocated against a per-instance CA at `<dataDir>/ca/`. Substitutes `__HEZO_SECRET_<NAME>__` placeholders in request headers and URLs against the `secrets` table scoped to `(company_id, project_id)`. Failures (unknown secret, host not allow-listed, locked master key) return 400 / 403 / 503 to the agent. Audit log records every substitution by name; values never serialised. Falling through to direct egress is **not** an option — failure to bind aborts the run.
+- **P4 — MCP connection persistence** (commit `d1c3f97`). New `mcp_connections` table for SaaS HTTP and local stdio MCP servers, with company / project scope. `add_mcp_connection` / `list_mcp_connections` / `remove_mcp_connection` MCP tools plus REST CRUD. All three runtime adapters (Claude Code, Codex, Gemini) handle both descriptor kinds. SaaS header values support `__HEZO_SECRET_*__` placeholders, substituted by the egress proxy.
+- **P5 — delete `packages/connect`** (commit `1b6387a`). Removes the OAuth relay, oauth-callback / connections routes, GitHub API helpers (kept `parseGitHubUrl`), `connected_platforms` and `slack_connections` tables, `github_key_id` column, `connectUrl` / `connectPublicKey` from app context. The `setup_github_repo` flow becomes the only path for GitHub repos; project settings UI gains an inline "Add Repo" form.
+
+**Detailed reference docs (live in `.dev/`):**
+
+- `credentials.md` — credential model, request lifecycle, audit semantics.
+- `egress.md` — proxy architecture, CA layout, container env wiring, substitution rules, edge cases (HMAC, WebSockets, streaming, Bun compat).
+- `mcp.md` — MCP connections schema, SaaS vs stdio descriptors, project-scoped overrides.
+- `ssh-signing.md` — SshAgentServer, Unix + TCP listeners, socat bridge, GitHub deploy-key bootstrap.
+
+**How to test:**
+
+- Unit: `bun run test --skip-e2e --pattern egress` and `--pattern mcp-connections` and `--pattern ssh-agent`.
+- Docker integration (macOS dev or Linux CI): same patterns with the `hezo/agent-base:latest` image built (`docker build -t hezo/agent-base:latest -f docker/Dockerfile.agent-base docker`). Each pattern runs both the in-process and Docker variants.
+
+**Deferred to a follow-up:**
+
+- `ai_provider_configs` migration to `secrets` (provider API keys can stay in container env for now).
+- Local-MCP on-demand installer that runs `npm install` / `uv tool install` inside the container at provision and on `mcp_connections` insert.
+- Renaming `oauth_request` approval-type enum value to something neutral (`designated_repo_request`) — the repo-setup gate still uses the old name as a generic "designated-repo-needed" approval.
+
+---
+
 ## Phase Summary
 
 | Phase | Focus | Key Deliverable |

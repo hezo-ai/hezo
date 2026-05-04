@@ -96,7 +96,7 @@ describe('agent types CRUD', () => {
 		const res = await app.request('/api/agent-types', {
 			headers: authHeader(token),
 		});
-		const body = await res.json();
+		const _body = await res.json();
 		// Get the Startup company type to check sort_orders
 		const ctRes = await app.request('/api/company-types', {
 			headers: authHeader(token),

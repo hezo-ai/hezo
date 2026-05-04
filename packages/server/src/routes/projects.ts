@@ -37,6 +37,8 @@ function buildContainerDeps(c: Context<Env>): ContainerDeps {
 		wsManager: c.get('wsManager'),
 		masterKeyManager: c.get('masterKeyManager'),
 		logs: c.get('logs'),
+		sshAgentServer: c.get('sshAgentServer'),
+		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
 	};
 }
 

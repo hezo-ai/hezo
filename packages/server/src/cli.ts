@@ -1,14 +1,12 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { DEFAULT_CONNECT_URL, DEFAULT_DATA_DIR, DEFAULT_PORT } from '@hezo/shared';
+import { DEFAULT_DATA_DIR, DEFAULT_PORT } from '@hezo/shared';
 import { Command } from 'commander';
 
 export interface HezoConfig {
 	port: number;
 	dataDir: string;
 	masterKey?: string;
-	connectUrl: string;
-	connectApiKey?: string;
 	webUrl: string;
 	reset: boolean;
 	open: boolean;
@@ -21,13 +19,7 @@ export function parseArgs(argv: string[] = process.argv): HezoConfig {
 		.option('--port <port>', 'Server port', String(DEFAULT_PORT))
 		.option('--data-dir <path>', 'Data directory', DEFAULT_DATA_DIR)
 		.option('--master-key <key>', 'Master key for unlocking')
-		.option('--connect-url <url>', 'Hezo Connect URL', DEFAULT_CONNECT_URL)
-		.option('--connect-api-key <key>', 'Hezo Connect API key')
-		.option(
-			'--web-url <url>',
-			'Web UI base URL for OAuth redirects (leave empty to use same origin)',
-			'',
-		)
+		.option('--web-url <url>', 'Web UI base URL for redirects (leave empty to use same origin)', '')
 		.option('--reset', 'Reset database and start fresh')
 		.option('--open', 'Auto-open the browser')
 		.parse(argv);
@@ -50,8 +42,6 @@ export function parseArgs(argv: string[] = process.argv): HezoConfig {
 		port,
 		dataDir,
 		masterKey: opts.masterKey,
-		connectUrl: opts.connectUrl,
-		connectApiKey: opts.connectApiKey,
 		webUrl: opts.webUrl ?? '',
 		reset: opts.reset ?? false,
 		open: opts.open ?? false,

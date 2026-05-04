@@ -25,17 +25,27 @@ import {
 	type ContainerExitReason,
 	type ContainerTransition,
 	failProjectRuns,
+	rebuildContainer,
 	syncAllContainerStatuses,
+	verifyContainerWorkspace,
 } from './containers';
 import type { DockerClient } from './docker';
+import type { EgressProxy } from './egress';
 import { recordStatusChange } from './issue-events';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans } from './orphan-detector';
 import { ensureRepoSetupAction } from './repo-setup';
+import type { SshAgentServer } from './ssh-agent';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('job-manager');
+
+const cronLog = {
+	trace: (msg: unknown) => log.debug(msg),
+	debug: (msg: unknown) => log.debug(msg),
+	error: (msg: unknown) => log.error(msg),
+};
 
 interface RunningTask {
 	key: string;
@@ -62,6 +72,9 @@ export interface JobManagerDeps {
 	dataDir: string;
 	wsManager: WebSocketManager;
 	logs: LogStreamBroker;
+	sshAgentServer?: SshAgentServer;
+	egressProxy?: EgressProxy | null;
+	egressCAPath?: string;
 }
 
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
@@ -132,22 +145,27 @@ export class JobManager {
 		this.started = true;
 		this.cron.createJob('wakeups', {
 			cron: '*/5 * * * * *',
+			log: cronLog,
 			onTick: () => this.guarded('wakeups', () => this.processWakeups()),
 		});
 		this.cron.createJob('heartbeats', {
 			cron: '*/5 * * * * *',
+			log: cronLog,
 			onTick: () => this.guarded('heartbeats', () => this.processScheduledHeartbeats()),
 		});
 		this.cron.createJob('orphan-detection', {
 			cron: '*/30 * * * * *',
+			log: cronLog,
 			onTick: () => this.guarded('orphan-detection', () => this.detectOrphanedRuns()),
 		});
 		this.cron.createJob('container-sync', {
 			cron: '* * * * * *',
+			log: cronLog,
 			onTick: () => this.guarded('container-sync', () => this.syncContainerStatuses()),
 		});
 		this.cron.createJob('embeddings', {
 			cron: '*/30 * * * * *',
+			log: cronLog,
 			onTick: () => this.guarded('embeddings', () => this.processEmbeddingQueue()),
 		});
 		log.info('Job manager started.');
@@ -281,6 +299,64 @@ export class JobManager {
 		}
 
 		await this.selfHealErroredContainers(docker);
+		await this.repairStaleContainerMounts(docker);
+	}
+
+	/**
+	 * Containers that survived a server restart can have stale bind mounts on
+	 * macOS Docker Desktop — they inspect as Running but every exec fails with
+	 * "current working directory is outside of container mount namespace root".
+	 * Probe each running container's `/workspace` and rebuild the broken ones
+	 * so wakeups don't loop on an unrecoverable exec error.
+	 */
+	private async repairStaleContainerMounts(docker: DockerClient): Promise<void> {
+		const { db } = this.deps;
+
+		const running = await db.query<{
+			id: string;
+			company_id: string;
+			slug: string;
+			company_slug: string;
+			container_id: string;
+			container_status: string | null;
+			docker_base_image: string;
+			dev_ports: Array<{ container: number; host: number }>;
+		}>(
+			`SELECT p.id, p.company_id, p.slug, c.slug AS company_slug,
+			        p.container_id, p.container_status, p.docker_base_image, p.dev_ports
+			 FROM projects p
+			 JOIN companies c ON c.id = p.company_id
+			 WHERE p.container_status = $1::container_status AND p.container_id IS NOT NULL`,
+			[ContainerStatus.Running],
+		);
+
+		for (const row of running.rows) {
+			if (!row.container_id) continue;
+			const ok = await verifyContainerWorkspace(docker, row.container_id);
+			if (ok) continue;
+
+			log.warn(
+				`Container ${row.container_id.slice(0, 12)} for project ${row.id} has unreachable /workspace mount — rebuilding`,
+			);
+			try {
+				await rebuildContainer(
+					this.buildContainerDeps(),
+					{
+						id: row.id,
+						company_id: row.company_id,
+						slug: row.slug,
+						docker_base_image: row.docker_base_image,
+						container_id: row.container_id,
+						container_status: row.container_status,
+						dev_ports: row.dev_ports ?? [],
+					},
+					row.company_slug,
+				);
+				log.info(`Rebuilt container for project ${row.id} after stale-mount detection`);
+			} catch (err) {
+				log.error(`Failed to rebuild stale container for project ${row.id}:`, err);
+			}
+		}
 	}
 
 	private async selfHealErroredContainers(docker: DockerClient): Promise<void> {
@@ -735,6 +811,9 @@ export class JobManager {
 			dataDir: this.deps.dataDir,
 			wsManager: this.deps.wsManager,
 			logs: this.deps.logs,
+			sshAgentServer: this.deps.sshAgentServer,
+			egressProxy: this.deps.egressProxy ?? null,
+			egressCAPath: this.deps.egressCAPath ?? null,
 		};
 		const timeoutMs = agent.rows[0].heartbeat_interval_min * 60 * 1000;
 

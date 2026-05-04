@@ -1,7 +1,5 @@
 import { execFile } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
 
@@ -35,55 +33,57 @@ function formatGitError(stderr: string): string {
 	return trimmed;
 }
 
-const SSH_HOSTS: Record<RepoHostType, string> = {
-	[RepoHostType.GitHub]: 'git@github.com',
+const HTTPS_HOSTS: Record<RepoHostType, string> = {
+	[RepoHostType.GitHub]: 'github.com',
 };
 
-export function buildGitSshUrl(hostType: RepoHostType, repoIdentifier: string): string {
-	const host = SSH_HOSTS[hostType];
+export function buildGitHttpsUrl(hostType: RepoHostType, repoIdentifier: string): string {
+	const host = HTTPS_HOSTS[hostType];
 	if (!host) throw new Error(`Unsupported repo host type: ${hostType}`);
-	return `${host}:${repoIdentifier}.git`;
+	return `https://${host}/${repoIdentifier}.git`;
 }
 
-function sshEnvWithKey(sshPrivateKeyPem: string): {
-	env: Record<string, string>;
-	cleanup: () => void;
-} {
-	const keyFile = join(tmpdir(), `hezo-ssh-${randomBytes(8).toString('hex')}`);
-	writeFileSync(keyFile, sshPrivateKeyPem, { mode: 0o600 });
-	chmodSync(keyFile, 0o600);
+function httpsEnvWithToken(token: string): Record<string, string> {
 	return {
-		env: {
-			GIT_SSH_COMMAND: `ssh -i ${keyFile} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10`,
-		},
-		cleanup: () => {
-			try {
-				unlinkSync(keyFile);
-			} catch {
-				// Best effort
-			}
-		},
+		GIT_TERMINAL_PROMPT: '0',
+		GIT_ASKPASS: '/bin/echo',
+		GIT_HTTP_EXTRAHEADER: `Authorization: bearer ${token}`,
 	};
 }
 
 export async function cloneRepo(
 	repoIdentifier: string,
 	targetDir: string,
-	sshPrivateKeyPem: string,
+	accessToken: string,
 	hostType: RepoHostType = RepoHostType.GitHub,
 ): Promise<{ success: boolean; error?: string }> {
-	const sshUrl = buildGitSshUrl(hostType, repoIdentifier);
-	const { env, cleanup } = sshEnvWithKey(sshPrivateKeyPem);
-	try {
-		const { exitCode, stderr } = await spawn('git', ['clone', sshUrl, targetDir], {
-			env,
+	const url = buildGitHttpsUrl(hostType, repoIdentifier);
+	const { exitCode, stderr } = await spawn(
+		'git',
+		[
+			'-c',
+			`http.${url}.extraHeader=Authorization: bearer ${token(accessToken)}`,
+			'clone',
+			url,
+			targetDir,
+		],
+		{
+			env: httpsEnvWithToken(accessToken),
 			timeout: 120_000,
-		});
-		if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
-		return { success: true };
-	} finally {
-		cleanup();
-	}
+		},
+	);
+	if (exitCode !== 0)
+		return { success: false, error: redactToken(formatGitError(stderr), accessToken) };
+	return { success: true };
+}
+
+function token(t: string): string {
+	return t;
+}
+
+function redactToken(text: string, accessToken: string): string {
+	if (!accessToken) return text;
+	return text.split(accessToken).join('***');
 }
 
 export async function createWorktree(
@@ -103,20 +103,16 @@ export async function createWorktree(
 
 export async function fetchRepo(
 	repoDir: string,
-	sshPrivateKeyPem: string,
+	accessToken: string,
 ): Promise<{ success: boolean; error?: string }> {
-	const { env, cleanup } = sshEnvWithKey(sshPrivateKeyPem);
-	try {
-		const { exitCode, stderr } = await spawn('git', ['fetch', '--all', '--prune'], {
-			cwd: repoDir,
-			env,
-			timeout: 60_000,
-		});
-		if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
-		return { success: true };
-	} finally {
-		cleanup();
-	}
+	const { exitCode, stderr } = await spawn('git', ['fetch', '--all', '--prune'], {
+		cwd: repoDir,
+		env: httpsEnvWithToken(accessToken),
+		timeout: 60_000,
+	});
+	if (exitCode !== 0)
+		return { success: false, error: redactToken(formatGitError(stderr), accessToken) };
+	return { success: true };
 }
 
 export async function ensureIssueWorktree(

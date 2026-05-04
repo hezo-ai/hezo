@@ -7,6 +7,7 @@ const URL = 'http://host.docker.internal:3000/mcp';
 const TOKEN = 'jwt.body.signature';
 
 const HEZO_DESCRIPTOR: McpDescriptor = {
+	kind: 'http',
 	name: 'hezo',
 	url: URL,
 	bearerToken: TOKEN,
@@ -106,7 +107,7 @@ describe('codex adapter', () => {
 	});
 
 	it('omits the bearer env entry when the descriptor has no token', () => {
-		const injection = adapter.build([{ name: 'hezo', url: URL }], {
+		const injection = adapter.build([{ kind: 'http', name: 'hezo', url: URL }], {
 			hostHomeDir: HOME,
 			containerHomeDir: HOME,
 		});
@@ -117,8 +118,8 @@ describe('codex adapter', () => {
 	it('handles multiple descriptors with distinct env var names per server', () => {
 		const injection = adapter.build(
 			[
-				{ name: 'hezo', url: URL, bearerToken: 't1' },
-				{ name: 'extras', url: 'http://other/mcp', bearerToken: 't2' },
+				{ kind: 'http', name: 'hezo', url: URL, bearerToken: 't1' },
+				{ kind: 'http', name: 'extras', url: 'http://other/mcp', bearerToken: 't2' },
 			],
 			{ hostHomeDir: HOME, containerHomeDir: HOME },
 		);

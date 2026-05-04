@@ -1,5 +1,3 @@
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
@@ -17,8 +15,9 @@ import type { DockerClient } from './docker';
 import { ensureImage } from './ensure-image';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
+import type { SshAgentServer } from './ssh-agent';
 import { createWakeup } from './wakeup';
-import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
+import { ensureProjectRunDir, ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
 import type { WebSocketManager } from './ws';
 
 export type ContainerExitReason = 'container_error' | 'container_stopped';
@@ -49,7 +48,12 @@ export interface ContainerDeps {
 	wsManager?: WebSocketManager;
 	masterKeyManager?: MasterKeyManager;
 	logs?: LogStreamBroker;
+	sshAgentServer?: SshAgentServer | null;
+	egressCAPath?: string | null;
 }
+
+/** In-container path the egress CA is bind-mounted to. */
+export const CONTAINER_CA_PATH = '/usr/local/share/ca-certificates/hezo-egress.crt';
 
 const PROVISION_CAP_BYTES = 64 * 1024;
 
@@ -143,20 +147,19 @@ export async function provisionContainer(
 		const worktreesPath = join(projectDir, 'worktrees');
 		const previewsPath = join(projectDir, '.previews');
 
+		// Host-side SSH agent socket lives in this dir for host-side git operations.
+		// In-container SSH socket is allocated fresh by the per-run socat bridge so
+		// no bind-mount is required, which sidesteps Docker Desktop's lack of
+		// AF_UNIX bind-mount forwarding on macOS.
+		ensureProjectRunDir(dataDir, companySlug, project.slug);
+
 		const binds = [
 			`${workspacePath}:/workspace:rw`,
 			`${worktreesPath}:/worktrees:rw`,
 			`${previewsPath}:/workspace/.previews:rw`,
 		];
-
-		const gitconfigPath = join(homedir(), '.gitconfig');
-		if (existsSync(gitconfigPath)) {
-			binds.push(`${gitconfigPath}:/root/.gitconfig:ro`);
-		}
-
-		const sshAuthSock = process.env.SSH_AUTH_SOCK;
-		if (sshAuthSock) {
-			binds.push(`${sshAuthSock}:/tmp/ssh-agent.sock`);
+		if (deps.egressCAPath) {
+			binds.push(`${deps.egressCAPath}:${CONTAINER_CA_PATH}:ro`);
 		}
 
 		const portBindings: Record<string, Array<{ HostPort: string }>> = {};
@@ -182,9 +185,6 @@ export async function provisionContainer(
 		const extraHosts = ['host.docker.internal:host-gateway'];
 
 		const env = ['HEZO_API_URL=http://host.docker.internal:3100/agent-api'];
-		if (sshAuthSock) {
-			env.push('SSH_AUTH_SOCK=/tmp/ssh-agent.sock');
-		}
 
 		emit('stdout', `→ Resolving image ${project.docker_base_image}`);
 		await ensureImage(docker, project.docker_base_image, {
@@ -219,6 +219,21 @@ export async function provisionContainer(
 			[Id, ContainerStatus.Running, project.id],
 		);
 
+		if (deps.egressCAPath) {
+			emit('stdout', '→ Trusting Hezo egress CA (update-ca-certificates)');
+			try {
+				const execId = await docker.execCreate(Id, {
+					Cmd: ['update-ca-certificates'],
+					AttachStdout: true,
+					AttachStderr: true,
+				});
+				const out = await docker.execStart(execId);
+				if (out.stderr.trim()) emit('stderr', out.stderr);
+			} catch (e) {
+				emit('stderr', `⚠ update-ca-certificates failed: ${(e as Error).message}`);
+			}
+		}
+
 		if (masterKeyManager) {
 			emit('stdout', '→ Syncing project repos');
 			const syncRes = await ensureProjectRepos(
@@ -239,6 +254,28 @@ export async function provisionContainer(
 					`⚠ ${syncRes.failed.length} repo(s) failed to clone; container is usable but some repos may be missing`,
 				);
 			}
+		}
+
+		emit('stdout', '→ Installing pending local MCP servers');
+		try {
+			const { installPendingLocalMcps } = await import('./mcp-installer');
+			const results = await installPendingLocalMcps({
+				db,
+				docker,
+				containerId: Id,
+				companyId,
+				projectId: project.id,
+				emit,
+			});
+			const failed = results.filter((r) => r.status === 'failed');
+			if (failed.length > 0) {
+				emit(
+					'stderr',
+					`⚠ ${failed.length} MCP server install(s) failed; check the connection's install_error in settings`,
+				);
+			}
+		} catch (e) {
+			emit('stderr', `⚠ MCP installer step failed: ${(e as Error).message}`);
 		}
 
 		emit('stdout', '✓ Container ready');
@@ -333,6 +370,31 @@ export async function stopContainerGracefully(
 	);
 
 	await broadcastProjectUpdate(db, wsManager, companyId, projectId);
+}
+
+/**
+ * Verify that the container's `/workspace` bind mount is reachable from inside.
+ * Docker Desktop on macOS can leave a container in a state where it inspects as
+ * Running but its bind mounts have gone stale — `docker exec` then fails with
+ * "current working directory is outside of container mount namespace root". Doing
+ * a cheap exec catches that case where `inspectContainer` cannot.
+ */
+export async function verifyContainerWorkspace(
+	docker: DockerClient,
+	containerId: string,
+): Promise<boolean> {
+	try {
+		const execId = await docker.execCreate(containerId, {
+			Cmd: ['ls', '/workspace'],
+			AttachStdout: true,
+			AttachStderr: true,
+		});
+		await docker.execStart(execId);
+		const info = await docker.execInspect(execId);
+		return info.ExitCode === 0;
+	} catch {
+		return false;
+	}
 }
 
 export async function rebuildContainer(

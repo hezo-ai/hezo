@@ -53,3 +53,25 @@ export function useChooseOption(companyId: string, issueId: string) {
 			}),
 	});
 }
+
+export function useFulfillCredential(companyId: string, issueId: string) {
+	return useMutation({
+		mutationFn: ({
+			commentId,
+			value,
+			confirmed,
+		}: {
+			commentId: string;
+			value?: string;
+			confirmed?: boolean;
+		}) =>
+			api.post(
+				`/api/companies/${companyId}/issues/${issueId}/comments/${commentId}/fulfill-credential`,
+				{ value, confirmed },
+			),
+		onSuccess: () =>
+			queryClient.invalidateQueries({
+				queryKey: ['companies', companyId, 'issues', issueId, 'comments'],
+			}),
+	});
+}

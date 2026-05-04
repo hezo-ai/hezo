@@ -19,8 +19,10 @@ export type {
 	McpAdapterCapabilities,
 	McpAdapterContext,
 	McpDescriptor,
+	McpHttpDescriptor,
 	McpInjection,
 	McpInjectionFile,
+	McpStdioDescriptor,
 	RuntimeMcpAdapter,
 } from './types';
 export { validateInjection } from './validate';

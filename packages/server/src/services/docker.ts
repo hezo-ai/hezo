@@ -46,6 +46,21 @@ interface ContainerInfo {
 	};
 }
 
+async function parseJsonOrThrow<T>(res: Response, op: string): Promise<T> {
+	const text = await res.text();
+	if (text.trim() === '') {
+		throw new Error(`Docker ${op} returned empty body (status=${res.status})`);
+	}
+	try {
+		return JSON.parse(text) as T;
+	} catch (err) {
+		const snippet = text.length > 200 ? `${text.slice(0, 200)}…` : text;
+		throw new Error(`Docker ${op} returned non-JSON (status=${res.status}): ${snippet}`, {
+			cause: err,
+		});
+	}
+}
+
 export class DockerClient {
 	private socketPath: string;
 
@@ -111,7 +126,7 @@ export class DockerClient {
 			const text = await res.text();
 			throw new Error(`Docker createContainer failed (${res.status}): ${text}`);
 		}
-		return res.json();
+		return parseJsonOrThrow(res, 'createContainer');
 	}
 
 	async startContainer(containerId: string): Promise<void> {
@@ -148,7 +163,7 @@ export class DockerClient {
 			const text = await res.text();
 			throw new Error(`Docker inspectContainer failed (${res.status}): ${text}`);
 		}
-		return res.json();
+		return parseJsonOrThrow(res, 'inspectContainer');
 	}
 
 	async inspectContainerByName(name: string): Promise<ContainerInfo | null> {
@@ -184,7 +199,7 @@ export class DockerClient {
 			const text = await res.text();
 			throw new Error(`Docker execCreate failed (${res.status}): ${text}`);
 		}
-		const data = (await res.json()) as { Id: string };
+		const data = await parseJsonOrThrow<{ Id: string }>(res, 'execCreate');
 		return data.Id;
 	}
 
@@ -217,7 +232,7 @@ export class DockerClient {
 			const text = await res.text();
 			throw new Error(`Docker execInspect failed (${res.status}): ${text}`);
 		}
-		return res.json();
+		return parseJsonOrThrow(res, 'execInspect');
 	}
 }
 

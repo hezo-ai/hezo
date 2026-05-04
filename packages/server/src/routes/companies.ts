@@ -479,7 +479,7 @@ async function createSkillsFromTemplate(
 	db: PGlite,
 	companyId: string,
 	templateId: string,
-	dataDir: string,
+	_dataDir: string,
 ): Promise<void> {
 	const result = await db.query<{
 		skills_config: Array<{ name: string; source_url: string; description?: string }>;

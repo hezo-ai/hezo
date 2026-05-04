@@ -7,6 +7,8 @@ import {
 	CEO_AGENT_SLUG,
 	COACH_AGENT_SLUG,
 	CommentContentType,
+	CredentialInputType,
+	CredentialKind,
 	DocumentType,
 	IssuePriority,
 	IssueStatus,
@@ -14,8 +16,10 @@ import {
 } from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import type { MasterKeyManager } from '../crypto/master-key';
 import { assertNoActiveRun } from '../lib/active-run';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
+import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import {
 	assertChildDepthAllowed,
@@ -214,6 +218,7 @@ export function registerTools(
 	server: McpServer,
 	db: PGlite,
 	_dataDir: string,
+	_masterKeyManager: MasterKeyManager,
 	wsManager?: WebSocketManager,
 ): ToolDef[] {
 	registeredTools.length = 0;
@@ -892,7 +897,7 @@ export function registerTools(
 			if (args.before) {
 				params.push(args.before);
 				conditions.push(
-					`ic.created_at < (SELECT created_at FROM issue_comments WHERE id = $${params.length})`,
+					`(ic.created_at, ic.id) < (SELECT created_at, id FROM issue_comments WHERE id = $${params.length})`,
 				);
 			}
 			const r = await db.query<Record<string, unknown>>(
@@ -903,7 +908,7 @@ export function registerTools(
 				 LEFT JOIN members m ON m.id = ic.author_member_id
 				 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
 				 WHERE ${conditions.join(' AND ')}
-				 ORDER BY ic.created_at DESC LIMIT 50`,
+				 ORDER BY ic.created_at DESC, ic.id DESC LIMIT 50`,
 				params,
 			);
 			const max = args.excerpt_chars as number | undefined;
@@ -968,6 +973,132 @@ export function registerTools(
 				wsManager,
 			).catch((e) => log.error('Failed to record issue links from comment:', e));
 			return r.rows[0];
+		},
+		db,
+	);
+
+	const credentialKindSchema = z.enum([
+		CredentialKind.ApiKey,
+		CredentialKind.SshPrivateKey,
+		CredentialKind.GithubPat,
+		CredentialKind.OauthToken,
+		CredentialKind.WebhookSecret,
+		CredentialKind.Other,
+	]);
+	const credentialInputTypeSchema = z.enum([
+		CredentialInputType.Text,
+		CredentialInputType.Textarea,
+		CredentialInputType.File,
+	]);
+
+	tool(
+		server,
+		'request_credential',
+		'Ask the human assignee to provide a secret value (API key, SSH private key, OAuth token, etc.). Posts a structured comment on the issue with a paste form. The agent never sees the value; it gets a placeholder string to embed in env vars or HTTP headers, which the egress proxy later substitutes. Returns immediately with the placeholder; the agent should stop work on whatever needed the credential and wait for a credential_provided wakeup.',
+		{
+			company_id: z.string().describe('Company ID'),
+			issue_id: z.string().describe('Issue ID — the request comment is posted here'),
+			name: z
+				.string()
+				.describe(
+					'Secret name. Must match [A-Z][A-Z0-9_]{0,63} (e.g. GITHUB_PAT, ANTHROPIC_API_KEY). The placeholder returned will be __HEZO_SECRET_<name>__.',
+				),
+			kind: credentialKindSchema.describe(
+				'Type of credential — drives validation when the human submits the value',
+			),
+			instructions: z
+				.string()
+				.describe(
+					'Human-facing prose explaining why you need this credential and how the human can obtain it (e.g. "I need a GitHub PAT with `repo` scope to push branches. Create one at https://github.com/settings/tokens").',
+				),
+			input_type: credentialInputTypeSchema
+				.optional()
+				.describe('Form input type. Defaults: text for short keys, textarea for SSH/multiline.'),
+			confirmation_text: z
+				.string()
+				.optional()
+				.describe(
+					'Optional yes/no confirmation prompt instead of a paste form (e.g. "Have you added the public key to github.com/owner/repo/settings/keys?"). When set, input_type is ignored.',
+				),
+			allowed_hosts: z
+				.array(z.string())
+				.optional()
+				.describe(
+					'Hostname allowlist for the egress proxy. The credential will only be substituted into outbound requests to these hosts. Wildcards: *.github.com matches one label segment.',
+				),
+			scope: z
+				.enum(['company', 'project'])
+				.optional()
+				.describe('Storage scope. Default: company. Use project to scope to the current project.'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			const name = args.name as string;
+			const validation = validateSecretName(name);
+			if (!validation.valid) return { error: validation.error };
+
+			const issueId = args.issue_id as string;
+			const companyId = args.company_id as string;
+			const scope = (args.scope as string | undefined) ?? 'company';
+
+			const issueRow = await db.query<{ id: string; project_id: string | null }>(
+				'SELECT id, project_id FROM issues WHERE id = $1 AND company_id = $2',
+				[issueId, companyId],
+			);
+			if (issueRow.rows.length === 0) return { error: 'Issue not found in this company' };
+			const projectId = scope === 'project' ? issueRow.rows[0].project_id : null;
+
+			const placeholder = credentialPlaceholder(name);
+
+			const existing = await db.query<{ id: string; content: Record<string, unknown> }>(
+				`SELECT id, content FROM issue_comments
+				 WHERE issue_id = $1
+				   AND content_type = 'credential_request'::comment_content_type
+				   AND chosen_option IS NULL
+				   AND content->>'name' = $2
+				   AND COALESCE(content->>'scope', 'company') = $3
+				 ORDER BY created_at ASC LIMIT 1`,
+				[issueId, name, scope],
+			);
+			if (existing.rows.length > 0) {
+				return {
+					placeholder,
+					comment_id: existing.rows[0].id,
+					status: 'pending',
+					reused: true,
+				};
+			}
+
+			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const content = {
+				name,
+				kind: args.kind,
+				instructions: args.instructions,
+				input_type: args.confirmation_text
+					? null
+					: ((args.input_type as string | undefined) ?? CredentialInputType.Text),
+				confirmation_text: args.confirmation_text ?? null,
+				allowed_hosts: (args.allowed_hosts as string[] | undefined) ?? [],
+				scope,
+				project_id: projectId,
+				placeholder,
+			};
+
+			const inserted = await db.query<{ id: string }>(
+				`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+				 VALUES ($1, $2, 'credential_request'::comment_content_type, $3::jsonb)
+				 RETURNING id`,
+				[issueId, authorMemberId, JSON.stringify(content)],
+			);
+
+			return {
+				placeholder,
+				comment_id: inserted.rows[0].id,
+				status: 'pending',
+				reused: false,
+			};
 		},
 		db,
 	);
@@ -1545,6 +1676,137 @@ export function registerTools(
 			);
 
 			return { skill_id: skillId, slug: result.rows[0].slug, created: true };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'list_mcp_connections',
+		'List MCP server connections registered for the company (and optionally a project). Returns name, kind (saas|local), config (URL or command), and install_status.',
+		{
+			company_id: z.string().describe('Company ID'),
+			project_id: z
+				.string()
+				.optional()
+				.describe(
+					'Optional project ID. When set, returns project-scoped + company-wide connections; when absent, only company-wide.',
+				),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const companyId = args.company_id as string;
+			const projectId = (args.project_id as string | undefined) ?? null;
+			const params: unknown[] = [companyId];
+			let where = 'company_id = $1';
+			if (projectId) {
+				where += ' AND (project_id IS NULL OR project_id = $2)';
+				params.push(projectId);
+			} else {
+				where += ' AND project_id IS NULL';
+			}
+			const r = await db.query(
+				`SELECT id, company_id, project_id, name, kind::text AS kind,
+				        config, install_status::text AS install_status, install_error,
+				        created_at::text, updated_at::text
+				 FROM mcp_connections
+				 WHERE ${where}
+				 ORDER BY name ASC`,
+				params,
+			);
+			return r.rows;
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'add_mcp_connection',
+		"Register an MCP server (SaaS HTTP or local stdio) for this company/project. SaaS servers go into the agent's descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.",
+		{
+			company_id: z.string().describe('Company ID'),
+			project_id: z
+				.string()
+				.optional()
+				.describe('Optional project ID. Omit for a company-wide connection.'),
+			name: z
+				.string()
+				.describe(
+					'Server identifier — used as the MCP descriptor name and for de-duplication within (company, project).',
+				),
+			kind: z.enum(['saas', 'local']).describe('saas = HTTP MCP, local = stdio MCP'),
+			config: z
+				.record(z.string(), z.unknown())
+				.describe('For saas: { url, headers? }. For local: { command, args?, env?, package? }.'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const companyId = args.company_id as string;
+			const projectId = (args.project_id as string | undefined) ?? null;
+			const name = String(args.name ?? '').trim();
+			const kind = args.kind as 'saas' | 'local';
+			const config = args.config as Record<string, unknown>;
+
+			if (!name) return { error: 'name is required' };
+			if (kind === 'saas') {
+				if (!config?.url || typeof config.url !== 'string') {
+					return { error: 'saas connections require config.url (string)' };
+				}
+			} else {
+				if (!config?.command || typeof config.command !== 'string') {
+					return { error: 'local connections require config.command (string)' };
+				}
+			}
+
+			const initialStatus = kind === 'saas' ? 'installed' : 'pending';
+			const r = await db.query<{
+				id: string;
+				install_status: string;
+			}>(
+				`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+				 VALUES ($1, $2, $3, $4::mcp_connection_kind, $5::jsonb, $6::mcp_install_status)
+				 ON CONFLICT (company_id, project_id, name) DO UPDATE
+				 SET kind = EXCLUDED.kind,
+				     config = EXCLUDED.config,
+				     install_status = EXCLUDED.install_status,
+				     install_error = NULL,
+				     updated_at = now()
+				 RETURNING id, install_status::text AS install_status`,
+				[companyId, projectId, name, kind, JSON.stringify(config), initialStatus],
+			);
+			return {
+				id: r.rows[0].id,
+				install_status: r.rows[0].install_status,
+				note:
+					kind === 'local'
+						? 'Local MCP registered with status pending. Install via the installer or container provision before agent runs can use it.'
+						: 'SaaS MCP registered. Will be available to the next agent run in this scope.',
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'remove_mcp_connection',
+		'Remove a previously registered MCP connection. The next agent run in this scope will not see it.',
+		{
+			company_id: z.string().describe('Company ID'),
+			id: z
+				.string()
+				.describe('mcp_connections.id (returned by add_mcp_connection or list_mcp_connections)'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const r = await db.query<{ id: string }>(
+				'DELETE FROM mcp_connections WHERE id = $1 AND company_id = $2 RETURNING id',
+				[args.id as string, args.company_id as string],
+			);
+			if (r.rows.length === 0) return { error: 'MCP connection not found' };
+			return { removed: true, id: r.rows[0].id };
 		},
 		db,
 	);

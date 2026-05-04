@@ -8,6 +8,7 @@ import {
 	Dot,
 	ExternalLink,
 	GitBranch,
+	KeyRound,
 	Link2,
 	Pencil,
 	Terminal,
@@ -15,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { ComponentType, SVGProps } from 'react';
 import { useState } from 'react';
+import { useFulfillCredential } from '../hooks/use-comments';
 import {
 	getRunWaitingMessage,
 	isActiveRunStatus,
@@ -24,7 +26,6 @@ import { useRunLogs } from '../hooks/use-run-logs';
 import { LazyMount } from './lazy-mount';
 import { LogViewer } from './log-viewer';
 import { MarkdownProse } from './markdown-prose';
-import { RepoSetupWizard } from './repo-setup-wizard';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 
@@ -83,6 +84,8 @@ export function CommentRenderer({
 			return <TraceComment comment={comment} />;
 		case 'options':
 			return <OptionsComment comment={comment} onChoose={onChooseOption} />;
+		case 'credential_request':
+			return <CredentialRequestComment comment={comment} companyId={companyId} issueId={issueId} />;
 		case 'preview':
 			return <PreviewComment comment={comment} />;
 		case 'system':
@@ -131,7 +134,6 @@ function ActionComment({
 	comment,
 	companyId,
 	projectId,
-	issueId,
 }: {
 	comment: CommentData;
 	companyId?: string;
@@ -144,8 +146,6 @@ function ActionComment({
 		typeof comment.chosen_option === 'object' &&
 		comment.chosen_option &&
 		comment.chosen_option.status === 'complete';
-
-	const [wizardOpen, setWizardOpen] = useState(false);
 
 	if (kind !== 'setup_repo') {
 		return <p className="text-xs text-text-subtle italic">Unknown action: {kind}</p>;
@@ -173,22 +173,18 @@ function ActionComment({
 			<div className="flex items-center gap-2 text-sm">
 				<GitBranch className="w-4 h-4 text-accent-blue-text" />
 				<span>
-					This project has no designated repository yet. Connect GitHub and pick a repo to unblock
-					work on this ticket.
+					This project has no designated repository yet. Add a repo URL in project settings, then
+					this ticket will resume.
 				</span>
 			</div>
 			<div>
-				<Button size="sm" onClick={() => setWizardOpen(true)}>
-					Set up repository
-				</Button>
+				<Link
+					to="/companies/$companyId/projects/$projectId/settings"
+					params={{ companyId, projectId }}
+				>
+					<Button size="sm">Open project settings</Button>
+				</Link>
 			</div>
-			<RepoSetupWizard
-				companyId={companyId}
-				projectId={projectId}
-				issueId={issueId}
-				open={wizardOpen}
-				onOpenChange={setWizardOpen}
-			/>
 		</div>
 	);
 }
@@ -465,6 +461,162 @@ function OptionsComment({
 					);
 				})}
 			</div>
+		</div>
+	);
+}
+
+function CredentialRequestComment({
+	comment,
+	companyId,
+	issueId,
+}: {
+	comment: CommentData;
+	companyId?: string;
+	issueId?: string;
+}) {
+	const content = typeof comment.content === 'object' ? comment.content : {};
+	const name: string = content.name ?? '';
+	const kind: string = content.kind ?? 'other';
+	const instructions: string = content.instructions ?? '';
+	const inputType: string = content.input_type ?? 'text';
+	const confirmationText: string | null = content.confirmation_text ?? null;
+	const placeholder: string = content.placeholder ?? `__HEZO_SECRET_${name}__`;
+	const allowedHosts: string[] = Array.isArray(content.allowed_hosts) ? content.allowed_hosts : [];
+	const fulfilled =
+		typeof comment.chosen_option === 'object' &&
+		comment.chosen_option &&
+		typeof comment.chosen_option.secret_id === 'string';
+
+	const [value, setValue] = useState('');
+	const [error, setError] = useState<string | null>(null);
+	const fulfill = useFulfillCredential(companyId ?? '', issueId ?? '');
+
+	if (!companyId || !issueId) {
+		return (
+			<p className="text-xs text-text-subtle italic">
+				Credential request unavailable in this view.
+			</p>
+		);
+	}
+
+	if (fulfilled) {
+		return (
+			<div
+				className="flex items-start gap-2 p-2.5 rounded-lg border border-accent-green bg-accent-green-bg"
+				data-testid="credential-fulfilled"
+			>
+				<Check className="w-4 h-4 text-accent-green-text shrink-0 mt-0.5" />
+				<div className="flex-1">
+					<p className="text-sm font-medium text-text">{name} provided</p>
+					<p className="text-xs text-text-muted mt-0.5">
+						Stored as a secret. Agent will use the placeholder{' '}
+						<code className="px-1 py-0.5 rounded bg-bg-subtle">{placeholder}</code> in env vars and
+						HTTP headers; the egress proxy substitutes the real value at request time.
+					</p>
+				</div>
+			</div>
+		);
+	}
+
+	const submit = () => {
+		setError(null);
+		const args = confirmationText
+			? { commentId: comment.id, confirmed: true }
+			: { commentId: comment.id, value };
+		fulfill.mutate(args, {
+			onError: (e: unknown) => {
+				const msg = e instanceof Error ? e.message : 'Failed to submit';
+				setError(msg);
+			},
+		});
+	};
+
+	return (
+		<div
+			className="flex flex-col gap-2 p-2.5 rounded-lg border border-accent-amber bg-accent-amber-bg"
+			data-testid="credential-request"
+			data-credential-name={name}
+		>
+			<div className="flex items-start gap-2">
+				<KeyRound className="w-4 h-4 text-accent-amber-text shrink-0 mt-0.5" />
+				<div className="flex-1">
+					<p className="text-sm font-medium text-text">
+						Agent needs credential: <code className="px-1 py-0.5 rounded bg-bg-subtle">{name}</code>{' '}
+						<Badge className="ml-1">{kind}</Badge>
+					</p>
+					{instructions && (
+						<div className="mt-1.5 text-sm text-text">
+							<MarkdownProse>{instructions}</MarkdownProse>
+						</div>
+					)}
+					{allowedHosts.length > 0 && (
+						<p className="text-xs text-text-muted mt-1">
+							Substituted only into requests to: {allowedHosts.join(', ')}
+						</p>
+					)}
+				</div>
+			</div>
+
+			{confirmationText ? (
+				<div className="flex flex-col gap-2">
+					<p className="text-sm text-text">{confirmationText}</p>
+					<div>
+						<Button
+							size="sm"
+							onClick={submit}
+							disabled={fulfill.isPending}
+							data-testid="credential-confirm"
+						>
+							{fulfill.isPending ? 'Submitting…' : 'Confirm'}
+						</Button>
+					</div>
+				</div>
+			) : (
+				<div className="flex flex-col gap-2">
+					{inputType === 'textarea' ? (
+						<textarea
+							value={value}
+							onChange={(e) => setValue(e.target.value)}
+							placeholder="Paste value here"
+							rows={6}
+							className="w-full font-mono text-xs p-2 rounded border border-border bg-bg focus:outline-none focus:border-accent-blue"
+							data-testid="credential-input"
+						/>
+					) : inputType === 'file' ? (
+						<input
+							type="file"
+							onChange={(e) => {
+								const file = e.target.files?.[0];
+								if (!file) return;
+								file.text().then(setValue);
+							}}
+							className="text-sm"
+							data-testid="credential-input"
+						/>
+					) : (
+						<input
+							type="password"
+							value={value}
+							onChange={(e) => setValue(e.target.value)}
+							placeholder="Paste value here"
+							autoComplete="off"
+							className="w-full text-sm p-2 rounded border border-border bg-bg focus:outline-none focus:border-accent-blue"
+							data-testid="credential-input"
+						/>
+					)}
+					{error && <p className="text-xs text-accent-red-text">{error}</p>}
+					<div>
+						<Button
+							size="sm"
+							onClick={submit}
+							disabled={fulfill.isPending || value.length === 0}
+							data-testid="credential-submit"
+						>
+							{fulfill.isPending ? 'Storing…' : 'Provide credential'}
+						</Button>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

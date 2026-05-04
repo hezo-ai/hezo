@@ -3,11 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { generateMasterKey, MasterKeyManager } from '../../crypto/master-key';
 import { loadAgentRoles } from '../../db/agent-roles';
 import { seedBuiltins } from '../../db/seed';
-import {
-	generateCompanySSHKey,
-	getCompanySSHKey,
-	updateGitHubKeyId,
-} from '../../services/ssh-keys';
+import { generateCompanySSHKey, getCompanySSHKey } from '../../services/ssh-keys';
 import { createTestDbWithMigrations } from '../helpers/db';
 
 let db: PGlite;
@@ -68,14 +64,6 @@ describe('SSH key management', () => {
 		expect(result).not.toBeNull();
 		expect(result!.publicKey).toContain('ssh-ed25519');
 		expect(result!.privateKey).toContain('-----BEGIN PRIVATE KEY-----');
-		expect(result!.githubKeyId).toBeNull();
-	});
-
-	it('updates the GitHub key ID', async () => {
-		await updateGitHubKeyId(db, companyId, 12345);
-
-		const result = await getCompanySSHKey(db, companyId, masterKeyManager);
-		expect(result!.githubKeyId).toBe(12345);
 	});
 
 	it('returns null for company without SSH key', async () => {

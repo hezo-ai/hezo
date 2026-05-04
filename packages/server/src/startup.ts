@@ -25,16 +25,15 @@ import { authRoutes } from './routes/auth';
 import { commentsRoutes } from './routes/comments';
 import { companiesRoutes } from './routes/companies';
 import { companyTypesRoutes } from './routes/company-types';
-import { connectionsRoutes } from './routes/connections';
 import { costsRoutes } from './routes/costs';
 import { executionLocksRoutes } from './routes/execution-locks';
-import { githubRoutes } from './routes/github';
 import { goalsRoutes } from './routes/goals';
 import { healthRoutes } from './routes/health';
 import { issuesRoutes } from './routes/issues';
 import { kbDocsRoutes } from './routes/kb-docs';
+import { mcpConnectionsRoutes } from './routes/mcp-connections';
 import { mentionsRoutes } from './routes/mentions';
-import { oauthCallbackRoutes } from './routes/oauth-callback';
+import { oauthRoutes } from './routes/oauth';
 import { preferencesRoutes } from './routes/preferences';
 import { previewRoutes } from './routes/preview';
 import { projectDocsRoutes } from './routes/project-docs';
@@ -45,8 +44,10 @@ import { secretsRoutes } from './routes/secrets';
 import { skillsRoutes } from './routes/skills';
 import { uiStateRoutes } from './routes/ui-state';
 import { DockerClient } from './services/docker';
+import { EgressProxy, loadOrCreateCA } from './services/egress';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
+import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
 
 export type { HezoConfig };
@@ -55,8 +56,6 @@ export type MasterKeyState = 'unset' | 'locked' | 'unlocked';
 
 export interface AppConfig {
 	dataDir: string;
-	connectUrl: string;
-	connectPublicKey: string;
 	webUrl: string;
 }
 
@@ -70,6 +69,8 @@ export interface StartupResult {
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
 	logs: LogStreamBroker;
+	sshAgentServer: SshAgentServer;
+	egressProxy: EgressProxy;
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
@@ -98,8 +99,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyState = await resolveMasterKeyState(db, masterKeyManager, config.masterKey);
 
-	const connectPublicKey = await fetchConnectPublicKey(config.connectUrl);
-
 	let docker: DockerClient;
 	if (process.env.HEZO_SKIP_DOCKER) {
 		const { createFakeDockerClient } = await import('./test/helpers/fake-docker.js');
@@ -110,6 +109,10 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
+	const sshAgentServer = new SshAgentServer({ db, masterKeyManager });
+	await cleanupOrphanRunSockets(db, config.dataDir);
+	const egressCA = await loadOrCreateCA(config.dataDir);
+	const egressProxy = new EgressProxy({ db, masterKeyManager, ca: egressCA });
 	const jobManager = new JobManager({
 		db,
 		docker,
@@ -118,6 +121,9 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		dataDir: config.dataDir,
 		wsManager,
 		logs,
+		sshAgentServer,
+		egressProxy,
+		egressCAPath: egressCA.certPath,
 	});
 
 	masterKeyManager.onUnlock(() => {
@@ -139,14 +145,14 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		masterKeyManager,
 		{
 			dataDir: config.dataDir,
-			connectUrl: config.connectUrl,
-			connectPublicKey,
 			webUrl: config.webUrl,
 		},
 		docker,
 		wsManager,
 		jobManager,
 		logs,
+		sshAgentServer,
+		egressProxy,
 	);
 
 	return {
@@ -159,20 +165,29 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker,
 		masterKeyManager,
 		logs,
+		sshAgentServer,
+		egressProxy,
 	};
 }
 
 export function buildApp(
 	db: PGlite,
 	masterKeyManager: MasterKeyManager,
-	config: AppConfig = { dataDir: '', connectUrl: '', connectPublicKey: '', webUrl: '' },
+	config: AppConfig = { dataDir: '', webUrl: '' },
 	docker: DockerClient = new DockerClient(),
 	wsManager: WebSocketManager = new WebSocketManager(),
 	jobManager?: JobManager,
 	logs: LogStreamBroker = new LogStreamBroker(),
+	sshAgentServer: SshAgentServer | null = null,
+	egressProxy: EgressProxy | null = null,
 ): Hono<Env> {
 	const app = new Hono<Env>();
 	logs.setWsManager(wsManager);
+
+	app.onError((err, c) => {
+		log.error(`Unhandled route error on ${c.req.method} ${c.req.path}:`, err);
+		return c.text('Internal Server Error', 500);
+	});
 
 	app.use('*', async (c, next) => {
 		c.set('db', db);
@@ -182,18 +197,17 @@ export function buildApp(
 		if (jobManager) c.set('jobManager', jobManager);
 		c.set('logs', logs);
 		c.set('dataDir', config.dataDir);
-		c.set('connectUrl', config.connectUrl);
-		c.set('connectPublicKey', config.connectPublicKey);
 		c.set('webUrl', config.webUrl);
+		c.set('sshAgentServer', sshAgentServer);
+		c.set('egressProxy', egressProxy);
 		return next();
 	});
 
 	// Initialize MCP server
-	initMcpServer(db, config.dataDir, wsManager);
+	initMcpServer(db, config.dataDir, masterKeyManager, wsManager);
 
 	// Public routes
 	app.route('/', healthRoutes);
-	app.route('/', oauthCallbackRoutes);
 
 	const statusHandler = (c: Context<Env>) =>
 		c.json({ masterKeyState: masterKeyManager.getState(), version: '0.1.0' });
@@ -240,12 +254,12 @@ export function buildApp(
 	app.route('/api', uiStateRoutes);
 	app.route('/api', projectDocsRoutes);
 	app.route('/api', mentionsRoutes);
-	app.route('/api', connectionsRoutes);
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', reposRoutes);
-	app.route('/api', githubRoutes);
 	app.route('/api', executionLocksRoutes);
 	app.route('/api', auditLogRoutes);
+	app.route('/api', mcpConnectionsRoutes);
+	app.route('/api', oauthRoutes);
 	app.route('/api', previewRoutes);
 	app.route('/api', searchRoutes);
 
@@ -295,16 +309,33 @@ export function buildApp(
 	return app;
 }
 
-async function fetchConnectPublicKey(connectUrl: string): Promise<string> {
+async function cleanupOrphanRunSockets(db: PGlite, dataDir: string): Promise<void> {
+	const fs = await import('node:fs/promises');
+	const { join } = await import('node:path');
+	const companiesDir = join(dataDir, 'companies');
+	if (!existsSync(companiesDir)) return;
+
+	const liveRunIds = new Set<string>();
 	try {
-		const res = await fetch(`${connectUrl}/signing-key`, { signal: AbortSignal.timeout(5000) });
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
-		const { key } = (await res.json()) as { key: string };
-		log.info('Fetched Connect signing public key.');
-		return key;
+		const live = await db.query<{ id: string }>(
+			"SELECT id FROM heartbeat_runs WHERE status = 'running'",
+		);
+		for (const row of live.rows) liveRunIds.add(row.id);
 	} catch {
-		log.warn('Could not fetch Connect signing key. OAuth flows will be unavailable.');
-		return '';
+		return;
+	}
+
+	for (const company of await fs.readdir(companiesDir).catch(() => [])) {
+		const projectsDir = join(companiesDir, company, 'projects');
+		for (const project of await fs.readdir(projectsDir).catch(() => [])) {
+			const runDir = join(projectsDir, project, 'run');
+			for (const entry of await fs.readdir(runDir).catch(() => [])) {
+				if (!entry.endsWith('.sock')) continue;
+				const runId = entry.replace(/\.sock$/, '').replace(/^bootstrap-/, '');
+				if (liveRunIds.has(runId)) continue;
+				await fs.rm(join(runDir, entry), { force: true }).catch(() => undefined);
+			}
+		}
 	}
 }
 

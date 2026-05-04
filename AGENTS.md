@@ -6,7 +6,7 @@
 - `bun run test --skip-e2e` — skip Playwright
 - `bun run test --e2e` — Playwright only
 - `bun run test --pattern <substring>` — filter by file-path substring (works for both unit/integration and e2e; combine with `--e2e` to narrow e2e)
-- `bun run test --package <server|connect>` — restrict unit/integration to one package
+- `bun run test --package <server>` — restrict unit/integration to one package
 - `bun run test --concurrency <n>` — override worker count (default 10)
 - `bun run test --bail` — stop on first failure
 - `bun run build` / `check` / `check:fix` / `typecheck` / `dev`
@@ -26,7 +26,7 @@ Pre-v1: modify `packages/server/migrations/001_initial_schema.sql` in place and 
 
 All changes ship with tests that exercise functionality (not "code runs without throwing"). Backend → unit/integration; UI → e2e. Prefer integration over heavily-mocked unit tests.
 
-Each test file is fully isolated via `createTestContext()` / `destroyTestContext()` (`packages/server/src/test/helpers/context.ts`, `packages/connect/src/test/helpers/context.ts`) — fresh PGlite + Hono app + HTTP server on port 0.
+Each test file is fully isolated via `createTestContext()` / `destroyTestContext()` (`packages/server/src/test/helpers/context.ts`) — fresh PGlite + Hono app + HTTP server on port 0.
 
 - Use `ctx.app` / `ctx.baseUrl` / `ctx.port` — never a shared singleton, never hardcoded ports.
 - No mutable state shared between files.
@@ -35,7 +35,7 @@ Each test file is fully isolated via `createTestContext()` / `destroyTestContext
 
 GitHub OAuth/repo/SSH-key tests use the local simulator at `packages/server/src/test/helpers/github-sim.ts` — set `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the test context boots.
 
-E2E specs live in `tests/e2e/` (Playwright). Root `playwright.config.ts` auto-starts server (:3100), connect (:4100), web (:5173). Use `authenticate(page)` to bypass the master-key gate when not testing auth itself. Every UI change ships with an e2e test for the affected flow.
+E2E specs live in `tests/e2e/` (Playwright). Root `playwright.config.ts` auto-starts server (:3100) and web (:5173). Use `authenticate(page)` to bypass the master-key gate when not testing auth itself. Every UI change ships with an e2e test for the affected flow.
 
 ## Type safety
 
@@ -80,6 +80,19 @@ Wrap any multi-write sequence that must succeed/fail together in `BEGIN`/`COMMIT
 ## Security
 
 Never expose raw secrets, private keys, or signing keys via endpoints or logs. Use asymmetric crypto for cross-service verification, encrypt sensitive data at rest, and use `timingSafeEqual` for all hash/token/signature comparisons (never `===`).
+
+### Credentials
+
+Agents reference secrets by **placeholder**, never by literal value. The pattern is `__HEZO_SECRET_<NAME>__` in any header or URL the agent emits; the egress proxy substitutes the real value at request time. Background and full lifecycle: `.dev/credentials.md`. Egress proxy details: `.dev/egress.md`.
+
+When you wire a new agent integration that needs a credential:
+
+- Don't put the real value in the agent's container env. Put the placeholder there. The real value lives in the `secrets` table with `allowed_hosts` constraining which upstream hosts the substitution may fire for.
+- If the agent needs to obtain a raw secret at runtime (API key, webhook secret, …), it calls `request_credential` (MCP tool) and the human pastes the value via the issue thread.
+- For GitHub repo access, the human connects a GitHub OAuth account once via device flow on the company Connections page; subsequent repos pick that connection. Repo clone/fetch/push runs over HTTPS+token, with the egress proxy substituting the access-token placeholder on each git request. The company Ed25519 key is auto-registered on GitHub as a *signing* key on first connect (so commits land as Verified). Full design: `.dev/oauth.md`. Signing-only ssh-agent flow: `.dev/ssh-signing.md`.
+- For SaaS MCPs requiring OAuth (DatoCMS, Linear, …), the operator starts the auth-code flow from the MCP-connection form. The resulting `oauth_connection_id` is linked to the `mcp_connections` row; the injector emits a placeholder Authorization header and the egress proxy substitutes at request time.
+
+The egress audit log records substitution events by **secret name** only, never the value. No-op requests (no placeholder anywhere) are not audited.
 
 ### Route authorization
 

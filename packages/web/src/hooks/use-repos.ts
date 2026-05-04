@@ -10,6 +10,7 @@ export interface CreateRepoPayload {
 	owner?: string;
 	name?: string;
 	private?: boolean;
+	oauth_connection_id: string;
 }
 
 export function useRepos(companyId: string, projectId: string) {

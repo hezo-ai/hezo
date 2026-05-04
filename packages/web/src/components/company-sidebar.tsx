@@ -115,6 +115,8 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 			title: 'Resources',
 			items: [
 				{ to: '/companies/$companyId/kb', params, label: 'Knowledge base' },
+				{ to: '/companies/$companyId/connections', params, label: 'Connections' },
+				{ to: '/companies/$companyId/credentials', params, label: 'Credentials' },
 				{ to: '/companies/$companyId/settings', params, label: 'Settings' },
 				{ to: '/companies/$companyId/audit-log', params, label: 'Audit log' },
 			],

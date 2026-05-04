@@ -32,9 +32,11 @@ import {
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
+import type { EgressProxy } from './egress';
 import { ensureIssueWorktree, fetchRepo } from './git';
 import { recordStatusChange } from './issue-events';
 import type { LogStreamBroker } from './log-stream-broker';
+import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
 import { ensureProjectRepos } from './repo-sync';
 import {
@@ -47,9 +49,9 @@ import {
 	type SubscriptionMount as SubscriptionMountImpl,
 } from './runtime-home';
 import { resolveRuntimeForIssue } from './runtime-resolver';
-import { getCompanySSHKey } from './ssh-keys';
+import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { resolveSystemPrompt } from './template-resolver';
-import { getWorkspacePath, getWorktreesPath } from './workspace';
+import { getProjectRunDir, getWorkspacePath, getWorktreesPath } from './workspace';
 import type { WebSocketManager } from './ws';
 
 export interface AgentInfo {
@@ -104,6 +106,9 @@ export interface RunnerDeps {
 	dataDir: string;
 	wsManager?: WebSocketManager;
 	logs: LogStreamBroker;
+	sshAgentServer?: SshAgentServer;
+	egressProxy?: EgressProxy | null;
+	egressCAPath?: string | null;
 }
 
 interface RepoRow {
@@ -205,8 +210,17 @@ export function getHostPromptPath(
 	);
 }
 
-function wrapExecCmd(cmd: string[]): string[] {
+function wrapExecCmd(cmd: string[], bridge: BridgeRunnerArgs | null): string[] {
+	if (bridge) {
+		return [...buildBridgeRunnerArgv(bridge), ...cmd];
+	}
 	return ['sh', '-c', 'exec "$@" < "$HEZO_PROMPT_FILE"', 'sh', ...cmd];
+}
+
+interface EgressEnvDescriptor {
+	host: string;
+	port: number;
+	containerCAPath: string;
 }
 
 async function buildRunContext(
@@ -220,6 +234,9 @@ async function buildRunContext(
 	runtimeType: AgentRuntime,
 	heartbeatRunId: string,
 	modelOverride: string | null,
+	sshSocketContainerPath: string | null,
+	bridge: BridgeRunnerArgs | null,
+	egress: EgressEnvDescriptor | null,
 ): Promise<RunContext> {
 	const storedPrompt = await getAgentSystemPrompt(deps.db, agent.company_id, agent.id);
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, storedPrompt, {
@@ -299,10 +316,12 @@ async function buildRunContext(
 
 	const mcpDescriptors: McpDescriptor[] = [
 		{
+			kind: 'http',
 			name: 'hezo',
 			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
 			bearerToken: agentJwt,
 		},
+		...(await loadMcpConnectionDescriptors(deps.db, agent.company_id, project.id)),
 	];
 
 	const mcpInjection = adapter.build(mcpDescriptors, {
@@ -333,6 +352,29 @@ async function buildRunContext(
 		...(subscriptionMount?.envEntries ?? (homeMount ? [homeMount.envEntry] : [])),
 		...mcpInjection.envEntries,
 	];
+	if (sshSocketContainerPath) {
+		env.push(`SSH_AUTH_SOCK=${sshSocketContainerPath}`);
+	}
+	if (egress) {
+		const proxyUrl = `http://${egress.host}:${egress.port}`;
+		const noProxy = `${egress.host},localhost,127.0.0.1`;
+		env.push(
+			`HTTP_PROXY=${proxyUrl}`,
+			`http_proxy=${proxyUrl}`,
+			`HTTPS_PROXY=${proxyUrl}`,
+			`https_proxy=${proxyUrl}`,
+			`NO_PROXY=${noProxy}`,
+			`no_proxy=${noProxy}`,
+			`NODE_EXTRA_CA_CERTS=${egress.containerCAPath}`,
+			`SSL_CERT_FILE=${egress.containerCAPath}`,
+			`REQUESTS_CA_BUNDLE=${egress.containerCAPath}`,
+			`CURL_CA_BUNDLE=${egress.containerCAPath}`,
+			`GIT_SSL_CAINFO=${egress.containerCAPath}`,
+			`AWS_CA_BUNDLE=${egress.containerCAPath}`,
+			`PIP_CERT=${egress.containerCAPath}`,
+			`NPM_CONFIG_CAFILE=${egress.containerCAPath}`,
+		);
+	}
 
 	const cliCommand = RUNTIME_COMMANDS[runtimeType];
 	const modelArgs = modelOverride ? ['--model', modelOverride] : [];
@@ -348,7 +390,7 @@ async function buildRunContext(
 		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
 	];
 
-	const execCmd = wrapExecCmd(cmd);
+	const execCmd = wrapExecCmd(cmd, bridge);
 
 	return {
 		cmd,
@@ -533,6 +575,46 @@ export async function runAgent(
 
 	await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast);
 
+	let sshSocketContainerPath: string | null = null;
+	let sshSocketHostPath: string | null = null;
+	let bridge: BridgeRunnerArgs | null = null;
+	if (deps.sshAgentServer) {
+		const runDir = getProjectRunDir(deps.dataDir, project.company_slug, project.slug);
+		sshSocketHostPath = join(runDir, `${heartbeatRunId}.sock`);
+		const allocated = await deps.sshAgentServer.allocateRunSocket(
+			heartbeatRunId,
+			{ companyId: agent.company_id, agentId: agent.id },
+			sshSocketHostPath,
+		);
+		sshSocketContainerPath = `/run/hezo/${heartbeatRunId}.sock`;
+		bridge = {
+			socketPath: sshSocketContainerPath,
+			socketUser: 'node',
+			tokenHex: allocated.tokenHex,
+			hostName: 'host.docker.internal',
+			hostPort: allocated.tcpHostPort,
+		};
+	}
+
+	let egressEnv: EgressEnvDescriptor | null = null;
+	let egressAllocated = false;
+	if (deps.egressProxy && deps.egressCAPath) {
+		// Egress proxy is mandatory: agents may have placeholder secrets in
+		// their env. Failing fast prevents real secrets from leaking through
+		// a fall-through path. If allocation fails, the run aborts.
+		const allocated = await deps.egressProxy.allocateRunProxy(heartbeatRunId, {
+			companyId: agent.company_id,
+			agentId: agent.id,
+			projectId: project.id,
+		});
+		egressAllocated = true;
+		egressEnv = {
+			host: allocated.proxyHost,
+			port: allocated.proxyPort,
+			containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
+		};
+	}
+
 	const context = await buildRunContext(
 		deps,
 		agent,
@@ -544,6 +626,9 @@ export async function runAgent(
 		runtimeType,
 		heartbeatRunId,
 		modelOverride,
+		sshSocketContainerPath,
+		bridge,
+		egressEnv,
 	);
 
 	if (signal?.aborted) {
@@ -551,6 +636,12 @@ export async function runAgent(
 		const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
 		if (dirToRemove) {
 			rmSync(dirToRemove, { recursive: true, force: true });
+		}
+		if (deps.sshAgentServer) {
+			await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
+		}
+		if (deps.egressProxy && egressAllocated) {
+			await deps.egressProxy.releaseRunProxy(heartbeatRunId);
 		}
 		return finalizeAbort();
 	}
@@ -580,7 +671,7 @@ export async function runAgent(
 
 	const persistRotatedAuth = async () => {
 		const mount = context.subscriptionMount;
-		if (!mount || !mount.rotates) return;
+		if (!mount?.rotates) return;
 		try {
 			if (existsSync(mount.hostAuthFile)) {
 				const rotated = readFileSync(mount.hostAuthFile, 'utf8');
@@ -607,6 +698,12 @@ export async function runAgent(
 		const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
 		if (dirToRemove) {
 			rmSync(dirToRemove, { recursive: true, force: true });
+		}
+		if (deps.sshAgentServer) {
+			await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
+		}
+		if (deps.egressProxy && egressAllocated) {
+			await deps.egressProxy.releaseRunProxy(heartbeatRunId);
 		}
 		releaseCredentialLock?.();
 	};
@@ -689,6 +786,24 @@ export async function runAgent(
 	}
 }
 
+async function loadOAuthAccessToken(
+	deps: RunnerDeps,
+	oauthConnectionId: string,
+): Promise<string | null> {
+	const key = deps.masterKeyManager.getKey();
+	if (!key) return null;
+	const result = await deps.db.query<{ encrypted_value: string }>(
+		`SELECT s.encrypted_value
+		 FROM oauth_connections oc
+		 JOIN secrets s ON s.id = oc.access_token_secret_id
+		 WHERE oc.id = $1`,
+		[oauthConnectionId],
+	);
+	if (result.rows.length === 0) return null;
+	const { decrypt } = await import('../crypto/encryption');
+	return decrypt(result.rows[0].encrypted_value, key);
+}
+
 function failedResult(stderr: string, startTime: number): RunResult {
 	return { success: false, exitCode: -1, stdout: '', stderr, durationMs: Date.now() - startTime };
 }
@@ -710,8 +825,8 @@ async function prepareWorktrees(
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 	signal?: AbortSignal,
 ): Promise<{ workingDir: string; designatedRepo: RepoRow | null }> {
-	const repos = await deps.db.query<RepoRow>(
-		`SELECT id, short_name, repo_identifier FROM repos
+	const repos = await deps.db.query<RepoRow & { oauth_connection_id: string | null }>(
+		`SELECT id, short_name, repo_identifier, oauth_connection_id FROM repos
 		 WHERE project_id = $1 ORDER BY created_at ASC`,
 		[project.id],
 	);
@@ -740,8 +855,6 @@ async function prepareWorktrees(
 
 	if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
 
-	const companySshKey = await getCompanySSHKey(deps.db, project.company_id, deps.masterKeyManager);
-
 	const workspaceRoot = getWorkspacePath(deps.dataDir, project.company_slug, project.slug);
 	const worktreesRoot = getWorktreesPath(deps.dataDir, project.company_slug, project.slug);
 	const issueWorktreeRoot = join(worktreesRoot, issue.identifier);
@@ -759,13 +872,16 @@ async function prepareWorktrees(
 			continue;
 		}
 
-		if (companySshKey) {
-			emit('stdout', `git fetch ${repo.short_name}...\n`);
-			const fetchRes = await fetchRepo(repoDir, companySshKey.privateKey);
-			if (fetchRes.success) {
-				emit('stdout', `git fetch ${repo.short_name} done\n`);
-			} else {
-				emit('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
+		if (repo.oauth_connection_id) {
+			const token = await loadOAuthAccessToken(deps, repo.oauth_connection_id);
+			if (token) {
+				emit('stdout', `git fetch ${repo.short_name}...\n`);
+				const fetchRes = await fetchRepo(repoDir, token);
+				if (fetchRes.success) {
+					emit('stdout', `git fetch ${repo.short_name} done\n`);
+				} else {
+					emit('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
+				}
 			}
 		}
 

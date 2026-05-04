@@ -141,9 +141,9 @@ describe('ContainerLogStreamer', () => {
 
 		streamer.stopAll(logs);
 
-		expect(aborted['a']).toBe(true);
-		expect(aborted['b']).toBe(true);
-		expect(aborted['c']).toBe(true);
+		expect(aborted.a).toBe(true);
+		expect(aborted.b).toBe(true);
+		expect(aborted.c).toBe(true);
 
 		// Map is cleared — further unsubscribes are no-ops.
 		expect(() => streamer.unsubscribe('proj-a')).not.toThrow();

@@ -53,7 +53,7 @@ async function notifyParentOfOAuthVerification(
 		[issueId, companyId],
 	);
 	const row = result.rows[0];
-	if (!row || !row.parent_issue_id) return;
+	if (!row?.parent_issue_id) return;
 
 	const labels = Array.isArray(row.labels) ? row.labels : [];
 	if (!labels.includes(OAUTH_VERIFICATION_LABEL)) return;

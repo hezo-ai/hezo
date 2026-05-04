@@ -11,12 +11,12 @@ import {
 	useCompany,
 	useUpdateCompany,
 } from '../../../../hooks/use-companies';
-import {
-	useConnections,
-	useDeleteConnection,
-	useStartConnection,
-} from '../../../../hooks/use-connections';
 import { useCosts } from '../../../../hooks/use-costs';
+import {
+	useCreateMcpConnection,
+	useDeleteMcpConnection,
+	useMcpConnections,
+} from '../../../../hooks/use-mcp-connections';
 import {
 	usePreferenceRevisions,
 	usePreferences,
@@ -34,7 +34,6 @@ import {
 const settingsNav = [
 	{ id: 'general', label: 'General' },
 	{ id: 'automations', label: 'Automations' },
-	{ id: 'connections', label: 'Connected platforms' },
 	{ id: 'secrets', label: 'Secrets vault' },
 	{ id: 'api-keys', label: 'API keys' },
 	{ id: 'mcp', label: 'MCP servers' },
@@ -78,9 +77,6 @@ function SettingsPage() {
 				</div>
 				<div id="settings-automations">
 					<AutomationsSection companyId={companyId} />
-				</div>
-				<div id="settings-connections">
-					<ConnectionsSection companyId={companyId} />
 				</div>
 				<div id="settings-secrets">
 					<SecretsSection companyId={companyId} />
@@ -221,50 +217,6 @@ function AutomationsSection({ companyId }: { companyId: string }) {
 	);
 }
 
-function ConnectionsSection({ companyId }: { companyId: string }) {
-	const { data: connections } = useConnections(companyId);
-	const startConn = useStartConnection(companyId);
-	const deleteConn = useDeleteConnection(companyId);
-
-	async function handleConnect(platform: string) {
-		const result = await startConn.mutateAsync(platform);
-		window.location.href = result.auth_url;
-	}
-
-	const github = connections?.find((c) => c.platform === 'github');
-
-	return (
-		<section>
-			<SectionHeader title="Connected platforms" desc="External services linked to this company." />
-			{github ? (
-				<div className="border border-border rounded-radius-md p-3 flex items-center justify-between">
-					<div className="flex items-center gap-2">
-						<span className="text-[13px] font-medium">GitHub</span>
-						<Badge color={github.status === 'active' ? 'success' : 'danger'}>{github.status}</Badge>
-					</div>
-					<Button variant="danger-text" size="sm" onClick={() => deleteConn.mutate(github.id)}>
-						<Trash2 className="w-3.5 h-3.5" /> Disconnect
-					</Button>
-				</div>
-			) : (
-				<Button
-					variant="secondary"
-					onClick={() => handleConnect('github')}
-					disabled={startConn.isPending}
-				>
-					{startConn.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-					<ExternalLink className="w-3.5 h-3.5" /> Connect GitHub
-				</Button>
-			)}
-			{startConn.error && (
-				<p className="text-[13px] text-accent-red mt-2">
-					{(startConn.error as { message: string }).message}
-				</p>
-			)}
-		</section>
-	);
-}
-
 function SecretsSection({ companyId }: { companyId: string }) {
 	const { data: secrets } = useSecrets(companyId);
 	const createSecret = useCreateSecret(companyId);
@@ -272,43 +224,87 @@ function SecretsSection({ companyId }: { companyId: string }) {
 	const [showForm, setShowForm] = useState(false);
 	const [name, setName] = useState('');
 	const [value, setValue] = useState('');
+	const [allowedHosts, setAllowedHosts] = useState('');
+	const [allowAllHosts, setAllowAllHosts] = useState(false);
 
 	async function handleCreate(e: React.FormEvent) {
 		e.preventDefault();
-		await createSecret.mutateAsync({ name, value });
+		const hosts = allowedHosts
+			.split(/[\s,]+/)
+			.map((h) => h.trim())
+			.filter(Boolean);
+		if (!allowAllHosts && hosts.length === 0) {
+			alert(
+				'Add at least one allowed host (e.g. api.stripe.com) or check Allow all hosts. ' +
+					'A secret with no hosts cannot be substituted by the egress proxy.',
+			);
+			return;
+		}
+		await createSecret.mutateAsync({
+			name,
+			value,
+			allowed_hosts: hosts,
+			allow_all_hosts: allowAllHosts,
+		});
 		setName('');
 		setValue('');
+		setAllowedHosts('');
+		setAllowAllHosts(false);
 		setShowForm(false);
 	}
 
 	return (
 		<section>
 			<div className="flex items-center justify-between mb-4">
-				<SectionHeader title="Secrets vault" desc="Encrypted secrets available to agents." />
+				<SectionHeader
+					title="Secrets vault"
+					desc="Encrypted secrets agents reference by placeholder. Allowed-hosts gates which upstream hostnames the egress proxy may substitute the secret for — leave empty (and uncheck the override) and the secret is unusable."
+				/>
 				<Button variant="secondary" size="sm" onClick={() => setShowForm(!showForm)}>
 					<Plus className="w-3 h-3" /> Add
 				</Button>
 			</div>
 			{showForm && (
-				<form onSubmit={handleCreate} className="flex flex-col sm:flex-row gap-2 mb-3">
+				<form onSubmit={handleCreate} className="flex flex-col gap-2 mb-3">
+					<div className="flex flex-col sm:flex-row gap-2">
+						<Input
+							placeholder="Name (e.g. STRIPE_API_KEY)"
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+							required
+							className="flex-1"
+						/>
+						<Input
+							placeholder="Value"
+							type="password"
+							value={value}
+							onChange={(e) => setValue(e.target.value)}
+							required
+							className="flex-1"
+						/>
+					</div>
 					<Input
-						placeholder="Name"
-						value={name}
-						onChange={(e) => setName(e.target.value)}
-						required
-						className="flex-1"
+						placeholder="Allowed hosts (comma- or space-separated, e.g. api.stripe.com, *.stripe.com)"
+						value={allowedHosts}
+						onChange={(e) => setAllowedHosts(e.target.value)}
+						disabled={allowAllHosts}
 					/>
-					<Input
-						placeholder="Value"
-						type="password"
-						value={value}
-						onChange={(e) => setValue(e.target.value)}
-						required
-						className="flex-1"
-					/>
-					<Button type="submit" size="sm" disabled={createSecret.isPending}>
-						Add
-					</Button>
+					<label className="flex items-center gap-2 text-[13px] text-text-muted">
+						<input
+							type="checkbox"
+							checked={allowAllHosts}
+							onChange={(e) => setAllowAllHosts(e.target.checked)}
+						/>
+						Allow this secret to reach any host (escape hatch — use sparingly)
+					</label>
+					<div className="flex gap-2">
+						<Button type="submit" size="sm" disabled={createSecret.isPending}>
+							Add
+						</Button>
+						<Button type="button" variant="secondary" size="sm" onClick={() => setShowForm(false)}>
+							Cancel
+						</Button>
+					</div>
 				</form>
 			)}
 			{secrets?.length === 0 ? (
@@ -320,11 +316,20 @@ function SecretsSection({ companyId }: { companyId: string }) {
 							key={s.id}
 							className="flex items-center justify-between rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
 						>
-							<div className="flex items-center gap-2">
+							<div className="flex items-center gap-2 min-w-0 flex-1">
 								<span className="font-medium">{s.name}</span>
 								<Badge color="neutral">{s.category}</Badge>
 								{s.project_name && (
 									<span className="text-xs text-text-subtle">{s.project_name}</span>
+								)}
+								{s.allow_all_hosts ? (
+									<Badge color="warning">all hosts</Badge>
+								) : s.allowed_hosts?.length ? (
+									<span className="text-xs text-text-subtle font-mono truncate">
+										{s.allowed_hosts.join(', ')}
+									</span>
+								) : (
+									<Badge color="danger">no hosts</Badge>
 								)}
 							</div>
 							<button
@@ -519,79 +524,154 @@ function PreferencesSection({ companyId }: { companyId: string }) {
 }
 
 function McpServersSection({ companyId }: { companyId: string }) {
-	const { data: company } = useCompany(companyId);
-	const updateCompany = useUpdateCompany(companyId);
+	const { data: connections = [] } = useMcpConnections(companyId);
+	const createConn = useCreateMcpConnection(companyId);
+	const deleteConn = useDeleteMcpConnection(companyId);
 	const [showAdd, setShowAdd] = useState(false);
+	const [kind, setKind] = useState<'saas' | 'local'>('saas');
 	const [name, setName] = useState('');
 	const [url, setUrl] = useState('');
-	const [apiKey, setApiKey] = useState('');
+	const [headersJson, setHeadersJson] = useState('');
+	const [command, setCommand] = useState('');
+	const [argsText, setArgsText] = useState('');
+	const [envJson, setEnvJson] = useState('');
 
-	const servers = (company?.mcp_servers ?? []) as { name: string; url: string; api_key?: string }[];
-
-	async function handleAdd(e: React.FormEvent) {
-		e.preventDefault();
-		if (!name.trim() || !url.trim()) return;
-		const entry: { name: string; url: string; api_key?: string } = {
-			name: name.trim(),
-			url: url.trim(),
-		};
-		if (apiKey.trim()) entry.api_key = apiKey.trim();
-		await updateCompany.mutateAsync({ mcp_servers: [...servers, entry] });
+	function reset() {
 		setName('');
 		setUrl('');
-		setApiKey('');
+		setHeadersJson('');
+		setCommand('');
+		setArgsText('');
+		setEnvJson('');
+		setKind('saas');
 		setShowAdd(false);
 	}
 
-	async function handleDelete(server: { name: string; url: string }) {
-		const updated = servers.filter((s) => s.name !== server.name || s.url !== server.url);
-		await updateCompany.mutateAsync({ mcp_servers: updated });
+	async function handleAdd(e: React.FormEvent) {
+		e.preventDefault();
+		if (!name.trim()) return;
+		const config: Record<string, unknown> = {};
+		if (kind === 'saas') {
+			if (!url.trim()) return;
+			config.url = url.trim();
+			if (headersJson.trim()) {
+				try {
+					config.headers = JSON.parse(headersJson);
+				} catch {
+					alert('Headers must be valid JSON');
+					return;
+				}
+			}
+		} else {
+			if (!command.trim()) return;
+			config.command = command.trim();
+			const args = argsText
+				.split(/\s+/)
+				.map((s) => s.trim())
+				.filter(Boolean);
+			if (args.length > 0) config.args = args;
+			if (envJson.trim()) {
+				try {
+					config.env = JSON.parse(envJson);
+				} catch {
+					alert('Env must be valid JSON');
+					return;
+				}
+			}
+		}
+		await createConn.mutateAsync({ name: name.trim(), kind, config });
+		reset();
 	}
 
 	return (
 		<section>
 			<SectionHeader
 				title="MCP servers"
-				desc="Model Context Protocol servers available to agents."
+				desc="Model Context Protocol servers available to every agent run in this company. Header values may include __HEZO_SECRET_<NAME>__ placeholders, substituted by the egress proxy at request time."
 			/>
-			{servers.length === 0 && !showAdd && (
+			{connections.length === 0 && !showAdd && (
 				<p className="text-[13px] text-text-muted mb-2">No MCP servers configured.</p>
 			)}
 			<div className="space-y-2 mb-3">
-				{servers.map((s) => (
-					<div
-						key={`${s.name}-${s.url}`}
-						className="border border-border rounded-radius-md p-3 flex items-center gap-3 bg-bg-subtle"
-					>
-						<div className="flex-1 min-w-0">
-							<span className="text-[13px] font-medium">{s.name}</span>
-							<span className="text-xs text-text-muted block font-mono truncate">{s.url}</span>
+				{connections.map((conn) => {
+					const config = conn.config as { url?: string; command?: string };
+					const target = conn.kind === 'saas' ? config.url : config.command;
+					return (
+						<div
+							key={conn.id}
+							className="border border-border rounded-radius-md p-3 flex items-center gap-3 bg-bg-subtle"
+						>
+							<Badge color={conn.kind === 'saas' ? 'blue' : 'gray'}>{conn.kind}</Badge>
+							<div className="flex-1 min-w-0">
+								<span className="text-[13px] font-medium">{conn.name}</span>
+								<span className="text-xs text-text-muted block font-mono truncate">{target}</span>
+							</div>
+							{conn.install_status !== 'installed' && (
+								<Badge color={conn.install_status === 'failed' ? 'danger' : 'warning'}>
+									{conn.install_status}
+								</Badge>
+							)}
+							<Button variant="danger-text" size="sm" onClick={() => deleteConn.mutate(conn.id)}>
+								<Trash2 className="w-3 h-3" />
+							</Button>
 						</div>
-						<Button variant="danger-text" size="sm" onClick={() => handleDelete(s)}>
-							<Trash2 className="w-3 h-3" />
-						</Button>
-					</div>
-				))}
+					);
+				})}
 			</div>
 			{showAdd ? (
 				<form onSubmit={handleAdd} className="space-y-2 border border-border rounded-radius-md p-3">
-					<Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Server name" />
-					<Input
-						value={url}
-						onChange={(e) => setUrl(e.target.value)}
-						placeholder="URL (e.g. http://localhost:8080/mcp)"
-					/>
-					<Input
-						value={apiKey}
-						onChange={(e) => setApiKey(e.target.value)}
-						placeholder="API key (optional)"
-						type="password"
-					/>
 					<div className="flex gap-2">
-						<Button type="submit" size="sm" disabled={!name.trim() || !url.trim()}>
+						<label className="flex items-center gap-1 text-[13px]">
+							<input type="radio" checked={kind === 'saas'} onChange={() => setKind('saas')} /> SaaS
+							HTTP
+						</label>
+						<label className="flex items-center gap-1 text-[13px]">
+							<input type="radio" checked={kind === 'local'} onChange={() => setKind('local')} />{' '}
+							Local stdio
+						</label>
+					</div>
+					<Input
+						value={name}
+						onChange={(e) => setName(e.target.value)}
+						placeholder="Server name (e.g. exa)"
+					/>
+					{kind === 'saas' ? (
+						<>
+							<Input
+								value={url}
+								onChange={(e) => setUrl(e.target.value)}
+								placeholder="URL (e.g. https://mcp.exa.ai/mcp)"
+							/>
+							<Input
+								value={headersJson}
+								onChange={(e) => setHeadersJson(e.target.value)}
+								placeholder='Headers JSON (e.g. {"x-api-key":"__HEZO_SECRET_EXA_KEY__"})'
+							/>
+						</>
+					) : (
+						<>
+							<Input
+								value={command}
+								onChange={(e) => setCommand(e.target.value)}
+								placeholder="Command (e.g. /workspace/.hezo/mcp/fs/node_modules/.bin/server-filesystem)"
+							/>
+							<Input
+								value={argsText}
+								onChange={(e) => setArgsText(e.target.value)}
+								placeholder="Args (space-separated)"
+							/>
+							<Input
+								value={envJson}
+								onChange={(e) => setEnvJson(e.target.value)}
+								placeholder='Env JSON (optional, e.g. {"FOO":"bar"})'
+							/>
+						</>
+					)}
+					<div className="flex gap-2">
+						<Button type="submit" size="sm" disabled={createConn.isPending}>
 							Add
 						</Button>
-						<Button type="button" variant="secondary" size="sm" onClick={() => setShowAdd(false)}>
+						<Button type="button" variant="secondary" size="sm" onClick={reset}>
 							Cancel
 						</Button>
 					</div>

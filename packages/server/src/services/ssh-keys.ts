@@ -54,16 +54,15 @@ export async function getCompanySSHKey(
 	db: PGlite,
 	companyId: string,
 	masterKeyManager: MasterKeyManager,
-): Promise<{ publicKey: string; privateKey: string; githubKeyId: number | null } | null> {
+): Promise<{ publicKey: string; privateKey: string } | null> {
 	const encryptionKey = masterKeyManager.getKey();
 	if (!encryptionKey) throw new Error('Master key not available');
 
 	const result = await db.query<{
 		public_key: string;
-		github_key_id: number | null;
 		encrypted_value: string;
 	}>(
-		`SELECT k.public_key, k.github_key_id, s.encrypted_value
+		`SELECT k.public_key, s.encrypted_value
 		 FROM company_ssh_keys k
 		 JOIN secrets s ON s.id = k.private_key_secret_id
 		 WHERE k.company_id = $1`,
@@ -76,19 +75,7 @@ export async function getCompanySSHKey(
 	return {
 		publicKey: row.public_key,
 		privateKey: decrypt(row.encrypted_value, encryptionKey),
-		githubKeyId: row.github_key_id,
 	};
-}
-
-export async function updateGitHubKeyId(
-	db: PGlite,
-	companyId: string,
-	githubKeyId: number,
-): Promise<void> {
-	await db.query('UPDATE company_ssh_keys SET github_key_id = $1 WHERE company_id = $2', [
-		githubKeyId,
-		companyId,
-	]);
 }
 
 function pemToSSHPublicKey(pem: string): string {
