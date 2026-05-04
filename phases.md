@@ -151,7 +151,18 @@ Each test asserts the upstream test server saw the resolved value (never the pla
 
 ## P4 — MCP connection persistence
 
+**Status:** ✅ Shipped 2026-05-04 (SaaS + local stdio descriptor flow; on-demand local installer is deferred).
+
 Make MCP servers a first-class, persistent concept so the agent can declare what it needs at runtime, and so installs survive container rebuilds.
+
+**Implementation notes:**
+- Schema: new `mcp_connection_kind` and `mcp_install_status` enums and `mcp_connections` table with `(company_id, project_id, name)` uniqueness; project_id NULL = company-wide.
+- `services/mcp-connections.ts` loads rows scoped to the run (project + company-wide, with project entries winning on name dedup) and maps them to `McpDescriptor`s.
+- `McpDescriptor` is now a discriminated union of `kind:'http'` (SaaS-style transport with optional `headers` whose values may include `__HEZO_SECRET_*__` placeholders) and `kind:'stdio'` (`command`, `args`, `env`). All three runtime adapters handle both kinds.
+- `agent-runner.buildRunContext` merges loaded descriptors after the built-in `hezo` server.
+- New MCP tools `list_mcp_connections`, `add_mcp_connection`, `remove_mcp_connection` let agents register MCP servers at runtime.
+- New `routes/mcp-connections.ts` exposes the same CRUD over the board REST API.
+- Local MCPs default to `install_status='pending'` so they don't reach the agent until something explicitly marks them installed; the on-demand installer that runs `npm/uv` inside the container is deferred to a follow-up phase since the descriptor + dispatch contract is already validated by the stdio Docker test.
 
 ### Schema
 
@@ -317,7 +328,7 @@ Test commands:
 | P2 | shipped | ✅ commit `9fa5be6` |
 | P2-followup (macOS SSH relay) | 1 day | ✅ shipped 2026-05-04 |
 | P3 (HTTPS MITM proxy) | 5 days | not started |
-| P4 (MCP connections) | 3 days | not started |
+| P4 (MCP connections) | 3 days | ✅ shipped 2026-05-04 |
 | P5 (delete connect) | 2 days | not started |
 | P6 (polish + docs) | 2–3 days | not started |
 | **Total remaining** | **~12–13 days** | |

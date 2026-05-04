@@ -49,7 +49,11 @@ export interface ContainerDeps {
 	masterKeyManager?: MasterKeyManager;
 	logs?: LogStreamBroker;
 	sshAgentServer?: SshAgentServer | null;
+	egressCAPath?: string | null;
 }
+
+/** In-container path the egress CA is bind-mounted to. */
+export const CONTAINER_CA_PATH = '/usr/local/share/ca-certificates/hezo-egress.crt';
 
 const PROVISION_CAP_BYTES = 64 * 1024;
 
@@ -154,6 +158,9 @@ export async function provisionContainer(
 			`${worktreesPath}:/worktrees:rw`,
 			`${previewsPath}:/workspace/.previews:rw`,
 		];
+		if (deps.egressCAPath) {
+			binds.push(`${deps.egressCAPath}:${CONTAINER_CA_PATH}:ro`);
+		}
 
 		const portBindings: Record<string, Array<{ HostPort: string }>> = {};
 		const exposedPorts: Record<string, object> = {};
@@ -211,6 +218,21 @@ export async function provisionContainer(
 			'UPDATE projects SET container_id = $1, container_status = $2::container_status, container_error = NULL WHERE id = $3',
 			[Id, ContainerStatus.Running, project.id],
 		);
+
+		if (deps.egressCAPath) {
+			emit('stdout', '→ Trusting Hezo egress CA (update-ca-certificates)');
+			try {
+				const execId = await docker.execCreate(Id, {
+					Cmd: ['update-ca-certificates'],
+					AttachStdout: true,
+					AttachStderr: true,
+				});
+				const out = await docker.execStart(execId);
+				if (out.stderr.trim()) emit('stderr', out.stderr);
+			} catch (e) {
+				emit('stderr', `⚠ update-ca-certificates failed: ${(e as Error).message}`);
+			}
+		}
 
 		if (masterKeyManager) {
 			emit('stdout', '→ Syncing project repos');

@@ -1782,6 +1782,137 @@ export function registerTools(
 		db,
 	);
 
+	tool(
+		server,
+		'list_mcp_connections',
+		'List MCP server connections registered for the company (and optionally a project). Returns name, kind (saas|local), config (URL or command), and install_status.',
+		{
+			company_id: z.string().describe('Company ID'),
+			project_id: z
+				.string()
+				.optional()
+				.describe(
+					'Optional project ID. When set, returns project-scoped + company-wide connections; when absent, only company-wide.',
+				),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const companyId = args.company_id as string;
+			const projectId = (args.project_id as string | undefined) ?? null;
+			const params: unknown[] = [companyId];
+			let where = 'company_id = $1';
+			if (projectId) {
+				where += ' AND (project_id IS NULL OR project_id = $2)';
+				params.push(projectId);
+			} else {
+				where += ' AND project_id IS NULL';
+			}
+			const r = await db.query(
+				`SELECT id, company_id, project_id, name, kind::text AS kind,
+				        config, install_status::text AS install_status, install_error,
+				        created_at::text, updated_at::text
+				 FROM mcp_connections
+				 WHERE ${where}
+				 ORDER BY name ASC`,
+				params,
+			);
+			return r.rows;
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'add_mcp_connection',
+		"Register an MCP server (SaaS HTTP or local stdio) for this company/project. SaaS servers go into the agent's descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.",
+		{
+			company_id: z.string().describe('Company ID'),
+			project_id: z
+				.string()
+				.optional()
+				.describe('Optional project ID. Omit for a company-wide connection.'),
+			name: z
+				.string()
+				.describe(
+					'Server identifier — used as the MCP descriptor name and for de-duplication within (company, project).',
+				),
+			kind: z.enum(['saas', 'local']).describe('saas = HTTP MCP, local = stdio MCP'),
+			config: z
+				.record(z.string(), z.unknown())
+				.describe('For saas: { url, headers? }. For local: { command, args?, env?, package? }.'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const companyId = args.company_id as string;
+			const projectId = (args.project_id as string | undefined) ?? null;
+			const name = String(args.name ?? '').trim();
+			const kind = args.kind as 'saas' | 'local';
+			const config = args.config as Record<string, unknown>;
+
+			if (!name) return { error: 'name is required' };
+			if (kind === 'saas') {
+				if (!config?.url || typeof config.url !== 'string') {
+					return { error: 'saas connections require config.url (string)' };
+				}
+			} else {
+				if (!config?.command || typeof config.command !== 'string') {
+					return { error: 'local connections require config.command (string)' };
+				}
+			}
+
+			const initialStatus = kind === 'saas' ? 'installed' : 'pending';
+			const r = await db.query<{
+				id: string;
+				install_status: string;
+			}>(
+				`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+				 VALUES ($1, $2, $3, $4::mcp_connection_kind, $5::jsonb, $6::mcp_install_status)
+				 ON CONFLICT (company_id, project_id, name) DO UPDATE
+				 SET kind = EXCLUDED.kind,
+				     config = EXCLUDED.config,
+				     install_status = EXCLUDED.install_status,
+				     install_error = NULL,
+				     updated_at = now()
+				 RETURNING id, install_status::text AS install_status`,
+				[companyId, projectId, name, kind, JSON.stringify(config), initialStatus],
+			);
+			return {
+				id: r.rows[0].id,
+				install_status: r.rows[0].install_status,
+				note:
+					kind === 'local'
+						? 'Local MCP registered with status pending. Install via the installer or container provision before agent runs can use it.'
+						: 'SaaS MCP registered. Will be available to the next agent run in this scope.',
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'remove_mcp_connection',
+		'Remove a previously registered MCP connection. The next agent run in this scope will not see it.',
+		{
+			company_id: z.string().describe('Company ID'),
+			id: z
+				.string()
+				.describe('mcp_connections.id (returned by add_mcp_connection or list_mcp_connections)'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const r = await db.query<{ id: string }>(
+				'DELETE FROM mcp_connections WHERE id = $1 AND company_id = $2 RETURNING id',
+				[args.id as string, args.company_id as string],
+			);
+			if (r.rows.length === 0) return { error: 'MCP connection not found' };
+			return { removed: true, id: r.rows[0].id };
+		},
+		db,
+	);
+
 	return [...registeredTools];
 }
 

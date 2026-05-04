@@ -32,9 +32,11 @@ import {
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
+import type { EgressProxy } from './egress';
 import { ensureIssueWorktree, fetchRepo } from './git';
 import { recordStatusChange } from './issue-events';
 import type { LogStreamBroker } from './log-stream-broker';
+import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
 import { ensureProjectRepos } from './repo-sync';
 import {
@@ -105,6 +107,8 @@ export interface RunnerDeps {
 	wsManager?: WebSocketManager;
 	logs: LogStreamBroker;
 	sshAgentServer?: SshAgentServer;
+	egressProxy?: EgressProxy | null;
+	egressCAPath?: string | null;
 }
 
 interface RepoRow {
@@ -213,6 +217,12 @@ function wrapExecCmd(cmd: string[], bridge: BridgeRunnerArgs | null): string[] {
 	return ['sh', '-c', 'exec "$@" < "$HEZO_PROMPT_FILE"', 'sh', ...cmd];
 }
 
+interface EgressEnvDescriptor {
+	host: string;
+	port: number;
+	containerCAPath: string;
+}
+
 async function buildRunContext(
 	deps: RunnerDeps,
 	agent: AgentInfo,
@@ -226,6 +236,7 @@ async function buildRunContext(
 	modelOverride: string | null,
 	sshSocketContainerPath: string | null,
 	bridge: BridgeRunnerArgs | null,
+	egress: EgressEnvDescriptor | null,
 ): Promise<RunContext> {
 	const storedPrompt = await getAgentSystemPrompt(deps.db, agent.company_id, agent.id);
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, storedPrompt, {
@@ -305,10 +316,12 @@ async function buildRunContext(
 
 	const mcpDescriptors: McpDescriptor[] = [
 		{
+			kind: 'http',
 			name: 'hezo',
 			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
 			bearerToken: agentJwt,
 		},
+		...(await loadMcpConnectionDescriptors(deps.db, agent.company_id, project.id)),
 	];
 
 	const mcpInjection = adapter.build(mcpDescriptors, {
@@ -341,6 +354,26 @@ async function buildRunContext(
 	];
 	if (sshSocketContainerPath) {
 		env.push(`SSH_AUTH_SOCK=${sshSocketContainerPath}`);
+	}
+	if (egress) {
+		const proxyUrl = `http://${egress.host}:${egress.port}`;
+		const noProxy = `${egress.host},localhost,127.0.0.1`;
+		env.push(
+			`HTTP_PROXY=${proxyUrl}`,
+			`http_proxy=${proxyUrl}`,
+			`HTTPS_PROXY=${proxyUrl}`,
+			`https_proxy=${proxyUrl}`,
+			`NO_PROXY=${noProxy}`,
+			`no_proxy=${noProxy}`,
+			`NODE_EXTRA_CA_CERTS=${egress.containerCAPath}`,
+			`SSL_CERT_FILE=${egress.containerCAPath}`,
+			`REQUESTS_CA_BUNDLE=${egress.containerCAPath}`,
+			`CURL_CA_BUNDLE=${egress.containerCAPath}`,
+			`GIT_SSL_CAINFO=${egress.containerCAPath}`,
+			`AWS_CA_BUNDLE=${egress.containerCAPath}`,
+			`PIP_CERT=${egress.containerCAPath}`,
+			`NPM_CONFIG_CAFILE=${egress.containerCAPath}`,
+		);
 	}
 
 	const cliCommand = RUNTIME_COMMANDS[runtimeType];
@@ -563,6 +596,25 @@ export async function runAgent(
 		};
 	}
 
+	let egressEnv: EgressEnvDescriptor | null = null;
+	let egressAllocated = false;
+	if (deps.egressProxy && deps.egressCAPath) {
+		// Egress proxy is mandatory: agents may have placeholder secrets in
+		// their env. Failing fast prevents real secrets from leaking through
+		// a fall-through path. If allocation fails, the run aborts.
+		const allocated = await deps.egressProxy.allocateRunProxy(heartbeatRunId, {
+			companyId: agent.company_id,
+			agentId: agent.id,
+			projectId: project.id,
+		});
+		egressAllocated = true;
+		egressEnv = {
+			host: allocated.proxyHost,
+			port: allocated.proxyPort,
+			containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
+		};
+	}
+
 	const context = await buildRunContext(
 		deps,
 		agent,
@@ -576,6 +628,7 @@ export async function runAgent(
 		modelOverride,
 		sshSocketContainerPath,
 		bridge,
+		egressEnv,
 	);
 
 	if (signal?.aborted) {
@@ -586,6 +639,9 @@ export async function runAgent(
 		}
 		if (deps.sshAgentServer) {
 			await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
+		}
+		if (deps.egressProxy && egressAllocated) {
+			await deps.egressProxy.releaseRunProxy(heartbeatRunId);
 		}
 		return finalizeAbort();
 	}
@@ -645,6 +701,9 @@ export async function runAgent(
 		}
 		if (deps.sshAgentServer) {
 			await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
+		}
+		if (deps.egressProxy && egressAllocated) {
+			await deps.egressProxy.releaseRunProxy(heartbeatRunId);
 		}
 		releaseCredentialLock?.();
 	};

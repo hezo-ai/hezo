@@ -260,6 +260,16 @@ export const AuditEntityType = {
 } as const;
 export type AuditEntityType = (typeof AuditEntityType)[keyof typeof AuditEntityType];
 
+export const McpConnectionKind = { Saas: 'saas', Local: 'local' } as const;
+export type McpConnectionKind = (typeof McpConnectionKind)[keyof typeof McpConnectionKind];
+
+export const McpInstallStatus = {
+	Pending: 'pending',
+	Installed: 'installed',
+	Failed: 'failed',
+} as const;
+export type McpInstallStatus = (typeof McpInstallStatus)[keyof typeof McpInstallStatus];
+
 export const AgentTypeSource = {
 	Builtin: 'builtin',
 	Custom: 'custom',

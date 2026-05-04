@@ -33,6 +33,7 @@ import { goalsRoutes } from './routes/goals';
 import { healthRoutes } from './routes/health';
 import { issuesRoutes } from './routes/issues';
 import { kbDocsRoutes } from './routes/kb-docs';
+import { mcpConnectionsRoutes } from './routes/mcp-connections';
 import { mentionsRoutes } from './routes/mentions';
 import { oauthCallbackRoutes } from './routes/oauth-callback';
 import { preferencesRoutes } from './routes/preferences';
@@ -45,6 +46,7 @@ import { secretsRoutes } from './routes/secrets';
 import { skillsRoutes } from './routes/skills';
 import { uiStateRoutes } from './routes/ui-state';
 import { DockerClient } from './services/docker';
+import { EgressProxy, loadOrCreateCA } from './services/egress';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
 import { SshAgentServer } from './services/ssh-agent';
@@ -72,6 +74,7 @@ export interface StartupResult {
 	masterKeyManager: MasterKeyManager;
 	logs: LogStreamBroker;
 	sshAgentServer: SshAgentServer;
+	egressProxy: EgressProxy;
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
@@ -114,6 +117,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	logs.setWsManager(wsManager);
 	const sshAgentServer = new SshAgentServer({ db, masterKeyManager });
 	await cleanupOrphanRunSockets(db, config.dataDir);
+	const egressCA = await loadOrCreateCA(config.dataDir);
+	const egressProxy = new EgressProxy({ db, masterKeyManager, ca: egressCA });
 	const jobManager = new JobManager({
 		db,
 		docker,
@@ -123,6 +128,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		wsManager,
 		logs,
 		sshAgentServer,
+		egressProxy,
+		egressCAPath: egressCA.certPath,
 	});
 
 	masterKeyManager.onUnlock(() => {
@@ -153,6 +160,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		jobManager,
 		logs,
 		sshAgentServer,
+		egressProxy,
 	);
 
 	return {
@@ -166,6 +174,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		masterKeyManager,
 		logs,
 		sshAgentServer,
+		egressProxy,
 	};
 }
 
@@ -178,6 +187,7 @@ export function buildApp(
 	jobManager?: JobManager,
 	logs: LogStreamBroker = new LogStreamBroker(),
 	sshAgentServer: SshAgentServer | null = null,
+	egressProxy: EgressProxy | null = null,
 ): Hono<Env> {
 	const app = new Hono<Env>();
 	logs.setWsManager(wsManager);
@@ -199,6 +209,7 @@ export function buildApp(
 		c.set('connectPublicKey', config.connectPublicKey);
 		c.set('webUrl', config.webUrl);
 		c.set('sshAgentServer', sshAgentServer);
+		c.set('egressProxy', egressProxy);
 		return next();
 	});
 
@@ -260,6 +271,7 @@ export function buildApp(
 	app.route('/api', githubRoutes);
 	app.route('/api', executionLocksRoutes);
 	app.route('/api', auditLogRoutes);
+	app.route('/api', mcpConnectionsRoutes);
 	app.route('/api', previewRoutes);
 	app.route('/api', searchRoutes);
 

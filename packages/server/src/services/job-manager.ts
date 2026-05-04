@@ -30,6 +30,7 @@ import {
 	verifyContainerWorkspace,
 } from './containers';
 import type { DockerClient } from './docker';
+import type { EgressProxy } from './egress';
 import { recordStatusChange } from './issue-events';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans } from './orphan-detector';
@@ -72,6 +73,8 @@ export interface JobManagerDeps {
 	wsManager: WebSocketManager;
 	logs: LogStreamBroker;
 	sshAgentServer?: SshAgentServer;
+	egressProxy?: EgressProxy | null;
+	egressCAPath?: string;
 }
 
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
@@ -809,6 +812,8 @@ export class JobManager {
 			wsManager: this.deps.wsManager,
 			logs: this.deps.logs,
 			sshAgentServer: this.deps.sshAgentServer,
+			egressProxy: this.deps.egressProxy ?? null,
+			egressCAPath: this.deps.egressCAPath ?? null,
 		};
 		const timeoutMs = agent.rows[0].heartbeat_interval_min * 60 * 1000;
 

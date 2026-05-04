@@ -345,6 +345,43 @@ CREATE INDEX idx_secrets_company ON secrets(company_id);
 CREATE INDEX idx_secrets_project ON secrets(project_id);
 
 -------------------------------------------------------------------------------
+-- MCP CONNECTIONS
+-------------------------------------------------------------------------------
+
+CREATE TYPE mcp_connection_kind AS ENUM ('saas', 'local');
+CREATE TYPE mcp_install_status AS ENUM ('pending', 'installed', 'failed');
+
+-- Catalog of MCP servers (SaaS or local stdio) made available to agents
+-- across runs. Per-run agent runtime merges these into the spawned agent's
+-- MCP descriptor list alongside the built-in `hezo` server.
+--
+-- `config` shape:
+--   kind = 'saas':  { url: string, headers?: Record<string,string> }
+--                   header values may contain __HEZO_SECRET_*__ placeholders
+--                   that the egress proxy substitutes at request time.
+--   kind = 'local': { command: string, args?: string[],
+--                     env?: Record<string,string>, package?: string }
+--                   `package` is the npm/pypi spec the installer uses to
+--                   provision the server under /workspace/.hezo/mcp/<name>/.
+CREATE TABLE mcp_connections (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    project_id      UUID REFERENCES projects(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    kind            mcp_connection_kind NOT NULL,
+    config          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    install_status  mcp_install_status NOT NULL DEFAULT 'pending',
+    install_error   TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (company_id, project_id, name)
+);
+
+CREATE INDEX idx_mcp_connections_company ON mcp_connections(company_id);
+CREATE INDEX idx_mcp_connections_project ON mcp_connections(project_id);
+
+-------------------------------------------------------------------------------
 -- GOALS
 -------------------------------------------------------------------------------
 
@@ -967,6 +1004,9 @@ CREATE TRIGGER trg_issues_updated BEFORE UPDATE ON issues
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_secrets_updated BEFORE UPDATE ON secrets
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_mcp_connections_updated BEFORE UPDATE ON mcp_connections
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_documents_updated BEFORE UPDATE ON documents

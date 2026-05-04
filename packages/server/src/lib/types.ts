@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { AuthType } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { DockerClient } from '../services/docker';
+import type { EgressProxy } from '../services/egress';
 import type { JobManager } from '../services/job-manager';
 import type { LogStreamBroker } from '../services/log-stream-broker';
 import type { SshAgentServer } from '../services/ssh-agent';
@@ -26,5 +27,6 @@ export type Env = {
 		connectPublicKey: string;
 		webUrl: string;
 		sshAgentServer: SshAgentServer | null;
+		egressProxy: EgressProxy | null;
 	};
 };
