@@ -256,6 +256,7 @@ export const AuditEntityType = {
 	Company: 'company',
 	Secret: 'secret',
 	Document: 'document',
+	EgressRequest: 'egress_request',
 } as const;
 export type AuditEntityType = (typeof AuditEntityType)[keyof typeof AuditEntityType];
 
