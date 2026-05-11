@@ -669,3 +669,47 @@ describe('AI providers DeepSeek', () => {
 		expect(body.data.providers).toContain('deepseek');
 	});
 });
+
+describe('AI providers z.ai', () => {
+	beforeAll(async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+	});
+
+	it('accepts a z.ai API key (no key prefix constraint)', async () => {
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'z_ai',
+				api_key: 'zai-no-prefix-required',
+				label: 'zai-primary',
+			}),
+		});
+		expect(res.status).toBe(201);
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const rows = (await list.json()).data as Array<{ provider: string }>;
+		expect(rows.some((r) => r.provider === 'z_ai')).toBe(true);
+	});
+
+	it('rejects subscription auth for z.ai (API key only)', async () => {
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'z_ai',
+				api_key: JSON.stringify({ tokens: { refresh_token: 'rt' } }),
+				auth_method: 'subscription',
+			}),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.code).toBe('UNSUPPORTED_AUTH_METHOD');
+	});
+
+	it('reports z_ai under the configured providers status', async () => {
+		const res = await app.request('/api/ai-providers/status', { headers: authHeader(token) });
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.providers).toContain('z_ai');
+	});
+});

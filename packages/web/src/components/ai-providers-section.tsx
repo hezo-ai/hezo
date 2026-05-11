@@ -18,6 +18,7 @@ import { Input } from './ui/input';
 
 const AI_PROVIDERS_ORDER: AiProvider[] = [
 	AiProvider.DeepSeek,
+	AiProvider.ZAi,
 	AiProvider.Anthropic,
 	AiProvider.OpenAI,
 	AiProvider.Google,

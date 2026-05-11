@@ -359,6 +359,7 @@ export const AiProvider = {
 	OpenAI: 'openai',
 	Google: 'google',
 	DeepSeek: 'deepseek',
+	ZAi: 'z_ai',
 } as const;
 export type AiProvider = (typeof AiProvider)[keyof typeof AiProvider];
 
@@ -411,6 +412,17 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 			ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-pro',
 			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash',
 			CLAUDE_CODE_SUBAGENT_MODEL: 'deepseek-v4-flash',
+		},
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
+	},
+	[AiProvider.ZAi]: {
+		runtime: AgentRuntime.ClaudeCode,
+		staticEnv: {
+			ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+			ANTHROPIC_DEFAULT_OPUS_MODEL: 'GLM-4.7',
+			ANTHROPIC_DEFAULT_SONNET_MODEL: 'GLM-4.7',
+			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'GLM-4.5-Air',
+			CLAUDE_CODE_SUBAGENT_MODEL: 'GLM-4.5-Air',
 		},
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
 	},
@@ -544,6 +556,15 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 		keyPlaceholder: 'sk-...',
 		verifyEndpoint: {
 			url: 'https://api.deepseek.com/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
+	},
+	[AiProvider.ZAi]: {
+		name: 'z.ai',
+		runtimeLabel: 'Claude Code',
+		keyPlaceholder: 'z.ai api key',
+		verifyEndpoint: {
+			url: 'https://api.z.ai/api/paas/v4/models',
 			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
 		},
 	},
