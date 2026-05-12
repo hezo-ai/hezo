@@ -10,6 +10,7 @@ import { Input } from './ui/input';
 
 const PROVIDERS = [
 	AiProvider.DeepSeek,
+	AiProvider.ZAi,
 	AiProvider.Anthropic,
 	AiProvider.OpenAI,
 	AiProvider.Google,

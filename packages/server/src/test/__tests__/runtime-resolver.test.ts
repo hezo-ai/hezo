@@ -132,4 +132,21 @@ describe('resolveRuntimeForIssue', () => {
 			provider: AiProvider.DeepSeek,
 		});
 	});
+
+	it('resolves z.ai to the ClaudeCode runtime', async () => {
+		await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.ZAi,
+			'zai-key',
+			AiAuthMethod.ApiKey,
+			'zai-primary',
+		);
+
+		expect(await resolveRuntimeForIssue(db, AgentRuntime.ClaudeCode)).toEqual({
+			runtime: AgentRuntime.ClaudeCode,
+			provider: AiProvider.ZAi,
+		});
+		expect(await resolveRuntimeForIssue(db, AgentRuntime.Codex)).toBeNull();
+	});
 });
