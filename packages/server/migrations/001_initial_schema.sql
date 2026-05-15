@@ -554,6 +554,21 @@ CREATE INDEX idx_comments_issue ON issue_comments(issue_id);
 CREATE INDEX idx_comments_author ON issue_comments(author_member_id);
 
 -------------------------------------------------------------------------------
+-- COMMENT REACTIONS
+-------------------------------------------------------------------------------
+
+CREATE TABLE comment_reactions (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    comment_id  UUID NOT NULL REFERENCES issue_comments(id) ON DELETE CASCADE,
+    member_id   UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (comment_id, member_id, kind)
+);
+
+CREATE INDEX idx_comment_reactions_comment ON comment_reactions(comment_id);
+
+-------------------------------------------------------------------------------
 -- TOOL CALLS
 -------------------------------------------------------------------------------
 

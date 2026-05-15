@@ -114,6 +114,15 @@ export const ActionCommentKind = {
 } as const;
 export type ActionCommentKind = (typeof ActionCommentKind)[keyof typeof ActionCommentKind];
 
+export const ReactionKind = {
+	Ack: 'ack',
+} as const;
+export type ReactionKind = (typeof ReactionKind)[keyof typeof ReactionKind];
+
+export function isReactionKind(value: unknown): value is ReactionKind {
+	return typeof value === 'string' && (Object.values(ReactionKind) as string[]).includes(value);
+}
+
 export const OAuthRequestReason = {
 	DesignatedRepo: 'designated_repo',
 	RepoAdd: 'repo_add',

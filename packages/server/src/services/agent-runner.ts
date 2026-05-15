@@ -38,6 +38,7 @@ import { recordStatusChange } from './issue-events';
 import type { LogStreamBroker } from './log-stream-broker';
 import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
+import { loadReactionsForIssue, type ReactionGroup } from './reactions';
 import { ensureProjectRepos } from './repo-sync';
 import {
 	buildSubscriptionMount as buildSubscriptionMountImpl,
@@ -965,6 +966,22 @@ export async function loadMentionContext(
 	};
 }
 
+const REACTION_GLYPH: Record<string, string> = { ack: '✓' };
+
+function reactorLabel(m: { slug: string | null; display_name: string | null }): string {
+	if (m.slug) return `@${m.slug}`;
+	return m.display_name ?? 'someone';
+}
+
+export function formatReactionLine(groups: ReactionGroup[] | undefined): string | null {
+	if (!groups || groups.length === 0) return null;
+	const parts = groups.map((g) => {
+		const glyph = REACTION_GLYPH[g.kind] ?? g.kind;
+		return `${glyph} ${g.members.map(reactorLabel).join(', ')}`;
+	});
+	return `Reactions: ${parts.join(' · ')}`;
+}
+
 function extractCommentText(content: unknown): string {
 	if (!content || typeof content !== 'object') return '';
 	const obj = content as Record<string, unknown>;
@@ -1231,12 +1248,13 @@ export async function buildCoachReviewPrompt(
 	companyId: string,
 ): Promise<string> {
 	const comments = await db.query<{
+		id: string;
 		content_type: string;
 		content: Record<string, unknown>;
 		author_name: string;
 		created_at: string;
 	}>(
-		`SELECT ic.content_type, ic.content,
+		`SELECT ic.id, ic.content_type, ic.content,
 		        COALESCE(ma.title, m.display_name, 'Unknown') AS author_name,
 		        ic.created_at::text
 		 FROM issue_comments ic
@@ -1246,6 +1264,8 @@ export async function buildCoachReviewPrompt(
 		 ORDER BY ic.created_at ASC`,
 		[issue.id],
 	);
+
+	const reactionsByComment = await loadReactionsForIssue(db, issue.id);
 
 	const involvedAgents = await db.query<{
 		id: string;
@@ -1267,7 +1287,9 @@ export async function buildCoachReviewPrompt(
 				c.content_type === 'text'
 					? (c.content as Record<string, unknown>).text
 					: JSON.stringify(c.content);
-			return `[${c.created_at}] ${c.author_name} (${c.content_type}): ${text}`;
+			const base = `[${c.created_at}] ${c.author_name} (${c.content_type}): ${text}`;
+			const reactionLine = formatReactionLine(reactionsByComment.get(c.id));
+			return reactionLine ? `${base}\n${reactionLine}` : base;
 		})
 		.join('\n');
 

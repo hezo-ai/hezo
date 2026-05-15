@@ -12,13 +12,16 @@ import {
 	DocumentType,
 	IssuePriority,
 	IssueStatus,
+	ReactionKind,
 	WakeupSource,
+	wsRoom,
 } from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { assertNoActiveRun } from '../lib/active-run';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
+import { broadcastRowChange } from '../lib/broadcast';
 import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import {
@@ -27,6 +30,7 @@ import {
 	assertNoOutstandingActivity,
 } from '../lib/issue-relationships';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
+import { resolveActorMemberId } from '../lib/resolve';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import { resolveProjectIssuePrefix } from '../routes/projects';
@@ -39,6 +43,11 @@ import {
 } from '../services/documents';
 import { triggerStatusAutomations } from '../services/issue-automation';
 import { recordIssueLinks } from '../services/issue-events';
+import {
+	addCommentReaction,
+	loadReactionsForIssue,
+	removeCommentReaction,
+} from '../services/reactions';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
 
@@ -911,9 +920,19 @@ export function registerTools(
 				 ORDER BY ic.created_at DESC, ic.id DESC LIMIT 50`,
 				params,
 			);
+			const viewerMemberId = await resolveActorMemberId(db, auth, args.company_id as string);
+			const reactionsByComment = await loadReactionsForIssue(
+				db,
+				args.issue_id as string,
+				viewerMemberId,
+			);
+			const withReactions: Record<string, unknown>[] = r.rows.map((row) => ({
+				...row,
+				reactions: reactionsByComment.get(row.id as string) ?? [],
+			}));
 			const max = args.excerpt_chars as number | undefined;
-			if (max == null) return r.rows;
-			return r.rows.map((row) => {
+			if (max == null) return withReactions;
+			return withReactions.map((row) => {
 				if (row.content_type !== CommentContentType.Text) return row;
 				const content = row.content as { text?: string } | null;
 				const text = content?.text;
@@ -930,10 +949,96 @@ export function registerTools(
 		db,
 	);
 
+	const reactionKindSchema = z.enum(Object.values(ReactionKind) as [string, ...string[]]);
+
+	tool(
+		server,
+		'add_reaction',
+		'React to a comment without waking its author. Use this to acknowledge mentions or signal "seen / picked up" without forcing the original commenter to run again. Prefer this over a follow-up create_comment when you have nothing substantive to add — comments wake the author, reactions do not. Only react when the situation calls for it: a clean handoff to your own new ticket (✓ on the mention), or a brief acknowledgement that a request landed. If you need the original commenter to read something, post a comment instead.',
+		{
+			company_id: z.string().describe('Company ID'),
+			issue_id: z.string().describe('Issue ID the comment belongs to'),
+			comment_id: z.string().describe('Comment ID to react to'),
+			kind: reactionKindSchema.describe(
+				`Reaction kind. v1 supports: ${Object.values(ReactionKind).join(', ')}`,
+			),
+		},
+		async (args, db, auth) => {
+			const companyId = args.company_id as string;
+			const denied = await verifyCompanyAccess(db, auth, companyId);
+			if (denied) return { error: denied };
+			const memberId = await resolveActorMemberId(db, auth, companyId);
+			if (!memberId) return { error: 'No member identity for caller' };
+			const result = await addCommentReaction({
+				db,
+				companyId,
+				issueId: args.issue_id as string,
+				commentId: args.comment_id as string,
+				kind: args.kind as string,
+				memberId,
+			});
+			if (!result.ok) return { error: result.message };
+			broadcastRowChange(wsManager, wsRoom.company(companyId), 'comment_reactions', 'INSERT', {
+				comment_id: args.comment_id,
+				issue_id: args.issue_id,
+				member_id: memberId,
+				kind: args.kind,
+			});
+			return {
+				comment_id: args.comment_id,
+				kind: args.kind,
+				reactions: result.reactions,
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'remove_reaction',
+		'Remove your own reaction from a comment. Removing a reaction does not wake the comment author.',
+		{
+			company_id: z.string().describe('Company ID'),
+			issue_id: z.string().describe('Issue ID the comment belongs to'),
+			comment_id: z.string().describe('Comment ID to remove the reaction from'),
+			kind: reactionKindSchema.describe(
+				`Reaction kind. v1 supports: ${Object.values(ReactionKind).join(', ')}`,
+			),
+		},
+		async (args, db, auth) => {
+			const companyId = args.company_id as string;
+			const denied = await verifyCompanyAccess(db, auth, companyId);
+			if (denied) return { error: denied };
+			const memberId = await resolveActorMemberId(db, auth, companyId);
+			if (!memberId) return { error: 'No member identity for caller' };
+			const result = await removeCommentReaction({
+				db,
+				companyId,
+				issueId: args.issue_id as string,
+				commentId: args.comment_id as string,
+				kind: args.kind as string,
+				memberId,
+			});
+			if (!result.ok) return { error: result.message };
+			broadcastRowChange(wsManager, wsRoom.company(companyId), 'comment_reactions', 'DELETE', {
+				comment_id: args.comment_id,
+				issue_id: args.issue_id,
+				member_id: memberId,
+				kind: args.kind,
+			});
+			return {
+				comment_id: args.comment_id,
+				kind: args.kind,
+				reactions: result.reactions,
+			};
+		},
+		db,
+	);
+
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to an issue. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Add a comment to an issue. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert. Comments wake the author of the comment you are responding to — if you just need to acknowledge a mention without adding substance, use add_reaction instead.',
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),

@@ -15,6 +15,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 import { AgentStatusLabel } from '../../../../../../components/agent-status-label';
 import {
 	type CommentData,
+	CommentReactions,
 	CommentRenderer,
 	inlineEventIcon,
 	isInlineEventType,
@@ -668,6 +669,11 @@ function IssueDetailPage() {
 														projectId={issue?.project_id ?? undefined}
 														projectSlug={issueProjectSlug}
 														issueId={issue?.id ?? undefined}
+													/>
+													<CommentReactions
+														comment={commentData}
+														companyId={companyId}
+														issueId={issue?.id}
 													/>
 												</div>
 											</div>

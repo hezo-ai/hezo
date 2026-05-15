@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import { broadcastChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
-import { resolveIssueId } from '../lib/resolve';
+import { resolveActorMemberId, resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -11,6 +11,11 @@ import { requireCompanyAccess } from '../middleware/auth';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
 import { recordIssueLinks } from '../services/issue-events';
+import {
+	addCommentReaction,
+	loadReactionsForIssue,
+	removeCommentReaction,
+} from '../services/reactions';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
@@ -40,6 +45,12 @@ commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) =
 		[issueId],
 	);
 
+	const viewerMemberId = await resolveActorMemberId(db, c.get('auth'), companyId);
+	const reactionsByComment = await loadReactionsForIssue(db, issueId, viewerMemberId);
+	for (const comment of result.rows as Record<string, unknown>[]) {
+		comment.reactions = reactionsByComment.get(comment.id as string) ?? [];
+	}
+
 	if (includeToolCalls) {
 		for (const comment of result.rows as Record<string, unknown>[]) {
 			if (comment.content_type === CommentContentType.Trace) {
@@ -56,6 +67,81 @@ commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) =
 
 	return ok(c, result.rows);
 });
+
+commentsRoutes.put(
+	'/companies/:companyId/issues/:issueId/comments/:commentId/reactions/:kind',
+	async (c) => {
+		const access = await requireCompanyAccess(c);
+		if (access instanceof Response) return access;
+
+		const db = c.get('db');
+		const { companyId } = access;
+		const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+		if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+		const commentId = c.req.param('commentId');
+		const kind = c.req.param('kind');
+
+		const memberId = await resolveActorMemberId(db, c.get('auth'), companyId);
+		if (!memberId) {
+			return err(c, 'FORBIDDEN', 'No member identity for caller', 403);
+		}
+
+		const result = await addCommentReaction({ db, companyId, issueId, commentId, kind, memberId });
+		if (!result.ok) {
+			const status = result.code === 'INVALID_KIND' ? 400 : 404;
+			return err(c, result.code, result.message, status);
+		}
+
+		broadcastChange(c, wsRoom.company(companyId), 'comment_reactions', 'INSERT', {
+			comment_id: commentId,
+			issue_id: issueId,
+			member_id: memberId,
+			kind,
+		});
+		return ok(c, { comment_id: commentId, kind, reactions: result.reactions });
+	},
+);
+
+commentsRoutes.delete(
+	'/companies/:companyId/issues/:issueId/comments/:commentId/reactions/:kind',
+	async (c) => {
+		const access = await requireCompanyAccess(c);
+		if (access instanceof Response) return access;
+
+		const db = c.get('db');
+		const { companyId } = access;
+		const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+		if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+		const commentId = c.req.param('commentId');
+		const kind = c.req.param('kind');
+
+		const memberId = await resolveActorMemberId(db, c.get('auth'), companyId);
+		if (!memberId) {
+			return err(c, 'FORBIDDEN', 'No member identity for caller', 403);
+		}
+
+		const result = await removeCommentReaction({
+			db,
+			companyId,
+			issueId,
+			commentId,
+			kind,
+			memberId,
+		});
+		if (!result.ok) {
+			const status = result.code === 'INVALID_KIND' ? 400 : 404;
+			return err(c, result.code, result.message, status);
+		}
+
+		broadcastChange(c, wsRoom.company(companyId), 'comment_reactions', 'DELETE', {
+			comment_id: commentId,
+			issue_id: issueId,
+			member_id: memberId,
+			kind,
+		});
+		return ok(c, { comment_id: commentId, kind, reactions: result.reactions });
+	},
+);
 
 commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) => {
 	const access = await requireCompanyAccess(c);
