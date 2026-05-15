@@ -35,7 +35,7 @@ Each test file is fully isolated via `createTestContext()` / `destroyTestContext
 
 GitHub OAuth/repo/SSH-key tests use the local simulator at `packages/server/src/test/helpers/github-sim.ts` — set `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the test context boots.
 
-E2E specs live in `tests/e2e/` (Playwright). Root `playwright.config.ts` auto-starts server (:3100) and web (:5173). Use `authenticate(page)` to bypass the master-key gate when not testing auth itself. Every UI change ships with an e2e test for the affected flow.
+E2E specs live in `test/e2e/` (Playwright). Root `playwright.config.ts` auto-starts server (:3100) and web (:5173). Use `authenticate(page)` to bypass the master-key gate when not testing auth itself. Every UI change ships with an e2e test for the affected flow.
 
 ## Type safety
 
