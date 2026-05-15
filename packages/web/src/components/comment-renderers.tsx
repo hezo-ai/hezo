@@ -23,6 +23,7 @@ import {
 	useFulfillCredential,
 	useRemoveReaction,
 } from '../hooks/use-comments';
+import { formatElapsed } from '../hooks/use-elapsed-duration';
 import {
 	getRunWaitingMessage,
 	isActiveRunStatus,
@@ -232,20 +233,14 @@ function RunComment({
 
 	return (
 		<div className="flex flex-col gap-1.5" data-testid="run-comment">
-			{inline && (
-				<div className="flex items-baseline gap-2">
-					<span className="text-xs text-text-muted">{agentTitle} run</span>
-					<span className="text-[11px] text-text-subtle">
-						{new Date(comment.created_at).toLocaleString()}
-					</span>
-				</div>
-			)}
 			<LazyMount minHeight={210} testId="run-comment-lazy">
 				<RunCommentBody
 					companyId={companyId}
 					runId={runId}
 					agentId={agentId}
 					agentTitle={agentTitle}
+					createdAt={comment.created_at}
+					inline={inline}
 				/>
 			</LazyMount>
 		</div>
@@ -257,11 +252,15 @@ function RunCommentBody({
 	runId,
 	agentId,
 	agentTitle,
+	createdAt,
+	inline,
 }: {
 	companyId: string;
 	runId: string;
 	agentId: string;
 	agentTitle: string;
+	createdAt: string;
+	inline?: boolean;
 }) {
 	const runQuery = useHeartbeatRun(companyId, agentId, runId);
 	const run = runQuery.data;
@@ -269,24 +268,64 @@ function RunCommentBody({
 	const isActive = isActiveRunStatus(status);
 	const { lines } = useRunLogs(run?.project_id, runId, run?.log_text, isActive);
 	const createdIssues = run?.created_issues ?? [];
+	const completed = run != null && !isActive;
+	const durationMs =
+		run?.started_at && run.finished_at
+			? Math.max(0, new Date(run.finished_at).getTime() - new Date(run.started_at).getTime())
+			: null;
 
 	return (
 		<>
-			<LogViewer
-				lines={lines}
-				compact
-				heightClassName="h-[180px]"
-				testId="run-comment-log"
-				liveLabel={
-					<span className="flex items-center gap-1.5">
-						<span className={`inline-block w-2 h-2 rounded-full ${runStatusDotClass(status)}`} />
-						<span>
-							{agentTitle} — {runStatusLabel(status)}
+			{inline && (
+				<div
+					className="flex flex-wrap items-baseline gap-x-2 gap-y-1"
+					data-testid="run-comment-header"
+				>
+					<span className="text-xs text-text-muted">{agentTitle} run</span>
+					{completed && (
+						<span
+							className="inline-flex items-baseline gap-1.5 text-xs text-text-subtle"
+							data-testid="run-comment-summary"
+						>
+							<span
+								aria-hidden="true"
+								className={`inline-block w-2 h-2 rounded-full self-center ${runStatusDotClass(status)}`}
+							/>
+							<span>{runStatusLabel(status)}</span>
+							<span aria-hidden="true">·</span>
+							<span data-testid="run-comment-line-count">
+								{lines.length} {lines.length === 1 ? 'line' : 'lines'}
+							</span>
+							{durationMs != null && (
+								<>
+									<span aria-hidden="true">·</span>
+									<span data-testid="run-comment-duration">{formatElapsed(durationMs)}</span>
+								</>
+							)}
 						</span>
+					)}
+					<span className="text-[11px] text-text-subtle">
+						{new Date(createdAt).toLocaleString()}
 					</span>
-				}
-				emptyState={getRunWaitingMessage(status)}
-			/>
+				</div>
+			)}
+			{!completed && (
+				<LogViewer
+					lines={lines}
+					compact
+					heightClassName="h-[180px]"
+					testId="run-comment-log"
+					liveLabel={
+						<span className="flex items-center gap-1.5">
+							<span className={`inline-block w-2 h-2 rounded-full ${runStatusDotClass(status)}`} />
+							<span>
+								{agentTitle} — {runStatusLabel(status)}
+							</span>
+						</span>
+					}
+					emptyState={getRunWaitingMessage(status)}
+				/>
+			)}
 			{createdIssues.length > 0 && (
 				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-issues">
 					<span className="text-xs text-text-subtle">Created tickets</span>

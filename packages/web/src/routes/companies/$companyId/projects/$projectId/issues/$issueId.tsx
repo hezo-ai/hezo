@@ -178,9 +178,24 @@ function IssueDetailPage() {
 		if (!scrollParent) return;
 		const target = scrollParent;
 		target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
-		for (const delay of [200, 500, 900, 1400]) {
-			setTimeout(() => target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' }), delay);
-		}
+		// Lazy virtualised content keeps growing scrollHeight as new rows render,
+		// so re-anchor at the bottom until the height stops changing or the budget runs out.
+		const deadline = Date.now() + 5000;
+		let lastScrollHeight = -1;
+		let stableTicks = 0;
+		const tick = () => {
+			target.scrollTo({ top: target.scrollHeight, behavior: 'auto' });
+			if (target.scrollHeight === lastScrollHeight) {
+				stableTicks++;
+				if (stableTicks >= 3) return;
+			} else {
+				lastScrollHeight = target.scrollHeight;
+				stableTicks = 0;
+			}
+			if (Date.now() >= deadline) return;
+			setTimeout(tick, 100);
+		};
+		setTimeout(tick, 400);
 	};
 
 	useEffect(() => {

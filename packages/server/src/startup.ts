@@ -321,33 +321,14 @@ export function buildApp(
 	return app;
 }
 
-async function cleanupOrphanRunSockets(db: PGlite, dataDir: string): Promise<void> {
+async function cleanupOrphanRunSockets(_db: PGlite, dataDir: string): Promise<void> {
 	const fs = await import('node:fs/promises');
 	const { join } = await import('node:path');
-	const companiesDir = join(dataDir, 'companies');
-	if (!existsSync(companiesDir)) return;
-
-	const liveRunIds = new Set<string>();
-	try {
-		const live = await db.query<{ id: string }>(
-			"SELECT id FROM heartbeat_runs WHERE status = 'running'",
-		);
-		for (const row of live.rows) liveRunIds.add(row.id);
-	} catch {
-		return;
-	}
-
-	for (const company of await fs.readdir(companiesDir).catch(() => [])) {
-		const projectsDir = join(companiesDir, company, 'projects');
-		for (const project of await fs.readdir(projectsDir).catch(() => [])) {
-			const runDir = join(projectsDir, project, 'run');
-			for (const entry of await fs.readdir(runDir).catch(() => [])) {
-				if (!entry.endsWith('.sock')) continue;
-				const runId = entry.replace(/\.sock$/, '').replace(/^bootstrap-/, '');
-				if (liveRunIds.has(runId)) continue;
-				await fs.rm(join(runDir, entry), { force: true }).catch(() => undefined);
-			}
-		}
+	const { getRunSocketDir } = await import('./services/workspace.js');
+	const socketDir = getRunSocketDir(dataDir);
+	for (const entry of await fs.readdir(socketDir).catch(() => [])) {
+		if (!entry.endsWith('.sock')) continue;
+		await fs.rm(join(socketDir, entry), { force: true }).catch(() => undefined);
 	}
 }
 

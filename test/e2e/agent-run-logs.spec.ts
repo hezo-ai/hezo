@@ -115,11 +115,9 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	await expect(page).toHaveURL(new RegExp(`/issues/${issue.identifier.toLowerCase()}$`));
 });
 
-test('issue page renders run as an inline comment with live-styled log', async ({
+test('issue page renders completed run as a collapsed inline comment with summary', async ({
 	page,
-	context,
 }) => {
-	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 	await authenticate(page);
 	const { company, token } = await createCompanyWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
@@ -128,76 +126,94 @@ test('issue page renders run as an inline comment with live-styled log', async (
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
 
-	const project = await createProjectAndClearPlanning(page, company.id, token, {
-		name: 'Run Comment Project',
-		description: 'Test project.',
+	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		headers,
+		data: { name: 'Collapsed Run Project', description: 'Test project.' },
 	});
-
-	await waitForContainer(page, company.id, project.id, token);
+	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
 	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
 		headers,
-		data: {
-			project_id: project.id,
-			title: 'Inline Run',
-			description: 'Synthetic test task',
-			assignee_id: ceo.id,
-		},
+		data: { project_id: project.id, title: 'Collapsed Run Issue', assignee_id: ceo.id },
 	});
-	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
+	const issue = ((await issueRes.json()) as { data: { id: string } }).data;
 
-	await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
-		headers,
-		data: { content_type: 'text', content: { text: 'Begin' } },
+	const runId = '88888888-8888-8888-8888-888888888888';
+	const startedAt = '2026-05-15T18:11:00Z';
+	const finishedAt = '2026-05-15T18:12:17Z';
+	const logText = Array.from({ length: 27 }, (_, i) => `[synthetic] line ${i + 1}`).join('\n');
+
+	const runComment = {
+		id: 'bbbb0000-0000-0000-0000-000000000001',
+		issue_id: issue.id,
+		content_type: 'run',
+		content: { run_id: runId, agent_id: ceo.id, agent_title: 'Product Lead' },
+		chosen_option: null,
+		created_at: startedAt,
+		author_type: 'agent',
+		author_name: 'Product Lead',
+		author_member_id: ceo.id,
+	};
+
+	await page.route('**/api/companies/*/issues/*/comments**', async (route) => {
+		if (route.request().method() !== 'GET') return route.continue();
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ data: [runComment] }),
+		});
 	});
 
-	const run = await waitForRunStatus(page, company.id, issue.id, token, 'succeeded');
+	const runResponse = {
+		id: runId,
+		member_id: ceo.id,
+		company_id: company.id,
+		issue_id: issue.id,
+		issue_identifier: null,
+		issue_title: null,
+		project_id: project.id,
+		status: 'succeeded',
+		started_at: startedAt,
+		finished_at: finishedAt,
+		exit_code: 0,
+		error: null,
+		input_tokens: 0,
+		output_tokens: 0,
+		cost_cents: 0,
+		invocation_command: null,
+		log_text: logText,
+		working_dir: null,
+		created_issues: [],
+	};
+
+	await page.route(`**/api/companies/*/agents/${ceo.id}/heartbeat-runs/${runId}`, async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ data: runResponse }),
+		});
+	});
 
 	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
 
-	const runComment = page.getByTestId('run-comment').first();
-	await expect(runComment).toBeVisible({ timeout: 20_000 });
+	const runCommentEl = page.getByTestId('run-comment').first();
+	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
 
-	const runLog = runComment.getByTestId('run-comment-log');
-	await expect(runLog).toBeVisible();
-	await expect(runLog).toContainText('[synthetic]', { timeout: 20_000 });
+	const summary = runCommentEl.getByTestId('run-comment-summary');
+	await expect(summary).toBeVisible({ timeout: 20_000 });
+	await expect(summary).toContainText('succeeded');
+	await expect(summary.getByTestId('run-comment-line-count')).toHaveText('27 lines');
+	await expect(summary.getByTestId('run-comment-duration')).toHaveText('1m17s');
 
-	// LazyMount swaps a 210px placeholder for the 180px log body once the row
-	// intersects the viewport — poll instead of snapshotting so the transition
-	// has time to land on a slow CI runner.
-	await expect
-		.poll(() => runLog.evaluate((el) => el.getBoundingClientRect().height), {
-			timeout: 5_000,
-		})
-		.toBeLessThan(220);
-	const height = await runLog.evaluate((el) => el.getBoundingClientRect().height);
-	expect(height).toBeGreaterThan(150);
+	await expect(runCommentEl.getByTestId('run-comment-log')).toHaveCount(0);
+	await expect(runCommentEl.getByRole('button', { name: /copy logs to clipboard/i })).toHaveCount(
+		0,
+	);
 
-	await expect(page.getByTestId('issue-run-log-tail')).toHaveCount(0);
-
-	const copyBtn = runComment.getByRole('button', { name: /copy logs to clipboard/i });
-	await expect(copyBtn).toBeVisible();
-	await copyBtn.click();
-	await expect(copyBtn).toContainText(/copied/i, { timeout: 2000 });
-	const minifiedClipboard = await page.evaluate(() => navigator.clipboard.readText());
-	expect(minifiedClipboard).toContain('[synthetic]');
-
-	const expandBtn = runComment.getByRole('button', { name: /expand log viewer/i });
-	await expandBtn.click();
-	const fullscreen = page.getByTestId('log-viewer-fullscreen');
-	await expect(fullscreen).toBeVisible();
-	const fullscreenCopyBtn = fullscreen.getByRole('button', { name: /copy logs to clipboard/i });
-	await expect(fullscreenCopyBtn).toBeVisible();
-	await fullscreenCopyBtn.click();
-	await expect(fullscreenCopyBtn).toContainText(/copied/i, { timeout: 2000 });
-	const expandedClipboard = await page.evaluate(() => navigator.clipboard.readText());
-	expect(expandedClipboard).toContain('[synthetic]');
-
-	await page.keyboard.press('Escape');
-	await expect(fullscreen).toBeHidden();
-
-	const runLink = runComment.getByRole('link', { name: /view full run/i });
+	const runLink = runCommentEl.getByRole('link', { name: /view full run/i });
 	await expect(runLink).toBeVisible();
-	await runLink.click();
-	await expect(page).toHaveURL(new RegExp(`/executions/${run.id}$`));
+	await expect(runLink).toHaveAttribute(
+		'href',
+		new RegExp(`/companies/${company.slug}/agents/${ceo.id}/executions/${runId}$`),
+	);
 });

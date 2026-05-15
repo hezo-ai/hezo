@@ -52,7 +52,7 @@ import {
 import { resolveRuntimeForIssue } from './runtime-resolver';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { resolveSystemPrompt } from './template-resolver';
-import { getProjectRunDir, getWorkspacePath, getWorktreesPath } from './workspace';
+import { getRunSocketPath, getWorkspacePath, getWorktreesPath } from './workspace';
 import type { WebSocketManager } from './ws';
 
 export interface AgentInfo {
@@ -580,8 +580,7 @@ export async function runAgent(
 	let sshSocketHostPath: string | null = null;
 	let bridge: BridgeRunnerArgs | null = null;
 	if (deps.sshAgentServer) {
-		const runDir = getProjectRunDir(deps.dataDir, project.company_slug, project.slug);
-		sshSocketHostPath = join(runDir, `${heartbeatRunId}.sock`);
+		sshSocketHostPath = getRunSocketPath(deps.dataDir, heartbeatRunId);
 		const allocated = await deps.sshAgentServer.allocateRunSocket(
 			heartbeatRunId,
 			{ companyId: agent.company_id, agentId: agent.id },
