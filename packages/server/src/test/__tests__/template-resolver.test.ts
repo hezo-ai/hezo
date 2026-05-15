@@ -211,6 +211,7 @@ describe('template resolver', () => {
 		expect(result).toContain('### Knowledge Maintenance');
 		expect(result).toContain('### Sub-Agents & Parallel Exploration');
 		expect(result).toContain('### Sub-Issue Delegation');
+		expect(result).toContain('### Comment Timing');
 		expect(result).toContain('update_issue');
 		expect(result).toContain('write_project_doc');
 		expect(result).toContain('upsert_kb_doc');

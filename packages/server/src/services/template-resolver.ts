@@ -37,6 +37,12 @@ const SHARED_INSTRUCTIONS = `
 
 ### Sub-Issue Delegation
 - Use \`create_issue\` with \`parent_issue_id\` and \`assignee_slug\` to create sub-issues and delegate work to other agents. The Teammates block above lists every enabled peer's slug — use \`list_agents\` only when you need details (description / reports_to) on a specific teammate.
+
+### Comment Timing
+- Post comments at the end of your run, after every other action. A comment almost always tends to be either a summary of what you did and/or a request for someone else to take a look — both are end-of-run moves.
+- If your run will create new tickets (sub-issues, follow-ups, delegations) that the comment should reference, call \`create_issue\` first and quote the resulting identifiers in the wrap-up comment. A comment announcing work you have not yet filed leaves readers without anywhere to look.
+- Skip play-by-play narration ("starting now", "halfway done"). The run record already shows every tool call you made; restating it in a comment burns wakeups for no gain.
+- Acknowledging an @-mention per the mention-handoff guidance is itself a single end-of-turn comment, so the same rule applies — do any ticket creation first, then post once and end the turn.
 `;
 
 export async function resolveSystemPrompt(
