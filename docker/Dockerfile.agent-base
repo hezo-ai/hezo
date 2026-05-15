@@ -22,4 +22,8 @@ COPY scripts/hezo-ssh-bridge /usr/local/bin/hezo-ssh-bridge
 COPY scripts/hezo-run-with-bridge /usr/local/bin/hezo-run-with-bridge
 RUN chmod +x /usr/local/bin/hezo-ssh-bridge /usr/local/bin/hezo-run-with-bridge
 
+# Runtime dir for the per-run Unix socket. The container is started as the
+# unprivileged `node` user, which cannot create subdirectories under /run.
+RUN mkdir -p /run/hezo && chown node:node /run/hezo
+
 WORKDIR /workspace

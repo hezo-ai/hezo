@@ -220,10 +220,11 @@ export function buildApp(
 		return c.text(md, 200, { 'Content-Type': 'text/markdown' });
 	});
 
-	// MCP endpoint (authenticated)
+	// MCP endpoint (authenticated). Only JSON-RPC POST is supported; the
+	// server does not offer an SSE event stream or session lifecycle, so
+	// GET/DELETE return 405 per the MCP Streamable-HTTP transport spec.
 	app.post('/mcp', (c) => handleMcpRequest(c));
-	app.get('/mcp', (c) => handleMcpRequest(c));
-	app.delete('/mcp', (c) => handleMcpRequest(c));
+	app.on(['GET', 'DELETE'], '/mcp', (c) => c.text('Method Not Allowed', 405, { Allow: 'POST' }));
 
 	// Auth routes (token endpoint is public, handled before auth middleware)
 	app.route('/api', authRoutes);

@@ -177,6 +177,18 @@ describe('MCP endpoint', () => {
 		expect(body).not.toHaveProperty('result');
 	});
 
+	it('returns 405 with Allow: POST on GET', async () => {
+		const res = await app.request('/mcp', { method: 'GET', headers: authHeader(token) });
+		expect(res.status).toBe(405);
+		expect(res.headers.get('Allow')).toBe('POST');
+	});
+
+	it('returns 405 with Allow: POST on DELETE', async () => {
+		const res = await app.request('/mcp', { method: 'DELETE', headers: authHeader(token) });
+		expect(res.status).toBe(405);
+		expect(res.headers.get('Allow')).toBe('POST');
+	});
+
 	it('rejects an agent token once its run has finalized', async () => {
 		const { token: agentToken, runId } = await mintAgentToken(
 			db,
