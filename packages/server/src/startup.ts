@@ -45,6 +45,7 @@ import { skillsRoutes } from './routes/skills';
 import { uiStateRoutes } from './routes/ui-state';
 import { DockerClient } from './services/docker';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
+import { pruneStaleBundledImages } from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
 import { SshAgentServer } from './services/ssh-agent';
@@ -105,6 +106,16 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker = createFakeDockerClient();
 	} else {
 		docker = new DockerClient();
+		try {
+			const outcome = await pruneStaleBundledImages(docker);
+			if (outcome.removed.length > 0 || outcome.skipped.length > 0) {
+				log.info(
+					`bundled-image prune: kept=${outcome.kept.length} removed=${outcome.removed.length} skipped=${outcome.skipped.length}`,
+				);
+			}
+		} catch (err) {
+			log.error('bundled-image prune failed (continuing startup):', err);
+		}
 	}
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();

@@ -1,6 +1,6 @@
 import type { DockerClient } from './docker';
-import { type BuildOnLine, buildImageViaCli } from './image-builder';
-import { type ResolvedLocalImage, resolveLocalImage } from './image-registry';
+import { type BuildOnLine, type BuildOptions, buildImageViaCli } from './image-builder';
+import { BUNDLE_SHA_LABEL, type ResolvedLocalImage, resolveLocalImage } from './image-registry';
 
 export interface EnsureImageDeps {
 	resolveLocal?: (image: string) => ResolvedLocalImage | null;
@@ -8,7 +8,7 @@ export interface EnsureImageDeps {
 		image: string,
 		contextPath: string,
 		dockerfilePath: string,
-		onLine?: BuildOnLine,
+		options?: BuildOptions,
 	) => Promise<void>;
 	onLine?: BuildOnLine;
 }
@@ -24,7 +24,10 @@ export async function ensureImage(
 	const local = resolver(image);
 	if (local) {
 		const builder = deps.build ?? buildImageViaCli;
-		await builder(local.image, local.context, local.dockerfile, deps.onLine);
+		await builder(local.image, local.context, local.dockerfile, {
+			onLine: deps.onLine,
+			labels: { [BUNDLE_SHA_LABEL]: local.bundleSourceHash },
+		});
 		return;
 	}
 

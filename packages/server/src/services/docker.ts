@@ -46,6 +46,13 @@ interface ContainerInfo {
 	};
 }
 
+export interface ImageInfo {
+	Id: string;
+	Config: {
+		Labels: Record<string, string> | null;
+	};
+}
+
 async function parseJsonOrThrow<T>(res: Response, op: string): Promise<T> {
 	const text = await res.text();
 	if (text.trim() === '') {
@@ -102,6 +109,31 @@ export class DockerClient {
 		}
 		await res.text();
 		return false;
+	}
+
+	async inspectImage(image: string): Promise<ImageInfo | null> {
+		const res = await this.request('GET', `/images/${encodeURIComponent(image)}/json`);
+		if (res.status === 404) {
+			await res.text();
+			return null;
+		}
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Docker inspectImage failed (${res.status}): ${text}`);
+		}
+		return parseJsonOrThrow(res, 'inspectImage');
+	}
+
+	async removeImage(image: string, force = false): Promise<void> {
+		const res = await this.request(
+			'DELETE',
+			`/images/${encodeURIComponent(image)}?force=${force}&noprune=false`,
+		);
+		if (!res.ok && res.status !== 404) {
+			const text = await res.text();
+			throw new Error(`Docker removeImage failed (${res.status}): ${text}`);
+		}
+		await res.text();
 	}
 
 	async pullImage(image: string): Promise<void> {
