@@ -1,5 +1,6 @@
 import {
 	AgentEffort,
+	AgentRuntimeStatus,
 	CEO_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	IssueStatus,
@@ -762,7 +763,7 @@ function IssueDetailPage() {
 					</select>
 				</div>
 
-				<div ref={assigneeRef} className="relative">
+				<div ref={assigneeRef} className="relative" data-testid="issue-assignee">
 					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
 						Assignee
 					</span>
@@ -770,7 +771,7 @@ function IssueDetailPage() {
 						<div className="flex items-center gap-1 w-full text-[13px] text-text px-1 py-0.5">
 							<AgentStatusLabel
 								name={assignedAgent?.title ?? '—'}
-								runtimeStatus={assignedAgent?.runtime_status ?? 'idle'}
+								runtimeStatus={AgentRuntimeStatus.Active}
 								className="flex-1 min-w-0"
 							/>
 							<Tooltip content="Cannot change assignee while an agent is running on this issue">
@@ -792,7 +793,7 @@ function IssueDetailPage() {
 							>
 								<AgentStatusLabel
 									name={assignedAgent?.title ?? '—'}
-									runtimeStatus={assignedAgent?.runtime_status ?? 'idle'}
+									runtimeStatus={AgentRuntimeStatus.Idle}
 									className="flex-1 min-w-0"
 								/>
 								<ChevronDown
@@ -813,7 +814,7 @@ function IssueDetailPage() {
 												a.id === issue.assignee_id ? 'bg-bg-subtle font-medium' : ''
 											}`}
 										>
-											<AgentStatusLabel name={a.title} runtimeStatus={a.runtime_status} />
+											<AgentStatusLabel name={a.title} runtimeStatus={AgentRuntimeStatus.Idle} />
 										</button>
 									))}
 								</div>
