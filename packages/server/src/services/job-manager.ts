@@ -137,6 +137,8 @@ export class JobManager {
 			wsManager: this.deps.wsManager,
 			masterKeyManager: this.deps.masterKeyManager,
 			logs: this.deps.logs,
+			sshAgentServer: this.deps.sshAgentServer,
+			egressCAPath: this.deps.egressCAPath ?? null,
 		};
 	}
 
