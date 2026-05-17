@@ -241,9 +241,10 @@ Issues progress through these statuses:
 1. **Backlog** — captured but not yet picked up
 2. **In Progress** — actively being worked on
 3. **Review** — implementation complete, awaiting QA review
-4. **Approved** — QA-approved, ready to land
-5. **Done** — landed, awaiting Coach post-mortem
-6. **Closed** — Coach review complete
+4. **Done** — QA-approved and landed, awaiting Coach post-mortem
+5. **Closed** — Coach review complete
+
+Approval is conveyed via comment, not status. From **Review**, the ticket either goes back to **In Progress** (more work needed) or forward to **Done** (work complete and approved). The **Blocked** status is reserved for explicit "I'm stuck" signals; agents and the system also use ticket dependencies to gate runs on prerequisites without setting this status.
 
 ## Branching Strategy
 

@@ -159,7 +159,7 @@ describe('agents CRUD', () => {
 
 		expect(prompt).toMatch(/read_project_doc/);
 		expect(prompt).toMatch(/prd\.md/);
-		expect(prompt).toMatch(/@-?mention the Product Lead/i);
+		expect(prompt).toMatch(/add_issue_blocker/);
 		expect(prompt).toMatch(/PRD gate/i);
 	});
 

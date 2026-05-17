@@ -5,10 +5,12 @@ import {
 	COACH_AGENT_SLUG,
 	CommentContentType,
 	IssueStatus,
+	TERMINAL_ISSUE_STATUSES,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
+import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { logger } from '../logger';
 import { recordStatusChange } from './issue-events';
 import { OAUTH_VERIFICATION_LABEL } from './oauth-verification-tasks';
@@ -114,6 +116,14 @@ export async function triggerStatusAutomations(
 	wsManager?: WebSocketManager,
 ): Promise<void> {
 	await recordStatusChange(db, companyId, issueId, oldStatus, newStatus, actorMemberId, wsManager);
+
+	if ((TERMINAL_ISSUE_STATUSES as readonly string[]).includes(newStatus)) {
+		try {
+			await recomputeDownstreamReadiness(db, issueId);
+		} catch (e) {
+			log.error('Failed to recompute downstream readiness:', e);
+		}
+	}
 
 	if (newStatus === IssueStatus.Done) {
 		const coach = await db.query<{ id: string }>(

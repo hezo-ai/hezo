@@ -23,9 +23,10 @@ import { assertNoActiveRun } from '../lib/active-run';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { broadcastRowChange } from '../lib/broadcast';
 import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
+import { wakeIfReady, wouldCreateCycle } from '../lib/dependencies';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/issue-relationships';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
-import { resolveActorMemberId } from '../lib/resolve';
+import { resolveActorMemberId, resolveIssueId } from '../lib/resolve';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import { resolveProjectIssuePrefix } from '../routes/projects';
@@ -229,6 +230,7 @@ function mcpArgsToCreateIssueInput(args: Record<string, unknown>): CreateIssueIn
 		parent_issue_id: args.parent_issue_id as string | undefined,
 		priority: args.priority as string | undefined,
 		runtime_type: args.runtime_type as string | undefined,
+		blocked_by_issue_ids: args.blocked_by_issue_ids as string[] | undefined,
 	};
 }
 
@@ -416,7 +418,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_issue',
-		'Get issue details',
+		"Get issue details, including the ticket's declared blockers (each with identifier, title, and current status). A non-empty blockers list means an automatic agent run on this ticket is paused until every blocker reaches a terminal status (done, closed, cancelled).",
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
@@ -428,7 +430,17 @@ export function registerTools(
 				`SELECT ${ISSUE_COLUMNS_BARE} FROM issues i WHERE i.id = $1 AND i.company_id = $2`,
 				[args.issue_id, args.company_id],
 			);
-			return r.rows[0] ?? null;
+			const issue = r.rows[0];
+			if (!issue) return null;
+			const blockers = await db.query(
+				`SELECT d.id AS dependency_id, b.id, b.identifier, b.title, b.status::text AS status
+				 FROM issue_dependencies d
+				 JOIN issues b ON b.id = d.blocked_by_issue_id
+				 WHERE d.issue_id = $1
+				 ORDER BY d.created_at ASC`,
+				[args.issue_id],
+			);
+			return { ...(issue as Record<string, unknown>), blockers: blockers.rows };
 		},
 		db,
 	);
@@ -436,7 +448,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_issue',
-		'Create a new issue. Use parent_issue_id for sub-issues — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-issues themselves can have sub-issues, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Create a new issue. Use parent_issue_id for sub-issues — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-issues themselves can have sub-issues, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_issue_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().describe('Project ID'),
@@ -459,6 +471,12 @@ export function registerTools(
 				.optional()
 				.describe(
 					'Pin this issue to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default.',
+				),
+			blocked_by_issue_ids: z
+				.array(z.string())
+				.optional()
+				.describe(
+					'Issue identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this ticket is started. The assignee will not be woken on this ticket until every blocker is satisfied.',
 				),
 		},
 		async (args, db, auth) => {
@@ -506,6 +524,12 @@ export function registerTools(
 							.optional()
 							.describe(
 								'Pin this issue to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default.',
+							),
+						blocked_by_issue_ids: z
+							.array(z.string())
+							.optional()
+							.describe(
+								'Issue identifiers (e.g. ["BE-2"]) or UUIDs that must reach a terminal status before this ticket is started.',
 							),
 					}),
 				)
@@ -564,7 +588,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'New status (backlog, in_progress, review, approved, blocked, done, closed, cancelled). Once an issue is `closed`, only board members can change its status again.',
+					'New status (backlog, in_progress, review, blocked, done, closed, cancelled). Once an issue is `closed`, only board members can change its status again.',
 				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z.string().optional().describe('New assignee ID'),
@@ -735,6 +759,67 @@ export function registerTools(
 			}
 
 			return r.rows[0];
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'add_issue_blocker',
+		'Declare that one issue blocks another. The downstream ticket will not start an automatic agent run until the blocker reaches a terminal status (done, closed, cancelled). Use this when you discover that a ticket you have been woken on depends on work that has not landed yet — declare the blocker and end your turn; the system will wake you again when the blocker resolves. Cycles are rejected.',
+		{
+			company_id: z.string().describe('Company ID'),
+			issue_id: z.string().describe('Issue identifier or UUID that should be blocked'),
+			blocked_by_issue_id: z.string().describe('Issue identifier or UUID of the upstream blocker'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const companyId = args.company_id as string;
+			const issueId = await resolveIssueId(db, companyId, args.issue_id as string);
+			if (!issueId) return { error: 'Issue not found' };
+			const blockerId = await resolveIssueId(db, companyId, args.blocked_by_issue_id as string);
+			if (!blockerId) return { error: 'Blocking issue not found in this company' };
+			if (blockerId === issueId) return { error: 'An issue cannot block itself' };
+			if (await wouldCreateCycle(db, issueId, blockerId)) {
+				return { error: 'Dependency would create a cycle' };
+			}
+			const r = await db.query(
+				`INSERT INTO issue_dependencies (issue_id, blocked_by_issue_id)
+				 VALUES ($1, $2) ON CONFLICT DO NOTHING
+				 RETURNING id, issue_id, blocked_by_issue_id, created_at`,
+				[issueId, blockerId],
+			);
+			if (r.rows.length === 0) return { error: 'Dependency already exists' };
+			return r.rows[0];
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'remove_issue_blocker',
+		"Remove a blocker between two issues. Call this when a dependency that was previously declared no longer applies. If removing this dependency clears the downstream ticket's last open blocker, its assignee is woken automatically.",
+		{
+			company_id: z.string().describe('Company ID'),
+			issue_id: z.string().describe('Issue identifier or UUID that is currently blocked'),
+			blocked_by_issue_id: z.string().describe('Issue identifier or UUID of the blocker to remove'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const companyId = args.company_id as string;
+			const issueId = await resolveIssueId(db, companyId, args.issue_id as string);
+			if (!issueId) return { error: 'Issue not found' };
+			const blockerId = await resolveIssueId(db, companyId, args.blocked_by_issue_id as string);
+			if (!blockerId) return { error: 'Blocking issue not found' };
+			const r = await db.query(
+				'DELETE FROM issue_dependencies WHERE issue_id = $1 AND blocked_by_issue_id = $2 RETURNING id',
+				[issueId, blockerId],
+			);
+			if (r.rows.length === 0) return { error: 'Dependency not found' };
+			await wakeIfReady(db, issueId);
+			return { removed: true };
 		},
 		db,
 	);

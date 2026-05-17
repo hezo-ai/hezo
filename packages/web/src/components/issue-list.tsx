@@ -15,7 +15,6 @@ const statusColors: Record<string, string> = {
 	backlog: 'neutral',
 	in_progress: 'warning',
 	review: 'purple',
-	approved: 'success',
 	blocked: 'danger',
 	done: 'success',
 	closed: 'neutral',

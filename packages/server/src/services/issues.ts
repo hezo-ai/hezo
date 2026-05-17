@@ -11,9 +11,11 @@ import {
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { auditLog } from '../lib/audit';
 import { broadcastRowChange } from '../lib/broadcast';
+import { wouldCreateCycle } from '../lib/dependencies';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { assertChildDepthAllowed } from '../lib/issue-relationships';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
+import { resolveIssueId } from '../lib/resolve';
 import { logger } from '../logger';
 import { recordIssueLinks } from './issue-events';
 import { createWakeup } from './wakeup';
@@ -42,6 +44,7 @@ export interface CreateIssueInput {
 	priority?: string;
 	labels?: string[];
 	runtime_type?: string;
+	blocked_by_issue_ids?: string[];
 }
 
 export interface CreateIssueCaller {
@@ -146,6 +149,10 @@ export async function createIssue(
 	);
 	const issue = r.rows[0];
 
+	if (input.blocked_by_issue_ids?.length) {
+		await attachBlockers(db, companyId, issue.id, input.blocked_by_issue_ids);
+	}
+
 	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
 	if (isAgent.rows.length > 0) {
 		createWakeup(db, assigneeId, companyId, WakeupSource.Assignment, {
@@ -178,4 +185,37 @@ export async function createIssue(
 	}
 
 	return issue;
+}
+
+async function attachBlockers(
+	db: PGlite,
+	companyId: string,
+	issueId: string,
+	rawIds: readonly string[],
+): Promise<void> {
+	const seen = new Set<string>();
+	for (const raw of rawIds) {
+		const trimmed = typeof raw === 'string' ? raw.trim() : '';
+		if (!trimmed) continue;
+		const blockerId = await resolveIssueId(db, companyId, trimmed);
+		if (!blockerId) {
+			throw new CreateIssueError('NOT_FOUND', `Blocking issue '${trimmed}' not found`);
+		}
+		if (blockerId === issueId) {
+			throw new CreateIssueError('INVALID_REQUEST', 'An issue cannot block itself');
+		}
+		if (seen.has(blockerId)) continue;
+		seen.add(blockerId);
+		if (await wouldCreateCycle(db, issueId, blockerId)) {
+			throw new CreateIssueError(
+				'INVALID_REQUEST',
+				`Adding ${trimmed} as a blocker would create a dependency cycle`,
+			);
+		}
+		await db.query(
+			`INSERT INTO issue_dependencies (issue_id, blocked_by_issue_id)
+			 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			[issueId, blockerId],
+		);
+	}
 }

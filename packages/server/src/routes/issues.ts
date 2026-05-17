@@ -10,6 +10,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { assertNoActiveRun } from '../lib/active-run';
 import { broadcastChange } from '../lib/broadcast';
+import { wakeIfReady, wouldCreateCycle } from '../lib/dependencies';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/issue-relationships';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
@@ -724,6 +725,10 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
 		return err(c, 'INVALID_REQUEST', 'An issue cannot block itself', 400);
 	}
 
+	if (await wouldCreateCycle(db, issueId, blockerId)) {
+		return err(c, 'INVALID_REQUEST', 'Dependency would create a cycle', 400);
+	}
+
 	const result = await db.query(
 		`INSERT INTO issue_dependencies (issue_id, blocked_by_issue_id)
      VALUES ($1, $2)
@@ -749,7 +754,6 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId/dependencies/:depId',
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const depId = c.req.param('depId');
 
-	// Verify issue belongs to company and dependency belongs to issue
 	const depCheck = await db.query(
 		`SELECT d.id FROM issue_dependencies d
      JOIN issues i ON i.id = d.issue_id
@@ -761,5 +765,6 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId/dependencies/:depId',
 	}
 
 	await db.query('DELETE FROM issue_dependencies WHERE id = $1', [depId]);
+	await wakeIfReady(db, issueId);
 	return c.json({ data: null }, 200);
 });

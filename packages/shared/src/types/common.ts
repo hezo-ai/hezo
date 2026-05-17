@@ -64,7 +64,6 @@ export const IssueStatus = {
 	Backlog: 'backlog',
 	InProgress: 'in_progress',
 	Review: 'review',
-	Approved: 'approved',
 	Blocked: 'blocked',
 	Done: 'done',
 	Closed: 'closed',
