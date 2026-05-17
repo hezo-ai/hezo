@@ -11,7 +11,7 @@ import {
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { auditLog } from '../lib/audit';
 import { broadcastRowChange } from '../lib/broadcast';
-import { wouldCreateCycle } from '../lib/dependencies';
+import { hasOpenBlockers, wouldCreateCycle } from '../lib/dependencies';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { assertChildDepthAllowed } from '../lib/issue-relationships';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
@@ -147,10 +147,17 @@ export async function createIssue(
 			input.runtime_type ?? null,
 		],
 	);
-	const issue = r.rows[0];
+	let issue = r.rows[0];
 
 	if (input.blocked_by_issue_ids?.length) {
 		await attachBlockers(db, companyId, issue.id, input.blocked_by_issue_ids);
+		if (await hasOpenBlockers(db, issue.id)) {
+			const updated = await db.query<typeof issue>(
+				'UPDATE issues SET status = $1::issue_status WHERE id = $2 RETURNING *',
+				[IssueStatus.Blocked, issue.id],
+			);
+			if (updated.rows[0]) issue = updated.rows[0];
+		}
 	}
 
 	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);

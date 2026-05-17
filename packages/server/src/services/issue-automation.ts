@@ -5,7 +5,6 @@ import {
 	COACH_AGENT_SLUG,
 	CommentContentType,
 	IssueStatus,
-	TERMINAL_ISSUE_STATUSES,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -117,12 +116,10 @@ export async function triggerStatusAutomations(
 ): Promise<void> {
 	await recordStatusChange(db, companyId, issueId, oldStatus, newStatus, actorMemberId, wsManager);
 
-	if ((TERMINAL_ISSUE_STATUSES as readonly string[]).includes(newStatus)) {
-		try {
-			await recomputeDownstreamReadiness(db, issueId);
-		} catch (e) {
-			log.error('Failed to recompute downstream readiness:', e);
-		}
+	try {
+		await recomputeDownstreamReadiness(db, companyId, issueId, actorMemberId, wsManager);
+	} catch (e) {
+		log.error('Failed to recompute downstream readiness:', e);
 	}
 
 	if (newStatus === IssueStatus.Done) {

@@ -23,7 +23,12 @@ import { assertNoActiveRun } from '../lib/active-run';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { broadcastRowChange } from '../lib/broadcast';
 import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
-import { wakeIfReady, wouldCreateCycle } from '../lib/dependencies';
+import {
+	coerceTargetStatusForBlockers,
+	reconcileBlockedStatus,
+	wakeIfReady,
+	wouldCreateCycle,
+} from '../lib/dependencies';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/issue-relationships';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import { resolveActorMemberId, resolveIssueId } from '../lib/resolve';
@@ -643,6 +648,14 @@ export function registerTools(
 				if (!activityCheck.ok) return { error: activityCheck.message };
 			}
 
+			if (args.status !== undefined) {
+				args.status = await coerceTargetStatusForBlockers(
+					db,
+					args.issue_id as string,
+					args.status as string,
+				);
+			}
+
 			if (args.assignee_id) {
 				const issueRow = await db.query<{
 					project_id: string;
@@ -791,6 +804,8 @@ export function registerTools(
 				[issueId, blockerId],
 			);
 			if (r.rows.length === 0) return { error: 'Dependency already exists' };
+			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			await reconcileBlockedStatus(db, companyId, issueId, actorMemberId, wsManager);
 			return r.rows[0];
 		},
 		db,
@@ -818,6 +833,8 @@ export function registerTools(
 				[issueId, blockerId],
 			);
 			if (r.rows.length === 0) return { error: 'Dependency not found' };
+			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			await reconcileBlockedStatus(db, companyId, issueId, actorMemberId, wsManager);
 			await wakeIfReady(db, issueId);
 			return { removed: true };
 		},

@@ -10,7 +10,12 @@ import {
 import { type Context, Hono } from 'hono';
 import { assertNoActiveRun } from '../lib/active-run';
 import { broadcastChange } from '../lib/broadcast';
-import { wakeIfReady, wouldCreateCycle } from '../lib/dependencies';
+import {
+	coerceTargetStatusForBlockers,
+	reconcileBlockedStatus,
+	wakeIfReady,
+	wouldCreateCycle,
+} from '../lib/dependencies';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/issue-relationships';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
@@ -429,6 +434,10 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		}
 	}
 
+	if (body.status !== undefined) {
+		body.status = await coerceTargetStatusForBlockers(db, issueId, body.status);
+	}
+
 	const sets: string[] = [];
 	const params: unknown[] = [];
 	let idx = 1;
@@ -743,6 +752,9 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
 		return err(c, 'CONFLICT', 'Dependency already exists', 409);
 	}
 
+	const actorMemberId = await resolveActorMemberId(c, companyId);
+	await reconcileBlockedStatus(db, companyId, issueId, actorMemberId, c.get('wsManager'));
+
 	return ok(c, result.rows[0], 201);
 });
 
@@ -767,6 +779,8 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId/dependencies/:depId',
 	}
 
 	await db.query('DELETE FROM issue_dependencies WHERE id = $1', [depId]);
+	const actorMemberId = await resolveActorMemberId(c, companyId);
+	await reconcileBlockedStatus(db, companyId, issueId, actorMemberId, c.get('wsManager'));
 	await wakeIfReady(db, issueId);
 	return c.json({ data: null }, 200);
 });

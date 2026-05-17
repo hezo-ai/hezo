@@ -1,7 +1,16 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { TERMINAL_ISSUE_STATUSES, WakeupSource, WakeupStatus } from '@hezo/shared';
+import {
+	IssueStatus,
+	TERMINAL_ISSUE_STATUSES,
+	WakeupSource,
+	WakeupStatus,
+	wsRoom,
+} from '@hezo/shared';
 import { logger } from '../logger';
+import { recordStatusChange } from '../services/issue-events';
 import { createWakeup } from '../services/wakeup';
+import type { WebSocketManager } from '../services/ws';
+import { broadcastRowChange } from './broadcast';
 
 const log = logger.child('dependencies');
 
@@ -89,26 +98,96 @@ export async function wouldCreateCycle(
 
 /**
  * Walk the downstream side of the dependency graph for `blockerIssueId` and
- * wake up any issue whose blockers are now all satisfied. Used on the three
- * unblock paths: a terminal-status transition, an explicit dependency
- * removal, and the side-effect of `triggerStatusAutomations`.
+ * reconcile each downstream's status against its current blocker state, then
+ * wake any that just became unblocked. Used on both directions of upstream
+ * status transitions (terminal entry/exit) and on direct dependency
+ * mutations.
  *
- * For each newly-unblocked downstream issue, the deferred wakeup is flipped
- * back to `queued` if one exists; otherwise a fresh assignment-source wakeup
- * is enqueued with an idempotency key keyed on the downstream issue ID, so
- * concurrent unblock events don't fan out duplicate runs.
+ * For each downstream issue whose blockers just cleared, `wakeIfReady`
+ * flips an existing deferred wakeup back to `queued` if one exists;
+ * otherwise it enqueues a fresh assignment-source wakeup with an
+ * idempotency key keyed on the downstream issue ID, so concurrent unblock
+ * events don't fan out duplicate runs.
  */
 export async function recomputeDownstreamReadiness(
 	db: PGlite,
+	companyId: string,
 	blockerIssueId: string,
+	actorMemberId: string | null,
+	wsManager: WebSocketManager | undefined,
 ): Promise<void> {
 	const downstream = await db.query<{ issue_id: string }>(
 		'SELECT DISTINCT issue_id FROM issue_dependencies WHERE blocked_by_issue_id = $1',
 		[blockerIssueId],
 	);
 	for (const row of downstream.rows) {
-		await wakeIfReady(db, row.issue_id);
+		const newStatus = await reconcileBlockedStatus(
+			db,
+			companyId,
+			row.issue_id,
+			actorMemberId,
+			wsManager,
+		);
+		if (newStatus === IssueStatus.Backlog || newStatus === null) {
+			await wakeIfReady(db, row.issue_id);
+		}
 	}
+}
+
+/**
+ * Coerce a requested status against the blocked-derivation invariant.
+ * Terminal targets pass through unchanged. For non-terminal targets: if
+ * the issue has any open blocker, the target collapses to `blocked`;
+ * if no open blockers remain and the caller asked for `blocked`, the
+ * target collapses to `backlog` (since `blocked` is purely derived).
+ */
+export async function coerceTargetStatusForBlockers(
+	db: PGlite,
+	issueId: string,
+	requested: string,
+): Promise<string> {
+	if ((TERMINAL_ISSUE_STATUSES as readonly string[]).includes(requested)) return requested;
+	const blocked = await hasOpenBlockers(db, issueId);
+	if (blocked) return IssueStatus.Blocked;
+	if (requested === IssueStatus.Blocked) return IssueStatus.Backlog;
+	return requested;
+}
+
+/**
+ * Reconcile an issue's stored status against its current blocker state.
+ * Terminal issues are never touched. Returns the new status when changed,
+ * or null when no update was needed.
+ */
+export async function reconcileBlockedStatus(
+	db: PGlite,
+	companyId: string,
+	issueId: string,
+	actorMemberId: string | null,
+	wsManager: WebSocketManager | undefined,
+): Promise<string | null> {
+	const r = await db.query<{ status: string }>('SELECT status FROM issues WHERE id = $1', [
+		issueId,
+	]);
+	const current = r.rows[0]?.status;
+	if (!current) return null;
+	if ((TERMINAL_ISSUE_STATUSES as readonly string[]).includes(current)) return null;
+
+	const blocked = await hasOpenBlockers(db, issueId);
+	let target: string | null = null;
+	if (blocked && current !== IssueStatus.Blocked) target = IssueStatus.Blocked;
+	else if (!blocked && current === IssueStatus.Blocked) target = IssueStatus.Backlog;
+	if (!target) return null;
+
+	const updated = await db.query<Record<string, unknown>>(
+		'UPDATE issues SET status = $1::issue_status, updated_at = NOW() WHERE id = $2 RETURNING *',
+		[target, issueId],
+	);
+	const row = updated.rows[0];
+	if (!row) return null;
+
+	await recordStatusChange(db, companyId, issueId, current, target, actorMemberId, wsManager);
+	broadcastRowChange(wsManager, wsRoom.company(companyId), 'issues', 'UPDATE', row);
+	return target;
 }
 
 /**

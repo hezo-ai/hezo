@@ -305,3 +305,155 @@ describe('dependency gate — wakeup deferral and reverse trigger', () => {
 		expect(after).toBeNull();
 	});
 });
+
+async function getIssueStatus(issueId: string): Promise<string> {
+	const r = await db.query<{ status: string }>('SELECT status FROM issues WHERE id = $1', [
+		issueId,
+	]);
+	return r.rows[0]?.status ?? '';
+}
+
+async function addDependency(issueId: string, blockerIdentifier: string): Promise<{ id: string }> {
+	const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/dependencies`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ blocked_by_issue_id: blockerIdentifier }),
+	});
+	expect(res.status).toBe(201);
+	return (await res.json()).data;
+}
+
+async function deleteDependency(issueId: string, depId: string): Promise<void> {
+	const res = await app.request(
+		`/api/companies/${companyId}/issues/${issueId}/dependencies/${depId}`,
+		{ method: 'DELETE', headers: authHeader(token) },
+	);
+	expect(res.status).toBe(200);
+}
+
+describe('blocked-status invariant', () => {
+	it('flips backlog to blocked when a dependency is added', async () => {
+		const upstream = await createIssue('inv-up', researcherId);
+		const downstream = await createIssue('inv-down', productLeadId);
+		expect(await getIssueStatus(downstream.id)).toBe(IssueStatus.Backlog);
+
+		await addDependency(downstream.id, upstream.identifier);
+
+		expect(await getIssueStatus(downstream.id)).toBe(IssueStatus.Blocked);
+	});
+
+	it('does not flip when the new blocker is already terminal', async () => {
+		const upstream = await createIssue('inv-up-done', researcherId);
+		await setStatus(upstream.id, IssueStatus.Done);
+		const downstream = await createIssue('inv-down-done-up', productLeadId);
+
+		await addDependency(downstream.id, upstream.identifier);
+
+		expect(await getIssueStatus(downstream.id)).toBe(IssueStatus.Backlog);
+	});
+
+	it('flips blocked back to backlog when the last open dependency is removed', async () => {
+		const upstream = await createIssue('inv-remove-up', researcherId);
+		const downstream = await createIssue('inv-remove-down', productLeadId);
+		const dep = await addDependency(downstream.id, upstream.identifier);
+		expect(await getIssueStatus(downstream.id)).toBe(IssueStatus.Blocked);
+
+		await deleteDependency(downstream.id, dep.id);
+
+		expect(await getIssueStatus(downstream.id)).toBe(IssueStatus.Backlog);
+	});
+
+	it('stays blocked when one of several dependencies is removed', async () => {
+		const u1 = await createIssue('inv-multi-1', researcherId);
+		const u2 = await createIssue('inv-multi-2', researcherId);
+		const down = await createIssue('inv-multi-down', productLeadId);
+		const d1 = await addDependency(down.id, u1.identifier);
+		await addDependency(down.id, u2.identifier);
+		expect(await getIssueStatus(down.id)).toBe(IssueStatus.Blocked);
+
+		await deleteDependency(down.id, d1.id);
+
+		expect(await getIssueStatus(down.id)).toBe(IssueStatus.Blocked);
+	});
+
+	it('coerces a PATCH to in_progress to blocked when open blockers exist', async () => {
+		const upstream = await createIssue('inv-coerce-up', researcherId);
+		const downstream = await createIssue('inv-coerce-down', productLeadId);
+		await addDependency(downstream.id, upstream.identifier);
+
+		await setStatus(downstream.id, IssueStatus.InProgress);
+
+		expect(await getIssueStatus(downstream.id)).toBe(IssueStatus.Blocked);
+	});
+
+	it('coerces a PATCH to blocked into backlog when no blockers exist', async () => {
+		const issue = await createIssue('inv-coerce-blocked', productLeadId);
+
+		await setStatus(issue.id, IssueStatus.Blocked);
+
+		expect(await getIssueStatus(issue.id)).toBe(IssueStatus.Backlog);
+	});
+
+	it('flips downstream blocked to backlog when the upstream blocker hits done', async () => {
+		const upstream = await createIssue('inv-up-flip', researcherId);
+		const downstream = await createIssue('inv-down-flip', productLeadId);
+		await addDependency(downstream.id, upstream.identifier);
+		expect(await getIssueStatus(downstream.id)).toBe(IssueStatus.Blocked);
+
+		await setStatus(upstream.id, IssueStatus.Done);
+		await new Promise((res) => setTimeout(res, 100));
+
+		expect(await getIssueStatus(downstream.id)).toBe(IssueStatus.Backlog);
+	});
+
+	it('flips downstream back to blocked when an upstream leaves terminal', async () => {
+		const upstream = await createIssue('inv-leave-up', researcherId);
+		const downstream = await createIssue('inv-leave-down', productLeadId);
+		await addDependency(downstream.id, upstream.identifier);
+		await setStatus(upstream.id, IssueStatus.Done);
+		await new Promise((res) => setTimeout(res, 100));
+		expect(await getIssueStatus(downstream.id)).toBe(IssueStatus.Backlog);
+
+		await setStatus(upstream.id, IssueStatus.InProgress);
+		await new Promise((res) => setTimeout(res, 100));
+
+		expect(await getIssueStatus(downstream.id)).toBe(IssueStatus.Blocked);
+	});
+
+	it('never coerces an issue whose status is already terminal', async () => {
+		const upstream = await createIssue('inv-term-up', researcherId);
+		const downstream = await createIssue('inv-term-down', productLeadId);
+		await setStatus(downstream.id, IssueStatus.Cancelled);
+
+		await addDependency(downstream.id, upstream.identifier);
+
+		expect(await getIssueStatus(downstream.id)).toBe(IssueStatus.Cancelled);
+	});
+
+	it('records a status_change activity event with the derived target', async () => {
+		const upstream = await createIssue('inv-event-up', researcherId);
+		const downstream = await createIssue('inv-event-down', productLeadId);
+		await addDependency(downstream.id, upstream.identifier);
+
+		const commentsRes = await app.request(
+			`/api/companies/${companyId}/issues/${downstream.id}/comments`,
+			{ headers: authHeader(token) },
+		);
+		const comments = (await commentsRes.json()).data as Array<{
+			content_type: string;
+			content: { kind?: string; from?: string; to?: string };
+		}>;
+		const ev = comments.find(
+			(c) => c.content_type === 'system' && c.content?.kind === 'status_change',
+		);
+		expect(ev?.content.from).toBe(IssueStatus.Backlog);
+		expect(ev?.content.to).toBe(IssueStatus.Blocked);
+	});
+
+	it('creates an issue directly as blocked when blocked_by_issue_ids is provided', async () => {
+		const upstream = await createIssue('inv-init-up', researcherId);
+		const downstream = await createIssue('inv-init-down', productLeadId, [upstream.identifier]);
+
+		expect(await getIssueStatus(downstream.id)).toBe(IssueStatus.Blocked);
+	});
+});
