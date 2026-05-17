@@ -35,6 +35,7 @@ import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import { resolveProjectIssuePrefix } from '../routes/projects';
 import { fireCommentWakeups } from '../services/comment-wakeups';
+import { enqueueTeamContextTaskForAllAgents } from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
 	getDocument,
@@ -1456,6 +1457,15 @@ export function registerTools(
 			);
 			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
 
+			// Other agents' team_context blobs reference this agent's summary,
+			// so they need to be regenerated to pick up the new wording.
+			enqueueTeamContextTaskForAllAgents(
+				db,
+				args.company_id as string,
+				'summary_updated',
+				args.agent_id as string,
+			).catch((e) => log.error('Failed to enqueue team_context fan-out:', e));
+
 			return { updated: true };
 		},
 		db,
@@ -1489,6 +1499,73 @@ export function registerTools(
 			]);
 
 			return { updated: true };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'set_agent_team_context',
+		"Save the team-relationships context for an agent (≤6000 chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the CEO of the same company.",
+		{
+			company_id: z.string().describe('Company ID'),
+			agent_id: z.string().describe('Target agent member ID'),
+			content: z.string().describe('The new team_context, ≤6000 chars'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			if (!(await isCeoOfCompany(db, auth, args.company_id as string))) {
+				return { error: 'Access denied: only the CEO can update agent team contexts' };
+			}
+
+			const content = String(args.content ?? '').trim();
+			if (content.length === 0) return { error: 'content must be non-empty' };
+			if (content.length > 6000) {
+				return { error: `content too long (${content.length} chars; max 6000)` };
+			}
+
+			const r = await db.query<{ id: string }>(
+				`UPDATE member_agents SET team_context = $1, updated_at = now()
+				 WHERE id = $2 AND id IN (
+				   SELECT m.id FROM members m WHERE m.id = $2 AND m.company_id = $3
+				 )
+				 RETURNING id`,
+				[content, args.agent_id, args.company_id],
+			);
+			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
+
+			return { updated: true };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'get_agent_team_context',
+		"Read an agent's stored team-relationships context. Useful for the CEO when regenerating siblings' contexts. Accessible by any agent or board user in the same company.",
+		{
+			company_id: z.string().describe('Company ID'),
+			agent_id: z.string().describe('Target agent member ID'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
+				return { error: 'Access denied' };
+			}
+
+			const r = await db.query<{ title: string; slug: string; team_context: string }>(
+				`SELECT ma.title, ma.slug, ma.team_context
+				 FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE ma.id = $1 AND m.company_id = $2`,
+				[args.agent_id, args.company_id],
+			);
+			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
+
+			return r.rows[0];
 		},
 		db,
 	);

@@ -11,6 +11,7 @@ export interface Agent {
 	slug: string;
 	role_description: string | null;
 	summary: string | null;
+	team_context: string | null;
 	default_effort: AgentEffort;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;

@@ -16,7 +16,12 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess, requireCompanyAccessForResource } from '../middleware/auth';
-import { enqueueAgentSummaryTask, enqueueTeamSummaryTask } from '../services/description-tasks';
+import {
+	enqueueAgentSummaryTask,
+	enqueueAgentTeamContextTask,
+	enqueueTeamContextTaskForAllAgents,
+	enqueueTeamSummaryTask,
+} from '../services/description-tasks';
 import { upsertDocument } from '../services/documents';
 import { recordStatusChange } from '../services/issue-events';
 import type { WebSocketManager } from '../services/ws';
@@ -145,6 +150,12 @@ async function applyApprovalSideEffect(
 			);
 			enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
 				log.error('Failed to enqueue team summary task:', e),
+			);
+			enqueueAgentTeamContextTask(db, companyId, memberId, 'initial').catch((e) =>
+				log.error('Failed to enqueue team_context task for new agent:', e),
+			);
+			enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added', memberId).catch((e) =>
+				log.error('Failed to fan out team_context tasks for existing agents:', e),
 			);
 			break;
 		}

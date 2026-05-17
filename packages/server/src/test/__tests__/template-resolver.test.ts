@@ -542,6 +542,100 @@ describe('teammates block', () => {
 	});
 });
 
+describe('team context block', () => {
+	let tcCompanyId: string;
+	let tcCeoMemberId: string;
+	let tcEngineerMemberId: string;
+
+	beforeAll(async () => {
+		const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
+
+		const companyRes = await app.request('/api/companies', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Team Context Co',
+				description: 'Team context block test company',
+				template_id: startup.id,
+			}),
+		});
+		tcCompanyId = ((await companyRes.json()) as any).data.id;
+
+		const agentsRes = await app.request(`/api/companies/${tcCompanyId}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = ((await agentsRes.json()) as any).data;
+		tcCeoMemberId = agents.find((a: any) => a.slug === 'ceo').id;
+		tcEngineerMemberId = agents.find((a: any) => a.slug === 'engineer').id;
+	});
+
+	it('emits a ## Your Team block when the agent has a stored team_context', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			companyId: tcCompanyId,
+			agentId: tcEngineerMemberId,
+		});
+		expect(result).toContain('## Your Team');
+		expect(result).toContain('precomputed so you don');
+	});
+
+	it("renders the engineer's stored team_context content (Startup template default)", async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			companyId: tcCompanyId,
+			agentId: tcEngineerMemberId,
+		});
+		expect(result).toContain('You report to the @architect');
+		expect(result).toContain('@qa-engineer');
+		expect(result).toContain('@security-engineer');
+	});
+
+	it('omits the block entirely when team_context is empty', async () => {
+		await db.query(`UPDATE member_agents SET team_context = '' WHERE id = $1`, [
+			tcEngineerMemberId,
+		]);
+
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			companyId: tcCompanyId,
+			agentId: tcEngineerMemberId,
+		});
+		expect(result).not.toContain('## Your Team');
+		// Teammates block still renders as a fallback.
+		expect(result).toContain('## Teammates');
+	});
+
+	it('omits the block when no agentId is supplied (preview/company-level resolve)', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId: tcCompanyId });
+		expect(result).not.toContain('## Your Team');
+	});
+
+	it('renders Your Team before Teammates so the rich narrative leads', async () => {
+		await db.query(`UPDATE member_agents SET team_context = $1 WHERE id = $2`, [
+			'Test team_context content',
+			tcCeoMemberId,
+		]);
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			companyId: tcCompanyId,
+			agentId: tcCeoMemberId,
+		});
+		const yourTeamIdx = result.indexOf('## Your Team');
+		const teammatesIdx = result.indexOf('## Teammates');
+		expect(yourTeamIdx).toBeGreaterThan(-1);
+		expect(teammatesIdx).toBeGreaterThan(yourTeamIdx);
+	});
+
+	it('substitutes {{team_context}} inline when the template uses it', async () => {
+		await db.query(`UPDATE member_agents SET team_context = $1 WHERE id = $2`, [
+			'INLINE TEAM CONTEXT MARKER',
+			tcCeoMemberId,
+		]);
+		const result = await resolveSystemPrompt(db, 'Body: {{team_context}}', {
+			companyId: tcCompanyId,
+			agentId: tcCeoMemberId,
+		});
+		expect(result).toContain('Body: INLINE TEAM CONTEXT MARKER');
+	});
+});
+
 describe('project state block', () => {
 	let psCompanyId: string;
 	let psProjectId: string;

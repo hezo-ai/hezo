@@ -26,7 +26,12 @@ import { buildUpdateSet, terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
-import { enqueueAgentSummaryTask, enqueueTeamSummaryTask } from '../services/description-tasks';
+import {
+	enqueueAgentSummaryTask,
+	enqueueAgentTeamContextTask,
+	enqueueTeamContextTaskForAllAgents,
+	enqueueTeamSummaryTask,
+} from '../services/description-tasks';
 import {
 	getDocument,
 	initAgentSystemPrompt,
@@ -46,7 +51,7 @@ export const agentsRoutes = new Hono<Env>();
  * `assigned_issue_count` requires the caller to bind terminal statuses via `terminalStatusParams`.
  */
 const AGENT_BASE_COLUMNS = `m.id, m.company_id, m.display_name, m.created_at,
-	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
+	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary, ma.team_context,
 	ma.default_effort,
 	ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
 	ma.touches_code,
@@ -221,6 +226,12 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 		enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
 			log.error('Failed to enqueue team summary task:', e),
 		);
+		enqueueAgentTeamContextTask(db, companyId, memberId, 'initial').catch((e) =>
+			log.error('Failed to enqueue team_context task for new agent:', e),
+		);
+		enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added', memberId).catch((e) =>
+			log.error('Failed to fan out team_context tasks for existing agents:', e),
+		);
 
 		return ok(c, result.rows[0], 201);
 	} catch (e) {
@@ -353,6 +364,12 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 		);
 		enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
 			log.error('Failed to enqueue team summary task:', e),
+		);
+		enqueueAgentTeamContextTask(db, companyId, agentRow.id as string, 'initial').catch((e) =>
+			log.error('Failed to enqueue team_context task for bootstrapped agent:', e),
+		);
+		enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added', agentRow.id as string).catch(
+			(e) => log.error('Failed to fan out team_context tasks for existing agents:', e),
 		);
 
 		return ok(c, { agent: agentRow, issue: null, approval: null, bootstrap: true }, 201);
@@ -685,6 +702,15 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		return ok(c, result.rows[0]);
 	}
 
+	let priorReportsTo: string | null | undefined;
+	if (body.reports_to !== undefined) {
+		const prior = await db.query<{ reports_to: string | null }>(
+			'SELECT reports_to FROM member_agents WHERE id = $1',
+			[agentId],
+		);
+		priorReportsTo = prior.rows[0]?.reports_to ?? null;
+	}
+
 	if (body.title?.trim()) {
 		await db.query('UPDATE members SET display_name = $1 WHERE id = $2', [
 			body.title.trim(),
@@ -728,6 +754,18 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		enqueueTeamSummaryTask(db, companyId, 'prompt_updated').catch((e) =>
 			log.error('Failed to enqueue team summary task:', e),
 		);
+		enqueueAgentTeamContextTask(db, companyId, agentId, 'prompt_updated').catch((e) =>
+			log.error('Failed to enqueue team_context task on prompt change:', e),
+		);
+	}
+
+	if (body.reports_to !== undefined && (body.reports_to ?? null) !== (priorReportsTo ?? null)) {
+		enqueueTeamSummaryTask(db, companyId, 'reports_to_changed').catch((e) =>
+			log.error('Failed to enqueue team summary task on reports_to change:', e),
+		);
+		enqueueTeamContextTaskForAllAgents(db, companyId, 'reports_to_changed').catch((e) =>
+			log.error('Failed to fan out team_context tasks on reports_to change:', e),
+		);
 	}
 
 	return ok(c, updatedRow);
@@ -769,6 +807,9 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/disable', async (c) => 
 	enqueueTeamSummaryTask(db, companyId, 'enabled_changed').catch((e) =>
 		log.error('Failed to enqueue team summary task:', e),
 	);
+	enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_removed', agentId).catch((e) =>
+		log.error('Failed to fan out team_context tasks on disable:', e),
+	);
 
 	return ok(c, { admin_status: AgentAdminStatus.Disabled });
 });
@@ -802,6 +843,12 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/enable', async (c) => {
 
 	enqueueTeamSummaryTask(db, companyId, 'enabled_changed').catch((e) =>
 		log.error('Failed to enqueue team summary task:', e),
+	);
+	enqueueAgentTeamContextTask(db, companyId, agentId, 'agent_added').catch((e) =>
+		log.error('Failed to enqueue team_context task for re-enabled agent:', e),
+	);
+	enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added', agentId).catch((e) =>
+		log.error('Failed to fan out team_context tasks on enable:', e),
 	);
 
 	return ok(c, { admin_status: AgentAdminStatus.Enabled });

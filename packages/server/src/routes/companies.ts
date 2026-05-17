@@ -8,6 +8,7 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess, requireSuperuser } from '../middleware/auth';
 import { type ProjectRow, provisionContainer } from '../services/containers';
+import { enqueueTeamContextTaskForAllAgents } from '../services/description-tasks';
 import { initAgentSystemPrompt } from '../services/documents';
 import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
 
@@ -126,6 +127,10 @@ companiesRoutes.post('/companies', async (c) => {
 		await ensureBuiltinAgents(db, company.id);
 
 		await db.query('COMMIT');
+
+		enqueueTeamContextTaskForAllAgents(db, company.id, 'initial').catch((e) =>
+			log.error('Failed to bootstrap team_context tasks for new company:', e),
+		);
 
 		const dataDir = c.get('dataDir');
 
@@ -281,6 +286,7 @@ interface AgentTypeRow {
 	slug: string;
 	role_description: string;
 	default_summary: string;
+	default_team_context: string;
 	system_prompt_template: string;
 	default_effort: string;
 	heartbeat_interval_min: number;
@@ -300,7 +306,7 @@ async function createAgentsFromTeamTypes(
 	for (const typeId of teamTypeIds) {
 		const joinRows = await db.query<AgentTypeRow>(
 			`SELECT at.id, at.name, at.slug, at.role_description, at.default_summary,
-			        at.system_prompt_template,
+			        at.default_team_context, at.system_prompt_template,
 			        at.default_effort, at.heartbeat_interval_min, at.monthly_budget_cents,
 			        at.touches_code,
 			        ctat.reports_to_slug,
@@ -342,9 +348,10 @@ async function createAgentsFromTeamTypes(
 
 		await db.query(
 			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
+			                            team_context,
 			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
 			                            touches_code)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, $10)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11)`,
 			[
 				memberId,
 				row.id,
@@ -352,6 +359,7 @@ async function createAgentsFromTeamTypes(
 				row.slug,
 				row.role_description,
 				row.default_summary ?? '',
+				row.default_team_context ?? '',
 				row.default_effort,
 				heartbeat,
 				budget,
@@ -387,17 +395,24 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 	const missingSlugs = BUILTIN_AGENT_SLUGS.filter((s) => !existingSlugs.has(s));
 	if (missingSlugs.length === 0) return;
 
-	const overrideResult = await db.query<{ builtin_agent_prompts: Record<string, string> | null }>(
-		`SELECT ct.builtin_agent_prompts
+	const overrideResult = await db.query<{
+		builtin_agent_prompts: Record<string, string> | null;
+		builtin_agent_team_contexts: Record<string, string> | null;
+	}>(
+		`SELECT ct.builtin_agent_prompts, ct.builtin_agent_team_contexts
 		 FROM company_team_types ctt
 		 JOIN company_types ct ON ct.id = ctt.company_type_id
 		 WHERE ctt.company_id = $1`,
 		[companyId],
 	);
 	const promptOverrides: Record<string, string> = {};
+	const teamContextOverrides: Record<string, string> = {};
 	for (const row of overrideResult.rows) {
 		for (const [slug, prompt] of Object.entries(row.builtin_agent_prompts ?? {})) {
 			if (prompt && !promptOverrides[slug]) promptOverrides[slug] = prompt;
+		}
+		for (const [slug, context] of Object.entries(row.builtin_agent_team_contexts ?? {})) {
+			if (context && !teamContextOverrides[slug]) teamContextOverrides[slug] = context;
 		}
 	}
 
@@ -407,13 +422,15 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 		slug: string;
 		role_description: string;
 		default_summary: string;
+		default_team_context: string;
 		system_prompt_template: string;
 		default_effort: string;
 		heartbeat_interval_min: number;
 		monthly_budget_cents: number;
 		touches_code: boolean;
 	}>(
-		`SELECT id, name, slug, role_description, default_summary, system_prompt_template,
+		`SELECT id, name, slug, role_description, default_summary, default_team_context,
+		        system_prompt_template,
 		        default_effort, heartbeat_interval_min, monthly_budget_cents, touches_code
 		 FROM agent_types WHERE slug = ANY($1)`,
 		[missingSlugs],
@@ -428,9 +445,10 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 		);
 		await db.query(
 			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
+			                            team_context,
 			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
 			                            touches_code)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, $10)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11)`,
 			[
 				memberResult.rows[0].id,
 				at.id,
@@ -438,6 +456,7 @@ async function ensureBuiltinAgents(db: PGlite, companyId: string): Promise<void>
 				at.slug,
 				at.role_description,
 				at.default_summary ?? '',
+				teamContextOverrides[at.slug] || at.default_team_context || '',
 				at.default_effort,
 				at.heartbeat_interval_min,
 				at.monthly_budget_cents,

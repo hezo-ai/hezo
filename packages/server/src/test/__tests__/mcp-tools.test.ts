@@ -727,6 +727,55 @@ describe('MCP tool: set_agent_summary and set_team_summary', () => {
 	});
 });
 
+describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
+	it('both tools are registered', async () => {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
+		});
+		const body = await res.json();
+		const toolNames = body.result.tools.map((t: any) => t.name);
+		expect(toolNames).toContain('set_agent_team_context');
+		expect(toolNames).toContain('get_agent_team_context');
+	});
+
+	it('set_agent_team_context writes and round-trips via direct DB path', async () => {
+		const eng = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1 AND ma.slug = 'engineer'`,
+			[companyId],
+		);
+		await db.query('UPDATE member_agents SET team_context = $1 WHERE id = $2', [
+			'You report to the Architect.',
+			eng.rows[0].id,
+		]);
+
+		const row = await db.query<{ team_context: string }>(
+			'SELECT team_context FROM member_agents WHERE id = $1',
+			[eng.rows[0].id],
+		);
+		expect(row.rows[0].team_context).toBe('You report to the Architect.');
+	});
+
+	it('default_team_context defaults are populated for Startup template agents', async () => {
+		// Use roles the earlier set_agent_summary test doesn't mutate.
+		const agents = await db.query<{ slug: string; team_context: string }>(
+			`SELECT ma.slug, ma.team_context FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1`,
+			[companyId],
+		);
+		const ceoRow = agents.rows.find((r) => r.slug === 'ceo');
+		const qaRow = agents.rows.find((r) => r.slug === 'qa-engineer');
+		const archRow = agents.rows.find((r) => r.slug === 'architect');
+		expect(ceoRow?.team_context).toBeTruthy();
+		expect(qaRow?.team_context).toBeTruthy();
+		expect(qaRow?.team_context).toContain('@architect');
+		expect(archRow?.team_context).toContain('@engineer');
+	});
+});
+
 describe('MCP tool: operations project assignee restriction', () => {
 	it('create_issue on Operations project rejects non-CEO assignee_slug', async () => {
 		const ops = await db.query<{ id: string }>(

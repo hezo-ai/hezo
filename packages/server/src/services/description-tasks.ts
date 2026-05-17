@@ -23,7 +23,17 @@ export type TeamSummaryReason =
 	| 'agent_added'
 	| 'agent_removed'
 	| 'prompt_updated'
-	| 'enabled_changed';
+	| 'enabled_changed'
+	| 'reports_to_changed';
+export type AgentTeamContextReason =
+	| 'initial'
+	| 'agent_added'
+	| 'agent_removed'
+	| 'reports_to_changed'
+	| 'prompt_updated'
+	| 'summary_updated';
+
+const TEAM_CONTEXT_TARGET_PREFIX = 'team_context:';
 
 interface CompanyContext {
 	ceoMemberId: string | null;
@@ -208,4 +218,95 @@ export async function enqueueTeamSummaryTask(
 
 	const body = buildTeamSummaryBody(reason);
 	return createDescriptionIssue(db, companyId, ctx, target, 'Update team description', body);
+}
+
+function buildAgentTeamContextBody(
+	agentId: string,
+	agentTitle: string,
+	reason: AgentTeamContextReason,
+): string {
+	return `## Description maintenance task
+
+Regenerate the team-relationships context for "${agentTitle}" (reason: ${reason}).
+
+This blob is injected into the agent's own system prompt at the start of every run so it doesn't need to derive its place in the org chart from scratch. It should describe how *this specific agent* relates to every other employee in the company.
+
+**Steps**
+
+1. Use \`list_agents(company_id)\` to enumerate all enabled agents and their reporting structure.
+2. For each agent that relates to "${agentTitle}" (manager, direct reports, peers, indirect reports), read their \`summary\` (or \`get_agent_system_prompt\` if the summary is empty) to understand what they do.
+3. Identify any humans on the company board.
+4. Write a relationships narrative for "${agentTitle}" in plain prose, second-person ("you"), up to ~30 lines. Cover:
+   - Manager and how to escalate to them
+   - Direct reports (if any) and how to delegate to each
+   - Peers and typical handoff patterns
+   - Indirect reports / agents two+ levels away and the correct routing path
+   - Humans on the board and when to involve them
+5. Call \`set_agent_team_context(company_id, agent_id="${agentId}", content="...")\` to save.
+6. Move this issue to "done".`;
+}
+
+export async function enqueueAgentTeamContextTask(
+	db: PGlite,
+	companyId: string,
+	agentId: string,
+	reason: AgentTeamContextReason,
+): Promise<string | null> {
+	const ctx = await loadCompanyContext(db, companyId);
+	if (!ctx) return null;
+	if (!ctx.ceoMemberId || !ctx.operationsProjectId) return null;
+
+	const target = `${TEAM_CONTEXT_TARGET_PREFIX}${agentId}`;
+	const existing = await findOpenDescriptionIssue(db, companyId, target);
+	if (existing) {
+		log.debug(`Skipping duplicate agent team_context task for ${agentId}; open issue ${existing}`);
+		return existing;
+	}
+
+	const agentResult = await db.query<{ title: string }>(
+		'SELECT title FROM member_agents WHERE id = $1',
+		[agentId],
+	);
+	const agentTitle = agentResult.rows[0]?.title ?? 'Unknown agent';
+
+	const body = buildAgentTeamContextBody(agentId, agentTitle, reason);
+	return createDescriptionIssue(
+		db,
+		companyId,
+		ctx,
+		target,
+		`Update team relationships for "${agentTitle}"`,
+		body,
+	);
+}
+
+export async function enqueueTeamContextTaskForAllAgents(
+	db: PGlite,
+	companyId: string,
+	reason: AgentTeamContextReason,
+	exceptAgentId?: string,
+): Promise<void> {
+	// On 'initial' fan-outs we only want agents that don't already have a
+	// precomputed default team_context (built-in templates ship with them).
+	// Other reasons signal an actual structural change, so we regenerate
+	// regardless of current content.
+	const skipNonEmpty = reason === 'initial';
+
+	const agents = await db.query<{ id: string }>(
+		`SELECT ma.id FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.company_id = $1
+		   AND ma.admin_status = $2::agent_admin_status
+		   AND ($3::uuid IS NULL OR ma.id <> $3::uuid)
+		   AND ($4::bool = false OR ma.team_context = '')`,
+		[companyId, AgentAdminStatus.Enabled, exceptAgentId ?? null, skipNonEmpty],
+	);
+
+	for (const { id } of agents.rows) {
+		try {
+			await enqueueAgentTeamContextTask(db, companyId, id, reason);
+		} catch (e) {
+			log.error(`Failed to enqueue team_context task for agent ${id}:`, e);
+		}
+	}
 }

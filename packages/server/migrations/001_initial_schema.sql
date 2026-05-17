@@ -81,6 +81,7 @@ CREATE TABLE agent_types (
     description            TEXT NOT NULL DEFAULT '',
     role_description       TEXT NOT NULL DEFAULT '',
     default_summary        TEXT NOT NULL DEFAULT '',
+    default_team_context   TEXT NOT NULL DEFAULT '',
     system_prompt_template TEXT NOT NULL DEFAULT '',
     default_effort         agent_effort NOT NULL DEFAULT 'medium',
     heartbeat_interval_min INTEGER NOT NULL DEFAULT 60,
@@ -114,6 +115,7 @@ CREATE TABLE company_types (
     mcp_servers         JSONB NOT NULL DEFAULT '[]'::jsonb,
     mpp_config          JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
     builtin_agent_prompts JSONB NOT NULL DEFAULT '{}'::jsonb,
+    builtin_agent_team_contexts JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -194,6 +196,7 @@ CREATE TABLE member_agents (
     slug                    TEXT NOT NULL,
     role_description        TEXT NOT NULL DEFAULT '',
     summary                 TEXT NOT NULL DEFAULT '',
+    team_context            TEXT NOT NULL DEFAULT '',
     default_effort          agent_effort NOT NULL DEFAULT 'medium',
     heartbeat_interval_min  INTEGER NOT NULL DEFAULT 60,
     monthly_budget_cents    INTEGER NOT NULL DEFAULT 3000,
