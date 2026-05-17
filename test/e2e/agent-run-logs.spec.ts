@@ -209,6 +209,116 @@ test('issue page renders completed run as a collapsed inline comment with summar
 	await expect(runCommentEl.getByRole('button', { name: /copy logs to clipboard/i })).toHaveCount(
 		0,
 	);
+	await expect(runCommentEl.getByRole('link', { name: /view full run/i })).toHaveCount(0);
+
+	const header = runCommentEl.getByTestId('run-comment-header');
+	await expect(header).toHaveAttribute('aria-expanded', 'false');
+});
+
+async function mockCompletedRun(page: Page, companyId: string, agentId: string, token: string) {
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const projectRes = await page.request.post(`/api/companies/${companyId}/projects`, {
+		headers,
+		data: { name: 'Expand Run Project', description: 'Test project.' },
+	});
+	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
+
+	const issueRes = await page.request.post(`/api/companies/${companyId}/issues`, {
+		headers,
+		data: { project_id: project.id, title: 'Expandable Run Issue', assignee_id: agentId },
+	});
+	const issue = ((await issueRes.json()) as { data: { id: string } }).data;
+
+	const runId = '77777777-7777-7777-7777-777777777777';
+	const startedAt = '2026-05-15T18:11:00Z';
+	const finishedAt = '2026-05-15T18:12:17Z';
+	const logText = Array.from({ length: 27 }, (_, i) => `[synthetic] line ${i + 1}`).join('\n');
+
+	const runComment = {
+		id: 'cccc0000-0000-0000-0000-000000000001',
+		issue_id: issue.id,
+		content_type: 'run',
+		content: { run_id: runId, agent_id: agentId, agent_title: 'Product Lead' },
+		chosen_option: null,
+		created_at: startedAt,
+		author_type: 'agent',
+		author_name: 'Product Lead',
+		author_member_id: agentId,
+	};
+
+	await page.route('**/api/companies/*/issues/*/comments**', async (route) => {
+		if (route.request().method() !== 'GET') return route.continue();
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ data: [runComment] }),
+		});
+	});
+
+	await page.route(
+		`**/api/companies/*/agents/${agentId}/heartbeat-runs/${runId}`,
+		async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					data: {
+						id: runId,
+						member_id: agentId,
+						company_id: companyId,
+						issue_id: issue.id,
+						issue_identifier: null,
+						issue_title: null,
+						project_id: project.id,
+						status: 'succeeded',
+						started_at: startedAt,
+						finished_at: finishedAt,
+						exit_code: 0,
+						error: null,
+						input_tokens: 0,
+						output_tokens: 0,
+						cost_cents: 0,
+						invocation_command: null,
+						log_text: logText,
+						working_dir: null,
+						created_issues: [],
+					},
+				}),
+			});
+		},
+	);
+
+	return { issue, runId };
+}
+
+test('clicking the summary on a completed run expands the inline log', async ({ page }) => {
+	await authenticate(page);
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+
+	const { issue, runId } = await mockCompletedRun(page, company.id, ceo.id, token);
+
+	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+
+	const runCommentEl = page.getByTestId('run-comment').first();
+	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
+
+	const header = runCommentEl.getByTestId('run-comment-header');
+	await expect(header).toHaveAttribute('aria-expanded', 'false');
+	await expect(runCommentEl.getByTestId('run-comment-log')).toHaveCount(0);
+
+	await header.click();
+
+	await expect(header).toHaveAttribute('aria-expanded', 'true');
+	const log = runCommentEl.getByTestId('run-comment-log');
+	await expect(log).toBeVisible();
+	await expect(log).toContainText('[synthetic] line 1');
+	await expect(log).toContainText('[synthetic] line 27');
 
 	const runLink = runCommentEl.getByRole('link', { name: /view full run/i });
 	await expect(runLink).toBeVisible();
@@ -216,4 +326,33 @@ test('issue page renders completed run as a collapsed inline comment with summar
 		'href',
 		new RegExp(`/companies/${company.slug}/agents/${ceo.id}/executions/${runId}$`),
 	);
+
+	await header.click();
+	await expect(header).toHaveAttribute('aria-expanded', 'false');
+	await expect(runCommentEl.getByTestId('run-comment-log')).toHaveCount(0);
+});
+
+test('completed run expansion works on mobile viewport', async ({ page }) => {
+	await page.setViewportSize({ width: 375, height: 800 });
+	await authenticate(page);
+	const { company, token } = await createCompanyWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+
+	const { issue } = await mockCompletedRun(page, company.id, ceo.id, token);
+
+	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+
+	const runCommentEl = page.getByTestId('run-comment').first();
+	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
+
+	const header = runCommentEl.getByTestId('run-comment-header');
+	await header.click();
+
+	const log = runCommentEl.getByTestId('run-comment-log');
+	await expect(log).toBeVisible();
+	await expect(log).toContainText('[synthetic] line 1');
 });

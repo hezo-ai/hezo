@@ -274,69 +274,99 @@ function RunCommentBody({
 		run?.started_at && run.finished_at
 			? Math.max(0, new Date(run.finished_at).getTime() - new Date(run.started_at).getTime())
 			: null;
+	const [expanded, setExpanded] = useState(false);
+	const logRegionId = `run-comment-log-${runId}`;
+
+	const summaryRow = (
+		<>
+			<span className="text-xs text-text-muted">{agentTitle} run</span>
+			{completed && (
+				<span
+					className="inline-flex items-baseline gap-1.5 text-xs text-text-subtle"
+					data-testid="run-comment-summary"
+				>
+					<span
+						aria-hidden="true"
+						className={`inline-block w-2 h-2 rounded-full self-center ${runStatusDotClass(status)}`}
+					/>
+					<span>{runStatusLabel(status)}</span>
+					<span aria-hidden="true">·</span>
+					<span data-testid="run-comment-line-count">
+						{lines.length} {lines.length === 1 ? 'line' : 'lines'}
+					</span>
+					{durationMs != null && (
+						<>
+							<span aria-hidden="true">·</span>
+							<span data-testid="run-comment-duration">{formatElapsed(durationMs)}</span>
+						</>
+					)}
+				</span>
+			)}
+			<span className="text-[11px] text-text-subtle">{new Date(createdAt).toLocaleString()}</span>
+		</>
+	);
 
 	return (
 		<>
-			{inline && (
-				<div
-					className="flex flex-wrap items-baseline gap-x-2 gap-y-1"
-					data-testid="run-comment-header"
-				>
-					<span className="text-xs text-text-muted">{agentTitle} run</span>
-					{completed && (
-						<span
-							className="inline-flex items-baseline gap-1.5 text-xs text-text-subtle"
-							data-testid="run-comment-summary"
+			{inline &&
+				(completed ? (
+					<button
+						type="button"
+						onClick={() => setExpanded((v) => !v)}
+						aria-expanded={expanded}
+						aria-controls={logRegionId}
+						data-testid="run-comment-header"
+						className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-left -mx-1 px-1 rounded-radius-md hover:bg-bg-muted cursor-pointer"
+					>
+						{summaryRow}
+						<svg
+							aria-hidden="true"
+							className={`w-3 h-3 self-center shrink-0 ml-auto text-text-subtle transition-transform ${expanded ? 'rotate-90' : ''}`}
+							viewBox="0 0 16 16"
+							fill="currentColor"
 						>
-							<span
-								aria-hidden="true"
-								className={`inline-block w-2 h-2 rounded-full self-center ${runStatusDotClass(status)}`}
-							/>
-							<span>{runStatusLabel(status)}</span>
-							<span aria-hidden="true">·</span>
-							<span data-testid="run-comment-line-count">
-								{lines.length} {lines.length === 1 ? 'line' : 'lines'}
+							<path d="M6 3l5 5-5 5V3z" />
+						</svg>
+					</button>
+				) : (
+					<div
+						className="flex flex-wrap items-baseline gap-x-2 gap-y-1"
+						data-testid="run-comment-header"
+					>
+						{summaryRow}
+					</div>
+				))}
+			{(!completed || expanded) && (
+				<div id={logRegionId}>
+					<LogViewer
+						lines={lines}
+						compact
+						heightClassName="h-[180px]"
+						testId="run-comment-log"
+						liveLabel={
+							<span className="flex items-center gap-1.5">
+								<span
+									className={`inline-block w-2 h-2 rounded-full ${runStatusDotClass(status)}`}
+								/>
+								<span>
+									{agentTitle} — {runStatusLabel(status)}
+								</span>
 							</span>
-							{durationMs != null && (
-								<>
-									<span aria-hidden="true">·</span>
-									<span data-testid="run-comment-duration">{formatElapsed(durationMs)}</span>
-								</>
-							)}
-						</span>
-					)}
-					<span className="text-[11px] text-text-subtle">
-						{new Date(createdAt).toLocaleString()}
-					</span>
+						}
+						emptyState={getRunWaitingMessage(status)}
+						headerAction={
+							<Link
+								to="/companies/$companyId/agents/$agentId/executions/$runId"
+								params={{ companyId, agentId, runId }}
+								title="View full run"
+								aria-label="View full run"
+								className="inline-flex items-center justify-center h-6 px-2 text-xs text-text-muted hover:text-text hover:bg-bg-muted rounded-radius-md transition-colors"
+							>
+								<DoorOpen className="w-3 h-3" />
+							</Link>
+						}
+					/>
 				</div>
-			)}
-			{!completed && (
-				<LogViewer
-					lines={lines}
-					compact
-					heightClassName="h-[180px]"
-					testId="run-comment-log"
-					liveLabel={
-						<span className="flex items-center gap-1.5">
-							<span className={`inline-block w-2 h-2 rounded-full ${runStatusDotClass(status)}`} />
-							<span>
-								{agentTitle} — {runStatusLabel(status)}
-							</span>
-						</span>
-					}
-					emptyState={getRunWaitingMessage(status)}
-					headerAction={
-						<Link
-							to="/companies/$companyId/agents/$agentId/executions/$runId"
-							params={{ companyId, agentId, runId }}
-							title="View full run"
-							aria-label="View full run"
-							className="inline-flex items-center justify-center h-6 px-2 text-xs text-text-muted hover:text-text hover:bg-bg-muted rounded-radius-md transition-colors"
-						>
-							<DoorOpen className="w-3 h-3" />
-						</Link>
-					}
-				/>
 			)}
 			{createdIssues.length > 0 && (
 				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-issues">
