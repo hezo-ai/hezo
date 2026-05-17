@@ -86,13 +86,13 @@ Secret allowed_hosts gate substitution: a leak attempt to the wrong host (e.g. e
 
 ## Config
 
+The OAuth App client_id is selected automatically: `NODE_ENV=production` → prod App, otherwise dev App. Both client_ids are hardcoded in `provider-github.ts` (`DEV_CLIENT_ID` / `PROD_CLIENT_ID`) — OAuth client_ids on public device-flow clients are not secrets. Both Apps must have **Enable Device Flow** ticked in their GitHub settings; otherwise `POST /login/device/code` returns 404 + `{"error":"Not Found"}`. The OAuth App must also request the `write:ssh_signing_key` scope (in `DEFAULT_SCOPES`) so it can register the company's Ed25519 public key as a signing key on first connect.
+
 | env var | default | purpose |
 |---|---|---|
-| `GITHUB_OAUTH_CLIENT_ID` | a public Hezo OAuth App client_id | the GitHub OAuth App used for device flow |
+| `GITHUB_OAUTH_CLIENT_ID` | unset | override the auto-selected client_id (use when testing OAuth flow changes against a throwaway App, or self-hosting with your own App) |
 | `GITHUB_OAUTH_BASE_URL` | `https://github.com` | overridden in tests by `github-sim` |
 | `GITHUB_API_BASE_URL` | `https://api.github.com` | same |
-
-A self-host operator who wants to use their own GitHub App sets `GITHUB_OAUTH_CLIENT_ID` to their App's client_id. No secret needed for device flow on a public client.
 
 ## Tests
 

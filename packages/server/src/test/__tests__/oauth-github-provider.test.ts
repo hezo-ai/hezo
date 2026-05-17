@@ -83,9 +83,23 @@ describe('GitHub OAuth device flow', () => {
 			'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 hezo',
 			'Hezo signing key',
 		);
-		expect(result.id).toBeGreaterThan(0);
+		expect(result.status).toBe('created');
+		if (result.status === 'created') {
+			expect(result.id).toBeGreaterThan(0);
+		}
 		expect(sim.state.signingKeys).toHaveLength(1);
 		expect(sim.state.signingKeys[0].title).toBe('Hezo signing key');
 		expect(sim.state.signingKeys[0].key).toContain('ssh-ed25519');
+	});
+
+	it('treats a duplicate signing key as already_exists, not a failure', async () => {
+		const key = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 hezo-duplicate';
+		sim.seed({
+			token: 'gho_dupe',
+			signingKeys: [{ id: 99, title: 'pre-existing', key }],
+		});
+		const result = await registerSigningKey('gho_dupe', key, 'Hezo signing key');
+		expect(result.status).toBe('already_exists');
+		expect(sim.state.signingKeys).toHaveLength(1);
 	});
 });

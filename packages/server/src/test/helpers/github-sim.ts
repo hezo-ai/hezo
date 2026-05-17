@@ -171,6 +171,25 @@ export async function createGitHubSim(): Promise<GitHubSim> {
 	app.post('/user/ssh_signing_keys', async (c) => {
 		if (!isAuthed(c.req.header('Authorization'))) return c.json({ message: 'Unauthorized' }, 401);
 		const body = await c.req.json<{ title: string; key: string }>();
+		if (state.signingKeys.some((k) => k.key === body.key)) {
+			return c.json(
+				{
+					message: 'Validation Failed',
+					errors: [
+						{
+							resource: 'GitSigningSshPublicKey',
+							code: 'custom',
+							field: 'key',
+							message: 'key is already in use',
+						},
+					],
+					documentation_url:
+						'https://docs.github.com/rest/users/ssh-signing-keys#create-a-ssh-signing-key-for-the-authenticated-user',
+					status: '422',
+				},
+				422,
+			);
+		}
 		const id = nextSigningKeyId++;
 		const entry = { id, title: body.title, key: body.key };
 		state.signingKeys.push(entry);

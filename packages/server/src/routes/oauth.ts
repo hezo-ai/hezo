@@ -452,6 +452,10 @@ async function ensureSigningKeyRegisteredOnGitHub(
 		companyKey = await getCompanySSHKey(db, companyId, masterKeyManager);
 		if (!companyKey) throw new Error('failed to generate company ssh key');
 	}
-	await registerSigningKey(accessToken, companyKey.publicKey, 'Hezo signing key');
-	log.info('registered company ssh key on GitHub for signing', { companyId });
+	const result = await registerSigningKey(accessToken, companyKey.publicKey, 'Hezo signing key');
+	if (result.status === 'already_exists') {
+		log.info('company ssh signing key already registered on GitHub', { companyId });
+	} else {
+		log.info('registered company ssh key on GitHub for signing', { companyId });
+	}
 }

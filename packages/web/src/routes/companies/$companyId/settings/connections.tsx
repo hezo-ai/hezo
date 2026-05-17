@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ExternalLink, Github, Trash2 } from 'lucide-react';
+import { Check, Copy, ExternalLink, Github, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
@@ -23,11 +23,13 @@ function ConnectionsPage() {
 	const deleteConn = useDeleteOAuthConnection(companyId);
 	const [deviceFlow, setDeviceFlow] = useState<DeviceFlowStart | null>(null);
 	const [pollMessage, setPollMessage] = useState<string>('');
+	const [codeCopied, setCodeCopied] = useState(false);
 	const stopRef = useRef(false);
 
 	useEffect(() => {
 		if (!deviceFlow) return;
 		stopRef.current = false;
+		setCodeCopied(false);
 		setPollMessage('Waiting for you to authorise on GitHub…');
 
 		(async () => {
@@ -66,6 +68,13 @@ function ConnectionsPage() {
 		}
 	};
 
+	const handleCopyCode = async () => {
+		if (!deviceFlow) return;
+		await navigator.clipboard.writeText(deviceFlow.user_code);
+		setCodeCopied(true);
+		setTimeout(() => setCodeCopied(false), 2000);
+	};
+
 	return (
 		<div className="space-y-6">
 			<div className="flex items-center justify-between">
@@ -97,7 +106,28 @@ function ConnectionsPage() {
 						</a>{' '}
 						and enter this code:
 					</p>
-					<div className="font-mono text-2xl tracking-widest">{deviceFlow.user_code}</div>
+					<div className="flex flex-wrap items-center gap-2">
+						<div className="font-mono text-2xl tracking-widest">{deviceFlow.user_code}</div>
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={handleCopyCode}
+							aria-label="Copy device code"
+						>
+							{codeCopied ? (
+								<>
+									<Check className="size-4 mr-1.5" />
+									Copied!
+								</>
+							) : (
+								<>
+									<Copy className="size-4 mr-1.5" />
+									Copy
+								</>
+							)}
+						</Button>
+					</div>
 					<p className="text-xs text-text-subtle">{pollMessage}</p>
 					<Button variant="ghost" size="sm" onClick={() => setDeviceFlow(null)}>
 						Cancel
