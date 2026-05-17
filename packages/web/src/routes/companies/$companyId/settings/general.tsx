@@ -849,6 +849,6 @@ function SkillFileSection() {
 	);
 }
 
-export const Route = createFileRoute('/companies/$companyId/settings/')({
+export const Route = createFileRoute('/companies/$companyId/settings/general')({
 	component: SettingsPage,
 });

@@ -521,9 +521,11 @@ function IssueDetailPage() {
 									className="flex items-center gap-2 text-[13px] hover:bg-bg-subtle rounded px-2 py-1"
 									data-testid="sub-issue-item"
 								>
-									<IssueStatusBadge status={s.status} />
-									<span className="font-mono text-xs text-text-muted">{s.identifier}</span>
-									<span className="truncate">{s.title}</span>
+									<IssueStatusBadge status={s.status} className="shrink-0" />
+									<span className="font-mono text-xs text-text-muted shrink-0 whitespace-nowrap">
+										{s.identifier}
+									</span>
+									<span className="truncate min-w-0">{s.title}</span>
 								</Link>
 							))}
 							{subIssues && subIssues.data.length > subIssuesShown && (

@@ -13,7 +13,11 @@ const STATUS_COLORS: Record<IssueStatus, BadgeColor> = {
 	[IssueStatus.Cancelled]: 'neutral',
 };
 
-export function IssueStatusBadge({ status }: { status: string }) {
+export function IssueStatusBadge({ status, className }: { status: string; className?: string }) {
 	const color = STATUS_COLORS[status as IssueStatus] ?? 'neutral';
-	return <Badge color={color}>{formatIssueStatus(status)}</Badge>;
+	return (
+		<Badge color={color} className={className}>
+			{formatIssueStatus(status)}
+		</Badge>
+	);
 }

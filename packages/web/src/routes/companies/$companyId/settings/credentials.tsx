@@ -1,9 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Trash2 } from 'lucide-react';
-import { Badge } from '../../../components/ui/badge';
-import { type Column, DataTable } from '../../../components/ui/data-table';
-import { type CredentialUsage, useCredentials } from '../../../hooks/use-credentials';
-import { useDeleteSecret } from '../../../hooks/use-secrets';
+import { Badge } from '../../../../components/ui/badge';
+import { type Column, DataTable } from '../../../../components/ui/data-table';
+import { type CredentialUsage, useCredentials } from '../../../../hooks/use-credentials';
+import { useDeleteSecret } from '../../../../hooks/use-secrets';
 
 function formatRelative(iso: string | null): string {
 	if (!iso) return 'never';
@@ -110,6 +110,6 @@ function CredentialsPage() {
 	);
 }
 
-export const Route = createFileRoute('/companies/$companyId/credentials')({
+export const Route = createFileRoute('/companies/$companyId/settings/credentials')({
 	component: CredentialsPage,
 });

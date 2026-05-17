@@ -21,7 +21,7 @@ test('general section displays company info', async ({ page }) => {
 	await authenticate(page);
 
 	const { company } = await createCompany(page);
-	await page.goto(`/companies/${company.slug}/settings`);
+	await page.goto(`/companies/${company.slug}/settings/general`);
 
 	const generalSection = page.locator('#settings-general');
 	await expect(generalSection.getByRole('heading', { name: 'General' })).toBeVisible({
@@ -38,7 +38,7 @@ test('automations section exposes the wake-mentioner toggle and persists the cha
 	await authenticate(page);
 
 	const { company, token } = await createCompany(page);
-	await page.goto(`/companies/${company.slug}/settings`);
+	await page.goto(`/companies/${company.slug}/settings/general`);
 
 	const automations = page.locator('#settings-automations');
 	await expect(automations.getByRole('heading', { name: 'Automations' })).toBeVisible({
@@ -66,7 +66,7 @@ test('can add and delete a secret', async ({ page }) => {
 	await authenticate(page);
 
 	const { company } = await createCompany(page);
-	await page.goto(`/companies/${company.slug}/settings`);
+	await page.goto(`/companies/${company.slug}/settings/general`);
 
 	const secretsSection = page.locator('#settings-secrets');
 	await expect(secretsSection.getByText('Secrets vault')).toBeVisible({ timeout: 15000 });
@@ -89,7 +89,7 @@ test('can create and delete an api key', async ({ page }) => {
 	await authenticate(page);
 
 	const { company } = await createCompany(page);
-	await page.goto(`/companies/${company.slug}/settings`);
+	await page.goto(`/companies/${company.slug}/settings/general`);
 
 	const apiKeysSection = page.locator('#settings-api-keys');
 	await expect(apiKeysSection.getByRole('heading', { name: 'API keys' })).toBeVisible({
@@ -116,7 +116,7 @@ test('can edit and save preferences', async ({ page }) => {
 	await authenticate(page);
 
 	const { company } = await createCompany(page);
-	await page.goto(`/companies/${company.slug}/settings`);
+	await page.goto(`/companies/${company.slug}/settings/general`);
 
 	const prefsSection = page.locator('#settings-preferences');
 	await expect(prefsSection.getByRole('heading', { name: 'Preferences' })).toBeVisible({
@@ -152,7 +152,7 @@ test('can restore a previous preferences revision', async ({ page }) => {
 		data: { content: 'Updated preferences body', change_summary: 'second pass' },
 	});
 
-	await page.goto(`/companies/${company.slug}/settings`);
+	await page.goto(`/companies/${company.slug}/settings/general`);
 	const prefsSection = page.locator('#settings-preferences');
 	await expect(prefsSection.getByText('Updated preferences body')).toBeVisible({ timeout: 15000 });
 
@@ -172,7 +172,7 @@ test('can add and delete an mcp server', async ({ page }) => {
 	await authenticate(page);
 
 	const { company } = await createCompany(page);
-	await page.goto(`/companies/${company.slug}/settings`);
+	await page.goto(`/companies/${company.slug}/settings/general`);
 
 	const mcpSection = page.locator('#settings-mcp');
 	await expect(mcpSection.getByRole('heading', { name: 'MCP servers' })).toBeVisible({

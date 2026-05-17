@@ -246,7 +246,7 @@ function resolveOauthDestination(approval: Approval) {
 		};
 	}
 	return {
-		to: '/companies/$companyId/settings' as const,
+		to: '/companies/$companyId/settings/general' as const,
 		params: { companyId: companySlug },
 	};
 }

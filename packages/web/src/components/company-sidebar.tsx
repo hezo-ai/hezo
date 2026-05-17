@@ -113,12 +113,15 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 		},
 		{
 			title: 'Resources',
+			items: [{ to: '/companies/$companyId/kb', params, label: 'Knowledge base' }],
+		},
+		{
+			title: 'Settings',
 			items: [
-				{ to: '/companies/$companyId/kb', params, label: 'Knowledge base' },
-				{ to: '/companies/$companyId/connections', params, label: 'Connections' },
-				{ to: '/companies/$companyId/credentials', params, label: 'Credentials' },
-				{ to: '/companies/$companyId/settings', params, label: 'Settings' },
-				{ to: '/companies/$companyId/audit-log', params, label: 'Audit log' },
+				{ to: '/companies/$companyId/settings/general', params, label: 'General' },
+				{ to: '/companies/$companyId/settings/connections', params, label: 'Connections' },
+				{ to: '/companies/$companyId/settings/credentials', params, label: 'Credentials' },
+				{ to: '/companies/$companyId/settings/audit-log', params, label: 'Audit log' },
 			],
 		},
 	];

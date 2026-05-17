@@ -131,7 +131,7 @@ function CompanySidebarShell({ companyId }: { companyId: string }) {
 	const collapsed = uiState?.sidebar?.collapsed ?? false;
 
 	return (
-		<div className="relative shrink-0 flex">
+		<div className="relative shrink-0 flex h-full">
 			<div
 				className={`overflow-hidden border-r border-border bg-bg transition-[width] duration-150 ${
 					collapsed ? 'w-0' : 'w-[260px]'

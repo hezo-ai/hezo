@@ -1,8 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
-import { Badge } from '../../../components/ui/badge';
-import { type Column, DataTable } from '../../../components/ui/data-table';
-import { type AuditEntry, useAuditLog } from '../../../hooks/use-audit-log';
+import { Badge } from '../../../../components/ui/badge';
+import { type Column, DataTable } from '../../../../components/ui/data-table';
+import { type AuditEntry, useAuditLog } from '../../../../hooks/use-audit-log';
 
 type TabKey = 'all' | 'egress';
 
@@ -153,6 +153,6 @@ function AuditLogPage() {
 	);
 }
 
-export const Route = createFileRoute('/companies/$companyId/audit-log')({
+export const Route = createFileRoute('/companies/$companyId/settings/audit-log')({
 	component: AuditLogPage,
 });

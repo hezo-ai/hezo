@@ -1,11 +1,11 @@
 import { formatIssueStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import {
-	ArrowRight,
 	ArrowRightLeft,
 	Check,
 	ChevronDown,
 	ChevronRight,
+	DoorOpen,
 	Dot,
 	ExternalLink,
 	GitBranch,
@@ -325,6 +325,17 @@ function RunCommentBody({
 						</span>
 					}
 					emptyState={getRunWaitingMessage(status)}
+					headerAction={
+						<Link
+							to="/companies/$companyId/agents/$agentId/executions/$runId"
+							params={{ companyId, agentId, runId }}
+							title="View full run"
+							aria-label="View full run"
+							className="inline-flex items-center justify-center h-6 px-2 text-xs text-text-muted hover:text-text hover:bg-bg-muted rounded-radius-md transition-colors"
+						>
+							<DoorOpen className="w-3 h-3" />
+						</Link>
+					}
 				/>
 			)}
 			{createdIssues.length > 0 && (
@@ -346,13 +357,6 @@ function RunCommentBody({
 					))}
 				</div>
 			)}
-			<Link
-				to="/companies/$companyId/agents/$agentId/executions/$runId"
-				params={{ companyId, agentId, runId }}
-				className="inline-flex items-center gap-1 text-xs text-accent-blue-text hover:underline self-start"
-			>
-				View full run <ArrowRight className="w-3 h-3" />
-			</Link>
 		</>
 	);
 }

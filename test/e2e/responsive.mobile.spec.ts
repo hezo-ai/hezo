@@ -78,7 +78,7 @@ test.describe('Responsive — mobile (390px)', () => {
 		lightWorkspace,
 	}) => {
 		const { company } = lightWorkspace;
-		await page.goto(`/companies/${company.slug}/audit-log`);
+		await page.goto(`/companies/${company.slug}/settings/audit-log`);
 		await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible({
 			timeout: 20000,
 		});

@@ -17,6 +17,7 @@ interface LogViewerProps {
 	heightClassName?: string;
 	testId?: string;
 	compact?: boolean;
+	headerAction?: ReactNode;
 }
 
 export function LogViewer({
@@ -27,6 +28,7 @@ export function LogViewer({
 	heightClassName = 'h-[400px]',
 	testId,
 	compact = false,
+	headerAction,
 }: LogViewerProps) {
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [copied, setCopied] = useState(false);
@@ -145,6 +147,7 @@ export function LogViewer({
 					>
 						{isExpanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
 					</Button>
+					{headerAction}
 				</div>
 			</div>
 			<div ref={attachScrollRef} data-testid={testId} className={bodyClassName}>

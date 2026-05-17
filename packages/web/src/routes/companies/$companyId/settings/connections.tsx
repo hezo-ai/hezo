@@ -1,8 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { ExternalLink, Github, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { Badge } from '../../../components/ui/badge';
-import { Button } from '../../../components/ui/button';
+import { Badge } from '../../../../components/ui/badge';
+import { Button } from '../../../../components/ui/button';
 import {
 	type DeviceFlowStart,
 	type OAuthConnection,
@@ -10,9 +10,9 @@ import {
 	useDeleteOAuthConnection,
 	useOAuthConnections,
 	useStartGitHubDeviceFlow,
-} from '../../../hooks/use-oauth-connections';
+} from '../../../../hooks/use-oauth-connections';
 
-export const Route = createFileRoute('/companies/$companyId/connections')({
+export const Route = createFileRoute('/companies/$companyId/settings/connections')({
 	component: ConnectionsPage,
 });
 
