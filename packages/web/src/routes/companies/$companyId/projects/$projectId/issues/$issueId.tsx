@@ -21,6 +21,7 @@ import {
 	inlineEventIcon,
 	isInlineEventType,
 } from '../../../../../../components/comment-renderers';
+import { IssueStatusBadge } from '../../../../../../components/issue-status-badge';
 import { MarkdownProse } from '../../../../../../components/markdown-prose';
 import { MentionTextarea } from '../../../../../../components/mention-textarea';
 import { Avatar, avatarColorFromString } from '../../../../../../components/ui/avatar';
@@ -44,16 +45,6 @@ import {
 	useRemoveDependency,
 	useUpdateIssue,
 } from '../../../../../../hooks/use-issues';
-
-const statusColors: Record<string, string> = {
-	backlog: 'neutral',
-	in_progress: 'warning',
-	review: 'purple',
-	blocked: 'danger',
-	done: 'success',
-	closed: 'neutral',
-	cancelled: 'neutral',
-};
 
 const priorityColors: Record<string, string> = {
 	urgent: 'danger',
@@ -309,9 +300,7 @@ function IssueDetailPage() {
 				<h1 className="text-xl font-medium mb-3">{issue.title}</h1>
 
 				<div className="flex flex-wrap gap-1.5 mb-4">
-					<Badge color={statusColors[issue.status] as 'neutral'}>
-						{issue.status.replace('_', ' ')}
-					</Badge>
+					<IssueStatusBadge status={issue.status} />
 					<Badge color={priorityColors[issue.priority] as 'neutral'}>{issue.priority}</Badge>
 					{issue.project_name && issue.project_slug && (
 						<Link
@@ -532,9 +521,7 @@ function IssueDetailPage() {
 									className="flex items-center gap-2 text-[13px] hover:bg-bg-subtle rounded px-2 py-1"
 									data-testid="sub-issue-item"
 								>
-									<Badge color={statusColors[s.status] as 'neutral'}>
-										{s.status.replace('_', ' ')}
-									</Badge>
+									<IssueStatusBadge status={s.status} />
 									<span className="font-mono text-xs text-text-muted">{s.identifier}</span>
 									<span className="truncate">{s.title}</span>
 								</Link>
@@ -572,18 +559,27 @@ function IssueDetailPage() {
 						</h3>
 						<div className="flex flex-col gap-1">
 							{deps?.map((d) => (
-								<div key={d.id} className="flex items-center gap-2 text-[13px]">
-									<Badge color={statusColors[d.blocked_by_status] as 'neutral'}>
-										{d.blocked_by_status}
-									</Badge>
-									<span className="font-mono text-xs text-text-muted">
-										{d.blocked_by_identifier}
-									</span>
-									<span>{d.blocked_by_title}</span>
+								<div key={d.id} className="flex items-center gap-2">
+									<Link
+										to="/companies/$companyId/projects/$projectId/issues/$issueId"
+										params={{
+											companyId,
+											projectId: d.blocked_by_project_slug,
+											issueId: d.blocked_by_identifier.toLowerCase(),
+										}}
+										className="flex items-center gap-2 text-[13px] hover:bg-bg-subtle rounded px-2 py-1 flex-1 min-w-0"
+										data-testid="blocked-by-item"
+									>
+										<IssueStatusBadge status={d.blocked_by_status} />
+										<span className="font-mono text-xs text-text-muted">
+											{d.blocked_by_identifier}
+										</span>
+										<span className="truncate">{d.blocked_by_title}</span>
+									</Link>
 									<button
 										type="button"
 										onClick={() => removeDep.mutate(d.id)}
-										className="text-text-subtle hover:text-accent-red ml-auto"
+										className="text-text-subtle hover:text-accent-red"
 									>
 										<Trash2 className="w-3 h-3" />
 									</button>

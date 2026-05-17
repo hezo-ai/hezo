@@ -1,3 +1,4 @@
+import { formatIssueStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import {
 	ArrowRight,
@@ -388,6 +389,21 @@ function SystemComment({ comment, companyId }: { comment: CommentData; companyId
 		return (
 			<div className="flex items-baseline gap-2 leading-[26px]">
 				<IssueLinkSystemBody comment={comment} companyId={companyId} />
+				{timestamp}
+			</div>
+		);
+	}
+
+	if (content?.kind === 'status_change') {
+		const actorName = comment.author_name ?? 'Board';
+		const from = typeof content.from === 'string' ? content.from : '';
+		const to = typeof content.to === 'string' ? content.to : '';
+		return (
+			<div className="flex items-baseline gap-2 leading-[26px]">
+				<span className="text-xs text-text-muted">
+					{actorName} changed status from <em className="italic">{formatIssueStatus(from)}</em> to{' '}
+					<em className="italic">{formatIssueStatus(to)}</em>
+				</span>
 				{timestamp}
 			</div>
 		);

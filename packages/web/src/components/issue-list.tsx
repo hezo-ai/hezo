@@ -1,25 +1,16 @@
-import { IssueStatus, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
+import { formatIssueStatus, IssueStatus, TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
 import { useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Plus, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { type IssueFilters, useIssues } from '../hooks/use-issues';
 import { CreateIssueDialog } from './create-issue-dialog';
+import { IssueStatusBadge } from './issue-status-badge';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { type Column, DataTable } from './ui/data-table';
 import { EmptyState } from './ui/empty-state';
 import { MultiSelect, type MultiSelectOption } from './ui/multi-select';
-
-const statusColors: Record<string, string> = {
-	backlog: 'neutral',
-	in_progress: 'warning',
-	review: 'purple',
-	blocked: 'danger',
-	done: 'success',
-	closed: 'neutral',
-	cancelled: 'neutral',
-};
 
 const priorityColors: Record<string, string> = {
 	urgent: 'danger',
@@ -34,7 +25,7 @@ const DEFAULT_OPEN_STATUSES: string[] = ALL_STATUSES.filter((s) => !TERMINAL_STA
 
 const statusOptions: MultiSelectOption[] = ALL_STATUSES.map((s) => ({
 	value: s,
-	label: s.replace('_', ' '),
+	label: formatIssueStatus(s),
 }));
 
 type SortField = 'created_at' | 'updated_at';
@@ -121,7 +112,7 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 		if (statusValues.length === 0) return 'No statuses';
 		if (statusValues.length === ALL_STATUSES.length) return 'All statuses';
 		if (isDefaultOpenSelection(statusValues)) return 'Open issues';
-		if (statusValues.length === 1) return `Status: ${statusValues[0].replace('_', ' ')}`;
+		if (statusValues.length === 1) return `Status: ${formatIssueStatus(statusValues[0])}`;
 		return `${statusValues.length} statuses`;
 	})();
 
@@ -212,9 +203,7 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 			key: 'status',
 			header: 'Status',
 			width: '100px',
-			render: (row) => (
-				<Badge color={statusColors[row.status] as 'neutral'}>{row.status.replace('_', ' ')}</Badge>
-			),
+			render: (row) => <IssueStatusBadge status={row.status} />,
 		},
 		{
 			key: 'priority',

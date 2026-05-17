@@ -71,6 +71,20 @@ export const IssueStatus = {
 } as const;
 export type IssueStatus = (typeof IssueStatus)[keyof typeof IssueStatus];
 
+export const ISSUE_STATUS_LABELS: Record<IssueStatus, string> = {
+	[IssueStatus.Backlog]: 'Backlog',
+	[IssueStatus.InProgress]: 'In Progress',
+	[IssueStatus.Review]: 'Review',
+	[IssueStatus.Blocked]: 'Blocked',
+	[IssueStatus.Done]: 'Done',
+	[IssueStatus.Closed]: 'Closed',
+	[IssueStatus.Cancelled]: 'Cancelled',
+};
+
+export function formatIssueStatus(status: string): string {
+	return ISSUE_STATUS_LABELS[status as IssueStatus] ?? status;
+}
+
 export const IssuePriority = {
 	Urgent: 'urgent',
 	High: 'high',

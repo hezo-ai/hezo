@@ -12,6 +12,7 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 let companyId: string;
 let projectId: string;
+let projectSlug: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -33,7 +34,9 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Main Project', description: 'Test project.' }),
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectBody = (await projectRes.json()).data;
+	projectId = projectBody.id;
+	projectSlug = projectBody.slug;
 
 	const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
 		method: 'POST',
@@ -235,6 +238,8 @@ describe('issues CRUD', () => {
 		expect(listDepsRes.status).toBe(200);
 		const deps = (await listDepsRes.json()).data;
 		expect(deps).toHaveLength(1);
+		expect(deps[0].blocked_by_project_slug).toBe(projectSlug);
+		expect(deps[0].blocked_by_identifier).toBe(issues[1].identifier);
 
 		// Remove dependency
 		const removeRes = await app.request(

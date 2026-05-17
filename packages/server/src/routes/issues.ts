@@ -693,9 +693,11 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId/dependencies', async (c)
 
 	const result = await db.query(
 		`SELECT d.id, d.issue_id, d.blocked_by_issue_id, d.created_at,
-            i.identifier AS blocked_by_identifier, i.title AS blocked_by_title, i.status AS blocked_by_status
+            i.identifier AS blocked_by_identifier, i.title AS blocked_by_title, i.status AS blocked_by_status,
+            p.slug AS blocked_by_project_slug
      FROM issue_dependencies d
      JOIN issues i ON i.id = d.blocked_by_issue_id
+     JOIN projects p ON p.id = i.project_id
      WHERE d.issue_id = $1`,
 		[issueId],
 	);

@@ -68,8 +68,6 @@ export async function recordStatusChange(
 	wsManager: WebSocketManager | undefined,
 ): Promise<void> {
 	if (oldStatus === newStatus) return;
-	const actorName = await resolveActorName(db, actorMemberId);
-	const text = `${actorName} changed status from ${oldStatus} to ${newStatus}`;
 	const r = await db.query<Record<string, unknown>>(
 		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb) RETURNING *`,
@@ -82,7 +80,6 @@ export async function recordStatusChange(
 				from: oldStatus,
 				to: newStatus,
 				actor_id: actorMemberId,
-				text,
 			}),
 		],
 	);
