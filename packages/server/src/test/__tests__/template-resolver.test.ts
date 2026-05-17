@@ -247,6 +247,21 @@ describe('template resolver', () => {
 		expect(result).toContain(`Project ID: ${projectId}`);
 		expect(result).toContain(`Issue ID: ${fakeIssueId}`);
 	});
+
+	it('preview mode substitutes placeholders, omits Run Context, keeps Teammates and Working Guidelines', async () => {
+		const result = await resolveSystemPrompt(
+			db,
+			'Working for {{company_name}}, mission: {{company_mission}}.',
+			{ companyId, mode: 'preview' },
+		);
+		expect(result).toContain('Working for Template Co');
+		expect(result).toContain('Build amazing things');
+		expect(result).not.toContain('{{');
+		expect(result).not.toContain('## Run Context');
+		expect(result).not.toContain(`Company ID: ${companyId}`);
+		expect(result).toContain('## Teammates');
+		expect(result).toContain('## Working Guidelines');
+	});
 });
 
 describe('template resolver with agents', () => {

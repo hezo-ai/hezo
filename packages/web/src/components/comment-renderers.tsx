@@ -101,7 +101,7 @@ export function CommentRenderer({
 		case 'preview':
 			return <PreviewComment comment={comment} />;
 		case 'system':
-			return <SystemComment comment={comment} />;
+			return <SystemComment comment={comment} companyId={companyId} />;
 		case 'action':
 			return (
 				<ActionComment
@@ -376,18 +376,86 @@ function TextComment({
 	);
 }
 
-function SystemComment({ comment }: { comment: CommentData }) {
-	const text =
-		typeof comment.content === 'object'
-			? comment.content.text || JSON.stringify(comment.content)
-			: String(comment.content);
+function SystemComment({ comment, companyId }: { comment: CommentData; companyId?: string }) {
+	const content = typeof comment.content === 'object' ? comment.content : null;
+	const timestamp = (
+		<span className="text-[11px] text-text-subtle">
+			{new Date(comment.created_at).toLocaleString()}
+		</span>
+	);
+
+	if (content?.kind === 'issue_link' && companyId) {
+		return (
+			<div className="flex items-baseline gap-2 leading-[26px]">
+				<IssueLinkSystemBody comment={comment} companyId={companyId} />
+				{timestamp}
+			</div>
+		);
+	}
+
+	const text = content ? content.text || JSON.stringify(content) : String(comment.content);
 	return (
 		<div className="flex items-baseline gap-2 leading-[26px]">
 			<span className="text-xs text-text-muted">{text}</span>
-			<span className="text-[11px] text-text-subtle">
-				{new Date(comment.created_at).toLocaleString()}
-			</span>
+			{timestamp}
 		</div>
+	);
+}
+
+function IssueLinkSystemBody({ comment, companyId }: { comment: CommentData; companyId: string }) {
+	const content = comment.content as {
+		source_identifier?: string;
+		source_project_slug?: string;
+		actor_name?: string;
+		actor_kind?: 'agent' | 'user' | 'board';
+		actor_slug?: string | null;
+		text?: string;
+	};
+	const sourceIdentifier = content.source_identifier ?? '';
+	const sourceProjectSlug = content.source_project_slug ?? '';
+	const actorName = content.actor_name ?? comment.author_name ?? 'Board';
+	const actorKind = content.actor_kind ?? null;
+	const actorSlug = content.actor_slug ?? null;
+
+	const linkClass = 'text-xs text-accent-blue-text hover:underline';
+	const textClass = 'text-xs text-text-muted';
+
+	const sourceNode =
+		sourceIdentifier && sourceProjectSlug ? (
+			<Link
+				to="/companies/$companyId/projects/$projectId/issues/$issueId"
+				params={{
+					companyId,
+					projectId: sourceProjectSlug,
+					issueId: sourceIdentifier.toLowerCase(),
+				}}
+				className={linkClass}
+				data-testid="issue-link-source"
+			>
+				{sourceIdentifier}
+			</Link>
+		) : (
+			<span className={textClass}>{sourceIdentifier}</span>
+		);
+
+	const actorNode =
+		actorKind === 'agent' && actorSlug ? (
+			<Link
+				to="/companies/$companyId/agents/$agentId"
+				params={{ companyId, agentId: actorSlug }}
+				className={linkClass}
+				data-testid="issue-link-actor"
+			>
+				{actorName}
+			</Link>
+		) : (
+			<span className={textClass}>{actorName}</span>
+		);
+
+	return (
+		<span className={textClass}>
+			Linked from {sourceNode} by {actorNode}
+		</span>
 	);
 }
 

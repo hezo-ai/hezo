@@ -2,6 +2,7 @@ import { AgentAdminStatus, AI_PROVIDER_INFO, type AiProvider } from '@hezo/share
 import { createFileRoute } from '@tanstack/react-router';
 import { Loader2, Power, PowerOff } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { MarkdownProse } from '../../../../../components/markdown-prose';
 import { RevisionsPanel } from '../../../../../components/revisions-panel';
 import { Button } from '../../../../../components/ui/button';
 import { Input } from '../../../../../components/ui/input';
@@ -9,6 +10,7 @@ import { Textarea } from '../../../../../components/ui/textarea';
 import {
 	useAgent,
 	useAgentSystemPrompt,
+	useAgentSystemPromptPreview,
 	useAgentSystemPromptRevisions,
 	useAgents,
 	useDisableAgent,
@@ -32,6 +34,12 @@ function AgentSettingsPage() {
 	const [title, setTitle] = useState('');
 	const [roleDesc, setRoleDesc] = useState('');
 	const [systemPrompt, setSystemPrompt] = useState('');
+	const [promptMode, setPromptMode] = useState<'edit' | 'preview'>('edit');
+	const { data: previewData, isLoading: isPreviewLoading } = useAgentSystemPromptPreview(
+		companyId,
+		agentId,
+		promptMode === 'preview',
+	);
 	const [reportsTo, setReportsTo] = useState('');
 	const [budget, setBudget] = useState('');
 	const [heartbeat, setHeartbeat] = useState('');
@@ -127,12 +135,60 @@ function AgentSettingsPage() {
 					onChange={(e) => setRoleDesc(e.target.value)}
 				/>
 				<div>
-					<Textarea
-						label="System Prompt"
-						value={systemPrompt}
-						onChange={(e) => setSystemPrompt(e.target.value)}
-						className="min-h-[160px] font-mono text-xs"
-					/>
+					<div className="flex items-center justify-between mb-1.5">
+						<span className="text-sm text-text-muted">System Prompt</span>
+						<div
+							role="tablist"
+							aria-label="Prompt view mode"
+							className="inline-flex rounded-md border border-border-subtle bg-bg-subtle p-0.5 text-xs"
+						>
+							<button
+								type="button"
+								role="tab"
+								aria-selected={promptMode === 'edit'}
+								onClick={() => setPromptMode('edit')}
+								className={`px-2.5 py-1 rounded ${
+									promptMode === 'edit'
+										? 'bg-bg text-text shadow-sm'
+										: 'text-text-muted hover:text-text'
+								}`}
+							>
+								Edit
+							</button>
+							<button
+								type="button"
+								role="tab"
+								aria-selected={promptMode === 'preview'}
+								onClick={() => setPromptMode('preview')}
+								className={`px-2.5 py-1 rounded ${
+									promptMode === 'preview'
+										? 'bg-bg text-text shadow-sm'
+										: 'text-text-muted hover:text-text'
+								}`}
+							>
+								Preview
+							</button>
+						</div>
+					</div>
+					{promptMode === 'edit' ? (
+						<Textarea
+							aria-label="System Prompt"
+							value={systemPrompt}
+							onChange={(e) => setSystemPrompt(e.target.value)}
+							className="min-h-[160px] font-mono text-xs"
+						/>
+					) : (
+						<div
+							data-testid="system-prompt-preview"
+							className="min-h-[160px] rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+						>
+							{isPreviewLoading ? (
+								<div className="text-text-muted text-xs">Resolving…</div>
+							) : (
+								<MarkdownProse>{previewData?.content ?? ''}</MarkdownProse>
+							)}
+						</div>
+					)}
 					<RevisionsPanel
 						revisions={revisions}
 						onRestore={(rev) => restorePrompt.mutateAsync(rev)}

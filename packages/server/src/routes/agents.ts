@@ -34,6 +34,7 @@ import {
 	restoreRevision,
 	upsertDocument,
 } from '../services/documents';
+import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
@@ -500,6 +501,30 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt', async (c
 		memberAgentId: agentId,
 	});
 	return ok(c, doc);
+});
+
+agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt/preview', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+
+	const doc = await getDocument(db, {
+		type: DocumentType.AgentSystemPrompt,
+		companyId,
+		memberAgentId: agentId,
+	});
+	if (!doc) return err(c, 'NOT_FOUND', 'Agent system prompt not found', 404);
+
+	const resolved = await resolveSystemPrompt(db, doc.content, {
+		companyId,
+		agentId,
+		mode: 'preview',
+	});
+	return ok(c, { content: resolved });
 });
 
 agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt/revisions', async (c) => {

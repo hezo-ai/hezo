@@ -31,3 +31,36 @@ test('agent settings page shows system prompt textarea, edits persist, revisions
 	await page.getByRole('button', { name: /Show revision history/i }).click();
 	await expect(page.getByText(/Rev \d+/)).toBeVisible();
 });
+
+test('agent settings preview tab resolves placeholders and edit tab keeps the raw template', async ({
+	page,
+}) => {
+	await page.goto('/');
+	await authenticate(page);
+
+	const { company, token } = await createCompanyWithAgents(page);
+
+	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const engineer = agents.find((a) => a.slug === 'engineer')!;
+
+	await page.goto(`/companies/${company.id}/agents/${engineer.id}/settings`);
+
+	const editTextarea = page.getByLabel('System Prompt');
+	await expect(editTextarea).toBeVisible({ timeout: 15000 });
+	const raw = await editTextarea.inputValue();
+	expect(raw.length).toBeGreaterThan(0);
+
+	await page.getByRole('tab', { name: 'Preview' }).click();
+	const preview = page.getByTestId('system-prompt-preview');
+	await expect(preview).toBeVisible();
+	await expect(preview).not.toContainText('{{');
+	await expect(preview).toContainText(company.name);
+	await expect(preview).toContainText('Working Guidelines');
+	await expect(preview).not.toContainText('Run Context');
+
+	await page.getByRole('tab', { name: 'Edit' }).click();
+	await expect(page.getByLabel('System Prompt')).toHaveValue(raw);
+});

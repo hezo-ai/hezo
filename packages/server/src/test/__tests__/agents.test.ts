@@ -114,6 +114,36 @@ describe('agents CRUD', () => {
 		expect(typeof body.data.content).toBe('string');
 	});
 
+	it('preview endpoint resolves placeholders and omits Run Context', async () => {
+		const rawRes = await app.request(`/api/companies/${companyId}/agents/architect/system-prompt`, {
+			headers: authHeader(token),
+		});
+		const raw = ((await rawRes.json()).data?.content ?? '') as string;
+
+		const res = await app.request(
+			`/api/companies/${companyId}/agents/architect/system-prompt/preview`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(200);
+		const resolved = ((await res.json()).data?.content ?? '') as string;
+
+		expect(resolved).not.toMatch(/\{\{[a-z_]+\}\}/);
+		expect(resolved).not.toContain('## Run Context');
+		expect(resolved).toContain('## Teammates');
+		expect(resolved).toContain('## Working Guidelines');
+		if (raw.includes('{{company_name}}')) {
+			expect(resolved).toContain('Agent Test Co');
+		}
+	});
+
+	it('preview endpoint 404s for unknown agent', async () => {
+		const res = await app.request(
+			`/api/companies/${companyId}/agents/no-such-agent/system-prompt/preview`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(404);
+	});
+
 	it('seeds the architect with a PRD gate instruction', async () => {
 		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
 			headers: authHeader(token),

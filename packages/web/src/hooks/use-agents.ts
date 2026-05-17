@@ -100,6 +100,17 @@ export function useAgentSystemPrompt(companyId: string, agentId: string) {
 	});
 }
 
+export function useAgentSystemPromptPreview(companyId: string, agentId: string, enabled: boolean) {
+	return useQuery({
+		queryKey: ['companies', companyId, 'agents', agentId, 'system-prompt', 'preview'],
+		queryFn: () =>
+			api.get<{ content: string }>(
+				`/api/companies/${companyId}/agents/${agentId}/system-prompt/preview`,
+			),
+		enabled: enabled && !!companyId && !!agentId,
+	});
+}
+
 export function useAgentSystemPromptRevisions(companyId: string, agentId: string) {
 	return useQuery({
 		queryKey: ['companies', companyId, 'agents', agentId, 'system-prompt', 'revisions'],

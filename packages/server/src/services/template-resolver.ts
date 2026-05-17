@@ -7,6 +7,7 @@ interface ResolveContext {
 	issueId?: string;
 	agentId?: string;
 	dataDir?: string;
+	mode?: 'runtime' | 'preview';
 }
 
 const SHARED_INSTRUCTIONS = `
@@ -168,7 +169,9 @@ export async function resolveSystemPrompt(
 
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
 
-	resolved += buildRunContextBlock(ctx);
+	if (ctx.mode !== 'preview') {
+		resolved += buildRunContextBlock(ctx);
+	}
 	resolved += await buildProjectStateBlock(db, ctx);
 	resolved += await buildTeammatesBlock(db, ctx);
 	resolved += SHARED_INSTRUCTIONS;
