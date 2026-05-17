@@ -81,6 +81,13 @@ export async function createIssue(
 		throw new CreateIssueError('INVALID_REQUEST', 'project_id and title are required');
 	}
 
+	if (input.parent_issue_id) {
+		const depthCheck = await assertChildDepthAllowed(db, companyId, input.parent_issue_id);
+		if (!depthCheck.ok) {
+			throw new CreateIssueError('INVALID_REQUEST', depthCheck.message);
+		}
+	}
+
 	let assigneeId = input.assignee_id;
 	if (!assigneeId && input.assignee_slug) {
 		const r = await db.query<{ id: string }>(
@@ -110,13 +117,6 @@ export async function createIssue(
 		const subordinateCheck = await assertSubordinateAssignee(db, caller.agentMemberId, assigneeId);
 		if (!subordinateCheck.ok) {
 			throw new CreateIssueError('FORBIDDEN', subordinateCheck.message);
-		}
-	}
-
-	if (input.parent_issue_id) {
-		const depthCheck = await assertChildDepthAllowed(db, companyId, input.parent_issue_id);
-		if (!depthCheck.ok) {
-			throw new CreateIssueError('INVALID_REQUEST', depthCheck.message);
 		}
 	}
 
