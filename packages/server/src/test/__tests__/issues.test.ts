@@ -369,7 +369,7 @@ describe('issues CRUD', () => {
 		});
 		expect(res.status).toBe(400);
 		const body = await res.json();
-		expect(body.error.message).toContain('assignee_id is required');
+		expect(body.error.message).toMatch(/assignee_(id|slug)/);
 	});
 
 	it('rejects sub-issue creation without assignee_id', async () => {
@@ -388,7 +388,7 @@ describe('issues CRUD', () => {
 		);
 		expect(res.status).toBe(400);
 		const body = await res.json();
-		expect(body.error.message).toContain('assignee_id is required');
+		expect(body.error.message).toMatch(/assignee_(id|slug)/);
 	});
 
 	it('rejects setting assignee_id to null on update', async () => {

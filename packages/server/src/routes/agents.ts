@@ -27,6 +27,11 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import {
+	AgentSystemPromptError,
+	fetchAgentSystemPromptForBatch,
+	type SystemPromptMode,
+} from '../services/agent-system-prompts';
+import {
 	enqueueAgentSummaryTask,
 	enqueueAgentTeamContextTask,
 	enqueueTeamContextTaskForAllAgents,
@@ -41,6 +46,9 @@ import {
 } from '../services/documents';
 import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
+
+const MAX_BATCH_AGENT_SYSTEM_PROMPTS = 50;
+const VALID_PROMPT_MODES: ReadonlyArray<SystemPromptMode> = ['raw', 'placeholders', 'preview'];
 
 const log = logger.child('routes');
 
@@ -542,6 +550,71 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt/preview', 
 		mode: 'preview',
 	});
 	return ok(c, { content: resolved });
+});
+
+agentsRoutes.post('/companies/:companyId/agents/system-prompts/batch', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+
+	const body = await c.req.json<{ items?: unknown }>();
+	const raw = body.items;
+	if (!Array.isArray(raw)) {
+		return err(c, 'INVALID_REQUEST', 'items must be an array', 400);
+	}
+	if (raw.length === 0) {
+		return err(c, 'INVALID_REQUEST', 'items must contain at least one entry', 400);
+	}
+	if (raw.length > MAX_BATCH_AGENT_SYSTEM_PROMPTS) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			`items array may not exceed ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} entries`,
+			400,
+		);
+	}
+
+	const items = raw as Array<Record<string, unknown>>;
+	const results = await Promise.all(
+		items.map(async (item, index) => {
+			const agentRef = typeof item.agent_id === 'string' ? item.agent_id : '';
+			const requestedMode = item.mode;
+			const mode: SystemPromptMode =
+				typeof requestedMode === 'string' &&
+				VALID_PROMPT_MODES.includes(requestedMode as SystemPromptMode)
+					? (requestedMode as SystemPromptMode)
+					: 'placeholders';
+
+			if (!agentRef) {
+				return {
+					index,
+					ok: false as const,
+					agent_id: agentRef,
+					error: 'agent_id is required',
+				};
+			}
+
+			try {
+				const out = await fetchAgentSystemPromptForBatch(db, companyId, agentRef, mode);
+				return { index, ok: true as const, ...out };
+			} catch (e) {
+				if (e instanceof AgentSystemPromptError) {
+					return { index, ok: false as const, agent_id: agentRef, error: e.message };
+				}
+				log.error('Unexpected error in system-prompts/batch:', e);
+				return {
+					index,
+					ok: false as const,
+					agent_id: agentRef,
+					error: e instanceof Error ? e.message : 'internal_error',
+				};
+			}
+		}),
+	);
+
+	return ok(c, results);
 });
 
 agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt/revisions', async (c) => {
