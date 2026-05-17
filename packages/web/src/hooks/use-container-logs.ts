@@ -8,6 +8,7 @@ export function useContainerLogs(projectId: string, phase: string | null) {
 		room: phase && projectId ? `container-logs:${projectId}` : null,
 		messageType: WsMessageType.ContainerLog,
 		enabled: !!phase && !!projectId,
-		extractChunk: (m) => (m.projectId === projectId ? { stream: m.stream, text: m.text } : null),
+		extractChunk: (m) =>
+			m.projectId === projectId ? { stream: m.stream, text: m.text, replace: m.replace } : null,
 	});
 }

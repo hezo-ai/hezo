@@ -473,6 +473,15 @@ export async function runAgent(
 			stream: line.stream,
 			text: line.text,
 		}),
+		buildSnapshot: (text) => ({
+			type: WsMessageType.RunLog,
+			projectId: project.id,
+			runId: heartbeatRunId,
+			issueId: issue.id,
+			stream: 'stdout',
+			text,
+			replace: true,
+		}),
 		onFlush: async (text) => {
 			await deps.db.query('UPDATE heartbeat_runs SET log_text = $1 WHERE id = $2', [
 				text,

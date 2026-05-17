@@ -36,6 +36,7 @@ export interface WsContainerLogMessage {
 	projectId: string;
 	stream: 'stdout' | 'stderr';
 	text: string;
+	replace?: boolean;
 }
 
 export interface WsRunLogMessage {
@@ -45,6 +46,7 @@ export interface WsRunLogMessage {
 	issueId: string | null;
 	stream: 'stdout' | 'stderr';
 	text: string;
+	replace?: boolean;
 }
 
 export interface WsErrorMessage {

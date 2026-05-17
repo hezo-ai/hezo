@@ -11,6 +11,7 @@ export interface LogStreamLine {
 export interface LogChunk {
 	stream: 'stdout' | 'stderr';
 	text: string;
+	replace?: boolean;
 }
 
 const DEFAULT_MAX_LINES = 5000;
@@ -86,6 +87,12 @@ export function useLogStream<M extends WsServerMessage>(
 		const unsubscribe = subscribe(messageType, (msg) => {
 			const chunk = extractRef.current(msg as M);
 			if (!chunk) return;
+			if (chunk.replace) {
+				const replaced = parseSeedLogText(chunk.text).slice(-cap);
+				linesRef.current = replaced;
+				setLines(replaced);
+				return;
+			}
 			const newEntries = chunk.text
 				.split('\n')
 				.filter((t) => t.length > 0)

@@ -41,6 +41,13 @@ export class ContainerLogStreamer {
 				stream: line.stream,
 				text: line.text,
 			}),
+			buildSnapshot: (text) => ({
+				type: WsMessageType.ContainerLog,
+				projectId,
+				stream: 'stdout',
+				text,
+				replace: true,
+			}),
 			capBytes: CONTAINER_LOG_CAP_BYTES,
 		});
 

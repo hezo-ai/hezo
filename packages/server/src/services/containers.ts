@@ -72,6 +72,13 @@ function beginProvisionStream(logs: LogStreamBroker | undefined, projectId: stri
 			stream: line.stream,
 			text: line.text,
 		}),
+		buildSnapshot: (text) => ({
+			type: WsMessageType.ContainerLog,
+			projectId,
+			stream: 'stdout',
+			text,
+			replace: true,
+		}),
 		capBytes: PROVISION_CAP_BYTES,
 	});
 }

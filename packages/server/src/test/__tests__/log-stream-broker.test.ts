@@ -19,6 +19,15 @@ function makeRunConfig(
 			stream: line.stream,
 			text: line.text,
 		}),
+		buildSnapshot: (text: string) => ({
+			type: WsMessageType.RunLog,
+			projectId,
+			runId,
+			issueId: null as string | null,
+			stream: 'stdout' as const,
+			text,
+			replace: true,
+		}),
 		onFlush,
 	};
 }
@@ -32,6 +41,13 @@ function makeContainerConfig(projectId: string, streamId = `container:${projectI
 			projectId,
 			stream: line.stream,
 			text: line.text,
+		}),
+		buildSnapshot: (text: string) => ({
+			type: WsMessageType.ContainerLog,
+			projectId,
+			stream: 'stdout' as const,
+			text,
+			replace: true,
 		}),
 	};
 }
@@ -68,36 +84,39 @@ describe('LogStreamBroker', () => {
 		expect(received[1]).toMatchObject({ runId: 'r1', stream: 'stdout', text: 'world' });
 	});
 
-	it('replays all buffered lines across streams registered to the same room', () => {
+	it('replays one snapshot per stream registered to a room with the full buffered text', () => {
 		broker.begin(makeContainerConfig('p1', 'container:p1'));
 		broker.begin(makeContainerConfig('p1', 'provision:p1'));
 		broker.emit('container:p1', 'stdout', 'live line\n');
 		broker.emit('provision:p1', 'stderr', 'prov line\n');
 
-		const replayed: unknown[] = [];
-		broker.replay('container-logs:p1', (p) => replayed.push(p));
+		const replayed: Array<{ replace?: boolean; text?: string }> = [];
+		broker.replay('container-logs:p1', (p) =>
+			replayed.push(p as { replace?: boolean; text?: string }),
+		);
 
 		expect(replayed).toHaveLength(2);
-		expect(replayed).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ stream: 'stdout', text: 'live line' }),
-				expect.objectContaining({ stream: 'stderr', text: 'prov line' }),
-			]),
-		);
+		for (const msg of replayed) {
+			expect(msg.replace).toBe(true);
+		}
+		const texts = replayed.map((m) => m.text);
+		expect(texts).toEqual(expect.arrayContaining(['live line\n', '[stderr] prov line\n']));
 	});
 
-	it('does not bleed lines across streams in different rooms', () => {
+	it('does not bleed snapshots across streams in different rooms', () => {
 		broker.begin(makeRunConfig('r1', 'p1'));
 		broker.begin(makeRunConfig('r2', 'p2'));
 		broker.emit('run:r1', 'stdout', 'p1-only\n');
 
-		const p1Lines: unknown[] = [];
-		const p2Lines: unknown[] = [];
-		broker.replay('project-runs:p1', (p) => p1Lines.push(p));
-		broker.replay('project-runs:p2', (p) => p2Lines.push(p));
+		const p1Lines: Array<{ text?: string }> = [];
+		const p2Lines: Array<{ text?: string }> = [];
+		broker.replay('project-runs:p1', (p) => p1Lines.push(p as { text?: string }));
+		broker.replay('project-runs:p2', (p) => p2Lines.push(p as { text?: string }));
 
 		expect(p1Lines).toHaveLength(1);
-		expect(p2Lines).toHaveLength(0);
+		expect(p1Lines[0].text).toBe('p1-only\n');
+		expect(p2Lines).toHaveLength(1);
+		expect(p2Lines[0].text).toBe('');
 	});
 
 	it('debounces onFlush calls and invokes them with the accumulated text', async () => {
@@ -149,10 +168,11 @@ describe('LogStreamBroker', () => {
 		broker.emit('run:r1', 'stdout', '1234567890\n');
 		broker.emit('run:r1', 'stdout', 'this should not broadcast\n');
 
-		const replayed: unknown[] = [];
-		broker.replay('project-runs:p1', (p) => replayed.push(p));
+		const replayed: Array<{ text?: string }> = [];
+		broker.replay('project-runs:p1', (p) => replayed.push(p as { text?: string }));
 		expect(replayed).toHaveLength(1);
-		expect(replayed[0]).toMatchObject({ text: '1234567890' });
+		expect(replayed[0].text).toContain('1234567890');
+		expect(replayed[0].text).not.toContain('this should not broadcast');
 	});
 
 	it('replay after end() yields nothing', async () => {
