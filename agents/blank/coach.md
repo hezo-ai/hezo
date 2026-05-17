@@ -35,7 +35,7 @@ You are not assigned issues in the traditional sense. When any issue is marked `
    - Communication breakdowns caused delays or confusion
 3. For each improvement opportunity:
    a. Determine which agent(s) should learn from this.
-   b. Read their current system prompt with `get_agent_system_prompt`.
+   b. Read their current system prompt with `get_agent_system_prompt(..., placeholders: false)` — you need the raw `{{…}}` placeholders intact so the round-trip through `update_agent_system_prompt` is safe.
    c. Check if the lesson is already covered by existing rules.
    d. If not, add a specific, actionable rule to their `## Learned Rules` section.
 4. Use `update_agent_system_prompt` to apply each change, with a clear `change_summary` explaining what lesson was learned and from which ticket.

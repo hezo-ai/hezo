@@ -457,6 +457,29 @@ describe('MCP endpoint: tool call integration', () => {
 		expect(result.error).toBeUndefined();
 		expect(result.status).toBe('in_progress');
 	});
+
+	it('get_agent_system_prompt defaults to substituting placeholders without appending runtime blocks', async () => {
+		const result = (await callToolViaMcp('get_agent_system_prompt', {
+			company_id: companyId,
+			agent_id: agentId,
+		})) as { system_prompt: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.system_prompt).not.toContain('{{company_name}}');
+		expect(result.system_prompt).toContain('MCP Tool Test Co');
+		expect(result.system_prompt).not.toContain('## Working Guidelines');
+		expect(result.system_prompt).not.toContain('## Teammates');
+	});
+
+	it('get_agent_system_prompt with placeholders=false returns the raw stored template', async () => {
+		const result = (await callToolViaMcp('get_agent_system_prompt', {
+			company_id: companyId,
+			agent_id: agentId,
+			placeholders: false,
+		})) as { system_prompt: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.system_prompt).toContain('{{company_name}}');
+		expect(result.system_prompt).not.toContain('MCP Tool Test Co');
+	});
 });
 
 describe('MCP tool handlers: additional data queries via DB', () => {
@@ -1002,7 +1025,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		});
 		const fatProjectId = (await fatProjectRes.json()).data.id;
 
-		const fatBody = 'lorem '.repeat(800);
+		const fatBody = 'lorem '.repeat(1800);
 		for (let i = 0; i < 8; i++) {
 			await callToolViaMcp('create_issue', {
 				company_id: companyId,

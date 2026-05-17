@@ -49,6 +49,7 @@ import {
 	loadReactionsForIssue,
 	removeCommentReaction,
 } from '../services/reactions';
+import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
 
@@ -87,7 +88,7 @@ const APPROVAL_COLUMNS = `id, company_id, type, status, requested_by_member_id,
 // Claude Code harness's ~25k-token tool-result limit. Oversized results would
 // otherwise be persisted to disk by the harness and become unreadable for the
 // agent (the persisted file itself trips the same cap).
-export const MCP_RESULT_BYTE_LIMIT = 24_000;
+export const MCP_RESULT_BYTE_LIMIT = 64_000;
 
 export interface Excerpt {
 	excerpt: string | null;
@@ -1349,10 +1350,17 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_system_prompt',
-		"Read an agent's system prompt. Accessible by any agent or board user in the same company.",
+		"Read an agent's system prompt. Accessible by any agent or board user in the same company. Returns the resolved role doc by default — `{{…}}` placeholders substituted with the real company name, mission, manager, KB, project docs, and team context — so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.",
 		{
 			company_id: z.string().describe('Company ID'),
 			agent_id: z.string().describe('Target agent member ID'),
+			placeholders: z
+				.boolean()
+				.optional()
+				.default(true)
+				.describe(
+					'When true (default) substitutes `{{…}}` placeholders with real company/team values. When false returns the raw stored template — needed when reading before update_agent_system_prompt so placeholders survive the round-trip.',
+				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -1370,11 +1378,18 @@ export function registerTools(
 			);
 			if (agent.rows.length === 0) return { error: 'Agent not found in this company' };
 
-			const system_prompt = await getAgentSystemPrompt(
+			const raw = await getAgentSystemPrompt(
 				db,
 				args.company_id as string,
 				args.agent_id as string,
 			);
+			const system_prompt = args.placeholders
+				? await resolveSystemPrompt(db, raw, {
+						companyId: args.company_id as string,
+						agentId: args.agent_id as string,
+						mode: 'placeholders',
+					})
+				: raw;
 			return { ...agent.rows[0], system_prompt };
 		},
 		db,

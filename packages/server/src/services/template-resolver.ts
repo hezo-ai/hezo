@@ -7,7 +7,7 @@ interface ResolveContext {
 	issueId?: string;
 	agentId?: string;
 	dataDir?: string;
-	mode?: 'runtime' | 'preview';
+	mode?: 'runtime' | 'preview' | 'placeholders';
 }
 
 const SHARED_INSTRUCTIONS = `
@@ -180,6 +180,10 @@ export async function resolveSystemPrompt(
 	}
 
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
+
+	if (ctx.mode === 'placeholders') {
+		return resolved;
+	}
 
 	if (ctx.mode !== 'preview') {
 		resolved += buildRunContextBlock(ctx);
