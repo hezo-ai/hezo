@@ -221,6 +221,7 @@ describe('template resolver', () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId });
 		expect(result).toContain('## Working Guidelines');
 		expect(result).toContain('### Ticket Maintenance');
+		expect(result).toContain('### Completion Handoff');
 		expect(result).toContain('### Knowledge Maintenance');
 		expect(result).toContain('### Sub-Agents & Parallel Exploration');
 		expect(result).toContain('### Sub-Issue Delegation');
@@ -229,6 +230,14 @@ describe('template resolver', () => {
 		expect(result).toContain('write_project_doc');
 		expect(result).toContain('upsert_kb_doc');
 		expect(result).toContain('create_issue');
+	});
+
+	it('completion handoff guidance covers mark-done, auto-wake, and no-mention rules', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId });
+		expect(result).toContain('### Completion Handoff');
+		expect(result).toContain('update_issue(status: "done")');
+		expect(result).toContain('dependents');
+		expect(result).toContain('do not `@`-mention any agent in that comment');
 	});
 
 	it('injects Run Context with only company id when no project/issue', async () => {

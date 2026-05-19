@@ -917,6 +917,47 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		expect(issue).toHaveProperty('description');
 	});
 
+	it('get_issue returns blockers and dependents symmetrically', async () => {
+		const upstream = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Upstream for dependents test',
+			assignee_id: agentId,
+		})) as { id: string; identifier: string };
+
+		const downstream = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Downstream for dependents test',
+			assignee_id: agentId,
+			blocked_by_issue_ids: [upstream.identifier],
+		})) as { id: string; identifier: string };
+
+		const upstreamView = (await callToolViaMcp('get_issue', {
+			company_id: companyId,
+			issue_id: upstream.id,
+		})) as {
+			blockers: Array<{ identifier: string }>;
+			dependents: Array<{ id: string; identifier: string; status: string }>;
+		};
+		expect(upstreamView.blockers).toEqual([]);
+		expect(upstreamView.dependents).toHaveLength(1);
+		expect(upstreamView.dependents[0].id).toBe(downstream.id);
+		expect(upstreamView.dependents[0].identifier).toBe(downstream.identifier);
+		expect(upstreamView.dependents[0].status).toBe('blocked');
+
+		const downstreamView = (await callToolViaMcp('get_issue', {
+			company_id: companyId,
+			issue_id: downstream.id,
+		})) as {
+			blockers: Array<{ id: string; identifier: string }>;
+			dependents: Array<unknown>;
+		};
+		expect(downstreamView.blockers).toHaveLength(1);
+		expect(downstreamView.blockers[0].id).toBe(upstream.id);
+		expect(downstreamView.dependents).toEqual([]);
+	});
+
 	it('list_issues with excerpt_chars returns the excerpt/truncated/length triple', async () => {
 		const longBody = `Paragraph one is the headline.\n\n${'detail '.repeat(200)}`;
 		const created = (await callToolViaMcp('create_issue', {

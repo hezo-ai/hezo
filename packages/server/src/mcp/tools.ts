@@ -423,7 +423,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_issue',
-		"Get issue details, including the ticket's declared blockers (each with identifier, title, and current status). A non-empty blockers list means an automatic agent run on this ticket is paused until every blocker reaches a terminal status (done, closed, cancelled).",
+		"Get issue details, including the ticket's declared blockers (upstream — what this ticket is waiting on) and dependents (downstream — tickets that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this ticket is paused until every blocker reaches a terminal status (done, closed, cancelled). The dependents list shows which teammates' tickets will be auto-unblocked when this ticket is marked terminal — you do not need to @-mention them, the auto-wake handles it.",
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
@@ -445,7 +445,19 @@ export function registerTools(
 				 ORDER BY d.created_at ASC`,
 				[args.issue_id],
 			);
-			return { ...(issue as Record<string, unknown>), blockers: blockers.rows };
+			const dependents = await db.query(
+				`SELECT d.id AS dependency_id, b.id, b.identifier, b.title, b.status::text AS status
+				 FROM issue_dependencies d
+				 JOIN issues b ON b.id = d.issue_id
+				 WHERE d.blocked_by_issue_id = $1
+				 ORDER BY d.created_at ASC`,
+				[args.issue_id],
+			);
+			return {
+				...(issue as Record<string, unknown>),
+				blockers: blockers.rows,
+				dependents: dependents.rows,
+			};
 		},
 		db,
 	);
