@@ -321,6 +321,53 @@ test.describe('Issue detail — right sidebar', () => {
 	});
 });
 
+test.describe('Issue detail — info tooltips on pinned cards', () => {
+	test('Progress Summary and Rules labels expose info icons with help text at mobile viewport', async ({
+		page,
+		freshWorkspace,
+	}) => {
+		const { company, agents, token } = freshWorkspace;
+		await page.setViewportSize({ width: 375, height: 720 });
+
+		const project = await createProjectViaApi(
+			page,
+			company.id,
+			token,
+			'Tooltip Project',
+			'Info tooltip coverage.',
+		);
+		const issue = await createIssueViaApi(page, company.id, token, {
+			project_id: project.id,
+			title: 'Tooltip Test Issue',
+			assignee_id: agents[0].id,
+		});
+
+		await page.goto(
+			`/companies/${company.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
+		);
+		await waitForPageLoad(page);
+		await expect(page.getByRole('heading', { name: 'Tooltip Test Issue' })).toBeVisible({
+			timeout: 20000,
+		});
+
+		const progressInfo = page.getByTestId('progress-summary-info');
+		await expect(progressInfo).toBeVisible();
+		await expect(progressInfo).toHaveAttribute('aria-label', 'About Progress Summary');
+
+		const rulesInfo = page.getByTestId('rules-info');
+		await expect(rulesInfo).toBeVisible();
+		await expect(rulesInfo).toHaveAttribute('aria-label', 'About Rules');
+
+		const progressCard = page.getByTestId('pinned-progress-summary');
+		await expect(progressCard).toContainText('Progress Summary');
+		await expect(progressCard.getByRole('button', { name: 'Edit' })).toBeVisible();
+
+		const rulesCard = page.getByTestId('pinned-rules');
+		await expect(rulesCard).toContainText('Rules');
+		await expect(rulesCard.getByRole('button', { name: 'Edit' })).toBeVisible();
+	});
+});
+
 test.describe('Issue detail — initial scroll and scroll-to-bottom button', () => {
 	test('lands at top of ticket page and floating button scrolls to bottom on demand', async ({
 		page,

@@ -7,7 +7,7 @@ import {
 	OPERATIONS_PROJECT_SLUG,
 } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { ArrowDown, ChevronDown, Info, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
@@ -28,7 +28,7 @@ import { Avatar, avatarColorFromString } from '../../../../../../components/ui/a
 import { Badge } from '../../../../../../components/ui/badge';
 import { Button } from '../../../../../../components/ui/button';
 import { ConfirmDialog } from '../../../../../../components/ui/confirm-dialog';
-import { Tooltip } from '../../../../../../components/ui/tooltip';
+import { InfoTooltip } from '../../../../../../components/ui/info-tooltip';
 import { useAgents } from '../../../../../../hooks/use-agents';
 import {
 	useChooseOption,
@@ -350,9 +350,16 @@ function IssueDetailPage() {
 					className="bg-bg-subtle rounded-radius-md p-3 mb-3 text-[13px] text-text-muted leading-relaxed"
 				>
 					<div className="flex items-center justify-between mb-1">
-						<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
-							Progress Summary
-						</span>
+						<div className="flex items-center gap-1">
+							<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
+								Progress Summary
+							</span>
+							<InfoTooltip
+								label="About Progress Summary"
+								data-testid="progress-summary-info"
+								content="A running checkpoint of what's been done and what's left on this issue. Agents update it at natural milestones via the update_issue tool. Not auto-included in the agent's prompt — agents fetch it on demand to stay continuous across runs."
+							/>
+						</div>
 						{!editingSummary && (
 							<button
 								type="button"
@@ -406,9 +413,16 @@ function IssueDetailPage() {
 					className="bg-bg-subtle rounded-radius-md p-3 mb-5 text-[13px] text-text-muted leading-relaxed border-l-2 border-accent-blue"
 				>
 					<div className="flex items-center justify-between mb-1">
-						<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
-							Rules
-						</span>
+						<div className="flex items-center gap-1">
+							<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
+								Rules
+							</span>
+							<InfoTooltip
+								label="About Rules"
+								data-testid="rules-info"
+								content="Approach constraints and required workflows for this issue — e.g. 'run the full suite before pushing' or 'consult the architect before touching auth'. Automatically prepended to every agent run's task prompt. Agents can update via the update_issue tool as they discover new rules."
+							/>
+						</div>
 						{!editingRules && (
 							<button
 								type="button"
@@ -786,15 +800,10 @@ function IssueDetailPage() {
 								runtimeStatus={AgentRuntimeStatus.Active}
 								className="flex-1 min-w-0"
 							/>
-							<Tooltip content="Cannot change assignee while an agent is running on this issue">
-								<button
-									type="button"
-									aria-label="Assignee locked: agent is running"
-									className="shrink-0 text-text-subtle hover:text-text transition-colors"
-								>
-									<Info className="w-3.5 h-3.5" />
-								</button>
-							</Tooltip>
+							<InfoTooltip
+								content="Cannot change assignee while an agent is running on this issue"
+								label="Assignee locked: agent is running"
+							/>
 						</div>
 					) : (
 						<>
