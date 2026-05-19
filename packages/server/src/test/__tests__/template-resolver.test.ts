@@ -118,7 +118,7 @@ describe('template resolver', () => {
 		expect(result).toContain('No project documentation available');
 	});
 
-	it('renders {{project_docs_context}} with bare-filename link tokens when docs exist', async () => {
+	it('renders {{project_docs_context}} with a not-a-file warning and bare-filename headings when docs exist', async () => {
 		const docRes = await app.request(
 			`/api/companies/${companyId}/projects/${projectId}/docs/spec.md`,
 			{
@@ -133,8 +133,21 @@ describe('template resolver', () => {
 			companyId,
 			projectId,
 		});
-		expect(result).toContain('## spec.md (link: spec.md)');
+		expect(result).toContain(
+			'The following project docs are stored in the project-doc database, not the filesystem.',
+		);
+		expect(result).toContain('use `write_project_doc`');
+		expect(result).toContain('`Edit`/`Write` tools will NOT work');
+		expect(result).toContain('### spec.md');
+		expect(result).not.toContain('## spec.md (link: spec.md)');
 		expect(result).toContain('Detailed spec.');
+
+		const warningIdx = result.indexOf(
+			'The following project docs are stored in the project-doc database',
+		);
+		const headingIdx = result.indexOf('### spec.md');
+		expect(warningIdx).toBeGreaterThanOrEqual(0);
+		expect(headingIdx).toBeGreaterThan(warningIdx);
 	});
 
 	it('passes through text without template variables', async () => {

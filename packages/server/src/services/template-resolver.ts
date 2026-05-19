@@ -145,9 +145,14 @@ export async function resolveSystemPrompt(
 				[ctx.projectId],
 			);
 			if (docs.rows.length > 0) {
-				docsText = docs.rows
-					.map((d) => `## ${d.filename} (link: ${d.filename})\n${d.content}`)
-					.join('\n\n---\n\n');
+				const body = docs.rows.map((d) => `### ${d.filename}\n${d.content}`).join('\n\n---\n\n');
+				docsText = [
+					'The following project docs are stored in the project-doc database, not the filesystem.',
+					'To modify any of them, use `write_project_doc` (with the bare filename, e.g. `prd.md`).',
+					'The filesystem `Edit`/`Write` tools will NOT work on these — they are not files in your worktree.',
+					'',
+					body,
+				].join('\n');
 			}
 		}
 		resolved = resolved.replace(/\{\{project_docs_context\}\}/g, docsText);
