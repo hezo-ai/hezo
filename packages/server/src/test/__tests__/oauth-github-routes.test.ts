@@ -56,6 +56,7 @@ describe('GitHub device-flow routes', () => {
 			token: 'gho_e2e_token',
 			user: { id: 7, login: 'octo-e2e', avatar_url: 'http://av/octo.png', email: 'octo@e2e' },
 			signingKeys: [],
+			authKeys: [],
 		});
 
 		const startRes = await app.request(`/api/companies/${companyId}/oauth/github/device-start`, {
@@ -102,6 +103,10 @@ describe('GitHub device-flow routes', () => {
 
 		expect(sim.state.signingKeys.length).toBe(1);
 		expect(sim.state.signingKeys[0].title).toBe('Hezo signing key');
+
+		expect(sim.state.authKeys.length).toBe(1);
+		expect(sim.state.authKeys[0].title).toBe('Hezo authentication key');
+		expect(sim.state.authKeys[0].key).toBe(sim.state.signingKeys[0].key);
 
 		const conn = await db.query<{ id: string }>(
 			`SELECT id FROM oauth_connections WHERE company_id = $1`,

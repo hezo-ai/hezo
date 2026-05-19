@@ -13,6 +13,7 @@ packages/server/static/
 *.db
 .hezo/
 .claude/
+.plans/
 test-results/
 
 # TSC build artifacts in src (output goes to dist/)

@@ -247,6 +247,7 @@ export async function provisionContainer(
 					projectSlug: project.slug,
 				},
 				dataDir,
+				deps.sshAgentServer ?? null,
 				(stream, text) => emit(stream, text),
 			);
 			if (syncRes.failed.length > 0) {

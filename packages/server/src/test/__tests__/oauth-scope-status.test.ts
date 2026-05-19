@@ -56,7 +56,7 @@ afterAll(async () => {
 });
 
 describe('GET /api/companies/:companyId/oauth-connections/:id/scope-status', () => {
-	it('reports sufficient=false with the missing scope when only repo is granted', async () => {
+	it('reports sufficient=false with the missing scopes when only repo is granted', async () => {
 		const connId = await insertConnection('github', ['repo']);
 		const res = await app.request(
 			`/api/companies/${companyId}/oauth-connections/${connId}/scope-status`,
@@ -67,12 +67,12 @@ describe('GET /api/companies/:companyId/oauth-connections/:id/scope-status', () 
 			data: { sufficient: boolean; missing: string[]; required: string[] };
 		};
 		expect(body.data.sufficient).toBe(false);
-		expect(body.data.missing).toEqual(['read:org']);
-		expect(body.data.required).toEqual(['repo', 'read:org']);
+		expect(body.data.missing).toEqual(['read:org', 'write:public_key']);
+		expect(body.data.required).toEqual(['repo', 'read:org', 'write:public_key']);
 	});
 
 	it('reports sufficient=true when the minimum set is granted', async () => {
-		const connId = await insertConnection('github', ['repo', 'read:org']);
+		const connId = await insertConnection('github', ['repo', 'read:org', 'write:public_key']);
 		const res = await app.request(
 			`/api/companies/${companyId}/oauth-connections/${connId}/scope-status`,
 			{ headers: authHeader(token) },
@@ -89,6 +89,7 @@ describe('GET /api/companies/:companyId/oauth-connections/:id/scope-status', () 
 			'read:org',
 			'workflow',
 			'write:ssh_signing_key',
+			'write:public_key',
 		]);
 		const res = await app.request(
 			`/api/companies/${companyId}/oauth-connections/${connId}/scope-status`,

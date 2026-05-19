@@ -1,3 +1,4 @@
+export { withHostAgentSocket } from './host';
 export type { AgentIdentity, AgentMessage, SignRequest } from './protocol';
 export {
 	decodeMessage,

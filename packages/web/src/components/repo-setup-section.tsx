@@ -33,13 +33,15 @@ export function RepoSetupSection({ companyId, projectId }: RepoSetupSectionProps
 		!!activeConnection && scopeStatusQuery.data && scopeStatusQuery.data.sufficient === false;
 	const hasConnection = !!activeConnection;
 
+	const hasRepos = !!repos && repos.length > 0;
+
 	return (
 		<section data-testid="repo-setup-section">
 			<div className="flex items-center justify-between mb-3">
 				<h2 className="text-sm font-medium text-text-muted flex items-center gap-1.5">
 					<GitBranch className="w-4 h-4" /> Repositories
 				</h2>
-				{isReady && (
+				{isReady && hasRepos && (
 					<Button
 						variant="ghost"
 						size="sm"
@@ -155,9 +157,9 @@ export function RepoSetupSection({ companyId, projectId }: RepoSetupSectionProps
 			)}
 
 			<div className="mt-4">
-				{repos && repos.length > 0 ? (
+				{hasRepos ? (
 					<div className="flex flex-col gap-2">
-						{repos.map((r) => (
+						{repos?.map((r) => (
 							<div
 								key={r.id}
 								className="flex items-center justify-between rounded-md border border-border-subtle bg-bg px-3 py-2 text-sm"
@@ -189,7 +191,27 @@ export function RepoSetupSection({ companyId, projectId }: RepoSetupSectionProps
 						))}
 					</div>
 				) : (
-					isReady && <p className="text-sm text-text-subtle">No repositories yet.</p>
+					isReady && (
+						<div
+							className="rounded-radius-md border border-border bg-bg-subtle p-4 flex items-start gap-3"
+							data-testid="repo-setup-state-c-empty"
+						>
+							<GitBranch className="size-5 text-text-muted shrink-0 mt-0.5" />
+							<div className="flex-1 space-y-2">
+								<div>
+									<p className="text-sm font-medium">No repositories yet</p>
+									<p className="text-xs text-text-subtle">
+										Link an existing GitHub repository to this project, or create a new one in one
+										of your orgs.
+									</p>
+								</div>
+								<Button size="sm" onClick={() => setPickerOpen(true)} data-testid="repo-setup-add">
+									<GitBranch className="size-4 mr-2" />
+									Set up repo
+								</Button>
+							</div>
+						</div>
+					)
 				)}
 			</div>
 		</section>

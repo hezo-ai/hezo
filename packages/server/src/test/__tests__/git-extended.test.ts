@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { cloneRepo } from '../../services/git';
+import { cloneRepo, ensureGithubKnownHosts } from '../../services/git';
 
 const testDir = mkdtempSync(join(tmpdir(), 'hezo-test-git-extended-'));
 
@@ -11,12 +11,14 @@ afterAll(() => {
 });
 
 describe('cloneRepo', { timeout: 30_000 }, () => {
-	it('returns { success: false, error } when clone fails', async () => {
+	it('returns { success: false, error } when ssh-agent is unreachable', async () => {
+		const knownHostsPath = await ensureGithubKnownHosts(testDir);
 		const targetDir = join(testDir, 'clone-fail');
 		const result = await cloneRepo(
 			'nonexistent-org-hezo-test/nonexistent-repo-xyz',
 			targetDir,
-			'invalid-token-for-test',
+			'/nonexistent-ssh-agent-socket',
+			knownHostsPath,
 		);
 
 		expect(result.success).toBe(false);
@@ -25,22 +27,26 @@ describe('cloneRepo', { timeout: 30_000 }, () => {
 	});
 
 	it('does not throw on clone failure', async () => {
+		const knownHostsPath = await ensureGithubKnownHosts(testDir);
 		const targetDir = join(testDir, 'clone-no-throw');
 		await expect(
 			cloneRepo(
 				'nonexistent-org-hezo-test/nonexistent-repo-xyz',
 				targetDir,
-				'invalid-token-for-test',
+				'/nonexistent-ssh-agent-socket',
+				knownHostsPath,
 			),
 		).resolves.not.toThrow();
 	});
 
 	it('does not create the target directory on failure', async () => {
+		const knownHostsPath = await ensureGithubKnownHosts(testDir);
 		const targetDir = join(testDir, 'clone-no-dir');
 		const result = await cloneRepo(
 			'nonexistent-org-hezo-test/nonexistent-repo-xyz',
 			targetDir,
-			'invalid-token-for-test',
+			'/nonexistent-ssh-agent-socket',
+			knownHostsPath,
 		);
 
 		expect(result.success).toBe(false);

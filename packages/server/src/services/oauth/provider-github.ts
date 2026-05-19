@@ -8,8 +8,14 @@ const DEFAULT_API_BASE_URL = 'https://api.github.com';
 // Both Apps must have "Enable Device Flow" checked. Client IDs are public and safe to commit.
 const DEV_CLIENT_ID = 'Ov23liSH5q35gMqGTKH9';
 const PROD_CLIENT_ID = '__REPLACE_WITH_PROD_CLIENT_ID__';
-const DEFAULT_SCOPES = ['repo', 'workflow', 'read:org', 'write:ssh_signing_key'];
-const REQUIRED_REPO_SETUP_SCOPES = ['repo', 'read:org'];
+const DEFAULT_SCOPES = [
+	'repo',
+	'workflow',
+	'read:org',
+	'write:ssh_signing_key',
+	'write:public_key',
+];
+const REQUIRED_REPO_SETUP_SCOPES = ['repo', 'read:org', 'write:public_key'];
 
 export function getOAuthBaseUrl(): string {
 	return process.env.GITHUB_OAUTH_BASE_URL || DEFAULT_OAUTH_BASE_URL;
@@ -80,6 +86,10 @@ export interface GitHubAccount {
 }
 
 export type SigningKeyResult =
+	| { status: 'created'; id: number; title: string }
+	| { status: 'already_exists' };
+
+export type AuthKeyResult =
 	| { status: 'created'; id: number; title: string }
 	| { status: 'already_exists' };
 
@@ -193,6 +203,30 @@ export async function registerSigningKey(
 		}
 		log.warn('failed to register signing key on GitHub', { status: res.status, body: text });
 		throw new Error(`GitHub /user/ssh_signing_keys failed (${res.status}): ${text}`);
+	}
+	const data = (await res.json()) as { id: number; title: string };
+	return { status: 'created', id: data.id, title: data.title };
+}
+
+export async function registerAuthKey(
+	accessToken: string,
+	publicKey: string,
+	title: string,
+	fetchFn: FetchFn = globalThis.fetch,
+): Promise<AuthKeyResult> {
+	const res = await fetchFn(`${getApiBaseUrl()}/user/keys`, {
+		method: 'POST',
+		headers: { ...authHeaders(accessToken), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title, key: publicKey }),
+	});
+	if (!res.ok) {
+		const text = await res.text();
+		if (res.status === 422 && isKeyAlreadyInUse(text)) {
+			log.info('auth key already registered on GitHub, no-op');
+			return { status: 'already_exists' };
+		}
+		log.warn('failed to register auth key on GitHub', { status: res.status, body: text });
+		throw new Error(`GitHub /user/keys failed (${res.status}): ${text}`);
 	}
 	const data = (await res.json()) as { id: number; title: string };
 	return { status: 'created', id: data.id, title: data.title };

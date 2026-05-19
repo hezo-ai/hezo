@@ -23,6 +23,7 @@ import {
 	defaultGitHubScopes,
 	fetchAccount,
 	pollDeviceFlow,
+	registerAuthKey,
 	registerSigningKey,
 	startDeviceFlow,
 } from '../services/oauth/provider-github';
@@ -145,16 +146,18 @@ oauthRoutes.post('/companies/:companyId/oauth/github/device-poll', async (c) => 
 		},
 	);
 
-	if (!existing) {
-		await ensureSigningKeyRegisteredOnGitHub(
-			db,
-			masterKeyManager,
-			access.companyId,
-			result.accessToken,
-		).catch((e) =>
-			log.warn('signing-key registration failed (non-fatal)', { error: (e as Error).message }),
-		);
-	}
+	// Always attempt registration — both helpers treat 422 "already in use" as
+	// a no-op, so this is idempotent. Critical for the re-auth path where a
+	// pre-existing connection is upgraded to broader scopes (write:public_key);
+	// without this, the newly-required auth key would never get registered.
+	await ensureCompanyKeyRegisteredOnGitHub(
+		db,
+		masterKeyManager,
+		access.companyId,
+		result.accessToken,
+	).catch((e) =>
+		log.warn('company-key registration failed (non-fatal)', { error: (e as Error).message }),
+	);
 
 	broadcastChange(
 		c,
@@ -454,11 +457,12 @@ function buildCallbackPage(
 }
 
 /**
- * On first connect, ensure the company's Ed25519 public key is registered as
- * a signing key on the GitHub account. This drives "Verified" badges on
- * commits the agents push without any manual step from the human.
+ * On first connect, ensure the company's Ed25519 public key is registered on
+ * the connecting user's GitHub account as both a signing key (so commits agents
+ * push appear Verified) and an authentication key (so the ssh-agent-backed git
+ * clone/fetch/push over `git@github.com:` works without exchanging tokens).
  */
-async function ensureSigningKeyRegisteredOnGitHub(
+async function ensureCompanyKeyRegisteredOnGitHub(
 	db: import('@electric-sql/pglite').PGlite,
 	masterKeyManager: import('../crypto/master-key').MasterKeyManager,
 	companyId: string,
@@ -470,10 +474,20 @@ async function ensureSigningKeyRegisteredOnGitHub(
 		companyKey = await getCompanySSHKey(db, companyId, masterKeyManager);
 		if (!companyKey) throw new Error('failed to generate company ssh key');
 	}
-	const result = await registerSigningKey(accessToken, companyKey.publicKey, 'Hezo signing key');
-	if (result.status === 'already_exists') {
-		log.info('company ssh signing key already registered on GitHub', { companyId });
-	} else {
-		log.info('registered company ssh key on GitHub for signing', { companyId });
-	}
+
+	const signing = await registerSigningKey(accessToken, companyKey.publicKey, 'Hezo signing key');
+	log.info(
+		signing.status === 'already_exists'
+			? 'company ssh signing key already registered on GitHub'
+			: 'registered company ssh key on GitHub for signing',
+		{ companyId },
+	);
+
+	const auth = await registerAuthKey(accessToken, companyKey.publicKey, 'Hezo authentication key');
+	log.info(
+		auth.status === 'already_exists'
+			? 'company ssh auth key already registered on GitHub'
+			: 'registered company ssh key on GitHub for authentication',
+		{ companyId },
+	);
 }
