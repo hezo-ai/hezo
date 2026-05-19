@@ -165,7 +165,7 @@ test.describe('Issue detail — breadcrumbs and depth', () => {
 
 		await page.getByTestId('sub-issues-add').click();
 		await page.getByTestId('sub-issue-title-input').fill('Should be rejected');
-		await page.getByRole('button', { name: 'Create' }).click();
+		await page.getByRole('button', { name: 'Create', exact: true }).click();
 
 		await expect(page.getByTestId('sub-issue-error')).toContainText(/2 levels deep/);
 	});

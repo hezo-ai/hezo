@@ -303,17 +303,14 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 	});
 
 	// Edit rules
-	const rulesSection = page.getByText('Rules', { exact: true }).locator('..').locator('..');
+	const rulesSection = page.getByTestId('pinned-rules');
 	await rulesSection.getByText('Edit').click();
 	await rulesSection.locator('textarea').fill('Consult architect before changes');
 	await rulesSection.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 15000 });
 
 	// Edit progress summary
-	const summarySection = page
-		.getByText('Progress Summary', { exact: true })
-		.locator('..')
-		.locator('..');
+	const summarySection = page.getByTestId('pinned-progress-summary');
 	await summarySection.getByText('Edit').click();
 	await summarySection.locator('textarea').fill('Implementation started');
 	await summarySection.getByRole('button', { name: 'Save' }).click();
@@ -360,25 +357,21 @@ test('issue rules and progress summary render markdown formatting', async ({ pag
 		timeout: 20000,
 	});
 
-	const rulesSection = page.getByText('Rules', { exact: true }).locator('..').locator('..');
-	await rulesSection.getByText('Edit').click();
-	await rulesSection
+	const pinnedRules = page.getByTestId('pinned-rules');
+	await pinnedRules.getByText('Edit').click();
+	await pinnedRules
 		.locator('textarea')
 		.fill(
 			'Use **bold** guidance.\n\n- first bullet\n- second bullet\n\nRun `bun test` before merge.',
 		);
-	await rulesSection.getByRole('button', { name: 'Save' }).click();
+	await pinnedRules.getByRole('button', { name: 'Save' }).click();
 
-	const pinnedRules = page.getByTestId('pinned-rules');
 	await expect(pinnedRules.locator('strong', { hasText: 'bold' })).toBeVisible({ timeout: 15000 });
 	await expect(pinnedRules.locator('ul li', { hasText: 'first bullet' })).toBeVisible();
 	await expect(pinnedRules.locator('ul li', { hasText: 'second bullet' })).toBeVisible();
 	await expect(pinnedRules.locator('code', { hasText: 'bun test' })).toBeVisible();
 
-	const summarySection = page
-		.getByText('Progress Summary', { exact: true })
-		.locator('..')
-		.locator('..');
+	const summarySection = page.getByTestId('pinned-progress-summary');
 	await summarySection.getByText('Edit').click();
 	await summarySection
 		.locator('textarea')

@@ -37,7 +37,7 @@ test('can create and view a kb document', async ({ page }) => {
 	await page.getByRole('button', { name: 'New document' }).click();
 	await page.getByLabel('Title').fill('Onboarding Guide');
 	await page.locator('textarea').fill('# Welcome\n\nThis is a **test** document.');
-	await page.getByRole('button', { name: 'Create' }).click();
+	await page.getByRole('button', { name: 'Create', exact: true }).click();
 
 	await expect(page.getByRole('heading', { name: 'Onboarding Guide' })).toBeVisible({
 		timeout: 15000,

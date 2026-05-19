@@ -17,7 +17,7 @@ test('can create, view, edit, and delete a project document', async ({ page }) =
 	await page.getByRole('button', { name: 'New document' }).click();
 	await page.getByLabel('Filename').fill('notes.md');
 	await page.locator('textarea').fill('# Project Notes\n\nSome **markdown** content.');
-	await page.getByRole('button', { name: 'Create' }).click();
+	await page.getByRole('button', { name: 'Create', exact: true }).click();
 
 	await expect(page.getByRole('heading', { name: 'notes.md' })).toBeVisible({ timeout: 15000 });
 	await expect(page.getByRole('heading', { name: 'Project Notes' })).toBeVisible({
@@ -52,7 +52,7 @@ test('shows revision history and restores a previous version', async ({ page }) 
 	await page.getByRole('button', { name: 'New document' }).click();
 	await page.getByLabel('Filename').fill('plan.md');
 	await page.locator('textarea').fill('Original plan');
-	await page.getByRole('button', { name: 'Create' }).click();
+	await page.getByRole('button', { name: 'Create', exact: true }).click();
 	await expect(page.getByRole('heading', { name: 'plan.md' })).toBeVisible({ timeout: 15000 });
 
 	await page.getByRole('button', { name: 'Edit' }).click();
@@ -87,7 +87,7 @@ test('rejects invalid filename when creating a document', async ({ page }) => {
 	await page.getByRole('button', { name: 'New document' }).click();
 	await page.getByLabel('Filename').fill('not-markdown');
 	await page.locator('textarea').fill('content');
-	await page.getByRole('button', { name: 'Create' }).click();
+	await page.getByRole('button', { name: 'Create', exact: true }).click();
 
 	await expect(page.getByText(/Filename must end with \.md/)).toBeVisible({ timeout: 15000 });
 });
