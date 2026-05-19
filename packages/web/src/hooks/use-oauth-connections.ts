@@ -61,6 +61,26 @@ export function useStartGitHubDeviceFlow(companyId: string) {
 	});
 }
 
+export interface ScopeStatus {
+	sufficient: boolean;
+	missing: string[];
+	required: string[];
+}
+
+export function useConnectionScopeStatus(
+	companyId: string,
+	connectionId: string | null | undefined,
+) {
+	return useQuery({
+		queryKey: ['companies', companyId, 'oauth-connections', connectionId, 'scope-status'],
+		queryFn: () =>
+			api.get<ScopeStatus>(
+				`/api/companies/${companyId}/oauth-connections/${connectionId}/scope-status`,
+			),
+		enabled: !!connectionId,
+	});
+}
+
 export async function pollGitHubDeviceFlow(
 	companyId: string,
 	flowId: string,

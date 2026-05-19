@@ -151,6 +151,9 @@ export interface FinalizeResult {
 	resolvedApprovalId: string | null;
 	affectedIssueIds: string[];
 	deferredWakeups: Array<{ memberId: string; issueId: string; wakeupId: string }>;
+	approvalRow: Record<string, unknown> | null;
+	updatedCommentRows: Record<string, unknown>[];
+	systemCommentRows: Record<string, unknown>[];
 }
 
 /**
@@ -165,7 +168,14 @@ export async function finalizePendingRepoSetup(
 ): Promise<FinalizeResult> {
 	const approvalId = await findPendingApproval(db, input.companyId, input.projectId);
 	if (!approvalId) {
-		return { resolvedApprovalId: null, affectedIssueIds: [], deferredWakeups: [] };
+		return {
+			resolvedApprovalId: null,
+			affectedIssueIds: [],
+			deferredWakeups: [],
+			approvalRow: null,
+			updatedCommentRows: [],
+			systemCommentRows: [],
+		};
 	}
 
 	const pendingComments = await db.query<{ id: string; issue_id: string }>(
@@ -180,21 +190,29 @@ export async function finalizePendingRepoSetup(
 	);
 
 	const affectedIssueIds: string[] = [];
+	const updatedCommentRows: Record<string, unknown>[] = [];
+	const systemCommentRows: Record<string, unknown>[] = [];
 	for (const row of pendingComments.rows) {
-		await db.query(`UPDATE issue_comments SET chosen_option = $1::jsonb WHERE id = $2`, [
-			JSON.stringify({
-				status: 'complete',
-				result: {
-					repo_id: input.repoId,
-					repo_identifier: input.repoIdentifier,
-					short_name: input.shortName,
-				},
-			}),
-			row.id,
-		]);
-		await db.query(
+		const updated = await db.query<Record<string, unknown>>(
+			`UPDATE issue_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *`,
+			[
+				JSON.stringify({
+					status: 'complete',
+					result: {
+						repo_id: input.repoId,
+						repo_identifier: input.repoIdentifier,
+						short_name: input.shortName,
+					},
+				}),
+				row.id,
+			],
+		);
+		if (updated.rows[0]) updatedCommentRows.push(updated.rows[0]);
+
+		const sys = await db.query<Record<string, unknown>>(
 			`INSERT INTO issue_comments (issue_id, content_type, content)
-			 VALUES ($1, $2::comment_content_type, $3::jsonb)`,
+			 VALUES ($1, $2::comment_content_type, $3::jsonb)
+			 RETURNING *`,
 			[
 				row.issue_id,
 				CommentContentType.System,
@@ -203,17 +221,20 @@ export async function finalizePendingRepoSetup(
 				}),
 			],
 		);
+		if (sys.rows[0]) systemCommentRows.push(sys.rows[0]);
 		affectedIssueIds.push(row.issue_id);
 	}
 
-	await db.query(
+	const approvalUpdate = await db.query<Record<string, unknown>>(
 		`UPDATE approvals
 		 SET status = $1::approval_status,
 		     resolution_note = 'Auto-resolved: designated repo set',
 		     resolved_at = now()
-		 WHERE id = $2`,
+		 WHERE id = $2
+		 RETURNING *`,
 		[ApprovalStatus.Approved, approvalId],
 	);
+	const approvalRow = approvalUpdate.rows[0] ?? null;
 
 	const deferred = await db.query<{
 		id: string;
@@ -234,7 +255,14 @@ export async function finalizePendingRepoSetup(
 		wakeupId: w.id,
 	}));
 
-	return { resolvedApprovalId: approvalId, affectedIssueIds, deferredWakeups };
+	return {
+		resolvedApprovalId: approvalId,
+		affectedIssueIds,
+		deferredWakeups,
+		approvalRow,
+		updatedCommentRows,
+		systemCommentRows,
+	};
 }
 
 /**

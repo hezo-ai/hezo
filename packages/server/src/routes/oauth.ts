@@ -19,6 +19,7 @@ import {
 	exchangeCode,
 } from '../services/oauth/provider-generic';
 import {
+	computeScopeStatus,
 	defaultGitHubScopes,
 	fetchAccount,
 	pollDeviceFlow,
@@ -378,6 +379,23 @@ oauthRoutes.get('/companies/:companyId/oauth-connections', async (c) => {
 			updated_at: conn.updatedAt,
 		})),
 	);
+});
+
+oauthRoutes.get('/companies/:companyId/oauth-connections/:id/scope-status', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const masterKeyManager = c.get('masterKeyManager');
+	const id = c.req.param('id');
+
+	const conn = await getConnectionForCompany({ db, masterKeyManager }, access.companyId, id);
+	if (!conn) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
+	if (conn.provider !== 'github') {
+		return err(c, 'INVALID_REQUEST', 'scope-status is only supported for github connections', 400);
+	}
+
+	return ok(c, computeScopeStatus(conn.scopes));
 });
 
 oauthRoutes.delete('/companies/:companyId/oauth-connections/:id', async (c) => {

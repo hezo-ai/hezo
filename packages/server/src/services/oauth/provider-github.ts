@@ -9,6 +9,7 @@ const DEFAULT_API_BASE_URL = 'https://api.github.com';
 const DEV_CLIENT_ID = 'Ov23liSH5q35gMqGTKH9';
 const PROD_CLIENT_ID = '__REPLACE_WITH_PROD_CLIENT_ID__';
 const DEFAULT_SCOPES = ['repo', 'workflow', 'read:org', 'write:ssh_signing_key'];
+const REQUIRED_REPO_SETUP_SCOPES = ['repo', 'read:org'];
 
 export function getOAuthBaseUrl(): string {
 	return process.env.GITHUB_OAUTH_BASE_URL || DEFAULT_OAUTH_BASE_URL;
@@ -25,6 +26,21 @@ export function getClientId(): string {
 
 export function defaultGitHubScopes(): string[] {
 	return [...DEFAULT_SCOPES];
+}
+
+export function requiredRepoSetupScopes(): string[] {
+	return [...REQUIRED_REPO_SETUP_SCOPES];
+}
+
+export function computeScopeStatus(have: string[] | null | undefined): {
+	sufficient: boolean;
+	missing: string[];
+	required: string[];
+} {
+	const required = requiredRepoSetupScopes();
+	const haveSet = new Set(have ?? []);
+	const missing = required.filter((s) => !haveSet.has(s));
+	return { sufficient: missing.length === 0, missing, required };
 }
 
 export interface DeviceFlowStart {

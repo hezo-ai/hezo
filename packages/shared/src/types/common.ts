@@ -142,6 +142,24 @@ export const OAuthRequestReason = {
 } as const;
 export type OAuthRequestReason = (typeof OAuthRequestReason)[keyof typeof OAuthRequestReason];
 
+export interface BlockedTicket {
+	issue_id: string;
+	identifier: string;
+	title: string;
+	project_slug: string;
+	comment_id: string;
+	comment_created_at: string;
+	agent_name: string | null;
+	agent_slug: string | null;
+	snippet: string;
+}
+
+export interface ScopeStatusResponse {
+	sufficient: boolean;
+	missing: string[];
+	required: string[];
+}
+
 export const ToolCallStatus = { Running: 'running', Success: 'success', Error: 'error' } as const;
 export type ToolCallStatus = (typeof ToolCallStatus)[keyof typeof ToolCallStatus];
 

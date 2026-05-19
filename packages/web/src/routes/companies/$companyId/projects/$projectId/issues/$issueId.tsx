@@ -122,6 +122,7 @@ function IssueDetailPage() {
 	const [assigneeOpen, setAssigneeOpen] = useState(false);
 	const [closeOpen, setCloseOpen] = useState(false);
 	const [reopenOpen, setReopenOpen] = useState(false);
+	const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
 	const assigneeRef = useRef<HTMLDivElement>(null);
 	const virtuosoRef = useRef<VirtuosoHandle>(null);
 	const didScrollToHashRef = useRef(false);
@@ -213,9 +214,11 @@ function IssueDetailPage() {
 		const scrollToHash = () => {
 			const hash = window.location.hash;
 			let idx = -1;
+			let highlightId: string | null = null;
 			if (hash.startsWith('#comment-')) {
 				const targetId = hash.slice('#comment-'.length);
 				idx = comments.findIndex((c) => c.id === targetId);
+				if (idx >= 0) highlightId = targetId;
 			} else if (hash === '#setup-repo') {
 				idx = comments.findIndex((c) => {
 					if (c.content_type !== 'action') return false;
@@ -231,6 +234,15 @@ function IssueDetailPage() {
 						virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center' });
 					}, delay),
 				);
+			}
+			if (highlightId) {
+				setHighlightedCommentId(highlightId);
+				out.push(
+					setTimeout(() => {
+						setHighlightedCommentId(null);
+					}, 2000),
+				);
+				window.history.replaceState(null, '', window.location.pathname + window.location.search);
 			}
 			if (hash === '#setup-repo') {
 				window.history.replaceState(null, '', window.location.pathname + window.location.search);
@@ -619,14 +631,16 @@ function IssueDetailPage() {
 										c.content_type === 'action' &&
 										content?.kind === 'setup_repo' &&
 										!c.chosen_option;
+									const isHighlighted = highlightedCommentId === c.id;
 
 									if (isInlineEventType(c.content_type)) {
 										const Icon = inlineEventIcon(commentData);
 										return (
 											<div
 												id={`comment-${c.id}`}
-												className="flex items-start gap-2.5 scroll-mt-20 pb-4"
+												className={`flex items-start gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-accent-blue/60 transition-shadow' : ''}`}
 												data-testid="comment-item"
+												data-comment-highlighted={isHighlighted ? 'true' : undefined}
 											>
 												<div className="w-[26px] h-[26px] flex items-center justify-center shrink-0 text-text-subtle">
 													<Icon className="w-3.5 h-3.5" />
@@ -651,8 +665,9 @@ function IssueDetailPage() {
 									return (
 										<div
 											id={`comment-${c.id}`}
-											className="flex gap-2.5 scroll-mt-20 pb-4"
+											className={`flex gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-accent-blue/60 transition-shadow' : ''}`}
 											data-testid="comment-item"
+											data-comment-highlighted={isHighlighted ? 'true' : undefined}
 											{...(isPendingSetupRepo ? { 'data-setup-repo-anchor': '' } : {})}
 										>
 											<Avatar

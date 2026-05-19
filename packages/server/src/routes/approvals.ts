@@ -290,6 +290,87 @@ approvalsRoutes.get('/companies/:companyId/approvals', async (c) => {
 	return ok(c, result.rows);
 });
 
+approvalsRoutes.get('/companies/:companyId/approvals/:approvalId/blocked-tickets', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const approvalId = c.req.param('approvalId');
+
+	const approval = await db.query<{ id: string; type: string }>(
+		'SELECT id, type FROM approvals WHERE id = $1 AND company_id = $2',
+		[approvalId, companyId],
+	);
+	if (approval.rows.length === 0) return err(c, 'NOT_FOUND', 'Approval not found', 404);
+	if (approval.rows[0].type !== ApprovalType.DesignatedRepoRequest) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'blocked-tickets only applies to designated_repo_request approvals',
+			400,
+		);
+	}
+
+	const rows = await db.query<{
+		issue_id: string;
+		identifier: string;
+		title: string;
+		project_slug: string;
+		comment_id: string;
+		comment_created_at: string;
+		agent_name: string | null;
+		agent_slug: string | null;
+		snippet: string | null;
+	}>(
+		`SELECT
+			   i.id AS issue_id,
+			   i.identifier,
+			   i.title,
+			   p.slug AS project_slug,
+			   ic.id AS comment_id,
+			   ic.created_at AS comment_created_at,
+			   COALESCE(ma.title, m.display_name) AS agent_name,
+			   ma.slug AS agent_slug,
+			   (
+			     SELECT LEFT(prev.content->>'text', 120)
+			     FROM issue_comments prev
+			     WHERE prev.issue_id = i.id
+			       AND prev.content_type IN ('text'::comment_content_type, 'system'::comment_content_type)
+			       AND prev.content->>'text' IS NOT NULL
+			       AND prev.created_at < ic.created_at
+			     ORDER BY prev.created_at DESC
+			     LIMIT 1
+			   ) AS snippet
+			 FROM issue_comments ic
+			 JOIN issues i ON i.id = ic.issue_id
+			 JOIN projects p ON p.id = i.project_id
+			 LEFT JOIN members m ON m.id = i.assignee_id
+			 LEFT JOIN member_agents ma ON ma.id = m.id
+			 WHERE ic.content_type = 'action'::comment_content_type
+			   AND ic.content->>'kind' = 'setup_repo'
+			   AND ic.content->>'approval_id' = $1
+			   AND ic.chosen_option IS NULL
+			   AND i.company_id = $2
+			 ORDER BY i.identifier ASC`,
+		[approvalId, companyId],
+	);
+
+	const tickets = rows.rows.map((r) => ({
+		issue_id: r.issue_id,
+		identifier: r.identifier,
+		title: r.title,
+		project_slug: r.project_slug,
+		comment_id: r.comment_id,
+		comment_created_at: r.comment_created_at,
+		agent_name: r.agent_name,
+		agent_slug: r.agent_slug,
+		snippet: r.snippet?.trim() || 'Needs a designated GitHub repo to start work',
+	}));
+
+	return ok(c, tickets);
+});
+
 approvalsRoutes.post('/companies/:companyId/approvals', async (c) => {
 	const access = await requireCompanyAccess(c);
 	if (access instanceof Response) return access;

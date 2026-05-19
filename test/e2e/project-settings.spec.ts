@@ -13,7 +13,7 @@ test.describe('Project Settings', () => {
 				description: 'Test project settings.',
 			},
 		});
-		const project = ((await projRes.json()) as any).data;
+		const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
 
 		return { company, project, token, headers };
 	}
@@ -38,18 +38,14 @@ test.describe('Project Settings', () => {
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/settings`);
 		await waitForPageLoad(page);
 
-		// Click Edit button
 		await page.getByRole('button', { name: 'Edit' }).click();
 
-		// Edit description only (changing name would change the slug and break the URL)
 		const descInput = page.getByLabel('Description');
 		await descInput.clear();
 		await descInput.fill('Updated description');
 
-		// Save
 		await page.getByRole('button', { name: 'Save' }).click();
 
-		// Verify updated description
 		await expect(page.getByText('Updated description').first()).toBeVisible({ timeout: 20000 });
 	});
 
@@ -66,41 +62,25 @@ test.describe('Project Settings', () => {
 		await nameInput.clear();
 		await nameInput.fill('Should Not Save');
 
-		// Cancel
 		await page.getByRole('button', { name: 'Cancel' }).click();
 
-		// Original name should still be visible
 		await expect(page.getByTestId('breadcrumb').getByText('Settings Project')).toBeVisible({
 			timeout: 15000,
 		});
 		await expect(page.getByText('Should Not Save')).toBeHidden();
 	});
 
-	test('shows repositories section', async ({ page }) => {
+	test('State A — no GitHub connection: shows Connect GitHub CTA', async ({ page }) => {
 		await authenticate(page);
 		const { company, project } = await createProject(page);
 
 		await page.goto(`/companies/${company.slug}/projects/${project.slug}/settings`);
 		await waitForPageLoad(page);
 
-		// Repositories section header
 		await expect(page.getByRole('heading', { name: 'Repositories' })).toBeVisible({
 			timeout: 15000,
 		});
-		await expect(page.getByText('No repositories yet.')).toBeVisible();
-		await expect(page.getByRole('button', { name: 'Add Repo' })).toBeVisible();
-	});
-
-	test('"Add Repo" reveals the inline form fields', async ({ page }) => {
-		await authenticate(page);
-		const { company, project } = await createProject(page);
-
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/settings`);
-		await waitForPageLoad(page);
-
-		await page.getByRole('button', { name: 'Add Repo' }).click();
-
-		await expect(page.getByLabel('Short name')).toBeVisible({ timeout: 15000 });
-		await expect(page.getByLabel('GitHub URL or owner/repo')).toBeVisible();
+		await expect(page.getByTestId('repo-setup-state-a')).toBeVisible();
+		await expect(page.getByTestId('repo-setup-connect-github')).toBeVisible();
 	});
 });

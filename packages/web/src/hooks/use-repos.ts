@@ -45,3 +45,58 @@ export function useDeleteRepo(companyId: string, projectId: string) {
 		},
 	});
 }
+
+export interface GitHubOrgSummary {
+	login: string;
+	avatar_url: string;
+	is_personal: boolean;
+}
+
+export interface GitHubRepoSummary {
+	id: number;
+	name: string;
+	full_name: string;
+	owner: { login: string };
+	private: boolean;
+	default_branch: string;
+	clone_url: string;
+	ssh_url: string;
+}
+
+export function useGitHubOrgs(companyId: string, oauthConnectionId: string | null | undefined) {
+	return useQuery({
+		queryKey: ['companies', companyId, 'oauth-connections', oauthConnectionId, 'orgs'],
+		queryFn: () =>
+			api.get<GitHubOrgSummary[]>(
+				`/api/companies/${companyId}/oauth-connections/${oauthConnectionId}/orgs`,
+			),
+		enabled: !!oauthConnectionId,
+	});
+}
+
+export function useGitHubReposForOwner(
+	companyId: string,
+	oauthConnectionId: string | null | undefined,
+	owner: string | null,
+	query: string,
+) {
+	return useQuery({
+		queryKey: [
+			'companies',
+			companyId,
+			'oauth-connections',
+			oauthConnectionId,
+			'repos',
+			owner,
+			query,
+		],
+		queryFn: () => {
+			const params = new URLSearchParams({ owner: owner ?? '' });
+			if (query) params.set('q', query);
+			return api.get<GitHubRepoSummary[]>(
+				`/api/companies/${companyId}/oauth-connections/${oauthConnectionId}/repos?${params}`,
+			);
+		},
+		enabled: !!oauthConnectionId && !!owner,
+	});
+}

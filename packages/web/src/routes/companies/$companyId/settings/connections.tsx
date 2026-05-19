@@ -1,15 +1,13 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { Check, Copy, ExternalLink, Github, Trash2 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Github, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { GitHubDeviceFlowDialog } from '../../../../components/github-device-flow-dialog';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import {
-	type DeviceFlowStart,
 	type OAuthConnection,
-	pollGitHubDeviceFlow,
 	useDeleteOAuthConnection,
 	useOAuthConnections,
-	useStartGitHubDeviceFlow,
 } from '../../../../hooks/use-oauth-connections';
 
 export const Route = createFileRoute('/companies/$companyId/settings/connections')({
@@ -19,61 +17,8 @@ export const Route = createFileRoute('/companies/$companyId/settings/connections
 function ConnectionsPage() {
 	const { companyId } = Route.useParams();
 	const { data: connections = [] } = useOAuthConnections(companyId);
-	const startDeviceFlow = useStartGitHubDeviceFlow(companyId);
 	const deleteConn = useDeleteOAuthConnection(companyId);
-	const [deviceFlow, setDeviceFlow] = useState<DeviceFlowStart | null>(null);
-	const [pollMessage, setPollMessage] = useState<string>('');
-	const [codeCopied, setCodeCopied] = useState(false);
-	const stopRef = useRef(false);
-
-	useEffect(() => {
-		if (!deviceFlow) return;
-		stopRef.current = false;
-		setCodeCopied(false);
-		setPollMessage('Waiting for you to authorise on GitHub…');
-
-		(async () => {
-			while (!stopRef.current) {
-				try {
-					const result = await pollGitHubDeviceFlow(companyId, deviceFlow.flow_id);
-					if (result.status === 'success') {
-						setPollMessage(`Connected ${result.connection.provider_account_label}.`);
-						setDeviceFlow(null);
-						return;
-					}
-					await new Promise((r) =>
-						setTimeout(r, Math.max(2000, (result.retry_after ?? deviceFlow.interval) * 1000)),
-					);
-				} catch (e) {
-					setPollMessage((e as Error).message);
-					setDeviceFlow(null);
-					return;
-				}
-			}
-		})();
-
-		return () => {
-			stopRef.current = true;
-		};
-	}, [deviceFlow, companyId]);
-
-	const handleConnectGitHub = async () => {
-		setPollMessage('');
-		const flow = await startDeviceFlow.mutateAsync(undefined);
-		setDeviceFlow(flow);
-		try {
-			window.open(flow.verification_uri, '_blank', 'noopener');
-		} catch {
-			// pop-up blocked — user can copy verification_uri from the prompt below
-		}
-	};
-
-	const handleCopyCode = async () => {
-		if (!deviceFlow) return;
-		await navigator.clipboard.writeText(deviceFlow.user_code);
-		setCodeCopied(true);
-		setTimeout(() => setCodeCopied(false), 2000);
-	};
+	const [githubDialogOpen, setGithubDialogOpen] = useState(false);
 
 	return (
 		<div className="space-y-6">
@@ -85,56 +30,17 @@ function ConnectionsPage() {
 						agents substitute placeholders at request time.
 					</p>
 				</div>
-				<Button onClick={handleConnectGitHub} disabled={startDeviceFlow.isPending || !!deviceFlow}>
+				<Button onClick={() => setGithubDialogOpen(true)}>
 					<Github className="size-4 mr-2" />
 					Connect GitHub
 				</Button>
 			</div>
 
-			{deviceFlow && (
-				<div className="rounded-md border border-border-default bg-bg-subtle p-4 space-y-2">
-					<p className="text-sm">
-						Open{' '}
-						<a
-							href={deviceFlow.verification_uri}
-							target="_blank"
-							rel="noopener"
-							className="underline inline-flex items-center gap-1"
-						>
-							{deviceFlow.verification_uri}
-							<ExternalLink className="size-3" />
-						</a>{' '}
-						and enter this code:
-					</p>
-					<div className="flex flex-wrap items-center gap-2">
-						<div className="font-mono text-2xl tracking-widest">{deviceFlow.user_code}</div>
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							onClick={handleCopyCode}
-							aria-label="Copy device code"
-						>
-							{codeCopied ? (
-								<>
-									<Check className="size-4 mr-1.5" />
-									Copied!
-								</>
-							) : (
-								<>
-									<Copy className="size-4 mr-1.5" />
-									Copy
-								</>
-							)}
-						</Button>
-					</div>
-					<p className="text-xs text-text-subtle">{pollMessage}</p>
-					<Button variant="ghost" size="sm" onClick={() => setDeviceFlow(null)}>
-						Cancel
-					</Button>
-				</div>
-			)}
-			{!deviceFlow && pollMessage && <p className="text-sm text-text-subtle">{pollMessage}</p>}
+			<GitHubDeviceFlowDialog
+				open={githubDialogOpen}
+				onOpenChange={setGithubDialogOpen}
+				companyId={companyId}
+			/>
 
 			<div className="rounded-md border border-border-default overflow-hidden">
 				<table className="w-full text-sm">
