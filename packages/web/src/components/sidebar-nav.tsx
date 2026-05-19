@@ -1,5 +1,6 @@
 import { Link, useMatchRoute } from '@tanstack/react-router';
 import { Plus } from 'lucide-react';
+import { Tooltip } from './ui/tooltip';
 
 interface SidebarNavItem {
 	to: string;
@@ -132,15 +133,16 @@ function SectionHeader({ section }: { section: SidebarNavSection }) {
 	);
 
 	const addButton = section.onAdd && (
-		<button
-			type="button"
-			onClick={section.onAdd}
-			className="text-text-subtle hover:text-text transition-colors p-0.5 -m-0.5 cursor-pointer shrink-0"
-			title={section.addLabel ?? 'Add'}
-			aria-label={section.addLabel ?? 'Add'}
-		>
-			<Plus className="w-3.5 h-3.5" />
-		</button>
+		<Tooltip content={section.addLabel ?? 'Add'} side="right">
+			<button
+				type="button"
+				onClick={section.onAdd}
+				className="text-text-subtle hover:text-text transition-colors p-0.5 -m-0.5 cursor-pointer shrink-0"
+				aria-label={section.addLabel ?? 'Add'}
+			>
+				<Plus className="w-3.5 h-3.5" />
+			</button>
+		</Tooltip>
 	);
 
 	const titleNode = section.titleTo ? (

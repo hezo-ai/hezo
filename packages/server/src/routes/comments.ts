@@ -36,7 +36,8 @@ commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) =
 		`SELECT ic.id, ic.issue_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
             m.member_type AS author_type,
             COALESCE(ma.title, m.display_name, 'Board') AS author_name,
-            ic.author_member_id
+            ic.author_member_id,
+            ic.parent_comment_id
      FROM issue_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
@@ -166,6 +167,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		content: Record<string, unknown>;
 		effort?: string;
 		wake_assignee?: boolean;
+		parent_comment_id?: string | null;
 	}>();
 
 	if (!body.content) {
@@ -175,6 +177,18 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 	// Optional per-comment effort override. Board users set this to dial up/down
 	// the reasoning budget of the agent run that the comment triggers.
 	const commentEffort = parseEffortFromCommentBody(body);
+
+	let parentCommentId: string | null = null;
+	if (body.parent_comment_id) {
+		const parentCheck = await db.query(
+			'SELECT 1 FROM issue_comments WHERE id = $1 AND issue_id = $2',
+			[body.parent_comment_id, issueId],
+		);
+		if (parentCheck.rows.length === 0) {
+			return err(c, 'INVALID_REQUEST', 'parent_comment_id does not belong to this issue', 400);
+		}
+		parentCommentId = body.parent_comment_id;
+	}
 
 	let authorMemberId: string | null = null;
 	if (auth.type === AuthType.Board) {
@@ -189,12 +203,13 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 	const wakeAssignee = auth.type === AuthType.Board && body.wake_assignee === true;
 
 	const result = await db.query<{ id: string }>(
-		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
-     VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
+		`INSERT INTO issue_comments (issue_id, author_member_id, parent_comment_id, content_type, content)
+     VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
      RETURNING *`,
 		[
 			issueId,
 			authorMemberId,
+			parentCommentId,
 			body.content_type ?? CommentContentType.Text,
 			JSON.stringify(body.content),
 		],
@@ -211,6 +226,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
 		effort: commentEffort,
 		wakeAssignee,
+		parentCommentId,
 	});
 
 	const commentText = typeof body.content?.text === 'string' ? body.content.text : '';

@@ -24,6 +24,7 @@ export interface Comment {
 	author_type: string;
 	author_name: string;
 	author_member_id: string | null;
+	parent_comment_id: string | null;
 	tool_calls?: unknown[];
 	reactions?: ReactionGroup[];
 }
@@ -45,6 +46,7 @@ export function useCreateComment(companyId: string, issueId: string) {
 			content_type?: string;
 			effort?: string;
 			wake_assignee?: boolean;
+			parent_comment_id?: string;
 		}) => api.post<Comment>(`/api/companies/${companyId}/issues/${issueId}/comments`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({

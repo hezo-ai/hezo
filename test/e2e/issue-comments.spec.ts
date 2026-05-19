@@ -338,4 +338,89 @@ test.describe('Issue Comments', () => {
 		await expect(anchored).toBeVisible({ timeout: 20_000 });
 		await expect(anchored).toContainText(`seeded-comment-${target.index}`);
 	});
+
+	test('reply icon focuses composer, shows in-response-to, and persists parent link', async ({
+		page,
+	}) => {
+		await authenticate(page);
+		const { company, issue, headers } = await createProjectAndIssue(page);
+
+		const parentRes = await page.request.post(
+			`/api/companies/${company.id}/issues/${issue.id}/comments`,
+			{
+				headers,
+				data: { content: 'Original comment to reply to' },
+			},
+		);
+		const parent = ((await parentRes.json()) as any).data;
+
+		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await waitForPageLoad(page);
+
+		const parentItem = page.locator(`#comment-${parent.id}`);
+		await expect(parentItem).toBeVisible({ timeout: 20_000 });
+
+		await parentItem.getByTestId('comment-reply').click();
+
+		const composer = page.getByPlaceholder('Add a comment...');
+		await expect(composer).toBeFocused();
+
+		const indicator = page.getByTestId('reply-indicator');
+		await expect(indicator).toBeVisible();
+		await expect(indicator).toContainText('In response to');
+		await expect(indicator).toContainText('Original comment');
+
+		await page.getByTestId('clear-reply').click();
+		await expect(indicator).toHaveCount(0);
+
+		await parentItem.getByTestId('comment-reply').click();
+		await expect(indicator).toBeVisible();
+
+		await composer.fill('Follow-up reply');
+		await page.getByRole('button', { name: 'Comment', exact: true }).click();
+
+		const followUp = page
+			.locator('[data-testid="comment-item"]')
+			.filter({ hasText: 'Follow-up reply' });
+		await expect(followUp).toBeVisible({ timeout: 15_000 });
+		const replyingTo = followUp.getByTestId('replying-to');
+		await expect(replyingTo).toBeVisible();
+		await expect(replyingTo).toContainText('replying to');
+	});
+
+	test('reply flow works on mobile viewport', async ({ page }) => {
+		await page.setViewportSize({ width: 390, height: 844 });
+		await authenticate(page);
+		const { company, issue, headers } = await createProjectAndIssue(page);
+
+		const parentRes = await page.request.post(
+			`/api/companies/${company.id}/issues/${issue.id}/comments`,
+			{
+				headers,
+				data: { content: 'Mobile parent comment' },
+			},
+		);
+		const parent = ((await parentRes.json()) as any).data;
+
+		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await waitForPageLoad(page);
+
+		const parentItem = page.locator(`#comment-${parent.id}`);
+		await expect(parentItem).toBeVisible({ timeout: 20_000 });
+
+		await parentItem.getByTestId('comment-reply').click();
+
+		const composer = page.getByPlaceholder('Add a comment...');
+		await expect(composer).toBeFocused();
+		await expect(page.getByTestId('reply-indicator')).toBeVisible();
+
+		await composer.fill('Mobile reply');
+		await page.getByRole('button', { name: 'Comment', exact: true }).click();
+
+		const followUp = page
+			.locator('[data-testid="comment-item"]')
+			.filter({ hasText: 'Mobile reply' });
+		await expect(followUp).toBeVisible({ timeout: 15_000 });
+		await expect(followUp.getByTestId('replying-to')).toBeVisible();
+	});
 });

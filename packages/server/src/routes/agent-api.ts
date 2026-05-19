@@ -159,17 +159,30 @@ agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
 	const body = await c.req.json<{
 		content_type: string;
 		content: Record<string, unknown>;
+		parent_comment_id?: string | null;
 	}>();
 
 	if (!body.content_type || !body.content) {
 		return err(c, 'INVALID_REQUEST', 'content_type and content are required', 400);
 	}
 
+	let parentCommentId: string | null = null;
+	if (body.parent_comment_id) {
+		const parentCheck = await db.query(
+			'SELECT 1 FROM issue_comments WHERE id = $1 AND issue_id = $2',
+			[body.parent_comment_id, issueId],
+		);
+		if (parentCheck.rows.length === 0) {
+			return err(c, 'INVALID_REQUEST', 'parent_comment_id does not belong to this issue', 400);
+		}
+		parentCommentId = body.parent_comment_id;
+	}
+
 	const result = await db.query<{ id: string }>(
-		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
-		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
+		`INSERT INTO issue_comments (issue_id, author_member_id, parent_comment_id, content_type, content)
+		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
 		 RETURNING *`,
-		[issueId, auth.memberId, body.content_type, JSON.stringify(body.content)],
+		[issueId, auth.memberId, parentCommentId, body.content_type, JSON.stringify(body.content)],
 	);
 
 	await fireCommentWakeups({
@@ -181,6 +194,7 @@ agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
 		contentType: body.content_type,
 		authorMemberId: auth.memberId,
 		authorRunId: auth.runId,
+		parentCommentId,
 	});
 
 	return ok(c, result.rows[0], 201);

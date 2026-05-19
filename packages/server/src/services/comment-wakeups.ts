@@ -17,6 +17,7 @@ export interface FireCommentWakeupsParams {
 	authorRunId?: string | null;
 	effort?: string | null;
 	wakeAssignee?: boolean;
+	parentCommentId?: string | null;
 }
 
 export async function fireCommentWakeups(params: FireCommentWakeupsParams): Promise<void> {
@@ -28,9 +29,9 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 		content,
 		contentType,
 		authorMemberId,
-		authorRunId,
 		effort,
 		wakeAssignee,
+		parentCommentId,
 	} = params;
 
 	if (contentType !== CommentContentType.Text) return;
@@ -82,14 +83,14 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 
 	await Promise.all(wakeupPromises);
 
-	if (authorMemberId && authorRunId) {
-		await fireReplyWakeupIfApplicable({
+	if (parentCommentId) {
+		await fireExplicitReplyWakeup({
 			db,
 			issueId,
 			companyId,
 			commentId,
 			authorMemberId,
-			authorRunId,
+			parentCommentId,
 			alreadyWokenAgentIds: mentionedAgentIds,
 			effortPayload,
 		});
@@ -101,43 +102,23 @@ interface ReplyWakeupCtx {
 	issueId: string;
 	companyId: string;
 	commentId: string;
-	authorMemberId: string;
-	authorRunId: string;
+	authorMemberId: string | null;
+	parentCommentId: string;
 	alreadyWokenAgentIds: Set<string>;
 	effortPayload: Record<string, unknown>;
 }
 
-async function fireReplyWakeupIfApplicable(ctx: ReplyWakeupCtx): Promise<void> {
+async function fireExplicitReplyWakeup(ctx: ReplyWakeupCtx): Promise<void> {
 	const {
 		db,
 		issueId,
 		companyId,
 		commentId,
 		authorMemberId,
-		authorRunId,
+		parentCommentId,
 		alreadyWokenAgentIds,
 		effortPayload,
 	} = ctx;
-
-	const runWakeup = await db.query<{ source: string; payload: Record<string, unknown> }>(
-		`SELECT w.source::text AS source, w.payload
-		 FROM heartbeat_runs r
-		 JOIN agent_wakeup_requests w ON w.id = r.wakeup_id
-		 WHERE r.id = $1 AND r.company_id = $2`,
-		[authorRunId, companyId],
-	);
-	if (runWakeup.rows.length === 0) return;
-	if (runWakeup.rows[0].source !== WakeupSource.Mention) return;
-
-	const triggeringCommentId =
-		typeof runWakeup.rows[0].payload.comment_id === 'string'
-			? runWakeup.rows[0].payload.comment_id
-			: null;
-	const triggeringIssueId =
-		typeof runWakeup.rows[0].payload.issue_id === 'string'
-			? runWakeup.rows[0].payload.issue_id
-			: null;
-	if (!triggeringCommentId || triggeringIssueId !== issueId) return;
 
 	const settings = await db.query<{ wake: boolean | null }>(
 		`SELECT COALESCE((settings->>'wake_mentioner_on_reply')::boolean, true) AS wake
@@ -146,11 +127,11 @@ async function fireReplyWakeupIfApplicable(ctx: ReplyWakeupCtx): Promise<void> {
 	);
 	if (settings.rows.length === 0 || settings.rows[0].wake === false) return;
 
-	const triggeringComment = await db.query<{ author_member_id: string | null }>(
+	const parent = await db.query<{ author_member_id: string | null }>(
 		'SELECT author_member_id FROM issue_comments WHERE id = $1',
-		[triggeringCommentId],
+		[parentCommentId],
 	);
-	const originalAuthorId = triggeringComment.rows[0]?.author_member_id ?? null;
+	const originalAuthorId = parent.rows[0]?.author_member_id ?? null;
 	if (!originalAuthorId) return;
 	if (originalAuthorId === authorMemberId) return;
 	if (alreadyWokenAgentIds.has(originalAuthorId)) return;
@@ -158,7 +139,7 @@ async function fireReplyWakeupIfApplicable(ctx: ReplyWakeupCtx): Promise<void> {
 	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [originalAuthorId]);
 	if (isAgent.rows.length === 0) return;
 
-	const idempotencyKey = `reply:${triggeringCommentId}:${commentId}`;
+	const idempotencyKey = `reply:${parentCommentId}:${commentId}`;
 	try {
 		await createWakeup(
 			db,
@@ -169,7 +150,7 @@ async function fireReplyWakeupIfApplicable(ctx: ReplyWakeupCtx): Promise<void> {
 				source: WakeupSource.Reply,
 				issue_id: issueId,
 				comment_id: commentId,
-				triggering_comment_id: triggeringCommentId,
+				triggering_comment_id: parentCommentId,
 				responder_member_id: authorMemberId,
 				...effortPayload,
 			},

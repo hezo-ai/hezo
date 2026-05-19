@@ -544,17 +544,20 @@ CREATE INDEX idx_exec_locks_member ON execution_locks(member_id);
 -------------------------------------------------------------------------------
 
 CREATE TABLE issue_comments (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    issue_id         UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    author_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    content_type     comment_content_type NOT NULL DEFAULT 'text',
-    content          JSONB NOT NULL,
-    chosen_option    JSONB,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    issue_id          UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    author_member_id  UUID REFERENCES members(id) ON DELETE SET NULL,
+    parent_comment_id UUID REFERENCES issue_comments(id) ON DELETE SET NULL,
+    content_type      comment_content_type NOT NULL DEFAULT 'text',
+    content           JSONB NOT NULL,
+    chosen_option     JSONB,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_comments_issue ON issue_comments(issue_id);
 CREATE INDEX idx_comments_author ON issue_comments(author_member_id);
+CREATE INDEX idx_comments_parent ON issue_comments(parent_comment_id)
+    WHERE parent_comment_id IS NOT NULL;
 
 -------------------------------------------------------------------------------
 -- COMMENT REACTIONS

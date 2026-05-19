@@ -1,4 +1,5 @@
 import { AgentAdminStatus, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useCompany } from '../hooks/use-companies';
@@ -14,6 +15,7 @@ interface CompanySidebarProps {
 
 export function CompanySidebar({ companyId }: CompanySidebarProps) {
 	const params = { companyId };
+	const navigate = useNavigate();
 	const { data: agents } = useAgents(companyId);
 	const { data: projects } = useProjects(companyId);
 	const { data: company } = useCompany(companyId);
@@ -61,7 +63,7 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 				updateUiState.mutate({ sidebar: { projects_expanded: !projectsExpanded } });
 			},
 			onAdd: () => setCreateProjectOpen(true),
-			addLabel: 'New project',
+			addLabel: 'Create a new project',
 			items: [],
 			children: sortedProjects.map((project) => {
 				const projectParams = { companyId, projectId: project.slug };
@@ -104,6 +106,8 @@ export function CompanySidebar({ companyId }: CompanySidebarProps) {
 			onToggle: () => {
 				updateUiState.mutate({ sidebar: { team_expanded: !teamExpanded } });
 			},
+			onAdd: () => navigate({ to: '/companies/$companyId/agents/hire', params }),
+			addLabel: 'Hire a new agent',
 			items: [],
 			children: activeAgents.map((agent) => ({
 				to: '/companies/$companyId/agents/$agentId',
