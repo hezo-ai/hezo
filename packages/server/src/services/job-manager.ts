@@ -575,13 +575,14 @@ export class JobManager {
 			slug: string;
 			admin_status: string;
 			heartbeat_interval_min: number;
+			run_timeout_min: number;
 			default_effort: string;
 			touches_code: boolean;
 			model_override_provider: AiProvider | null;
 			model_override_model: string | null;
 		}>(
 			`SELECT id, title, slug, admin_status,
-			        heartbeat_interval_min, default_effort, touches_code,
+			        heartbeat_interval_min, run_timeout_min, default_effort, touches_code,
 			        model_override_provider, model_override_model
 			 FROM member_agents WHERE id = $1`,
 			[memberId],
@@ -839,7 +840,7 @@ export class JobManager {
 			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
 		};
-		const timeoutMs = agent.rows[0].heartbeat_interval_min * 60 * 1000;
+		const timeoutMs = agent.rows[0].run_timeout_min * 60 * 1000;
 
 		const projectId = project.rows[0].id;
 		const taskKey = wsRoom.agent(memberId);

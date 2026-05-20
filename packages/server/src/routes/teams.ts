@@ -287,6 +287,7 @@ interface AgentTypeRow {
 	system_prompt_template: string;
 	default_effort: string;
 	heartbeat_interval_min: number;
+	run_timeout_min: number;
 	monthly_budget_cents: number;
 	touches_code: boolean;
 	reports_to_slug: string | null;
@@ -304,7 +305,8 @@ async function createAgentsFromTeamTypes(
 		const joinRows = await db.query<AgentTypeRow>(
 			`SELECT at.id, at.name, at.slug, at.role_description, at.default_summary,
 			        at.default_team_context, at.system_prompt_template,
-			        at.default_effort, at.heartbeat_interval_min, at.monthly_budget_cents,
+			        at.default_effort, at.heartbeat_interval_min, at.run_timeout_min,
+			        at.monthly_budget_cents,
 			        at.touches_code,
 			        ctat.reports_to_slug,
 			        ctat.heartbeat_interval_override, ctat.monthly_budget_override
@@ -346,9 +348,9 @@ async function createAgentsFromTeamTypes(
 		await db.query(
 			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
 			                            team_context,
-			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
-			                            touches_code)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11)`,
+			                            default_effort, heartbeat_interval_min, run_timeout_min,
+			                            monthly_budget_cents, touches_code)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12)`,
 			[
 				memberId,
 				row.id,
@@ -359,6 +361,7 @@ async function createAgentsFromTeamTypes(
 				row.default_team_context ?? '',
 				row.default_effort,
 				heartbeat,
+				row.run_timeout_min,
 				budget,
 				row.touches_code ?? false,
 			],
@@ -423,12 +426,14 @@ async function ensureBuiltinAgents(db: PGlite, teamId: string): Promise<void> {
 		system_prompt_template: string;
 		default_effort: string;
 		heartbeat_interval_min: number;
+		run_timeout_min: number;
 		monthly_budget_cents: number;
 		touches_code: boolean;
 	}>(
 		`SELECT id, name, slug, role_description, default_summary, default_team_context,
 		        system_prompt_template,
-		        default_effort, heartbeat_interval_min, monthly_budget_cents, touches_code
+		        default_effort, heartbeat_interval_min, run_timeout_min,
+		        monthly_budget_cents, touches_code
 		 FROM agent_types WHERE slug = ANY($1)`,
 		[missingSlugs],
 	);
@@ -443,9 +448,9 @@ async function ensureBuiltinAgents(db: PGlite, teamId: string): Promise<void> {
 		await db.query(
 			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
 			                            team_context,
-			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
-			                            touches_code)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11)`,
+			                            default_effort, heartbeat_interval_min, run_timeout_min,
+			                            monthly_budget_cents, touches_code)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12)`,
 			[
 				memberResult.rows[0].id,
 				at.id,
@@ -456,6 +461,7 @@ async function ensureBuiltinAgents(db: PGlite, teamId: string): Promise<void> {
 				teamContextOverrides[at.slug] || at.default_team_context || '',
 				at.default_effort,
 				at.heartbeat_interval_min,
+				at.run_timeout_min,
 				at.monthly_budget_cents,
 				at.touches_code ?? false,
 			],
