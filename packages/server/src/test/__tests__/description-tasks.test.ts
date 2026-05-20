@@ -15,7 +15,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
-let ceoMemberId: string;
+let captainMemberId: string;
 let engineerMemberId: string;
 
 beforeAll(async () => {
@@ -36,13 +36,13 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const ceo = await db.query<{ id: string }>(
+	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+		 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
 		[teamId],
 	);
-	ceoMemberId = ceo.rows[0].id;
+	captainMemberId = captain.rows[0].id;
 
 	const eng = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
@@ -64,7 +64,7 @@ beforeEach(async () => {
 });
 
 describe('enqueueAgentSummaryTask', () => {
-	it('creates an issue in the Operations project assigned to the CEO with the correct label and priority', async () => {
+	it('creates an issue in the Operations project assigned to the Captain with the correct label and priority', async () => {
 		const issueId = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'created');
 		expect(issueId).toBeTruthy();
 
@@ -82,7 +82,7 @@ describe('enqueueAgentSummaryTask', () => {
 			[issueId],
 		);
 		const row = issue.rows[0];
-		expect(row.assignee_id).toBe(ceoMemberId);
+		expect(row.assignee_id).toBe(captainMemberId);
 
 		const opsProject = await db.query<{ id: string }>(
 			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
@@ -100,12 +100,12 @@ describe('enqueueAgentSummaryTask', () => {
 		expect(row.description).toContain('set_team_summary');
 	});
 
-	it('creates a wakeup for the CEO when enqueueing', async () => {
+	it('creates a wakeup for the Captain when enqueueing', async () => {
 		const issueId = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'created');
 		const wakeups = await db.query<{ source: string; payload: Record<string, unknown> }>(
 			`SELECT source, payload FROM agent_wakeup_requests
 			 WHERE member_id = $1 AND payload->>'issue_id' = $2`,
-			[ceoMemberId, issueId],
+			[captainMemberId, issueId],
 		);
 		expect(wakeups.rows.length).toBe(1);
 		expect(wakeups.rows[0].source).toBe('assignment');
@@ -134,18 +134,18 @@ describe('enqueueAgentSummaryTask', () => {
 		expect(second).toBeTruthy();
 	});
 
-	it('returns null and does not create an issue when there is no enabled CEO', async () => {
-		// Create a fresh team with no template — only built-in CEO + Coach
-		// then disable the CEO.
+	it('returns null and does not create an issue when there is no enabled Captain', async () => {
+		// Create a fresh team with no template — only built-in Captain + Coach
+		// then disable the Captain.
 		const blankRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No CEO Co' }),
+			body: JSON.stringify({ name: 'No Captain Co' }),
 		});
 		const blankTeamId = (await blankRes.json()).data.id;
 		const ceoRes = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
 			[blankTeamId],
 		);
 		const blankCeoId = ceoRes.rows[0].id;
@@ -179,7 +179,7 @@ describe('enqueueAgentSummaryTask', () => {
 		]);
 		const ceoRes = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
 			[blankTeamId],
 		);
 		const blankCeoId = ceoRes.rows[0].id;
@@ -190,7 +190,7 @@ describe('enqueueAgentSummaryTask', () => {
 });
 
 describe('enqueueTeamSummaryTask', () => {
-	it('creates a team-targeted issue in the Operations project assigned to the CEO', async () => {
+	it('creates a team-targeted issue in the Operations project assigned to the Captain', async () => {
 		const issueId = await enqueueTeamSummaryTask(db, teamId, 'agent_added');
 		expect(issueId).toBeTruthy();
 
@@ -201,7 +201,7 @@ describe('enqueueTeamSummaryTask', () => {
 			labels: string[];
 		}>('SELECT assignee_id, title, description, labels FROM issues WHERE id = $1', [issueId]);
 		const row = issue.rows[0];
-		expect(row.assignee_id).toBe(ceoMemberId);
+		expect(row.assignee_id).toBe(captainMemberId);
 		expect(row.title).toContain('team');
 		expect(row.description).toContain('target=team');
 		expect(row.description).toContain('set_team_summary');
@@ -226,7 +226,7 @@ describe('enqueueTeamSummaryTask', () => {
 });
 
 describe('enqueueAgentTeamContextTask', () => {
-	it('creates an agent-scoped team_context issue in Operations assigned to the CEO', async () => {
+	it('creates an agent-scoped team_context issue in Operations assigned to the Captain', async () => {
 		const issueId = await enqueueAgentTeamContextTask(db, teamId, engineerMemberId, 'agent_added');
 		expect(issueId).toBeTruthy();
 
@@ -240,7 +240,7 @@ describe('enqueueAgentTeamContextTask', () => {
 			issueId,
 		]);
 		const row = issue.rows[0];
-		expect(row.assignee_id).toBe(ceoMemberId);
+		expect(row.assignee_id).toBe(captainMemberId);
 		expect(row.title).toContain('team relationships');
 		expect(row.description).toContain(`target=team_context:${engineerMemberId}`);
 		expect(row.description).toContain('set_agent_team_context');
@@ -317,7 +317,7 @@ describe('enqueueTeamContextTaskForAllAgents', () => {
 			`SELECT count(*)::int AS n FROM issues
 			 WHERE labels @> '["description-update"]'::jsonb
 			   AND description LIKE $1`,
-			[`%target=team_context:${ceoMemberId}%`],
+			[`%target=team_context:${captainMemberId}%`],
 		);
 		expect(ceoTasks.rows[0].n).toBe(1);
 	});

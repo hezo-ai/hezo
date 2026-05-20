@@ -30,8 +30,8 @@ test('bare kb and project-doc references render as tooltip-ed links and navigate
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo');
-	if (!ceo) throw new Error('CEO agent not found');
+	const captain = agents.find((a) => a.slug === 'captain');
+	if (!captain) throw new Error('Captain agent not found');
 
 	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers: json,
@@ -39,7 +39,7 @@ test('bare kb and project-doc references render as tooltip-ed links and navigate
 			project_id: project.id,
 			title: 'Doc mention host issue',
 			description: `See onboarding-guide.md and runbook.md for context.`,
-			assignee_id: ceo.id,
+			assignee_id: captain.id,
 		},
 	});
 	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
@@ -85,12 +85,12 @@ test('mention picker opens on @ and inserts the selected handle', async ({ page 
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo');
-	if (!ceo) throw new Error('CEO agent not found');
+	const captain = agents.find((a) => a.slug === 'captain');
+	if (!captain) throw new Error('Captain agent not found');
 
 	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers: json,
-		data: { project_id: project.id, title: 'Picker host', assignee_id: ceo.id },
+		data: { project_id: project.id, title: 'Picker host', assignee_id: captain.id },
 	});
 	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
 
@@ -143,12 +143,12 @@ test('rendered markdown autolinks only real entities and leaves look-alikes as t
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo');
-	if (!ceo) throw new Error('CEO agent not found');
+	const captain = agents.find((a) => a.slug === 'captain');
+	if (!captain) throw new Error('Captain agent not found');
 
 	const targetIssueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers: json,
-		data: { project_id: project.id, title: 'Target for mixed mentions', assignee_id: ceo.id },
+		data: { project_id: project.id, title: 'Target for mixed mentions', assignee_id: captain.id },
 	});
 	const targetIssue = (
 		(await targetIssueRes.json()) as {
@@ -157,7 +157,7 @@ test('rendered markdown autolinks only real entities and leaves look-alikes as t
 	).data;
 
 	const body = [
-		`See ${targetIssue.identifier} and spec.md and coding-standards.md with @ceo.`,
+		`See ${targetIssue.identifier} and spec.md and coding-standards.md with @captain.`,
 		`Look-alikes that must stay plain text: UTF-8, ${targetIssue.identifier}x, \`${targetIssue.identifier}\` and \`spec.md\`.`,
 	].join('\n\n');
 
@@ -167,7 +167,7 @@ test('rendered markdown autolinks only real entities and leaves look-alikes as t
 			project_id: project.id,
 			title: 'Host for mixed mentions',
 			description: body,
-			assignee_id: ceo.id,
+			assignee_id: captain.id,
 		},
 	});
 	const host = ((await hostRes.json()) as { data: { identifier: string } }).data;

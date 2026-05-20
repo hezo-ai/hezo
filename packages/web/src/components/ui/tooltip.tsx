@@ -6,9 +6,17 @@ interface TooltipProps {
 	children: ReactNode;
 	side?: 'top' | 'right' | 'bottom' | 'left';
 	delayDuration?: number;
+	/** Extra classes on the floating content panel (e.g. wider role-description tooltips). */
+	contentClassName?: string;
 }
 
-export function Tooltip({ content, children, side = 'top', delayDuration = 150 }: TooltipProps) {
+export function Tooltip({
+	content,
+	children,
+	side = 'top',
+	delayDuration = 150,
+	contentClassName,
+}: TooltipProps) {
 	return (
 		<TooltipPrimitive.Provider delayDuration={delayDuration}>
 			<TooltipPrimitive.Root>
@@ -17,7 +25,7 @@ export function Tooltip({ content, children, side = 'top', delayDuration = 150 }
 					<TooltipPrimitive.Content
 						side={side}
 						sideOffset={6}
-						className="z-50 max-w-xs rounded-radius-md border border-border bg-bg-raised px-2.5 py-1.5 text-[11px] leading-snug text-text shadow-md data-[state=delayed-open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=delayed-open]:fade-in-0"
+						className={`z-50 max-w-xs rounded-radius-md border border-border bg-bg-raised px-2.5 py-1.5 text-[11px] leading-snug text-text shadow-md data-[state=delayed-open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=delayed-open]:fade-in-0 ${contentClassName ?? ''}`}
 					>
 						{content}
 						<TooltipPrimitive.Arrow className="fill-bg-raised" />

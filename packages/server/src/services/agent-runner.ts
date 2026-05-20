@@ -2,14 +2,16 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { dirname, join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	type AgentRuntime,
+	AgentRuntime,
 	AiAuthMethod,
 	type AiProvider,
 	CommentContentType,
 	ContainerStatus,
+	claudeCodeModelArg,
 	HeartbeatRunStatus,
 	IssueStatus,
 	PROVIDER_RUNTIME_ADAPTERS,
+	providerDirectUpstreamHosts,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
 	RUNTIME_HEADLESS_PREFIX_ARGS,
@@ -359,7 +361,13 @@ async function buildRunContext(
 	}
 	if (egress) {
 		const proxyUrl = `http://${egress.host}:${egress.port}`;
-		const noProxy = `${egress.host},localhost,127.0.0.1`;
+		const noProxyHosts = [
+			egress.host,
+			'localhost',
+			'127.0.0.1',
+			...providerDirectUpstreamHosts(provider),
+		];
+		const noProxy = [...new Set(noProxyHosts)].join(',');
 		env.push(
 			`HTTP_PROXY=${proxyUrl}`,
 			`http_proxy=${proxyUrl}`,
@@ -367,19 +375,20 @@ async function buildRunContext(
 			`https_proxy=${proxyUrl}`,
 			`NO_PROXY=${noProxy}`,
 			`no_proxy=${noProxy}`,
+			// Rely on update-ca-certificates for curl/git; do not set SSL_CERT_FILE to
+			// the egress CA alone — that replaces the system trust store and breaks TLS.
 			`NODE_EXTRA_CA_CERTS=${egress.containerCAPath}`,
-			`SSL_CERT_FILE=${egress.containerCAPath}`,
-			`REQUESTS_CA_BUNDLE=${egress.containerCAPath}`,
 			`CURL_CA_BUNDLE=${egress.containerCAPath}`,
 			`GIT_SSL_CAINFO=${egress.containerCAPath}`,
-			`AWS_CA_BUNDLE=${egress.containerCAPath}`,
-			`PIP_CERT=${egress.containerCAPath}`,
-			`NPM_CONFIG_CAFILE=${egress.containerCAPath}`,
 		);
 	}
 
 	const cliCommand = RUNTIME_COMMANDS[runtimeType];
-	const modelArgs = modelOverride ? ['--model', modelOverride] : [];
+	const cliModel =
+		modelOverride && runtimeType === AgentRuntime.ClaudeCode
+			? claudeCodeModelArg(provider, modelOverride)
+			: modelOverride;
+	const modelArgs = cliModel ? ['--model', cliModel] : [];
 
 	const cmd = [
 		cliCommand,

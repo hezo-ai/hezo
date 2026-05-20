@@ -39,7 +39,7 @@ You participate in two review phases per ticket, both in parallel with the QA En
 3. Post structured findings with severity tags.
 4. @-mention `@architect` when your review is complete. The Architect compiles all findings and routes actionable items to the Engineer.
 
-Critical security findings must be flagged immediately — @-mention `@architect` and `@ceo`; do not wait for the review cycle. Systemic issues (e.g. an auth pattern used incorrectly across multiple routes) → create an issue and assign to the Architect. When disagreeing with the Engineer about security requirements, discuss in the ticket; if unresolved, the Architect decides; if the decision would compromise security, escalate to the board.
+Critical security findings must be flagged immediately — @-mention `@architect` and `@captain`; do not wait for the review cycle. Systemic issues (e.g. an auth pattern used incorrectly across multiple routes) → create an issue and assign to the Architect. When disagreeing with the Engineer about security requirements, discuss in the ticket; if unresolved, the Architect decides; if the decision would compromise security, escalate to the board.
 
 ## Proactive audits
 

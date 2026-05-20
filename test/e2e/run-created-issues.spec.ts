@@ -8,7 +8,7 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
@@ -21,7 +21,7 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 		data: {
 			project_id: project.id,
 			title: 'Parent With Spawns',
-			assignee_id: ceo.id,
+			assignee_id: captain.id,
 		},
 	});
 	const issue = ((await issueRes.json()) as { data: { id: string } }).data;
@@ -44,12 +44,12 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 		id: 'aaaa0000-0000-0000-0000-000000000001',
 		issue_id: issue.id,
 		content_type: 'run',
-		content: { run_id: runId, agent_id: ceo.id, agent_title: 'CEO' },
+		content: { run_id: runId, agent_id: captain.id, agent_title: 'Captain' },
 		chosen_option: null,
 		created_at: new Date().toISOString(),
 		author_type: 'agent',
-		author_name: 'CEO',
-		author_member_id: ceo.id,
+		author_name: 'Captain',
+		author_member_id: captain.id,
 	};
 
 	await page.route(`**/api/teams/*/issues/*/comments**`, async (route) => {
@@ -63,7 +63,7 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 
 	const runResponse = {
 		id: runId,
-		member_id: ceo.id,
+		member_id: captain.id,
 		team_id: team.id,
 		issue_id: issue.id,
 		issue_identifier: 'PARENT-1',
@@ -83,7 +83,7 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 		created_issues: [spawnedA, spawnedB],
 	};
 
-	await page.route(`**/api/teams/*/agents/${ceo.id}/heartbeat-runs/${runId}`, async (route) => {
+	await page.route(`**/api/teams/*/agents/${captain.id}/heartbeat-runs/${runId}`, async (route) => {
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
@@ -123,7 +123,7 @@ test('run comment omits created tickets section when list is empty', async ({ pa
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
@@ -136,7 +136,7 @@ test('run comment omits created tickets section when list is empty', async ({ pa
 		data: {
 			project_id: project.id,
 			title: 'Parent No Spawns',
-			assignee_id: ceo.id,
+			assignee_id: captain.id,
 		},
 	});
 	const issue = ((await issueRes.json()) as { data: { id: string } }).data;
@@ -146,12 +146,12 @@ test('run comment omits created tickets section when list is empty', async ({ pa
 		id: 'aaaa0000-0000-0000-0000-000000000002',
 		issue_id: issue.id,
 		content_type: 'run',
-		content: { run_id: runId, agent_id: ceo.id, agent_title: 'CEO' },
+		content: { run_id: runId, agent_id: captain.id, agent_title: 'Captain' },
 		chosen_option: null,
 		created_at: new Date().toISOString(),
 		author_type: 'agent',
-		author_name: 'CEO',
-		author_member_id: ceo.id,
+		author_name: 'Captain',
+		author_member_id: captain.id,
 	};
 
 	await page.route(`**/api/teams/*/issues/*/comments**`, async (route) => {
@@ -165,7 +165,7 @@ test('run comment omits created tickets section when list is empty', async ({ pa
 
 	const runResponse = {
 		id: runId,
-		member_id: ceo.id,
+		member_id: captain.id,
 		team_id: team.id,
 		issue_id: issue.id,
 		issue_identifier: 'PARENT-2',
@@ -185,7 +185,7 @@ test('run comment omits created tickets section when list is empty', async ({ pa
 		created_issues: [],
 	};
 
-	await page.route(`**/api/teams/*/agents/${ceo.id}/heartbeat-runs/${runId}`, async (route) => {
+	await page.route(`**/api/teams/*/agents/${captain.id}/heartbeat-runs/${runId}`, async (route) => {
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',

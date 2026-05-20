@@ -324,12 +324,12 @@ via the same `debit_agent_budget()` atomic function.
 
 When a team is created via `POST /teams`, the server automatically:
 1. Creates the `~/.hezo/teams/{slug}/` folder structure
-2. Creates the full 11-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer,
+2. Creates the full 11-agent team (Captain, Product Lead, Architect, Engineer, QA Engineer,
    Security Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher, Coach)
    with pre-filled system prompts from built-in role templates. DevOps Engineer starts
    in `idle` status.
 3. Prompts the owner to connect platforms via OAuth (GitHub required, Gmail recommended)
-4. Creates an "Operations" project (`is_internal = true`) with an onboarding issue assigned to the CEO
+4. Creates an "Operations" project (`is_internal = true`) with an onboarding issue assigned to the Captain
 5. Generates an SSH key pair for the team and registers it on the connected GitHub account
 6. Auto-generates the team AGENTS.md KB doc with default engineering rules and writes it to disk
 7. Auto-provisions a Docker container for the Operations project in the background
@@ -367,7 +367,7 @@ defines a reusable role template with a system prompt template, default config
 (runtime type, heartbeat interval, monthly budget), and metadata.
 
 **Sources:**
-- `builtin` — shipped with Hezo (11 built-in types: CEO, Product Lead, Architect, Engineer, QA Engineer, Security Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher, Coach). Security Engineer reports to Architect. Coach is a standalone role that reviews completed tickets to extract lessons and improve system prompts.
+- `builtin` — shipped with Hezo (11 built-in types: Captain, Product Lead, Architect, Engineer, QA Engineer, Security Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher, Coach). Security Engineer reports to Architect. Coach is a standalone role that reviews completed tickets to extract lessons and improve system prompts.
 - `custom` — created by users for their specific needs
 - `remote` — loaded from hezo connect marketplace (future)
 
@@ -399,11 +399,11 @@ description of how the team collaborates (≤20 lines).
 `member_agents.summary` and `teams.summary` during team
 provisioning.
 
-**Runtime updates:** The CEO agent can regenerate descriptions at runtime by
+**Runtime updates:** The Captain agent can regenerate descriptions at runtime by
 processing `description-update` issues (created in the Operations project).
 Two MCP tools — `set_agent_summary` and `set_team_summary` — write the new
 text directly to the database. Only agents and board members within the
-team can set agent summaries; only the CEO agent can set the team summary.
+team can set agent summaries; only the Captain agent can set the team summary.
 
 ### Agent system prompts
 
@@ -610,7 +610,7 @@ activation time with this precedence:
    `agent_types.default_effort` at team creation time).
 3. The global `DEFAULT_EFFORT` fallback (`medium`).
 
-Planning-heavy roles (CEO, Architect) default to `max` so their plans go
+Planning-heavy roles (Captain, Architect) default to `max` so their plans go
 through ultrathink; implementers default to `medium`. Each runtime translates
 the resolved level to its native knob:
 
@@ -708,7 +708,7 @@ A user can belong to multiple teams — each team membership is a separate
 Permission enforcement is two-layered: the API layer enforces structural
 boundaries (project scope, board-only endpoints), while agents interpret
 `permissions_text` to respect behavioral boundaries (e.g. "cannot modify
-PRDs — escalate to CEO").
+PRDs — escalate to Captain").
 
 `invites` carries the intended role, title, permissions, and project scope.
 These fields are copied to `member_users` when accepted.

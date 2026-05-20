@@ -1,6 +1,7 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import type { Team } from './use-teams';
 
 export interface Project {
 	id: string;
@@ -9,6 +10,7 @@ export interface Project {
 	slug: string;
 	issue_prefix: string;
 	description: string;
+	is_internal?: boolean;
 	docker_base_image: string | null;
 	container_id: string | null;
 	container_status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error' | null;
@@ -40,6 +42,34 @@ export function useProjects(teamId: string) {
 		staleTime: 0,
 		refetchOnMount: 'always',
 	});
+}
+
+export type ProjectWithTeam = Project & { teamSlug: string; teamName: string };
+
+/** User-facing projects across all teams (excludes internal e.g. Operations). */
+export function useAllVisibleProjects(teams: Team[] | undefined) {
+	const queries = useQueries({
+		queries: (teams ?? []).map((team) => ({
+			queryKey: ['teams', team.slug, 'projects'],
+			queryFn: () => api.get<Project[]>(`/api/teams/${team.slug}/projects`),
+		})),
+	});
+
+	const isLoading = queries.some((q) => q.isLoading);
+	const projects: ProjectWithTeam[] = [];
+
+	for (let i = 0; i < queries.length; i++) {
+		const team = teams?.[i];
+		if (!team) continue;
+		for (const p of queries[i].data ?? []) {
+			if (p.is_internal) continue;
+			projects.push({ ...p, teamSlug: team.slug, teamName: team.name });
+		}
+	}
+
+	projects.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+	return { projects, isLoading };
 }
 
 export function useProject(teamId: string, projectId: string, options?: { enabled?: boolean }) {

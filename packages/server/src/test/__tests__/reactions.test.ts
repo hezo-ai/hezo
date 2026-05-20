@@ -14,7 +14,7 @@ let masterKeyManager: MasterKeyManager;
 
 let teamId: string;
 let projectId: string;
-let ceoId: string;
+let captainId: string;
 let architectId: string;
 let productLeadId: string;
 let ceoSlug: string;
@@ -113,9 +113,9 @@ beforeAll(async () => {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
-	const ceo = agents.find((a) => a.slug === 'ceo')!;
-	ceoId = ceo.id;
-	ceoSlug = ceo.slug;
+	const captain = agents.find((a) => a.slug === 'captain')!;
+	captainId = captain.id;
+	ceoSlug = captain.slug;
 	architectId = agents.find((a) => a.slug === 'architect')!.id;
 	productLeadId = agents.find((a) => a.slug === 'product-lead')!.id;
 
@@ -138,7 +138,7 @@ beforeEach(async () => {
 
 describe('REST reactions endpoints', () => {
 	it('PUT adds a reaction; idempotent on repeat', async () => {
-		const issueId = await insertIssue(ceoId, 'Reaction test');
+		const issueId = await insertIssue(captainId, 'Reaction test');
 		const commentId = await insertComment(issueId, productLeadId);
 
 		const url = `/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/reactions/${ReactionKind.Ack}`;
@@ -159,7 +159,7 @@ describe('REST reactions endpoints', () => {
 	});
 
 	it('DELETE removes only the caller’s reaction', async () => {
-		const issueId = await insertIssue(ceoId, 'Reaction delete test');
+		const issueId = await insertIssue(captainId, 'Reaction delete test');
 		const commentId = await insertComment(issueId, productLeadId);
 
 		// Architect (an agent) reacts via MCP
@@ -196,7 +196,7 @@ describe('REST reactions endpoints', () => {
 	});
 
 	it('400 on unknown reaction kind', async () => {
-		const issueId = await insertIssue(ceoId, 'Invalid kind test');
+		const issueId = await insertIssue(captainId, 'Invalid kind test');
 		const commentId = await insertComment(issueId, productLeadId);
 
 		const res = await app.request(
@@ -207,8 +207,8 @@ describe('REST reactions endpoints', () => {
 	});
 
 	it('404 when comment does not belong to the issue', async () => {
-		const issueA = await insertIssue(ceoId, 'Cross-issue A');
-		const issueB = await insertIssue(ceoId, 'Cross-issue B');
+		const issueA = await insertIssue(captainId, 'Cross-issue A');
+		const issueB = await insertIssue(captainId, 'Cross-issue B');
 		const commentInA = await insertComment(issueA, productLeadId);
 
 		const res = await app.request(
@@ -219,7 +219,7 @@ describe('REST reactions endpoints', () => {
 	});
 
 	it('reacting does not create any wakeups', async () => {
-		const issueId = await insertIssue(ceoId, 'No wakeup test');
+		const issueId = await insertIssue(captainId, 'No wakeup test');
 		const commentId = await insertComment(issueId, productLeadId);
 
 		const before = await wakeupCount();
@@ -235,10 +235,16 @@ describe('REST reactions endpoints', () => {
 	});
 
 	it('GET /comments includes reactions inline', async () => {
-		const issueId = await insertIssue(ceoId, 'GET with reactions');
+		const issueId = await insertIssue(captainId, 'GET with reactions');
 		const commentId = await insertComment(issueId, productLeadId);
 
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, teamId, issueId);
+		const { token: ceoToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captainId,
+			teamId,
+			issueId,
+		);
 		await callMcp(ceoToken, 'add_reaction', {
 			team_id: teamId,
 			issue_id: issueId,
@@ -262,7 +268,7 @@ describe('REST reactions endpoints', () => {
 	});
 
 	it('cross-team access is denied', async () => {
-		const issueId = await insertIssue(ceoId, 'Cross-team test');
+		const issueId = await insertIssue(captainId, 'Cross-team test');
 		const commentId = await insertComment(issueId, productLeadId);
 
 		// Build a second team; mint an api key for it.
@@ -280,7 +286,7 @@ describe('REST reactions endpoints', () => {
 			headers: authHeader(token),
 		});
 		const otherCeo = (await otherAgents.json()).data.find(
-			(a: { slug: string }) => a.slug === 'ceo',
+			(a: { slug: string }) => a.slug === 'captain',
 		);
 		const otherIssue = await db.query<{ id: string }>(
 			`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
@@ -307,12 +313,12 @@ describe('REST reactions endpoints', () => {
 
 describe('MCP add_reaction / remove_reaction tools', () => {
 	it('add_reaction is idempotent', async () => {
-		const issueId = await insertIssue(ceoId, 'MCP idempotent');
+		const issueId = await insertIssue(captainId, 'MCP idempotent');
 		const commentId = await insertComment(issueId, productLeadId);
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
-			ceoId,
+			captainId,
 			teamId,
 			issueId,
 		);
@@ -335,9 +341,15 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 	});
 
 	it('remove_reaction removes only the caller’s reaction', async () => {
-		const issueId = await insertIssue(ceoId, 'MCP remove');
+		const issueId = await insertIssue(captainId, 'MCP remove');
 		const commentId = await insertComment(issueId, productLeadId);
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, teamId, issueId);
+		const { token: ceoToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captainId,
+			teamId,
+			issueId,
+		);
 		const { token: archToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -372,12 +384,12 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 	});
 
 	it('list_comments includes reactions inline', async () => {
-		const issueId = await insertIssue(ceoId, 'MCP list_comments');
+		const issueId = await insertIssue(captainId, 'MCP list_comments');
 		const commentId = await insertComment(issueId, productLeadId);
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
-			ceoId,
+			captainId,
 			teamId,
 			issueId,
 		);
@@ -399,7 +411,7 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 
 	it('add_reaction does not fire any wakeups', async () => {
 		const issueId = await insertIssue(architectId, 'MCP no wakeups');
-		const commentId = await insertComment(issueId, ceoId);
+		const commentId = await insertComment(issueId, captainId);
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,

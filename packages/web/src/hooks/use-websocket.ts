@@ -1,17 +1,22 @@
 import { WsMessageType, type WsRowChangeMessage, wsRoom } from '@hezo/shared';
+import type { QueryClient } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useSocket } from '../contexts/socket-context';
+import { invalidateTeamAgentCaches } from '../lib/invalidate-team-caches';
 
 const TABLE_TO_QUERY_KEY: Record<
 	string,
-	(teamId: string, row: Record<string, unknown>) => string[][]
+	(teamSlug: string, row: Record<string, unknown>) => string[][]
 > = {
 	issues: (cid) => [
 		['teams', cid, 'issues'],
 		['teams', cid],
 		['teams'],
 		['teams', cid, 'projects'],
+		['teams', cid, 'requirements-intake'],
+		['teams', cid, 'hire-team-intake'],
+		['teams', cid, 'onboarding'],
 	],
 	heartbeat_runs: (cid, row) => {
 		const keys: string[][] = [['teams', cid, 'issues']];
@@ -34,8 +39,11 @@ const TABLE_TO_QUERY_KEY: Record<
 	comment_reactions: (cid) => [['teams', cid, 'issues']],
 	comment_attachments: (cid) => [['teams', cid, 'issues']],
 	member_agents: (cid) => [['teams', cid, 'agents']],
-	projects: (cid) => [['teams', cid, 'projects']],
-	approvals: (cid) => [['teams', cid, 'approvals']],
+	projects: (cid) => [
+		['teams', cid, 'projects'],
+		['teams', cid, 'onboarding'],
+	],
+	approvals: (cid) => [['teams', cid, 'approvals'], ['approvals'], ['approvals', 'pending']],
 	documents: (cid, row) => {
 		switch (row.type) {
 			case 'project_doc':
@@ -53,8 +61,77 @@ const TABLE_TO_QUERY_KEY: Record<
 	cost_entries: (cid) => [['teams', cid, 'costs']],
 	execution_locks: (cid) => [['teams', cid, 'execution-locks']],
 	repos: (cid) => [['teams', cid, 'projects']],
-	goals: (cid) => [['teams', cid, 'goals']],
+	goals: (cid) => [
+		['teams', cid, 'goals'],
+		['teams', cid, 'onboarding'],
+	],
 };
+
+/** Invalidate TanStack Query caches for a realtime row_change event. */
+export function invalidateQueriesForRowChange(
+	queryClient: QueryClient,
+	teamSlug: string,
+	table: string,
+	row: Record<string, unknown>,
+): void {
+	const keyMapper = TABLE_TO_QUERY_KEY[table];
+	if (!keyMapper) return;
+	for (const key of keyMapper(teamSlug, row)) {
+		queryClient.invalidateQueries({ queryKey: key });
+	}
+}
+
+interface TeamRoom {
+	id: string;
+	slug: string;
+}
+
+/**
+ * Subscribe to all team rooms so global UI (inbox badge, home) updates without a full page refresh.
+ */
+export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
+	const queryClient = useQueryClient();
+	const { joinRoom, leaveRoom, subscribe } = useSocket();
+
+	const teamsKey =
+		teams
+			?.map((t) => `${t.id}:${t.slug}`)
+			.sort()
+			.join(',') ?? '';
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: teamsKey tracks membership; teams read from latest render
+	useEffect(() => {
+		if (!teams?.length) return;
+
+		const slugById = new Map(teams.map((t) => [t.id, t.slug]));
+		const rooms = teams.map((t) => wsRoom.team(t.id));
+		for (const room of rooms) {
+			joinRoom(room);
+		}
+
+		const unsubscribe = subscribe(WsMessageType.RowChange, (msg) => {
+			const { table, row } = msg as WsRowChangeMessage;
+			const teamUuid = row.team_id as string | undefined;
+			const teamSlug = teamUuid ? slugById.get(teamUuid) : undefined;
+			if (teamSlug) {
+				invalidateQueriesForRowChange(queryClient, teamSlug, table, row);
+				if (table === 'member_agents') {
+					invalidateTeamAgentCaches(queryClient, teamSlug);
+				}
+			}
+			if (table === 'approvals') {
+				queryClient.invalidateQueries({ queryKey: ['approvals'] });
+			}
+		});
+
+		return () => {
+			unsubscribe();
+			for (const room of rooms) {
+				leaveRoom(room);
+			}
+		};
+	}, [teamsKey, queryClient, joinRoom, leaveRoom, subscribe]);
+}
 
 export function useWebSocket(wsTeamId: string | undefined, routeTeamId: string): void {
 	const queryClient = useQueryClient();
@@ -67,12 +144,9 @@ export function useWebSocket(wsTeamId: string | undefined, routeTeamId: string):
 
 		const unsubscribe = subscribe(WsMessageType.RowChange, (msg) => {
 			const { table, row } = msg as WsRowChangeMessage;
-			const keyMapper = TABLE_TO_QUERY_KEY[table];
-			if (keyMapper) {
-				const keys = keyMapper(routeTeamId, row);
-				for (const key of keys) {
-					queryClient.invalidateQueries({ queryKey: key });
-				}
+			invalidateQueriesForRowChange(queryClient, routeTeamId, table, row);
+			if (table === 'member_agents') {
+				invalidateTeamAgentCaches(queryClient, routeTeamId);
 			}
 		});
 

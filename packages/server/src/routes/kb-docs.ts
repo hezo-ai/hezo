@@ -5,6 +5,7 @@ import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
 import { requireTeamAccess } from '../middleware/auth';
+import { broadcastApprovalChange } from '../services/approval-broadcast';
 import {
 	deleteDocument,
 	getDocument,
@@ -97,9 +98,10 @@ kbDocsRoutes.patch('/teams/:teamId/kb-docs/:slug', async (c) => {
 	}>();
 
 	if (auth.type === AuthType.Agent) {
-		await db.query(
+		const approvalResult = await db.query<Record<string, unknown>>(
 			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
-			 VALUES ($1, $2::approval_type, $3, $4::jsonb)`,
+			 VALUES ($1, $2::approval_type, $3, $4::jsonb)
+			 RETURNING *`,
 			[
 				access.teamId,
 				ApprovalType.KbUpdate,
@@ -113,6 +115,10 @@ kbDocsRoutes.patch('/teams/:teamId/kb-docs/:slug', async (c) => {
 				}),
 			],
 		);
+		const row = approvalResult.rows[0];
+		if (row) {
+			broadcastApprovalChange(c.get('wsManager'), access.teamId, 'INSERT', row);
+		}
 		return c.json({ data: { pending_approval: true, slug } }, 202);
 	}
 

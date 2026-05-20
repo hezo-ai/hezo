@@ -225,6 +225,7 @@ export type GrantScope = (typeof GrantScope)[keyof typeof GrantScope];
 export const ApprovalType = {
 	SecretAccess: 'secret_access',
 	Hire: 'hire',
+	TeamTemplate: 'team_template',
 	Strategy: 'strategy',
 	KbUpdate: 'kb_update',
 	PlanReview: 'plan_review',
@@ -495,6 +496,7 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		runtime: AgentRuntime.ClaudeCode,
 		staticEnv: {
 			ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
+			// Base ids only — Claude Code appends `[1m]` for 1M-context models itself.
 			ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-v4-pro',
 			ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-pro',
 			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash',
@@ -514,6 +516,45 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
 	},
 };
+
+/** Default upstream API hostnames per provider (for egress NO_PROXY). */
+const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
+	[AiProvider.Anthropic]: ['api.anthropic.com'],
+	[AiProvider.OpenAI]: ['api.openai.com'],
+	[AiProvider.Google]: ['generativelanguage.googleapis.com'],
+	[AiProvider.DeepSeek]: ['api.deepseek.com'],
+	[AiProvider.ZAi]: ['api.z.ai'],
+};
+
+/**
+ * Hostnames that should bypass the egress MITM proxy for a given provider.
+ * LLM credentials are injected via container env (not `__HEZO_SECRET_*`
+ * placeholders); MITM breaks some Anthropic-compatible APIs, so provider
+ * traffic goes direct while git/MCP placeholders still use the proxy.
+ */
+export function providerDirectUpstreamHosts(provider: AiProvider): readonly string[] {
+	const baseUrl = PROVIDER_RUNTIME_ADAPTERS[provider].staticEnv?.ANTHROPIC_BASE_URL;
+	if (baseUrl) {
+		try {
+			return [new URL(baseUrl).hostname];
+		} catch {
+			// fall through
+		}
+	}
+	return PROVIDER_UPSTREAM_HOSTS[provider];
+}
+
+/**
+ * Normalize a model id before passing it to Claude Code CLI. DeepSeek runs
+ * append `[1m]` themselves; including it in env or `--model` yields
+ * `deepseek-v4-pro[1m][1m]` and provider 400s.
+ */
+export function claudeCodeModelArg(provider: AiProvider, model: string): string {
+	if (provider === AiProvider.DeepSeek) {
+		return model.replace(/\[1m\]/gi, '');
+	}
+	return model;
+}
 
 export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = Object.freeze(
 	(Object.keys(PROVIDER_RUNTIME_ADAPTERS) as AiProvider[]).reduce(

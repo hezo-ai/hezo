@@ -5,7 +5,7 @@ import {
 	ApprovalStatus,
 	ApprovalType,
 	AuthType,
-	CEO_AGENT_SLUG,
+	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DocumentType,
 	IssuePriority,
@@ -294,11 +294,11 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 		return err(c, 'CONFLICT', `A pending hire proposal for slug '${slug}' already exists`, 409);
 	}
 
-	const ceoResult = await db.query<{ id: string }>(
+	const captainResult = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status`,
-		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
 
 	const opsProject = await db.query<{ id: string }>(
@@ -306,7 +306,7 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 		[teamId, OPERATIONS_PROJECT_SLUG],
 	);
 
-	const hasCeo = ceoResult.rows.length > 0;
+	const hasCaptain = captainResult.rows.length > 0;
 	const hasOpsProject = opsProject.rows.length > 0;
 
 	const proposal = {
@@ -320,7 +320,7 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 		touches_code: body.touches_code ?? false,
 	};
 
-	if (!hasCeo || !hasOpsProject) {
+	if (!hasCaptain || !hasOpsProject) {
 		await db.query('BEGIN');
 		try {
 			const memberResult = await db.query<{ id: string }>(
@@ -383,7 +383,7 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 		return ok(c, { agent: agentRow, issue: null, approval: null, bootstrap: true }, 201);
 	}
 
-	const ceoId = ceoResult.rows[0].id;
+	const captainId = captainResult.rows[0].id;
 	const projectId = opsProject.rows[0].id;
 
 	const auth = c.get('auth');
@@ -451,7 +451,7 @@ ${teamRoster}`;
 			[
 				teamId,
 				projectId,
-				ceoId,
+				captainId,
 				issueNumber,
 				identifier,
 				`Onboard new agent: ${proposal.title}`,
@@ -477,8 +477,8 @@ ${teamRoster}`;
 		broadcastChange(c, wsRoom.team(teamId), 'approvals', 'INSERT', finalApproval.rows[0]);
 		broadcastChange(c, wsRoom.team(teamId), 'issues', 'INSERT', issue);
 
-		createWakeup(db, ceoId, teamId, WakeupSource.Assignment, { issue_id: issue.id }).catch((e) =>
-			log.error('Failed to wake CEO for hire request:', e),
+		createWakeup(db, captainId, teamId, WakeupSource.Assignment, { issue_id: issue.id }).catch(
+			(e) => log.error('Failed to wake Captain for hire request:', e),
 		);
 
 		return ok(c, { agent: null, issue, approval: finalApproval.rows[0], bootstrap: false }, 201);
@@ -935,7 +935,7 @@ agentsRoutes.get('/teams/:teamId/org-chart', async (c) => {
 	const { teamId } = access;
 
 	const result = await db.query(
-		`SELECT m.id, ma.title, ma.slug, ma.runtime_status, ma.admin_status, ma.reports_to
+		`SELECT m.id, ma.title, ma.slug, ma.role_description, ma.runtime_status, ma.admin_status, ma.reports_to
      FROM members m
      JOIN member_agents ma ON ma.id = m.id
      WHERE m.team_id = $1`,
@@ -946,6 +946,7 @@ agentsRoutes.get('/teams/:teamId/org-chart', async (c) => {
 		id: string;
 		title: string;
 		slug: string;
+		role_description: string;
 		runtime_status: string;
 		admin_status: string;
 		reports_to: string | null;

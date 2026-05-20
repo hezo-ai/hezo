@@ -74,8 +74,8 @@ export async function clearAiProviders(page: Page, token: string) {
 
 /**
  * Create a project and mark its auto-generated planning issue as done.
- * Tests that kick off agent runs on the CEO would otherwise race the
- * CEO's planning wakeup and see runs targeted at the planning issue.
+ * Tests that kick off agent runs on the Captain would otherwise race the
+ * Captain's planning wakeup and see runs targeted at the planning issue.
  */
 export async function createProjectAndClearPlanning(
 	page: Page,

@@ -3,11 +3,13 @@ import {
 	AiAuthMethod,
 	type AiProvider,
 	ALL_AI_PROVIDERS,
+	AuthType,
 	parseProviderModels,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireSuperuser } from '../middleware/auth';
 import {
 	deleteAiProviderConfig,
@@ -19,6 +21,9 @@ import {
 	storeAiProviderKey,
 } from '../services/ai-provider-keys';
 import { validateSubscriptionBlob } from '../services/subscription-auth';
+import { ensureOnboardingTeamAfterFirstProvider } from '../services/team-create';
+
+const log = logger.child('routes');
 
 const VALID_PROVIDERS = new Set<string>(ALL_AI_PROVIDERS);
 
@@ -45,6 +50,8 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
+	const auth = c.get('auth');
+	const wasConfiguredBefore = (await getAiProviderStatus(db)).configured;
 
 	const body = await c.req.json<{
 		provider: string;
@@ -134,6 +141,24 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 			authMethod,
 			body.label?.trim(),
 		);
+
+		if (auth.type === AuthType.Board) {
+			ensureOnboardingTeamAfterFirstProvider(
+				{
+					db,
+					docker: c.get('docker'),
+					dataDir: c.get('dataDir'),
+					wsManager: c.get('wsManager'),
+					masterKeyManager,
+					logs: c.get('logs'),
+					egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
+				},
+				auth.userId,
+				wasConfiguredBefore,
+			).catch((error) => {
+				log.error('Failed to create onboarding team after first AI provider:', error);
+			});
+		}
 
 		return ok(c, { id: configId }, 201);
 	} catch (e) {

@@ -16,7 +16,7 @@ let teamId: string;
 let projectId: string;
 let productLeadId: string;
 let architectId: string;
-let ceoId: string;
+let captainId: string;
 
 interface WakeupRow {
 	id: string;
@@ -140,7 +140,7 @@ beforeAll(async () => {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
-	ceoId = agents.find((a) => a.slug === 'ceo')!.id;
+	captainId = agents.find((a) => a.slug === 'captain')!.id;
 	architectId = agents.find((a) => a.slug === 'architect')!.id;
 	productLeadId = agents.find((a) => a.slug === 'product-lead')!.id;
 
@@ -162,7 +162,7 @@ beforeEach(async () => {
 
 describe('MCP create_comment fires mention-only wakeups', () => {
 	it('wakes a mentioned agent who is not the author or assignee', async () => {
-		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'CEO roadmap ticket');
+		const { issueId, agentToken } = await setup(captainId, productLeadId, 'Captain roadmap ticket');
 		const commentId = await postMcpComment(
 			agentToken,
 			issueId,
@@ -187,11 +187,11 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 	});
 
 	it('wakes only @-mentioned agents, not the assignee, on a mention-bearing comment', async () => {
-		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'Cross-team ticket');
+		const { issueId, agentToken } = await setup(captainId, productLeadId, 'Cross-team ticket');
 		const commentId = await postMcpComment(
 			agentToken,
 			issueId,
-			'@architect take a look — CEO please weigh in.',
+			'@architect take a look — Captain please weigh in.',
 		);
 
 		const wakeups = await wakeupsForComment(commentId);
@@ -215,7 +215,7 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 	});
 
 	it('ignores @mentions inside fenced code blocks', async () => {
-		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'PRD draft');
+		const { issueId, agentToken } = await setup(captainId, productLeadId, 'PRD draft');
 		const commentId = await postMcpComment(
 			agentToken,
 			issueId,
@@ -227,7 +227,7 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 	});
 
 	it('does not wake an unknown slug', async () => {
-		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'Unknown mention');
+		const { issueId, agentToken } = await setup(captainId, productLeadId, 'Unknown mention');
 		const commentId = await postMcpComment(agentToken, issueId, '@not-a-real-agent please help');
 
 		const wakeups = await wakeupsForComment(commentId);
@@ -237,7 +237,11 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 
 describe('agent-api POST comments fires mention-only wakeups', () => {
 	it('wakes a mentioned agent on an agent-api-posted comment', async () => {
-		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'CEO roadmap ticket 2');
+		const { issueId, agentToken } = await setup(
+			captainId,
+			productLeadId,
+			'Captain roadmap ticket 2',
+		);
 		const commentId = await postAgentApiComment(
 			agentToken,
 			issueId,
@@ -260,7 +264,7 @@ describe('agent-api POST comments fires mention-only wakeups', () => {
 	});
 
 	it('skips non-text content types even when they contain @-mentions', async () => {
-		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'Trace ticket');
+		const { issueId, agentToken } = await setup(captainId, productLeadId, 'Trace ticket');
 		const res = await app.request(`/agent-api/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
@@ -421,8 +425,8 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 	});
 
 	it('wakes the parent comment author when an agent replies via MCP create_comment', async () => {
-		const issueId = await insertIssue(ceoId, 'Reply basic MCP');
-		const parentId = await insertCommentBy(issueId, ceoId, 'Please proceed with the plan.');
+		const issueId = await insertIssue(captainId, 'Reply basic MCP');
+		const parentId = await insertCommentBy(issueId, captainId, 'Please proceed with the plan.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -436,7 +440,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Reply)).toHaveLength(1);
 		const reply = wakeups.find((w) => w.source === WakeupSource.Reply)!;
-		expect(reply.member_id).toBe(ceoId);
+		expect(reply.member_id).toBe(captainId);
 		expect(reply.payload.issue_id).toBe(issueId);
 		expect(reply.payload.comment_id).toBe(replyId);
 		expect((reply.payload as Record<string, unknown>).triggering_comment_id).toBe(parentId);
@@ -444,8 +448,8 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 	});
 
 	it('also fires when the reply is posted via the agent-api', async () => {
-		const issueId = await insertIssue(ceoId, 'Reply agent-api');
-		const parentId = await insertCommentBy(issueId, ceoId, 'Thoughts?');
+		const issueId = await insertIssue(captainId, 'Reply agent-api');
+		const parentId = await insertCommentBy(issueId, captainId, 'Thoughts?');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -467,7 +471,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 		const replyId = (await res.json()).data.id;
 
 		const wakeups = await wakeupsForComment(replyId);
-		expect(wakeups.some((w) => w.source === WakeupSource.Reply && w.member_id === ceoId)).toBe(
+		expect(wakeups.some((w) => w.source === WakeupSource.Reply && w.member_id === captainId)).toBe(
 			true,
 		);
 	});
@@ -529,8 +533,8 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 
 	it('suppresses reply wakeups when wake_mentioner_on_reply is false', async () => {
 		await setTeamSetting('wake_mentioner_on_reply', false);
-		const issueId = await insertIssue(ceoId, 'Reply disabled');
-		const parentId = await insertCommentBy(issueId, ceoId, '@architect please take a look.');
+		const issueId = await insertIssue(captainId, 'Reply disabled');
+		const parentId = await insertCommentBy(issueId, captainId, '@architect please take a look.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -545,8 +549,8 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 	});
 
 	it('dedupes reply wakeups with mention wakeups when the reply also @-mentions the parent author', async () => {
-		const issueId = await insertIssue(ceoId, 'Reply overlap mention');
-		const parentId = await insertCommentBy(issueId, ceoId, 'Please proceed.');
+		const issueId = await insertIssue(captainId, 'Reply overlap mention');
+		const parentId = await insertCommentBy(issueId, captainId, 'Please proceed.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -558,20 +562,20 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 		const replyId = await postMcpReply(
 			architectToken,
 			issueId,
-			'@ceo done — follow-up in new ticket.',
+			'@captain done — follow-up in new ticket.',
 			parentId,
 		);
 
 		const wakeups = await wakeupsForComment(replyId);
-		const ceoWakeups = wakeups.filter((w) => w.member_id === ceoId);
+		const ceoWakeups = wakeups.filter((w) => w.member_id === captainId);
 		expect(ceoWakeups).toHaveLength(1);
 		expect(ceoWakeups[0].source).toBe(WakeupSource.Mention);
 	});
 
 	it('rejects parent_comment_id from a different issue', async () => {
-		const issueA = await insertIssue(ceoId, 'Issue A');
+		const issueA = await insertIssue(captainId, 'Issue A');
 		const issueB = await insertIssue(architectId, 'Issue B');
-		const parentIdInA = await insertCommentBy(issueA, ceoId, 'Comment in A.');
+		const parentIdInA = await insertCommentBy(issueA, captainId, 'Comment in A.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -606,8 +610,8 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 	});
 
 	it('does not fire reply wakeup when parent_comment_id is omitted', async () => {
-		const issueId = await insertIssue(ceoId, 'No parent');
-		await insertCommentBy(issueId, ceoId, '@architect please take a look.');
+		const issueId = await insertIssue(captainId, 'No parent');
+		await insertCommentBy(issueId, captainId, '@architect please take a look.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,

@@ -67,7 +67,7 @@ function TemplateStep({
 			<div className="flex items-center gap-3 mb-1">
 				<button
 					type="button"
-					onClick={() => navigate({ to: '/teams' })}
+					onClick={() => navigate({ to: '/home' })}
 					className="text-text-muted hover:text-text transition-colors"
 				>
 					<ArrowLeft className="w-5 h-5" />
@@ -209,7 +209,7 @@ function TemplateCard({
 			{type.description && <p className="text-xs text-text-muted pr-6">{type.description}</p>}
 			<div className="flex items-center gap-2 mt-0.5">
 				{agentCount > 0 && <Badge color="blue">{agentCount} agents</Badge>}
-				{isBlank && <Badge color="neutral">Includes CEO + Coach</Badge>}
+				{isBlank && <Badge color="neutral">Includes Captain + Coach</Badge>}
 				{kbDocCount > 0 && <Badge color="green">{kbDocCount} docs</Badge>}
 				<a
 					href="#see-more"
@@ -307,12 +307,12 @@ function TemplateDetailModal({
 					{agents.length === 0 && kbDocs.length === 0 && (
 						<div>
 							<p className="text-sm text-text-muted mb-4">
-								Every team includes the built-in CEO and Coach agents. No additional agents or
+								Every team includes the built-in Captain and Coach agents. No additional agents or
 								documents will be created.
 							</p>
 							<div className="flex flex-col gap-2">
 								<div className="rounded-md border border-border px-3 py-2">
-									<span className="text-sm font-medium">CEO</span>
+									<span className="text-sm font-medium">Captain</span>
 									<p className="text-xs text-text-muted mt-0.5">
 										Translates team mission into actionable strategy, delegates work across
 										leadership, and resolves disputes between agents.

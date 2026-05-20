@@ -20,16 +20,16 @@ test.describe('Mention handoff', () => {
 			slug: string;
 			title: string;
 		}>;
-		const ceo = agents.find((a) => a.slug === 'ceo');
+		const captain = agents.find((a) => a.slug === 'captain');
 		const architect = agents.find((a) => a.slug === 'architect');
-		if (!ceo || !architect) throw new Error('CEO and architect agents required');
+		if (!captain || !architect) throw new Error('Captain and architect agents required');
 
 		const ceoIssueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 			headers,
 			data: {
 				project_id: project.id,
 				title: 'Roadmap ticket',
-				assignee_id: ceo.id,
+				assignee_id: captain.id,
 			},
 		});
 		const ceoIssue = ((await ceoIssueRes.json()) as any).data;
@@ -44,7 +44,7 @@ test.describe('Mention handoff', () => {
 		});
 		const architectIssue = ((await archIssueRes.json()) as any).data;
 
-		return { team, token, headers, ceo, architect, ceoIssue, architectIssue };
+		return { team, token, headers, captain, architect, ceoIssue, architectIssue };
 	}
 
 	test('posting an @architect mention in a comment renders as a link to the architect page', async ({
@@ -122,12 +122,12 @@ test.describe('Mention handoff', () => {
 
 	test('mentioning multiple agents in one comment renders all mentions', async ({ page }) => {
 		await authenticate(page);
-		const { team, ceo, architect, ceoIssue, headers } = await setup(page);
+		const { team, captain, architect, ceoIssue, headers } = await setup(page);
 
 		await page.request.post(`/api/teams/${team.id}/issues/${ceoIssue.id}/comments`, {
 			headers,
 			data: {
-				content: { text: `cc @${architect.slug} and @${ceo.slug} for visibility` },
+				content: { text: `cc @${architect.slug} and @${captain.slug} for visibility` },
 			},
 		});
 
@@ -142,7 +142,7 @@ test.describe('Mention handoff', () => {
 		await expect(comment.locator(`a[href*="/agents/${architect.slug}"]`)).toHaveCount(1, {
 			timeout: 15000,
 		});
-		await expect(comment.locator(`a[href*="/agents/${ceo.slug}"]`)).toHaveCount(1, {
+		await expect(comment.locator(`a[href*="/agents/${captain.slug}"]`)).toHaveCount(1, {
 			timeout: 15000,
 		});
 	});

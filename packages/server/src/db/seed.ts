@@ -23,8 +23,8 @@ interface AgentTypeDef {
 function buildAgentTypeDefs(): AgentTypeDef[] {
 	return [
 		{
-			name: 'CEO',
-			slug: 'ceo',
+			name: 'Captain',
+			slug: 'captain',
 			reports_to_slug: null,
 			sort_order: 0,
 			// Strategy + delegation requires deep reasoning — default to max (ultrathink).
@@ -38,7 +38,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 		{
 			name: 'Architect',
 			slug: 'architect',
-			reports_to_slug: 'ceo',
+			reports_to_slug: 'captain',
 			sort_order: 1,
 			// Planning is the core job — always ultrathink.
 			default_effort: AgentEffort.Max,
@@ -51,7 +51,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 		{
 			name: 'Product Lead',
 			slug: 'product-lead',
-			reports_to_slug: 'ceo',
+			reports_to_slug: 'captain',
 			sort_order: 2,
 			// Scoping/PRD work is planning-heavy.
 			default_effort: AgentEffort.High,
@@ -126,7 +126,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 		{
 			name: 'Marketing Lead',
 			slug: 'marketing-lead',
-			reports_to_slug: 'ceo',
+			reports_to_slug: 'captain',
 			sort_order: 8,
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 120,
@@ -138,7 +138,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 		{
 			name: 'Researcher',
 			slug: 'researcher',
-			reports_to_slug: 'ceo',
+			reports_to_slug: 'captain',
 			sort_order: 9,
 			// Research benefits from deep thinking.
 			default_effort: AgentEffort.High,
@@ -355,12 +355,12 @@ Significant technical decisions should be documented with:
 	}
 
 	const blankBuiltinPrompts = {
-		ceo: roleDocs['blank/ceo.md'] ?? '',
+		captain: roleDocs['blank/captain.md'] ?? '',
 		coach: roleDocs['blank/coach.md'] ?? '',
 	};
 
 	const blankBuiltinTeamContexts = {
-		ceo: summaries.team_contexts.blank?.ceo ?? '',
+		captain: summaries.team_contexts.blank?.captain ?? '',
 		coach: summaries.team_contexts.builtin?.coach ?? '',
 	};
 
@@ -376,7 +376,7 @@ Significant technical decisions should be documented with:
 		     builtin_agent_team_contexts = EXCLUDED.builtin_agent_team_contexts`,
 		[
 			'Blank',
-			'Start from scratch with only the built-in CEO and Coach agents',
+			'Start from scratch with only the built-in Captain and Coach agents',
 			summaries.teams.Blank ?? '',
 			JSON.stringify(blankBuiltinPrompts),
 			JSON.stringify(blankBuiltinTeamContexts),

@@ -76,14 +76,14 @@ describe('agents CRUD', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
-		const ceo = agents.find((a: Record<string, unknown>) => a.slug === 'ceo');
+		const captain = agents.find((a: Record<string, unknown>) => a.slug === 'captain');
 
-		const res = await app.request(`/api/teams/${teamId}/agents/${ceo.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/${captain.id}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.title).toBe('CEO');
+		expect(body.data.title).toBe('Captain');
 		expect(body.data).toHaveProperty('mcp_servers');
 		expect(body.data).toHaveProperty('runtime_status');
 		expect(body.data).toHaveProperty('admin_status');
@@ -297,18 +297,21 @@ describe('agents CRUD', () => {
 		const body = await res.json();
 		expect(body.data.board).toBeDefined();
 		expect(body.data.board.children.length).toBeGreaterThan(0);
-		const ceo = body.data.board.children.find((c: Record<string, unknown>) => c.title === 'CEO');
-		expect(ceo).toBeDefined();
-		expect(ceo).toHaveProperty('runtime_status');
-		expect(ceo).toHaveProperty('admin_status');
-		expect(ceo.children.length).toBeGreaterThan(0);
+		const captain = body.data.board.children.find(
+			(c: Record<string, unknown>) => c.title === 'Captain',
+		);
+		expect(captain).toBeDefined();
+		expect(captain).toHaveProperty('runtime_status');
+		expect(captain).toHaveProperty('admin_status');
+		expect(captain).toHaveProperty('role_description');
+		expect(captain.children.length).toBeGreaterThan(0);
 	});
 
 	it('rejects duplicate agent slug', async () => {
 		const res = await app.request(`/api/teams/${teamId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: 'CEO' }),
+			body: JSON.stringify({ title: 'Captain' }),
 		});
 		expect(res.status).toBe(409);
 	});

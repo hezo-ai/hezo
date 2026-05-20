@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
-	CEO_AGENT_SLUG,
+	CAPTAIN_AGENT_SLUG,
 	CommentContentType,
 	IssuePriority,
 	IssueStatus,
@@ -13,6 +13,7 @@ import {
 import { broadcastRowChange } from '../lib/broadcast';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { logger } from '../logger';
+import { isTeamExecutionStarted } from './onboarding';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -23,17 +24,17 @@ const GOAL_LABEL = 'goal-update';
 export type GoalChangeReason = 'created' | 'updated';
 
 interface TeamContext {
-	ceoMemberId: string;
+	captainMemberId: string;
 	operationsProjectId: string;
 }
 
 async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
-	const ceo = await db.query<{ id: string }>(
+	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
 	const ops = await db.query<{ id: string }>(
 		`SELECT id FROM projects
@@ -41,9 +42,9 @@ async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext 
 		 LIMIT 1`,
 		[teamId, OPERATIONS_PROJECT_SLUG],
 	);
-	if (!ceo.rows[0] || !ops.rows[0]) return null;
+	if (!captain.rows[0] || !ops.rows[0]) return null;
 	return {
-		ceoMemberId: ceo.rows[0].id,
+		captainMemberId: captain.rows[0].id,
 		operationsProjectId: ops.rows[0].id,
 	};
 }
@@ -82,9 +83,14 @@ export async function enqueueGoalReviewTask(
 	reason: GoalChangeReason,
 	wsManager?: WebSocketManager,
 ): Promise<string | null> {
+	if (!(await isTeamExecutionStarted(db, teamId))) {
+		log.info(`Deferring goal review for ${goalId} until project execution is confirmed`);
+		return null;
+	}
+
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) {
-		log.warn(`Cannot enqueue goal review for ${goalId}; missing CEO or Operations project`);
+		log.warn(`Cannot enqueue goal review for ${goalId}; missing Captain or Operations project`);
 		return null;
 	}
 
@@ -136,12 +142,12 @@ export async function enqueueGoalReviewTask(
 			],
 		);
 		try {
-			await createWakeup(db, ctx.ceoMemberId, teamId, WakeupSource.Comment, {
+			await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Comment, {
 				issue_id: existingIssueId,
 				goal_id: goalId,
 			});
 		} catch (e) {
-			log.error('Failed to wake CEO for goal update (dedup path):', e);
+			log.error('Failed to wake Captain for goal update (dedup path):', e);
 		}
 		return existingIssueId;
 	}
@@ -156,7 +162,7 @@ export async function enqueueGoalReviewTask(
 		[
 			teamId,
 			targetProjectId,
-			ctx.ceoMemberId,
+			ctx.captainMemberId,
 			issueNumber,
 			identifier,
 			`Review plans for goal: "${goal.title}"`,
@@ -173,12 +179,12 @@ export async function enqueueGoalReviewTask(
 	}
 
 	try {
-		await createWakeup(db, ctx.ceoMemberId, teamId, WakeupSource.Assignment, {
+		await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Assignment, {
 			issue_id: issue.id,
 			goal_id: goalId,
 		});
 	} catch (e) {
-		log.error('Failed to wake CEO for goal review:', e);
+		log.error('Failed to wake Captain for goal review:', e);
 	}
 
 	return issue.id as string;

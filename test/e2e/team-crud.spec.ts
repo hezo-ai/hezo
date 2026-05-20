@@ -35,7 +35,7 @@ test('can create a team with Startup template and see auto-created agents', asyn
 	await waitForPageLoad(page);
 
 	const main = page.getByRole('main');
-	await expect(main.getByRole('link', { name: 'CEO', exact: true })).toBeVisible({
+	await expect(main.getByRole('link', { name: 'Captain', exact: true })).toBeVisible({
 		timeout: 15000,
 	});
 	await expect(main.getByRole('link', { name: 'Product Lead', exact: true })).toBeVisible({
@@ -56,7 +56,7 @@ test('new team page shows template selection', async ({ page }) => {
 	await expect(page.getByText('Blank')).toBeVisible();
 });
 
-test('Blank template shows built-in agents note and creates CEO/Coach', async ({ page }) => {
+test('Blank template shows built-in agents note and creates Captain/Coach', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 	await suppressAiModal(page);
@@ -67,7 +67,7 @@ test('Blank template shows built-in agents note and creates CEO/Coach', async ({
 	await blankCard.click();
 
 	// Verify the built-in agents badge is visible on the Blank card
-	await expect(blankCard.getByText('Includes CEO + Coach')).toBeVisible();
+	await expect(blankCard.getByText('Includes Captain + Coach')).toBeVisible();
 
 	// Continue to details step
 	await page.getByRole('button', { name: 'Continue' }).click();
@@ -78,11 +78,11 @@ test('Blank template shows built-in agents note and creates CEO/Coach', async ({
 
 	await expect(page).toHaveURL(/\/teams\/[^/]+\/projects\?create=true$/, { timeout: 20000 });
 
-	// Navigate to agents page and verify CEO and Coach exist
+	// Navigate to agents page and verify Captain and Coach exist
 	await page.goto(`/teams/${page.url().split('/teams/')[1].split('/')[0]}/agents`);
 	await waitForPageLoad(page);
 	const main = page.getByRole('main');
-	await expect(main.getByRole('link', { name: 'CEO', exact: true })).toBeVisible({
+	await expect(main.getByRole('link', { name: 'Captain', exact: true })).toBeVisible({
 		timeout: 15000,
 	});
 	await expect(main.getByRole('link', { name: 'Coach', exact: true })).toBeVisible({

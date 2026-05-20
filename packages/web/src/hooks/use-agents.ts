@@ -56,6 +56,7 @@ export function useAgents(teamId: string, adminStatus?: string) {
 				adminStatus ? { admin_status: adminStatus } : undefined,
 			),
 		enabled: !!teamId,
+		staleTime: 0,
 	});
 }
 

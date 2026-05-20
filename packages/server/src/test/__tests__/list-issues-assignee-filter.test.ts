@@ -11,7 +11,7 @@ let token: string;
 
 let teamId: string;
 let projectId: string;
-let ceoId: string;
+let captainId: string;
 let architectId: string;
 let architectSlug: string;
 
@@ -40,10 +40,10 @@ beforeAll(async () => {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
-	const ceo = agents.find((a) => a.slug === 'ceo');
+	const captain = agents.find((a) => a.slug === 'captain');
 	const architect = agents.find((a) => a.slug === 'architect');
-	if (!ceo || !architect) throw new Error('Expected CEO and architect agents in seed');
-	ceoId = ceo.id;
+	if (!captain || !architect) throw new Error('Expected Captain and architect agents in seed');
+	captainId = captain.id;
 	architectId = architect.id;
 	architectSlug = architect.slug;
 
@@ -54,7 +54,7 @@ beforeAll(async () => {
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	// Create three issues: two assigned to architect, one to CEO. Mark one of
+	// Create three issues: two assigned to architect, one to Captain. Mark one of
 	// architect's issues as 'done' so we can verify the status filter.
 	const arch1 = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
@@ -90,8 +90,8 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectId,
-			title: 'CEO issue',
-			assignee_id: ceoId,
+			title: 'Captain issue',
+			assignee_id: captainId,
 		}),
 	});
 });

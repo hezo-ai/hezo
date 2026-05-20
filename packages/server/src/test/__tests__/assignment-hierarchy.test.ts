@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CEO_AGENT_SLUG } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
@@ -18,7 +18,7 @@ let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let projectId: string;
 
-let ceoId: string;
+let captainId: string;
 let architectId: string;
 let productLeadId: string;
 let engineerId: string;
@@ -70,7 +70,7 @@ beforeAll(async () => {
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
 	const bySlug = (slug: string) => agents.find((a) => a.slug === slug);
-	ceoId = bySlug(CEO_AGENT_SLUG)!.id;
+	captainId = bySlug(CAPTAIN_AGENT_SLUG)!.id;
 	architectId = bySlug('architect')!.id;
 	productLeadId = bySlug('product-lead')!.id;
 	engineerId = bySlug('engineer')!.id;
@@ -111,15 +111,15 @@ describe('assertSubordinateAssignee (unit)', () => {
 		expect(result.message).toContain('create_comment');
 	});
 
-	it('rejects manager (architect → ceo)', async () => {
-		const result = await assertSubordinateAssignee(db, architectId, ceoId);
+	it('rejects manager (architect → captain)', async () => {
+		const result = await assertSubordinateAssignee(db, architectId, captainId);
 		expect(result.ok).toBe(false);
 		if (result.ok) throw new Error('expected rejection');
-		expect(result.message).toContain('@ceo');
+		expect(result.message).toContain('@captain');
 	});
 
-	it('rejects grand-subordinate (ceo → engineer, transitive only)', async () => {
-		const result = await assertSubordinateAssignee(db, ceoId, engineerId);
+	it('rejects grand-subordinate (captain → engineer, transitive only)', async () => {
+		const result = await assertSubordinateAssignee(db, captainId, engineerId);
 		expect(result.ok).toBe(false);
 		if (result.ok) throw new Error('expected rejection');
 		expect(result.message).toContain('@engineer');
@@ -197,18 +197,18 @@ describe('MCP create_issue: agent assignment hierarchy', () => {
 		const result = await callTool(archToken, 'create_issue', {
 			team_id: teamId,
 			project_id: projectId,
-			title: 'Architect → CEO (manager, should fail)',
-			assignee_id: ceoId,
+			title: 'Architect → Captain (manager, should fail)',
+			assignee_id: captainId,
 		});
-		expect(result.error).toContain('@ceo');
+		expect(result.error).toContain('@captain');
 	});
 
 	it('agent cannot create_issue assigned to a grand-subordinate', async () => {
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, teamId);
+		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, captainId, teamId);
 		const result = await callTool(ceoToken, 'create_issue', {
 			team_id: teamId,
 			project_id: projectId,
-			title: 'CEO → Engineer (transitive subordinate, should fail)',
+			title: 'Captain → Engineer (transitive subordinate, should fail)',
 			assignee_id: engineerId,
 		});
 		expect(result.error).toContain('@engineer');

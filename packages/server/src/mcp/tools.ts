@@ -1,11 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PGlite } from '@electric-sql/pglite';
 import {
+	AgentAdminStatus,
 	ApprovalStatus,
 	ApprovalType,
 	AuditActorType,
 	AuthType,
-	CEO_AGENT_SLUG,
+	CAPTAIN_AGENT_SLUG,
 	COACH_AGENT_SLUG,
 	CommentContentType,
 	CredentialInputType,
@@ -41,6 +42,7 @@ import {
 	fetchAgentSystemPromptForBatch,
 	type SystemPromptMode,
 } from '../services/agent-system-prompts';
+import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { enqueueTeamContextTaskForAllAgents } from '../services/description-tasks';
 import {
@@ -58,6 +60,8 @@ import {
 	createIssue,
 	ISSUE_COLUMNS_BARE,
 } from '../services/issues';
+import { isFirstUserFacingProject } from '../services/onboarding';
+import { createProjectWithPlanningIssue } from '../services/project-create';
 import {
 	addCommentReaction,
 	loadReactionsForIssue,
@@ -879,7 +883,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_hire_proposal',
-		'Revise the draft of a pending hire approval. CEO-only. Use this to expand or rewrite the system prompt, adjust role description, budget, heartbeat, or touches_code before board review. All fields are optional — pass only what you want to change.',
+		'Revise the draft of a pending hire approval. Captain-only. Use this to expand or rewrite the system prompt, adjust role description, budget, heartbeat, or touches_code before board review. All fields are optional — pass only what you want to change.',
 		{
 			approval_id: z.string().describe('Hire approval ID'),
 			title: z.string().optional().describe('Updated role title'),
@@ -901,8 +905,8 @@ export function registerTools(
 				'SELECT slug FROM member_agents WHERE id = $1',
 				[auth.memberId],
 			);
-			if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
-				return { error: 'Only the CEO can revise hire proposals' };
+			if (caller.rows[0]?.slug !== CAPTAIN_AGENT_SLUG) {
+				return { error: 'Only the Captain can revise hire proposals' };
 			}
 
 			const approval = await db.query<{
@@ -952,6 +956,128 @@ export function registerTools(
 		db,
 	);
 
+	tool(
+		server,
+		'list_team_templates',
+		'List team templates (built-in Startup for software development, Blank, and custom). Use when recommending a team structure to hire.',
+		{
+			team_id: z.string().describe('Team ID'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
+			if (denied) return { error: denied };
+			const r = await db.query<{
+				id: string;
+				name: string;
+				description: string;
+				is_builtin: boolean;
+				agent_types: Array<{ slug: string; name: string; role_description: string }>;
+			}>(
+				`SELECT ct.id, ct.name, ct.description, ct.is_builtin,
+				    COALESCE(
+				        json_agg(json_build_object(
+				            'slug', at.slug,
+				            'name', at.name,
+				            'role_description', at.role_description
+				        ) ORDER BY ctat.sort_order) FILTER (WHERE at.id IS NOT NULL),
+				        '[]'
+				    ) AS agent_types
+				 FROM team_templates ct
+				 LEFT JOIN team_template_agent_types ctat ON ctat.team_template_id = ct.id
+				 LEFT JOIN agent_types at ON at.id = ctat.agent_type_id
+				 GROUP BY ct.id
+				 ORDER BY ct.is_builtin DESC, ct.name ASC`,
+			);
+			return r.rows;
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'request_team_template_approval',
+		'Request board approval to provision agents from a team template onto this team. Captain-only. Call after the board agrees to your recommendation.',
+		{
+			team_id: z.string().describe('Team ID'),
+			template_id: z.string().describe('Team template UUID from list_team_templates'),
+			issue_id: z
+				.string()
+				.optional()
+				.describe('Hire-the-team Operations issue id (for post-approval Captain wake)'),
+			rationale: z.string().describe('Why this template fits the first project'),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent) {
+				return { error: 'request_team_template_approval is only callable by agents' };
+			}
+			const caller = await db.query<{ slug: string }>(
+				'SELECT slug FROM member_agents WHERE id = $1',
+				[auth.memberId],
+			);
+			if (caller.rows[0]?.slug !== CAPTAIN_AGENT_SLUG) {
+				return { error: 'Only the Captain can request team template approval' };
+			}
+			const teamId = auth.teamId;
+			if (args.team_id !== teamId) {
+				return { error: 'Access denied: team mismatch' };
+			}
+
+			const template = await db.query<{ id: string; name: string; description: string }>(
+				'SELECT id, name, description FROM team_templates WHERE id = $1',
+				[args.template_id],
+			);
+			if (template.rows.length === 0) {
+				return { error: 'Team template not found' };
+			}
+
+			const pending = await db.query(
+				`SELECT id FROM approvals
+				 WHERE team_id = $1 AND type = $2::approval_type AND status = $3::approval_status`,
+				[teamId, ApprovalType.TeamTemplate, ApprovalStatus.Pending],
+			);
+			if (pending.rows.length > 0) {
+				return { error: 'A pending team template approval already exists for this team' };
+			}
+
+			const roles = await db.query<{ slug: string; name: string }>(
+				`SELECT at.slug, at.name
+				 FROM team_template_agent_types ctat
+				 JOIN agent_types at ON at.id = ctat.agent_type_id
+				 WHERE ctat.team_template_id = $1
+				 ORDER BY ctat.sort_order`,
+				[args.template_id],
+			);
+
+			const payload = {
+				template_id: args.template_id,
+				template_name: template.rows[0].name,
+				template_description: template.rows[0].description,
+				rationale: args.rationale,
+				roles: roles.rows,
+				issue_id: args.issue_id ?? null,
+			};
+
+			const inserted = await db.query<Record<string, unknown>>(
+				`INSERT INTO approvals (team_id, type, requested_by_member_id, payload, status)
+				 VALUES ($1, $2::approval_type, $3, $4::jsonb, $5::approval_status)
+				 RETURNING ${APPROVAL_COLUMNS}`,
+				[
+					teamId,
+					ApprovalType.TeamTemplate,
+					auth.memberId,
+					JSON.stringify(payload),
+					ApprovalStatus.Pending,
+				],
+			);
+			const row = inserted.rows[0];
+			if (row) {
+				broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
+			}
+			return row ?? null;
+		},
+		db,
+	);
+
 	// Projects
 	tool(
 		server,
@@ -995,28 +1121,58 @@ export function registerTools(
 				.describe('2–4 uppercase alphanumeric chars; derived from name if omitted'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
+			const teamId = args.team_id as string;
+			const denied = await verifyTeamAccess(db, auth, teamId);
 			if (denied) return { error: denied };
+
+			const captainResult = await db.query<{ id: string }>(
+				`SELECT ma.id FROM member_agents ma
+				 JOIN members m ON m.id = ma.id
+				 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
+				 LIMIT 1`,
+				[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
+			);
+			const captainMemberId = captainResult.rows[0]?.id;
+			if (!captainMemberId) {
+				return { error: 'No enabled Captain found for this team' };
+			}
+
 			const slug = (args.name as string)
 				.toLowerCase()
 				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/^-|-$/g, '');
 			const prefixResult = await resolveProjectIssuePrefix(
 				db,
-				args.team_id as string,
+				teamId,
 				args.issue_prefix as string | undefined,
 				args.name as string,
 			);
 			if (!prefixResult.ok) return { error: prefixResult.message };
-			const r = await db.query<{ id: string }>(
-				`INSERT INTO projects (team_id, name, slug, issue_prefix, description) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-				[args.team_id, args.name, slug, prefixResult.prefix, args.description ?? ''],
-			);
-			await db.query(
-				'INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)',
-				[r.rows[0].id],
-			);
-			return r.rows[0];
+
+			const deferPlanningWake = await isFirstUserFacingProject(db, teamId);
+			const { project, planningIssue } = await createProjectWithPlanningIssue(db, {
+				teamId,
+				captainMemberId,
+				name: args.name as string,
+				slug,
+				issuePrefix: prefixResult.prefix,
+				description: (args.description as string | undefined) ?? '',
+			});
+
+			broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
+			broadcastRowChange(wsManager, wsRoom.team(teamId), 'issues', 'INSERT', planningIssue);
+
+			if (!deferPlanningWake) {
+				await createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
+					issue_id: planningIssue.id,
+				});
+			}
+
+			return {
+				...project,
+				planning_issue_id: planningIssue.id,
+				planning_issue_identifier: planningIssue.identifier,
+			};
 		},
 		db,
 	);
@@ -1436,11 +1592,15 @@ export function registerTools(
 			if (existing.rows.length === 0) return { error: 'Approval not found' };
 			const denied = await verifyTeamAccess(db, auth, existing.rows[0].team_id);
 			if (denied) return { error: denied };
-			const r = await db.query(
+			const r = await db.query<Record<string, unknown>>(
 				`UPDATE approvals SET status = $1::approval_status, resolution_note = $2, resolved_at = now() WHERE id = $3 RETURNING ${APPROVAL_COLUMNS}`,
 				[args.status, args.resolution_note ?? null, args.approval_id],
 			);
-			return r.rows[0] ?? null;
+			const row = r.rows[0];
+			if (row) {
+				broadcastApprovalChange(wsManager, existing.rows[0].team_id, 'UPDATE', row);
+			}
+			return row ?? null;
 		},
 		db,
 	);
@@ -1568,7 +1728,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_system_prompts',
-		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. CEO auditing how team_context renders for every agent. For a single prompt, use get_agent_system_prompt.`,
+		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. Captain auditing how team_context renders for every agent. For a single prompt, use get_agent_system_prompt.`,
 		{
 			team_id: z.string().describe('Team ID'),
 			items: z
@@ -1668,12 +1828,12 @@ export function registerTools(
 		db,
 	);
 
-	// Description maintenance — used by the CEO (and self) to write back
+	// Description maintenance — used by the Captain (and self) to write back
 	// auto-generated agent and team summaries.
 	tool(
 		server,
 		'set_agent_summary',
-		'Save a short human-readable summary for an agent (≤1000 chars, single paragraph, plain prose). Callable by any agent in the same team or any board user; the CEO is the expected caller, but agents may also self-summarise.',
+		'Save a short human-readable summary for an agent (≤1000 chars, single paragraph, plain prose). Callable by any agent in the same team or any board user; the Captain is the expected caller, but agents may also self-summarise.',
 		{
 			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -1720,7 +1880,7 @@ export function registerTools(
 	tool(
 		server,
 		'set_team_summary',
-		'Save the team-level collaboration summary for a team (≤4000 chars, plain prose, may span paragraphs). Only callable by the CEO of that team.',
+		'Save the team-level collaboration summary for a team (≤4000 chars, plain prose, may span paragraphs). Only callable by the Captain of that team.',
 		{
 			team_id: z.string().describe('Team ID'),
 			summary: z.string().describe('The new team summary, ≤4000 chars'),
@@ -1729,8 +1889,8 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			if (!(await isCeoOfTeam(db, auth, args.team_id as string))) {
-				return { error: 'Access denied: only the CEO can update the team summary' };
+			if (!(await isCaptainOfTeam(db, auth, args.team_id as string))) {
+				return { error: 'Access denied: only the Captain can update the team summary' };
 			}
 
 			const summary = String(args.summary ?? '').trim();
@@ -1752,7 +1912,7 @@ export function registerTools(
 	tool(
 		server,
 		'set_agent_team_context',
-		"Save the team-relationships context for an agent (≤6000 chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the CEO of the same team.",
+		"Save the team-relationships context for an agent (≤6000 chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the Captain of the same team.",
 		{
 			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -1762,8 +1922,8 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			if (!(await isCeoOfTeam(db, auth, args.team_id as string))) {
-				return { error: 'Access denied: only the CEO can update agent team contexts' };
+			if (!(await isCaptainOfTeam(db, auth, args.team_id as string))) {
+				return { error: 'Access denied: only the Captain can update agent team contexts' };
 			}
 
 			const content = String(args.content ?? '').trim();
@@ -1790,7 +1950,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_team_context',
-		"Read an agent's stored team-relationships context. Useful for the CEO when regenerating siblings' contexts. Accessible by any agent or board user in the same team.",
+		"Read an agent's stored team-relationships context. Useful for the Captain when regenerating siblings' contexts. Accessible by any agent or board user in the same team.",
 		{
 			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -1942,12 +2102,13 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const result = await db.query<{ id: string; status: string }>(
+			const teamId = args.team_id as string;
+			const result = await db.query<Record<string, unknown>>(
 				`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
 				 VALUES ($1, $2::approval_type, $3, $4::jsonb)
-				 RETURNING id, status`,
+				 RETURNING ${APPROVAL_COLUMNS}`,
 				[
-					args.team_id,
+					teamId,
 					ApprovalType.SkillProposal,
 					callerMemberId,
 					JSON.stringify({
@@ -1958,7 +2119,11 @@ export function registerTools(
 					}),
 				],
 			);
-			return { approval_id: result.rows[0].id, status: result.rows[0].status };
+			const row = result.rows[0];
+			if (row) {
+				broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
+			}
+			return { approval_id: row?.id, status: row?.status };
 		},
 		db,
 	);
@@ -2250,7 +2415,7 @@ async function isCoach(db: PGlite, auth: AuthInfo): Promise<boolean> {
 	return r.rows[0]?.slug === COACH_AGENT_SLUG;
 }
 
-async function isCeoOfTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<boolean> {
+async function isCaptainOfTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<boolean> {
 	if (auth.type !== AuthType.Agent) return false;
 	const r = await db.query<{ slug: string }>(
 		`SELECT ma.slug FROM member_agents ma
@@ -2258,5 +2423,5 @@ async function isCeoOfTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<
 		 WHERE ma.id = $1 AND m.team_id = $2`,
 		[auth.memberId, teamId],
 	);
-	return r.rows[0]?.slug === CEO_AGENT_SLUG;
+	return r.rows[0]?.slug === CAPTAIN_AGENT_SLUG;
 }

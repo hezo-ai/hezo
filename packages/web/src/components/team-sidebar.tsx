@@ -1,11 +1,8 @@
-import { AgentAdminStatus, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
-import { useNavigate } from '@tanstack/react-router';
+import { OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { useState } from 'react';
-import { useAgents } from '../hooks/use-agents';
 import { useProjects } from '../hooks/use-projects';
 import { useTeam } from '../hooks/use-teams';
 import { useUiState, useUpdateUiState } from '../hooks/use-ui-state';
-import { AgentStatusLabel } from './agent-status-label';
 import { CreateProjectDialog } from './create-project-dialog';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 
@@ -15,17 +12,11 @@ interface TeamSidebarProps {
 
 export function TeamSidebar({ teamId }: TeamSidebarProps) {
 	const params = { teamId };
-	const navigate = useNavigate();
-	const { data: agents } = useAgents(teamId);
 	const { data: projects } = useProjects(teamId);
 	const { data: team } = useTeam(teamId);
 	const { data: uiState } = useUiState(teamId);
 	const updateUiState = useUpdateUiState(teamId);
 	const [createProjectOpen, setCreateProjectOpen] = useState(false);
-
-	const activeAgents = (agents ?? [])
-		.filter((a) => a.admin_status !== AgentAdminStatus.Disabled)
-		.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
 	const sortedProjects = [...(projects ?? [])].sort((a, b) => {
 		if (a.slug === OPERATIONS_PROJECT_SLUG) return -1;
@@ -33,7 +24,6 @@ export function TeamSidebar({ teamId }: TeamSidebarProps) {
 		return a.name.localeCompare(b.name);
 	});
 
-	const teamExpanded = uiState?.sidebar?.team_expanded ?? true;
 	const projectsExpanded = uiState?.sidebar?.projects_expanded ?? true;
 
 	const sections: SidebarNavSection[] = [
@@ -98,22 +88,7 @@ export function TeamSidebar({ teamId }: TeamSidebarProps) {
 			}),
 		},
 		{
-			title: 'Team',
-			titleTo: '/teams/$teamId/agents',
-			titleParams: params,
-			collapsible: true,
-			collapsed: !teamExpanded,
-			onToggle: () => {
-				updateUiState.mutate({ sidebar: { team_expanded: !teamExpanded } });
-			},
-			onAdd: () => navigate({ to: '/teams/$teamId/agents/hire', params }),
-			addLabel: 'Hire a new agent',
-			items: [],
-			children: activeAgents.map((agent) => ({
-				to: '/teams/$teamId/agents/$agentId',
-				params: { teamId, agentId: agent.slug },
-				label: <AgentStatusLabel name={agent.title} runtimeStatus={agent.runtime_status} />,
-			})),
+			items: [{ to: '/teams/$teamId/agents', params, label: 'Team' }],
 		},
 		{
 			title: 'Resources',

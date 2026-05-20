@@ -13,8 +13,8 @@ export class PartialResolutionError extends Error {
  * Resolve `{{> partials/<name>}}` includes across role docs.
  *
  * Partials live under `_partials/**\/*.md` and are addressed by path without the
- * prefix or extension (e.g. a file at `_partials/ceo/hire-workflow.md` is
- * referenced as `{{> partials/ceo/hire-workflow}}`).
+ * prefix or extension (e.g. a file at `_partials/captain/hire-workflow.md` is
+ * referenced as `{{> partials/captain/hire-workflow}}`).
  *
  * The directive must be the entire line — leading/trailing whitespace is tolerated,
  * but anything else on the line is treated as literal text. Partials can include

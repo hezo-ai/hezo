@@ -240,11 +240,11 @@ Response:
   "data": [
     {
       "id": "uuid",
-      "name": "CEO",
-      "slug": "ceo",
+      "name": "Captain",
+      "slug": "captain",
       "description": "...",
       "role_description": "...",
-      "system_prompt_template": "You are the CEO of {{team_name}}...",
+      "system_prompt_template": "You are the Captain of {{team_name}}...",
       "default_effort": "max",
       "heartbeat_interval_min": 120,
       "monthly_budget_cents": 2000,
@@ -323,25 +323,25 @@ Response:
 ```
 
 #### `POST /teams/:teamId/agents`
-Internal direct-create endpoint used by team provisioning (seeding the template team). Board-initiated hires must go through `POST /teams/:teamId/agents/onboard` instead — this endpoint is not wired to the hire form and skips the CEO/board review cycle. Tests and bootstrap paths are the only expected callers.
+Internal direct-create endpoint used by team provisioning (seeding the template team). Board-initiated hires must go through `POST /teams/:teamId/agents/onboard` instead — this endpoint is not wired to the hire form and skips the Captain/board review cycle. Tests and bootstrap paths are the only expected callers.
 
 Request fields: `title` (required), `role_description`, `system_prompt`, `reports_to`, `default_effort`, `heartbeat_interval_min`, `monthly_budget_cents`, `touches_code`, `mcp_servers`.
 
 Response: full agent object.
 
 #### `POST /teams/:teamId/agents/onboard`
-Starts the CEO-mediated hire workflow. The board submits a draft spec; the server creates a pending `hire` approval holding the draft in its payload, opens an onboarding issue in the Operations project assigned to the CEO, and wakes the CEO to refine the draft. **No `member_agents` row is created yet.**
+Starts the Captain-mediated hire workflow. The board submits a draft spec; the server creates a pending `hire` approval holding the draft in its payload, opens an onboarding issue in the Operations project assigned to the Captain, and wakes the Captain to refine the draft. **No `member_agents` row is created yet.**
 
-The CEO revises the draft via the `update_hire_proposal` MCP tool, @-mentions the board for review, and iterates until the board resolves the pending approval. Approving the approval materialises the agent (see `POST /approvals/:approvalId/resolve`); denying leaves nothing behind.
+The Captain revises the draft via the `update_hire_proposal` MCP tool, @-mentions the board for review, and iterates until the board resolves the pending approval. Approving the approval materialises the agent (see `POST /approvals/:approvalId/resolve`); denying leaves nothing behind.
 
-If the team has no enabled CEO or no Operations project (bootstrap case), the endpoint creates the agent directly as `enabled` and returns it with `bootstrap: true`. No approval or ticket is created in that case.
+If the team has no enabled Captain or no Operations project (bootstrap case), the endpoint creates the agent directly as `enabled` and returns it with `bootstrap: true`. No approval or ticket is created in that case.
 
 Request:
 ```json
 {
   "title": "Data Scientist",
   "role_description": "Analyzes data and builds ML models",
-  "system_prompt": "Draft prompt — CEO will expand",
+  "system_prompt": "Draft prompt — Captain will expand",
   "default_effort": "medium",
   "heartbeat_interval_min": 60,
   "monthly_budget_cents": 3000,
@@ -365,7 +365,7 @@ Response (bootstrap):
 ```json
 {
   "data": {
-    "agent": { "id": "uuid", "slug": "ceo", "admin_status": "enabled", ... },
+    "agent": { "id": "uuid", "slug": "captain", "admin_status": "enabled", ... },
     "issue": null,
     "approval": null,
     "bootstrap": true
@@ -471,7 +471,7 @@ Response:
       "children": [
         {
           "id": "uuid",
-          "title": "CEO",
+          "title": "Captain",
           "runtime_status": "idle",
           "admin_status": "enabled",
 
@@ -532,16 +532,16 @@ Response:
 #### `POST /teams/:teamId/projects`
 Create a project. Container is auto-provisioned asynchronously. A planning issue titled
 `Draft execution plan for "{name}"` (labeled `planning`) is opened and assigned to the
-team's enabled CEO agent — board users are redirected there so the CEO can draft the
-execution plan. The planning ticket's body instructs the CEO to create the first
+team's enabled Captain agent — board users are redirected there so the Captain can draft the
+execution plan. The planning ticket's body instructs the Captain to create the first
 milestone's tickets as **top-level** issues (no `parent_issue_id` pointing at the
 planning ticket) — each delegated milestone is the assignee's own first-class
-deliverable. Fails with 500 if no enabled CEO agent exists.
+deliverable. Fails with 500 if no enabled Captain agent exists.
 
 Request: `name` and `description` are required. `docker_base_image` and `initial_prd`
 are optional. `docker_base_image` defaults to `hezo/agent-base:latest`. When
 `initial_prd` is provided (markdown string), it is saved as the `initial-prd.md`
-project doc and the CEO's planning issue directs the Researcher and Product Lead to
+project doc and the Captain's planning issue directs the Researcher and Product Lead to
 consult it as a starting point.
 ```json
 {
@@ -553,7 +553,7 @@ consult it as a starting point.
 ```
 
 Response includes the created project plus `planning_issue_id`, the UUID of the
-auto-opened CEO planning issue.
+auto-opened Captain planning issue.
 ```json
 {
   "data": {
@@ -818,7 +818,7 @@ Request:
 the agent receives an event trigger. If a board member, they are notified via
 inbox and configured messaging channels.
 
-Issues in the auto-created Operations project (`slug = 'operations'`, `is_internal = true`) must be assigned to the CEO. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Operations project issues must be assigned to the CEO`.
+Issues in the auto-created Operations project (`slug = 'operations'`, `is_internal = true`) must be assigned to the Captain. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Operations project issues must be assigned to the Captain`.
 
 `runtime_type` is optional. It pins this issue to a specific AI adapter
 (`claude_code | codex | gemini`). When unset, the server picks the
@@ -868,13 +868,13 @@ Two server-enforced guards block the `→ done` and `→ closed` transitions whe
 
 The error message names the blocking sub-issue or agent so the caller knows what to wait on.
 
-For issues whose project is Operations (`slug = 'operations'`, `is_internal = true`), `assignee_id` must be the CEO; any other value returns `400 INVALID_REQUEST`.
+For issues whose project is Operations (`slug = 'operations'`, `is_internal = true`), `assignee_id` must be the Captain; any other value returns `400 INVALID_REQUEST`.
 
 #### `DELETE /teams/:teamId/issues/:issueId`
 Delete an issue. Only allowed if status is `backlog`, and no comments exist.
 
 #### `POST /teams/:teamId/issues/:issueId/sub-issues`
-Create a sub-issue. `project_id` is inherited from the parent. When the parent belongs to the Operations project, the sub-issue's `assignee_id` must be the CEO.
+Create a sub-issue. `project_id` is inherited from the parent. When the parent belongs to the Operations project, the sub-issue's `assignee_id` must be the Captain.
 
 Request:
 ```json
@@ -1247,7 +1247,7 @@ Response (when `group_by=agent`):
   "data": {
     "entries": [...],
     "summary": [
-      { "agent_id": "uuid", "agent_title": "CEO", "total_cents": 2400 },
+      { "agent_id": "uuid", "agent_title": "Captain", "total_cents": 2400 },
       { "agent_id": "uuid", "agent_title": "Dev Engineer", "total_cents": 1800 }
     ],
     "total_cents": 12700
@@ -2077,7 +2077,7 @@ Each runtime translates the resolved level to its native knob:
 The resolved level is also exposed as `HEZO_AGENT_EFFORT` in the container
 env so agent-side tooling can read it.
 
-Built-in agent defaults: CEO and Architect default to `max` (ultrathink),
+Built-in agent defaults: Captain and Architect default to `max` (ultrathink),
 Product Lead / QA / Security / Researcher to `high`, all implementers to
 `medium`.
 
@@ -2353,7 +2353,7 @@ Response:
 {
   "data": {
     "id": "uuid",
-    "content": "You are the CEO of {{team_name}}...",
+    "content": "You are the Captain of {{team_name}}...",
     "member_agent_id": "uuid",
     "last_updated_by_member_id": "uuid | null",
     "created_at": "...",
@@ -2703,7 +2703,7 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `connection.refreshed` | connected_platform | System or board refreshes token |
 | `connection.expired` | connected_platform | System detects expired token |
 | `connection.disconnected` | connected_platform | Board disconnects platform |
-| `agent.created` | agent | Board-approved `hire` approval materialises, or bootstrap direct-create when no CEO exists |
+| `agent.created` | agent | Board-approved `hire` approval materialises, or bootstrap direct-create when no Captain exists |
 | `agent.updated` | agent | Board edits agent config |
 | `agent.disabled` | agent | Board disables agent |
 | `agent.resumed` | agent | Board resumes |
@@ -2773,10 +2773,10 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `create_team` | Create a new team (superuser only) | `name`, `description` |
 | `list_issues` | List issues with filtering | `team_id`, `project_id?`, `status?` |
 | `get_issue` | Get issue details | `team_id`, `issue_id` |
-| `create_issue` | Create a new issue. Operations-project issues must be assigned to the CEO (slug `ceo`); otherwise an error is returned. | `team_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
-| `update_issue` | Update an issue. Changing `assignee_id` on an Operations-project issue to anyone other than the CEO returns an error. | `team_id`, `issue_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
+| `create_issue` | Create a new issue. Operations-project issues must be assigned to the Captain (slug `captain`); otherwise an error is returned. | `team_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
+| `update_issue` | Update an issue. Changing `assignee_id` on an Operations-project issue to anyone other than the Captain returns an error. | `team_id`, `issue_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
 | `list_agents` | List agents in a team | `team_id` |
-| `update_hire_proposal` | Revise the draft of a pending `hire` approval. **CEO-only.** Rejects non-CEO agents with `Only the CEO can revise hire proposals`. Rejects already-resolved approvals. All draft fields optional — pass only what changes. | `approval_id`, `title?`, `role_description?`, `system_prompt?`, `default_effort?`, `heartbeat_interval_min?`, `monthly_budget_cents?`, `touches_code?` |
+| `update_hire_proposal` | Revise the draft of a pending `hire` approval. **Captain-only.** Rejects non-Captain agents with `Only the Captain can revise hire proposals`. Rejects already-resolved approvals. All draft fields optional — pass only what changes. | `approval_id`, `title?`, `role_description?`, `system_prompt?`, `default_effort?`, `heartbeat_interval_min?`, `monthly_budget_cents?`, `touches_code?` |
 | `list_projects` | List projects | `team_id` |
 | `create_project` | Create a project | `team_id`, `name` |
 | `list_comments` | List issue comments | `team_id`, `issue_id` |
@@ -2798,7 +2798,7 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `get_skill` | Get skill by slug | `team_id`, `slug` |
 | `create_skill` | Create skill directly | `team_id`, `name`, `content`, `description?` |
 | `set_agent_summary` | Set an agent's auto-generated description | `team_id`, `agent_id`, `summary` (≤1000 chars) |
-| `set_team_summary` | Set the team collaboration description (CEO only) | `team_id`, `summary` (≤4000 chars) |
+| `set_team_summary` | Set the team collaboration description (Captain only) | `team_id`, `summary` (≤4000 chars) |
 
 MCP tools call the same business logic layer as REST endpoints.
 
@@ -2806,7 +2806,7 @@ MCP tools call the same business logic layer as REST endpoints.
 
 To trigger runtime regeneration of agent and team descriptions, the system
 creates an issue with the `description-update` label in the Operations project,
-assigned to the CEO agent. The CEO processes this issue by calling
+assigned to the Captain agent. The Captain processes this issue by calling
 `set_agent_summary` for each agent and `set_team_summary` for the team,
 then marks the issue done.
 

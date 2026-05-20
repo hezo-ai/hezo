@@ -2,7 +2,9 @@ import { expect, test } from '@playwright/test';
 import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Goals', () => {
-	test('creates a team-wide goal from the Goals page and opens a CEO ticket', async ({ page }) => {
+	test('creates a team-wide goal from the Goals page and opens a Captain ticket', async ({
+		page,
+	}) => {
 		await authenticate(page);
 		const { team } = await createTeamWithAgents(page);
 
@@ -20,7 +22,7 @@ test.describe('Goals', () => {
 		await expect(main.getByText('Raise seed round')).toBeVisible({ timeout: 15000 });
 		await expect(main.getByText('Team-wide').first()).toBeVisible();
 
-		// The CEO ticket lives in the Operations project.
+		// The Captain ticket lives in the Operations project.
 		await page.goto(`/teams/${team.slug}/projects/operations/issues`);
 		await waitForPageLoad(page);
 		await expect(
@@ -28,7 +30,7 @@ test.describe('Goals', () => {
 		).toBeVisible({ timeout: 15000 });
 	});
 
-	test('project-scoped goal routes the CEO ticket into that project', async ({ page }) => {
+	test('project-scoped goal routes the Captain ticket into that project', async ({ page }) => {
 		await authenticate(page);
 		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}` };

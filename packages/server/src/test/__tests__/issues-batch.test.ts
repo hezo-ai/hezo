@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CEO_AGENT_SLUG } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
@@ -17,7 +17,7 @@ let projectId: string;
 let architectId: string;
 let productLeadId: string;
 let engineerId: string;
-let ceoId: string;
+let captainId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -46,7 +46,7 @@ beforeAll(async () => {
 	architectId = bySlug('architect')!.id;
 	productLeadId = bySlug('product-lead')!.id;
 	engineerId = bySlug('engineer')!.id;
-	ceoId = bySlug(CEO_AGENT_SLUG)!.id;
+	captainId = bySlug(CAPTAIN_AGENT_SLUG)!.id;
 
 	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
@@ -205,8 +205,8 @@ describe('MCP tool: create_issues (agent caller)', () => {
 				},
 				{
 					project_id: projectId,
-					title: 'Architect → manager CEO (forbidden — manager is not a subordinate)',
-					assignee_id: ceoId,
+					title: 'Architect → manager Captain (forbidden — manager is not a subordinate)',
+					assignee_id: captainId,
 				},
 			],
 		})) as Array<{

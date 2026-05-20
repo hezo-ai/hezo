@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Project CRUD', () => {
-	test('creates a project via dialog and opens a CEO planning ticket', async ({ page }) => {
+	test('creates a project via dialog and opens a Captain planning ticket', async ({ page }) => {
 		await authenticate(page);
 		const { team } = await createTeamWithAgents(page);
 

@@ -26,10 +26,10 @@ describe('resolveEffort', () => {
 		expect(resolveEffort('bogus', 'also-bogus')).toBe(DEFAULT_EFFORT);
 	});
 
-	it('forces max effort for the CEO regardless of wakeup or column default', () => {
-		expect(resolveEffort(AgentEffort.Minimal, AgentEffort.Low, 'ceo')).toBe(AgentEffort.Max);
-		expect(resolveEffort(undefined, null, 'ceo')).toBe(AgentEffort.Max);
-		expect(resolveEffort('nonsense', 'bogus', 'ceo')).toBe(AgentEffort.Max);
+	it('forces max effort for the Captain regardless of wakeup or column default', () => {
+		expect(resolveEffort(AgentEffort.Minimal, AgentEffort.Low, 'captain')).toBe(AgentEffort.Max);
+		expect(resolveEffort(undefined, null, 'captain')).toBe(AgentEffort.Max);
+		expect(resolveEffort('nonsense', 'bogus', 'captain')).toBe(AgentEffort.Max);
 	});
 
 	it('does not force max effort for other slugs', () => {

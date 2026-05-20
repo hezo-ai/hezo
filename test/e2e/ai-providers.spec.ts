@@ -218,7 +218,7 @@ test.describe('AI provider gate (post-master-key, pre-team)', () => {
 		await expect(page.getByText('Google')).toBeVisible();
 		await expect(page.getByText('Moonshot')).toHaveCount(0);
 
-		await expect(page.getByRole('heading', { name: 'Welcome to Hezo' })).toBeHidden();
+		await expect(page.getByTestId('home-welcome')).toBeHidden();
 
 		const anthropicCard = page
 			.locator('div.border.border-border.rounded-radius-md.p-4', { hasText: 'Anthropic' })
@@ -230,7 +230,11 @@ test.describe('AI provider gate (post-master-key, pre-team)', () => {
 		await expect(page.getByRole('heading', { name: 'Set up an AI provider' })).toBeHidden({
 			timeout: 20000,
 		});
-		await expect(page).toHaveURL(/\/teams(\/|$)/);
+		await expect(page).toHaveURL(/\/home(\/|$)/);
+		await expect(page.getByTestId('home-welcome')).toBeVisible({ timeout: 20000 });
+		await expect(page.getByTestId('home-captain-intake')).toBeVisible({ timeout: 20000 });
+		await expect(page.getByTestId('home-captain-intake-input')).toBeVisible();
+		await expect(page.getByText("I'm the Captain for your team")).toBeVisible();
 	});
 
 	test('re-raises the gate after deleting the last provider', async ({ page }) => {

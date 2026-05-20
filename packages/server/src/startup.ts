@@ -1,7 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
-import { vector } from '@electric-sql/pglite/vector';
 import { type Context, Hono } from 'hono';
 import type { HezoConfig } from './cli';
 import { logger } from './logger';
@@ -9,6 +8,7 @@ import { logger } from './logger';
 const log = logger.child('startup');
 
 import { MasterKeyManager } from './crypto/master-key';
+import { openPersistentDb } from './db/client';
 import { BASE_SCHEMA } from './db/schema';
 import type { Env } from './lib/types';
 import { getToolDefs, handleMcpRequest, initMcpServer } from './mcp/server';
@@ -76,23 +76,9 @@ export interface StartupResult {
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
-	const pgDataPath = join(config.dataDir, 'pgdata');
-
-	if (config.reset) {
-		rmSync(pgDataPath, { recursive: true, force: true });
-	}
-
 	mkdirSync(config.dataDir, { recursive: true });
 
-	const { PGlite } = await import('@electric-sql/pglite');
-	let db: InstanceType<typeof PGlite>;
-
-	try {
-		const { NodeFS } = await import('@electric-sql/pglite/nodefs');
-		db = new PGlite({ fs: new NodeFS(pgDataPath), extensions: { vector } });
-	} catch {
-		db = new PGlite({ extensions: { vector } });
-	}
+	const db = await openPersistentDb(config.dataDir, { reset: config.reset });
 
 	await db.exec(BASE_SCHEMA);
 	await runAvailableMigrations(db);

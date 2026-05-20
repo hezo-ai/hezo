@@ -1,16 +1,13 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
-	CEO_AGENT_SLUG,
+	CAPTAIN_AGENT_SLUG,
 	ContainerStatus,
-	IssuePriority,
-	IssueStatus,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
-import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toProjectIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
@@ -27,6 +24,8 @@ import {
 	teardownContainer,
 } from '../services/containers';
 import type { JobManager } from '../services/job-manager';
+import { isFirstUserFacingProject } from '../services/onboarding';
+import { createProjectWithPlanningIssue } from '../services/project-create';
 import { createWakeup } from '../services/wakeup';
 
 function buildContainerDeps(c: Context<Env>): ContainerDeps {
@@ -199,19 +198,19 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
 	const issuePrefix = prefixResult.prefix;
 
-	const ceoResult = await db.query<{ id: string }>(
+	const captainResult = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
-	const ceoMemberId = ceoResult.rows[0]?.id;
-	if (!ceoMemberId) {
+	const captainMemberId = captainResult.rows[0]?.id;
+	if (!captainMemberId) {
 		return err(
 			c,
 			'INTERNAL',
-			'No enabled CEO found for this team. Re-enable the CEO agent before creating projects.',
+			'No enabled Captain found for this team. Re-enable the Captain agent before creating projects.',
 			500,
 		);
 	}
@@ -224,105 +223,27 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 		return r.rows.length > 0;
 	});
 
-	const projectName = body.name.trim();
-	const projectDescription = body.description.trim();
-	const initialPrd = body.initial_prd?.trim() || null;
+	const deferPlanningWake = await isFirstUserFacingProject(db, teamId);
 
-	await db.query('BEGIN');
-	let project: Record<string, unknown>;
-	let planningIssue: Record<string, unknown>;
-	try {
-		const projectResult = await db.query(
-			`INSERT INTO projects (team_id, name, slug, issue_prefix, description, docker_base_image)
-			 VALUES ($1, $2, $3, $4, $5, $6)
-			 RETURNING *`,
-			[
-				teamId,
-				projectName,
-				slug,
-				issuePrefix,
-				projectDescription,
-				body.docker_base_image ?? 'hezo/agent-base:latest',
-			],
-		);
-		project = projectResult.rows[0] as Record<string, unknown>;
-
-		await db.query('INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)', [
-			project.id,
-		]);
-
-		if (initialPrd) {
-			await db.query(
-				`INSERT INTO documents (project_id, team_id, type, slug, content)
-				 VALUES ($1, $2, 'project_doc', 'initial-prd.md', $3)`,
-				[project.id, teamId, initialPrd],
-			);
-		}
-
-		const { number: issueNumber, identifier } = await allocateIssueIdentifier(
-			db,
-			project.id as string,
-		);
-
-		const initialPrdNote = initialPrd
-			? `\n\n> **Note:** The board has provided an initial requirements document saved as \`initial-prd.md\` in this project's docs. Direct the Researcher and Product Lead to consult this document as a starting point for research and the formal PRD.`
-			: '';
-
-		const issueBody = `## Draft the execution plan for this new project
-
-A new project has just been created. Please read the description below carefully and produce an execution plan.
-
-### Project: ${projectName}
-
-**Description**
-
-${projectDescription}${initialPrdNote}
-
-### Your task
-
-1. Read the description above. If anything is ambiguous, post a clarifying comment on this issue for the board.
-2. Use \`list_agents\` / \`get_agent_system_prompt\` to recall who is on the team.
-3. Break the work into 3-8 top-level milestones. Write a short scope note for each.
-4. Post the plan as a comment on this issue. Then create the milestone tickets with \`create_issue\`, choosing the parent based on what each milestone produces:
-   - **Planning artefacts** (research, PRD, spec, design — anything the implementation team reads before building) → open as **sub-issues of this planning ticket**: set \`parent_issue_id\` to this issue's id. Their outputs are required before the plan itself can be considered complete.
-   - **Work tickets** (implementation, build, deploy, security review of built code, marketing launch — anything that *executes* the finished plan) → open as **top-level tickets**: leave \`parent_issue_id\` unset. They run on their own clock; the plan is complete once they exist.
-   For a typical 7-milestone plan: research / PRD / spec / design → sub-issues; alpha implementation / security review / marketing launch → top-level. Assign each ticket to the right agent — the assignment wakes them on their own ticket.
-5. This planning ticket is the epic for the plan itself. The server will not let it move to \`done\` while any sub-issue is open, so it stays open while research / PRD / spec / design execute. Once those sub-issues close and the top-level work tickets have been created, move this issue to \`done\` and the Coach will close it after the post-mortem. Trying to flip it to \`done\` early will fail with a "sub-issue(s) still open" error.
-
-Container provisioning for this project is in progress. Focus on planning while the environment comes up — implementation agents can start work as soon as their tickets are ready.`;
-
-		const issueResult = await db.query(
-			`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier,
-			                     title, description, status, priority, labels)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
-			 RETURNING *`,
-			[
-				teamId,
-				project.id,
-				ceoMemberId,
-				issueNumber,
-				identifier,
-				`Draft execution plan for "${projectName}"`,
-				issueBody,
-				IssueStatus.Backlog,
-				IssuePriority.High,
-				JSON.stringify(['planning']),
-			],
-		);
-		planningIssue = issueResult.rows[0] as Record<string, unknown>;
-
-		await db.query('COMMIT');
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+	const { project, planningIssue } = await createProjectWithPlanningIssue(db, {
+		teamId,
+		captainMemberId,
+		name: body.name.trim(),
+		slug,
+		issuePrefix,
+		description: body.description.trim(),
+		dockerBaseImage: body.docker_base_image,
+		initialPrd: body.initial_prd?.trim() || null,
+	});
 
 	broadcastChange(c, wsRoom.team(teamId), 'projects', 'INSERT', project);
 	broadcastChange(c, wsRoom.team(teamId), 'issues', 'INSERT', planningIssue);
 
-	createWakeup(db, ceoMemberId, teamId, WakeupSource.Assignment, {
-		issue_id: planningIssue.id,
-	}).catch((e) => log.error('Failed to wake CEO for project planning:', e));
+	if (!deferPlanningWake) {
+		createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
+			issue_id: planningIssue.id,
+		}).catch((e) => log.error('Failed to wake Captain for project planning:', e));
+	}
 
 	provisionContainer(buildContainerDeps(c), project as unknown as ProjectRow, teamMeta.slug).catch(
 		(error) => {

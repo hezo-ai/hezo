@@ -177,7 +177,7 @@ test.describe('Issue detail — friendly URLs and mentions', () => {
 		freshWorkspace,
 	}) => {
 		const { team, agents, token } = freshWorkspace;
-		const ceo = agents.find((a) => a.slug === 'ceo')!;
+		const captain = agents.find((a) => a.slug === 'captain')!;
 
 		const project = await createProjectAndClearPlanning(page, team.id, token, {
 			name: 'URL Test Project',
@@ -186,7 +186,7 @@ test.describe('Issue detail — friendly URLs and mentions', () => {
 		const issue = await createIssueViaApi(page, team.id, token, {
 			project_id: project.id,
 			title: 'Friendly URL issue',
-			assignee_id: ceo.id,
+			assignee_id: captain.id,
 		});
 
 		const friendly = issue.identifier.toLowerCase();
@@ -215,7 +215,7 @@ test.describe('Issue detail — friendly URLs and mentions', () => {
 		freshWorkspace,
 	}) => {
 		const { team, agents, token } = freshWorkspace;
-		const ceo = agents.find((a) => a.slug === 'ceo')!;
+		const captain = agents.find((a) => a.slug === 'captain')!;
 
 		const projA = await createProjectAndClearPlanning(page, team.id, token, {
 			name: 'Mention Source',
@@ -229,13 +229,13 @@ test.describe('Issue detail — friendly URLs and mentions', () => {
 		const target = await createIssueViaApi(page, team.id, token, {
 			project_id: projB.id,
 			title: 'Target issue title goes here',
-			assignee_id: ceo.id,
+			assignee_id: captain.id,
 		});
 		const source = await createIssueViaApi(page, team.id, token, {
 			project_id: projA.id,
 			title: 'Source issue',
 			description: `See also ${target.identifier} for related work.`,
-			assignee_id: ceo.id,
+			assignee_id: captain.id,
 		});
 
 		await page.goto(

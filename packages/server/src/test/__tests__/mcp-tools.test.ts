@@ -720,19 +720,19 @@ describe('MCP tool: set_agent_summary and set_team_summary', () => {
 		expect(longSummary.length).toBeGreaterThan(1000);
 	});
 
-	it('set_team_summary CEO-only access enforced via isCeoOfTeam helper (direct DB)', async () => {
+	it('set_team_summary Captain-only access enforced via isCaptainOfTeam helper (direct DB)', async () => {
 		const eng = await db.query<{ slug: string }>(
 			`SELECT ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
 			 WHERE m.team_id = $1 AND ma.slug = 'engineer'`,
 			[teamId],
 		);
-		expect(eng.rows[0].slug).not.toBe('ceo');
-		const ceo = await db.query<{ slug: string }>(
+		expect(eng.rows[0].slug).not.toBe('captain');
+		const captain = await db.query<{ slug: string }>(
 			`SELECT ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
 			[teamId],
 		);
-		expect(ceo.rows[0].slug).toBe('ceo');
+		expect(captain.rows[0].slug).toBe('captain');
 	});
 
 	it('set_team_summary writes via direct DB path', async () => {
@@ -786,7 +786,7 @@ describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
 			 WHERE m.team_id = $1`,
 			[teamId],
 		);
-		const ceoRow = agents.rows.find((r) => r.slug === 'ceo');
+		const ceoRow = agents.rows.find((r) => r.slug === 'captain');
 		const qaRow = agents.rows.find((r) => r.slug === 'qa-engineer');
 		const archRow = agents.rows.find((r) => r.slug === 'architect');
 		expect(ceoRow?.team_context).toBeTruthy();
@@ -797,7 +797,7 @@ describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
 });
 
 describe('MCP tool: operations project assignee restriction', () => {
-	it('create_issue on Operations project rejects non-CEO assignee_slug', async () => {
+	it('create_issue on Operations project rejects non-Captain assignee_slug', async () => {
 		const ops = await db.query<{ id: string }>(
 			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
 			[teamId],
@@ -805,13 +805,13 @@ describe('MCP tool: operations project assignee restriction', () => {
 		const result = (await callToolViaMcp('create_issue', {
 			team_id: teamId,
 			project_id: ops.rows[0].id,
-			title: 'Operations via MCP with non-CEO',
+			title: 'Operations via MCP with non-Captain',
 			assignee_slug: 'engineer',
 		})) as { error?: string };
-		expect(result.error).toContain('CEO');
+		expect(result.error).toContain('Captain');
 	});
 
-	it('create_issue on Operations project accepts CEO assignee_slug', async () => {
+	it('create_issue on Operations project accepts Captain assignee_slug', async () => {
 		const ops = await db.query<{ id: string }>(
 			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
 			[teamId],
@@ -819,8 +819,8 @@ describe('MCP tool: operations project assignee restriction', () => {
 		const result = (await callToolViaMcp('create_issue', {
 			team_id: teamId,
 			project_id: ops.rows[0].id,
-			title: 'Operations via MCP with CEO',
-			assignee_slug: 'ceo',
+			title: 'Operations via MCP with Captain',
+			assignee_slug: 'captain',
 		})) as { error?: string; id?: string; project_id?: string };
 		expect(result.error).toBeUndefined();
 		expect(result.project_id).toBe(ops.rows[0].id);
@@ -863,14 +863,14 @@ describe('MCP tool: operations project assignee restriction', () => {
 		expect(tooDeep.error).toMatch(/2 levels deep/);
 	});
 
-	it('update_issue rejects reassigning Operations issue to non-CEO', async () => {
+	it('update_issue rejects reassigning Operations issue to non-Captain', async () => {
 		const ops = await db.query<{ id: string }>(
 			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
 			[teamId],
 		);
-		const ceo = await db.query<{ id: string }>(
+		const captain = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
 			[teamId],
 		);
 
@@ -878,7 +878,7 @@ describe('MCP tool: operations project assignee restriction', () => {
 			team_id: teamId,
 			project_id: ops.rows[0].id,
 			title: 'Operations reassign target',
-			assignee_id: ceo.rows[0].id,
+			assignee_id: captain.rows[0].id,
 		})) as { id: string };
 
 		const result = (await callToolViaMcp('update_issue', {
@@ -886,7 +886,7 @@ describe('MCP tool: operations project assignee restriction', () => {
 			issue_id: created.id,
 			assignee_id: agentId,
 		})) as { error?: string };
-		expect(result.error).toContain('CEO');
+		expect(result.error).toContain('Captain');
 	});
 });
 

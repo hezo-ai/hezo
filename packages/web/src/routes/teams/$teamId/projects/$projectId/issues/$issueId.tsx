@@ -1,7 +1,7 @@
 import {
 	AgentEffort,
 	AgentRuntimeStatus,
-	CEO_AGENT_SLUG,
+	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	IssueStatus,
 	OPERATIONS_PROJECT_SLUG,
@@ -293,13 +293,13 @@ function IssueDetailPage() {
 
 	const assignedAgent = agents?.find((a) => a.id === issue?.assignee_id);
 	const effectiveDefaultEffort: AgentEffort =
-		assignedAgent?.slug === CEO_AGENT_SLUG
+		assignedAgent?.slug === CAPTAIN_AGENT_SLUG
 			? AgentEffort.Max
 			: (assignedAgent?.default_effort ?? DEFAULT_EFFORT);
 	const isOperationsProject = issue?.project_slug === OPERATIONS_PROJECT_SLUG;
 	const assigneeOptions = agents
 		?.filter((a) => a.admin_status !== 'disabled')
-		.filter((a) => !isOperationsProject || a.slug === CEO_AGENT_SLUG);
+		.filter((a) => !isOperationsProject || a.slug === CAPTAIN_AGENT_SLUG);
 
 	if (isLoading || !issue)
 		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;

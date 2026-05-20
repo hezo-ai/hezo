@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
-	CEO_AGENT_SLUG,
+	CAPTAIN_AGENT_SLUG,
 	CommentContentType,
 	IssuePriority,
 	IssueStatus,
@@ -22,17 +22,17 @@ const log = logger.child('oauth-verification-tasks');
 export const OAUTH_VERIFICATION_LABEL = 'oauth-verification';
 
 interface TeamContext {
-	ceoMemberId: string;
+	captainMemberId: string;
 	operationsProjectId: string;
 }
 
 async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
-	const ceo = await db.query<{ id: string }>(
+	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
 	const ops = await db.query<{ id: string }>(
 		`SELECT id FROM projects
@@ -40,9 +40,9 @@ async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext 
 		 LIMIT 1`,
 		[teamId, OPERATIONS_PROJECT_SLUG],
 	);
-	if (!ceo.rows[0] || !ops.rows[0]) return null;
+	if (!captain.rows[0] || !ops.rows[0]) return null;
 	return {
-		ceoMemberId: ceo.rows[0].id,
+		captainMemberId: captain.rows[0].id,
 		operationsProjectId: ops.rows[0].id,
 	};
 }
@@ -110,7 +110,7 @@ export async function enqueueOAuthVerificationTask(
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) {
 		log.warn(
-			`Cannot enqueue OAuth verification task; missing CEO or Operations project for ${teamId}`,
+			`Cannot enqueue OAuth verification task; missing Captain or Operations project for ${teamId}`,
 		);
 		return null;
 	}
@@ -143,11 +143,11 @@ export async function enqueueOAuthVerificationTask(
 			],
 		);
 		try {
-			await createWakeup(db, ctx.ceoMemberId, teamId, WakeupSource.Comment, {
+			await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Comment, {
 				issue_id: existingId,
 			});
 		} catch (e) {
-			log.error('Failed to wake CEO for repeat OAuth verification:', e);
+			log.error('Failed to wake Captain for repeat OAuth verification:', e);
 		}
 		return { issueId: existingId, identifier: existing.rows[0].identifier, created: false };
 	}
@@ -179,7 +179,7 @@ export async function enqueueOAuthVerificationTask(
 		[
 			teamId,
 			ctx.operationsProjectId,
-			ctx.ceoMemberId,
+			ctx.captainMemberId,
 			parentIdentifier ? originatingIssueId : null,
 			issueNumber,
 			identifier,
@@ -198,11 +198,11 @@ export async function enqueueOAuthVerificationTask(
 	}
 
 	try {
-		await createWakeup(db, ctx.ceoMemberId, teamId, WakeupSource.Assignment, {
+		await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Assignment, {
 			issue_id: issueId,
 		});
 	} catch (e) {
-		log.error('Failed to wake CEO for OAuth verification task:', e);
+		log.error('Failed to wake Captain for OAuth verification task:', e);
 	}
 
 	return { issueId, identifier, created: true };

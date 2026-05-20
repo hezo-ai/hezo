@@ -287,6 +287,7 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 						resolveApproval.mutate({
 							approvalId: approval.id,
 							status: ApprovalStatus.Approved,
+							teamSlug: approval.team_slug,
 						})
 					}
 				>
@@ -306,6 +307,7 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 						resolveApproval.mutate({
 							approvalId: approval.id,
 							status: ApprovalStatus.Denied,
+							teamSlug: approval.team_slug,
 						})
 					}
 				>

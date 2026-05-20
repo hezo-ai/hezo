@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
-	CEO_AGENT_SLUG,
+	CAPTAIN_AGENT_SLUG,
 	IssuePriority,
 	IssueStatus,
 	OPERATIONS_PROJECT_SLUG,
@@ -36,17 +36,17 @@ export type AgentTeamContextReason =
 const TEAM_CONTEXT_TARGET_PREFIX = 'team_context:';
 
 interface TeamContext {
-	ceoMemberId: string | null;
+	captainMemberId: string | null;
 	operationsProjectId: string | null;
 }
 
 async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
-	const ceo = await db.query<{ id: string }>(
+	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
 
 	const ops = await db.query<{ id: string }>(
@@ -60,7 +60,7 @@ async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext 
 	if (teamExists.rows.length === 0) return null;
 
 	return {
-		ceoMemberId: ceo.rows[0]?.id ?? null,
+		captainMemberId: captain.rows[0]?.id ?? null,
 		operationsProjectId: ops.rows[0]?.id ?? null,
 	};
 }
@@ -91,7 +91,7 @@ async function createDescriptionIssue(
 	title: string,
 	body: string,
 ): Promise<string | null> {
-	if (!ctx.ceoMemberId || !ctx.operationsProjectId) return null;
+	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
 
 	const { number: issueNumber, identifier } = await allocateIssueIdentifier(
 		db,
@@ -110,7 +110,7 @@ async function createDescriptionIssue(
 		[
 			teamId,
 			ctx.operationsProjectId,
-			ctx.ceoMemberId,
+			ctx.captainMemberId,
 			issueNumber,
 			identifier,
 			title,
@@ -124,11 +124,11 @@ async function createDescriptionIssue(
 	const issueId = insertResult.rows[0].id;
 
 	try {
-		await createWakeup(db, ctx.ceoMemberId, teamId, WakeupSource.Assignment, {
+		await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Assignment, {
 			issue_id: issueId,
 		});
 	} catch (e) {
-		log.error('Failed to wake CEO for description task:', e);
+		log.error('Failed to wake Captain for description task:', e);
 	}
 
 	return issueId;
@@ -174,7 +174,7 @@ export async function enqueueAgentSummaryTask(
 ): Promise<string | null> {
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
-	if (!ctx.ceoMemberId || !ctx.operationsProjectId) return null;
+	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
 
 	const target = wsRoom.agent(agentId);
 	const existing = await findOpenDescriptionIssue(db, teamId, target);
@@ -207,7 +207,7 @@ export async function enqueueTeamSummaryTask(
 ): Promise<string | null> {
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
-	if (!ctx.ceoMemberId || !ctx.operationsProjectId) return null;
+	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
 
 	const target = TEAM_TARGET;
 	const existing = await findOpenDescriptionIssue(db, teamId, target);
@@ -254,7 +254,7 @@ export async function enqueueAgentTeamContextTask(
 ): Promise<string | null> {
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
-	if (!ctx.ceoMemberId || !ctx.operationsProjectId) return null;
+	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
 
 	const target = `${TEAM_CONTEXT_TARGET_PREFIX}${agentId}`;
 	const existing = await findOpenDescriptionIssue(db, teamId, target);

@@ -154,7 +154,7 @@ PostgreSQL with Drizzle ORM. ~59 tables organized into domains.
 | id | UUID PK | |
 | companyId | UUID FK→companies | |
 | name | text NOT NULL | |
-| role | text | `ceo`, `general`, etc. |
+| role | text | `captain`, `general`, etc. |
 | title | text | |
 | icon | text | |
 | status | text | `idle`, `active`, `paused`, `pending_approval`, `terminated` |
@@ -455,7 +455,7 @@ Resolution order:
 
 **Instance admin**: `instance_user_roles.role = 'instance_admin'` bypasses company access checks.
 
-**CEO agents**: automatically get elevated permissions within their company.
+**Captain agents**: automatically get elevated permissions within their company.
 
 ### 6.4 Deployment Modes
 
@@ -525,7 +525,7 @@ create → pending_approval → idle ↔ running → error
 Agents have a `reportsTo` self-referential FK, creating a management hierarchy. The system supports:
 - Org chart visualization
 - Chain of command queries (`getChainOfCommand`)
-- CEO role at the top of the hierarchy
+- Captain role at the top of the hierarchy
 
 ### 7.4 Agent Instructions
 
@@ -1280,7 +1280,7 @@ Dashboard, Companies, CompanySettings, Agents, AgentDetail, Projects, ProjectDet
 | `dashboard summary` | Show dashboard metrics |
 | `plugin list/install/uninstall` | Plugin management |
 | `worktree init/env/list` | Multi-instance worktree management |
-| `auth bootstrap-ceo` | Generate first admin invite |
+| `auth bootstrap-captain` | Generate first admin invite |
 | `allowed-hostname` | Add private hostname whitelist entry |
 | `context show` | Display loaded context |
 

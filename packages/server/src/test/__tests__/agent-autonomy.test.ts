@@ -351,7 +351,7 @@ describe('agent-runner: mention handoff prompt', () => {
 	const mentionIssue = {
 		id: 'trig-uuid',
 		identifier: 'AUT-42',
-		title: "CEO's roadmap",
+		title: "Captain's roadmap",
 		description: 'Roadmap planning.',
 		status: 'in_progress',
 		priority: 'high',
@@ -369,7 +369,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		const { buildTaskPrompt } = await import('../../services/agent-runner');
 
 		const ctx = {
-			authorName: 'CEO',
+			authorName: 'Captain',
 			excerpt: 'Please update the spec to cover §6 and §11.',
 			openTickets: [
 				{ identifier: 'AUT-10', title: 'Draft spec', status: 'backlog', priority: 'high' },
@@ -383,7 +383,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		});
 
 		expect(prompt).toContain('## Mention Handoff');
-		expect(prompt).toContain('You were mentioned by CEO in AUT-42');
+		expect(prompt).toContain('You were mentioned by Captain in AUT-42');
 		expect(prompt).toContain('> Please update the spec to cover §6 and §11.');
 		expect(prompt).toContain('AUT-10 — Draft spec (backlog, high)');
 		expect(prompt).toContain('AUT-12 — Review PRD (in_progress, medium)');
@@ -400,7 +400,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		const { buildTaskPrompt } = await import('../../services/agent-runner');
 
 		const ctx = {
-			authorName: 'CEO',
+			authorName: 'Captain',
 			excerpt: 'Take a look at this.',
 			openTickets: [],
 		};
@@ -417,7 +417,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		const { buildTaskPrompt } = await import('../../services/agent-runner');
 
 		const ctx = {
-			authorName: 'CEO',
+			authorName: 'Captain',
 			excerpt: 'hi',
 			openTickets: [],
 		};
@@ -468,7 +468,7 @@ describe('agent-runner: mention context loader', () => {
 
 		const longCode = `Here is the plan\n\`\`\`\n${'x'.repeat(1200)}\n\`\`\`\nend`;
 		const ctx = {
-			authorName: 'CEO',
+			authorName: 'Captain',
 			excerpt: longCode.replace(
 				/(?:^|\n)(?:```|~~~)[^\n]*\n[\s\S]*?(?:```|~~~)(?=\n|$)/g,
 				'[code omitted]',

@@ -372,7 +372,7 @@ UI:
 
 **Status:** Done (2026-04)
 
-**Goal:** Simplify the UI with a team-first navigation model and add agent onboarding via CEO-managed issues.
+**Goal:** Simplify the UI with a team-first navigation model and add agent onboarding via Captain-managed issues.
 
 **What's included:**
 
@@ -380,7 +380,7 @@ Backend:
 - `is_internal` boolean on `projects` table — marks auto-created projects
 - Auto-create "Operations" project (`is_internal = true`) on team creation
 - Prevent deletion of internal projects
-- `POST /teams/:teamId/agents/onboard` endpoint — creates agent in disabled state, opens onboarding issue assigned to CEO
+- `POST /teams/:teamId/agents/onboard` endpoint — creates agent in disabled state, opens onboarding issue assigned to the Captain
 
 Frontend:
 - Team icon rail (left sidebar) with home, team avatars, theme switcher, inbox badge
@@ -678,7 +678,7 @@ UI:
 Backend:
 - `agent_effort` enum: `minimal | low | medium | high | max`
 - `default_effort` column on `agent_types` and `member_agents`
-- Per-role seed defaults: CEO / Architect → `max`; Product Lead / QA / Security / Researcher → `high`; implementers → `medium`
+- Per-role seed defaults: Captain / Architect → `max`; Product Lead / QA / Security / Researcher → `high`; implementers → `medium`
 - Effort resolver service with precedence: wakeup payload override → agent default → `medium`
 - Runtime translation: Claude Code (`think`/`ultrathink` prompt keyword), Codex (`-c model_reasoning_effort=<level>`), Gemini (`GEMINI_REASONING_EFFORT` env)
 - Resolved level exposed as `HEZO_AGENT_EFFORT` env var for agent-side tooling
@@ -703,7 +703,7 @@ UI:
 
 **Status:** Done (2026-04-17)
 
-**Goal:** Auto-generated descriptions for agents and teams — pre-baked defaults for built-in types, runtime regeneration via CEO-managed tickets.
+**Goal:** Auto-generated descriptions for agents and teams — pre-baked defaults for built-in types, runtime regeneration via Captain-managed tickets.
 
 **What's included:**
 
@@ -714,13 +714,13 @@ Backend:
 - `team_templates.default_summary` (TEXT) — pre-generated team defaults
 - Summaries copied to agents and team during provisioning
 - `set_agent_summary` MCP tool — any agent or board member in the team can set an agent's summary
-- `set_team_summary` MCP tool — CEO agent only, sets the team team summary
-- `description-update` label convention: issue created in Operations project, assigned to CEO, triggers regeneration
+- `set_team_summary` MCP tool — Captain agent only, sets the team team summary
+- `description-update` label convention: issue created in Operations project, assigned to the Captain, triggers regeneration
 
 **How to test:**
 - Create a team from built-in template — agents have pre-baked summaries, team has team summary
-- CEO processes a `description-update` issue — calls MCP tools to update summaries
-- Non-CEO agent cannot call `set_team_summary` (rejected)
+- Captain processes a `description-update` issue — calls MCP tools to update summaries
+- Non-Captain agent cannot call `set_team_summary` (rejected)
 - `bun run test --skip-e2e` passes
 
 **Depends on:** Phase 11.5
@@ -834,7 +834,7 @@ After successful container provisioning or rebuild, runs that died with `error='
 | 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack Query, real-time updates |
 | 6 | MCP + Skill File + Binary Build | MCP endpoint, skill file + `bun build --compile` single binary, Playwright E2E |
 | 6.5 | Auth + Session Compaction | Custom OAuth auth (board members only), session compaction + login page, account settings |
-| 6.6 | UI Redesign + Agent Onboarding | Team icon rail, unified side menu, tab-based project view, agent onboarding via CEO |
+| 6.6 | UI Redesign + Agent Onboarding | Team icon rail, unified side menu, tab-based project view, agent onboarding via Captain |
 | 6.7 | Job Manager + Audit Log Navigation | cron-async job manager, container sync, audit log route |
 | 7 | Multi-User Roles + Invites | Member roles, scoped permissions, email invites + member management UI |
 | 8 | Adapters + Plugins + UI | Gemini/Codex adapters, plugin system + plugin management UI, runtime selector |
@@ -842,6 +842,6 @@ After successful container provisioning or rebuild, runs that died with `error='
 | 10 | Deploy + Messaging + UI | Staging/production pipeline, Slack + Telegram + deploy status, notification preferences |
 | 11 | Agent Execution Logs | Execution comments on issues, agent Executions/Settings tabs, run detail pages |
 | 11.5 | Per-Run Reasoning Effort | `agent_effort` enum, per-agent `default_effort`, per-comment override, runtime-native knobs (ultrathink, model_reasoning_effort) |
-| 12 | Agent & Team Auto-Descriptions | Pre-baked summaries for built-in types, runtime regeneration via CEO tickets, `set_agent_summary` / `set_team_summary` MCP tools |
+| 12 | Agent & Team Auto-Descriptions | Pre-baked summaries for built-in types, runtime regeneration via Captain tickets, `set_agent_summary` / `set_team_summary` MCP tools |
 
 Each phase produces a testable increment. Phase 0 can be built and verified in isolation. Phases 1–3 give a working API server testable entirely with curl. Phase 3.5 makes everything browser-testable. From Phase 4 onward, every phase includes UI alongside backend so new functionality is always manually testable in the browser.

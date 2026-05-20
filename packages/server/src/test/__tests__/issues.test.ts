@@ -702,7 +702,7 @@ describe('sub-issue depth + ancestors', () => {
 
 describe('operations project assignee restriction', () => {
 	let operationsProjectId: string;
-	let ceoAgentId: string;
+	let captainAgentId: string;
 
 	beforeAll(async () => {
 		const opsResult = await db.query<{ id: string }>(
@@ -711,64 +711,64 @@ describe('operations project assignee restriction', () => {
 		);
 		operationsProjectId = opsResult.rows[0].id;
 
-		const ceoResult = await db.query<{ id: string }>(
+		const captainResult = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
 			[teamId],
 		);
-		ceoAgentId = ceoResult.rows[0].id;
+		captainAgentId = captainResult.rows[0].id;
 	});
 
-	it('rejects creating an Operations issue assigned to a non-CEO agent', async () => {
+	it('rejects creating an Operations issue assigned to a non-Captain agent', async () => {
 		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: operationsProjectId,
-				title: 'Non-CEO on Operations',
+				title: 'Non-Captain on Operations',
 				assignee_id: agentId,
 			}),
 		});
 		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toContain('CEO');
+		expect((await res.json()).error.message).toContain('Captain');
 	});
 
-	it('accepts creating an Operations issue assigned to the CEO', async () => {
+	it('accepts creating an Operations issue assigned to the Captain', async () => {
 		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: operationsProjectId,
-				title: 'CEO on Operations',
-				assignee_id: ceoAgentId,
+				title: 'Captain on Operations',
+				assignee_id: captainAgentId,
 			}),
 		});
 		expect(res.status).toBe(201);
-		expect((await res.json()).data.assignee_id).toBe(ceoAgentId);
+		expect((await res.json()).data.assignee_id).toBe(captainAgentId);
 	});
 
-	it('allows non-CEO assignees on non-Operations projects', async () => {
+	it('allows non-Captain assignees on non-Operations projects', async () => {
 		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Non-CEO on regular project',
+				title: 'Non-Captain on regular project',
 				assignee_id: agentId,
 			}),
 		});
 		expect(res.status).toBe(201);
 	});
 
-	it('rejects reassigning an Operations issue to a non-CEO agent', async () => {
+	it('rejects reassigning an Operations issue to a non-Captain agent', async () => {
 		const createRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: operationsProjectId,
 				title: 'Reassignable Operations issue',
-				assignee_id: ceoAgentId,
+				assignee_id: captainAgentId,
 			}),
 		});
 		const issue = (await createRes.json()).data;
@@ -779,17 +779,17 @@ describe('operations project assignee restriction', () => {
 			body: JSON.stringify({ assignee_id: agentId }),
 		});
 		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toContain('CEO');
+		expect((await res.json()).error.message).toContain('Captain');
 	});
 
-	it('allows reassigning an Operations issue back to the CEO', async () => {
+	it('allows reassigning an Operations issue back to the Captain', async () => {
 		const createRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: operationsProjectId,
-				title: 'Operations keep-CEO issue',
-				assignee_id: ceoAgentId,
+				title: 'Operations keep-Captain issue',
+				assignee_id: captainAgentId,
 			}),
 		});
 		const issue = (await createRes.json()).data;
@@ -797,19 +797,19 @@ describe('operations project assignee restriction', () => {
 		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ assignee_id: ceoAgentId }),
+			body: JSON.stringify({ assignee_id: captainAgentId }),
 		});
 		expect(res.status).toBe(200);
 	});
 
-	it('rejects sub-issue of an Operations parent assigned to a non-CEO agent', async () => {
+	it('rejects sub-issue of an Operations parent assigned to a non-Captain agent', async () => {
 		const parentRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: operationsProjectId,
 				title: 'Operations parent',
-				assignee_id: ceoAgentId,
+				assignee_id: captainAgentId,
 			}),
 		});
 		const parent = (await parentRes.json()).data;
@@ -817,10 +817,10 @@ describe('operations project assignee restriction', () => {
 		const res = await app.request(`/api/teams/${teamId}/issues/${parent.id}/sub-issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: 'Sub with non-CEO', assignee_id: agentId }),
+			body: JSON.stringify({ title: 'Sub with non-Captain', assignee_id: agentId }),
 		});
 		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toContain('CEO');
+		expect((await res.json()).error.message).toContain('Captain');
 	});
 
 	it('exposes project_slug on the issue detail response', async () => {
@@ -830,7 +830,7 @@ describe('operations project assignee restriction', () => {
 			body: JSON.stringify({
 				project_id: operationsProjectId,
 				title: 'Operations detail check',
-				assignee_id: ceoAgentId,
+				assignee_id: captainAgentId,
 			}),
 		});
 		const issue = (await createRes.json()).data;

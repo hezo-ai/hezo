@@ -12,7 +12,7 @@ let token: string;
 let teamId: string;
 let projectId: string;
 let otherTeamId: string;
-let ceoMemberId: string;
+let captainMemberId: string;
 let masterKeyManager: MasterKeyManager;
 
 beforeAll(async () => {
@@ -43,12 +43,12 @@ beforeAll(async () => {
 	});
 	otherTeamId = (await otherRes.json()).data.id;
 
-	const ceo = await db.query<{ id: string }>(
+	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = 'ceo' LIMIT 1`,
+		 WHERE m.team_id = $1 AND ma.slug = 'captain' LIMIT 1`,
 		[teamId],
 	);
-	ceoMemberId = ceo.rows[0].id;
+	captainMemberId = captain.rows[0].id;
 });
 
 afterAll(async () => {
@@ -64,7 +64,7 @@ async function getOperationsProjectId(cid: string): Promise<string> {
 }
 
 describe('goals CRUD', () => {
-	it('creates a team-wide goal and opens a CEO ticket in Operations', async () => {
+	it('creates a team-wide goal and opens a Captain ticket in Operations', async () => {
 		const res = await app.request(`/api/teams/${teamId}/goals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -90,7 +90,7 @@ describe('goals CRUD', () => {
 		);
 		expect(issueResult.rows.length).toBe(1);
 		const issue = issueResult.rows[0];
-		expect(issue.assignee_id).toBe(ceoMemberId);
+		expect(issue.assignee_id).toBe(captainMemberId);
 		expect(issue.project_id).toBe(opsId);
 		expect(issue.status).toBe('backlog');
 		expect(issue.priority).toBe('medium');
@@ -98,7 +98,7 @@ describe('goals CRUD', () => {
 		expect(labels).toContain('goal-update');
 	});
 
-	it('creates a project-scoped goal and routes the CEO ticket into that project', async () => {
+	it('creates a project-scoped goal and routes the Captain ticket into that project', async () => {
 		const res = await app.request(`/api/teams/${teamId}/goals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -145,7 +145,7 @@ describe('goals CRUD', () => {
 	});
 
 	it('forbids an agent from creating a goal', async () => {
-		const agent = await mintAgentToken(db, masterKeyManager, ceoMemberId, teamId);
+		const agent = await mintAgentToken(db, masterKeyManager, captainMemberId, teamId);
 		const res = await app.request(`/api/teams/${teamId}/goals`, {
 			method: 'POST',
 			headers: { ...authHeader(agent.token), 'Content-Type': 'application/json' },

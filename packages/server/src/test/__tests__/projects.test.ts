@@ -31,7 +31,7 @@ afterAll(async () => {
 });
 
 describe('projects CRUD', () => {
-	it('creates a project with description and auto-opens a planning issue for the CEO', async () => {
+	it('creates a project with description and auto-opens a planning issue for the Captain', async () => {
 		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -47,14 +47,14 @@ describe('projects CRUD', () => {
 		expect(body.data.team_id).toBe(teamId);
 		expect(body.data.description).toBe(VALID_DESCRIPTION);
 
-		const ceoResult = await db.query<{ id: string }>(
+		const captainResult = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'ceo' LIMIT 1`,
+			 WHERE m.team_id = $1 AND ma.slug = 'captain' LIMIT 1`,
 			[teamId],
 		);
-		const ceoId = ceoResult.rows[0]?.id;
-		expect(ceoId).toBeDefined();
+		const captainId = captainResult.rows[0]?.id;
+		expect(captainId).toBeDefined();
 
 		const issueResult = await db.query<{
 			id: string;
@@ -70,7 +70,7 @@ describe('projects CRUD', () => {
 		);
 		expect(issueResult.rows.length).toBe(1);
 		const issue = issueResult.rows[0];
-		expect(issue.assignee_id).toBe(ceoId);
+		expect(issue.assignee_id).toBe(captainId);
 		expect(issue.status).toBe('backlog');
 		expect(issue.priority).toBe('high');
 		expect(issue.title).toContain('Draft execution plan');
@@ -90,7 +90,7 @@ describe('projects CRUD', () => {
 		}>(
 			`SELECT source, payload FROM agent_wakeup_requests
 			 WHERE member_id = $1 AND team_id = $2 AND source = 'assignment'`,
-			[ceoId, teamId],
+			[captainId, teamId],
 		);
 		expect(wakeupResult.rows.length).toBeGreaterThanOrEqual(1);
 		const payload =

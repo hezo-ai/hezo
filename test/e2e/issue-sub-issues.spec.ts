@@ -10,7 +10,7 @@ test('sub-issues panel is expanded by default and collapses on click', async ({ 
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string; slug: string }[];
-	const ceo = agents.find((a) => a.slug === 'ceo')!;
+	const captain = agents.find((a) => a.slug === 'captain')!;
 	const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
 	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
@@ -65,8 +65,8 @@ test('sub-issues panel is expanded by default and collapses on click', async ({ 
 	await expect(toggle).toHaveAttribute('aria-expanded', 'false');
 	await expect(list).toBeHidden();
 
-	// CEO agent variable retained to validate presence in the seeded team.
-	expect(ceo).toBeDefined();
+	// Captain agent variable retained to validate presence in the seeded team.
+	expect(captain).toBeDefined();
 });
 
 test('sub-issues paginate to team page size with a Show more link', async ({ page }) => {

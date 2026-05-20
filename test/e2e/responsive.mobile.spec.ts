@@ -20,7 +20,7 @@ test.describe('Responsive — mobile (390px)', () => {
 
 	test('issue detail metadata stacks above content', async ({ page, freshWorkspace }) => {
 		const { team, token, agents } = freshWorkspace;
-		const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+		const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
 		const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
@@ -34,7 +34,7 @@ test.describe('Responsive — mobile (390px)', () => {
 			data: {
 				project_id: project.id,
 				title: 'Mobile issue',
-				assignee_id: ceo.id,
+				assignee_id: captain.id,
 				description: 'mobile description',
 			},
 		});

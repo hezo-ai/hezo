@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
-	CEO_AGENT_SLUG,
+	CAPTAIN_AGENT_SLUG,
 	COACH_AGENT_SLUG,
 	CommentContentType,
 	IssueStatus,
@@ -11,6 +11,7 @@ import {
 import { broadcastRowChange } from '../lib/broadcast';
 import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { logger } from '../logger';
+import { onRequirementsIntakeCompleted } from './hire-team-intake';
 import { recordStatusChange } from './issue-events';
 import { OAUTH_VERIFICATION_LABEL } from './oauth-verification-tasks';
 import { createWakeup } from './wakeup';
@@ -62,21 +63,21 @@ async function notifyParentOfOAuthVerification(
 	const markerMatch = row.description.match(OAUTH_MARKER_RE);
 	const platform = markerMatch ? markerMatch[1] : 'external';
 
-	const ceo = await db.query<{ id: string }>(
+	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
-	const ceoId = ceo.rows[0]?.id ?? null;
+	const captainId = captain.rows[0]?.id ?? null;
 
 	const text = `${platformDisplayName(platform)} connector is set up and verified. You can resume work here.`;
 	const commentResult = await db.query<Record<string, unknown>>(
 		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
 		 RETURNING *`,
-		[row.parent_issue_id, ceoId, CommentContentType.Text, JSON.stringify({ text })],
+		[row.parent_issue_id, captainId, CommentContentType.Text, JSON.stringify({ text })],
 	);
 
 	if (wsManager && commentResult.rows[0]) {
@@ -89,14 +90,14 @@ async function notifyParentOfOAuthVerification(
 		);
 	}
 
-	if (ceoId) {
+	if (captainId) {
 		try {
-			await createWakeup(db, ceoId, teamId, WakeupSource.Automation, {
+			await createWakeup(db, captainId, teamId, WakeupSource.Automation, {
 				issue_id: row.parent_issue_id,
 				trigger: 'oauth_verified',
 			});
 		} catch (e) {
-			log.error('Failed to wake CEO on OAuth verification completion:', e);
+			log.error('Failed to wake Captain on OAuth verification completion:', e);
 		}
 	}
 }
@@ -142,6 +143,12 @@ export async function triggerStatusAutomations(
 			await notifyParentOfOAuthVerification(db, teamId, issueId, wsManager);
 		} catch (e) {
 			log.error('Failed to notify parent of OAuth verification:', e);
+		}
+
+		try {
+			await onRequirementsIntakeCompleted(db, teamId, issueId, wsManager);
+		} catch (e) {
+			log.error('Failed to start hire-team intake after requirements:', e);
 		}
 	}
 }

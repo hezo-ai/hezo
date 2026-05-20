@@ -54,7 +54,7 @@ test('run page shows trigger reason linking back to the source mention', async (
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 	const architect = agents.find((a) => a.slug === 'architect') ?? agents[1];
 
 	const project = await createProjectAndClearPlanning(page, team.id, token, {
@@ -80,19 +80,19 @@ test('run page shows trigger reason linking back to the source mention', async (
 
 	await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 		headers,
-		data: { content_type: 'text', content: { text: `@${ceo.slug} please weigh in here` } },
+		data: { content_type: 'text', content: { text: `@${captain.slug} please weigh in here` } },
 	});
 
 	const mentionRun = await waitForRunWithTrigger(
 		page,
 		team.id,
-		ceo.id,
+		captain.id,
 		token,
 		(r) =>
 			r.trigger_source === 'mention' && r.trigger_comment_issue_identifier === issue.identifier,
 	);
 
-	await page.goto(`/teams/${team.slug}/agents/${ceo.id}/executions/${mentionRun.id}`);
+	await page.goto(`/teams/${team.slug}/agents/${captain.id}/executions/${mentionRun.id}`);
 
 	const triggerRow = page.getByTestId('run-trigger-reason');
 	await expect(triggerRow).toBeVisible({ timeout: 15000 });
@@ -116,7 +116,7 @@ test('run list row shows the trigger reason summary', async ({ page }) => {
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const project = await createProjectAndClearPlanning(page, team.id, token, {
 		name: 'Trigger List Project',
@@ -131,16 +131,16 @@ test('run list row shows the trigger reason summary', async ({ page }) => {
 			project_id: project.id,
 			title: 'Trigger list test',
 			description: 'Synthetic test task',
-			assignee_id: ceo.id,
+			assignee_id: captain.id,
 		},
 	});
 	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
 
 	// Wait for at least one terminal run on the assigned agent so the list page
 	// has a row to render.
-	await waitForRunWithTrigger(page, team.id, ceo.id, token, (r) => r.trigger_source !== null);
+	await waitForRunWithTrigger(page, team.id, captain.id, token, (r) => r.trigger_source !== null);
 
-	await page.goto(`/teams/${team.slug}/agents/${ceo.id}/executions`);
+	await page.goto(`/teams/${team.slug}/agents/${captain.id}/executions`);
 
 	const firstRow = page.locator('a[href*="/executions/"]').first();
 	await expect(firstRow).toBeVisible({ timeout: 15000 });

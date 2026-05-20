@@ -38,13 +38,15 @@ export interface Comment {
 	attachments?: CommentAttachment[];
 }
 
-export function useComments(teamId: string, issueId: string) {
+export function useComments(teamId: string, issueId: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
 		queryFn: () =>
 			api.get<Comment[]>(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 				include_tool_calls: 'true',
 			}),
+		enabled: options?.enabled ?? true,
+		staleTime: 0,
 	});
 }
 
@@ -58,7 +60,15 @@ export function useCreateComment(teamId: string, issueId: string) {
 			parent_comment_id?: string;
 			attachment_ids?: string[];
 		}) => api.post<Comment>(`/api/teams/${teamId}/issues/${issueId}/comments`, data),
-		onSuccess: () => {
+		onSuccess: (created) => {
+			queryClient.setQueryData<Comment[]>(
+				['teams', teamId, 'issues', issueId, 'comments'],
+				(old) => {
+					if (!old) return [created];
+					if (old.some((c) => c.id === created.id)) return old;
+					return [...old, created];
+				},
+			);
 			queryClient.invalidateQueries({
 				queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
 			});

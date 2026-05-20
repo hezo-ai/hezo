@@ -23,7 +23,15 @@ import {
 	enqueueTeamSummaryTask,
 } from '../services/description-tasks';
 import { upsertDocument } from '../services/documents';
+import {
+	completeHireTeamIntakeAfterProvisioning,
+	postHireTeamTemplateApprovedAck,
+} from '../services/hire-team-intake';
 import { recordStatusChange } from '../services/issue-events';
+import {
+	createSkillsFromTemplate,
+	provisionTeamTemplate,
+} from '../services/team-template-provision';
 import type { WebSocketManager } from '../services/ws';
 
 const log = logger.child('approvals');
@@ -204,6 +212,94 @@ async function applyApprovalSideEffect(
 					op: 'UPDATE',
 					row: doc as unknown as Record<string, unknown>,
 				});
+			}
+			break;
+		}
+		case ApprovalType.TeamTemplate: {
+			const teamId = approval.team_id as string;
+			const templateId = payload.template_id as string;
+			if (!templateId) {
+				throw new Error('team_template approval payload missing template_id');
+			}
+
+			const hireIssueId = payload.issue_id as string | undefined;
+			const templateName =
+				(typeof payload.template_name === 'string' && payload.template_name.trim()) ||
+				'team template';
+			if (hireIssueId) {
+				const ackComment = await postHireTeamTemplateApprovedAck(
+					db,
+					teamId,
+					hireIssueId,
+					templateName,
+				);
+				if (ackComment) {
+					broadcasts.push({ table: 'issue_comments', op: 'INSERT', row: ackComment });
+				}
+			}
+
+			const provision = await provisionTeamTemplate(db, teamId, templateId, {
+				skipExistingSlugs: true,
+				dataDir: _dataDir,
+			});
+			await createSkillsFromTemplate(db, teamId, templateId);
+
+			for (const slug of provision.created_slugs) {
+				const agentRow = await db.query<{ id: string }>(
+					`SELECT ma.id FROM member_agents ma
+					 JOIN members m ON m.id = ma.id
+					 WHERE m.team_id = $1 AND ma.slug = $2`,
+					[teamId, slug],
+				);
+				const memberId = agentRow.rows[0]?.id;
+				if (memberId) {
+					enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
+						log.error('Failed to enqueue agent summary after template provision:', e),
+					);
+					const newAgent = await db.query<Record<string, unknown>>(
+						`SELECT m.id, m.team_id, m.display_name, m.created_at,
+						        ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
+						        ma.default_effort, ma.heartbeat_interval_min,
+						        ma.monthly_budget_cents, ma.budget_used_cents, ma.touches_code,
+						        ma.budget_reset_at, ma.runtime_status, ma.admin_status,
+						        ma.last_heartbeat_at, ma.reports_to, ma.mcp_servers, ma.updated_at
+						 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1`,
+						[memberId],
+					);
+					if (newAgent.rows[0]) {
+						broadcasts.push({
+							table: 'member_agents',
+							op: 'INSERT',
+							row: newAgent.rows[0],
+						});
+					}
+				}
+			}
+
+			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
+				log.error('Failed to enqueue team summary after template provision:', e),
+			);
+
+			if (hireIssueId) {
+				const completed = await completeHireTeamIntakeAfterProvisioning(
+					db,
+					teamId,
+					hireIssueId,
+					templateName,
+					provision.created_slugs,
+					provision.skipped_slugs,
+					wsManager,
+				);
+				if (completed.summaryComment) {
+					broadcasts.push({
+						table: 'issue_comments',
+						op: 'INSERT',
+						row: completed.summaryComment,
+					});
+				}
+				if (completed.issue) {
+					broadcasts.push({ table: 'issues', op: 'UPDATE', row: completed.issue });
+				}
 			}
 			break;
 		}

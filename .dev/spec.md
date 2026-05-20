@@ -8,7 +8,7 @@
 
 ## 1. Product overview
 
-Hezo is a self-hosted web application that orchestrates teams of AI agents to run autonomous teams. Each agent plays a defined role (CEO, Product Lead, Architect, Engineer, etc.) and operates as a subprocess inside the project's Docker container (one container per project). Human users — **board members** — sit at the top as the board of directors, approving decisions, managing budgets, and steering strategy. Multiple board members can collaborate on the same team.
+Hezo is a self-hosted web application that orchestrates teams of AI agents to run autonomous teams. Each agent plays a defined role (Captain, Product Lead, Architect, Engineer, etc.) and operates as a subprocess inside the project's Docker container (one container per project). Human users — **board members** — sit at the top as the board of directors, approving decisions, managing budgets, and steering strategy. Multiple board members can collaborate on the same team.
 
 One Hezo instance supports multiple teams with full data isolation. The primary interaction surface is an issue tracker — agents receive work via tickets, report progress via threaded conversations, and present options and previews to the board for review.
 
@@ -306,7 +306,7 @@ This means an OpenClaw instance or any AI agent with an API key can fully orches
 A **team type** (also called a template or recipe) defines the blueprint for a new team. A team type is a grouping of **agent types** plus default KB docs, preferences, and MCP servers.
 
 **Agent types** are first-class entities stored in the `agent_types` table. Each agent type defines:
-- **Name and slug** — e.g., "CEO" / `ceo`
+- **Name and slug** — e.g., "Captain" / `captain`
 - **Role description** — what this agent type does
 - **System prompt template** — with `{{placeholder}}` variables resolved at runtime
 - **Default config** — runtime type, default reasoning effort, heartbeat interval, monthly budget
@@ -322,7 +322,7 @@ A **team type** (stored as `team_templates`) specifies:
 
 A team is created from a single **template** (`template_id`). The selected template determines the starting agent roster, knowledge base, and preferences.
 
-The current 11-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher, Security Engineer, Coach) is the built-in **"Software Development"** team type. It ships with Hezo and is pre-selected by default in the UI. Users are not limited to the agent types that come with their template — they can add other agent types later.
+The current 11-agent team (Captain, Product Lead, Architect, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher, Security Engineer, Coach) is the built-in **"Software Development"** team type. It ships with Hezo and is pre-selected by default in the UI. Users are not limited to the agent types that come with their template — they can add other agent types later.
 
 **Creating agent types:**
 - 11 built-in agent types ship with Hezo
@@ -341,23 +341,23 @@ The current 11-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, 
 When a new team is created, the user selects a **team type** (see above). The system then clones from that type and automatically:
 
 1. **Creates the full 11-agent team** defined by the selected template. For the built-in "Software Development" type, this includes (see `agents/` for full specs):
-   - CEO (reports to board)
-   - Product Lead (reports to CEO)
-   - Architect (reports to CEO)
+   - Captain (reports to board)
+   - Product Lead (reports to Captain)
+   - Architect (reports to Captain)
    - Engineer (reports to Architect)
    - QA Engineer (reports to Architect)
    - UI Designer (reports to Architect)
    - DevOps Engineer (reports to Architect) — **starts in `idle` status**
    - Security Engineer (reports to Architect)
-   - Marketing Lead (reports to CEO)
-   - Researcher (reports to CEO)
+   - Marketing Lead (reports to Captain)
+   - Researcher (reports to Captain)
    - Coach (reports to no one) — reviews completed tickets to extract lessons and improve agent system prompts
 2. **Prompts the creator to connect platforms** via OAuth (see Hezo Connect, section 5b):
    - GitHub (required for repo access)
    - Gmail (recommended for agent email)
    - Others optional: Stripe, PostHog, Railway, Vercel, DigitalOcean, X, GitLab
 3. **Generates an SSH key pair** for the team and registers it on the connected GitHub account via OAuth API
-4. **Creates a "Setup" project** with an onboarding issue assigned to the CEO: *"Set up repository access — configure deploy keys for connected GitHub account."*
+4. **Creates a "Setup" project** with an onboarding issue assigned to the Captain: *"Set up repository access — configure deploy keys for connected GitHub account."*
 5. **Creates the `~/.hezo/teams/{slug}/` folder structure** on the host machine with AGENTS.md in the project root
 6. **Provisions the project's Docker container** when the first project is created (not at team creation)
 
@@ -446,23 +446,23 @@ The system prompt editor supports variables that are resolved at runtime:
 
 On agent creation, the UI provides a monospace editor with a toolbar for inserting variables, loading role templates, and Markdown preview support.
 
-### Hire workflow (CEO-mediated)
+### Hire workflow (Captain-mediated)
 
 New agents are not created by the board directly. When a board member submits the hire form (`POST /api/teams/:teamId/agents/onboard`), the server:
 
 1. Validates the proposed title, slug uniqueness, and effort value.
 2. Inserts an `approvals` row of type `hire` whose payload holds the full draft spec (`title`, `slug`, `role_description`, `system_prompt`, `default_effort`, `heartbeat_interval_min`, `monthly_budget_cents`, `touches_code`).
-3. Opens an issue in the Operations project, assigned to the CEO, titled `Onboard new agent: {title}`, labelled `onboarding,hire`, with the approval ID and the current draft in the body.
-4. Wakes the CEO to process the ticket. **No `member_agents` row is created yet.**
+3. Opens an issue in the Operations project, assigned to the Captain, titled `Onboard new agent: {title}`, labelled `onboarding,hire`, with the approval ID and the current draft in the body.
+4. Wakes the Captain to process the ticket. **No `member_agents` row is created yet.**
 
-The CEO picks up the ticket and refines the draft via the `update_hire_proposal(approval_id, ...)` MCP tool — CEO-only. Other agents (including the Architect) are rejected with `Only the CEO can revise hire proposals`. Revisions mutate the approval payload in place and do not reset the `status`. The CEO @-mentions the board via `create_comment` when the draft is ready for review.
+The Captain picks up the ticket and refines the draft via the `update_hire_proposal(approval_id, ...)` MCP tool — Captain-only. Other agents (including the Architect) are rejected with `Only the Captain can revise hire proposals`. Revisions mutate the approval payload in place and do not reset the `status`. The Captain @-mentions the board via `create_comment` when the draft is ready for review.
 
 The board reviews the draft in the approvals inbox and either approves or denies the pending `hire` approval.
 
 - **Approved** → the `applyApprovalSideEffect` hook in `packages/server/src/routes/approvals.ts` inserts the `members` and `member_agents` rows from the latest payload, marks the agent as `enabled`, transitions the onboarding issue to `done`, and broadcasts both row changes so the UI and org chart update live. Agent and team description refresh tasks are enqueued.
-- **Denied** → no agent is created; the CEO is expected to close the onboarding issue as `cancelled` with a brief note.
+- **Denied** → no agent is created; the Captain is expected to close the onboarding issue as `cancelled` with a brief note.
 
-Bootstrap exception: if the team has no enabled CEO or no Operations project (e.g., the CEO itself is being hired first), the endpoint falls back to creating the agent directly as `enabled` without an approval or ticket. This is the only way to create an agent without the CEO-mediated flow and is intended solely for early setup.
+Bootstrap exception: if the team has no enabled Captain or no Operations project (e.g., the Captain itself is being hired first), the endpoint falls back to creating the agent directly as `enabled` without an approval or ticket. This is the only way to create an agent without the Captain-mediated flow and is intended solely for early setup.
 
 ### Built-in role templates
 
@@ -474,7 +474,7 @@ Agents can request updates to their own system prompts via `PATCH /agent-api/sel
 
 ### Role-doc partials
 
-Role docs for different team templates frequently share boilerplate — the same "no designated repo means no run" rule appears in every code-touching role, the same hire workflow belongs on every CEO prompt regardless of template. To avoid drift we resolve **section-level partials** at bundle time.
+Role docs for different team templates frequently share boilerplate — the same "no designated repo means no run" rule appears in every code-touching role, the same hire workflow belongs on every Captain prompt regardless of template. To avoid drift we resolve **section-level partials** at bundle time.
 
 - Partials live under `agents/_partials/**/*.md`. They are plain Markdown with no frontmatter and are not seeded as role docs themselves.
 - A role doc pulls one in with a **whole-line** directive: `{{> partials/<name>}}` (leading whitespace tolerated; anything else on the line makes it literal text). The name mirrors the path under `_partials/` without the `.md` suffix.
@@ -487,13 +487,13 @@ Current partials:
 
 | Partial | Used by |
 |---------|---------|
-| `ceo/always-max-effort` | `blank/ceo.md`, `software-development/ceo.md` |
-| `ceo/hire-workflow` | `blank/ceo.md`, `software-development/ceo.md` |
+| `captain/always-max-effort` | `blank/captain.md`, `software-development/captain.md` |
+| `captain/hire-workflow` | `blank/captain.md`, `software-development/captain.md` |
 | `common/no-designated-repo` | all `touches_code: true` roles in `software-development/` |
 
 ### Agent and team auto-descriptions
 
-Every agent carries a short summary (≤5 lines) describing its role and capabilities. Every team carries a team summary (≤20 lines) describing how the agents collaborate. Built-in agent types ship with pre-baked defaults from `packages/server/src/db/agent-summaries.json`, copied to each agent and team during provisioning. At runtime the CEO can regenerate descriptions via `description-update` issues in Operations, calling the `set_agent_summary` and `set_team_summary` MCP tools.
+Every agent carries a short summary (≤5 lines) describing its role and capabilities. Every team carries a team summary (≤20 lines) describing how the agents collaborate. Built-in agent types ship with pre-baked defaults from `packages/server/src/db/agent-summaries.json`, copied to each agent and team during provisioning. At runtime the Captain can regenerate descriptions via `description-update` issues in Operations, calling the `set_agent_summary` and `set_team_summary` MCP tools.
 
 ### Ticket workflow
 
@@ -521,15 +521,15 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **DevOps Engineer** joins the workflow later — when the board is ready for staging or production deployment of the application. DevOps is not involved in the typical feature ticket flow.
 
-**Escalation path:** Engineer ↔ Architect disagreement → CEO mediates → CEO escalates to human board if needed.
+**Escalation path:** Engineer ↔ Architect disagreement → Captain mediates → Captain escalates to human board if needed.
 
 ### Role summaries
 
-**CEO** — strategic direction, delegation, dispute resolution, escalation to board. Reports to board.
+**Captain** — strategic direction, delegation, dispute resolution, escalation to board. Reports to board.
 
-**Product Lead** — owns product requirements. Writes PRDs with acceptance criteria. Posts clarifying ticket comments (and structured-option cards when helpful) to resolve ambiguous requirements with the board. Ensures development aligns with team goals. Reports to CEO.
+**Product Lead** — owns product requirements. Writes PRDs with acceptance criteria. Posts clarifying ticket comments (and structured-option cards when helpful) to resolve ambiguous requirements with the board. Ensures development aligns with team goals. Reports to Captain.
 
-**Architect** — owns technical vision. Adds technical specs, architecture decisions, and implementation phases to tickets after the Product Lead's PRD. Reviews and approves the Engineer's implementation plans. Has technical authority — decides HOW to build things. Reports to CEO. Direct reports: Engineer, QA Engineer, UI Designer, DevOps Engineer.
+**Architect** — owns technical vision. Adds technical specs, architecture decisions, and implementation phases to tickets after the Product Lead's PRD. Reviews and approves the Engineer's implementation plans. Has technical authority — decides HOW to build things. Reports to Captain. Direct reports: Engineer, QA Engineer, UI Designer, DevOps Engineer.
 
 **Engineer** — primary implementer. Writes code, tests, and documentation based on the Architect's spec. Can @-mention Product Lead, Architect, or UI Designer in ticket comments during implementation. Reports to Architect.
 
@@ -539,9 +539,9 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **DevOps Engineer** — owns infrastructure and deployment. Manages staging/production environments, CI/CD pipelines, database migrations. Not part of the typical feature ticket flow — joins when board is ready for deployment. Reports to Architect.
 
-**Marketing Lead** — owns marketing strategy and content. Writes blog posts, social media, changelogs, marketing copy (replaces the need for a separate Content Writer). Reports to CEO.
+**Marketing Lead** — owns marketing strategy and content. Writes blog posts, social media, changelogs, marketing copy (replaces the need for a separate Content Writer). Reports to Captain.
 
-**Researcher** — conducts competitive analysis, technical research, and feasibility studies. First step in the ticket workflow — produces research that informs the Product Lead's PRD. Works with CEO, Architect, UI Designer, and Marketing Lead. Does NOT communicate directly with the Engineer. Reports to CEO.
+**Researcher** — conducts competitive analysis, technical research, and feasibility studies. First step in the ticket workflow — produces research that informs the Product Lead's PRD. Works with Captain, Architect, UI Designer, and Marketing Lead. Does NOT communicate directly with the Engineer. Reports to Captain.
 
 **Security Engineer** — owns security posture. Reviews code for vulnerabilities, validates auth flows, audits dependencies, and ensures security best practices. Reports to Architect.
 
@@ -1206,13 +1206,13 @@ Comments in the thread can be:
 
 Agents can delegate work to direct reports or peers (agents at the same level in the org chart). Delegation allows both downward and lateral assignment.
 
-The choice between sub-issue and top-level ticket is governed by the **deliverable-feed test**: a sub-issue is for work whose output feeds into the parent ticket's deliverable (the parent isn't done until the sub-issue is). Independent work — including the canonical case of a CEO drafting a plan and creating tickets for direct reports — is opened as **top-level**, not as a sub-issue of the planning ticket. Each delegated ticket is the report's own first-class work, owned end-to-end by them.
+The choice between sub-issue and top-level ticket is governed by the **deliverable-feed test**: a sub-issue is for work whose output feeds into the parent ticket's deliverable (the parent isn't done until the sub-issue is). Independent work — including the canonical case of a Captain drafting a plan and creating tickets for direct reports — is opened as **top-level**, not as a sub-issue of the planning ticket. Each delegated ticket is the report's own first-class work, owned end-to-end by them.
 
 Use a sub-issue when the new work is a parallelisable slice of the parent's deliverable, a prerequisite blocking the parent, or a sub-task whose output rolls up into the parent. Sub-issues inherit the parent's project. Use a top-level ticket when the new work has its own lifecycle, lives in a different domain or project, or is a delegated deliverable owned by another agent.
 
 The hierarchy is capped at depth 2 — top-level tickets can have sub-issues, and each sub-issue can have its own sub-issues, but no further. The server enforces this on `POST .../sub-issues` and on MCP `create_issue` calls that set `parent_issue_id`.
 
-**Planning tickets are never parents.** Tickets labeled `planning` or `goal-update` (CEO-owned plan-drafting tickets — the auto-created "Draft execution plan for …" ticket on project creation, or a goal-driven plan-review ticket) are by convention never used as `parent_issue_id`. Milestone / report tickets spawned from a draft execution plan are top-level — each is the assignee's own first-class deliverable, not a slice of the plan. This convention is enforced in the agent prompts (`agents/_partials/common/mention-handoff.md`, `subtask-preference.md`, `ceo/delegation-top-level.md`) and in the body of the auto-created planning ticket itself (`routes/projects.ts`). The closure rules above make the consequence concrete: nesting a report's ticket under a planning ticket would freeze the planning ticket's lifecycle to every report's work.
+**Planning tickets are never parents.** Tickets labeled `planning` or `goal-update` (Captain-owned plan-drafting tickets — the auto-created "Draft execution plan for …" ticket on project creation, or a goal-driven plan-review ticket) are by convention never used as `parent_issue_id`. Milestone / report tickets spawned from a draft execution plan are top-level — each is the assignee's own first-class deliverable, not a slice of the plan. This convention is enforced in the agent prompts (`agents/_partials/common/mention-handoff.md`, `subtask-preference.md`, `captain/delegation-top-level.md`) and in the body of the auto-created planning ticket itself (`routes/projects.ts`). The closure rules above make the consequence concrete: nesting a report's ticket under a planning ticket would freeze the planning ticket's lifecycle to every report's work.
 
 ### Agent-to-agent communication
 
@@ -1383,8 +1383,8 @@ Board members (human users) collectively act as the board of directors. All boar
 
 | Action | Requires approval? |
 |--------|-------------------|
-| Board hires an agent | Yes — CEO refines a draft via `update_hire_proposal` MCP tool, then the board approves the pending `hire` approval to materialise the agent. Bypassed only in the bootstrap case where the team has no enabled CEO or no Operations project (the agent is then created directly as enabled). |
-| Agent requests to hire | Yes — same `hire` approval type, routed through the CEO for refinement first. |
+| Board hires an agent | Yes — Captain refines a draft via `update_hire_proposal` MCP tool, then the board approves the pending `hire` approval to materialise the agent. Bypassed only in the bootstrap case where the team has no enabled Captain or no Operations project (the agent is then created directly as enabled). |
+| Agent requests to hire | Yes — same `hire` approval type, routed through the Captain for refinement first. |
 | Board grants secret access | No — direct action |
 | Agent requests secret access | Yes — pending approval |
 | Agent submits strategy | Yes — pending approval |
@@ -1396,7 +1396,7 @@ A unified notification center accessible from any screen. The board inbox surfac
 
 - **Pending approvals** — secret access, hire requests, strategy reviews, plan reviews, KB updates, deploy requests
 - **UI design reviews** — preview mockups from the UI Designer awaiting approval. Board can approve directly or delegate approval to the Product Lead.
-- **Escalations** — disputes between agents that the CEO couldn't resolve
+- **Escalations** — disputes between agents that the Captain couldn't resolve
 - **Budget alerts** — agents approaching or exceeding budget limits, team budget alerts
 - **Agent errors** — container failures, repeated task failures, agents stuck in error states
 - **QA critical findings** — security vulnerabilities, critical bugs found during audits
@@ -1422,7 +1422,7 @@ For secret access requests, the board can choose the grant scope (single / proje
 Members can participate in the day-to-day work within their project scope:
 - Create issues, post comments
 - Be assigned issues and work on them
-- Direct agents (except CEO by default) — subject to `permissions_text` boundaries
+- Direct agents (except Captain by default) — subject to `permissions_text` boundaries
 - Read knowledge base and project documents
 - Receive notifications via inbox and configured messaging channels (Telegram, Slack)
 
@@ -1559,7 +1559,7 @@ Every agent run picks a reasoning effort level (`minimal | low | medium | high |
 
 Each runtime translates the resolved level to its native knob: Claude Code appends `think`/`think hard`/`ultrathink` to the task prompt, Codex passes `-c model_reasoning_effort=<level>` (with `max` mapped to `high`), and Gemini sets `GEMINI_REASONING_EFFORT` in the container env. The resolved level is also exposed as `HEZO_AGENT_EFFORT` so agent-side tooling can read it.
 
-Built-in defaults: CEO and Architect default to `max` (ultrathink) so their planning runs get the full thinking budget, the Product Lead / QA / Security / Researcher default to `high`, and implementer roles default to `medium`.
+Built-in defaults: Captain and Architect default to `max` (ultrathink) so their planning runs get the full thinking budget, the Product Lead / QA / Security / Researcher default to `high`, and implementer roles default to `medium`.
 
 ### Container lifecycle and agent state
 
@@ -1892,8 +1892,8 @@ Users are linked to teams through the `members` + `member_users` tables with one
 
 | Role | Authority |
 |------|-----------|
-| **Board** | Full authority. Can direct all agents including CEO. Access all projects, settings, budgets, audit log. Hire/fire agents. Approve all requests. Invite new members. |
-| **Member** | Scoped authority. Can create issues, post comments, be assigned issues. Can direct agents (except CEO by default). Cannot modify team settings, budgets, secrets, or agent configurations. Can be restricted to specific projects. |
+| **Board** | Full authority. Can direct all agents including Captain. Access all projects, settings, budgets, audit log. Hire/fire agents. Approve all requests. Invite new members. |
+| **Member** | Scoped authority. Can create issues, post comments, be assigned issues. Can direct agents (except Captain by default). Cannot modify team settings, budgets, secrets, or agent configurations. Can be restricted to specific projects. |
 
 Both roles sign in via GitHub or GitLab OAuth. All board members have **equal authority** — any board member can take any board action. Board member conflicts are resolved first-come-first-served (first to approve/deny locks the decision). A user can belong to multiple teams with different roles in each.
 
@@ -1908,10 +1908,10 @@ When a member is added, the inviting board member specifies:
 
 **Permission enforcement** operates at two layers:
 1. **API layer (structural):** Hard boundaries enforced by the server. Board-only operations (settings, budgets, agents, secrets, audit log) are blocked for members. Project scope restrictions are enforced on all queries.
-2. **Agent layer (behavioral):** The `permissions_text` is injected into agent context when the member interacts with an agent. Agents interpret the text to decide whether to accept direction, escalate to the CEO, or refuse. This allows nuanced, role-specific boundaries without rigid permission matrices.
+2. **Agent layer (behavioral):** The `permissions_text` is injected into agent context when the member interacts with an agent. Agents interpret the text to decide whether to accept direction, escalate to the Captain, or refuse. This allows nuanced, role-specific boundaries without rigid permission matrices.
 
 **Example permissions_text values:**
-- *"Frontend developer. Can direct Engineer and QA Engineer on frontend tasks. Cannot modify architecture decisions or PRDs — escalate to Architect or CEO."*
+- *"Frontend developer. Can direct Engineer and QA Engineer on frontend tasks. Cannot modify architecture decisions or PRDs — escalate to Architect or Captain."*
 - *"Project manager for the mobile app. Full authority over issues in the Mobile project. Can direct all agents on mobile-related work."*
 - *"Intern. Can comment on issues but cannot create or assign them. Read-only access to knowledge base."*
 
@@ -2046,7 +2046,7 @@ The board inbox is the primary notification center. It surfaces everything that 
 |-----------|--------|---------|
 | Pending approvals | Secret access, hire, strategy, plan review, KB update, deploy | Approve / Deny |
 | UI design reviews | UI Designer submits preview mockups | Approve / Deny / Delegate to Product Lead |
-| Escalations | CEO escalates unresolved disputes | Review issue, make decision |
+| Escalations | Captain escalates unresolved disputes | Review issue, make decision |
 | Budget alerts | System detects 80%+ usage or team budget approaching limit | Adjust budget, acknowledge |
 | Agent errors | Container crash, repeated failures, stuck agents | Restart, investigate, terminate |
 | QA critical findings | QA agent finds security or critical issues | Review, prioritize |
@@ -2126,7 +2126,7 @@ Team Rail → Team workspace (side menu)
         │           └── Settings tab
         ├── Team (header links to org chart page)
         │     ├── Agent detail / edit
-        │     └── Hire agent (creates onboarding issue for CEO)
+        │     └── Hire agent (creates onboarding issue for Captain)
         └── Resources
               ├── Knowledge base
               │     └── Document view / edit / version history
@@ -2146,11 +2146,11 @@ Team Rail → Team workspace (side menu)
 
 When creating a team, the user selects one or more team templates (default: "Software Development"). A template includes a team of agents with defined roles and reporting hierarchy, plus optional KB docs and preferences.
 
-Every team gets an auto-created **Operations** project (`is_internal = true`) for administrative issues like agent onboarding. Internal projects are visible but not deletable. Every issue in the Operations project must be assigned to the CEO — the server rejects any `POST /teams/:teamId/issues`, `PATCH /teams/:teamId/issues/:issueId`, `POST .../sub-issues`, or MCP `create_issue` / `update_issue` call that would leave an Operations-project issue assigned to anyone else. The create-issue dialog and the issue-detail assignee picker reflect this by filtering the agent list to the CEO when Operations is selected.
+Every team gets an auto-created **Operations** project (`is_internal = true`) for administrative issues like agent onboarding. Internal projects are visible but not deletable. Every issue in the Operations project must be assigned to the Captain — the server rejects any `POST /teams/:teamId/issues`, `PATCH /teams/:teamId/issues/:issueId`, `POST .../sub-issues`, or MCP `create_issue` / `update_issue` call that would leave an Operations-project issue assigned to anyone else. The create-issue dialog and the issue-detail assignee picker reflect this by filtering the agent list to the Captain when Operations is selected.
 
 ### Agent onboarding
 
-Hiring a new agent creates the agent in disabled state and opens an onboarding issue in the Operations project, assigned to the CEO agent. The CEO reviews the new hire against the existing team, discusses reporting structure and responsibilities with the board member via issue comments, and enables the agent once onboarding is complete. If no CEO agent exists, the agent is created directly in enabled state.
+Hiring a new agent creates the agent in disabled state and opens an onboarding issue in the Operations project, assigned to the Captain agent. The Captain reviews the new hire against the existing team, discusses reporting structure and responsibilities with the board member via issue comments, and enables the agent once onboarding is complete. If no Captain agent exists, the agent is created directly in enabled state.
 
 ---
 
@@ -2297,7 +2297,7 @@ The following specification details are maintained in separate files:
 - **`api.md`** — Complete API reference with all endpoints, request/response shapes, query parameters, and WebSocket event types
 - **`connect-spec.md`** — Hezo Connect OAuth gateway specification (self-hosted and centrally hosted modes)
 - **`implementation-phases.md`** — 12 implementation phases from Phase 0 (Hezo Connect) through Phase 11 (Deploy + Messaging)
-- **`agents/<template>/`** — Full role specifications per team template. `software-development/` contains the 11 Software Development roles (`ceo.md`, `product-lead.md`, `architect.md`, `engineer.md`, `qa-engineer.md`, `ui-designer.md`, `devops-engineer.md`, `marketing-lead.md`, `researcher.md`, `security-engineer.md`, `coach.md`); `blank/` contains the pared-down `ceo.md` and `coach.md` used when the Blank template is selected.
+- **`agents/<template>/`** — Full role specifications per team template. `software-development/` contains the 11 Software Development roles (`captain.md`, `product-lead.md`, `architect.md`, `engineer.md`, `qa-engineer.md`, `ui-designer.md`, `devops-engineer.md`, `marketing-lead.md`, `researcher.md`, `security-engineer.md`, `coach.md`); `blank/` contains the pared-down `captain.md` and `coach.md` used when the Blank template is selected.
 
 ## Appendix B: Endpoint count
 

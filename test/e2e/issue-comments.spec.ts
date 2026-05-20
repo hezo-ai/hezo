@@ -132,7 +132,7 @@ test.describe('Issue Comments', () => {
 		const { team, issue, agent } = await createProjectAndIssue(page);
 
 		const expectedDefault =
-			agent.slug === 'ceo'
+			agent.slug === 'captain'
 				? 'Max (ultrathink)'
 				: {
 						minimal: 'Minimal',

@@ -12,7 +12,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
-let ceoMemberId: string;
+let captainMemberId: string;
 let parentProjectId: string;
 
 beforeAll(async () => {
@@ -33,13 +33,13 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const ceo = await db.query<{ id: string }>(
+	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+		 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
 		[teamId],
 	);
-	ceoMemberId = ceo.rows[0].id;
+	captainMemberId = captain.rows[0].id;
 
 	const ops = await db.query<{ id: string }>(
 		`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
@@ -69,7 +69,7 @@ async function createParentIssue(title = 'Originating ticket'): Promise<string> 
 }
 
 describe('triggerStatusAutomations: OAuth verification done', () => {
-	it('posts a CEO-authored comment on the parent when the verification issue moves to done', async () => {
+	it('posts a Captain-authored comment on the parent when the verification issue moves to done', async () => {
 		const parentId = await createParentIssue();
 		const verif = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, parentId, {});
 		expect(verif?.issueId).toBeTruthy();
@@ -95,7 +95,7 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 		}>('SELECT content, author_member_id, content_type FROM issue_comments WHERE issue_id = $1', [
 			parentId,
 		]);
-		const ceoComment = comments.rows.find((c) => c.author_member_id === ceoMemberId);
+		const ceoComment = comments.rows.find((c) => c.author_member_id === captainMemberId);
 		expect(ceoComment).toBeTruthy();
 		expect(ceoComment?.content_type).toBe('text');
 		expect(ceoComment?.content.text).toContain('GitHub');
@@ -107,7 +107,7 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 		const commentsBefore = await db.query<{ count: string }>(
 			`SELECT count(*)::text AS count FROM issue_comments
 			 WHERE author_member_id = $1`,
-			[ceoMemberId],
+			[captainMemberId],
 		);
 
 		await db.query('UPDATE issues SET status = $1::issue_status WHERE id = $2', [
@@ -127,7 +127,7 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 		const commentsAfter = await db.query<{ count: string }>(
 			`SELECT count(*)::text AS count FROM issue_comments
 			 WHERE author_member_id = $1`,
-			[ceoMemberId],
+			[captainMemberId],
 		);
 		expect(commentsAfter.rows[0].count).toBe(commentsBefore.rows[0].count);
 	});

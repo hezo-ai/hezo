@@ -12,6 +12,7 @@ import { resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
+import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 
 export const agentApiRoutes = new Hono<Env>();
@@ -324,10 +325,10 @@ agentApiRoutes.post('/secrets/request', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'secret_name and reason are required', 400);
 	}
 
-	const result = await db.query<{ id: string; status: string }>(
+	const result = await db.query<Record<string, unknown>>(
 		`INSERT INTO approvals (team_id, type, payload)
 		 VALUES ($1, $2::approval_type, $3::jsonb)
-		 RETURNING id, status`,
+		 RETURNING *`,
 		[
 			auth.teamId,
 			ApprovalType.SecretAccess,
@@ -339,8 +340,12 @@ agentApiRoutes.post('/secrets/request', async (c) => {
 			}),
 		],
 	);
+	const row = result.rows[0];
+	if (row) {
+		broadcastApprovalChange(c.get('wsManager'), auth.teamId, 'INSERT', row);
+	}
 
-	return ok(c, { approval_id: result.rows[0].id, status: result.rows[0].status }, 201);
+	return ok(c, { approval_id: row?.id, status: row?.status }, 201);
 });
 
 agentApiRoutes.get('/secrets/mine', async (c) => {

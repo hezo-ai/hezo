@@ -46,7 +46,7 @@ You participate in two review phases per ticket.
 8. **If approved**: post an approval comment summarising what you verified and @-mention the Engineer to merge. Leave the status on `review` — the Engineer transitions it to `done` after merging.
 9. **If issues found**: post findings, set status back to `in_progress` via `update_issue`, and @-mention the Engineer with specific, actionable feedback. When fixes are submitted, re-review and repeat.
 
-When the Engineer disagrees with a finding, discuss in the ticket; if unresolved, the Architect decides. Critical security findings must be flagged immediately via @-mention to the Architect and CEO — do not wait for the review cycle. Systemic quality issues (e.g. coverage declining across the board) → create an issue and assign to the Architect.
+When the Engineer disagrees with a finding, discuss in the ticket; if unresolved, the Architect decides. Critical security findings must be flagged immediately via @-mention to the Architect and Captain — do not wait for the review cycle. Systemic quality issues (e.g. coverage declining across the board) → create an issue and assign to the Architect.
 
 ## Proactive audits
 

@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as TeamsIndexRouteImport } from './routes/teams/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as InboxIndexRouteImport } from './routes/inbox/index'
+import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as TeamsNewRouteImport } from './routes/teams/new'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as TeamsTeamIdRouteRouteImport } from './routes/teams/$teamId/route'
@@ -60,6 +61,11 @@ const SettingsIndexRoute = SettingsIndexRouteImport.update({
 const InboxIndexRoute = InboxIndexRouteImport.update({
   id: '/inbox/',
   path: '/inbox/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeIndexRoute = HomeIndexRouteImport.update({
+  id: '/home/',
+  path: '/home/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TeamsNewRoute = TeamsNewRouteImport.update({
@@ -226,6 +232,7 @@ export interface FileRoutesByFullPath {
   '/teams/$teamId': typeof TeamsTeamIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/teams/new': typeof TeamsNewRoute
+  '/home/': typeof HomeIndexRoute
   '/inbox/': typeof InboxIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/teams/': typeof TeamsIndexRoute
@@ -259,6 +266,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/teams/new': typeof TeamsNewRoute
+  '/home': typeof HomeIndexRoute
   '/inbox': typeof InboxIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/teams': typeof TeamsIndexRoute
@@ -292,6 +300,7 @@ export interface FileRoutesById {
   '/teams/$teamId': typeof TeamsTeamIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/teams/new': typeof TeamsNewRoute
+  '/home/': typeof HomeIndexRoute
   '/inbox/': typeof InboxIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/teams/': typeof TeamsIndexRoute
@@ -328,6 +337,7 @@ export interface FileRouteTypes {
     | '/teams/$teamId'
     | '/settings/ai-providers'
     | '/teams/new'
+    | '/home/'
     | '/inbox/'
     | '/settings/'
     | '/teams/'
@@ -361,6 +371,7 @@ export interface FileRouteTypes {
     | '/'
     | '/settings/ai-providers'
     | '/teams/new'
+    | '/home'
     | '/inbox'
     | '/settings'
     | '/teams'
@@ -393,6 +404,7 @@ export interface FileRouteTypes {
     | '/teams/$teamId'
     | '/settings/ai-providers'
     | '/teams/new'
+    | '/home/'
     | '/inbox/'
     | '/settings/'
     | '/teams/'
@@ -428,6 +440,7 @@ export interface RootRouteChildren {
   TeamsTeamIdRouteRoute: typeof TeamsTeamIdRouteRouteWithChildren
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
   TeamsNewRoute: typeof TeamsNewRoute
+  HomeIndexRoute: typeof HomeIndexRoute
   InboxIndexRoute: typeof InboxIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
   TeamsIndexRoute: typeof TeamsIndexRoute
@@ -461,6 +474,13 @@ declare module '@tanstack/react-router' {
       path: '/inbox'
       fullPath: '/inbox/'
       preLoaderRoute: typeof InboxIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home/': {
+      id: '/home/'
+      path: '/home'
+      fullPath: '/home/'
+      preLoaderRoute: typeof HomeIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/teams/new': {
@@ -761,6 +781,7 @@ const rootRouteChildren: RootRouteChildren = {
   TeamsTeamIdRouteRoute: TeamsTeamIdRouteRouteWithChildren,
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
   TeamsNewRoute: TeamsNewRoute,
+  HomeIndexRoute: HomeIndexRoute,
   InboxIndexRoute: InboxIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,
   TeamsIndexRoute: TeamsIndexRoute,

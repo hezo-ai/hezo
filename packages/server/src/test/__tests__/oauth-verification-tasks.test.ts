@@ -11,7 +11,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
-let ceoMemberId: string;
+let captainMemberId: string;
 let parentProjectId: string;
 
 beforeAll(async () => {
@@ -32,13 +32,13 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const ceo = await db.query<{ id: string }>(
+	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+		 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
 		[teamId],
 	);
-	ceoMemberId = ceo.rows[0].id;
+	captainMemberId = captain.rows[0].id;
 
 	const ops = await db.query<{ id: string }>(
 		`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
@@ -56,7 +56,7 @@ beforeEach(async () => {
 });
 
 describe('enqueueOAuthVerificationTask', () => {
-	it('creates an Operations issue assigned to the CEO with high priority and the label', async () => {
+	it('creates an Operations issue assigned to the Captain with high priority and the label', async () => {
 		const result = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, null, {
 			username: 'octocat',
 		});
@@ -78,7 +78,7 @@ describe('enqueueOAuthVerificationTask', () => {
 			[result!.issueId],
 		);
 		const issue = row.rows[0];
-		expect(issue.assignee_id).toBe(ceoMemberId);
+		expect(issue.assignee_id).toBe(captainMemberId);
 		expect(issue.parent_issue_id).toBeNull();
 
 		const ops = await db.query<{ id: string }>(
@@ -144,11 +144,11 @@ describe('enqueueOAuthVerificationTask', () => {
 		expect(comments.rows.some((c) => c.content_type === 'system')).toBe(true);
 	});
 
-	it('creates a wakeup for the CEO when enqueueing', async () => {
+	it('creates a wakeup for the Captain when enqueueing', async () => {
 		const result = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, null, {});
 		const wakeups = await db.query<{ source: string; payload: Record<string, unknown> }>(
 			`SELECT source, payload FROM agent_wakeup_requests WHERE member_id = $1`,
-			[ceoMemberId],
+			[captainMemberId],
 		);
 		expect(
 			wakeups.rows.some((w) => w.source === 'assignment' && w.payload.issue_id === result!.issueId),

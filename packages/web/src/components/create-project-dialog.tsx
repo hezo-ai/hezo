@@ -90,7 +90,7 @@ export function CreateProjectDialog({ teamId, open, onOpenChange }: CreateProjec
 				<Dialog.Content className={dialogContentClassName.lg}>
 					<Dialog.Title className="text-base font-medium mb-1">Create Project</Dialog.Title>
 					<p className="text-sm text-text-muted mb-4">
-						The CEO will draft an execution plan from your description.
+						The Captain will draft an execution plan from your description.
 					</p>
 					<form onSubmit={handleSubmit} className="flex flex-col gap-4">
 						<Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />

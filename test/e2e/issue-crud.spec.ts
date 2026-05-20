@@ -523,7 +523,7 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 	await expect(dropdown).toBeHidden();
 });
 
-test('operations project restricts assignee dropdown to the CEO', async ({ page }) => {
+test('operations project restricts assignee dropdown to the Captain', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
@@ -532,8 +532,8 @@ test('operations project restricts assignee dropdown to the CEO', async ({ page 
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string; title: string; slug: string }[];
-	const ceo = agents.find((a) => a.slug === 'ceo');
-	expect(ceo).toBeDefined();
+	const captain = agents.find((a) => a.slug === 'captain');
+	expect(captain).toBeDefined();
 	const engineer = agents.find((a) => a.slug === 'engineer');
 	expect(engineer).toBeDefined();
 
@@ -551,11 +551,11 @@ test('operations project restricts assignee dropdown to the CEO', async ({ page 
 		.filter({ hasText: 'Select project' })
 		.selectOption({ label: 'Operations' });
 
-	const assigneeSelect = page.locator('select').filter({ hasText: /Select assignee|CEO/ });
+	const assigneeSelect = page.locator('select').filter({ hasText: /Select assignee|Captain/ });
 	const optionLabels = await assigneeSelect.locator('option').allTextContents();
 	const agentLabels = optionLabels.filter((l) => l !== 'Select assignee');
 
-	expect(agentLabels).toContain(ceo!.title);
+	expect(agentLabels).toContain(captain!.title);
 	expect(agentLabels).not.toContain(engineer!.title);
 	expect(agentLabels.length).toBe(1);
 });

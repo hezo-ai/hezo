@@ -1,4 +1,4 @@
-import { CEO_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from '@tanstack/react-router';
 import { Loader2, X } from 'lucide-react';
@@ -36,20 +36,20 @@ export function CreateIssueDialog({
 
 	const selectedProject = projects?.find((p) => p.id === projectId);
 	const isOperationsProject = selectedProject?.slug === OPERATIONS_PROJECT_SLUG;
-	const ceoAgent = useMemo(() => agents?.find((a) => a.slug === CEO_AGENT_SLUG), [agents]);
+	const captainAgent = useMemo(() => agents?.find((a) => a.slug === CAPTAIN_AGENT_SLUG), [agents]);
 	const selectableAgents = useMemo(() => {
 		if (!agents) return [];
 		if (isOperationsProject) {
-			return ceoAgent ? [ceoAgent] : [];
+			return captainAgent ? [captainAgent] : [];
 		}
 		return agents.filter((a) => a.admin_status !== 'disabled');
-	}, [agents, ceoAgent, isOperationsProject]);
+	}, [agents, captainAgent, isOperationsProject]);
 
 	function handleProjectChange(nextProjectId: string) {
 		setProjectId(nextProjectId);
 		const next = projects?.find((p) => p.id === nextProjectId);
 		if (next?.slug === OPERATIONS_PROJECT_SLUG) {
-			setAssigneeId(ceoAgent?.id ?? '');
+			setAssigneeId(captainAgent?.id ?? '');
 		}
 	}
 

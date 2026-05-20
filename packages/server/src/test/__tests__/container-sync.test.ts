@@ -371,6 +371,38 @@ describe('provisionContainer broadcasting', () => {
 		);
 	});
 
+	it('bind-mounts the egress CA when egressCAPath is provided', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
+			[projectId],
+		);
+
+		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
+		const egressCAPath = join(dataDir, 'ca.pem');
+		const mockDocker = {
+			imageExists: vi.fn().mockResolvedValue(false),
+			pullImage: vi.fn().mockResolvedValue(undefined),
+			createContainer: vi.fn().mockResolvedValue({ Id: 'egress-ca-container' }),
+			startContainer: vi.fn().mockResolvedValue(undefined),
+			execCreate: vi.fn().mockResolvedValue('exec-id'),
+			execStart: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
+		} as any;
+
+		const project = (
+			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
+		).rows[0];
+
+		await provisionContainer(
+			{ db, docker: mockDocker, dataDir, egressCAPath },
+			project,
+			'container-sync-co',
+		);
+
+		const binds = mockDocker.createContainer.mock.calls[0][1].HostConfig.Binds as string[];
+		expect(binds).toContain(`${egressCAPath}:/usr/local/share/ca-certificates/hezo-egress.crt:ro`);
+		expect(mockDocker.execCreate).toHaveBeenCalled();
+	});
+
 	it('broadcasts row_change on provisioning error', async () => {
 		// Reset status
 		await db.query(

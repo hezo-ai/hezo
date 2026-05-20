@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CEO_AGENT_SLUG } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
@@ -12,7 +12,7 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
-let ceoId: string;
+let captainId: string;
 let engineerId: string;
 
 async function callTool(
@@ -59,7 +59,7 @@ beforeAll(async () => {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data;
-	ceoId = agents.find((a: Record<string, unknown>) => a.slug === CEO_AGENT_SLUG).id;
+	captainId = agents.find((a: Record<string, unknown>) => a.slug === CAPTAIN_AGENT_SLUG).id;
 	engineerId = agents.find((a: Record<string, unknown>) => a.slug === 'engineer').id;
 });
 
@@ -68,7 +68,7 @@ afterAll(async () => {
 });
 
 describe('MCP tool update_hire_proposal', () => {
-	it('lets the CEO revise a pending hire proposal', async () => {
+	it('lets the Captain revise a pending hire proposal', async () => {
 		const onboardRes = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -80,7 +80,7 @@ describe('MCP tool update_hire_proposal', () => {
 		});
 		const { approval } = (await onboardRes.json()).data;
 
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, teamId);
+		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, captainId, teamId);
 		const result = (await callTool(ceoToken, 'update_hire_proposal', {
 			approval_id: approval.id,
 			system_prompt: 'You are the Support Lead. Own all customer support channels.',
@@ -100,7 +100,7 @@ describe('MCP tool update_hire_proposal', () => {
 		expect((result as { payload: Record<string, unknown> }).payload.title).toBe('Support Lead');
 	});
 
-	it('rejects non-CEO agents', async () => {
+	it('rejects non-Captain agents', async () => {
 		const onboardRes = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -114,7 +114,7 @@ describe('MCP tool update_hire_proposal', () => {
 			system_prompt: 'hostile rewrite',
 		})) as { error?: string };
 
-		expect(result.error).toBe('Only the CEO can revise hire proposals');
+		expect(result.error).toBe('Only the Captain can revise hire proposals');
 	});
 
 	it('rejects revisions to resolved proposals', async () => {
@@ -131,7 +131,7 @@ describe('MCP tool update_hire_proposal', () => {
 			body: JSON.stringify({ status: 'denied', resolution_note: 'no' }),
 		});
 
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, teamId);
+		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, captainId, teamId);
 		const result = (await callTool(ceoToken, 'update_hire_proposal', {
 			approval_id: approval.id,
 			system_prompt: 'too late',

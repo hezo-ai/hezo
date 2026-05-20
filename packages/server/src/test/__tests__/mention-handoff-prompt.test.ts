@@ -19,13 +19,13 @@ let token: string;
 
 let teamId: string;
 let projectId: string;
-let ceoMemberId: string;
+let captainMemberId: string;
 let architectMemberId: string;
 
 const TRIGGERING_ISSUE: Parameters<typeof buildTaskPrompt>[1] = {
 	id: 'filled-below',
 	identifier: 'filled-below',
-	title: 'CEO PRD ticket',
+	title: 'Captain PRD ticket',
 	description: 'Project definition and roadmap.',
 	status: 'in_progress',
 	priority: 'high',
@@ -58,7 +58,7 @@ beforeAll(async () => {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
-	ceoMemberId = agents.find((a) => a.slug === 'ceo')!.id;
+	captainMemberId = agents.find((a) => a.slug === 'captain')!.id;
 	architectMemberId = agents.find((a) => a.slug === 'architect')!.id;
 
 	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
@@ -83,8 +83,8 @@ async function createTriggeringIssueWithComment(commentText: string): Promise<{
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectId,
-			title: "CEO's PRD ticket",
-			assignee_id: ceoMemberId,
+			title: "Captain's PRD ticket",
+			assignee_id: captainMemberId,
 		}),
 	});
 	const issue = (await issueRes.json()).data as { id: string; identifier: string };
@@ -93,7 +93,7 @@ async function createTriggeringIssueWithComment(commentText: string): Promise<{
 		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
 		 RETURNING id`,
-		[issue.id, ceoMemberId, CommentContentType.Text, JSON.stringify({ text: commentText })],
+		[issue.id, captainMemberId, CommentContentType.Text, JSON.stringify({ text: commentText })],
 	);
 
 	return {
@@ -190,7 +190,7 @@ describe('mention handoff prompt (integration)', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
-		const ceo = agents.find((a) => a.slug === 'ceo')!;
+		const captain = agents.find((a) => a.slug === 'captain')!;
 		const architect = agents.find((a) => a.slug === 'architect')!;
 		const projRes = await app.request(`/api/teams/${soloTeamId}/projects`, {
 			method: 'POST',
@@ -203,8 +203,8 @@ describe('mention handoff prompt (integration)', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: soloProjectId,
-				title: 'CEO ticket only',
-				assignee_id: ceo.id,
+				title: 'Captain ticket only',
+				assignee_id: captain.id,
 			}),
 		});
 		const triggering = (await issueRes.json()).data as { id: string; identifier: string };
@@ -215,7 +215,7 @@ describe('mention handoff prompt (integration)', () => {
 			 RETURNING id`,
 			[
 				triggering.id,
-				ceo.id,
+				captain.id,
 				CommentContentType.Text,
 				JSON.stringify({ text: '@architect weigh in' }),
 			],
@@ -234,7 +234,7 @@ describe('mention handoff prompt (integration)', () => {
 			{
 				id: triggering.id,
 				identifier: triggering.identifier,
-				title: 'CEO ticket only',
+				title: 'Captain ticket only',
 				description: 'x',
 				status: 'backlog',
 				priority: 'medium',
@@ -403,8 +403,8 @@ describe('spawned-from prompt line', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Parent CEO work',
-				assignee_id: ceoMemberId,
+				title: 'Parent Captain work',
+				assignee_id: captainMemberId,
 			}),
 		});
 		const parent = (await issueRes.json()).data as { id: string; identifier: string };
@@ -413,7 +413,7 @@ describe('spawned-from prompt line', () => {
 			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
 			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())
 			 RETURNING id`,
-			[ceoMemberId, teamId, parent.id],
+			[captainMemberId, teamId, parent.id],
 		);
 
 		const subRes = await db.query<{ id: string; identifier: string }>(
@@ -466,8 +466,8 @@ describe('spawned-from prompt line', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Spawning CEO work',
-				assignee_id: ceoMemberId,
+				title: 'Spawning Captain work',
+				assignee_id: captainMemberId,
 			}),
 		});
 		const spawning = (await issueRes.json()).data as { id: string; identifier: string };
@@ -476,7 +476,7 @@ describe('spawned-from prompt line', () => {
 			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
 			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())
 			 RETURNING id`,
-			[ceoMemberId, teamId, spawning.id],
+			[captainMemberId, teamId, spawning.id],
 		);
 
 		const topRes = await db.query<{ id: string; identifier: string }>(

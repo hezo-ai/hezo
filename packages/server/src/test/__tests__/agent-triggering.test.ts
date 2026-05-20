@@ -42,12 +42,12 @@ beforeAll(async () => {
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	// Get the CEO agent
+	// Get the Captain agent
 	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data;
-	agentId = agents.find((a: any) => a.slug === 'ceo').id;
+	agentId = agents.find((a: any) => a.slug === 'captain').id;
 });
 
 afterAll(async () => {
@@ -75,7 +75,7 @@ describe('agent triggering', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Task for CEO',
+				title: 'Task for Captain',
 				assignee_id: agentId,
 			}),
 		});
@@ -132,7 +132,7 @@ describe('agent triggering', () => {
 		const subRes = await app.request(`/api/teams/${teamId}/issues/${parentId}/sub-issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: 'Sub-task for CEO', assignee_id: agentId }),
+			body: JSON.stringify({ title: 'Sub-task for Captain', assignee_id: agentId }),
 		});
 		expect(subRes.status).toBe(201);
 		const subId = (await subRes.json()).data.id;
@@ -243,7 +243,7 @@ describe('agent triggering', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'CEO ticket that mentions architect',
+				title: 'Captain ticket that mentions architect',
 				assignee_id: agentId,
 			}),
 		});
@@ -357,7 +357,7 @@ describe('agent triggering', () => {
 	});
 
 	it('does not create a mention wakeup when an agent mentions itself', async () => {
-		// Assign to architect (not CEO) so there's no CEO-assignment wakeup to coalesce
+		// Assign to architect (not Captain) so there's no Captain-assignment wakeup to coalesce
 		// with the subsequent mention wakeup, which would mask the test.
 		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
@@ -382,11 +382,11 @@ describe('agent triggering', () => {
 		await new Promise((r) => setTimeout(r, 50));
 		await clearWakeups();
 
-		// Baseline: board-posted @ceo DOES create a mention wakeup for CEO.
+		// Baseline: board-posted @captain DOES create a mention wakeup for Captain.
 		await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ content: { text: '@ceo baseline mention' } }),
+			body: JSON.stringify({ content: { text: '@captain baseline mention' } }),
 		});
 		await new Promise((r) => setTimeout(r, 50));
 		const baselineMentions = (await getWakeups(agentId)).filter((w: any) => w.source === 'mention');
@@ -394,12 +394,12 @@ describe('agent triggering', () => {
 
 		await clearWakeups();
 
-		// Now have the CEO agent itself post a comment mentioning @ceo on the same issue.
+		// Now have the Captain agent itself post a comment mentioning @captain on the same issue.
 		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 		const selfRes = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(ceoToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ content: { text: '@ceo self-mention should be skipped' } }),
+			body: JSON.stringify({ content: { text: '@captain self-mention should be skipped' } }),
 		});
 		expect(selfRes.status).toBe(201);
 		await new Promise((r) => setTimeout(r, 50));

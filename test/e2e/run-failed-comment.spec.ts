@@ -45,7 +45,7 @@ async function setupIssue(page: Page): Promise<MockSetup> {
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const agent = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+	const agent = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,

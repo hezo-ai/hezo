@@ -9,7 +9,9 @@ import { TeamSidebar } from '../components/team-sidebar';
 import { SocketProvider } from '../contexts/socket-context';
 import { useAiProviderStatus } from '../hooks/use-ai-providers';
 import { useStatus } from '../hooks/use-status';
+import { useTeams } from '../hooks/use-teams';
 import { useUiState, useUpdateUiState } from '../hooks/use-ui-state';
+import { useShellWebSockets } from '../hooks/use-websocket';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
@@ -30,14 +32,22 @@ function Spinner() {
 }
 
 function AppShell() {
-	const { data: status, isLoading } = useStatus();
+	const { data: status, isPending, isFetching, isError, error, refetch } = useStatus();
 	const navigate = useNavigate();
 	const params = useParams({ strict: false }) as Record<string, string>;
 	const teamId = params.teamId;
-	const unlocked = status?.masterKeyState === 'unlocked';
+	const statusSettled = !isPending && !isFetching;
+	const unlocked = statusSettled && status?.masterKeyState === 'unlocked';
 	const hasToken = !!api.getToken();
 
-	const { data: providerStatus, isLoading: providersLoading } = useAiProviderStatus({
+	const {
+		data: providerStatus,
+		isPending: providersPending,
+		isFetching: providersFetching,
+		isError: providersError,
+		error: providersQueryError,
+		refetch: refetchProviderStatus,
+	} = useAiProviderStatus({
 		enabled: unlocked && hasToken,
 	});
 
@@ -47,14 +57,62 @@ function AppShell() {
 		}
 	}, [status?.masterKeyState, navigate]);
 
-	if (isLoading) return <Spinner />;
+	// Wait for a fresh /api/status before gating — stale cached "unlocked" after a DB
+	// reset would otherwise skip straight to the AI provider setup screen.
+	if (isPending || isFetching) return <Spinner />;
+
+	if (isError || !status) {
+		const message =
+			(error as { message?: string } | null)?.message ??
+			'Could not reach the server. If you just reset the database, wait a few seconds and retry.';
+		return (
+			<div className="flex flex-col items-center justify-center h-screen gap-4 px-4 text-center">
+				<p className="text-[13px] text-accent-red max-w-md">{message}</p>
+				<button
+					type="button"
+					onClick={() => refetch()}
+					className="text-[13px] font-medium text-primary hover:underline"
+				>
+					Retry
+				</button>
+			</div>
+		);
+	}
 
 	if (status?.masterKeyState === 'unset' || status?.masterKeyState === 'locked') {
 		api.clearToken();
 		return <MasterKeyGate state={status.masterKeyState} />;
 	}
 
-	if (providersLoading || !providerStatus) return <Spinner />;
+	const providerLocked =
+		providersError &&
+		(providersQueryError as { code?: string; status?: number } | null)?.code === 'LOCKED';
+
+	if (providerLocked) {
+		api.clearToken();
+		queryClient.invalidateQueries({ queryKey: ['status'] });
+		return <MasterKeyGate state="locked" />;
+	}
+
+	if (providersPending || providersFetching) return <Spinner />;
+
+	if (providersError || !providerStatus) {
+		const message =
+			(providersQueryError as { message?: string } | null)?.message ??
+			'Could not reach the server. If you just reset the database, wait a few seconds and retry.';
+		return (
+			<div className="flex flex-col items-center justify-center h-screen gap-4 px-4 text-center">
+				<p className="text-[13px] text-accent-red max-w-md">{message}</p>
+				<button
+					type="button"
+					onClick={() => refetchProviderStatus()}
+					className="text-[13px] font-medium text-primary hover:underline"
+				>
+					Retry
+				</button>
+			</div>
+		);
+	}
 
 	if (!providerStatus.configured) {
 		return <AiProviderSetupModal />;
@@ -69,6 +127,8 @@ function AppShell() {
 
 function ShellLayout({ teamId }: { teamId: string | undefined }) {
 	const [drawerOpen, setDrawerOpen] = useState(false);
+	const { data: teams } = useTeams();
+	useShellWebSockets(teams);
 
 	return (
 		<div className="h-screen flex flex-row overflow-hidden">
