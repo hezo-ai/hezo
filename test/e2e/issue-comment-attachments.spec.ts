@@ -96,6 +96,74 @@ test.describe('Issue Comment Attachments', () => {
 		await popup.close();
 	});
 
+	test('hint with tooltip shows when empty, hides once a chip appears, returns after removal', async ({
+		page,
+	}) => {
+		await authenticate(page);
+		const { team, issue } = await createIssue(page);
+
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
+		await waitForPageLoad(page);
+		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
+
+		const hint = page.locator('[data-testid="comment-attachment-hint"]');
+		await expect(hint).toBeVisible();
+		await expect(hint).toContainText('Drag and drop files to attach');
+
+		const info = page.locator('[data-testid="comment-attachment-hint-info"]');
+		await info.hover();
+		const tooltip = page.getByRole('tooltip');
+		await expect(tooltip).toBeVisible({ timeout: 5000 });
+		await expect(tooltip).toContainText('PNG');
+		await expect(tooltip).toContainText('PDF');
+		await expect(tooltip).toContainText('MP3');
+		await expect(tooltip).toContainText('MP4');
+		await expect(tooltip).toContainText('10');
+
+		await dropFile(
+			page,
+			'[data-testid="comment-attachments-drop"]',
+			'shot.png',
+			'image/png',
+			Array.from(PNG_BYTES),
+		);
+
+		const chip = page.locator('[data-testid="comment-attachment-chip"]', { hasText: 'shot.png' });
+		await expect(chip).toBeVisible({ timeout: 10000 });
+		await expect(hint).toBeHidden();
+
+		await chip.getByRole('button', { name: 'Remove attachment' }).click();
+		await expect(chip).toBeHidden();
+		await expect(hint).toBeVisible();
+	});
+
+	test('pending chip exposes a preview link with the signed asset URL', async ({ page }) => {
+		await authenticate(page);
+		const { team, issue } = await createIssue(page);
+
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
+		await waitForPageLoad(page);
+		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
+
+		await dropFile(
+			page,
+			'[data-testid="comment-attachments-drop"]',
+			'preview.png',
+			'image/png',
+			Array.from(PNG_BYTES),
+		);
+
+		const preview = page
+			.locator('[data-testid="comment-attachment-preview"]')
+			.filter({ hasText: 'preview.png' });
+		await expect(preview).toBeVisible({ timeout: 10000 });
+		await expect(preview).toHaveAttribute('target', '_blank');
+		await expect(preview).toHaveAttribute('rel', 'noopener noreferrer');
+		const href = await preview.getAttribute('href');
+		expect(href).toBeTruthy();
+		expect(href).toContain('/api/assets/');
+	});
+
 	test('rejects an unsupported extension with an inline error chip', async ({ page }) => {
 		await authenticate(page);
 		const { team, issue } = await createIssue(page);
@@ -117,7 +185,9 @@ test.describe('Issue Comment Attachments', () => {
 		await expect(errorChip).toContainText('virus.exe');
 	});
 
-	test('mobile viewport — chips wrap and overlay still triggers', async ({ page }) => {
+	test('mobile viewport — hint visible, chips wrap and overlay still triggers', async ({
+		page,
+	}) => {
 		await page.setViewportSize({ width: 375, height: 812 });
 		await authenticate(page);
 		const { team, issue } = await createIssue(page);
@@ -125,6 +195,10 @@ test.describe('Issue Comment Attachments', () => {
 		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
+
+		const hint = page.locator('[data-testid="comment-attachment-hint"]');
+		await expect(hint).toBeVisible();
+		await expect(hint).toContainText('Drag and drop files to attach');
 
 		await dropFile(
 			page,
@@ -134,8 +208,11 @@ test.describe('Issue Comment Attachments', () => {
 			Array.from(PNG_BYTES),
 		);
 
-		await expect(
-			page.locator('[data-testid="comment-attachment-chip"]', { hasText: 'mobile.png' }),
-		).toBeVisible({ timeout: 10000 });
+		const chip = page.locator('[data-testid="comment-attachment-chip"]', {
+			hasText: 'mobile.png',
+		});
+		await expect(chip).toBeVisible({ timeout: 10000 });
+		await expect(hint).toBeHidden();
+		await expect(chip.locator('[data-testid="comment-attachment-preview"]')).toBeVisible();
 	});
 });

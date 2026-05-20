@@ -1,5 +1,6 @@
 import { ATTACHMENT_MAX_BYTES, isAllowedAttachmentExtension } from '@hezo/shared';
 import {
+	ExternalLink,
 	FileAudio,
 	File as FileIcon,
 	FileText,
@@ -13,6 +14,7 @@ import { type ReactNode, useCallback, useMemo, useRef, useState } from 'react';
 import type { CommentAttachment } from '../hooks/use-comments';
 import { useUploadAttachment } from '../hooks/use-upload-attachment';
 import type { ApiError } from '../lib/api';
+import { InfoTooltip } from './ui/info-tooltip';
 
 interface Props {
 	teamId: string;
@@ -148,6 +150,8 @@ export function CommentAttachmentsDrop({ teamId, issueId, value, onChange, child
 		[onChange, value],
 	);
 
+	const hasAnyChip = visibleAttachments.length > 0 || uploading.length > 0 || errors.length > 0;
+
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop wrapper; the inner textarea owns keyboard interaction
 		<div
@@ -158,17 +162,55 @@ export function CommentAttachmentsDrop({ teamId, issueId, value, onChange, child
 			onDragOver={onDragOver}
 			onDrop={onDrop}
 		>
-			{(visibleAttachments.length > 0 || uploading.length > 0 || errors.length > 0) && (
+			{!hasAnyChip && (
+				<div
+					className="mb-2 flex items-center gap-1.5 text-xs text-text-subtle"
+					data-testid="comment-attachment-hint"
+				>
+					<span>Drag and drop files to attach</span>
+					<InfoTooltip
+						label="Supported attachment types"
+						data-testid="comment-attachment-hint-info"
+						content={
+							<div className="space-y-1">
+								<div>
+									<strong>Images:</strong> PNG, JPG, GIF
+								</div>
+								<div>
+									<strong>Documents:</strong> PDF, TXT
+								</div>
+								<div>
+									<strong>Audio:</strong> MP3, WAV, AAC, OPUS
+								</div>
+								<div>
+									<strong>Video:</strong> MP4, WEBM, MOV
+								</div>
+								<div className="pt-1 text-text-subtle">Max 10&nbsp;MB per file</div>
+							</div>
+						}
+					/>
+				</div>
+			)}
+			{hasAnyChip && (
 				<div className="mb-2 flex flex-wrap gap-1.5" data-testid="comment-attachment-pending-row">
 					{visibleAttachments.map((a) => (
 						<span
 							key={a.id}
 							className="flex items-center gap-1.5 rounded-radius-sm border border-border bg-bg-muted px-2 py-1 text-[12px] text-text"
-							title={a.original_filename}
 							data-testid="comment-attachment-chip"
 						>
 							{iconFor(a.content_type)}
-							<span className="max-w-[140px] truncate">{a.original_filename}</span>
+							<a
+								href={a.url}
+								target="_blank"
+								rel="noopener noreferrer"
+								title={a.original_filename}
+								className="flex items-center gap-1 text-text hover:underline"
+								data-testid="comment-attachment-preview"
+							>
+								<span className="max-w-[140px] truncate">{a.original_filename}</span>
+								<ExternalLink className="h-3 w-3 shrink-0" />
+							</a>
 							<button
 								type="button"
 								aria-label="Remove attachment"
