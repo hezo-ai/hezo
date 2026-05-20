@@ -1,18 +1,18 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
+import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Repo Setup Approval', () => {
 	async function seedBlockedProject(page: import('@playwright/test').Page) {
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 			headers,
 			data: { name: 'Blocked Project', description: 'Project waiting on repo' },
 		});
 		const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
 
-		const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, {
+		const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
 			headers: { Authorization: `Bearer ${token}` },
 		});
 		const agents = ((await agentsRes.json()) as { data: Array<{ id: string; title: string }> })
@@ -25,7 +25,7 @@ test.describe('Repo Setup Approval', () => {
 				{ title: 'Migrate to vNext', assignee_id: agentA.id },
 				{ title: 'Add CI workflow', assignee_id: agentB.id },
 			].map(async (i) => {
-				const r = await page.request.post(`/api/companies/${company.id}/issues`, {
+				const r = await page.request.post(`/api/teams/${team.id}/issues`, {
 					headers,
 					data: { project_id: project.id, ...i },
 				});
@@ -33,7 +33,7 @@ test.describe('Repo Setup Approval', () => {
 			}),
 		);
 
-		const approvalRes = await page.request.post(`/api/companies/${company.id}/approvals`, {
+		const approvalRes = await page.request.post(`/api/teams/${team.id}/approvals`, {
 			headers,
 			data: {
 				type: 'designated_repo_request',
@@ -48,7 +48,7 @@ test.describe('Repo Setup Approval', () => {
 		const approval = ((await approvalRes.json()) as { data: { id: string } }).data;
 
 		for (const issue of issuesData) {
-			await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+			await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 				headers,
 				data: {
 					content_type: 'action',
@@ -57,14 +57,14 @@ test.describe('Repo Setup Approval', () => {
 			});
 		}
 
-		return { company, project, approval, issues: issuesData, agents: [agentA, agentB], token };
+		return { team, project, approval, issues: issuesData, agents: [agentA, agentB], token };
 	}
 
 	test('inbox card opens popup listing every blocked ticket', async ({ page }) => {
 		await authenticate(page);
-		const { company, issues } = await seedBlockedProject(page);
+		const { team, issues } = await seedBlockedProject(page);
 
-		await page.goto(`/companies/${company.slug}/inbox`);
+		await page.goto(`/teams/${team.slug}/inbox`);
 		await waitForPageLoad(page);
 
 		const card = page.getByTestId('approval-card').filter({ hasText: 'Requesting GitHub OAuth' });
@@ -84,9 +84,9 @@ test.describe('Repo Setup Approval', () => {
 		page,
 	}) => {
 		await authenticate(page);
-		const { company, project, issues } = await seedBlockedProject(page);
+		const { team, project, issues } = await seedBlockedProject(page);
 
-		await page.goto(`/companies/${company.slug}/inbox`);
+		await page.goto(`/teams/${team.slug}/inbox`);
 		await waitForPageLoad(page);
 
 		await page.getByTestId('approval-card').first().click();
@@ -97,7 +97,7 @@ test.describe('Repo Setup Approval', () => {
 
 		await expect(page).toHaveURL(
 			new RegExp(
-				`/companies/${company.slug}/projects/${project.slug}/issues/${issues[0].identifier.toLowerCase()}`,
+				`/teams/${team.slug}/projects/${project.slug}/issues/${issues[0].identifier.toLowerCase()}`,
 			),
 			{ timeout: 15000 },
 		);
@@ -108,16 +108,16 @@ test.describe('Repo Setup Approval', () => {
 
 	test('CTA navigates to the project settings page', async ({ page }) => {
 		await authenticate(page);
-		const { company, project } = await seedBlockedProject(page);
+		const { team, project } = await seedBlockedProject(page);
 
-		await page.goto(`/companies/${company.slug}/inbox`);
+		await page.goto(`/teams/${team.slug}/inbox`);
 		await waitForPageLoad(page);
 
 		await page.getByTestId('approval-card').first().click();
 		await page.getByTestId('repo-setup-approval-cta').click();
 
 		await expect(page).toHaveURL(
-			new RegExp(`/companies/${company.slug}/projects/${project.slug}/settings`),
+			new RegExp(`/teams/${team.slug}/projects/${project.slug}/settings`),
 			{ timeout: 15000 },
 		);
 		await expect(page.getByRole('heading', { name: 'Repositories' })).toBeVisible({

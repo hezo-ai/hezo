@@ -2,11 +2,11 @@ import { AuthType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 
 export const uiStateRoutes = new Hono<Env>();
 
-async function resolveMemberUser(c: import('hono').Context<Env>, companyId: string) {
+async function resolveMemberUser(c: import('hono').Context<Env>, teamId: string) {
 	const auth = c.get('auth');
 	if (auth.type !== AuthType.Board) return null;
 
@@ -14,17 +14,17 @@ async function resolveMemberUser(c: import('hono').Context<Env>, companyId: stri
 	const result = await db.query<{ id: string; settings: Record<string, unknown> }>(
 		`SELECT mu.id, mu.settings
 		 FROM members m JOIN member_users mu ON mu.id = m.id
-		 WHERE mu.user_id = $1 AND m.company_id = $2`,
-		[auth.userId, companyId],
+		 WHERE mu.user_id = $1 AND m.team_id = $2`,
+		[auth.userId, teamId],
 	);
 	return result.rows[0] ?? null;
 }
 
-uiStateRoutes.get('/companies/:companyId/ui-state', async (c) => {
-	const access = await requireCompanyAccess(c);
+uiStateRoutes.get('/teams/:teamId/ui-state', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
-	const member = await resolveMemberUser(c, access.companyId);
+	const member = await resolveMemberUser(c, access.teamId);
 	if (!member) {
 		return err(c, 'FORBIDDEN', 'Only board users have UI state', 403);
 	}
@@ -32,11 +32,11 @@ uiStateRoutes.get('/companies/:companyId/ui-state', async (c) => {
 	return ok(c, member.settings);
 });
 
-uiStateRoutes.patch('/companies/:companyId/ui-state', async (c) => {
-	const access = await requireCompanyAccess(c);
+uiStateRoutes.patch('/teams/:teamId/ui-state', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
-	const member = await resolveMemberUser(c, access.companyId);
+	const member = await resolveMemberUser(c, access.teamId);
 	if (!member) {
 		return err(c, 'FORBIDDEN', 'Only board users have UI state', 403);
 	}

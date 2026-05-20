@@ -42,7 +42,7 @@ export interface ProjectDocMentionData {
 export type ProjectDocsMap = Map<string, Map<string, ProjectDocMentionData>>;
 
 interface Options {
-	companyId: string;
+	teamId: string;
 	projectSlug?: string;
 	agents: Map<string, AgentMentionData>;
 	issues: Map<string, IssueMentionData>;
@@ -121,7 +121,7 @@ function splitTextNode(node: TextNode, opts: Options): MdNode[] {
 }
 
 function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
-	const { companyId, projectSlug, agents, issues, kbDocs, projectDocs } = opts;
+	const { teamId, projectSlug, agents, issues, kbDocs, projectDocs } = opts;
 	const display = match[0];
 	const agentToken = match[1];
 	const issueToken = match[2];
@@ -133,7 +133,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		if (!data) return null;
 		return {
 			type: 'link',
-			url: `/companies/${companyId}/agents/${slug}`,
+			url: `/teams/${teamId}/agents/${slug}`,
 			children: [{ type: 'text', value: display }],
 			data: {
 				hProperties: {
@@ -150,7 +150,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		if (!data) return null;
 		return {
 			type: 'link',
-			url: `/companies/${companyId}/projects/${data.projectSlug}/issues/${key}`,
+			url: `/teams/${teamId}/projects/${data.projectSlug}/issues/${key}`,
 			children: [{ type: 'text', value: display }],
 			data: {
 				hProperties: {
@@ -170,7 +170,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 			if (data) {
 				return {
 					type: 'link',
-					url: `/companies/${companyId}/projects/${slug}/documents?file=${encodeURIComponent(filenameToken)}`,
+					url: `/teams/${teamId}/projects/${slug}/documents?file=${encodeURIComponent(filenameToken)}`,
 					children: [{ type: 'text', value: display }],
 					data: {
 						hProperties: {
@@ -189,7 +189,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		if (kbData) {
 			return {
 				type: 'link',
-				url: `/companies/${companyId}/kb?slug=${encodeURIComponent(kbKey)}`,
+				url: `/teams/${teamId}/kb?slug=${encodeURIComponent(kbKey)}`,
 				children: [{ type: 'text', value: display }],
 				data: {
 					hProperties: {

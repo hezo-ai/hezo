@@ -21,11 +21,11 @@ export async function detectOrphans(
 	const orphans = await db.query<{
 		id: string;
 		member_id: string;
-		company_id: string;
+		team_id: string;
 		issue_id: string | null;
 		process_loss_retry_count: number;
 	}>(
-		`SELECT id, member_id, company_id, issue_id, process_loss_retry_count
+		`SELECT id, member_id, team_id, issue_id, process_loss_retry_count
 		 FROM heartbeat_runs
 		 WHERE status = $1::heartbeat_run_status
 		   AND started_at < now() - ($2 || ' seconds')::interval`,
@@ -70,14 +70,14 @@ export async function detectOrphans(
 				[AgentRuntimeStatus.Idle, run.member_id, AgentRuntimeStatus.Active],
 			);
 			if (reset.rows.length > 0) {
-				broadcastRowChange(wsManager, wsRoom.company(run.company_id), 'member_agents', 'UPDATE', {
+				broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'member_agents', 'UPDATE', {
 					id: run.member_id,
 					runtime_status: AgentRuntimeStatus.Idle,
 				});
 			}
 		}
 
-		broadcastRowChange(wsManager, wsRoom.company(run.company_id), 'heartbeat_runs', 'UPDATE', {
+		broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
 			id: run.id,
 			member_id: run.member_id,
 			issue_id: run.issue_id,
@@ -92,7 +92,7 @@ export async function detectOrphans(
 			}>('SELECT exit_code, log_text FROM heartbeat_runs WHERE id = $1', [run.id]);
 			const fr = failedRun.rows[0];
 
-			await createWakeup(db, run.member_id, run.company_id, WakeupSource.Timer, {
+			await createWakeup(db, run.member_id, run.team_id, WakeupSource.Timer, {
 				reason: 'orphan_retry',
 				retry_count: run.process_loss_retry_count + 1,
 				max_retries: MAX_RETRIES,
@@ -104,10 +104,10 @@ export async function detectOrphans(
 			});
 		} else {
 			await db.query(
-				`INSERT INTO approvals (company_id, type, payload)
+				`INSERT INTO approvals (team_id, type, payload)
 				 VALUES ($1, $2::approval_type, $3::jsonb)`,
 				[
-					run.company_id,
+					run.team_id,
 					ApprovalType.Strategy,
 					JSON.stringify({
 						type: 'agent_error',

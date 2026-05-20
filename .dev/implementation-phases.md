@@ -77,13 +77,13 @@
 **Goal:** Full REST API for all core entities. No Docker, no agents running, no OAuth — all testable with curl.
 
 **What's included:**
-- Company types CRUD (create, list, get, update, delete)
+- Team types CRUD (create, list, get, update, delete)
   - Built-in "Software Development" type seeded on first run
-- Company CRUD (create from company type, update, delete, list)
-  - Company email field
+- Team CRUD (create from team type, update, delete, list)
+  - Team email field
   - Issue prefix and auto-derived identifiers
 - Agent CRUD (create/hire, update, pause, resume, terminate, list)
-  - Agents auto-created from company type on company creation
+  - Agents auto-created from team type on team creation
   - Custom role creation with arbitrary titles/prompts
   - Org chart with `reports_to` hierarchy
 - Project CRUD (create, update, delete, list)
@@ -102,7 +102,7 @@
 - Board API authentication: stateless JWT (always authenticated, no local_trusted mode)
 
 **How to test:**
-- Create a company type, then create a company from it — 9 agents auto-created
+- Create a team type, then create a team from it — 9 agents auto-created
 - Full CRUD cycle for every entity via curl
 - Issue status state machine enforced (invalid transitions rejected)
 - Issue identifiers auto-generated correctly (ACME-1, ACME-2, ...)
@@ -124,8 +124,8 @@
 - `POST /connections/github/start` — generates auth URL via Hezo Connect
 - `GET /oauth/callback` — receives token, encrypts, stores in `connected_platforms`
 - Repo CRUD with GitHub access validation (API check with OAuth token before saving)
-- Repo cloning via SSH with company-generated SSH key pair (registered on GitHub via OAuth API)
-- Company-level folder setup with AGENTS.md in project root
+- Repo cloning via SSH with team-generated SSH key pair (registered on GitHub via OAuth API)
+- Team-level folder setup with AGENTS.md in project root
 - Board inbox `oauth_request` items when GitHub not connected
 - Connected platforms management (connect, disconnect)
 
@@ -159,8 +159,8 @@ Scaffolding:
 
 Screens:
 - Master key gate — modal when `/api/status` returns `masterKeyState: "unset"` or `"locked"`. Generate new key or enter existing key.
-- Company list — card grid, create from company type
-- Company workspace — tab layout: Issues, Agents, Projects, Org Chart, KB, Settings
+- Team list — card grid, create from team type
+- Team workspace — tab layout: Issues, Agents, Projects, Org Chart, KB, Settings
 - Issue list — filterable/sortable table with identifier, project, assignee, status, priority
 - Issue detail — comments thread, status transitions, assignee/priority/project editing, sub-issues, blocked-by
 - Agent list — cards with title, runtime, status, budget usage
@@ -169,14 +169,14 @@ Screens:
 - Project list + detail — repos list, filtered issues, add project/repo forms
 - GitHub connection — Settings section showing connected platforms, "Connect GitHub" button triggering OAuth flow
 - KB docs — list, view with markdown rendering, create/edit
-- Settings — secrets vault (list/create/revoke), API keys (list/create/revoke), budget overview, company preferences, project docs, connected platforms
+- Settings — secrets vault (list/create/revoke), API keys (list/create/revoke), budget overview, team preferences, project docs, connected platforms
 - Board inbox — drawer accessible from any screen (nav badge), pending approvals with approve/deny actions
-- Playwright setup with basic smoke tests (master key flow, create company, create issue)
+- Playwright setup with basic smoke tests (master key flow, create team, create issue)
 
 **How to test:**
 - `bun run dev` starts server (3100) and Vite (5173)
 - Open browser to `localhost:5173` — master key gate appears on first visit
-- Create a company from a company type — agents auto-created, visible in Agents tab
+- Create a team from a team type — agents auto-created, visible in Agents tab
 - Full CRUD cycle for issues, projects, agents, KB docs, secrets, API keys from the browser
 - Connect GitHub via OAuth flow in Settings
 - Board inbox shows pending approvals with working approve/deny
@@ -225,10 +225,10 @@ Backend:
 - Heartbeat engine: wakeup queue, coalescing, timer ticks
 - Issue work ownership (claim on start, release on complete/reassign/pause)
 - Orphan detection and auto-retry
-- Per-agent and per-company budget enforcement with atomic debit
+- Per-agent and per-team budget enforcement with atomic debit
 - Cost tracking (per agent, per issue, per project)
 - Tool call tracing
-- Host filesystem layout (`~/.hezo/companies/{id}/projects/{id}/...`)
+- Host filesystem layout (`~/.hezo/teams/{id}/projects/{id}/...`)
 - Agent JWT authentication for Agent API
 
 UI:
@@ -257,7 +257,7 @@ UI:
 
 ## Phase 5: Knowledge + Observability
 
-**Status:** Done (2026-04). Documents unified into a single `documents` + `document_revisions` schema (2026-04-22) — project docs, KB docs, and company preferences all share one revision-with-rollback path; project docs and preferences gained the rollback UI as part of that.
+**Status:** Done (2026-04). Documents unified into a single `documents` + `document_revisions` schema (2026-04-22) — project docs, KB docs, and team preferences all share one revision-with-rollback path; project docs and preferences gained the rollback UI as part of that.
 
 **Goal:** KB revisions, audit log, live queries, WebSocket events, previews. Migrate frontend from polling to real-time.
 
@@ -265,7 +265,7 @@ UI:
 
 Backend:
 - Knowledge base revisions, agent proposals, approval flow
-- Company preferences revisions, agent-driven updates
+- Team preferences revisions, agent-driven updates
 - Project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan)
 - Audit log (append-only, never updated/deleted)
 - PGlite live queries for frontend data reactivity (`live.query()`, `live.changes()`)
@@ -315,7 +315,7 @@ Backend:
 UI + Build:
 - `bun build --compile`: bundle `packages/web` static assets into the server binary
 - Hono serves the built frontend at `/` (static file serving from embedded assets)
-- MCP server configuration UI in Settings (add/remove/edit company-level MCP servers)
+- MCP server configuration UI in Settings (add/remove/edit team-level MCP servers)
 - Skill file preview — link or inline display of `/skill.md`
 - Full Playwright E2E suite against the compiled binary
 
@@ -355,12 +355,12 @@ Backend:
 UI:
 - OAuth login page (GitHub + GitLab buttons)
 - Account settings page
-- First user flow: OAuth login → master key gate → forced company creation
+- First user flow: OAuth login → master key gate → forced team creation
 
 **How to test:**
-- Create account via GitHub OAuth, log in, access company as board member — all in browser
-- Create account via GitLab OAuth, log in, access company — all in browser
-- First user flow: OAuth login → master key gate → forced company creation — all in browser
+- Create account via GitHub OAuth, log in, access team as board member — all in browser
+- Create account via GitLab OAuth, log in, access team — all in browser
+- First user flow: OAuth login → master key gate → forced team creation — all in browser
 - Session compaction triggers after token threshold
 - Unauthorized requests rejected with 401
 
@@ -372,18 +372,18 @@ UI:
 
 **Status:** Done (2026-04)
 
-**Goal:** Simplify the UI with a company-first navigation model and add agent onboarding via CEO-managed issues.
+**Goal:** Simplify the UI with a team-first navigation model and add agent onboarding via CEO-managed issues.
 
 **What's included:**
 
 Backend:
 - `is_internal` boolean on `projects` table — marks auto-created projects
-- Auto-create "Operations" project (`is_internal = true`) on company creation
+- Auto-create "Operations" project (`is_internal = true`) on team creation
 - Prevent deletion of internal projects
-- `POST /companies/:companyId/agents/onboard` endpoint — creates agent in disabled state, opens onboarding issue assigned to CEO
+- `POST /teams/:teamId/agents/onboard` endpoint — creates agent in disabled state, opens onboarding issue assigned to CEO
 
 Frontend:
-- Company icon rail (left sidebar) with home, company avatars, theme switcher, inbox badge
+- Team icon rail (left sidebar) with home, team avatars, theme switcher, inbox badge
 - Unified side menu grouping: Inbox, Work (Issues, Goals), Projects (header links to projects list), Team (header links to org chart), Resources (Knowledge base, Settings, Audit log)
 - Removed top header with breadcrumbs
 - Tab-based project view (Issues, Agents, Container, Settings) replacing project sidebar
@@ -411,7 +411,7 @@ Backend:
 - AbortSignal threading through Docker exec for agent task cancellation
 
 Frontend:
-- Audit log moved from Settings page to dedicated route at `/companies/:companyId/audit-log`
+- Audit log moved from Settings page to dedicated route at `/teams/:teamId/audit-log`
 - Audit log added as sidebar nav item in the Resources section
 
 **How to test:**
@@ -426,7 +426,7 @@ Frontend:
 
 ## Phase 7: Multi-User Roles + Invites
 
-**Goal:** Member roles with scoped permissions, company email invites, file attachments. Extends Phase 6.5 auth from board-only to multi-role.
+**Goal:** Member roles with scoped permissions, team email invites, file attachments. Extends Phase 6.5 auth from board-only to multi-role.
 
 **What's included:**
 
@@ -437,7 +437,7 @@ Backend:
   - API layer: board-only endpoints blocked for members, project scope enforced
   - Agent layer: `{{requester_context}}` injected into agent prompts with member's permissions_text
 - Invite system:
-  - Email invites sent from company email address
+  - Email invites sent from team email address
   - Invite specifies role, title, permissions, project scope
   - Invite link with unique token, 7-day expiry
   - Recipient authenticates via GitHub or GitLab OAuth
@@ -454,7 +454,7 @@ UI:
 - Invite a member with role_title + permissions_text + project_ids — joins with scoped access
 - Member can create issue in allowed project via browser
 - Member cannot access restricted project (403) — UI hides restricted content
-- Member cannot access company settings or agent management (403)
+- Member cannot access team settings or agent management (403)
 - Agent respects member's permissions_text (e.g. refuses to change PRD when permissions say not to)
 - Member cannot create invites (403)
 
@@ -487,11 +487,11 @@ UI:
 - Manual API key entry (password input, format validation)
 - OAuth connection for subscription mode (Anthropic, OpenAI, Google)
 - Each provider card renders every stored config row (API key and/or OAuth subscription) and exposes add buttons only for auth methods not yet configured, so an API key and an OAuth subscription can coexist for the same provider. A `Default` badge and `Set default` button let the operator pick which config the agent runner uses.
-- Full-screen setup gate rendered by the root shell immediately after master-key unlock, before the app is interactive. Blocks company creation until at least one provider is active. Re-raises if the last provider is deleted.
+- Full-screen setup gate rendered by the root shell immediately after master-key unlock, before the app is interactive. Blocks team creation until at least one provider is active. Re-raises if the last provider is deleted.
 
 **How to test:**
-- Fresh instance → enter master key → gate appears before any company UI is reachable
-- Enter API key in gate → gate drops, company list visible, create company succeeds
+- Fresh instance → enter master key → gate appears before any team UI is reachable
+- Enter API key in gate → gate drops, team list visible, create team succeeds
 - `/settings/ai-providers` shows configured providers with status badges
 - Verify button tests key against provider API
 - Delete the last key → gate re-appears over whichever route you were on
@@ -514,7 +514,7 @@ Backend:
 - `member_agents.model_override_provider` + `member_agents.model_override_model` columns with a `CHECK` ensuring the model isn't set without a provider.
 - `GET /api/ai-providers/:configId/models` — superuser only; fetches models live from the provider (reusing the URL + headers from `AI_PROVIDER_INFO.verifyEndpoint`), filters to chat models, normalises to `{ id, label }[]`. No server cache — TanStack Query caches on the client.
 - `PATCH /api/ai-providers/:configId` — superuser only; accepts `{ default_model: string | null }`.
-- `PATCH /api/companies/:companyId/agents/:agentId` accepts `model_override_provider` + `model_override_model` alongside existing fields; clearing the provider also clears the model.
+- `PATCH /api/teams/:teamId/agents/:agentId` accepts `model_override_provider` + `model_override_model` alongside existing fields; clearing the provider also clears the model.
 - `getProviderCredentialAndModel` returns config + credential + default model together so the runner does it in one query.
 - Runner precedence: `agent.model_override_provider` wins over `resolveRuntimeForIssue`; `agent.model_override_model` wins over `config.default_model`; when nothing is set, no `--model` flag is added (matching prior behaviour).
 
@@ -577,9 +577,9 @@ Backend:
   - Rate limiting and abuse prevention
 - Additional platform OAuth: Gmail, GitLab, Stripe, PostHog, Railway, Vercel, DigitalOcean, X
 - Token refresh lifecycle (automatic refresh, expiry detection, board notification)
-- Auto-registration of connected platforms as company-level MCP servers
+- Auto-registration of connected platforms as team-level MCP servers
 - Agent-initiated OAuth link requests (24-hour validity, board inbox + ticket comment)
-- MCP server configuration (company-level + agent-level, merged at runtime)
+- MCP server configuration (team-level + agent-level, merged at runtime)
 - Connection lifecycle management (health checks, disconnect, re-authorize)
 
 UI:
@@ -609,7 +609,7 @@ Backend:
 - DevOps Engineer activation flow (board sets to active when ready)
 - Messaging integrations (all optional):
   - Telegram bot — per-user setup, full platform interface (notifications, approvals, issue creation, agent interaction via commands and inline keyboards)
-  - Slack integration — per-company setup, single Slack app with per-agent display names/avatars, interactive messages for approvals, channel-based interaction
+  - Slack integration — per-team setup, single Slack app with per-agent display names/avatars, interactive messages for approvals, channel-based interaction
   - Notification preferences — per-user, per-channel event type routing
   - `notification_preferences` and `slack_connections` tables
   - Webhook endpoints: `POST /webhooks/slack`, `POST /webhooks/telegram`
@@ -650,13 +650,13 @@ UI:
 - Executions tab lists all past runs with status, issue, timing, cost
 - Execution detail sub-page shows full stdout/stderr excerpts, tokens, timing, cost
 - Settings tab contains budget, heartbeat, and agent configuration form
-- Single-run API endpoint: `GET /companies/:companyId/agents/:agentId/heartbeat-runs/:runId`
+- Single-run API endpoint: `GET /teams/:teamId/agents/:agentId/heartbeat-runs/:runId`
 - Heartbeat-runs list endpoint returns issue identifier and title via JOIN
 - Integration tests for heartbeat-runs API and execution comments
 - E2E tests for agent tabs navigation and execution list
 
 **How to test:**
-- Create a company with agents and trigger an agent run — execution comment appears on the issue
+- Create a team with agents and trigger an agent run — execution comment appears on the issue
 - Navigate to agent page — Executions tab loads by default with run list
 - Click a run — detail page shows with stdout, stderr, timing, cost
 - Navigate to Settings tab — budget, heartbeat, and edit form visible
@@ -709,16 +709,16 @@ UI:
 
 Backend:
 - `member_agents.summary` (TEXT) — agent description, ≤5 lines / 1000 chars
-- `companies.team_summary` (TEXT) — team collaboration description, ≤20 lines / 4000 chars
+- `teams.summary` (TEXT) — team collaboration description, ≤20 lines / 4000 chars
 - `agent_types.default_summary` (TEXT) — pre-generated defaults loaded from `packages/server/src/db/agent-summaries.json`
-- `company_types.default_team_summary` (TEXT) — pre-generated team defaults
-- Summaries copied to agents and company during provisioning
-- `set_agent_summary` MCP tool — any agent or board member in the company can set an agent's summary
-- `set_team_summary` MCP tool — CEO agent only, sets the company team summary
+- `team_templates.default_summary` (TEXT) — pre-generated team defaults
+- Summaries copied to agents and team during provisioning
+- `set_agent_summary` MCP tool — any agent or board member in the team can set an agent's summary
+- `set_team_summary` MCP tool — CEO agent only, sets the team team summary
 - `description-update` label convention: issue created in Operations project, assigned to CEO, triggers regeneration
 
 **How to test:**
-- Create a company from built-in template — agents have pre-baked summaries, company has team summary
+- Create a team from built-in template — agents have pre-baked summaries, team has team summary
 - CEO processes a `description-update` issue — calls MCP tools to update summaries
 - Non-CEO agent cannot call `set_team_summary` (rejected)
 - `bun run test --skip-e2e` passes
@@ -737,7 +737,7 @@ Backend:
 
 Backend:
 - `CommentContentType.Action` + `setup_repo` action comment kind for in-ticket board actions
-- Partial unique index `idx_one_pending_repo_setup` dedupes concurrent pending approvals per `(company, project)`
+- Partial unique index `idx_one_pending_repo_setup` dedupes concurrent pending approvals per `(team, project)`
 - `projects.designated_repo_id` FK switched to `ON DELETE RESTRICT` (designated repo can't be deleted directly)
 - `DELETE /repos/:id` returns 409 `DESIGNATED_REPO_IMMUTABLE` for the designated repo
 - `POST /repos` accepts `mode: 'link' | 'create'`; `mode=create` POSTs to GitHub's `/user/repos` or `/orgs/:owner/repos` after re-validating `owner` against the user's accessible orgs; first-repo-wins designation happens atomically under a `FOR UPDATE` project lock
@@ -763,7 +763,7 @@ Docs:
 - All six code-touching agent role docs note the auto-pause behavior
 
 **How to test:**
-- Create a company + project with no repo, assign an engineer to an issue, see the action comment + inbox approval, drive the wizard with the GitHub simulator (integration) or a real local Connect + GitHub account (manual)
+- Create a team + project with no repo, assign an engineer to an issue, see the action comment + inbox approval, drive the wizard with the GitHub simulator (integration) or a real local Connect + GitHub account (manual)
 - Verify the cloned repo appears at `/workspace/{short_name}/` inside the project container and a worktree is created on the engineer's resume
 - Verify `DELETE` on the designated repo returns 409
 - `bun run test` and `bun run test --e2e` pass
@@ -778,7 +778,7 @@ Docs:
 
 In-process **live-run registry** keyed by `heartbeat_runs.id` becomes the single source of truth for "this run is alive." Three reconciliation paths converge on one outcome (run failed, agent reset to idle, locks released, broadcasts emitted, retry wakeup created): startup reconciliation (all DB `running`/`queued` rows are necessarily orphaned), the orphan-detection cron (DB rows whose id isn't in the live registry, after a 30s safety window), and container-state transitions (any project leaving `running` fans out to fail every in-flight run for that project's issues).
 
-`syncContainerStatus` now distinguishes a real terminal signal (HTTP 404 from `docker inspect` → `error` + `container_id` cleared) from a transport error (daemon unreachable / EPIPE → status untouched, retry next tick). The container-sync cron defers its first tick until `docker.ping()` succeeds, killing the startup-race that previously soft-bricked projects on every dev-server restart. Startup reconciliation also self-heals projects already stuck in `error` whose canonical container `hezo-<companySlug>-<projectSlug>` is alive in Docker, by re-attaching to it.
+`syncContainerStatus` now distinguishes a real terminal signal (HTTP 404 from `docker inspect` → `error` + `container_id` cleared) from a transport error (daemon unreachable / EPIPE → status untouched, retry next tick). The container-sync cron defers its first tick until `docker.ping()` succeeds, killing the startup-race that previously soft-bricked projects on every dev-server restart. Startup reconciliation also self-heals projects already stuck in `error` whose canonical container `hezo-<teamSlug>-<projectSlug>` is alive in Docker, by re-attaching to it.
 
 After successful container provisioning or rebuild, runs that died with `error='container_error'` are automatically re-queued via `container_recovery` wakeups (capped at 50 per project, 24h lookback). Runs that died with `error='container_stopped'` are intentionally left alone — those came from a user-initiated stop where surprise auto-resume would be worse than a missed retry. Sentinel error strings: `container_error`, `container_stopped`, `Orphaned: process no longer running`, `Server restarted while run in flight`.
 
@@ -795,10 +795,10 @@ After successful container provisioning or rebuild, runs that died with `error='
 **What's included:**
 
 - **P1 — `request_credential` MCP tool** (commit `9fa5be6`). Agent posts a `credential_request` comment on an issue; human pastes the value via the issue thread; server encrypts to `secrets`; agent receives a `credential_provided` wakeup. Generic for any kind: API key, SSH key, OAuth token, database URL, webhook secret.
-- **P2 — SSH signing server** (commit `9fa5be6`). Per-run `SshAgentServer` with Unix-socket + loopback-TCP listeners. Agents do `git clone` over SSH using the company's Ed25519 deploy key; private key never leaves the server. `setup_github_repo` MCP tool surfaces the public key in a credential_request comment for one-time human deploy-key onboarding.
+- **P2 — SSH signing server** (commit `9fa5be6`). Per-run `SshAgentServer` with Unix-socket + loopback-TCP listeners. Agents do `git clone` over SSH using the team's Ed25519 deploy key; private key never leaves the server. `setup_github_repo` MCP tool surfaces the public key in a credential_request comment for one-time human deploy-key onboarding.
 - **P2-followup — macOS Docker SSH socket relay** (commit `c9b9be9`). Adds a per-run `socat` bridge baked into the agent base image so the same wire-up works on macOS Docker Desktop (which does not forward `AF_UNIX` bind mounts) and Linux production. Token-authenticated TCP listener on the host; `hezo-run-with-bridge` wrapper inside the container.
-- **P3 — HTTPS MITM egress proxy** (commit `98d63de`). Per-run `http-mitm-proxy` instance allocated against a per-instance CA at `<dataDir>/ca/`. Substitutes `__HEZO_SECRET_<NAME>__` placeholders in request headers and URLs against the `secrets` table scoped to `(company_id, project_id)`. Failures (unknown secret, host not allow-listed, locked master key) return 400 / 403 / 503 to the agent. Audit log records every substitution by name; values never serialised. Falling through to direct egress is **not** an option — failure to bind aborts the run.
-- **P4 — MCP connection persistence** (commit `d1c3f97`). New `mcp_connections` table for SaaS HTTP and local stdio MCP servers, with company / project scope. `add_mcp_connection` / `list_mcp_connections` / `remove_mcp_connection` MCP tools plus REST CRUD. All three runtime adapters (Claude Code, Codex, Gemini) handle both descriptor kinds. SaaS header values support `__HEZO_SECRET_*__` placeholders, substituted by the egress proxy.
+- **P3 — HTTPS MITM egress proxy** (commit `98d63de`). Per-run `http-mitm-proxy` instance allocated against a per-instance CA at `<dataDir>/ca/`. Substitutes `__HEZO_SECRET_<NAME>__` placeholders in request headers and URLs against the `secrets` table scoped to `(team_id, project_id)`. Failures (unknown secret, host not allow-listed, locked master key) return 400 / 403 / 503 to the agent. Audit log records every substitution by name; values never serialised. Falling through to direct egress is **not** an option — failure to bind aborts the run.
+- **P4 — MCP connection persistence** (commit `d1c3f97`). New `mcp_connections` table for SaaS HTTP and local stdio MCP servers, with team / project scope. `add_mcp_connection` / `list_mcp_connections` / `remove_mcp_connection` MCP tools plus REST CRUD. All three runtime adapters (Claude Code, Codex, Gemini) handle both descriptor kinds. SaaS header values support `__HEZO_SECRET_*__` placeholders, substituted by the egress proxy.
 - **P5 — delete `packages/connect`** (commit `1b6387a`). Removes the OAuth relay, oauth-callback / connections routes, GitHub API helpers (kept `parseGitHubUrl`), `connected_platforms` and `slack_connections` tables, `github_key_id` column, `connectUrl` / `connectPublicKey` from app context. The `setup_github_repo` flow becomes the only path for GitHub repos; project settings UI gains an inline "Add Repo" form.
 
 **Detailed reference docs (live in `.dev/`):**
@@ -827,14 +827,14 @@ After successful container provisioning or rebuild, runs that died with `error='
 |-------|-------|----------------|
 | 0 | Hezo Connect | Standalone GitHub OAuth relay, independently testable |
 | 1 | Foundation | Hono + PGlite + migrations + master key + CLI |
-| 2 | Core CRUD | Companies (with types), agents (all 11), issues, projects — all via REST |
+| 2 | Core CRUD | Teams (with types), agents (all 11), issues, projects — all via REST |
 | 3 | GitHub Integration | OAuth flow, token storage, repo validation and cloning |
 | 3.5 | UI Foundation + Core Screens | React app with all CRUD screens for Phases 0–3 APIs, master key gate, board inbox |
 | 4 | Agent Execution + UI | Docker per project, subprocesses, heartbeats, budgets + agent status UI, cost views |
 | 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack Query, real-time updates |
 | 6 | MCP + Skill File + Binary Build | MCP endpoint, skill file + `bun build --compile` single binary, Playwright E2E |
 | 6.5 | Auth + Session Compaction | Custom OAuth auth (board members only), session compaction + login page, account settings |
-| 6.6 | UI Redesign + Agent Onboarding | Company icon rail, unified side menu, tab-based project view, agent onboarding via CEO |
+| 6.6 | UI Redesign + Agent Onboarding | Team icon rail, unified side menu, tab-based project view, agent onboarding via CEO |
 | 6.7 | Job Manager + Audit Log Navigation | cron-async job manager, container sync, audit log route |
 | 7 | Multi-User Roles + Invites | Member roles, scoped permissions, email invites + member management UI |
 | 8 | Adapters + Plugins + UI | Gemini/Codex adapters, plugin system + plugin management UI, runtime selector |

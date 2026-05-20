@@ -10,9 +10,9 @@ test.describe('team summary collapse', () => {
 			freshWorkspace,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height });
-			const { company } = freshWorkspace;
+			const { team } = freshWorkspace;
 
-			await page.goto(`/companies/${company.slug}/agents`);
+			await page.goto(`/teams/${team.slug}/agents`);
 
 			const summaryBox = page.getByTestId('team-summary');
 			await expect(summaryBox).toBeVisible({ timeout: 15000 });
@@ -35,8 +35,8 @@ test.describe('team summary collapse', () => {
 	}
 
 	test('shows attribution caption beneath the summary', async ({ page, freshWorkspace }) => {
-		const { company } = freshWorkspace;
-		await page.goto(`/companies/${company.slug}/agents`);
+		const { team } = freshWorkspace;
+		await page.goto(`/teams/${team.slug}/agents`);
 
 		const caption = page.getByTestId('team-summary-attribution');
 		await expect(caption).toBeVisible({ timeout: 15000 });
@@ -44,8 +44,8 @@ test.describe('team summary collapse', () => {
 	});
 
 	test('shows placeholder when no team summary is set', async ({ page, lightWorkspace }) => {
-		const { company } = lightWorkspace;
-		await page.goto(`/companies/${company.slug}/agents`);
+		const { team } = lightWorkspace;
+		await page.goto(`/teams/${team.slug}/agents`);
 
 		const summaryBox = page.getByTestId('team-summary');
 		await expect(summaryBox).toBeVisible({ timeout: 15000 });

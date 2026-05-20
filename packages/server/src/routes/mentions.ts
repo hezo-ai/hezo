@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 
 export const mentionsRoutes = new Hono<Env>();
 
@@ -14,12 +14,12 @@ interface SearchResult {
 	sublabel?: string;
 }
 
-mentionsRoutes.post('/companies/:companyId/docs/resolve', async (c) => {
-	const access = await requireCompanyAccess(c);
+mentionsRoutes.post('/teams/:teamId/docs/resolve', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const body = await c.req.json<{
 		kb_slugs?: unknown;
@@ -69,8 +69,8 @@ mentionsRoutes.post('/companies/:companyId/docs/resolve', async (c) => {
 		}>(
 			`SELECT slug, title, octet_length(content)::int AS size, updated_at
 			 FROM documents
-			 WHERE type = 'kb_doc' AND company_id = $1 AND LOWER(slug) = ANY($2::text[])`,
-			[companyId, kbSlugs],
+			 WHERE type = 'kb_doc' AND team_id = $1 AND LOWER(slug) = ANY($2::text[])`,
+			[teamId, kbSlugs],
 		);
 		kbDocs = result.rows;
 	}
@@ -95,10 +95,10 @@ mentionsRoutes.post('/companies/:companyId/docs/resolve', async (c) => {
 			 FROM documents pd
 			 JOIN projects p ON p.id = pd.project_id
 			 WHERE pd.type = 'project_doc'
-			   AND pd.company_id = $1
+			   AND pd.team_id = $1
 			   AND LOWER(p.slug) = ANY($2::text[])
 			   AND pd.slug = ANY($3::text[])`,
-			[companyId, slugs, filenames],
+			[teamId, slugs, filenames],
 		);
 		const requested = new Set(
 			projectDocs.map((d) => `${d.project_slug.toLowerCase()}/${d.filename}`),
@@ -111,12 +111,12 @@ mentionsRoutes.post('/companies/:companyId/docs/resolve', async (c) => {
 	return ok(c, { kb_docs: kbDocs, project_docs: resolvedProjectDocs });
 });
 
-mentionsRoutes.get('/companies/:companyId/mentions/search', async (c) => {
-	const access = await requireCompanyAccess(c);
+mentionsRoutes.get('/teams/:teamId/mentions/search', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const q = (c.req.query('q') ?? '').trim();
 	const kind = (c.req.query('kind') ?? 'all') as MentionKind | 'all';
@@ -137,12 +137,12 @@ mentionsRoutes.get('/companies/:companyId/mentions/search', async (c) => {
 			`SELECT ma.slug, ma.title
 			 FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE m.company_id = $1
+			 WHERE m.team_id = $1
 			   AND ma.admin_status = 'enabled'
 			   AND ($2 = '' OR ma.slug ILIKE $3 OR ma.title ILIKE $3)
 			 ORDER BY ma.title
 			 LIMIT $4`,
-			[companyId, q, pattern, perKind],
+			[teamId, q, pattern, perKind],
 		);
 		for (const row of r.rows) {
 			results.push({
@@ -159,11 +159,11 @@ mentionsRoutes.get('/companies/:companyId/mentions/search', async (c) => {
 			`SELECT i.identifier, i.title, p.slug AS project_slug
 			 FROM issues i
 			 JOIN projects p ON p.id = i.project_id
-			 WHERE i.company_id = $1
+			 WHERE i.team_id = $1
 			   AND ($2 = '' OR LOWER(i.identifier) LIKE LOWER($4) OR i.title ILIKE $3)
 			 ORDER BY i.updated_at DESC
 			 LIMIT $5`,
-			[companyId, q, pattern, prefix, perKind],
+			[teamId, q, pattern, prefix, perKind],
 		);
 		for (const row of r.rows) {
 			results.push({
@@ -179,11 +179,11 @@ mentionsRoutes.get('/companies/:companyId/mentions/search', async (c) => {
 		const r = await db.query<{ slug: string; title: string }>(
 			`SELECT slug, title
 			 FROM documents
-			 WHERE type = 'kb_doc' AND company_id = $1
+			 WHERE type = 'kb_doc' AND team_id = $1
 			   AND ($2 = '' OR slug ILIKE $3 OR title ILIKE $3)
 			 ORDER BY title
 			 LIMIT $4`,
-			[companyId, q, pattern, perKind],
+			[teamId, q, pattern, perKind],
 		);
 		for (const row of r.rows) {
 			results.push({
@@ -200,12 +200,12 @@ mentionsRoutes.get('/companies/:companyId/mentions/search', async (c) => {
 			`SELECT pd.slug AS filename, p.slug AS project_slug
 			 FROM documents pd
 			 JOIN projects p ON p.id = pd.project_id
-			 WHERE pd.type = 'project_doc' AND pd.company_id = $1
+			 WHERE pd.type = 'project_doc' AND pd.team_id = $1
 			   AND LOWER(p.slug) = LOWER($4)
 			   AND ($2 = '' OR pd.slug ILIKE $3)
 			 ORDER BY pd.slug
 			 LIMIT $5`,
-			[companyId, q, pattern, projectSlug, perKind],
+			[teamId, q, pattern, projectSlug, perKind],
 		);
 		for (const row of r.rows) {
 			results.push({

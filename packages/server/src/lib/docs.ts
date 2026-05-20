@@ -6,17 +6,9 @@ import { join } from 'node:path';
  */
 export function resolveAgentsMdPath(
 	dataDir: string,
-	companySlug: string,
+	teamSlug: string,
 	projectSlug: string,
 	repoShortName: string,
 ): string {
-	return join(
-		dataDir,
-		'companies',
-		companySlug,
-		'projects',
-		projectSlug,
-		repoShortName,
-		'AGENTS.md',
-	);
+	return join(dataDir, 'teams', teamSlug, 'projects', projectSlug, repoShortName, 'AGENTS.md');
 }

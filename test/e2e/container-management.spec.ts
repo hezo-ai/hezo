@@ -1,21 +1,21 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
+import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Container Management', () => {
 	test('container page renders rebuild button and is reachable from project nav', async ({
 		page,
 	}) => {
 		await authenticate(page);
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 			headers,
 			data: { name: 'Container Project', description: 'Test container management project.' },
 		});
 		const project = ((await projRes.json()) as { data: { slug: string } }).data;
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/container`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/container`);
 		await waitForPageLoad(page);
 
 		await expect(page.getByText(/container|docker|build|start/i).first()).toBeVisible({
@@ -23,7 +23,7 @@ test.describe('Container Management', () => {
 		});
 		await expect(page.getByRole('button', { name: /rebuild/i })).toBeVisible({ timeout: 20000 });
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
 		const containerLink = page.getByRole('link', { name: /container/i });
@@ -39,7 +39,7 @@ test.describe('Container Management', () => {
 		page,
 	}) => {
 		await authenticate(page);
-		const { company } = await createCompanyWithAgents(page);
+		const { team } = await createTeamWithAgents(page);
 
 		const fakeProjects = [
 			{ id: '11111111-1111-1111-1111-000000000001', slug: 'alpha-banner', name: 'Alpha Banner' },
@@ -47,7 +47,7 @@ test.describe('Container Management', () => {
 			{ id: '11111111-1111-1111-1111-000000000003', slug: 'gamma-banner', name: 'Gamma Banner' },
 		].map((p) => ({
 			...p,
-			company_id: company.id,
+			team_id: team.id,
 			issue_prefix: 'AB',
 			description: '',
 			docker_base_image: null,
@@ -61,7 +61,7 @@ test.describe('Container Management', () => {
 			created_at: new Date().toISOString(),
 		}));
 
-		await page.route(`**/api/companies/*/projects`, async (route) => {
+		await page.route(`**/api/teams/*/projects`, async (route) => {
 			if (route.request().method() !== 'GET') return route.continue();
 			await route.fulfill({
 				status: 200,
@@ -81,7 +81,7 @@ test.describe('Container Management', () => {
 			});
 		});
 
-		await page.goto(`/companies/${company.slug}/inbox`);
+		await page.goto(`/teams/${team.slug}/inbox`);
 
 		const banner = page.getByTestId('container-status-banner');
 		await expect(banner).toBeVisible({ timeout: 20000 });

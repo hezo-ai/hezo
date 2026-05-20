@@ -5,10 +5,10 @@ import { getProjectLocator, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 import { provisionContainer } from '../services/containers';
 import { createGitHubRepo, parseGitHubUrl, validateRepoAccess } from '../services/github';
-import { getConnectionForCompany } from '../services/oauth/connection-store';
+import { getConnectionForTeam } from '../services/oauth/connection-store';
 import { enqueueRepoSetupResumeWakeups, finalizePendingRepoSetup } from '../services/repo-setup';
 import { ensureProjectRepos, removeRepoFromWorkspace } from '../services/repo-sync';
 
@@ -16,13 +16,13 @@ const log = logger.child('routes');
 
 export const reposRoutes = new Hono<Env>();
 
-reposRoutes.get('/companies/:companyId/projects/:projectId/repos', async (c) => {
-	const access = await requireCompanyAccess(c);
+reposRoutes.get('/teams/:teamId/projects/:projectId/repos', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	const { teamId } = access;
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const result = await db.query(
@@ -43,19 +43,19 @@ reposRoutes.get('/companies/:companyId/projects/:projectId/repos', async (c) => 
 
 /**
  * Add a GitHub repository to the project. The user must already have an
- * active GitHub OAuth connection for this company; the request supplies its
+ * active GitHub OAuth connection for this team; the request supplies its
  * id, and the server validates access via the corresponding token before
  * recording the repo. Clones run over HTTPS, with the proxy substituting
  * the access-token placeholder at request time.
  */
-reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) => {
-	const access = await requireCompanyAccess(c);
+reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const { companyId } = access;
-	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	const { teamId } = access;
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const body = await c.req.json<{
@@ -93,12 +93,12 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 		return err(c, 'INVALID_REQUEST', 'oauth_connection_id is required', 400);
 	}
 
-	const conn = await getConnectionForCompany(
+	const conn = await getConnectionForTeam(
 		{ db, masterKeyManager },
-		companyId,
+		teamId,
 		body.oauth_connection_id,
 	);
-	if (!conn) return err(c, 'NOT_FOUND', 'oauth connection not found for this company', 404);
+	if (!conn) return err(c, 'NOT_FOUND', 'oauth connection not found for this team', 404);
 	if (conn.provider !== 'github') {
 		return err(c, 'INVALID_REQUEST', 'oauth connection is not for GitHub', 400);
 	}
@@ -184,7 +184,7 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 			becameDesignated = true;
 
 			finalizeResult = await finalizePendingRepoSetup(db, {
-				companyId,
+				teamId,
 				projectId,
 				repoId: insertedRepo.id,
 				repoIdentifier,
@@ -214,8 +214,8 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 				masterKeyManager,
 				{
 					id: projectId,
-					company_id: companyId,
-					companySlug: locator.companySlug,
+					team_id: teamId,
+					teamSlug: locator.teamSlug,
 					projectSlug: locator.slug,
 				},
 				dataDir,
@@ -237,7 +237,7 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 		if (finalizeResult.resolvedApprovalId) {
 			await enqueueRepoSetupResumeWakeups(
 				db,
-				companyId,
+				teamId,
 				insertedRepo.id,
 				finalizeResult.resolvedApprovalId,
 				finalizeResult.deferredWakeups,
@@ -245,30 +245,24 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 		}
 	}
 
-	broadcastChange(c, wsRoom.company(companyId), 'repos', 'INSERT', {
+	broadcastChange(c, wsRoom.team(teamId), 'repos', 'INSERT', {
 		...insertedRepo,
 		is_designated: becameDesignated,
 	} as Record<string, unknown>);
 
 	if (becameDesignated) {
-		broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
+		broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', {
 			id: projectId,
 			designated_repo_id: insertedRepo.id,
 		});
 		if (finalizeResult.approvalRow) {
-			broadcastChange(
-				c,
-				wsRoom.company(companyId),
-				'approvals',
-				'UPDATE',
-				finalizeResult.approvalRow,
-			);
+			broadcastChange(c, wsRoom.team(teamId), 'approvals', 'UPDATE', finalizeResult.approvalRow);
 		}
 		for (const row of finalizeResult.updatedCommentRows) {
-			broadcastChange(c, wsRoom.company(companyId), 'issue_comments', 'UPDATE', row);
+			broadcastChange(c, wsRoom.team(teamId), 'issue_comments', 'UPDATE', row);
 		}
 		for (const row of finalizeResult.systemCommentRows) {
-			broadcastChange(c, wsRoom.company(companyId), 'issue_comments', 'INSERT', row);
+			broadcastChange(c, wsRoom.team(teamId), 'issue_comments', 'INSERT', row);
 		}
 	}
 
@@ -284,13 +278,13 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 	);
 });
 
-reposRoutes.delete('/companies/:companyId/projects/:projectId/repos/:repoId', async (c) => {
-	const access = await requireCompanyAccess(c);
+reposRoutes.delete('/teams/:teamId/projects/:projectId/repos/:repoId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	const { teamId } = access;
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 	const repoId = c.req.param('repoId');
 
@@ -317,30 +311,25 @@ reposRoutes.delete('/companies/:companyId/projects/:projectId/repos/:repoId', as
 		const locator = await getProjectLocator(db, projectId);
 		if (locator) {
 			try {
-				removeRepoFromWorkspace(
-					dataDir,
-					locator.companySlug,
-					locator.slug,
-					result.rows[0].short_name,
-				);
+				removeRepoFromWorkspace(dataDir, locator.teamSlug, locator.slug, result.rows[0].short_name);
 			} catch (error) {
 				log.error(`Failed to clean up workspace for repo ${result.rows[0].short_name}:`, error);
 			}
 		}
 	}
 
-	broadcastChange(c, wsRoom.company(companyId), 'repos', 'DELETE', { id: repoId });
+	broadcastChange(c, wsRoom.team(teamId), 'repos', 'DELETE', { id: repoId });
 	return ok(c, { deleted: true });
 });
 
-reposRoutes.get('/companies/:companyId/oauth-connections/:id/orgs', async (c) => {
-	const access = await requireCompanyAccess(c);
+reposRoutes.get('/teams/:teamId/oauth-connections/:id/orgs', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const conn = await getConnectionForCompany(
+	const conn = await getConnectionForTeam(
 		{ db, masterKeyManager },
-		access.companyId,
+		access.teamId,
 		c.req.param('id'),
 	);
 	if (!conn || conn.provider !== 'github')
@@ -354,17 +343,17 @@ reposRoutes.get('/companies/:companyId/oauth-connections/:id/orgs', async (c) =>
 	return ok(c, orgs);
 });
 
-reposRoutes.get('/companies/:companyId/oauth-connections/:id/repos', async (c) => {
-	const access = await requireCompanyAccess(c);
+reposRoutes.get('/teams/:teamId/oauth-connections/:id/repos', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 	const owner = c.req.query('owner');
 	const query = c.req.query('q') ?? undefined;
 	if (!owner) return err(c, 'INVALID_REQUEST', 'owner query parameter is required', 400);
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const conn = await getConnectionForCompany(
+	const conn = await getConnectionForTeam(
 		{ db, masterKeyManager },
-		access.companyId,
+		access.teamId,
 		c.req.param('id'),
 	);
 	if (!conn || conn.provider !== 'github')
@@ -410,17 +399,17 @@ async function ensureProjectContainerUp(c: Context<Env>, projectId: string): Pro
 
 	const projectRes = await db.query<{
 		id: string;
-		company_id: string;
+		team_id: string;
 		slug: string;
 		docker_base_image: string;
 		container_id: string | null;
 		container_status: string | null;
 		dev_ports: Array<{ container: number; host: number }>;
-		company_slug: string;
+		team_slug: string;
 	}>(
-		`SELECT p.id, p.company_id, p.slug, p.docker_base_image, p.container_id, p.container_status,
-		        p.dev_ports, c.slug AS company_slug
-		 FROM projects p JOIN companies c ON c.id = p.company_id
+		`SELECT p.id, p.team_id, p.slug, p.docker_base_image, p.container_id, p.container_status,
+		        p.dev_ports, c.slug AS team_slug
+		 FROM projects p JOIN teams c ON c.id = p.team_id
 		 WHERE p.id = $1`,
 		[projectId],
 	);
@@ -441,7 +430,7 @@ async function ensureProjectContainerUp(c: Context<Env>, projectId: string): Pro
 				egressCAPath: egressProxy?.caCertPath ?? null,
 			},
 			proj,
-			proj.company_slug,
+			proj.team_slug,
 		);
 	} catch (e) {
 		log.error('Failed to auto-start container after repo add:', e);

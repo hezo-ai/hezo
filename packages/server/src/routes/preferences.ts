@@ -3,24 +3,24 @@ import { Hono } from 'hono';
 import { resolveActorMemberId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 import { getDocument, listRevisions, restoreRevision, upsertDocument } from '../services/documents';
 
 export const preferencesRoutes = new Hono<Env>();
 
-preferencesRoutes.get('/companies/:companyId/preferences', async (c) => {
-	const access = await requireCompanyAccess(c);
+preferencesRoutes.get('/teams/:teamId/preferences', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const doc = await getDocument(c.get('db'), {
-		type: DocumentType.CompanyPreferences,
-		companyId: access.companyId,
+		type: DocumentType.TeamPreferences,
+		teamId: access.teamId,
 	});
 	return ok(c, doc);
 });
 
-preferencesRoutes.patch('/companies/:companyId/preferences', async (c) => {
-	const access = await requireCompanyAccess(c);
+preferencesRoutes.patch('/teams/:teamId/preferences', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
@@ -31,14 +31,14 @@ preferencesRoutes.patch('/companies/:companyId/preferences', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
 
-	const authorMemberId = await resolveActorMemberId(db, auth, access.companyId);
+	const authorMemberId = await resolveActorMemberId(db, auth, access.teamId);
 	const existing = await getDocument(db, {
-		type: DocumentType.CompanyPreferences,
-		companyId: access.companyId,
+		type: DocumentType.TeamPreferences,
+		teamId: access.teamId,
 	});
 
 	const doc = await upsertDocument(db, c.get('wsManager'), {
-		scope: { type: DocumentType.CompanyPreferences, companyId: access.companyId },
+		scope: { type: DocumentType.TeamPreferences, teamId: access.teamId },
 		content: body.content,
 		changeSummary: body.change_summary,
 		authorMemberId,
@@ -47,13 +47,13 @@ preferencesRoutes.patch('/companies/:companyId/preferences', async (c) => {
 	return ok(c, doc, existing ? 200 : 201);
 });
 
-preferencesRoutes.get('/companies/:companyId/preferences/revisions', async (c) => {
-	const access = await requireCompanyAccess(c);
+preferencesRoutes.get('/teams/:teamId/preferences/revisions', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const doc = await getDocument(c.get('db'), {
-		type: DocumentType.CompanyPreferences,
-		companyId: access.companyId,
+		type: DocumentType.TeamPreferences,
+		teamId: access.teamId,
 	});
 	if (!doc) return ok(c, []);
 
@@ -61,8 +61,8 @@ preferencesRoutes.get('/companies/:companyId/preferences/revisions', async (c) =
 	return ok(c, revisions);
 });
 
-preferencesRoutes.post('/companies/:companyId/preferences/restore', async (c) => {
-	const access = await requireCompanyAccess(c);
+preferencesRoutes.post('/teams/:teamId/preferences/restore', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const auth = c.get('auth');
@@ -77,12 +77,12 @@ preferencesRoutes.post('/companies/:companyId/preferences/restore', async (c) =>
 	}
 
 	const doc = await getDocument(db, {
-		type: DocumentType.CompanyPreferences,
-		companyId: access.companyId,
+		type: DocumentType.TeamPreferences,
+		teamId: access.teamId,
 	});
 	if (!doc) return err(c, 'NOT_FOUND', 'Preferences not found', 404);
 
-	const restoredByMemberId = await resolveActorMemberId(db, auth, access.companyId);
+	const restoredByMemberId = await resolveActorMemberId(db, auth, access.teamId);
 	const restored = await restoreRevision(db, c.get('wsManager'), {
 		documentId: doc.id,
 		revisionNumber: body.revision_number,

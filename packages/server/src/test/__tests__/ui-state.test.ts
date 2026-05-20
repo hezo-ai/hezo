@@ -10,8 +10,8 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
-let company2Id: string;
+let teamId: string;
+let team2Id: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -20,19 +20,19 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'UI State Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const company2Res = await app.request('/api/companies', {
+	const team2Res = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'UI State Co 2' }),
 	});
-	company2Id = (await company2Res.json()).data.id;
+	team2Id = (await team2Res.json()).data.id;
 });
 
 afterAll(async () => {
@@ -41,7 +41,7 @@ afterAll(async () => {
 
 describe('UI state', () => {
 	it('GET returns empty object when no settings set', async () => {
-		const res = await app.request(`/api/companies/${companyId}/ui-state`, {
+		const res = await app.request(`/api/teams/${teamId}/ui-state`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -50,7 +50,7 @@ describe('UI state', () => {
 	});
 
 	it('PATCH sets sidebar.team_expanded', async () => {
-		const res = await app.request(`/api/companies/${companyId}/ui-state`, {
+		const res = await app.request(`/api/teams/${teamId}/ui-state`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ sidebar: { team_expanded: false } }),
@@ -61,7 +61,7 @@ describe('UI state', () => {
 	});
 
 	it('GET returns persisted state after PATCH', async () => {
-		const res = await app.request(`/api/companies/${companyId}/ui-state`, {
+		const res = await app.request(`/api/teams/${teamId}/ui-state`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -70,13 +70,13 @@ describe('UI state', () => {
 	});
 
 	it('PATCH merges state without replacing other keys', async () => {
-		await app.request(`/api/companies/${companyId}/ui-state`, {
+		await app.request(`/api/teams/${teamId}/ui-state`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ other_setting: 'hello' }),
 		});
 
-		const res = await app.request(`/api/companies/${companyId}/ui-state`, {
+		const res = await app.request(`/api/teams/${teamId}/ui-state`, {
 			headers: authHeader(token),
 		});
 		const body = await res.json();
@@ -85,7 +85,7 @@ describe('UI state', () => {
 	});
 
 	it('PATCH updates existing nested value', async () => {
-		const res = await app.request(`/api/companies/${companyId}/ui-state`, {
+		const res = await app.request(`/api/teams/${teamId}/ui-state`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ sidebar: { team_expanded: true } }),
@@ -95,20 +95,20 @@ describe('UI state', () => {
 		expect(body.data.sidebar.team_expanded).toBe(true);
 	});
 
-	it('state is per-company', async () => {
-		await app.request(`/api/companies/${company2Id}/ui-state`, {
+	it('state is per-team', async () => {
+		await app.request(`/api/teams/${team2Id}/ui-state`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ sidebar: { team_expanded: false } }),
 		});
 
-		const res1 = await app.request(`/api/companies/${companyId}/ui-state`, {
+		const res1 = await app.request(`/api/teams/${teamId}/ui-state`, {
 			headers: authHeader(token),
 		});
 		const body1 = await res1.json();
 		expect(body1.data.sidebar.team_expanded).toBe(true);
 
-		const res2 = await app.request(`/api/companies/${company2Id}/ui-state`, {
+		const res2 = await app.request(`/api/teams/${team2Id}/ui-state`, {
 			headers: authHeader(token),
 		});
 		const body2 = await res2.json();
@@ -116,20 +116,20 @@ describe('UI state', () => {
 	});
 
 	it('rejects agent auth with 403', async () => {
-		const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Test Agent' }),
 		});
 		const agentId = (await agentRes.json()).data.id;
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 
-		const getRes = await app.request(`/api/companies/${companyId}/ui-state`, {
+		const getRes = await app.request(`/api/teams/${teamId}/ui-state`, {
 			headers: authHeader(agentToken),
 		});
 		expect(getRes.status).toBe(403);
 
-		const patchRes = await app.request(`/api/companies/${companyId}/ui-state`, {
+		const patchRes = await app.request(`/api/teams/${teamId}/ui-state`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ sidebar: { team_expanded: false } }),
@@ -137,11 +137,11 @@ describe('UI state', () => {
 		expect(patchRes.status).toBe(403);
 	});
 
-	it('rejects access to company user is not a member of', async () => {
-		const res = await app.request('/api/companies/00000000-0000-0000-0000-000000000000/ui-state', {
+	it('rejects access to team user is not a member of', async () => {
+		const res = await app.request('/api/teams/00000000-0000-0000-0000-000000000000/ui-state', {
 			headers: authHeader(token),
 		});
-		// Superuser bypasses company access check but has no member_users row
+		// Superuser bypasses team access check but has no member_users row
 		expect(res.status).toBe(403);
 	});
 });

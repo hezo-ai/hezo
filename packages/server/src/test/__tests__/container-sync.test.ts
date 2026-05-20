@@ -19,7 +19,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let db: PGlite;
 let app: Hono<Env>;
 let token: string;
-let companyId: string;
+let teamId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -27,19 +27,19 @@ beforeAll(async () => {
 	app = ctx.app;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
-	const companyTypeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Container Sync Co',
 
-			template_id: companyTypeId,
+			template_id: teamTemplateId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 });
 
 afterAll(async () => {
@@ -55,7 +55,7 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('sets status to error when container does not exist in Docker', async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Ghost Container Project', description: 'Test project.' }),
@@ -82,7 +82,7 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('sets container_error with a helpful message when container is removed', async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Removed Container Project', description: 'Test project.' }),
@@ -109,7 +109,7 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('captures container_last_logs and records container_error when transitioning from running to stopped', async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Exit Capture Project', description: 'Test project.' }),
@@ -160,7 +160,7 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('leaves container_status untouched on transport errors', async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -192,7 +192,7 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('updates status to stopped when container exists but is not running', async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Stopped Container Project', description: 'Test project.' }),
@@ -220,7 +220,7 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('keeps status as running when container is actually running', async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Running Container Project', description: 'Test project.' }),
@@ -248,7 +248,7 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('broadcasts changes when status changes', async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Broadcast Test Project', description: 'Test project.' }),
@@ -269,7 +269,7 @@ describe('syncAllContainerStatuses', () => {
 
 		expect(mockWsManager.broadcast).toHaveBeenCalled();
 		const [room, event] = mockWsManager.broadcast.mock.calls.find(
-			([r]: [string]) => r === wsRoom.company(companyId),
+			([r]: [string]) => r === wsRoom.team(teamId),
 		) || [null, null];
 		expect(room).toBeTruthy();
 		expect(event.type).toBe('row_change');
@@ -280,11 +280,11 @@ describe('syncAllContainerStatuses', () => {
 	it('does not broadcast when status is unchanged', async () => {
 		// Clear all container_ids from previous tests so only this project is synced
 		await db.query(
-			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE company_id = $1',
-			[companyId],
+			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE team_id = $1',
+			[teamId],
 		);
 
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'No Broadcast Project', description: 'Test project.' }),
@@ -316,7 +316,7 @@ describe('provisionContainer broadcasting', () => {
 	let projectId: string;
 
 	beforeAll(async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Provision Broadcast Project', description: 'Test project.' }),
@@ -356,7 +356,7 @@ describe('provisionContainer broadcasting', () => {
 
 		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(1);
 		const [room, event] = mockWsManager.broadcast.mock.calls[0];
-		expect(room).toBe(wsRoom.company(companyId));
+		expect(room).toBe(wsRoom.team(teamId));
 		expect(event.type).toBe('row_change');
 		expect(event.table).toBe('projects');
 		expect(event.action).toBe('UPDATE');
@@ -392,7 +392,7 @@ describe('provisionContainer broadcasting', () => {
 
 		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(1);
 		const [room, event] = mockWsManager.broadcast.mock.calls[0];
-		expect(room).toBe(wsRoom.company(companyId));
+		expect(room).toBe(wsRoom.team(teamId));
 		expect(event.type).toBe('row_change');
 		expect(event.table).toBe('projects');
 		expect(event.action).toBe('UPDATE');
@@ -519,7 +519,7 @@ describe('stopContainerGracefully', () => {
 	let projectId: string;
 
 	beforeAll(async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Stop Test Project', description: 'Test project.' }),
@@ -540,7 +540,7 @@ describe('stopContainerGracefully', () => {
 		await stopContainerGracefully(
 			{ db, docker: mockDocker, dataDir: '', wsManager: mockWsManager },
 			projectId,
-			companyId,
+			teamId,
 			'stop-test-container',
 		);
 
@@ -554,7 +554,7 @@ describe('stopContainerGracefully', () => {
 
 		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(1);
 		const [room, event] = mockWsManager.broadcast.mock.calls[0];
-		expect(room).toBe(wsRoom.company(companyId));
+		expect(room).toBe(wsRoom.team(teamId));
 		expect(event.type).toBe('row_change');
 		expect(event.row.container_status).toBe('stopped');
 	});
@@ -573,7 +573,7 @@ describe('stopContainerGracefully', () => {
 		await stopContainerGracefully(
 			{ db, docker: mockDocker, dataDir: '', wsManager: mockWsManager },
 			projectId,
-			companyId,
+			teamId,
 			'fail-stop-container',
 		);
 
@@ -599,7 +599,7 @@ describe('stopContainerGracefully', () => {
 		await stopContainerGracefully(
 			{ db, docker: mockDocker, dataDir: '' },
 			projectId,
-			companyId,
+			teamId,
 			'no-ws-stop',
 		);
 
@@ -614,11 +614,11 @@ describe('stopContainerGracefully', () => {
 describe('syncAllContainerStatuses with stopping status', () => {
 	it('resolves stopping status to stopped when container is not running', async () => {
 		await db.query(
-			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE company_id = $1',
-			[companyId],
+			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE team_id = $1',
+			[teamId],
 		);
 
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Stopping Sync Project', description: 'Test project.' }),

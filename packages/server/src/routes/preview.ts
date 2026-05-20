@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { resolveProjectId } from '../lib/resolve';
 import { err } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 import { getWorkspacePath } from '../services/workspace';
 
 export const previewRoutes = new Hono<Env>();
@@ -25,14 +25,14 @@ const MIME_TYPES: Record<string, string> = {
 	'.ttf': 'font/ttf',
 };
 
-previewRoutes.get('/companies/:companyId/projects/:projectId/preview/*', async (c) => {
-	const access = await requireCompanyAccess(c);
+previewRoutes.get('/teams/:teamId/projects/:projectId/preview/*', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
-	const { companyId } = access;
-	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	const { teamId } = access;
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	if (!dataDir) {
@@ -40,21 +40,19 @@ previewRoutes.get('/companies/:companyId/projects/:projectId/preview/*', async (
 	}
 
 	const project = await db.query<{ slug: string }>(
-		'SELECT slug FROM projects WHERE id = $1 AND company_id = $2',
-		[projectId, companyId],
+		'SELECT slug FROM projects WHERE id = $1 AND team_id = $2',
+		[projectId, teamId],
 	);
 	if (project.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Project not found', 404);
 	}
 
-	const company = await db.query<{ slug: string }>('SELECT slug FROM companies WHERE id = $1', [
-		companyId,
-	]);
-	if (company.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Company not found', 404);
+	const team = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [teamId]);
+	if (team.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Team not found', 404);
 	}
 
-	const workspacePath = getWorkspacePath(dataDir, company.rows[0].slug, project.rows[0].slug);
+	const workspacePath = getWorkspacePath(dataDir, team.rows[0].slug, project.rows[0].slug);
 	const requestedPath = c.req.path.split('/preview/')[1] || 'index.html';
 	const resolvedPath = resolve(join(workspacePath, requestedPath));
 

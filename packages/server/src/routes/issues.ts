@@ -28,7 +28,7 @@ import {
 import { err, ok } from '../lib/response';
 import type { AuthInfo, Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 import { triggerStatusAutomations } from '../services/issue-automation';
 import {
 	recordAssigneeChange,
@@ -52,12 +52,9 @@ function actorTypeFromAuth(auth: AuthInfo): AuditActorType {
 	return auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Board;
 }
 
-async function buildCreateIssueCaller(
-	c: Context<Env>,
-	companyId: string,
-): Promise<CreateIssueCaller> {
+async function buildCreateIssueCaller(c: Context<Env>, teamId: string): Promise<CreateIssueCaller> {
 	const auth = c.get('auth');
-	const actorMemberId = await resolveAuthActorMemberId(c.get('db'), auth, companyId);
+	const actorMemberId = await resolveAuthActorMemberId(c.get('db'), auth, teamId);
 	const caller: CreateIssueCaller = {
 		actorType: actorTypeFromAuth(auth),
 		actorMemberId,
@@ -72,39 +69,39 @@ async function buildCreateIssueCaller(
 async function wakeAgentIfAssigned(
 	db: PGlite,
 	assigneeId: string | null | undefined,
-	companyId: string,
+	teamId: string,
 	issueId: string,
 ): Promise<void> {
 	if (!assigneeId) return;
 	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
 	if (isAgent.rows.length > 0) {
-		createWakeup(db, assigneeId, companyId, WakeupSource.Assignment, {
+		createWakeup(db, assigneeId, teamId, WakeupSource.Assignment, {
 			issue_id: issueId,
 		}).catch((e) => log.error('Failed to create wakeup for assignment:', e));
 	}
 }
 
-async function resolveActorMemberId(c: Context<Env>, companyId: string): Promise<string | null> {
-	return resolveAuthActorMemberId(c.get('db'), c.get('auth'), companyId);
+async function resolveActorMemberId(c: Context<Env>, teamId: string): Promise<string | null> {
+	return resolveAuthActorMemberId(c.get('db'), c.get('auth'), teamId);
 }
 
 export const issuesRoutes = new Hono<Env>();
 
-issuesRoutes.get('/companies/:companyId/issues', async (c) => {
-	const access = await requireCompanyAccess(c);
+issuesRoutes.get('/teams/:teamId/issues', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const { page, perPage, offset } = parsePagination(c);
 
-	const conditions: string[] = ['i.company_id = $1'];
-	const params: unknown[] = [companyId];
+	const conditions: string[] = ['i.team_id = $1'];
+	const params: unknown[] = [teamId];
 	let idx = 2;
 
 	const rawProjectId = c.req.query('project_id');
 	if (rawProjectId) {
-		const projectId = await resolveProjectId(db, companyId, rawProjectId);
+		const projectId = await resolveProjectId(db, teamId, rawProjectId);
 		if (projectId) {
 			conditions.push(`i.project_id = $${idx}`);
 			params.push(projectId);
@@ -174,7 +171,7 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
 
 	const dataParams = [...params, perPage, offset];
 	const result = await db.query(
-		`SELECT i.id, i.company_id, i.project_id, i.assignee_id, i.parent_issue_id,
+		`SELECT i.id, i.team_id, i.project_id, i.assignee_id, i.parent_issue_id,
             i.number, i.identifier, i.title, i.description, i.status, i.priority,
             i.labels, i.created_at, i.updated_at,
             p.name AS project_name,
@@ -201,18 +198,18 @@ issuesRoutes.get('/companies/:companyId/issues', async (c) => {
 	return c.json({ data: result.rows, meta: buildMeta(page, perPage, total) });
 });
 
-issuesRoutes.post('/companies/:companyId/issues', async (c) => {
-	const access = await requireCompanyAccess(c);
+issuesRoutes.post('/teams/:teamId/issues', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const body = await c.req.json<CreateIssueInput>();
-	const caller = await buildCreateIssueCaller(c, companyId);
+	const caller = await buildCreateIssueCaller(c, teamId);
 
 	try {
-		const issue = await createIssue(db, companyId, body, caller, c.get('wsManager'));
+		const issue = await createIssue(db, teamId, body, caller, c.get('wsManager'));
 		return ok(c, issue, 201);
 	} catch (e) {
 		if (e instanceof CreateIssueError) {
@@ -223,12 +220,12 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 	}
 });
 
-issuesRoutes.post('/companies/:companyId/issues/batch', async (c) => {
-	const access = await requireCompanyAccess(c);
+issuesRoutes.post('/teams/:teamId/issues/batch', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const body = await c.req.json<{ items?: unknown }>();
 	const raw = body.items;
@@ -242,13 +239,13 @@ issuesRoutes.post('/companies/:companyId/issues/batch', async (c) => {
 		return err(c, 'INVALID_REQUEST', `items array may not exceed ${MAX_BATCH_ISSUES} entries`, 400);
 	}
 
-	const caller = await buildCreateIssueCaller(c, companyId);
+	const caller = await buildCreateIssueCaller(c, teamId);
 	const wsManager = c.get('wsManager');
 
 	const results = await Promise.all(
 		raw.map(async (item, index) => {
 			try {
-				const issue = await createIssue(db, companyId, item as CreateIssueInput, caller, wsManager);
+				const issue = await createIssue(db, teamId, item as CreateIssueInput, caller, wsManager);
 				return { index, ok: true as const, issue };
 			} catch (e) {
 				if (e instanceof CreateIssueError) {
@@ -268,19 +265,19 @@ issuesRoutes.post('/companies/:companyId/issues/batch', async (c) => {
 	return ok(c, results, 200);
 });
 
-issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
-	const access = await requireCompanyAccess(c);
+issuesRoutes.get('/teams/:teamId/issues/:issueId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	const { teamId } = access;
+	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const result = await db.query(
 		`SELECT i.*,
             p.name AS project_name, p.slug AS project_slug, p.description AS project_description,
-            co.description AS company_description,
+            co.description AS team_description,
             COALESCE(ma.title, m.display_name) AS assignee_name,
             m.member_type AS assignee_type,
             COALESCE(ma_ps.title, m_ps.display_name) AS progress_summary_updated_by_name,
@@ -292,13 +289,13 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
             ) AS has_active_run
      FROM issues i
      JOIN projects p ON p.id = i.project_id
-     JOIN companies co ON co.id = i.company_id
+     JOIN teams co ON co.id = i.team_id
      LEFT JOIN members m ON m.id = i.assignee_id
      LEFT JOIN member_agents ma ON ma.id = i.assignee_id
      LEFT JOIN members m_ps ON m_ps.id = i.progress_summary_updated_by
      LEFT JOIN member_agents ma_ps ON ma_ps.id = i.progress_summary_updated_by
-     WHERE i.id = $1 AND i.company_id = $2`,
-		[issueId, companyId],
+     WHERE i.id = $1 AND i.team_id = $2`,
+		[issueId, teamId],
 	);
 
 	if (result.rows.length === 0) {
@@ -308,12 +305,12 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-issuesRoutes.post('/companies/:companyId/issues/resolve', async (c) => {
-	const access = await requireCompanyAccess(c);
+issuesRoutes.post('/teams/:teamId/issues/resolve', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const body = await c.req.json<{ identifiers?: unknown }>();
 	const raw = body.identifiers;
@@ -340,19 +337,19 @@ issuesRoutes.post('/companies/:companyId/issues/resolve', async (c) => {
 	}>(
 		`SELECT i.identifier, i.title, p.slug AS project_slug, i.status::text AS status
 		 FROM issues i JOIN projects p ON p.id = i.project_id
-		 WHERE i.company_id = $1 AND LOWER(i.identifier) = ANY($2::text[])`,
-		[companyId, identifiers],
+		 WHERE i.team_id = $1 AND LOWER(i.identifier) = ANY($2::text[])`,
+		[teamId, identifiers],
 	);
 	return ok(c, result.rows);
 });
 
-issuesRoutes.get('/companies/:companyId/issues/:issueId/latest-run', async (c) => {
-	const access = await requireCompanyAccess(c);
+issuesRoutes.get('/teams/:teamId/issues/:issueId/latest-run', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	const { teamId } = access;
+	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const result = await db.query(
@@ -363,10 +360,10 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId/latest-run', async (c) =
 		 FROM heartbeat_runs hr
 		 JOIN issues i ON i.id = hr.issue_id
 		 LEFT JOIN member_agents ma ON ma.id = hr.member_id
-		 WHERE hr.issue_id = $1 AND hr.company_id = $2
+		 WHERE hr.issue_id = $1 AND hr.team_id = $2
 		 ORDER BY hr.started_at DESC
 		 LIMIT 1`,
-		[issueId, companyId],
+		[issueId, teamId],
 	);
 
 	if (result.rows.length === 0) {
@@ -375,13 +372,13 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId/latest-run', async (c) =
 	return ok(c, result.rows[0]);
 });
 
-issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
-	const access = await requireCompanyAccess(c);
+issuesRoutes.patch('/teams/:teamId/issues/:issueId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	const { teamId } = access;
+	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const existing = await db.query<{
@@ -391,8 +388,8 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		project_id: string;
 		assignee_id: string | null;
 	}>(
-		'SELECT id, title, status, project_id, assignee_id FROM issues WHERE id = $1 AND company_id = $2',
-		[issueId, companyId],
+		'SELECT id, title, status, project_id, assignee_id FROM issues WHERE id = $1 AND team_id = $2',
+		[issueId, teamId],
 	);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Issue not found', 404);
@@ -421,7 +418,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	}
 
 	if (body.status === IssueStatus.Done || body.status === IssueStatus.Closed) {
-		const childrenCheck = await assertChildrenAllClosed(db, companyId, issueId);
+		const childrenCheck = await assertChildrenAllClosed(db, teamId, issueId);
 		if (!childrenCheck.ok) {
 			return err(c, 'INVALID_REQUEST', childrenCheck.message, 400);
 		}
@@ -474,7 +471,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		}
 		const opsCheck = await assertOperationsAssignee(
 			db,
-			companyId,
+			teamId,
 			existing.rows[0].project_id,
 			body.assignee_id,
 		);
@@ -526,14 +523,14 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		params,
 	);
 
-	wakeAgentIfAssigned(db, body.assignee_id, companyId, issueId);
+	wakeAgentIfAssigned(db, body.assignee_id, teamId, issueId);
 
-	const actorMemberId = await resolveActorMemberId(c, companyId);
+	const actorMemberId = await resolveActorMemberId(c, teamId);
 
 	if (body.description !== undefined) {
 		recordIssueLinks(
 			db,
-			companyId,
+			teamId,
 			issueId,
 			body.description,
 			actorMemberId,
@@ -544,7 +541,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	if (body.title !== undefined) {
 		recordTitleChange(
 			db,
-			companyId,
+			teamId,
 			issueId,
 			existing.rows[0].title,
 			body.title.trim(),
@@ -556,7 +553,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	if (body.assignee_id !== undefined && body.assignee_id !== existing.rows[0].assignee_id) {
 		recordAssigneeChange(
 			db,
-			companyId,
+			teamId,
 			issueId,
 			existing.rows[0].assignee_id,
 			body.assignee_id,
@@ -568,7 +565,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	if (body.status) {
 		triggerStatusAutomations(
 			db,
-			companyId,
+			teamId,
 			issueId,
 			existing.rows[0].status,
 			body.status,
@@ -588,12 +585,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 					const locator = await getProjectLocator(db, issueInfo.project_id);
 					if (locator) {
 						try {
-							removeIssueWorktrees(
-								dataDir,
-								locator.companySlug,
-								locator.slug,
-								issueInfo.identifier,
-							);
+							removeIssueWorktrees(dataDir, locator.teamSlug, locator.slug, issueInfo.identifier);
 						} catch (error) {
 							log.error(`Failed to clean up worktrees for issue ${issueInfo.identifier}:`, error);
 						}
@@ -605,7 +597,7 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 
 	broadcastChange(
 		c,
-		wsRoom.company(companyId),
+		wsRoom.team(teamId),
 		'issues',
 		'UPDATE',
 		result.rows[0] as Record<string, unknown>,
@@ -613,30 +605,30 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) => {
-	const access = await requireCompanyAccess(c);
+issuesRoutes.post('/teams/:teamId/issues/:issueId/sub-issues', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const parentIssueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	const { teamId } = access;
+	const parentIssueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
 	if (!parentIssueId) return err(c, 'NOT_FOUND', 'Parent issue not found', 404);
 
 	const parent = await db.query<{ project_id: string }>(
-		'SELECT project_id FROM issues WHERE id = $1 AND company_id = $2',
-		[parentIssueId, companyId],
+		'SELECT project_id FROM issues WHERE id = $1 AND team_id = $2',
+		[parentIssueId, teamId],
 	);
 	if (parent.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Parent issue not found', 404);
 	}
 
 	const body = await c.req.json<Omit<CreateIssueInput, 'project_id' | 'parent_issue_id'>>();
-	const caller = await buildCreateIssueCaller(c, companyId);
+	const caller = await buildCreateIssueCaller(c, teamId);
 
 	try {
 		const subIssue = await createIssue(
 			db,
-			companyId,
+			teamId,
 			{
 				...body,
 				project_id: parent.rows[0].project_id,
@@ -655,13 +647,13 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 	}
 });
 
-issuesRoutes.get('/companies/:companyId/issues/:issueId/ancestors', async (c) => {
-	const access = await requireCompanyAccess(c);
+issuesRoutes.get('/teams/:teamId/issues/:issueId/ancestors', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	const { teamId } = access;
+	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const result = await db.query<{
@@ -672,15 +664,15 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId/ancestors', async (c) =>
 	}>(
 		`WITH RECURSIVE chain AS (
 			SELECT id, parent_issue_id, identifier, title, 0 AS depth
-			FROM issues WHERE id = $1 AND company_id = $2
+			FROM issues WHERE id = $1 AND team_id = $2
 			UNION ALL
 			SELECT i.id, i.parent_issue_id, i.identifier, i.title, c.depth + 1
 			FROM issues i
 			JOIN chain c ON c.parent_issue_id = i.id
-			WHERE i.company_id = $2 AND c.depth < 3
+			WHERE i.team_id = $2 AND c.depth < 3
 		)
 		SELECT id, identifier, title, depth FROM chain ORDER BY depth DESC`,
-		[issueId, companyId],
+		[issueId, teamId],
 	);
 	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	return ok(
@@ -691,13 +683,13 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId/ancestors', async (c) =>
 	);
 });
 
-issuesRoutes.get('/companies/:companyId/issues/:issueId/dependencies', async (c) => {
-	const access = await requireCompanyAccess(c);
+issuesRoutes.get('/teams/:teamId/issues/:issueId/dependencies', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	const { teamId } = access;
+	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const result = await db.query(
@@ -713,13 +705,13 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId/dependencies', async (c)
 	return ok(c, result.rows);
 });
 
-issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c) => {
-	const access = await requireCompanyAccess(c);
+issuesRoutes.post('/teams/:teamId/issues/:issueId/dependencies', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	const { teamId } = access;
+	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const body = await c.req.json<{ blocked_by_issue_id: string }>();
 
@@ -727,9 +719,9 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
 		return err(c, 'INVALID_REQUEST', 'blocked_by_issue_id is required', 400);
 	}
 
-	const blockerId = await resolveIssueId(db, companyId, body.blocked_by_issue_id);
+	const blockerId = await resolveIssueId(db, teamId, body.blocked_by_issue_id);
 	if (!blockerId) {
-		return err(c, 'NOT_FOUND', 'Blocking issue not found in this company', 404);
+		return err(c, 'NOT_FOUND', 'Blocking issue not found in this team', 404);
 	}
 
 	if (blockerId === issueId) {
@@ -752,35 +744,35 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
 		return err(c, 'CONFLICT', 'Dependency already exists', 409);
 	}
 
-	const actorMemberId = await resolveActorMemberId(c, companyId);
-	await reconcileBlockedStatus(db, companyId, issueId, actorMemberId, c.get('wsManager'));
+	const actorMemberId = await resolveActorMemberId(c, teamId);
+	await reconcileBlockedStatus(db, teamId, issueId, actorMemberId, c.get('wsManager'));
 
 	return ok(c, result.rows[0], 201);
 });
 
-issuesRoutes.delete('/companies/:companyId/issues/:issueId/dependencies/:depId', async (c) => {
-	const access = await requireCompanyAccess(c);
+issuesRoutes.delete('/teams/:teamId/issues/:issueId/dependencies/:depId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	const { teamId } = access;
+	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const depId = c.req.param('depId');
 
 	const depCheck = await db.query(
 		`SELECT d.id FROM issue_dependencies d
      JOIN issues i ON i.id = d.issue_id
-     WHERE d.id = $1 AND d.issue_id = $2 AND i.company_id = $3`,
-		[depId, issueId, companyId],
+     WHERE d.id = $1 AND d.issue_id = $2 AND i.team_id = $3`,
+		[depId, issueId, teamId],
 	);
 	if (depCheck.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Dependency not found', 404);
 	}
 
 	await db.query('DELETE FROM issue_dependencies WHERE id = $1', [depId]);
-	const actorMemberId = await resolveActorMemberId(c, companyId);
-	await reconcileBlockedStatus(db, companyId, issueId, actorMemberId, c.get('wsManager'));
+	const actorMemberId = await resolveActorMemberId(c, teamId);
+	await reconcileBlockedStatus(db, teamId, issueId, actorMemberId, c.get('wsManager'));
 	await wakeIfReady(db, issueId);
 	return c.json({ data: null }, 200);
 });

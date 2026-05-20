@@ -9,7 +9,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let ceoId: string;
 let architectId: string;
@@ -21,12 +21,12 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -34,9 +34,9 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -47,7 +47,7 @@ beforeAll(async () => {
 	architectId = architect.id;
 	architectSlug = architect.slug;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Filter Test Project', description: 'Test project.' }),
@@ -56,7 +56,7 @@ beforeAll(async () => {
 
 	// Create three issues: two assigned to architect, one to CEO. Mark one of
 	// architect's issues as 'done' so we can verify the status filter.
-	const arch1 = await app.request(`/api/companies/${companyId}/issues`, {
+	const arch1 = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -68,7 +68,7 @@ beforeAll(async () => {
 	const arch1Id = (await arch1.json()).data.id;
 	void arch1Id;
 
-	const arch2 = await app.request(`/api/companies/${companyId}/issues`, {
+	const arch2 = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -79,13 +79,13 @@ beforeAll(async () => {
 	});
 	const arch2Id = (await arch2.json()).data.id;
 
-	await app.request(`/api/companies/${companyId}/issues/${arch2Id}`, {
+	await app.request(`/api/teams/${teamId}/issues/${arch2Id}`, {
 		method: 'PATCH',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ status: 'done' }),
 	});
 
-	await app.request(`/api/companies/${companyId}/issues`, {
+	await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -109,7 +109,7 @@ async function callListIssues(
 		body: JSON.stringify({
 			jsonrpc: '2.0',
 			method: 'tools/call',
-			params: { name: 'list_issues', arguments: { company_id: companyId, ...args } },
+			params: { name: 'list_issues', arguments: { team_id: teamId, ...args } },
 			id: 1,
 		}),
 	});

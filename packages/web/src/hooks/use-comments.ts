@@ -29,17 +29,17 @@ export interface Comment {
 	reactions?: ReactionGroup[];
 }
 
-export function useComments(companyId: string, issueId: string) {
+export function useComments(teamId: string, issueId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'issues', issueId, 'comments'],
+		queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
 		queryFn: () =>
-			api.get<Comment[]>(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+			api.get<Comment[]>(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 				include_tool_calls: 'true',
 			}),
 	});
 }
 
-export function useCreateComment(companyId: string, issueId: string) {
+export function useCreateComment(teamId: string, issueId: string) {
 	return useMutation({
 		mutationFn: (data: {
 			content: string;
@@ -47,24 +47,24 @@ export function useCreateComment(companyId: string, issueId: string) {
 			effort?: string;
 			wake_assignee?: boolean;
 			parent_comment_id?: string;
-		}) => api.post<Comment>(`/api/companies/${companyId}/issues/${issueId}/comments`, data),
+		}) => api.post<Comment>(`/api/teams/${teamId}/issues/${issueId}/comments`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'issues', issueId, 'comments'],
+				queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
 			});
 		},
 	});
 }
 
-export function useChooseOption(companyId: string, issueId: string) {
+export function useChooseOption(teamId: string, issueId: string) {
 	return useMutation({
 		mutationFn: ({ commentId, chosen_id }: { commentId: string; chosen_id: string }) =>
-			api.post(`/api/companies/${companyId}/issues/${issueId}/comments/${commentId}/choose`, {
+			api.post(`/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/choose`, {
 				chosen_id,
 			}),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'issues', issueId, 'comments'],
+				queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
 			}),
 	});
 }
@@ -75,34 +75,34 @@ export interface ReactionMutationResponse {
 	reactions: ReactionGroup[];
 }
 
-export function useAddReaction(companyId: string, issueId: string) {
+export function useAddReaction(teamId: string, issueId: string) {
 	return useMutation({
 		mutationFn: ({ commentId, kind }: { commentId: string; kind: string }) =>
 			api.put<ReactionMutationResponse>(
-				`/api/companies/${companyId}/issues/${issueId}/comments/${commentId}/reactions/${kind}`,
+				`/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/reactions/${kind}`,
 				{},
 			),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'issues', issueId, 'comments'],
+				queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
 			}),
 	});
 }
 
-export function useRemoveReaction(companyId: string, issueId: string) {
+export function useRemoveReaction(teamId: string, issueId: string) {
 	return useMutation({
 		mutationFn: ({ commentId, kind }: { commentId: string; kind: string }) =>
 			api.delete<ReactionMutationResponse>(
-				`/api/companies/${companyId}/issues/${issueId}/comments/${commentId}/reactions/${kind}`,
+				`/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/reactions/${kind}`,
 			),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'issues', issueId, 'comments'],
+				queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
 			}),
 	});
 }
 
-export function useFulfillCredential(companyId: string, issueId: string) {
+export function useFulfillCredential(teamId: string, issueId: string) {
 	return useMutation({
 		mutationFn: ({
 			commentId,
@@ -113,13 +113,13 @@ export function useFulfillCredential(companyId: string, issueId: string) {
 			value?: string;
 			confirmed?: boolean;
 		}) =>
-			api.post(
-				`/api/companies/${companyId}/issues/${issueId}/comments/${commentId}/fulfill-credential`,
-				{ value, confirmed },
-			),
+			api.post(`/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/fulfill-credential`, {
+				value,
+				confirmed,
+			}),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'issues', issueId, 'comments'],
+				queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
 			}),
 	});
 }

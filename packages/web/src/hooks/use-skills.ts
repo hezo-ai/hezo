@@ -4,7 +4,7 @@ import { queryClient } from '../lib/query-client';
 
 export interface Skill {
 	id: string;
-	company_id: string;
+	team_id: string;
 	name: string;
 	slug: string;
 	description: string;
@@ -21,47 +21,44 @@ export interface SkillDetail extends Skill {
 	content: string;
 }
 
-export function useSkills(companyId: string) {
+export function useSkills(teamId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'skills'],
-		queryFn: () => api.get<Skill[]>(`/api/companies/${companyId}/skills`),
+		queryKey: ['teams', teamId, 'skills'],
+		queryFn: () => api.get<Skill[]>(`/api/teams/${teamId}/skills`),
 	});
 }
 
-export function useSkillDetail(companyId: string, slug: string | null) {
+export function useSkillDetail(teamId: string, slug: string | null) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'skills', slug],
-		queryFn: () => api.get<SkillDetail>(`/api/companies/${companyId}/skills/${slug}`),
+		queryKey: ['teams', teamId, 'skills', slug],
+		queryFn: () => api.get<SkillDetail>(`/api/teams/${teamId}/skills/${slug}`),
 		enabled: slug !== null,
 	});
 }
 
-export function useCreateSkill(companyId: string) {
+export function useCreateSkill(teamId: string) {
 	return useMutation({
 		mutationFn: (data: {
 			name: string;
 			source_url: string;
 			description?: string;
 			tags?: string[];
-		}) => api.post<SkillDetail>(`/api/companies/${companyId}/skills`, data),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'skills'] }),
+		}) => api.post<SkillDetail>(`/api/teams/${teamId}/skills`, data),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] }),
 	});
 }
 
-export function useSyncSkill(companyId: string) {
+export function useSyncSkill(teamId: string) {
 	return useMutation({
 		mutationFn: (slug: string) =>
-			api.post<SkillDetail>(`/api/companies/${companyId}/skills/${slug}/sync`, {}),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'skills'] }),
+			api.post<SkillDetail>(`/api/teams/${teamId}/skills/${slug}/sync`, {}),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] }),
 	});
 }
 
-export function useDeleteSkill(companyId: string) {
+export function useDeleteSkill(teamId: string) {
 	return useMutation({
-		mutationFn: (slug: string) => api.delete(`/api/companies/${companyId}/skills/${slug}`),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'skills'] }),
+		mutationFn: (slug: string) => api.delete(`/api/teams/${teamId}/skills/${slug}`),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] }),
 	});
 }

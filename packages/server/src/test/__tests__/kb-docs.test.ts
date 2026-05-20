@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -16,12 +16,12 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'KB Test Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 });
 
 afterAll(async () => {
@@ -30,7 +30,7 @@ afterAll(async () => {
 
 describe('KB docs CRUD', () => {
 	it('creates a KB doc', async () => {
-		const res = await app.request(`/api/companies/${companyId}/kb-docs`, {
+		const res = await app.request(`/api/teams/${teamId}/kb-docs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -46,7 +46,7 @@ describe('KB docs CRUD', () => {
 	});
 
 	it('lists KB docs', async () => {
-		const res = await app.request(`/api/companies/${companyId}/kb-docs`, {
+		const res = await app.request(`/api/teams/${teamId}/kb-docs`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -57,7 +57,7 @@ describe('KB docs CRUD', () => {
 	});
 
 	it('gets a KB doc by slug', async () => {
-		const res = await app.request(`/api/companies/${companyId}/kb-docs/coding-standards.md`, {
+		const res = await app.request(`/api/teams/${teamId}/kb-docs/coding-standards.md`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -67,14 +67,14 @@ describe('KB docs CRUD', () => {
 	});
 
 	it('returns 404 for non-existent slug', async () => {
-		const res = await app.request(`/api/companies/${companyId}/kb-docs/non-existent.md`, {
+		const res = await app.request(`/api/teams/${teamId}/kb-docs/non-existent.md`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(404);
 	});
 
 	it('updates a KB doc and creates revision', async () => {
-		const res = await app.request(`/api/companies/${companyId}/kb-docs/coding-standards.md`, {
+		const res = await app.request(`/api/teams/${teamId}/kb-docs/coding-standards.md`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -87,10 +87,9 @@ describe('KB docs CRUD', () => {
 		expect(body.data.content).toContain('functional patterns');
 
 		// Check revision was created
-		const revRes = await app.request(
-			`/api/companies/${companyId}/kb-docs/coding-standards.md/revisions`,
-			{ headers: authHeader(token) },
-		);
+		const revRes = await app.request(`/api/teams/${teamId}/kb-docs/coding-standards.md/revisions`, {
+			headers: authHeader(token),
+		});
 		expect(revRes.status).toBe(200);
 		const revBody = await revRes.json();
 		expect(revBody.data.length).toBe(1);
@@ -100,7 +99,7 @@ describe('KB docs CRUD', () => {
 
 	it('restores a KB doc to a previous revision', async () => {
 		// Update again to create a second revision
-		await app.request(`/api/companies/${companyId}/kb-docs/coding-standards.md`, {
+		await app.request(`/api/teams/${teamId}/kb-docs/coding-standards.md`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -111,7 +110,7 @@ describe('KB docs CRUD', () => {
 
 		// Restore to revision 1 (original content before first update)
 		const restoreRes = await app.request(
-			`/api/companies/${companyId}/kb-docs/coding-standards.md/restore`,
+			`/api/teams/${teamId}/kb-docs/coding-standards.md/restore`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -123,10 +122,9 @@ describe('KB docs CRUD', () => {
 		expect(restored.data.content).toBe('# Coding Standards\n\nUse TypeScript.');
 
 		// Verify a new revision was created for the pre-restore content
-		const revRes = await app.request(
-			`/api/companies/${companyId}/kb-docs/coding-standards.md/revisions`,
-			{ headers: authHeader(token) },
-		);
+		const revRes = await app.request(`/api/teams/${teamId}/kb-docs/coding-standards.md/revisions`, {
+			headers: authHeader(token),
+		});
 		const revBody = await revRes.json();
 		expect(revBody.data.length).toBe(3);
 		expect(revBody.data[0].change_summary).toBe('Restored to revision 1');
@@ -134,33 +132,30 @@ describe('KB docs CRUD', () => {
 	});
 
 	it('returns 404 when restoring non-existent revision', async () => {
-		const res = await app.request(
-			`/api/companies/${companyId}/kb-docs/coding-standards.md/restore`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ revision_number: 999 }),
-			},
-		);
+		const res = await app.request(`/api/teams/${teamId}/kb-docs/coding-standards.md/restore`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ revision_number: 999 }),
+		});
 		expect(res.status).toBe(404);
 	});
 
 	it('deletes a KB doc', async () => {
 		// Create one to delete
-		await app.request(`/api/companies/${companyId}/kb-docs`, {
+		await app.request(`/api/teams/${teamId}/kb-docs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'To Delete' }),
 		});
 
-		const deleteRes = await app.request(`/api/companies/${companyId}/kb-docs/to-delete.md`, {
+		const deleteRes = await app.request(`/api/teams/${teamId}/kb-docs/to-delete.md`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
 		expect(deleteRes.status).toBe(200);
 
 		// Verify it's gone
-		const getRes = await app.request(`/api/companies/${companyId}/kb-docs/to-delete.md`, {
+		const getRes = await app.request(`/api/teams/${teamId}/kb-docs/to-delete.md`, {
 			headers: authHeader(token),
 		});
 		expect(getRes.status).toBe(404);

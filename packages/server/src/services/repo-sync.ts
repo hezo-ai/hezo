@@ -20,8 +20,8 @@ export interface RepoSyncResult {
 
 export interface ProjectIdentity {
 	id: string;
-	company_id: string;
-	companySlug: string;
+	team_id: string;
+	teamSlug: string;
 	projectSlug: string;
 }
 
@@ -43,7 +43,7 @@ export async function ensureProjectRepos(
 
 	if (repos.rows.length === 0) return result;
 
-	const workspacePath = getWorkspacePath(dataDir, project.companySlug, project.projectSlug);
+	const workspacePath = getWorkspacePath(dataDir, project.teamSlug, project.projectSlug);
 	mkdirSync(workspacePath, { recursive: true });
 
 	const pending: RepoRow[] = [];
@@ -69,27 +69,22 @@ export async function ensureProjectRepos(
 
 	const knownHostsPath = await ensureGithubKnownHosts(dataDir);
 
-	await withHostAgentSocket(
-		sshAgentServer,
-		project.company_id,
-		dataDir,
-		async ({ sshAuthSock }) => {
-			for (const r of pending) {
-				const targetDir = join(workspacePath, r.short_name);
-				logEmit?.('stdout', `→ Cloning ${r.repo_identifier} into ${r.short_name}/`);
-				const clone = await cloneRepo(r.repo_identifier, targetDir, sshAuthSock, knownHostsPath);
-				if (clone.success) {
-					logEmit?.('stdout', `✓ Cloned ${r.short_name}`);
-					result.cloned.push(r.short_name);
-				} else {
-					const errMsg = clone.error ?? 'unknown error';
-					logEmit?.('stderr', `✗ Clone failed for ${r.short_name}: ${errMsg}`);
-					result.failed.push({ short_name: r.short_name, error: errMsg });
-					log.error(`Failed to clone ${r.repo_identifier}`, errMsg);
-				}
+	await withHostAgentSocket(sshAgentServer, project.team_id, dataDir, async ({ sshAuthSock }) => {
+		for (const r of pending) {
+			const targetDir = join(workspacePath, r.short_name);
+			logEmit?.('stdout', `→ Cloning ${r.repo_identifier} into ${r.short_name}/`);
+			const clone = await cloneRepo(r.repo_identifier, targetDir, sshAuthSock, knownHostsPath);
+			if (clone.success) {
+				logEmit?.('stdout', `✓ Cloned ${r.short_name}`);
+				result.cloned.push(r.short_name);
+			} else {
+				const errMsg = clone.error ?? 'unknown error';
+				logEmit?.('stderr', `✗ Clone failed for ${r.short_name}: ${errMsg}`);
+				result.failed.push({ short_name: r.short_name, error: errMsg });
+				log.error(`Failed to clone ${r.repo_identifier}`, errMsg);
 			}
-		},
-	);
+		}
+	});
 
 	return result;
 }
@@ -101,18 +96,18 @@ interface RepoRow {
 
 export function removeRepoFromWorkspace(
 	dataDir: string,
-	companySlug: string,
+	teamSlug: string,
 	projectSlug: string,
 	shortName: string,
 ): void {
 	if (!shortName || shortName.includes('/') || shortName === '..' || shortName === '.') return;
-	const workspacePath = getWorkspacePath(dataDir, companySlug, projectSlug);
+	const workspacePath = getWorkspacePath(dataDir, teamSlug, projectSlug);
 	const repoDir = join(workspacePath, shortName);
 	if (existsSync(repoDir)) {
 		rmSync(repoDir, { recursive: true, force: true });
 	}
 
-	const worktreesRoot = getWorktreesPath(dataDir, companySlug, projectSlug);
+	const worktreesRoot = getWorktreesPath(dataDir, teamSlug, projectSlug);
 	if (!existsSync(worktreesRoot)) return;
 
 	for (const entry of readdirSync(worktreesRoot, { withFileTypes: true })) {
@@ -126,7 +121,7 @@ export function removeRepoFromWorkspace(
 
 export function removeIssueWorktrees(
 	dataDir: string,
-	companySlug: string,
+	teamSlug: string,
 	projectSlug: string,
 	issueIdentifier: string,
 ): void {
@@ -137,7 +132,7 @@ export function removeIssueWorktrees(
 		issueIdentifier === '.'
 	)
 		return;
-	const worktreesRoot = getWorktreesPath(dataDir, companySlug, projectSlug);
+	const worktreesRoot = getWorktreesPath(dataDir, teamSlug, projectSlug);
 	const issueDir = join(worktreesRoot, issueIdentifier);
 	if (existsSync(issueDir)) {
 		rmSync(issueDir, { recursive: true, force: true });

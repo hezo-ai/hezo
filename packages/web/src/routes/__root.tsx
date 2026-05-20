@@ -3,9 +3,9 @@ import { createRootRoute, Outlet, useNavigate, useParams } from '@tanstack/react
 import { ChevronsLeft, ChevronsRight, Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AiProviderSetupModal } from '../components/ai-provider-setup-modal';
-import { CompanyRail } from '../components/company-rail';
-import { CompanySidebar } from '../components/company-sidebar';
 import { MasterKeyGate } from '../components/master-key-gate';
+import { TeamRail } from '../components/team-rail';
+import { TeamSidebar } from '../components/team-sidebar';
 import { SocketProvider } from '../contexts/socket-context';
 import { useAiProviderStatus } from '../hooks/use-ai-providers';
 import { useStatus } from '../hooks/use-status';
@@ -33,7 +33,7 @@ function AppShell() {
 	const { data: status, isLoading } = useStatus();
 	const navigate = useNavigate();
 	const params = useParams({ strict: false }) as Record<string, string>;
-	const companyId = params.companyId;
+	const teamId = params.teamId;
 	const unlocked = status?.masterKeyState === 'unlocked';
 	const hasToken = !!api.getToken();
 
@@ -62,22 +62,22 @@ function AppShell() {
 
 	return (
 		<SocketProvider token={api.getToken()}>
-			<ShellLayout companyId={companyId} />
+			<ShellLayout teamId={teamId} />
 		</SocketProvider>
 	);
 }
 
-function ShellLayout({ companyId }: { companyId: string | undefined }) {
+function ShellLayout({ teamId }: { teamId: string | undefined }) {
 	const [drawerOpen, setDrawerOpen] = useState(false);
 
 	return (
 		<div className="h-screen flex flex-row overflow-hidden">
 			<div className="hidden md:flex">
-				<CompanyRail />
+				<TeamRail />
 			</div>
-			{companyId && (
+			{teamId && (
 				<div className="hidden lg:block">
-					<CompanySidebarShell companyId={companyId} />
+					<TeamSidebarShell teamId={teamId} />
 				</div>
 			)}
 			<main className="flex-1 overflow-auto relative">
@@ -102,11 +102,11 @@ function ShellLayout({ companyId }: { companyId: string | undefined }) {
 					/>
 					<div className="relative flex h-full bg-bg shadow-xl">
 						<div className="md:hidden">
-							<CompanyRail />
+							<TeamRail />
 						</div>
-						{companyId && (
+						{teamId && (
 							<div className="w-[260px] h-full overflow-y-auto py-2 border-r border-border bg-bg">
-								<CompanySidebar companyId={companyId} />
+								<TeamSidebar teamId={teamId} />
 							</div>
 						)}
 						<button
@@ -125,9 +125,9 @@ function ShellLayout({ companyId }: { companyId: string | undefined }) {
 	);
 }
 
-function CompanySidebarShell({ companyId }: { companyId: string }) {
-	const { data: uiState } = useUiState(companyId);
-	const updateUiState = useUpdateUiState(companyId);
+function TeamSidebarShell({ teamId }: { teamId: string }) {
+	const { data: uiState } = useUiState(teamId);
+	const updateUiState = useUpdateUiState(teamId);
 	const collapsed = uiState?.sidebar?.collapsed ?? false;
 
 	return (
@@ -141,7 +141,7 @@ function CompanySidebarShell({ companyId }: { companyId: string }) {
 					className={`w-[260px] h-full overflow-y-auto py-2 ${collapsed ? 'invisible' : ''}`}
 					aria-hidden={collapsed}
 				>
-					<CompanySidebar companyId={companyId} />
+					<TeamSidebar teamId={teamId} />
 				</div>
 			</div>
 			<button

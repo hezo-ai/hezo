@@ -1,6 +1,6 @@
 # SSH signing
 
-A per-run SSH agent server that holds the company's Ed25519 private key and answers SSH agent-protocol requests over both a Unix socket (host-side operations) and a loopback TCP listener (in-container access via a socat bridge). The key is used **only for git commit signing** — agents never see the private key, and GitHub repo access goes through OAuth (see `.dev/oauth.md`), not SSH deploy keys.
+A per-run SSH agent server that holds the team's Ed25519 private key and answers SSH agent-protocol requests over both a Unix socket (host-side operations) and a loopback TCP listener (in-container access via a socat bridge). The key is used **only for git commit signing** — agents never see the private key, and GitHub repo access goes through OAuth (see `.dev/oauth.md`), not SSH deploy keys.
 
 ## Why two listeners
 
@@ -44,7 +44,7 @@ The agent CLI sees a normal Unix socket and is unaware of the relay.
 
 `releaseRunSocket(runId)` closes both listeners, unlinks the Unix socket, and forgets the token.
 
-The protocol implementation handles `MSG_REQUEST_IDENTITIES` (advertises the company's public key) and `MSG_SIGN_REQUEST` (signs the challenge with the matching private key, decrypted lazily from `secrets`). `MSG_FAILURE` is returned for any other message type.
+The protocol implementation handles `MSG_REQUEST_IDENTITIES` (advertises the team's public key) and `MSG_SIGN_REQUEST` (signs the challenge with the matching private key, decrypted lazily from `secrets`). `MSG_FAILURE` is returned for any other message type.
 
 ## Agent runner integration
 
@@ -66,7 +66,7 @@ There is no in-container Unix-socket bind-mount from the host. The previous `<ru
 
 ## Verified-on-GitHub bootstrap
 
-The same Ed25519 key the agent runner uses for in-container signing is auto-registered on GitHub on every successful OAuth connect, as **both** a signing key (`POST /user/ssh_signing_keys` — drives `Verified` badges on commits) and an authentication key (`POST /user/keys` — so SSH `git@github.com:` clone/fetch/push works). Registration is idempotent: GitHub returns 422 "key is already in use" for repeat calls, treated as a no-op. One key per company; reused across every GitHub OAuth connection the company adds.
+The same Ed25519 key the agent runner uses for in-container signing is auto-registered on GitHub on every successful OAuth connect, as **both** a signing key (`POST /user/ssh_signing_keys` — drives `Verified` badges on commits) and an authentication key (`POST /user/keys` — so SSH `git@github.com:` clone/fetch/push works). Registration is idempotent: GitHub returns 422 "key is already in use" for repeat calls, treated as a no-op. One key per team; reused across every GitHub OAuth connection the team adds.
 
 Repo *access* (clone, fetch, push) uses this same key over SSH (`git@github.com:owner/repo.git`). The OAuth token is reserved for REST API calls only (listing orgs/repos, creating repos via the picker).
 

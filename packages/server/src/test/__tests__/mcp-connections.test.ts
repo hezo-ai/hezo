@@ -8,7 +8,7 @@ import { safeClose } from '../helpers';
 import { createTestApp } from '../helpers/app';
 
 let db: PGlite;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let token: string;
 
@@ -17,18 +17,18 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const companyRes = await ctx.app.request('/api/companies', {
+	const teamRes = await ctx.app.request('/api/teams', {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'MCP Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
 	const projectRow = await db.query<{ id: string }>(
-		`INSERT INTO projects (company_id, name, slug, issue_prefix, docker_base_image, container_status)
+		`INSERT INTO projects (team_id, name, slug, issue_prefix, docker_base_image, container_status)
 		 VALUES ($1, 'MCP Project', 'mcp-project', 'MP', 'hezo/agent-base:latest', NULL)
 		 RETURNING id`,
-		[companyId],
+		[teamId],
 	);
 	projectId = projectRow.rows[0].id;
 });
@@ -40,13 +40,13 @@ afterAll(async () => {
 describe('mcp_connections REST routes', () => {
 	it('rejects a saas connection without config.url', async () => {
 		const ctx = await createTestApp();
-		const co = await ctx.app.request('/api/companies', {
+		const co = await ctx.app.request('/api/teams', {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'X' }),
 		});
 		const cid = (await co.json()).data.id;
-		const res = await ctx.app.request(`/api/companies/${cid}/mcp-connections`, {
+		const res = await ctx.app.request(`/api/teams/${cid}/mcp-connections`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'bad', kind: 'saas', config: {} }),
@@ -57,13 +57,13 @@ describe('mcp_connections REST routes', () => {
 
 	it('inserts a saas connection (status=installed) and lists it', async () => {
 		const ctx = await createTestApp();
-		const co = await ctx.app.request('/api/companies', {
+		const co = await ctx.app.request('/api/teams', {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Y' }),
 		});
 		const cid = (await co.json()).data.id;
-		const insert = await ctx.app.request(`/api/companies/${cid}/mcp-connections`, {
+		const insert = await ctx.app.request(`/api/teams/${cid}/mcp-connections`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -77,7 +77,7 @@ describe('mcp_connections REST routes', () => {
 		expect(inserted.data.install_status).toBe('installed');
 		expect(inserted.data.kind).toBe('saas');
 
-		const list = await ctx.app.request(`/api/companies/${cid}/mcp-connections`, {
+		const list = await ctx.app.request(`/api/teams/${cid}/mcp-connections`, {
 			headers: { Authorization: `Bearer ${ctx.token}` },
 		});
 		expect(list.status).toBe(200);
@@ -89,13 +89,13 @@ describe('mcp_connections REST routes', () => {
 
 	it('inserts a local connection with status=pending until the installer marks it', async () => {
 		const ctx = await createTestApp();
-		const co = await ctx.app.request('/api/companies', {
+		const co = await ctx.app.request('/api/teams', {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Z' }),
 		});
 		const cid = (await co.json()).data.id;
-		const res = await ctx.app.request(`/api/companies/${cid}/mcp-connections`, {
+		const res = await ctx.app.request(`/api/teams/${cid}/mcp-connections`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -117,14 +117,11 @@ describe('mcp_connections REST routes', () => {
 describe('loadMcpConnectionDescriptors', () => {
 	it('returns saas connections as http descriptors', async () => {
 		await db.query(
-			`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 			 VALUES ($1, NULL, 'service-a', 'saas', $2::jsonb, 'installed')`,
-			[
-				companyId,
-				JSON.stringify({ url: 'https://service-a.example/mcp', headers: { 'x-key': 'v' } }),
-			],
+			[teamId, JSON.stringify({ url: 'https://service-a.example/mcp', headers: { 'x-key': 'v' } })],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db, companyId, projectId);
+		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId);
 		const a = descriptors.find((d) => d.name === 'service-a');
 		expect(a).toBeDefined();
 		expect(a?.kind).toBe('http');
@@ -136,21 +133,21 @@ describe('loadMcpConnectionDescriptors', () => {
 
 	it('skips local connections that are not yet installed', async () => {
 		await db.query(
-			`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 			 VALUES ($1, NULL, 'pending-local', 'local', $2::jsonb, 'pending')`,
-			[companyId, JSON.stringify({ command: 'npx', args: ['-y', 'pkg'] })],
+			[teamId, JSON.stringify({ command: 'npx', args: ['-y', 'pkg'] })],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db, companyId, projectId);
+		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId);
 		expect(descriptors.find((d) => d.name === 'pending-local')).toBeUndefined();
 	});
 
 	it('returns installed local connections as stdio descriptors', async () => {
 		await db.query(
-			`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 			 VALUES ($1, NULL, 'installed-local', 'local', $2::jsonb, 'installed')`,
-			[companyId, JSON.stringify({ command: '/usr/bin/foo', args: ['x'], env: { K: 'v' } })],
+			[teamId, JSON.stringify({ command: '/usr/bin/foo', args: ['x'], env: { K: 'v' } })],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db, companyId, projectId);
+		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId);
 		const local = descriptors.find((d) => d.name === 'installed-local');
 		expect(local?.kind).toBe('stdio');
 		if (local?.kind === 'stdio') {
@@ -160,18 +157,18 @@ describe('loadMcpConnectionDescriptors', () => {
 		}
 	});
 
-	it('project-scoped connections override company-wide entries with the same name', async () => {
+	it('project-scoped connections override team-wide entries with the same name', async () => {
 		await db.query(
-			`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 			 VALUES ($1, NULL, 'shared', 'saas', $2::jsonb, 'installed')`,
-			[companyId, JSON.stringify({ url: 'https://company-wide.example/mcp' })],
+			[teamId, JSON.stringify({ url: 'https://team-wide.example/mcp' })],
 		);
 		await db.query(
-			`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 			 VALUES ($1, $2, 'shared', 'saas', $3::jsonb, 'installed')`,
-			[companyId, projectId, JSON.stringify({ url: 'https://project-only.example/mcp' })],
+			[teamId, projectId, JSON.stringify({ url: 'https://project-only.example/mcp' })],
 		);
-		const rows = await loadMcpConnectionsForRun(db, companyId, projectId);
+		const rows = await loadMcpConnectionsForRun(db, teamId, projectId);
 		const shared = rows.find((r) => r.name === 'shared');
 		expect((shared?.config as { url: string }).url).toBe('https://project-only.example/mcp');
 	});

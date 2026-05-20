@@ -15,7 +15,7 @@ import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireCompanyAccess, requireCompanyAccessForResource } from '../middleware/auth';
+import { requireTeamAccess, requireTeamAccessForResource } from '../middleware/auth';
 import {
 	enqueueAgentSummaryTask,
 	enqueueAgentTeamContextTask,
@@ -45,7 +45,7 @@ async function applyApprovalSideEffect(
 	const broadcasts: SideEffectBroadcast[] = [];
 	switch (approval.type) {
 		case ApprovalType.Hire: {
-			const companyId = approval.company_id as string;
+			const teamId = approval.team_id as string;
 			const title = (payload.title as string)?.trim();
 			const slug = payload.slug as string;
 			if (!title || !slug) {
@@ -55,17 +55,17 @@ async function applyApprovalSideEffect(
 			const slugCheck = await db.query(
 				`SELECT ma.id FROM member_agents ma
 				 JOIN members m ON m.id = ma.id
-				 WHERE m.company_id = $1 AND ma.slug = $2`,
-				[companyId, slug],
+				 WHERE m.team_id = $1 AND ma.slug = $2`,
+				[teamId, slug],
 			);
 			if (slugCheck.rows.length > 0) {
-				throw new Error(`cannot materialise hire: slug '${slug}' already exists in this company`);
+				throw new Error(`cannot materialise hire: slug '${slug}' already exists in this team`);
 			}
 
 			const memberResult = await db.query<{ id: string }>(
-				`INSERT INTO members (company_id, member_type, display_name)
+				`INSERT INTO members (team_id, member_type, display_name)
 				 VALUES ($1, $2, $3) RETURNING id`,
-				[companyId, MemberType.Agent, title],
+				[teamId, MemberType.Agent, title],
 			);
 			const memberId = memberResult.rows[0].id;
 
@@ -90,7 +90,7 @@ async function applyApprovalSideEffect(
 			const promptDoc = await upsertDocument(db, undefined, {
 				scope: {
 					type: DocumentType.AgentSystemPrompt,
-					companyId,
+					teamId,
 					memberAgentId: memberId,
 				},
 				content: (payload.system_prompt as string) ?? '',
@@ -120,7 +120,7 @@ async function applyApprovalSideEffect(
 					if (oldStatus) {
 						await recordStatusChange(
 							db,
-							companyId,
+							teamId,
 							issueId,
 							oldStatus,
 							IssueStatus.Done,
@@ -132,7 +132,7 @@ async function applyApprovalSideEffect(
 			}
 
 			const newAgent = await db.query<Record<string, unknown>>(
-				`SELECT m.id, m.company_id, m.display_name, m.created_at,
+				`SELECT m.id, m.team_id, m.display_name, m.created_at,
 				        ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
 				        ma.default_effort, ma.heartbeat_interval_min,
 				        ma.monthly_budget_cents, ma.budget_used_cents, ma.touches_code,
@@ -145,16 +145,16 @@ async function applyApprovalSideEffect(
 				broadcasts.push({ table: 'member_agents', op: 'INSERT', row: newAgent.rows[0] });
 			}
 
-			enqueueAgentSummaryTask(db, companyId, memberId, 'created').catch((e) =>
+			enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
 				log.error('Failed to enqueue agent summary task:', e),
 			);
-			enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
+			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
 				log.error('Failed to enqueue team summary task:', e),
 			);
-			enqueueAgentTeamContextTask(db, companyId, memberId, 'initial').catch((e) =>
+			enqueueAgentTeamContextTask(db, teamId, memberId, 'initial').catch((e) =>
 				log.error('Failed to enqueue team_context task for new agent:', e),
 			);
-			enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added', memberId).catch((e) =>
+			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
 				log.error('Failed to fan out team_context tasks for existing agents:', e),
 			);
 			break;
@@ -165,7 +165,7 @@ async function applyApprovalSideEffect(
 			const doc = await upsertDocument(db, undefined, {
 				scope: {
 					type: DocumentType.KbDoc,
-					companyId: approval.company_id as string,
+					teamId: approval.team_id as string,
 					slug,
 				},
 				title: typeof payload.title === 'string' ? payload.title : undefined,
@@ -192,7 +192,7 @@ async function applyApprovalSideEffect(
 				const doc = await upsertDocument(db, undefined, {
 					scope: {
 						type: DocumentType.ProjectDoc,
-						companyId: approval.company_id as string,
+						teamId: approval.team_id as string,
 						projectId: payload.project_id,
 						slug: payload.filename,
 					},
@@ -208,7 +208,7 @@ async function applyApprovalSideEffect(
 			break;
 		}
 		case ApprovalType.SkillProposal: {
-			const companyId = approval.company_id as string;
+			const teamId = approval.team_id as string;
 			const slug = payload.skill_slug as string;
 			const name = payload.skill_name as string;
 			const content = payload.content as string;
@@ -218,22 +218,14 @@ async function applyApprovalSideEffect(
 
 			// Write to DB (source of truth)
 			const skillResult = await db.query<{ id: string }>(
-				`INSERT INTO skills (company_id, name, slug, description, content, content_hash, created_by_member_id)
+				`INSERT INTO skills (team_id, name, slug, description, content, content_hash, created_by_member_id)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7)
-				 ON CONFLICT (company_id, slug) DO UPDATE SET
+				 ON CONFLICT (team_id, slug) DO UPDATE SET
 				   content = EXCLUDED.content,
 				   content_hash = EXCLUDED.content_hash,
 				   updated_at = now()
 				 RETURNING id`,
-				[
-					companyId,
-					name,
-					slug,
-					(payload.reason as string) ?? '',
-					content,
-					contentHash,
-					requestedBy,
-				],
+				[teamId, name, slug, (payload.reason as string) ?? '', content, contentHash, requestedBy],
 			);
 
 			if (skillResult.rows[0]) {
@@ -251,19 +243,19 @@ async function applyApprovalSideEffect(
 
 export const approvalsRoutes = new Hono<Env>();
 
-approvalsRoutes.get('/companies/:companyId/approvals', async (c) => {
-	const access = await requireCompanyAccess(c);
+approvalsRoutes.get('/teams/:teamId/approvals', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const statusFilter = c.req.query('status') || ApprovalStatus.Pending;
 
 	const result = await db.query(
-		`SELECT a.id, a.company_id, a.type, a.status, a.payload, a.resolution_note,
+		`SELECT a.id, a.team_id, a.type, a.status, a.payload, a.resolution_note,
             a.resolved_at, a.created_at,
-            co.name AS company_name,
-            co.slug AS company_slug,
+            co.name AS team_name,
+            co.slug AS team_slug,
             COALESCE(ma.title, m.display_name) AS requested_by_name,
             a.requested_by_member_id,
             COALESCE(pma.title, pm.display_name) AS payload_member_name,
@@ -272,35 +264,35 @@ approvalsRoutes.get('/companies/:companyId/approvals', async (c) => {
             pp.slug AS payload_project_slug,
             pi.identifier AS payload_issue_identifier
      FROM approvals a
-     JOIN companies co ON co.id = a.company_id
+     JOIN teams co ON co.id = a.team_id
      LEFT JOIN members m ON m.id = a.requested_by_member_id
      LEFT JOIN member_agents ma ON ma.id = a.requested_by_member_id
      LEFT JOIN members pm ON pm.id = (a.payload->>'member_id')::uuid
      LEFT JOIN member_agents pma ON pma.id = pm.id
      LEFT JOIN projects pp ON pp.id = (a.payload->>'project_id')::uuid
      LEFT JOIN issues pi ON pi.id = (a.payload->>'issue_id')::uuid
-     WHERE a.company_id = $1 AND a.status IN (${statusFilter
+     WHERE a.team_id = $1 AND a.status IN (${statusFilter
 				.split(',')
 				.map((_, i) => `$${i + 2}::approval_status`)
 				.join(', ')})
      ORDER BY a.created_at DESC`,
-		[companyId, ...statusFilter.split(',').map((s) => s.trim())],
+		[teamId, ...statusFilter.split(',').map((s) => s.trim())],
 	);
 
 	return ok(c, result.rows);
 });
 
-approvalsRoutes.get('/companies/:companyId/approvals/:approvalId/blocked-tickets', async (c) => {
-	const access = await requireCompanyAccess(c);
+approvalsRoutes.get('/teams/:teamId/approvals/:approvalId/blocked-tickets', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const approvalId = c.req.param('approvalId');
 
 	const approval = await db.query<{ id: string; type: string }>(
-		'SELECT id, type FROM approvals WHERE id = $1 AND company_id = $2',
-		[approvalId, companyId],
+		'SELECT id, type FROM approvals WHERE id = $1 AND team_id = $2',
+		[approvalId, teamId],
 	);
 	if (approval.rows.length === 0) return err(c, 'NOT_FOUND', 'Approval not found', 404);
 	if (approval.rows[0].type !== ApprovalType.DesignatedRepoRequest) {
@@ -351,9 +343,9 @@ approvalsRoutes.get('/companies/:companyId/approvals/:approvalId/blocked-tickets
 			   AND ic.content->>'kind' = 'setup_repo'
 			   AND ic.content->>'approval_id' = $1
 			   AND ic.chosen_option IS NULL
-			   AND i.company_id = $2
+			   AND i.team_id = $2
 			 ORDER BY i.identifier ASC`,
-		[approvalId, companyId],
+		[approvalId, teamId],
 	);
 
 	const tickets = rows.rows.map((r) => ({
@@ -371,12 +363,12 @@ approvalsRoutes.get('/companies/:companyId/approvals/:approvalId/blocked-tickets
 	return ok(c, tickets);
 });
 
-approvalsRoutes.post('/companies/:companyId/approvals', async (c) => {
-	const access = await requireCompanyAccess(c);
+approvalsRoutes.post('/teams/:teamId/approvals', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const body = await c.req.json<{
 		type: string;
@@ -389,15 +381,15 @@ approvalsRoutes.post('/companies/:companyId/approvals', async (c) => {
 	}
 
 	const result = await db.query(
-		`INSERT INTO approvals (company_id, type, requested_by_member_id, payload)
+		`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
      VALUES ($1, $2::approval_type, $3, $4::jsonb)
      RETURNING *`,
-		[companyId, body.type, body.requested_by_member_id, JSON.stringify(body.payload)],
+		[teamId, body.type, body.requested_by_member_id, JSON.stringify(body.payload)],
 	);
 
 	broadcastChange(
 		c,
-		wsRoom.company(companyId),
+		wsRoom.team(teamId),
 		'approvals',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
@@ -409,15 +401,15 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 	const db = c.get('db');
 	const approvalId = c.req.param('approvalId');
 
-	const existing = await db.query<{ status: string; company_id: string }>(
-		'SELECT status, company_id FROM approvals WHERE id = $1',
+	const existing = await db.query<{ status: string; team_id: string }>(
+		'SELECT status, team_id FROM approvals WHERE id = $1',
 		[approvalId],
 	);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Approval not found', 404);
 	}
 
-	const resourceAccess = await requireCompanyAccessForResource(db, c, existing.rows[0].company_id);
+	const resourceAccess = await requireTeamAccessForResource(db, c, existing.rows[0].team_id);
 	if (resourceAccess instanceof Response) return resourceAccess;
 
 	if (existing.rows[0].status !== ApprovalStatus.Pending) {
@@ -452,8 +444,8 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 			const r = await db.query<{ id: string }>(
 				`SELECT m.id FROM members m
 				   JOIN member_users mu ON mu.id = m.id
-				  WHERE mu.user_id = $1 AND m.company_id = $2`,
-				[auth.userId, existing.rows[0].company_id],
+				  WHERE mu.user_id = $1 AND m.team_id = $2`,
+				[auth.userId, existing.rows[0].team_id],
 			);
 			actorMemberId = r.rows[0]?.id ?? null;
 		}
@@ -466,8 +458,8 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 		);
 	}
 
-	if (row.company_id) {
-		const room = wsRoom.company(row.company_id as string);
+	if (row.team_id) {
+		const room = wsRoom.team(row.team_id as string);
 		broadcastChange(c, room, 'approvals', 'UPDATE', row);
 		for (const effect of sideEffects) {
 			broadcastChange(c, room, effect.table, effect.op, effect.row);

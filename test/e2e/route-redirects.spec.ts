@@ -1,9 +1,9 @@
 import { expect, test } from './fixtures';
 
-test('invalid company slug redirects to /companies', async ({ authedPage }) => {
-	await authedPage.goto('/companies/does-not-exist-abc123/issues');
-	await authedPage.waitForURL('**/companies', { timeout: 20000 });
-	expect(new URL(authedPage.url()).pathname).toBe('/companies');
+test('invalid team slug redirects to /teams', async ({ authedPage }) => {
+	await authedPage.goto('/teams/does-not-exist-abc123/issues');
+	await authedPage.waitForURL('**/teams', { timeout: 20000 });
+	expect(new URL(authedPage.url()).pathname).toBe('/teams');
 });
 
 test('fresh instance (unset master key) redirects deep URL to /', async ({ page }) => {
@@ -15,7 +15,7 @@ test('fresh instance (unset master key) redirects deep URL to /', async ({ page 
 		});
 	});
 
-	await page.goto('/companies/foo/projects/bar');
+	await page.goto('/teams/foo/projects/bar');
 	await page.waitForURL((url) => url.pathname === '/', { timeout: 20000 });
 	expect(new URL(page.url()).pathname).toBe('/');
 	await expect(page.getByText('Set Master Key')).toBeVisible();

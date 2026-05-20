@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -16,21 +16,21 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Pref Test Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 });
 
 afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('Company preferences', () => {
+describe('Team preferences', () => {
 	it('returns null when no preferences exist', async () => {
-		const res = await app.request(`/api/companies/${companyId}/preferences`, {
+		const res = await app.request(`/api/teams/${teamId}/preferences`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -39,7 +39,7 @@ describe('Company preferences', () => {
 	});
 
 	it('creates preferences on first PATCH', async () => {
-		const res = await app.request(`/api/companies/${companyId}/preferences`, {
+		const res = await app.request(`/api/teams/${teamId}/preferences`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -52,7 +52,7 @@ describe('Company preferences', () => {
 	});
 
 	it('reads preferences after creation', async () => {
-		const res = await app.request(`/api/companies/${companyId}/preferences`, {
+		const res = await app.request(`/api/teams/${teamId}/preferences`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -61,7 +61,7 @@ describe('Company preferences', () => {
 	});
 
 	it('updates preferences and creates revision', async () => {
-		const res = await app.request(`/api/companies/${companyId}/preferences`, {
+		const res = await app.request(`/api/teams/${teamId}/preferences`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -74,7 +74,7 @@ describe('Company preferences', () => {
 		expect(body.data.content).toContain('dark themes');
 
 		// Check revision was created with previous content
-		const revRes = await app.request(`/api/companies/${companyId}/preferences/revisions`, {
+		const revRes = await app.request(`/api/teams/${teamId}/preferences/revisions`, {
 			headers: authHeader(token),
 		});
 		expect(revRes.status).toBe(200);
@@ -86,14 +86,14 @@ describe('Company preferences', () => {
 	});
 
 	it('returns empty revisions when no preferences exist', async () => {
-		const coRes = await app.request('/api/companies', {
+		const coRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Empty Prefs Co' }),
 		});
 		const emptyCoId = (await coRes.json()).data.id;
 
-		const res = await app.request(`/api/companies/${emptyCoId}/preferences/revisions`, {
+		const res = await app.request(`/api/teams/${emptyCoId}/preferences/revisions`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -101,7 +101,7 @@ describe('Company preferences', () => {
 	});
 
 	it('restores preferences to a prior revision', async () => {
-		await app.request(`/api/companies/${companyId}/preferences`, {
+		await app.request(`/api/teams/${teamId}/preferences`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -110,7 +110,7 @@ describe('Company preferences', () => {
 			}),
 		});
 
-		const restoreRes = await app.request(`/api/companies/${companyId}/preferences/restore`, {
+		const restoreRes = await app.request(`/api/teams/${teamId}/preferences/restore`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ revision_number: 1 }),
@@ -120,7 +120,7 @@ describe('Company preferences', () => {
 		expect(restored.data.content).toContain('functional patterns');
 		expect(restored.data.content).not.toContain('Reverted body');
 
-		const revRes = await app.request(`/api/companies/${companyId}/preferences/revisions`, {
+		const revRes = await app.request(`/api/teams/${teamId}/preferences/revisions`, {
 			headers: authHeader(token),
 		});
 		const revs = (await revRes.json()).data;
@@ -128,7 +128,7 @@ describe('Company preferences', () => {
 	});
 
 	it('returns 404 when restoring an unknown revision number', async () => {
-		const res = await app.request(`/api/companies/${companyId}/preferences/restore`, {
+		const res = await app.request(`/api/teams/${teamId}/preferences/restore`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ revision_number: 9999 }),

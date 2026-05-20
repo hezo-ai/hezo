@@ -11,7 +11,7 @@ export interface StatePayload {
 }
 
 export interface OAuthStatePayload {
-	company_id?: string;
+	team_id?: string;
 	issue_id?: string;
 }
 
@@ -38,7 +38,7 @@ export function verifyConnectState(signedState: string, publicKeyPem: string): S
 }
 
 /**
- * Sign a server-originated OAuth state carrying company_id.
+ * Sign a server-originated OAuth state carrying team_id.
  */
 export async function signOAuthState(
 	payload: OAuthStatePayload,

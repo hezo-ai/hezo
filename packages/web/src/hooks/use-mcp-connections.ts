@@ -4,7 +4,7 @@ import { queryClient } from '../lib/query-client';
 
 export interface McpConnection {
 	id: string;
-	company_id: string;
+	team_id: string;
 	project_id: string | null;
 	name: string;
 	kind: 'saas' | 'local';
@@ -22,32 +22,32 @@ export interface CreateMcpConnectionPayload {
 	project_id?: string;
 }
 
-export function useMcpConnections(companyId: string, projectId?: string) {
+export function useMcpConnections(teamId: string, projectId?: string) {
 	const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
 	return useQuery({
-		queryKey: ['companies', companyId, 'mcp-connections', projectId ?? null],
-		queryFn: () => api.get<McpConnection[]>(`/api/companies/${companyId}/mcp-connections${qs}`),
+		queryKey: ['teams', teamId, 'mcp-connections', projectId ?? null],
+		queryFn: () => api.get<McpConnection[]>(`/api/teams/${teamId}/mcp-connections${qs}`),
 	});
 }
 
-export function useCreateMcpConnection(companyId: string) {
+export function useCreateMcpConnection(teamId: string) {
 	return useMutation({
 		mutationFn: (data: CreateMcpConnectionPayload) =>
-			api.post<McpConnection>(`/api/companies/${companyId}/mcp-connections`, data),
+			api.post<McpConnection>(`/api/teams/${teamId}/mcp-connections`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'mcp-connections'],
+				queryKey: ['teams', teamId, 'mcp-connections'],
 			});
 		},
 	});
 }
 
-export function useDeleteMcpConnection(companyId: string) {
+export function useDeleteMcpConnection(teamId: string) {
 	return useMutation({
-		mutationFn: (id: string) => api.delete(`/api/companies/${companyId}/mcp-connections/${id}`),
+		mutationFn: (id: string) => api.delete(`/api/teams/${teamId}/mcp-connections/${id}`),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'mcp-connections'],
+				queryKey: ['teams', teamId, 'mcp-connections'],
 			});
 		},
 	});

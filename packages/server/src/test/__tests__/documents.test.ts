@@ -12,7 +12,7 @@ import { safeClose } from '../helpers';
 import { createTestApp } from '../helpers/app';
 
 let db: PGlite;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 
 beforeAll(async () => {
@@ -20,13 +20,13 @@ beforeAll(async () => {
 	db = ctx.db;
 
 	const co = await db.query<{ id: string }>(
-		"INSERT INTO companies (name, slug) VALUES ('Doc Service Co', 'doc-service-co') RETURNING id",
+		"INSERT INTO teams (name, slug) VALUES ('Doc Service Co', 'doc-service-co') RETURNING id",
 	);
-	companyId = co.rows[0].id;
+	teamId = co.rows[0].id;
 
 	const proj = await db.query<{ id: string }>(
-		"INSERT INTO projects (company_id, name, slug, issue_prefix) VALUES ($1, 'Doc Service Project', 'ds-proj', 'DS') RETURNING id",
-		[companyId],
+		"INSERT INTO projects (team_id, name, slug, issue_prefix) VALUES ($1, 'Doc Service Project', 'ds-proj', 'DS') RETURNING id",
+		[teamId],
 	);
 	projectId = proj.rows[0].id;
 });
@@ -38,7 +38,7 @@ afterAll(async () => {
 describe('documents service', () => {
 	it('upserts a kb_doc and creates no revision on first insert', async () => {
 		const doc = await upsertDocument(db, undefined, {
-			scope: { type: DocumentType.KbDoc, companyId, slug: 'svc-test' },
+			scope: { type: DocumentType.KbDoc, teamId, slug: 'svc-test' },
 			title: 'Service Test',
 			content: 'first',
 			authorMemberId: null,
@@ -52,7 +52,7 @@ describe('documents service', () => {
 
 	it('creates a revision when content changes', async () => {
 		const initial = await upsertDocument(db, undefined, {
-			scope: { type: DocumentType.KbDoc, companyId, slug: 'svc-test' },
+			scope: { type: DocumentType.KbDoc, teamId, slug: 'svc-test' },
 			content: 'second',
 			changeSummary: 'bumped',
 			authorMemberId: null,
@@ -68,12 +68,12 @@ describe('documents service', () => {
 	it('does not create a revision when content is identical', async () => {
 		const doc = await getDocument(db, {
 			type: DocumentType.KbDoc,
-			companyId,
+			teamId,
 			slug: 'svc-test',
 		});
 		expect(doc).not.toBeNull();
 		await upsertDocument(db, undefined, {
-			scope: { type: DocumentType.KbDoc, companyId, slug: 'svc-test' },
+			scope: { type: DocumentType.KbDoc, teamId, slug: 'svc-test' },
 			content: 'second',
 			authorMemberId: null,
 		});
@@ -85,11 +85,11 @@ describe('documents service', () => {
 	it('restores to a prior revision and snapshots current', async () => {
 		const doc = await getDocument(db, {
 			type: DocumentType.KbDoc,
-			companyId,
+			teamId,
 			slug: 'svc-test',
 		});
 		await upsertDocument(db, undefined, {
-			scope: { type: DocumentType.KbDoc, companyId, slug: 'svc-test' },
+			scope: { type: DocumentType.KbDoc, teamId, slug: 'svc-test' },
 			content: 'third',
 			authorMemberId: null,
 		});
@@ -110,7 +110,7 @@ describe('documents service', () => {
 	it('returns null when restoring a missing revision', async () => {
 		const doc = await getDocument(db, {
 			type: DocumentType.KbDoc,
-			companyId,
+			teamId,
 			slug: 'svc-test',
 		});
 		const result = await restoreRevision(db, undefined, {
@@ -123,7 +123,7 @@ describe('documents service', () => {
 
 	it('scopes project_doc upsert by project_id and treats slug as filename', async () => {
 		const doc = await upsertDocument(db, undefined, {
-			scope: { type: DocumentType.ProjectDoc, companyId, projectId, slug: 'svc-spec.md' },
+			scope: { type: DocumentType.ProjectDoc, teamId, projectId, slug: 'svc-spec.md' },
 			content: 'pd v1',
 			authorMemberId: null,
 		});
@@ -132,27 +132,27 @@ describe('documents service', () => {
 
 		const list = await listDocuments(db, {
 			type: DocumentType.ProjectDoc,
-			companyId,
+			teamId,
 			projectId,
 		});
 		expect(list.some((d) => d.slug === 'svc-spec.md')).toBe(true);
 	});
 
-	it('enforces singleton company_preferences scoping', async () => {
+	it('enforces singleton team_preferences scoping', async () => {
 		await upsertDocument(db, undefined, {
-			scope: { type: DocumentType.CompanyPreferences, companyId },
+			scope: { type: DocumentType.TeamPreferences, teamId },
 			content: 'prefs v1',
 			authorMemberId: null,
 		});
 		await upsertDocument(db, undefined, {
-			scope: { type: DocumentType.CompanyPreferences, companyId },
+			scope: { type: DocumentType.TeamPreferences, teamId },
 			content: 'prefs v2',
 			authorMemberId: null,
 		});
 
 		const all = await db.query<{ count: string }>(
-			"SELECT COUNT(*)::text AS count FROM documents WHERE type = 'company_preferences' AND company_id = $1",
-			[companyId],
+			"SELECT COUNT(*)::text AS count FROM documents WHERE type = 'team_preferences' AND team_id = $1",
+			[teamId],
 		);
 		expect(Number(all.rows[0].count)).toBe(1);
 	});

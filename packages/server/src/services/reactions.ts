@@ -28,24 +28,24 @@ export type ReactionResult = ReactionSuccess | ReactionFailure;
 
 export interface MutateReactionParams {
 	db: PGlite;
-	companyId: string;
+	teamId: string;
 	issueId: string;
 	commentId: string;
 	kind: string;
 	memberId: string;
 }
 
-async function verifyCommentBelongsToIssueAndCompany(
+async function verifyCommentBelongsToIssueAndTeam(
 	db: PGlite,
 	commentId: string,
 	issueId: string,
-	companyId: string,
+	teamId: string,
 ): Promise<boolean> {
 	const row = await db.query<{ id: string }>(
 		`SELECT ic.id FROM issue_comments ic
 		 JOIN issues i ON i.id = ic.issue_id
-		 WHERE ic.id = $1 AND ic.issue_id = $2 AND i.company_id = $3`,
-		[commentId, issueId, companyId],
+		 WHERE ic.id = $1 AND ic.issue_id = $2 AND i.team_id = $3`,
+		[commentId, issueId, teamId],
 	);
 	return row.rows.length > 0;
 }
@@ -84,11 +84,11 @@ async function loadReactionsForComment(
 }
 
 export async function addCommentReaction(params: MutateReactionParams): Promise<ReactionResult> {
-	const { db, companyId, issueId, commentId, kind, memberId } = params;
+	const { db, teamId, issueId, commentId, kind, memberId } = params;
 	if (!isReactionKind(kind)) {
 		return { ok: false, code: 'INVALID_KIND', message: `Unknown reaction kind: ${kind}` };
 	}
-	const exists = await verifyCommentBelongsToIssueAndCompany(db, commentId, issueId, companyId);
+	const exists = await verifyCommentBelongsToIssueAndTeam(db, commentId, issueId, teamId);
 	if (!exists) {
 		return { ok: false, code: 'NOT_FOUND', message: 'Comment not found' };
 	}
@@ -102,11 +102,11 @@ export async function addCommentReaction(params: MutateReactionParams): Promise<
 }
 
 export async function removeCommentReaction(params: MutateReactionParams): Promise<ReactionResult> {
-	const { db, companyId, issueId, commentId, kind, memberId } = params;
+	const { db, teamId, issueId, commentId, kind, memberId } = params;
 	if (!isReactionKind(kind)) {
 		return { ok: false, code: 'INVALID_KIND', message: `Unknown reaction kind: ${kind}` };
 	}
-	const exists = await verifyCommentBelongsToIssueAndCompany(db, commentId, issueId, companyId);
+	const exists = await verifyCommentBelongsToIssueAndTeam(db, commentId, issueId, teamId);
 	if (!exists) {
 		return { ok: false, code: 'NOT_FOUND', message: 'Comment not found' };
 	}

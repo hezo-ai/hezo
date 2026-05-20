@@ -25,7 +25,7 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let architectId: string;
 let productLeadId: string;
@@ -38,26 +38,26 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 	void masterKeyManager;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Trigger Reason Co', template_id: typeId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
 	architectId = agents.find((a) => a.slug === 'architect')!.id;
 	productLeadId = agents.find((a) => a.slug === 'product-lead')!.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Test Project', description: 'x' }),
@@ -77,10 +77,10 @@ async function insertIssue(assigneeId: string, title: string): Promise<string> {
 	);
 	const n = meta.rows[0].number;
 	const res = await db.query<{ id: string }>(
-		`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
+		`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
 		 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
 		 RETURNING id`,
-		[companyId, projectId, assigneeId, n, `${meta.rows[0].issue_prefix}-${n}`, title],
+		[teamId, projectId, assigneeId, n, `${meta.rows[0].issue_prefix}-${n}`, title],
 	);
 	return res.rows[0].id;
 }
@@ -91,10 +91,10 @@ async function insertWakeup(
 	payload: Record<string, unknown>,
 ): Promise<string> {
 	const r = await db.query<{ id: string }>(
-		`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, payload, claimed_at)
+		`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload, claimed_at)
 		 VALUES ($1, $2, $3::wakeup_source, 'completed'::wakeup_status, $4::jsonb, now())
 		 RETURNING id`,
-		[memberId, companyId, source, JSON.stringify(payload)],
+		[memberId, teamId, source, JSON.stringify(payload)],
 	);
 	return r.rows[0].id;
 }
@@ -105,10 +105,10 @@ async function insertRun(
 	issueId: string | null,
 ): Promise<string> {
 	const r = await db.query<{ id: string }>(
-		`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, wakeup_id, status, started_at, finished_at)
+		`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, wakeup_id, status, started_at, finished_at)
 		 VALUES ($1, $2, $3, $4, 'succeeded'::heartbeat_run_status, now() - interval '1 minute', now())
 		 RETURNING id`,
-		[memberId, companyId, issueId, wakeupId],
+		[memberId, teamId, issueId, wakeupId],
 	);
 	return r.rows[0].id;
 }
@@ -128,10 +128,9 @@ async function insertComment(
 }
 
 async function fetchRun(agentId: string, runId: string): Promise<RunRow> {
-	const res = await app.request(
-		`/api/companies/${companyId}/agents/${agentId}/heartbeat-runs/${runId}`,
-		{ headers: authHeader(token) },
-	);
+	const res = await app.request(`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${runId}`, {
+		headers: authHeader(token),
+	});
 	expect(res.status).toBe(200);
 	return (await res.json()).data;
 }
@@ -179,10 +178,10 @@ describe('GET /heartbeat-runs/:runId trigger reason', () => {
 	it('returns null trigger fields for legacy runs without wakeup_id', async () => {
 		const issueId = await insertIssue(architectId, 'Legacy run issue');
 		const r = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at, finished_at)
+			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at, finished_at)
 			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now() - interval '1 minute', now())
 			 RETURNING id`,
-			[architectId, companyId, issueId],
+			[architectId, teamId, issueId],
 		);
 		const run = await fetchRun(architectId, r.rows[0].id);
 		expect(run.trigger_source).toBeNull();

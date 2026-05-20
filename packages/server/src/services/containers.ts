@@ -24,7 +24,7 @@ export type ContainerExitReason = 'container_error' | 'container_stopped';
 
 export interface ContainerTransition {
 	projectId: string;
-	companyId: string;
+	teamId: string;
 	oldStatus: string | null;
 	newStatus: string | null;
 }
@@ -33,7 +33,7 @@ const log = logger.child('containers');
 
 export interface ProjectRow {
 	id: string;
-	company_id: string;
+	team_id: string;
 	slug: string;
 	docker_base_image: string;
 	container_id: string | null;
@@ -133,10 +133,10 @@ export async function captureContainerLogs(
 export async function provisionContainer(
 	deps: ContainerDeps,
 	project: ProjectRow,
-	companySlug: string,
+	teamSlug: string,
 ): Promise<string> {
 	const { db, docker, dataDir, wsManager, masterKeyManager, logs } = deps;
-	const companyId = project.company_id;
+	const teamId = project.team_id;
 
 	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 		ContainerStatus.Creating,
@@ -148,8 +148,8 @@ export async function provisionContainer(
 	const emit = (stream: 'stdout' | 'stderr', text: string) => logs?.emit(streamId, stream, text);
 
 	try {
-		emit('stdout', `→ Preparing workspace for ${companySlug}/${project.slug}`);
-		const projectDir = ensureProjectWorkspace(dataDir, companySlug, project.slug);
+		emit('stdout', `→ Preparing workspace for ${teamSlug}/${project.slug}`);
+		const projectDir = ensureProjectWorkspace(dataDir, teamSlug, project.slug);
 		const workspacePath = join(projectDir, 'workspace');
 		const worktreesPath = join(projectDir, 'worktrees');
 		const previewsPath = join(projectDir, '.previews');
@@ -182,7 +182,7 @@ export async function provisionContainer(
 			]);
 		}
 
-		const containerName = `hezo-${companySlug}-${project.slug}`;
+		const containerName = `hezo-${teamSlug}-${project.slug}`;
 		const extraHosts = ['host.docker.internal:host-gateway'];
 
 		const env = ['HEZO_API_URL=http://host.docker.internal:3100/agent-api'];
@@ -242,8 +242,8 @@ export async function provisionContainer(
 				masterKeyManager,
 				{
 					id: project.id,
-					company_id: companyId,
-					companySlug,
+					team_id: teamId,
+					teamSlug,
 					projectSlug: project.slug,
 				},
 				dataDir,
@@ -265,7 +265,7 @@ export async function provisionContainer(
 				db,
 				docker,
 				containerId: Id,
-				companyId,
+				teamId,
 				projectId: project.id,
 				emit,
 			});
@@ -281,9 +281,9 @@ export async function provisionContainer(
 		}
 
 		emit('stdout', '✓ Container ready');
-		await broadcastProjectUpdate(db, wsManager, companyId, project.id);
+		await broadcastProjectUpdate(db, wsManager, teamId, project.id);
 
-		await requeueContainerKilledRuns(deps, project.id, companyId).catch((e) =>
+		await requeueContainerKilledRuns(deps, project.id, teamId).catch((e) =>
 			log.error('Failed to requeue container-killed runs after provision:', e),
 		);
 
@@ -295,7 +295,7 @@ export async function provisionContainer(
 			'UPDATE projects SET container_status = $1::container_status, container_error = $2 WHERE id = $3',
 			[ContainerStatus.Error, errorMessage, project.id],
 		);
-		await broadcastProjectUpdate(db, wsManager, companyId, project.id);
+		await broadcastProjectUpdate(db, wsManager, teamId, project.id);
 		throw error;
 	}
 }
@@ -303,7 +303,7 @@ export async function provisionContainer(
 export async function teardownContainer(
 	deps: ContainerDeps,
 	projectId: string,
-	companySlug: string,
+	teamSlug: string,
 	projectSlug: string,
 ): Promise<void> {
 	const { db, docker, dataDir } = deps;
@@ -330,13 +330,13 @@ export async function teardownContainer(
 		projectId,
 	]);
 
-	removeProjectWorkspace(dataDir, companySlug, projectSlug);
+	removeProjectWorkspace(dataDir, teamSlug, projectSlug);
 }
 
 export async function stopContainerGracefully(
 	deps: ContainerDeps,
 	projectId: string,
-	companyId: string,
+	teamId: string,
 	containerId: string,
 ): Promise<void> {
 	const { db, docker, wsManager } = deps;
@@ -367,11 +367,11 @@ export async function stopContainerGracefully(
 		exitReason = 'container_error';
 	}
 
-	await failProjectRuns(deps, projectId, companyId, exitReason).catch((e) =>
+	await failProjectRuns(deps, projectId, teamId, exitReason).catch((e) =>
 		log.error('Failed to fail project runs on stop:', e),
 	);
 
-	await broadcastProjectUpdate(db, wsManager, companyId, projectId);
+	await broadcastProjectUpdate(db, wsManager, teamId, projectId);
 }
 
 /**
@@ -402,7 +402,7 @@ export async function verifyContainerWorkspace(
 export async function rebuildContainer(
 	deps: ContainerDeps,
 	project: ProjectRow,
-	companySlug: string,
+	teamSlug: string,
 ): Promise<string> {
 	const { db, docker, logs } = deps;
 	beginProvisionStream(logs, project.id);
@@ -433,7 +433,7 @@ export async function rebuildContainer(
 		}
 	}
 
-	return provisionContainer(deps, project, companySlug);
+	return provisionContainer(deps, project, teamSlug);
 }
 
 export async function syncContainerStatus(
@@ -500,11 +500,11 @@ export async function syncAllContainerStatuses(
 ): Promise<ContainerTransition[]> {
 	const projects = await db.query<{
 		id: string;
-		company_id: string;
+		team_id: string;
 		container_id: string;
 		container_status: string | null;
 	}>(
-		'SELECT id, company_id, container_id, container_status FROM projects WHERE container_id IS NOT NULL',
+		'SELECT id, team_id, container_id, container_status FROM projects WHERE container_id IS NOT NULL',
 	);
 
 	const transitions: ContainerTransition[] = [];
@@ -521,11 +521,11 @@ export async function syncAllContainerStatuses(
 		if (newStatus !== null && newStatus !== oldStatus) {
 			transitions.push({
 				projectId: project.id,
-				companyId: project.company_id,
+				teamId: project.team_id,
 				oldStatus,
 				newStatus,
 			});
-			await broadcastProjectUpdate(db, wsManager, project.company_id, project.id);
+			await broadcastProjectUpdate(db, wsManager, project.team_id, project.id);
 		}
 	}
 
@@ -541,7 +541,7 @@ export async function syncAllContainerStatuses(
 export async function failProjectRuns(
 	deps: ContainerDeps,
 	projectId: string,
-	companyId: string,
+	teamId: string,
 	reason: ContainerExitReason,
 ): Promise<void> {
 	const { db, wsManager } = deps;
@@ -576,7 +576,7 @@ export async function failProjectRuns(
 	);
 
 	for (const run of failedRuns.rows) {
-		broadcastRowChange(wsManager, wsRoom.company(companyId), 'heartbeat_runs', 'UPDATE', {
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'heartbeat_runs', 'UPDATE', {
 			id: run.id,
 			member_id: run.member_id,
 			issue_id: run.issue_id,
@@ -586,7 +586,7 @@ export async function failProjectRuns(
 	}
 
 	for (const memberId of memberIds) {
-		broadcastRowChange(wsManager, wsRoom.company(companyId), 'member_agents', 'UPDATE', {
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
 			id: memberId,
 			runtime_status: AgentRuntimeStatus.Idle,
 		});
@@ -608,7 +608,7 @@ const REQUEUE_LOOKBACK_HOURS = 24;
 export async function requeueContainerKilledRuns(
 	deps: ContainerDeps,
 	projectId: string,
-	companyId: string,
+	teamId: string,
 ): Promise<number> {
 	const { db } = deps;
 
@@ -634,7 +634,7 @@ export async function requeueContainerKilledRuns(
 	);
 
 	for (const run of killed.rows) {
-		await createWakeup(db, run.member_id, companyId, WakeupSource.Timer, {
+		await createWakeup(db, run.member_id, teamId, WakeupSource.Timer, {
 			reason: 'container_recovery',
 			issue_id: run.issue_id,
 			previous_run_id: run.id,

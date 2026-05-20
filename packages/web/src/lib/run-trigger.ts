@@ -13,22 +13,22 @@ function getString(payload: Record<string, unknown> | null, key: string): string
 	return typeof v === 'string' ? v : undefined;
 }
 
-function commentHref(run: HeartbeatRun, companySlug: string): string | undefined {
+function commentHref(run: HeartbeatRun, teamSlug: string): string | undefined {
 	const issueIdentifier = run.trigger_comment_issue_identifier;
 	const projectSlug = run.trigger_comment_project_slug;
 	const commentId = run.trigger_comment_id;
 	if (!issueIdentifier || !projectSlug || !commentId) return undefined;
-	return `/companies/${companySlug}/projects/${projectSlug}/issues/${issueIdentifier}#c-${commentId}`;
+	return `/teams/${teamSlug}/projects/${projectSlug}/issues/${issueIdentifier}#c-${commentId}`;
 }
 
-function issueHref(run: HeartbeatRun, companySlug: string): string | undefined {
+function issueHref(run: HeartbeatRun, teamSlug: string): string | undefined {
 	const issueIdentifier = run.trigger_comment_issue_identifier ?? run.issue_identifier;
 	const projectSlug = run.trigger_comment_project_slug ?? run.project_slug;
 	if (!issueIdentifier || !projectSlug) return undefined;
-	return `/companies/${companySlug}/projects/${projectSlug}/issues/${issueIdentifier}`;
+	return `/teams/${teamSlug}/projects/${projectSlug}/issues/${issueIdentifier}`;
 }
 
-export function formatTriggerReason(run: HeartbeatRun, companySlug: string): TriggerLabel {
+export function formatTriggerReason(run: HeartbeatRun, teamSlug: string): TriggerLabel {
 	const source = run.trigger_source;
 	const issueId = run.trigger_comment_issue_identifier ?? run.issue_identifier;
 	const actor = run.trigger_actor_slug;
@@ -39,27 +39,27 @@ export function formatTriggerReason(run: HeartbeatRun, companySlug: string): Tri
 				return {
 					source,
 					text: `Mentioned by @${actor} in ${issueId}`,
-					href: commentHref(run, companySlug),
+					href: commentHref(run, teamSlug),
 				};
 			}
-			return { source, text: 'Mentioned in a comment', href: commentHref(run, companySlug) };
+			return { source, text: 'Mentioned in a comment', href: commentHref(run, teamSlug) };
 		}
 		case WakeupSource.Reply: {
 			if (actor && issueId) {
 				return {
 					source,
 					text: `Reply from @${actor} in ${issueId}`,
-					href: commentHref(run, companySlug),
+					href: commentHref(run, teamSlug),
 				};
 			}
-			return { source, text: 'Reply to your earlier comment', href: commentHref(run, companySlug) };
+			return { source, text: 'Reply to your earlier comment', href: commentHref(run, teamSlug) };
 		}
 		case WakeupSource.Comment: {
 			if (issueId) {
 				return {
 					source,
 					text: `New comment on ${issueId}`,
-					href: commentHref(run, companySlug) ?? issueHref(run, companySlug),
+					href: commentHref(run, teamSlug) ?? issueHref(run, teamSlug),
 				};
 			}
 			return { source, text: 'New comment on assigned issue' };
@@ -69,14 +69,14 @@ export function formatTriggerReason(run: HeartbeatRun, companySlug: string): Tri
 				return {
 					source,
 					text: `Option chosen on ${issueId}`,
-					href: issueHref(run, companySlug),
+					href: issueHref(run, teamSlug),
 				};
 			}
 			return { source, text: 'Option chosen on assigned issue' };
 		}
 		case WakeupSource.Assignment: {
 			if (issueId) {
-				return { source, text: `Assigned to ${issueId}`, href: issueHref(run, companySlug) };
+				return { source, text: `Assigned to ${issueId}`, href: issueHref(run, teamSlug) };
 			}
 			return { source, text: 'Assigned to an issue' };
 		}

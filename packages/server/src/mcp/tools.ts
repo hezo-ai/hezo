@@ -83,10 +83,10 @@ const registeredTools: ToolDef[] = [];
 // patterns.
 const ISSUE_COLUMNS = ISSUE_COLUMNS_BARE.replace(/[A-Za-z_][A-Za-z_0-9]*/g, 'i.$&');
 
-const SKILL_COLUMNS = `id, company_id, name, slug, description, content, source_url,
+const SKILL_COLUMNS = `id, team_id, name, slug, description, content, source_url,
 	content_hash, created_by_member_id, tags, is_active, created_at, updated_at`;
 
-const APPROVAL_COLUMNS = `id, company_id, type, status, requested_by_member_id,
+const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 	resolution_note, resolved_at, created_at, payload`;
 
 // Cap MCP tool result payloads at 24 000 bytes — comfortably under the
@@ -211,9 +211,9 @@ const MAX_BATCH_AGENT_SYSTEM_PROMPTS = 50;
 async function buildMcpCreateIssueCaller(
 	db: PGlite,
 	auth: AuthInfo,
-	companyId: string,
+	teamId: string,
 ): Promise<CreateIssueCaller> {
-	const actorMemberId = await resolveActorMemberId(db, auth, companyId);
+	const actorMemberId = await resolveActorMemberId(db, auth, teamId);
 	const caller: CreateIssueCaller = {
 		actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Board,
 		actorMemberId,
@@ -240,25 +240,25 @@ function mcpArgsToCreateIssueInput(args: Record<string, unknown>): CreateIssueIn
 }
 
 /**
- * Verify the caller has access to the given company_id.
+ * Verify the caller has access to the given team_id.
  * Returns an error string if access denied, null if allowed.
  */
-async function verifyCompanyAccess(
+async function verifyTeamAccess(
 	db: PGlite,
 	auth: AuthInfo,
-	companyId: string,
+	teamId: string,
 ): Promise<string | null> {
 	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
-		if (auth.companyId !== companyId) return 'Access denied: company mismatch';
+		if (auth.teamId !== teamId) return 'Access denied: team mismatch';
 		return null;
 	}
 	if (auth.type === AuthType.Board) {
 		if (auth.isSuperuser) return null;
 		const result = await db.query(
-			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.company_id = $2',
-			[auth.userId, companyId],
+			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
+			[auth.userId, teamId],
 		);
-		if (result.rows.length === 0) return 'Access denied: not a member of this company';
+		if (result.rows.length === 0) return 'Access denied: not a member of this team';
 		return null;
 	}
 	return 'Access denied';
@@ -273,25 +273,25 @@ export function registerTools(
 ): ToolDef[] {
 	registeredTools.length = 0;
 
-	// Companies
+	// Teams
 	tool(
 		server,
-		'list_companies',
-		'List companies accessible to the caller',
+		'list_teams',
+		'List teams accessible to the caller',
 		{},
 		async (_args, db, auth) => {
 			if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
-				const r = await db.query('SELECT * FROM companies WHERE id = $1', [auth.companyId]);
+				const r = await db.query('SELECT * FROM teams WHERE id = $1', [auth.teamId]);
 				return r.rows;
 			}
 			if (auth.type === AuthType.Board) {
 				if (auth.isSuperuser) {
-					const r = await db.query('SELECT * FROM companies ORDER BY name');
+					const r = await db.query('SELECT * FROM teams ORDER BY name');
 					return r.rows;
 				}
 				const r = await db.query(
-					`SELECT c.* FROM companies c
-					 JOIN members m ON m.company_id = c.id
+					`SELECT c.* FROM teams c
+					 JOIN members m ON m.team_id = c.id
 					 JOIN member_users mu ON mu.id = m.id
 					 WHERE mu.user_id = $1
 					 ORDER BY c.name`,
@@ -306,15 +306,15 @@ export function registerTools(
 
 	tool(
 		server,
-		'get_company',
-		'Get a company by ID',
+		'get_team',
+		'Get a team by ID',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const r = await db.query('SELECT * FROM companies WHERE id = $1', [args.company_id]);
+			const r = await db.query('SELECT * FROM teams WHERE id = $1', [args.team_id]);
 			return r.rows[0] ?? null;
 		},
 		db,
@@ -322,11 +322,11 @@ export function registerTools(
 
 	tool(
 		server,
-		'create_company',
-		'Create a new company (superuser only)',
+		'create_team',
+		'Create a new team (superuser only)',
 		{
-			name: z.string().describe('Company name'),
-			description: z.string().optional().describe('Company description'),
+			name: z.string().describe('Team name'),
+			description: z.string().optional().describe('Team description'),
 		},
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Board || !auth.isSuperuser) {
@@ -337,7 +337,7 @@ export function registerTools(
 				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/^-|-$/g, '');
 			const r = await db.query(
-				`INSERT INTO companies (name, slug, description) VALUES ($1, $2, $3) RETURNING *`,
+				`INSERT INTO teams (name, slug, description) VALUES ($1, $2, $3) RETURNING *`,
 				[args.name, slug, args.description ?? ''],
 			);
 			return r.rows[0];
@@ -349,9 +349,9 @@ export function registerTools(
 	tool(
 		server,
 		'list_issues',
-		'List issues for a company. Returns up to 50 issues ordered by creation date (newest first). Filter by project_id to scope to one project (the common case), and optionally by status (comma-separated) or assignee_id/assignee_slug to narrow further. The Project State block in your system prompt already gives you the active tickets in the current project — only call this if you need older or terminal tickets, a different project, or a specific status filter. Pass excerpt_chars (e.g. 300) to truncate description and rules to triage-sized excerpts; omit for full content.',
+		'List issues for a team. Returns up to 50 issues ordered by creation date (newest first). Filter by project_id to scope to one project (the common case), and optionally by status (comma-separated) or assignee_id/assignee_slug to narrow further. The Project State block in your system prompt already gives you the active tickets in the current project — only call this if you need older or terminal tickets, a different project, or a specific status filter. Pass excerpt_chars (e.g. 300) to truncate description and rules to triage-sized excerpts; omit for full content.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			project_id: z.string().optional().describe('Filter by project ID'),
 			status: z.string().optional().describe('Filter by status (comma-separated)'),
 			assignee_id: z.string().optional().describe('Filter by assignee member ID'),
@@ -369,10 +369,10 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const conditions = ['i.company_id = $1'];
-			const params: unknown[] = [args.company_id];
+			const conditions = ['i.team_id = $1'];
+			const params: unknown[] = [args.team_id];
 			let idx = 2;
 			if (args.project_id) {
 				conditions.push(`i.project_id = $${idx}`);
@@ -391,8 +391,8 @@ export function registerTools(
 				const agent = await db.query<{ id: string }>(
 					`SELECT ma.id FROM member_agents ma
 					 JOIN members m ON m.id = ma.id
-					 WHERE ma.slug = $1 AND m.company_id = $2`,
-					[args.assignee_slug, args.company_id],
+					 WHERE ma.slug = $1 AND m.team_id = $2`,
+					[args.assignee_slug, args.team_id],
 				);
 				if (agent.rows.length === 0) return [];
 				assigneeId = agent.rows[0].id;
@@ -425,15 +425,15 @@ export function registerTools(
 		'get_issue',
 		"Get issue details, including the ticket's declared blockers (upstream — what this ticket is waiting on) and dependents (downstream — tickets that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this ticket is paused until every blocker reaches a terminal status (done, closed, cancelled). The dependents list shows which teammates' tickets will be auto-unblocked when this ticket is marked terminal — you do not need to @-mention them, the auto-wake handles it.",
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			issue_id: z.string().describe('Issue ID'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const r = await db.query(
-				`SELECT ${ISSUE_COLUMNS_BARE} FROM issues i WHERE i.id = $1 AND i.company_id = $2`,
-				[args.issue_id, args.company_id],
+				`SELECT ${ISSUE_COLUMNS_BARE} FROM issues i WHERE i.id = $1 AND i.team_id = $2`,
+				[args.issue_id, args.team_id],
 			);
 			const issue = r.rows[0];
 			if (!issue) return null;
@@ -467,7 +467,7 @@ export function registerTools(
 		'create_issue',
 		'Create a new issue. Use parent_issue_id for sub-issues — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-issues themselves can have sub-issues, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_issue_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			project_id: z.string().describe('Project ID'),
 			title: z.string().describe('Issue title'),
 			description: z.string().optional().describe('Issue description'),
@@ -497,13 +497,13 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			const companyId = args.company_id as string;
-			const caller = await buildMcpCreateIssueCaller(db, auth, companyId);
+			const teamId = args.team_id as string;
+			const caller = await buildMcpCreateIssueCaller(db, auth, teamId);
 			try {
-				return await createIssue(db, companyId, mcpArgsToCreateIssueInput(args), caller, wsManager);
+				return await createIssue(db, teamId, mcpArgsToCreateIssueInput(args), caller, wsManager);
 			} catch (e) {
 				if (e instanceof CreateIssueError) return { error: e.message };
 				throw e;
@@ -517,7 +517,7 @@ export function registerTools(
 		'create_issues',
 		`Create multiple issues in one call (max ${MAX_BATCH_CREATE_ISSUES}). Each item has the same shape as create_issue; per-item errors are returned without aborting the rest. Use this when filing a related set of tickets in one go (planning a feature, splitting a project into sub-issues). For a single issue, use create_issue.`,
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			items: z
 				.array(
 					z.object({
@@ -555,19 +555,19 @@ export function registerTools(
 				.describe(`Up to ${MAX_BATCH_CREATE_ISSUES} items.`),
 		},
 		async (args, db, auth) => {
-			const companyId = args.company_id as string;
-			const denied = await verifyCompanyAccess(db, auth, companyId);
+			const teamId = args.team_id as string;
+			const denied = await verifyTeamAccess(db, auth, teamId);
 			if (denied) return { error: denied };
 
 			const items = args.items as Array<Record<string, unknown>>;
-			const caller = await buildMcpCreateIssueCaller(db, auth, companyId);
+			const caller = await buildMcpCreateIssueCaller(db, auth, teamId);
 
 			const results = await Promise.all(
 				items.map(async (item, index) => {
 					try {
 						const issue = await createIssue(
 							db,
-							companyId,
+							teamId,
 							mcpArgsToCreateIssueInput(item),
 							caller,
 							wsManager,
@@ -597,7 +597,7 @@ export function registerTools(
 		'update_issue',
 		'Update an issue. Agents can use this to change status (including closing), update progress, set rules, and record branch names. Re-opening a closed issue is board-only — once an issue is `closed` only the board can change its status again. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			issue_id: z.string().describe('Issue ID'),
 			title: z.string().optional().describe('New title'),
 			description: z.string().optional().describe('New description'),
@@ -625,12 +625,12 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
 			const currentStatusResult = await db.query<{ status: string }>(
-				'SELECT status FROM issues WHERE id = $1 AND company_id = $2',
-				[args.issue_id, args.company_id],
+				'SELECT status FROM issues WHERE id = $1 AND team_id = $2',
+				[args.issue_id, args.team_id],
 			);
 			const currentStatus = currentStatusResult.rows[0]?.status;
 
@@ -645,7 +645,7 @@ export function registerTools(
 			if (args.status === IssueStatus.Done || args.status === IssueStatus.Closed) {
 				const childrenCheck = await assertChildrenAllClosed(
 					db,
-					args.company_id as string,
+					args.team_id as string,
 					args.issue_id as string,
 				);
 				if (!childrenCheck.ok) return { error: childrenCheck.message };
@@ -672,9 +672,9 @@ export function registerTools(
 				const issueRow = await db.query<{
 					project_id: string;
 					assignee_id: string | null;
-				}>('SELECT project_id, assignee_id FROM issues WHERE id = $1 AND company_id = $2', [
+				}>('SELECT project_id, assignee_id FROM issues WHERE id = $1 AND team_id = $2', [
 					args.issue_id,
-					args.company_id,
+					args.team_id,
 				]);
 				const row = issueRow.rows[0];
 				if (row) {
@@ -684,7 +684,7 @@ export function registerTools(
 					}
 					const opsCheck = await assertOperationsAssignee(
 						db,
-						args.company_id as string,
+						args.team_id as string,
 						row.project_id,
 						args.assignee_id as string,
 					);
@@ -705,7 +705,7 @@ export function registerTools(
 			const params: unknown[] = [];
 			let idx = 1;
 			for (const [key, val] of Object.entries(args)) {
-				if (['company_id', 'issue_id'].includes(key) || val === undefined) continue;
+				if (['team_id', 'issue_id'].includes(key) || val === undefined) continue;
 				if (key === 'status') {
 					sets.push(`status = $${idx}::issue_status`);
 				} else if (key === 'priority') {
@@ -732,9 +732,9 @@ export function registerTools(
 				idx++;
 			}
 			if (sets.length === 0) return { unchanged: true };
-			params.push(args.issue_id, args.company_id);
+			params.push(args.issue_id, args.team_id);
 			const r = await db.query(
-				`UPDATE issues SET ${sets.join(', ')} WHERE id = $${idx} AND company_id = $${idx + 1} RETURNING ${ISSUE_COLUMNS_BARE}`,
+				`UPDATE issues SET ${sets.join(', ')} WHERE id = $${idx} AND team_id = $${idx + 1} RETURNING ${ISSUE_COLUMNS_BARE}`,
 				params,
 			);
 			if (!r.rows[0]) return null;
@@ -744,7 +744,7 @@ export function registerTools(
 			if (args.description !== undefined) {
 				recordIssueLinks(
 					db,
-					args.company_id as string,
+					args.team_id as string,
 					args.issue_id as string,
 					args.description as string,
 					actorMemberId,
@@ -756,7 +756,7 @@ export function registerTools(
 			if (args.status && currentStatus) {
 				triggerStatusAutomations(
 					db,
-					args.company_id as string,
+					args.team_id as string,
 					args.issue_id as string,
 					currentStatus,
 					args.status as string,
@@ -774,7 +774,7 @@ export function registerTools(
 					createWakeup(
 						db,
 						args.assignee_id as string,
-						args.company_id as string,
+						args.team_id as string,
 						WakeupSource.Assignment,
 						{
 							issue_id: args.issue_id,
@@ -793,18 +793,18 @@ export function registerTools(
 		'add_issue_blocker',
 		'Declare that one issue blocks another. The downstream ticket will not start an automatic agent run until the blocker reaches a terminal status (done, closed, cancelled). Use this when you discover that a ticket you have been woken on depends on work that has not landed yet — declare the blocker and end your turn; the system will wake you again when the blocker resolves. Cycles are rejected.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			issue_id: z.string().describe('Issue identifier or UUID that should be blocked'),
 			blocked_by_issue_id: z.string().describe('Issue identifier or UUID of the upstream blocker'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const companyId = args.company_id as string;
-			const issueId = await resolveIssueId(db, companyId, args.issue_id as string);
+			const teamId = args.team_id as string;
+			const issueId = await resolveIssueId(db, teamId, args.issue_id as string);
 			if (!issueId) return { error: 'Issue not found' };
-			const blockerId = await resolveIssueId(db, companyId, args.blocked_by_issue_id as string);
-			if (!blockerId) return { error: 'Blocking issue not found in this company' };
+			const blockerId = await resolveIssueId(db, teamId, args.blocked_by_issue_id as string);
+			if (!blockerId) return { error: 'Blocking issue not found in this team' };
 			if (blockerId === issueId) return { error: 'An issue cannot block itself' };
 			if (await wouldCreateCycle(db, issueId, blockerId)) {
 				return { error: 'Dependency would create a cycle' };
@@ -817,7 +817,7 @@ export function registerTools(
 			);
 			if (r.rows.length === 0) return { error: 'Dependency already exists' };
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			await reconcileBlockedStatus(db, companyId, issueId, actorMemberId, wsManager);
+			await reconcileBlockedStatus(db, teamId, issueId, actorMemberId, wsManager);
 			return r.rows[0];
 		},
 		db,
@@ -828,17 +828,17 @@ export function registerTools(
 		'remove_issue_blocker',
 		"Remove a blocker between two issues. Call this when a dependency that was previously declared no longer applies. If removing this dependency clears the downstream ticket's last open blocker, its assignee is woken automatically.",
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			issue_id: z.string().describe('Issue identifier or UUID that is currently blocked'),
 			blocked_by_issue_id: z.string().describe('Issue identifier or UUID of the blocker to remove'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const companyId = args.company_id as string;
-			const issueId = await resolveIssueId(db, companyId, args.issue_id as string);
+			const teamId = args.team_id as string;
+			const issueId = await resolveIssueId(db, teamId, args.issue_id as string);
 			if (!issueId) return { error: 'Issue not found' };
-			const blockerId = await resolveIssueId(db, companyId, args.blocked_by_issue_id as string);
+			const blockerId = await resolveIssueId(db, teamId, args.blocked_by_issue_id as string);
 			if (!blockerId) return { error: 'Blocking issue not found' };
 			const r = await db.query(
 				'DELETE FROM issue_dependencies WHERE issue_id = $1 AND blocked_by_issue_id = $2 RETURNING id',
@@ -846,7 +846,7 @@ export function registerTools(
 			);
 			if (r.rows.length === 0) return { error: 'Dependency not found' };
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			await reconcileBlockedStatus(db, companyId, issueId, actorMemberId, wsManager);
+			await reconcileBlockedStatus(db, teamId, issueId, actorMemberId, wsManager);
 			await wakeIfReady(db, issueId);
 			return { removed: true };
 		},
@@ -857,18 +857,18 @@ export function registerTools(
 	tool(
 		server,
 		'list_agents',
-		'List agents for a company',
+		'List agents for a team',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const r = await db.query(
 				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug,
 				        ma.monthly_budget_cents, ma.budget_used_cents, ma.runtime_status, ma.admin_status
-				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.company_id = $1 ORDER BY ma.title`,
-				[args.company_id],
+				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.team_id = $1 ORDER BY ma.title`,
+				[args.team_id],
 			);
 			return r.rows;
 		},
@@ -906,18 +906,18 @@ export function registerTools(
 
 			const approval = await db.query<{
 				id: string;
-				company_id: string;
+				team_id: string;
 				type: string;
 				status: string;
 				payload: Record<string, unknown>;
-			}>('SELECT id, company_id, type, status, payload FROM approvals WHERE id = $1', [
+			}>('SELECT id, team_id, type, status, payload FROM approvals WHERE id = $1', [
 				args.approval_id,
 			]);
 			if (approval.rows.length === 0) return { error: 'Approval not found' };
 
 			const row = approval.rows[0];
-			if (row.company_id !== auth.companyId) {
-				return { error: 'Access denied: company mismatch' };
+			if (row.team_id !== auth.teamId) {
+				return { error: 'Access denied: team mismatch' };
 			}
 			if (row.type !== ApprovalType.Hire) {
 				return { error: 'Approval is not a hire request' };
@@ -955,9 +955,9 @@ export function registerTools(
 	tool(
 		server,
 		'list_projects',
-		'List projects for a company. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.',
+		'List projects for a team. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			excerpt_chars: z
 				.number()
 				.int()
@@ -966,12 +966,12 @@ export function registerTools(
 				.describe('When set, truncates description and adds description_truncated/_length'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const r = await db.query<Record<string, unknown>>(
-				`SELECT id, company_id, name, slug, issue_prefix, description, created_at, updated_at
-				 FROM projects WHERE company_id = $1 ORDER BY name`,
-				[args.company_id],
+				`SELECT id, team_id, name, slug, issue_prefix, description, created_at, updated_at
+				 FROM projects WHERE team_id = $1 ORDER BY name`,
+				[args.team_id],
 			);
 			const max = args.excerpt_chars as number | undefined;
 			if (max == null) return r.rows;
@@ -985,7 +985,7 @@ export function registerTools(
 		'create_project',
 		'Create a new project',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			name: z.string().describe('Project name'),
 			description: z.string().optional().describe('Project description'),
 			issue_prefix: z
@@ -994,7 +994,7 @@ export function registerTools(
 				.describe('2–4 uppercase alphanumeric chars; derived from name if omitted'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const slug = (args.name as string)
 				.toLowerCase()
@@ -1002,14 +1002,14 @@ export function registerTools(
 				.replace(/^-|-$/g, '');
 			const prefixResult = await resolveProjectIssuePrefix(
 				db,
-				args.company_id as string,
+				args.team_id as string,
 				args.issue_prefix as string | undefined,
 				args.name as string,
 			);
 			if (!prefixResult.ok) return { error: prefixResult.message };
 			const r = await db.query<{ id: string }>(
-				`INSERT INTO projects (company_id, name, slug, issue_prefix, description) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-				[args.company_id, args.name, slug, prefixResult.prefix, args.description ?? ''],
+				`INSERT INTO projects (team_id, name, slug, issue_prefix, description) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+				[args.team_id, args.name, slug, prefixResult.prefix, args.description ?? ''],
 			);
 			await db.query(
 				'INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)',
@@ -1026,7 +1026,7 @@ export function registerTools(
 		'list_comments',
 		"List comments for an issue. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/issue_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading — when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment.",
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			issue_id: z.string().describe('Issue ID'),
 			before: z
 				.string()
@@ -1042,13 +1042,13 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+			const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND team_id = $2', [
 				args.issue_id,
-				args.company_id,
+				args.team_id,
 			]);
-			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
+			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this team' };
 			const conditions = ['ic.issue_id = $1'];
 			const params: unknown[] = [args.issue_id];
 			if (args.before) {
@@ -1068,7 +1068,7 @@ export function registerTools(
 				 ORDER BY ic.created_at DESC, ic.id DESC LIMIT 50`,
 				params,
 			);
-			const viewerMemberId = await resolveActorMemberId(db, auth, args.company_id as string);
+			const viewerMemberId = await resolveActorMemberId(db, auth, args.team_id as string);
 			const reactionsByComment = await loadReactionsForIssue(
 				db,
 				args.issue_id as string,
@@ -1104,7 +1104,7 @@ export function registerTools(
 		'add_reaction',
 		'React to a comment without waking its author. Use this to acknowledge mentions or signal "seen / picked up" without forcing the original commenter to run again. Prefer this over a follow-up create_comment when you have nothing substantive to add — comments wake the author, reactions do not. Only react when the situation calls for it: a clean handoff to your own new ticket (✓ on the mention), or a brief acknowledgement that a request landed. If you need the original commenter to read something, post a comment instead.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			issue_id: z.string().describe('Issue ID the comment belongs to'),
 			comment_id: z.string().describe('Comment ID to react to'),
 			kind: reactionKindSchema.describe(
@@ -1112,21 +1112,21 @@ export function registerTools(
 			),
 		},
 		async (args, db, auth) => {
-			const companyId = args.company_id as string;
-			const denied = await verifyCompanyAccess(db, auth, companyId);
+			const teamId = args.team_id as string;
+			const denied = await verifyTeamAccess(db, auth, teamId);
 			if (denied) return { error: denied };
-			const memberId = await resolveActorMemberId(db, auth, companyId);
+			const memberId = await resolveActorMemberId(db, auth, teamId);
 			if (!memberId) return { error: 'No member identity for caller' };
 			const result = await addCommentReaction({
 				db,
-				companyId,
+				teamId,
 				issueId: args.issue_id as string,
 				commentId: args.comment_id as string,
 				kind: args.kind as string,
 				memberId,
 			});
 			if (!result.ok) return { error: result.message };
-			broadcastRowChange(wsManager, wsRoom.company(companyId), 'comment_reactions', 'INSERT', {
+			broadcastRowChange(wsManager, wsRoom.team(teamId), 'comment_reactions', 'INSERT', {
 				comment_id: args.comment_id,
 				issue_id: args.issue_id,
 				member_id: memberId,
@@ -1146,7 +1146,7 @@ export function registerTools(
 		'remove_reaction',
 		'Remove your own reaction from a comment. Removing a reaction does not wake the comment author.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			issue_id: z.string().describe('Issue ID the comment belongs to'),
 			comment_id: z.string().describe('Comment ID to remove the reaction from'),
 			kind: reactionKindSchema.describe(
@@ -1154,21 +1154,21 @@ export function registerTools(
 			),
 		},
 		async (args, db, auth) => {
-			const companyId = args.company_id as string;
-			const denied = await verifyCompanyAccess(db, auth, companyId);
+			const teamId = args.team_id as string;
+			const denied = await verifyTeamAccess(db, auth, teamId);
 			if (denied) return { error: denied };
-			const memberId = await resolveActorMemberId(db, auth, companyId);
+			const memberId = await resolveActorMemberId(db, auth, teamId);
 			if (!memberId) return { error: 'No member identity for caller' };
 			const result = await removeCommentReaction({
 				db,
-				companyId,
+				teamId,
 				issueId: args.issue_id as string,
 				commentId: args.comment_id as string,
 				kind: args.kind as string,
 				memberId,
 			});
 			if (!result.ok) return { error: result.message };
-			broadcastRowChange(wsManager, wsRoom.company(companyId), 'comment_reactions', 'DELETE', {
+			broadcastRowChange(wsManager, wsRoom.team(teamId), 'comment_reactions', 'DELETE', {
 				comment_id: args.comment_id,
 				issue_id: args.issue_id,
 				member_id: memberId,
@@ -1188,7 +1188,7 @@ export function registerTools(
 		'create_comment',
 		'Add a comment to an issue. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert. When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			issue_id: z.string().describe('Issue ID'),
 			content: z.string().describe('Comment text'),
 			parent_comment_id: z
@@ -1199,14 +1199,14 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			// Verify issue belongs to company
-			const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND company_id = $2', [
+			// Verify issue belongs to team
+			const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND team_id = $2', [
 				args.issue_id,
-				args.company_id,
+				args.team_id,
 			]);
-			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
+			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this team' };
 			let parentCommentId: string | null = null;
 			if (args.parent_comment_id) {
 				const parentCheck = await db.query(
@@ -1233,7 +1233,7 @@ export function registerTools(
 			await fireCommentWakeups({
 				db,
 				issueId: args.issue_id as string,
-				companyId: args.company_id as string,
+				teamId: args.team_id as string,
 				commentId: r.rows[0].id,
 				content,
 				contentType: CommentContentType.Text,
@@ -1243,7 +1243,7 @@ export function registerTools(
 			});
 			recordIssueLinks(
 				db,
-				args.company_id as string,
+				args.team_id as string,
 				args.issue_id as string,
 				args.content as string,
 				authorMemberId,
@@ -1273,7 +1273,7 @@ export function registerTools(
 		'request_credential',
 		'Ask the human assignee to provide a secret value (API key, SSH private key, OAuth token, etc.). Posts a structured comment on the issue with a paste form. The agent never sees the value; it gets a placeholder string to embed in env vars or HTTP headers, which the egress proxy later substitutes. Returns immediately with the placeholder; the agent should stop work on whatever needed the credential and wait for a credential_provided wakeup.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			issue_id: z.string().describe('Issue ID — the request comment is posted here'),
 			name: z
 				.string()
@@ -1304,12 +1304,12 @@ export function registerTools(
 					'Hostname allowlist for the egress proxy. The credential will only be substituted into outbound requests to these hosts. Wildcards: *.github.com matches one label segment.',
 				),
 			scope: z
-				.enum(['company', 'project'])
+				.enum(['team', 'project'])
 				.optional()
-				.describe('Storage scope. Default: company. Use project to scope to the current project.'),
+				.describe('Storage scope. Default: team. Use project to scope to the current project.'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
 			const name = args.name as string;
@@ -1317,14 +1317,14 @@ export function registerTools(
 			if (!validation.valid) return { error: validation.error };
 
 			const issueId = args.issue_id as string;
-			const companyId = args.company_id as string;
-			const scope = (args.scope as string | undefined) ?? 'company';
+			const teamId = args.team_id as string;
+			const scope = (args.scope as string | undefined) ?? 'team';
 
 			const issueRow = await db.query<{ id: string; project_id: string | null }>(
-				'SELECT id, project_id FROM issues WHERE id = $1 AND company_id = $2',
-				[issueId, companyId],
+				'SELECT id, project_id FROM issues WHERE id = $1 AND team_id = $2',
+				[issueId, teamId],
 			);
-			if (issueRow.rows.length === 0) return { error: 'Issue not found in this company' };
+			if (issueRow.rows.length === 0) return { error: 'Issue not found in this team' };
 			const projectId = scope === 'project' ? issueRow.rows[0].project_id : null;
 
 			const placeholder = credentialPlaceholder(name);
@@ -1335,7 +1335,7 @@ export function registerTools(
 				   AND content_type = 'credential_request'::comment_content_type
 				   AND chosen_option IS NULL
 				   AND content->>'name' = $2
-				   AND COALESCE(content->>'scope', 'company') = $3
+				   AND COALESCE(content->>'scope', 'team') = $3
 				 ORDER BY created_at ASC LIMIT 1`,
 				[issueId, name, scope],
 			);
@@ -1386,7 +1386,7 @@ export function registerTools(
 		'list_approvals',
 		'List pending approvals. Pass excerpt_chars (e.g. 500) to truncate long fields inside payload (e.g. skill-proposal content); omit for full payload.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			excerpt_chars: z
 				.number()
 				.int()
@@ -1397,13 +1397,13 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const r = await db.query<Record<string, unknown>>(
 				`SELECT ${APPROVAL_COLUMNS} FROM approvals
-				 WHERE company_id = $1 AND status = $2::approval_status
+				 WHERE team_id = $1 AND status = $2::approval_status
 				 ORDER BY created_at DESC`,
-				[args.company_id, ApprovalStatus.Pending],
+				[args.team_id, ApprovalStatus.Pending],
 			);
 			const max = args.excerpt_chars as number | undefined;
 			if (max == null) return r.rows;
@@ -1424,13 +1424,13 @@ export function registerTools(
 			resolution_note: z.string().optional().describe('Note'),
 		},
 		async (args, db, auth) => {
-			// Look up the approval's company and verify access
-			const existing = await db.query<{ company_id: string }>(
-				'SELECT company_id FROM approvals WHERE id = $1',
+			// Look up the approval's team and verify access
+			const existing = await db.query<{ team_id: string }>(
+				'SELECT team_id FROM approvals WHERE id = $1',
 				[args.approval_id],
 			);
 			if (existing.rows.length === 0) return { error: 'Approval not found' };
-			const denied = await verifyCompanyAccess(db, auth, existing.rows[0].company_id);
+			const denied = await verifyTeamAccess(db, auth, existing.rows[0].team_id);
 			if (denied) return { error: denied };
 			const r = await db.query(
 				`UPDATE approvals SET status = $1::approval_status, resolution_note = $2, resolved_at = now() WHERE id = $3 RETURNING ${APPROVAL_COLUMNS}`,
@@ -1447,14 +1447,14 @@ export function registerTools(
 		'list_kb_docs',
 		'List knowledge base documents',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const docs = await listDocuments(db, {
 				type: DocumentType.KbDoc,
-				companyId: args.company_id as string,
+				teamId: args.team_id as string,
 			});
 			return docs.map((d) => ({
 				id: d.id,
@@ -1471,15 +1471,15 @@ export function registerTools(
 		'get_kb_doc',
 		'Get a KB document by slug',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			slug: z.string().describe('Document slug'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			return await getDocument(db, {
 				type: DocumentType.KbDoc,
-				companyId: args.company_id as string,
+				teamId: args.team_id as string,
 				slug: args.slug as string,
 			});
 		},
@@ -1490,50 +1490,50 @@ export function registerTools(
 	tool(
 		server,
 		'get_costs',
-		'Get cost summary for a company',
+		'Get cost summary for a team',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			group_by: z.enum(['agent', 'project', 'day']).optional().describe('Group costs by'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			if (args.group_by === 'agent') {
 				const r = await db.query(
 					`SELECT ce.member_id, COALESCE(ma.title, m.display_name) AS agent_title, sum(ce.amount_cents)::int AS total_cents
 				 FROM cost_entries ce LEFT JOIN members m ON m.id = ce.member_id LEFT JOIN member_agents ma ON ma.id = ce.member_id
-				 WHERE ce.company_id = $1 GROUP BY ce.member_id, ma.title, m.display_name`,
-					[args.company_id],
+				 WHERE ce.team_id = $1 GROUP BY ce.member_id, ma.title, m.display_name`,
+					[args.team_id],
 				);
 				return r.rows;
 			}
 			const r = await db.query(
-				`SELECT sum(amount_cents)::int AS total_cents, count(*)::int AS entry_count FROM cost_entries WHERE company_id = $1`,
-				[args.company_id],
+				`SELECT sum(amount_cents)::int AS total_cents, count(*)::int AS entry_count FROM cost_entries WHERE team_id = $1`,
+				[args.team_id],
 			);
 			return r.rows[0];
 		},
 		db,
 	);
 
-	// System Prompt Management — read: any agent/board in same company; write: coach only
+	// System Prompt Management — read: any agent/board in same team; write: coach only
 	tool(
 		server,
 		'get_agent_system_prompt',
-		"Read an agent's system prompt. Accessible by any agent or board user in the same company. Returns the resolved role doc by default — `{{…}}` placeholders substituted with the real company name, mission, manager, KB, project docs, and team context — so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.",
+		"Read an agent's system prompt. Accessible by any agent or board user in the same team. Returns the resolved role doc by default — `{{…}}` placeholders substituted with the real team name, mission, manager, KB, project docs, and team context — so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.",
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
 			placeholders: z
 				.boolean()
 				.optional()
 				.default(true)
 				.describe(
-					'When true (default) substitutes `{{…}}` placeholders with real company/team values. When false returns the raw stored template — needed when reading before update_agent_system_prompt so placeholders survive the round-trip.',
+					'When true (default) substitutes `{{…}}` placeholders with real team/team values. When false returns the raw stored template — needed when reading before update_agent_system_prompt so placeholders survive the round-trip.',
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
 			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
@@ -1543,19 +1543,15 @@ export function registerTools(
 			const agent = await db.query<{ title: string; slug: string }>(
 				`SELECT ma.title, ma.slug
 				 FROM member_agents ma JOIN members m ON m.id = ma.id
-				 WHERE ma.id = $1 AND m.company_id = $2`,
-				[args.agent_id, args.company_id],
+				 WHERE ma.id = $1 AND m.team_id = $2`,
+				[args.agent_id, args.team_id],
 			);
-			if (agent.rows.length === 0) return { error: 'Agent not found in this company' };
+			if (agent.rows.length === 0) return { error: 'Agent not found in this team' };
 
-			const raw = await getAgentSystemPrompt(
-				db,
-				args.company_id as string,
-				args.agent_id as string,
-			);
+			const raw = await getAgentSystemPrompt(db, args.team_id as string, args.agent_id as string);
 			const system_prompt = args.placeholders
 				? await resolveSystemPrompt(db, raw, {
-						companyId: args.company_id as string,
+						teamId: args.team_id as string,
 						agentId: args.agent_id as string,
 						mode: 'placeholders',
 					})
@@ -1570,7 +1566,7 @@ export function registerTools(
 		'get_agent_system_prompts',
 		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. CEO auditing how team_context renders for every agent. For a single prompt, use get_agent_system_prompt.`,
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			items: z
 				.array(
 					z.object({
@@ -1588,8 +1584,8 @@ export function registerTools(
 				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} items.`),
 		},
 		async (args, db, auth) => {
-			const companyId = args.company_id as string;
-			const denied = await verifyCompanyAccess(db, auth, companyId);
+			const teamId = args.team_id as string;
+			const denied = await verifyTeamAccess(db, auth, teamId);
 			if (denied) return { error: denied };
 
 			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
@@ -1602,7 +1598,7 @@ export function registerTools(
 					try {
 						const out = await fetchAgentSystemPromptForBatch(
 							db,
-							companyId,
+							teamId,
 							item.agent_id,
 							item.mode ?? 'placeholders',
 						);
@@ -1631,13 +1627,13 @@ export function registerTools(
 		'update_agent_system_prompt',
 		'Apply a system prompt change for an agent. Only the Coach agent can call this. The change is applied immediately and a revision snapshot is stored so the board can restore previous versions.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
 			new_system_prompt: z.string().describe('The full updated system prompt'),
 			change_summary: z.string().describe('Summary of what changed and why'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
 			if (!(await isCoach(db, auth))) {
@@ -1646,17 +1642,17 @@ export function registerTools(
 
 			const agentCheck = await db.query<{ id: string }>(
 				`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
-				 WHERE ma.id = $1 AND m.company_id = $2`,
-				[args.agent_id, args.company_id],
+				 WHERE ma.id = $1 AND m.team_id = $2`,
+				[args.agent_id, args.team_id],
 			);
-			if (agentCheck.rows.length === 0) return { error: 'Agent not found in this company' };
+			if (agentCheck.rows.length === 0) return { error: 'Agent not found in this team' };
 
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 
 			const doc = await upsertDocument(db, undefined, {
 				scope: {
 					type: DocumentType.AgentSystemPrompt,
-					companyId: args.company_id as string,
+					teamId: args.team_id as string,
 					memberAgentId: args.agent_id as string,
 				},
 				content: args.new_system_prompt as string,
@@ -1673,14 +1669,14 @@ export function registerTools(
 	tool(
 		server,
 		'set_agent_summary',
-		'Save a short human-readable summary for an agent (≤1000 chars, single paragraph, plain prose). Callable by any agent in the same company or any board user; the CEO is the expected caller, but agents may also self-summarise.',
+		'Save a short human-readable summary for an agent (≤1000 chars, single paragraph, plain prose). Callable by any agent in the same team or any board user; the CEO is the expected caller, but agents may also self-summarise.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
 			summary: z.string().describe('The new summary, ≤1000 chars'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
 			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
@@ -1696,18 +1692,18 @@ export function registerTools(
 			const r = await db.query<{ id: string }>(
 				`UPDATE member_agents SET summary = $1, updated_at = now()
 				 WHERE id = $2 AND id IN (
-				   SELECT m.id FROM members m WHERE m.id = $2 AND m.company_id = $3
+				   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
 				 )
 				 RETURNING id`,
-				[summary, args.agent_id, args.company_id],
+				[summary, args.agent_id, args.team_id],
 			);
-			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
+			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
 			// Other agents' team_context blobs reference this agent's summary,
 			// so they need to be regenerated to pick up the new wording.
 			enqueueTeamContextTaskForAllAgents(
 				db,
-				args.company_id as string,
+				args.team_id as string,
 				'summary_updated',
 				args.agent_id as string,
 			).catch((e) => log.error('Failed to enqueue team_context fan-out:', e));
@@ -1720,16 +1716,16 @@ export function registerTools(
 	tool(
 		server,
 		'set_team_summary',
-		'Save the team-level collaboration summary for a company (≤4000 chars, plain prose, may span paragraphs). Only callable by the CEO of that company.',
+		'Save the team-level collaboration summary for a team (≤4000 chars, plain prose, may span paragraphs). Only callable by the CEO of that team.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			summary: z.string().describe('The new team summary, ≤4000 chars'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			if (!(await isCeoOfCompany(db, auth, args.company_id as string))) {
+			if (!(await isCeoOfTeam(db, auth, args.team_id as string))) {
 				return { error: 'Access denied: only the CEO can update the team summary' };
 			}
 
@@ -1739,9 +1735,9 @@ export function registerTools(
 				return { error: `summary too long (${summary.length} chars; max 4000)` };
 			}
 
-			await db.query('UPDATE companies SET team_summary = $1, updated_at = now() WHERE id = $2', [
+			await db.query('UPDATE teams SET summary = $1, updated_at = now() WHERE id = $2', [
 				summary,
-				args.company_id,
+				args.team_id,
 			]);
 
 			return { updated: true };
@@ -1752,17 +1748,17 @@ export function registerTools(
 	tool(
 		server,
 		'set_agent_team_context',
-		"Save the team-relationships context for an agent (≤6000 chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the CEO of the same company.",
+		"Save the team-relationships context for an agent (≤6000 chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the CEO of the same team.",
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
 			content: z.string().describe('The new team_context, ≤6000 chars'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			if (!(await isCeoOfCompany(db, auth, args.company_id as string))) {
+			if (!(await isCeoOfTeam(db, auth, args.team_id as string))) {
 				return { error: 'Access denied: only the CEO can update agent team contexts' };
 			}
 
@@ -1775,12 +1771,12 @@ export function registerTools(
 			const r = await db.query<{ id: string }>(
 				`UPDATE member_agents SET team_context = $1, updated_at = now()
 				 WHERE id = $2 AND id IN (
-				   SELECT m.id FROM members m WHERE m.id = $2 AND m.company_id = $3
+				   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
 				 )
 				 RETURNING id`,
-				[content, args.agent_id, args.company_id],
+				[content, args.agent_id, args.team_id],
 			);
-			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
+			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
 			return { updated: true };
 		},
@@ -1790,13 +1786,13 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_team_context',
-		"Read an agent's stored team-relationships context. Useful for the CEO when regenerating siblings' contexts. Accessible by any agent or board user in the same company.",
+		"Read an agent's stored team-relationships context. Useful for the CEO when regenerating siblings' contexts. Accessible by any agent or board user in the same team.",
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
 			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
@@ -1806,10 +1802,10 @@ export function registerTools(
 			const r = await db.query<{ title: string; slug: string; team_context: string }>(
 				`SELECT ma.title, ma.slug, ma.team_context
 				 FROM member_agents ma JOIN members m ON m.id = ma.id
-				 WHERE ma.id = $1 AND m.company_id = $2`,
-				[args.agent_id, args.company_id],
+				 WHERE ma.id = $1 AND m.team_id = $2`,
+				[args.agent_id, args.team_id],
 			);
-			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
+			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
 			return r.rows[0];
 		},
@@ -1822,19 +1818,19 @@ export function registerTools(
 		'upsert_kb_doc',
 		'Create or update a knowledge base document. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			title: z.string().describe('Document title'),
 			slug: z.string().describe('URL-safe filename ending in .md (e.g. "coding-standards.md")'),
 			content: z.string().describe('Document content (markdown)'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			return await upsertDocument(db, wsManager, {
 				scope: {
 					type: DocumentType.KbDoc,
-					companyId: args.company_id as string,
+					teamId: args.team_id as string,
 					slug: args.slug as string,
 				},
 				title: args.title as string,
@@ -1851,15 +1847,15 @@ export function registerTools(
 		'list_project_docs',
 		'List project documentation files (PRD, spec, implementation plan, etc.)',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			project_id: z.string().describe('Project ID'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const docs = await listDocuments(db, {
 				type: DocumentType.ProjectDoc,
-				companyId: args.company_id as string,
+				teamId: args.team_id as string,
 				projectId: args.project_id as string,
 			});
 			return {
@@ -1878,16 +1874,16 @@ export function registerTools(
 		'read_project_doc',
 		'Read a project documentation file by filename',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			project_id: z.string().describe('Project ID'),
 			filename: z.string().describe('Filename to read (e.g. "spec.md")'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const doc = await getDocument(db, {
 				type: DocumentType.ProjectDoc,
-				companyId: args.company_id as string,
+				teamId: args.team_id as string,
 				projectId: args.project_id as string,
 				slug: args.filename as string,
 			});
@@ -1902,19 +1898,19 @@ export function registerTools(
 		'write_project_doc',
 		'Write a project documentation file. For high-level project context: PRD, spec, implementation plan, research. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			project_id: z.string().describe('Project ID'),
 			filename: z.string().describe('Filename to write (e.g. "spec.md")'),
 			content: z.string().describe('File content (markdown)'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const doc = await upsertDocument(db, wsManager, {
 				scope: {
 					type: DocumentType.ProjectDoc,
-					companyId: args.company_id as string,
+					teamId: args.team_id as string,
 					projectId: args.project_id as string,
 					slug: args.filename as string,
 				},
@@ -1932,22 +1928,22 @@ export function registerTools(
 		'propose_skill',
 		'Propose a new skill. Creates an approval request that, when approved, writes the skill file.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			skill_name: z.string().describe('Human-readable skill name'),
 			skill_slug: z.string().describe('URL-safe slug for the skill file'),
 			content: z.string().describe('Skill content (markdown)'),
 			reason: z.string().describe('Why this skill should be added'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const result = await db.query<{ id: string; status: string }>(
-				`INSERT INTO approvals (company_id, type, requested_by_member_id, payload)
+				`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
 				 VALUES ($1, $2::approval_type, $3, $4::jsonb)
 				 RETURNING id, status`,
 				[
-					args.company_id,
+					args.team_id,
 					ApprovalType.SkillProposal,
 					callerMemberId,
 					JSON.stringify({
@@ -1969,7 +1965,7 @@ export function registerTools(
 		'semantic_search',
 		'Search across knowledge base docs, issues, and skills using natural language. Returns ranked results by relevance.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			query: z.string().describe('Natural language search query'),
 			scope: z
 				.enum(['all', 'kb_docs', 'issues', 'skills', 'project_docs'])
@@ -1978,7 +1974,7 @@ export function registerTools(
 			limit: z.number().optional().describe('Max results (default: 10)'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
 			const { isModelReady, semanticSearch } = await import('../services/embeddings');
@@ -1989,7 +1985,7 @@ export function registerTools(
 				};
 			}
 
-			const results = await semanticSearch(db, args.company_id as string, args.query as string, {
+			const results = await semanticSearch(db, args.team_id as string, args.query as string, {
 				scope: (args.scope as 'all' | 'kb_docs' | 'issues' | 'skills' | 'project_docs') ?? 'all',
 				limit: (args.limit as number) ?? 10,
 			});
@@ -2003,18 +1999,18 @@ export function registerTools(
 	tool(
 		server,
 		'list_skills',
-		'List all active skills for a company. Returns name, slug, description, and tags.',
+		'List all active skills for a team. Returns name, slug, description, and tags.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			tags: z.string().optional().describe('Filter by tag (comma-separated)'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
 			let query = `SELECT id, name, slug, description, tags, created_at, updated_at
-			             FROM skills WHERE company_id = $1 AND is_active = true`;
-			const params: unknown[] = [args.company_id];
+			             FROM skills WHERE team_id = $1 AND is_active = true`;
+			const params: unknown[] = [args.team_id];
 
 			if (args.tags) {
 				const tagList = (args.tags as string).split(',').map((t) => t.trim());
@@ -2034,16 +2030,16 @@ export function registerTools(
 		'get_skill',
 		'Get the full content of a skill by slug.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			slug: z.string().describe('Skill slug'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
 			const result = await db.query(
-				`SELECT ${SKILL_COLUMNS} FROM skills WHERE company_id = $1 AND slug = $2`,
-				[args.company_id, args.slug],
+				`SELECT ${SKILL_COLUMNS} FROM skills WHERE team_id = $1 AND slug = $2`,
+				[args.team_id, args.slug],
 			);
 			if (result.rows.length === 0) return { error: 'Skill not found' };
 			return result.rows[0];
@@ -2056,7 +2052,7 @@ export function registerTools(
 		'create_skill',
 		'Create a new skill directly (no approval needed). Use propose_skill if approval is required.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			name: z.string().describe('Human-readable skill name'),
 			slug: z.string().describe('URL-safe slug'),
 			content: z.string().describe('Skill content (markdown)'),
@@ -2064,7 +2060,7 @@ export function registerTools(
 			tags: z.string().optional().describe('Comma-separated tags'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
@@ -2075,9 +2071,9 @@ export function registerTools(
 			const tagList = args.tags ? (args.tags as string).split(',').map((t) => t.trim()) : [];
 
 			const result = await db.query<{ id: string; slug: string }>(
-				`INSERT INTO skills (company_id, name, slug, description, content, content_hash, created_by_member_id, tags)
+				`INSERT INTO skills (team_id, name, slug, description, content, content_hash, created_by_member_id, tags)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-				 ON CONFLICT (company_id, slug) DO UPDATE SET
+				 ON CONFLICT (team_id, slug) DO UPDATE SET
 				   content = EXCLUDED.content,
 				   content_hash = EXCLUDED.content_hash,
 				   description = EXCLUDED.description,
@@ -2085,7 +2081,7 @@ export function registerTools(
 				   updated_at = now()
 				 RETURNING id, slug`,
 				[
-					args.company_id,
+					args.team_id,
 					args.name,
 					args.slug,
 					(args.description as string) ?? '',
@@ -2111,23 +2107,23 @@ export function registerTools(
 	tool(
 		server,
 		'list_mcp_connections',
-		'List MCP server connections registered for the company (and optionally a project). Returns name, kind (saas|local), config (URL or command), and install_status.',
+		'List MCP server connections registered for the team (and optionally a project). Returns name, kind (saas|local), config (URL or command), and install_status.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			project_id: z
 				.string()
 				.optional()
 				.describe(
-					'Optional project ID. When set, returns project-scoped + company-wide connections; when absent, only company-wide.',
+					'Optional project ID. When set, returns project-scoped + team-wide connections; when absent, only team-wide.',
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const companyId = args.company_id as string;
+			const teamId = args.team_id as string;
 			const projectId = (args.project_id as string | undefined) ?? null;
-			const params: unknown[] = [companyId];
-			let where = 'company_id = $1';
+			const params: unknown[] = [teamId];
+			let where = 'team_id = $1';
 			if (projectId) {
 				where += ' AND (project_id IS NULL OR project_id = $2)';
 				params.push(projectId);
@@ -2135,7 +2131,7 @@ export function registerTools(
 				where += ' AND project_id IS NULL';
 			}
 			const r = await db.query(
-				`SELECT id, company_id, project_id, name, kind::text AS kind,
+				`SELECT id, team_id, project_id, name, kind::text AS kind,
 				        config, install_status::text AS install_status, install_error,
 				        created_at::text, updated_at::text
 				 FROM mcp_connections
@@ -2151,17 +2147,17 @@ export function registerTools(
 	tool(
 		server,
 		'add_mcp_connection',
-		"Register an MCP server (SaaS HTTP or local stdio) for this company/project. SaaS servers go into the agent's descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.",
+		"Register an MCP server (SaaS HTTP or local stdio) for this team/project. SaaS servers go into the agent's descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.",
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			project_id: z
 				.string()
 				.optional()
-				.describe('Optional project ID. Omit for a company-wide connection.'),
+				.describe('Optional project ID. Omit for a team-wide connection.'),
 			name: z
 				.string()
 				.describe(
-					'Server identifier — used as the MCP descriptor name and for de-duplication within (company, project).',
+					'Server identifier — used as the MCP descriptor name and for de-duplication within (team, project).',
 				),
 			kind: z.enum(['saas', 'local']).describe('saas = HTTP MCP, local = stdio MCP'),
 			config: z
@@ -2169,9 +2165,9 @@ export function registerTools(
 				.describe('For saas: { url, headers? }. For local: { command, args?, env?, package? }.'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const companyId = args.company_id as string;
+			const teamId = args.team_id as string;
 			const projectId = (args.project_id as string | undefined) ?? null;
 			const name = String(args.name ?? '').trim();
 			const kind = args.kind as 'saas' | 'local';
@@ -2193,16 +2189,16 @@ export function registerTools(
 				id: string;
 				install_status: string;
 			}>(
-				`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+				`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 				 VALUES ($1, $2, $3, $4::mcp_connection_kind, $5::jsonb, $6::mcp_install_status)
-				 ON CONFLICT (company_id, project_id, name) DO UPDATE
+				 ON CONFLICT (team_id, project_id, name) DO UPDATE
 				 SET kind = EXCLUDED.kind,
 				     config = EXCLUDED.config,
 				     install_status = EXCLUDED.install_status,
 				     install_error = NULL,
 				     updated_at = now()
 				 RETURNING id, install_status::text AS install_status`,
-				[companyId, projectId, name, kind, JSON.stringify(config), initialStatus],
+				[teamId, projectId, name, kind, JSON.stringify(config), initialStatus],
 			);
 			return {
 				id: r.rows[0].id,
@@ -2221,17 +2217,17 @@ export function registerTools(
 		'remove_mcp_connection',
 		'Remove a previously registered MCP connection. The next agent run in this scope will not see it.',
 		{
-			company_id: z.string().describe('Company ID'),
+			team_id: z.string().describe('Team ID'),
 			id: z
 				.string()
 				.describe('mcp_connections.id (returned by add_mcp_connection or list_mcp_connections)'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const r = await db.query<{ id: string }>(
-				'DELETE FROM mcp_connections WHERE id = $1 AND company_id = $2 RETURNING id',
-				[args.id as string, args.company_id as string],
+				'DELETE FROM mcp_connections WHERE id = $1 AND team_id = $2 RETURNING id',
+				[args.id as string, args.team_id as string],
 			);
 			if (r.rows.length === 0) return { error: 'MCP connection not found' };
 			return { removed: true, id: r.rows[0].id };
@@ -2250,13 +2246,13 @@ async function isCoach(db: PGlite, auth: AuthInfo): Promise<boolean> {
 	return r.rows[0]?.slug === COACH_AGENT_SLUG;
 }
 
-async function isCeoOfCompany(db: PGlite, auth: AuthInfo, companyId: string): Promise<boolean> {
+async function isCeoOfTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<boolean> {
 	if (auth.type !== AuthType.Agent) return false;
 	const r = await db.query<{ slug: string }>(
 		`SELECT ma.slug FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE ma.id = $1 AND m.company_id = $2`,
-		[auth.memberId, companyId],
+		 WHERE ma.id = $1 AND m.team_id = $2`,
+		[auth.memberId, teamId],
 	);
 	return r.rows[0]?.slug === CEO_AGENT_SLUG;
 }

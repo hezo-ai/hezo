@@ -1,18 +1,18 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
+import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Mention handoff', () => {
 	async function setup(page: import('@playwright/test').Page) {
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 			headers,
 			data: { name: 'Handoff Project', description: 'Test project.' },
 		});
 		const project = ((await projRes.json()) as any).data;
 
-		const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, {
+		const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
 			headers: { Authorization: `Bearer ${token}` },
 		});
 		const agents = ((await agentsRes.json()) as any).data as Array<{
@@ -24,7 +24,7 @@ test.describe('Mention handoff', () => {
 		const architect = agents.find((a) => a.slug === 'architect');
 		if (!ceo || !architect) throw new Error('CEO and architect agents required');
 
-		const ceoIssueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		const ceoIssueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 			headers,
 			data: {
 				project_id: project.id,
@@ -34,7 +34,7 @@ test.describe('Mention handoff', () => {
 		});
 		const ceoIssue = ((await ceoIssueRes.json()) as any).data;
 
-		const archIssueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		const archIssueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 			headers,
 			data: {
 				project_id: project.id,
@@ -44,16 +44,16 @@ test.describe('Mention handoff', () => {
 		});
 		const architectIssue = ((await archIssueRes.json()) as any).data;
 
-		return { company, token, headers, ceo, architect, ceoIssue, architectIssue };
+		return { team, token, headers, ceo, architect, ceoIssue, architectIssue };
 	}
 
 	test('posting an @architect mention in a comment renders as a link to the architect page', async ({
 		page,
 	}) => {
 		await authenticate(page);
-		const { company, architect, ceoIssue } = await setup(page);
+		const { team, architect, ceoIssue } = await setup(page);
 
-		await page.goto(`/companies/${company.slug}/issues/${ceoIssue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${ceoIssue.id}`);
 		await waitForPageLoad(page);
 
 		const composer = page.getByPlaceholder('Add a comment...');
@@ -71,7 +71,7 @@ test.describe('Mention handoff', () => {
 		await expect(mentionLink).toHaveText(`@${architect.slug}`);
 		await expect(mentionLink).toHaveAttribute(
 			'href',
-			`/companies/${company.slug}/agents/${architect.slug}`,
+			`/teams/${team.slug}/agents/${architect.slug}`,
 		);
 	});
 
@@ -79,15 +79,15 @@ test.describe('Mention handoff', () => {
 		page,
 	}) => {
 		await authenticate(page);
-		const { company, architect, ceoIssue, headers } = await setup(page);
+		const { team, architect, ceoIssue, headers } = await setup(page);
 
 		const body = `Here is the template we discussed:\n\`\`\`\n@${architect.slug}\n\`\`\`\nThat's it.`;
-		await page.request.post(`/api/companies/${company.id}/issues/${ceoIssue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/issues/${ceoIssue.id}/comments`, {
 			headers,
 			data: { content: { text: body } },
 		});
 
-		await page.goto(`/companies/${company.slug}/issues/${ceoIssue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${ceoIssue.id}`);
 		await waitForPageLoad(page);
 
 		const comment = page
@@ -104,36 +104,34 @@ test.describe('Mention handoff', () => {
 		page,
 	}) => {
 		await authenticate(page);
-		const { company, architect, ceoIssue, headers } = await setup(page);
+		const { team, architect, ceoIssue, headers } = await setup(page);
 
-		await page.request.post(`/api/companies/${company.id}/issues/${ceoIssue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/issues/${ceoIssue.id}/comments`, {
 			headers,
 			data: { content: { text: `@${architect.slug} heads up` } },
 		});
 
-		await page.goto(`/companies/${company.slug}/issues/${ceoIssue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${ceoIssue.id}`);
 		await waitForPageLoad(page);
 
 		await page.getByTestId('agent-mention-link').first().click();
-		await expect(page).toHaveURL(
-			new RegExp(`/companies/${company.slug}/agents/${architect.slug}(/|$)`),
-		);
+		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/agents/${architect.slug}(/|$)`));
 		await expect(page.getByTestId('agent-summary')).toBeVisible({ timeout: 15000 });
 		await expect(page.getByRole('heading', { name: architect.title })).toBeVisible();
 	});
 
 	test('mentioning multiple agents in one comment renders all mentions', async ({ page }) => {
 		await authenticate(page);
-		const { company, ceo, architect, ceoIssue, headers } = await setup(page);
+		const { team, ceo, architect, ceoIssue, headers } = await setup(page);
 
-		await page.request.post(`/api/companies/${company.id}/issues/${ceoIssue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/issues/${ceoIssue.id}/comments`, {
 			headers,
 			data: {
 				content: { text: `cc @${architect.slug} and @${ceo.slug} for visibility` },
 			},
 		});
 
-		await page.goto(`/companies/${company.slug}/issues/${ceoIssue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${ceoIssue.id}`);
 		await waitForPageLoad(page);
 
 		const comment = page

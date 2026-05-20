@@ -5,12 +5,12 @@ type Page = import('@playwright/test').Page;
 
 async function createProject(
 	page: Page,
-	companyId: string,
+	teamId: string,
 	token: string,
 	name: string,
 ): Promise<{ id: string; slug: string }> {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const res = await page.request.post(`/api/companies/${companyId}/projects`, {
+	const res = await page.request.post(`/api/teams/${teamId}/projects`, {
 		headers,
 		data: { name, description: 'Test project.' },
 	});
@@ -19,23 +19,23 @@ async function createProject(
 
 async function createIssue(
 	page: Page,
-	companyId: string,
+	teamId: string,
 	token: string,
 	data: { project_id: string; title: string; assignee_id: string },
 ): Promise<{ id: string }> {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const res = await page.request.post(`/api/companies/${companyId}/issues`, { headers, data });
+	const res = await page.request.post(`/api/teams/${teamId}/issues`, { headers, data });
 	return ((await res.json()) as { data: { id: string } }).data;
 }
 
 async function patchIssueStatus(
 	page: Page,
-	companyId: string,
+	teamId: string,
 	token: string,
 	issueId: string,
 	status: string,
 ) {
-	await page.request.patch(`/api/companies/${companyId}/issues/${issueId}`, {
+	await page.request.patch(`/api/teams/${teamId}/issues/${issueId}`, {
 		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
 		data: { status },
 	});
@@ -46,37 +46,37 @@ test.describe('Issue list — filtering', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents, token } = freshWorkspace;
-		const project = await createProject(page, company.id, token, 'Filter Project A');
+		const { team, agents, token } = freshWorkspace;
+		const project = await createProject(page, team.id, token, 'Filter Project A');
 		const agentId = agents[0].id;
 
 		const issues = await Promise.all([
-			createIssue(page, company.id, token, {
+			createIssue(page, team.id, token, {
 				project_id: project.id,
 				title: 'Review Issue',
 				assignee_id: agentId,
 			}),
-			createIssue(page, company.id, token, {
+			createIssue(page, team.id, token, {
 				project_id: project.id,
 				title: 'In Progress Issue',
 				assignee_id: agentId,
 			}),
-			createIssue(page, company.id, token, {
+			createIssue(page, team.id, token, {
 				project_id: project.id,
 				title: 'Done Issue',
 				assignee_id: agentId,
 			}),
-			createIssue(page, company.id, token, {
+			createIssue(page, team.id, token, {
 				project_id: project.id,
 				title: 'Backlog Issue',
 				assignee_id: agentId,
 			}),
 		]);
-		await patchIssueStatus(page, company.id, token, issues[0].id, 'review');
-		await patchIssueStatus(page, company.id, token, issues[1].id, 'in_progress');
-		await patchIssueStatus(page, company.id, token, issues[2].id, 'done');
+		await patchIssueStatus(page, team.id, token, issues[0].id, 'review');
+		await patchIssueStatus(page, team.id, token, issues[1].id, 'in_progress');
+		await patchIssueStatus(page, team.id, token, issues[2].id, 'done');
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
 		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 20000 });
@@ -97,37 +97,37 @@ test.describe('Issue list — filtering', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents, token } = freshWorkspace;
-		const project = await createProject(page, company.id, token, 'Filter Project B');
+		const { team, agents, token } = freshWorkspace;
+		const project = await createProject(page, team.id, token, 'Filter Project B');
 		const agentId = agents[0].id;
 
 		const created = await Promise.all([
-			createIssue(page, company.id, token, {
+			createIssue(page, team.id, token, {
 				project_id: project.id,
 				title: 'Review Issue',
 				assignee_id: agentId,
 			}),
-			createIssue(page, company.id, token, {
+			createIssue(page, team.id, token, {
 				project_id: project.id,
 				title: 'In Progress Issue',
 				assignee_id: agentId,
 			}),
-			createIssue(page, company.id, token, {
+			createIssue(page, team.id, token, {
 				project_id: project.id,
 				title: 'Done Issue',
 				assignee_id: agentId,
 			}),
-			createIssue(page, company.id, token, {
+			createIssue(page, team.id, token, {
 				project_id: project.id,
 				title: 'Backlog Issue',
 				assignee_id: agentId,
 			}),
 		]);
-		await patchIssueStatus(page, company.id, token, created[0].id, 'review');
-		await patchIssueStatus(page, company.id, token, created[1].id, 'in_progress');
-		await patchIssueStatus(page, company.id, token, created[2].id, 'done');
+		await patchIssueStatus(page, team.id, token, created[0].id, 'review');
+		await patchIssueStatus(page, team.id, token, created[1].id, 'in_progress');
+		await patchIssueStatus(page, team.id, token, created[2].id, 'done');
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 		await expect(page.getByText('Review Issue')).toBeVisible({ timeout: 20000 });
 
@@ -162,19 +162,19 @@ test.describe('Issue list — filtering', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents, token } = freshWorkspace;
-		const project = await createProject(page, company.id, token, 'Filter Project C');
+		const { team, agents, token } = freshWorkspace;
+		const project = await createProject(page, team.id, token, 'Filter Project C');
 		const agentId = agents[0].id;
 
 		for (const title of ['Authentication bug', 'Payment flow', 'Sign-up form']) {
-			await createIssue(page, company.id, token, {
+			await createIssue(page, team.id, token, {
 				project_id: project.id,
 				title,
 				assignee_id: agentId,
 			});
 		}
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
 		const panel = page.getByTestId('issue-filter-panel');
@@ -205,22 +205,22 @@ test.describe('Issue list — running indicator', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents, token } = freshWorkspace;
-		const project = await createProject(page, company.id, token, 'Indicator Project');
+		const { team, agents, token } = freshWorkspace;
+		const project = await createProject(page, team.id, token, 'Indicator Project');
 		const agentId = agents[0].id;
 
-		await createIssue(page, company.id, token, {
+		await createIssue(page, team.id, token, {
 			project_id: project.id,
 			title: 'Quiet Issue',
 			assignee_id: agentId,
 		});
-		const busy = await createIssue(page, company.id, token, {
+		const busy = await createIssue(page, team.id, token, {
 			project_id: project.id,
 			title: 'Busy Issue',
 			assignee_id: agentId,
 		});
 
-		await page.route(`**/api/companies/${company.slug}/issues?**`, async (route) => {
+		await page.route(`**/api/teams/${team.slug}/issues?**`, async (route) => {
 			const response = await route.fetch();
 			const body = await response.json();
 			const data = Array.isArray(body) ? body : body.data;
@@ -234,7 +234,7 @@ test.describe('Issue list — running indicator', () => {
 			});
 		});
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
 		await expect(page.getByText('Quiet Issue')).toBeVisible({ timeout: 20000 });
@@ -252,22 +252,22 @@ test.describe('Issue list — running indicator', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents, token } = freshWorkspace;
-		const project = await createProject(page, company.id, token, 'Pin Project');
+		const { team, agents, token } = freshWorkspace;
+		const project = await createProject(page, team.id, token, 'Pin Project');
 		const agentId = agents[0].id;
 
-		const oldIssue = await createIssue(page, company.id, token, {
+		const oldIssue = await createIssue(page, team.id, token, {
 			project_id: project.id,
 			title: 'Old running ticket',
 			assignee_id: agentId,
 		});
-		await createIssue(page, company.id, token, {
+		await createIssue(page, team.id, token, {
 			project_id: project.id,
 			title: 'New idle ticket',
 			assignee_id: agentId,
 		});
 
-		await page.route(`**/api/companies/${company.slug}/issues?**`, async (route) => {
+		await page.route(`**/api/teams/${team.slug}/issues?**`, async (route) => {
 			const response = await route.fetch();
 			const body = await response.json();
 			const data = Array.isArray(body) ? body : body.data;
@@ -285,7 +285,7 @@ test.describe('Issue list — running indicator', () => {
 			});
 		});
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 
 		const rows = page.getByRole('row').filter({ hasText: /ticket/ });

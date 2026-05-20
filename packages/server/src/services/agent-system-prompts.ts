@@ -27,28 +27,28 @@ export interface AgentSystemPromptResult {
 
 export async function fetchAgentSystemPromptForBatch(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	agentIdOrSlug: string,
 	mode: SystemPromptMode,
 ): Promise<AgentSystemPromptResult> {
-	const agentId = await resolveAgentId(db, companyId, agentIdOrSlug);
+	const agentId = await resolveAgentId(db, teamId, agentIdOrSlug);
 	if (!agentId) {
-		throw new AgentSystemPromptError('NOT_FOUND', 'Agent not found in this company');
+		throw new AgentSystemPromptError('NOT_FOUND', 'Agent not found in this team');
 	}
 
 	const agent = await db.query<{ title: string; slug: string }>(
 		`SELECT ma.title, ma.slug FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE ma.id = $1 AND m.company_id = $2`,
-		[agentId, companyId],
+		 WHERE ma.id = $1 AND m.team_id = $2`,
+		[agentId, teamId],
 	);
 	if (agent.rows.length === 0) {
-		throw new AgentSystemPromptError('NOT_FOUND', 'Agent not found in this company');
+		throw new AgentSystemPromptError('NOT_FOUND', 'Agent not found in this team');
 	}
 
 	const doc = await getDocument(db, {
 		type: DocumentType.AgentSystemPrompt,
-		companyId,
+		teamId,
 		memberAgentId: agentId,
 	});
 	if (!doc) {
@@ -59,7 +59,7 @@ export async function fetchAgentSystemPromptForBatch(
 		mode === 'raw'
 			? doc.content
 			: await resolveSystemPrompt(db, doc.content, {
-					companyId,
+					teamId,
 					agentId,
 					mode,
 				});

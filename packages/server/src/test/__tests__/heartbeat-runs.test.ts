@@ -15,14 +15,14 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 let projectId: string;
 let issueId: string;
 
 async function mintTestWakeup(memberId: string, cId: string): Promise<string> {
 	const r = await db.query<{ id: string }>(
-		`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, payload, claimed_at)
+		`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload, claimed_at)
 		 VALUES ($1, $2, 'on_demand'::wakeup_source, 'claimed'::wakeup_status, '{}'::jsonb, now())
 		 RETURNING id`,
 		[memberId, cId],
@@ -37,28 +37,28 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Run Test Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Main', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Test Runner' }),
 	});
 	agentId = (await agentRes.json()).data.id;
 
-	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -79,10 +79,10 @@ describe('heartbeat-runs API', () => {
 
 	it('stores issue_id on heartbeat_runs', async () => {
 		const result = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status)
+			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status)
 			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status)
 			 RETURNING id`,
-			[agentId, companyId, issueId],
+			[agentId, teamId, issueId],
 		);
 		runId = result.rows[0].id;
 		expect(runId).toBeTruthy();
@@ -108,7 +108,7 @@ describe('heartbeat-runs API', () => {
 			[runId],
 		);
 
-		const res = await app.request(`/api/companies/${companyId}/agents/${agentId}/heartbeat-runs`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -124,7 +124,7 @@ describe('heartbeat-runs API', () => {
 
 	it('gets a single run by id with issue info', async () => {
 		const res = await app.request(
-			`/api/companies/${companyId}/agents/${agentId}/heartbeat-runs/${runId}`,
+			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${runId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
@@ -140,7 +140,7 @@ describe('heartbeat-runs API', () => {
 	it('returns 404 for nonexistent run', async () => {
 		const fakeId = '00000000-0000-0000-0000-000000000000';
 		const res = await app.request(
-			`/api/companies/${companyId}/agents/${agentId}/heartbeat-runs/${fakeId}`,
+			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${fakeId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
@@ -148,10 +148,10 @@ describe('heartbeat-runs API', () => {
 
 	it('allows null issue_id on heartbeat_runs', async () => {
 		const result = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, status)
+			`INSERT INTO heartbeat_runs (member_id, team_id, status)
 			 VALUES ($1, $2, 'running'::heartbeat_run_status)
 			 RETURNING id`,
-			[agentId, companyId],
+			[agentId, teamId],
 		);
 		expect(result.rows[0].id).toBeTruthy();
 
@@ -168,7 +168,7 @@ describe('run comments', () => {
 		const agent: AgentInfo = {
 			id: agentId,
 			title: 'Test Runner',
-			company_id: companyId,
+			team_id: teamId,
 		};
 		const issue = {
 			id: issueId,
@@ -181,7 +181,7 @@ describe('run comments', () => {
 			rules: null,
 		};
 		const broadcast: HeartbeatRunBroadcast = {
-			companyId,
+			teamId,
 			issueId,
 			memberId: agentId,
 		};
@@ -191,7 +191,7 @@ describe('run comments', () => {
 			agent,
 			issue,
 			broadcast,
-			await mintTestWakeup(agentId, companyId),
+			await mintTestWakeup(agentId, teamId),
 		);
 		expect(runId).toBeTruthy();
 
@@ -224,7 +224,7 @@ describe('run comments', () => {
 		const agent: AgentInfo = {
 			id: agentId,
 			title: 'Test Runner',
-			company_id: companyId,
+			team_id: teamId,
 		};
 		const issue = {
 			id: issueId,
@@ -246,11 +246,11 @@ describe('run comments', () => {
 			agent,
 			issue,
 			{
-				companyId,
+				teamId,
 				issueId,
 				memberId: agentId,
 			},
-			await mintTestWakeup(agentId, companyId),
+			await mintTestWakeup(agentId, teamId),
 		);
 
 		await db.query(
@@ -270,7 +270,7 @@ describe('run comments', () => {
 
 describe('issue status auto-transition on run start', () => {
 	async function createIssue(opts?: { assigneeId?: string; status?: string }): Promise<string> {
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -304,11 +304,11 @@ describe('issue status auto-transition on run start', () => {
 		};
 	}
 
-	const agent: AgentInfo = { id: '', title: 'Test Runner', company_id: '' };
+	const agent: AgentInfo = { id: '', title: 'Test Runner', team_id: '' };
 
 	beforeAll(() => {
 		agent.id = agentId;
-		agent.company_id = companyId;
+		agent.team_id = teamId;
 	});
 
 	it('flips backlog → in_progress when the running agent is the assignee', async () => {
@@ -320,11 +320,11 @@ describe('issue status auto-transition on run start', () => {
 			agent,
 			issue,
 			{
-				companyId,
+				teamId,
 				issueId: localIssueId,
 				memberId: agentId,
 			},
-			await mintTestWakeup(agentId, companyId),
+			await mintTestWakeup(agentId, teamId),
 		);
 
 		const row = await db.query<{ status: string }>(
@@ -336,7 +336,7 @@ describe('issue status auto-transition on run start', () => {
 	});
 
 	it('does not flip status when the running agent is not the assignee', async () => {
-		const otherRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const otherRes = await app.request(`/api/teams/${teamId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Other Runner' }),
@@ -350,11 +350,11 @@ describe('issue status auto-transition on run start', () => {
 			agent,
 			issue,
 			{
-				companyId,
+				teamId,
 				issueId: localIssueId,
 				memberId: agentId,
 			},
-			await mintTestWakeup(agentId, companyId),
+			await mintTestWakeup(agentId, teamId),
 		);
 
 		const row = await db.query<{ status: string }>(
@@ -373,11 +373,11 @@ describe('issue status auto-transition on run start', () => {
 			agent,
 			issue,
 			{
-				companyId,
+				teamId,
 				issueId: localIssueId,
 				memberId: agentId,
 			},
-			await mintTestWakeup(agentId, companyId),
+			await mintTestWakeup(agentId, teamId),
 		);
 
 		const row = await db.query<{ status: string }>(
@@ -391,7 +391,7 @@ describe('issue status auto-transition on run start', () => {
 	it('is idempotent across repeated runs on the same backlog issue', async () => {
 		const localIssueId = await createIssue();
 		const broadcast: HeartbeatRunBroadcast = {
-			companyId,
+			teamId,
 			issueId: localIssueId,
 			memberId: agentId,
 		};
@@ -401,14 +401,14 @@ describe('issue status auto-transition on run start', () => {
 			agent,
 			buildIssue(localIssueId),
 			broadcast,
-			await mintTestWakeup(agentId, companyId),
+			await mintTestWakeup(agentId, teamId),
 		);
 		const run2 = await createHeartbeatRun(
 			db,
 			agent,
 			buildIssue(localIssueId),
 			broadcast,
-			await mintTestWakeup(agentId, companyId),
+			await mintTestWakeup(agentId, teamId),
 		);
 
 		expect(run1).toBeTruthy();
@@ -429,7 +429,7 @@ describe('created_issues tracking', () => {
 			db,
 			masterKeyManager,
 			agentId,
-			companyId,
+			teamId,
 			issueId,
 		);
 
@@ -442,7 +442,7 @@ describe('created_issues tracking', () => {
 				params: {
 					name: 'create_issue',
 					arguments: {
-						company_id: companyId,
+						team_id: teamId,
 						project_id: projectId,
 						title: 'Spawned Issue',
 						description: 'Created by agent during run',
@@ -468,7 +468,7 @@ describe('created_issues tracking', () => {
 		expect(dbRow.rows[0].created_by_run_id).toBe(runId);
 
 		const runRes = await app.request(
-			`/api/companies/${companyId}/agents/${agentId}/heartbeat-runs/${runId}`,
+			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${runId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(runRes.status).toBe(200);
@@ -496,15 +496,15 @@ describe('created_issues tracking', () => {
 
 	it('returns empty created_issues when the run has created none', async () => {
 		const result = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status)
+			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status)
 			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status)
 			 RETURNING id`,
-			[agentId, companyId, issueId],
+			[agentId, teamId, issueId],
 		);
 		const emptyRunId = result.rows[0].id;
 
 		const res = await app.request(
-			`/api/companies/${companyId}/agents/${agentId}/heartbeat-runs/${emptyRunId}`,
+			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${emptyRunId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
@@ -522,7 +522,7 @@ describe('created_issues tracking', () => {
 				params: {
 					name: 'create_issue',
 					arguments: {
-						company_id: companyId,
+						team_id: teamId,
 						project_id: projectId,
 						title: 'Board-created Issue',
 						assignee_id: agentId,

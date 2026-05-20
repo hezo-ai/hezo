@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -16,14 +16,14 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', {
+	const typesRes = await app.request('/api/team-templates', {
 		headers: authHeader(token),
 	});
 	const typeId = (await typesRes.json()).data.find(
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -31,16 +31,16 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 });
 
 afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('POST /companies/:companyId/agents/onboard', () => {
+describe('POST /teams/:teamId/agents/onboard', () => {
 	it('creates a hire approval and CEO ticket, but no agent yet', async () => {
-		const res = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -67,7 +67,7 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 		expect(approval.payload.issue_id).toBe(issue.id);
 
 		// No member_agent should exist yet
-		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
@@ -75,7 +75,7 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 	});
 
 	it('resolving the hire approval materializes the agent and closes the ticket', async () => {
-		const onboardRes = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+		const onboardRes = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -95,7 +95,7 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 		});
 		expect(resolveRes.status).toBe(200);
 
-		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const created = (await agentsRes.json()).data.find(
@@ -106,13 +106,12 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 		expect(created.monthly_budget_cents).toBe(7500);
 		expect(created.heartbeat_interval_min).toBe(45);
 
-		const promptRes = await app.request(
-			`/api/companies/${companyId}/agents/${created.id}/system-prompt`,
-			{ headers: authHeader(token) },
-		);
+		const promptRes = await app.request(`/api/teams/${teamId}/agents/${created.id}/system-prompt`, {
+			headers: authHeader(token),
+		});
 		expect((await promptRes.json()).data.content).toBe('Draft prompt');
 
-		const issueRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			headers: authHeader(token),
 		});
 		const updatedIssue = (await issueRes.json()).data;
@@ -120,7 +119,7 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 	});
 
 	it('denying the hire approval leaves no agent behind', async () => {
-		const onboardRes = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+		const onboardRes = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Dropped Role', role_description: 'No go' }),
@@ -133,7 +132,7 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 			body: JSON.stringify({ status: 'denied', resolution_note: 'not needed right now' }),
 		});
 
-		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const exists = (await agentsRes.json()).data.find(
@@ -143,14 +142,14 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 	});
 
 	it('rejects a second pending hire for the same slug', async () => {
-		const first = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+		const first = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Growth Marketer', role_description: 'x' }),
 		});
 		expect(first.status).toBe(201);
 
-		const dup = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+		const dup = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Growth Marketer', role_description: 'y' }),
@@ -159,32 +158,32 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 	});
 
 	it('bootstrap: with no CEO, creates the agent enabled without an approval', async () => {
-		const typesRes = await app.request('/api/company-types', {
+		const typesRes = await app.request('/api/team-templates', {
 			headers: authHeader(token),
 		});
 		const typeId = (await typesRes.json()).data.find(
 			(t: Record<string, unknown>) => t.name === 'Startup',
 		).id;
 
-		const bareRes = await app.request('/api/companies', {
+		const bareRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'No CEO Co', template_id: typeId }),
 		});
-		const bareCompanyId = (await bareRes.json()).data.id;
+		const bareTeamId = (await bareRes.json()).data.id;
 
 		// Disable the CEO so hasCeo becomes false
-		const agentsRes = await app.request(`/api/companies/${bareCompanyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${bareTeamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
 		const ceo = agents.find((a: Record<string, unknown>) => a.slug === 'ceo');
-		await app.request(`/api/companies/${bareCompanyId}/agents/${ceo.id}/disable`, {
+		await app.request(`/api/teams/${bareTeamId}/agents/${ceo.id}/disable`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
 
-		const res = await app.request(`/api/companies/${bareCompanyId}/agents/onboard`, {
+		const res = await app.request(`/api/teams/${bareTeamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Solo Agent', role_description: 'Works independently' }),
@@ -198,7 +197,7 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 	});
 
 	it('rejects onboard with missing title', async () => {
-		const res = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ role_description: 'Missing title field' }),
@@ -210,7 +209,7 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 
 	it('rejects onboard with duplicate slug against existing agent', async () => {
 		// CEO slug already exists from the Startup template
-		const res = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'CEO' }),
@@ -221,7 +220,7 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 	});
 
 	it('requires authentication', async () => {
-		const res = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Unauthorized Agent' }),
@@ -232,7 +231,7 @@ describe('POST /companies/:companyId/agents/onboard', () => {
 
 describe('seeded agent system prompts', () => {
 	it('every Startup-template agent gets a non-empty system prompt with templating preserved', async () => {
-		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -252,7 +251,7 @@ describe('seeded agent system prompts', () => {
 		];
 
 		const getPrompt = async (agentId: string): Promise<string> => {
-			const res = await app.request(`/api/companies/${companyId}/agents/${agentId}/system-prompt`, {
+			const res = await app.request(`/api/teams/${teamId}/agents/${agentId}/system-prompt`, {
 				headers: authHeader(token),
 			});
 			return ((await res.json()).data?.content ?? '') as string;
@@ -260,7 +259,7 @@ describe('seeded agent system prompts', () => {
 
 		for (const slug of seededSlugs) {
 			const agent = agents.find((a) => a.slug === slug);
-			expect(agent, `agent ${slug} should exist on the seeded company`).toBeDefined();
+			expect(agent, `agent ${slug} should exist on the seeded team`).toBeDefined();
 			const prompt = await getPrompt(agent!.id);
 			expect(prompt, `agent ${slug} should have a system prompt`).toBeTruthy();
 			expect(prompt.length).toBeGreaterThan(100);
@@ -269,7 +268,7 @@ describe('seeded agent system prompts', () => {
 		const ceo = agents.find((a) => a.slug === 'ceo')!;
 		const ceoPrompt = await getPrompt(ceo.id);
 		expect(ceoPrompt).toContain('You are the CEO of');
-		expect(ceoPrompt).toContain('{{company_name}}');
+		expect(ceoPrompt).toContain('{{team_name}}');
 		expect(ceoPrompt).toMatch(/##\s+Rules\b/);
 
 		const engineer = agents.find((a) => a.slug === 'engineer')!;
@@ -282,35 +281,34 @@ describe('seeded agent system prompts', () => {
 describe('agent listing with admin_status filter', () => {
 	it('filters by multiple statuses with comma-separated query param', async () => {
 		// Disable one agent so we have both enabled and disabled agents
-		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
 		const target = agents.find((a: Record<string, unknown>) => a.slug === 'engineer');
 
-		await app.request(`/api/companies/${companyId}/agents/${target.id}/disable`, {
+		await app.request(`/api/teams/${teamId}/agents/${target.id}/disable`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
 
-		const res = await app.request(
-			`/api/companies/${companyId}/agents?admin_status=enabled,disabled`,
-			{ headers: authHeader(token) },
-		);
+		const res = await app.request(`/api/teams/${teamId}/agents?admin_status=enabled,disabled`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		const statuses = new Set(body.data.map((a: Record<string, unknown>) => a.admin_status));
 		expect(statuses.has('enabled')).toBe(true);
 		expect(statuses.has('disabled')).toBe(true);
 		// Re-enable so other tests aren't affected
-		await app.request(`/api/companies/${companyId}/agents/${target.id}/enable`, {
+		await app.request(`/api/teams/${teamId}/agents/${target.id}/enable`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
 	});
 
 	it('returns empty array when filter matches no agents', async () => {
-		const res = await app.request(`/api/companies/${companyId}/agents?admin_status=disabled`, {
+		const res = await app.request(`/api/teams/${teamId}/agents?admin_status=disabled`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -322,7 +320,7 @@ describe('agent listing with admin_status filter', () => {
 	});
 
 	it('list includes reports_to and reports_to_title fields', async () => {
-		const res = await app.request(`/api/companies/${companyId}/agents`, {
+		const res = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -342,9 +340,9 @@ describe('agent listing with admin_status filter', () => {
 	});
 });
 
-describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => {
+describe('PATCH /teams/:teamId/agents/:agentId (partial updates)', () => {
 	it('updates only role_description leaving other fields unchanged', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
@@ -353,7 +351,7 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 		const originalTitle = agent.title;
 		const originalBudget = agent.monthly_budget_cents;
 
-		const res = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ role_description: 'Updated role description for Architect' }),
@@ -366,28 +364,27 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 	});
 
 	it('updates system_prompt and records a revision', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const agent = agents.find((a: Record<string, unknown>) => a.slug === 'architect');
 
-		const res = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'New system prompt for Architect.' }),
 		});
 		expect(res.status).toBe(200);
 
-		const promptRes = await app.request(
-			`/api/companies/${companyId}/agents/${agent.id}/system-prompt`,
-			{ headers: authHeader(token) },
-		);
+		const promptRes = await app.request(`/api/teams/${teamId}/agents/${agent.id}/system-prompt`, {
+			headers: authHeader(token),
+		});
 		const promptDoc = (await promptRes.json()).data;
 		expect(promptDoc.content).toBe('New system prompt for Architect.');
 
 		const revisionsRes = await app.request(
-			`/api/companies/${companyId}/agents/${agent.id}/system-prompt/revisions`,
+			`/api/teams/${teamId}/agents/${agent.id}/system-prompt/revisions`,
 			{ headers: authHeader(token) },
 		);
 		const revisions = (await revisionsRes.json()).data as Array<{
@@ -399,13 +396,13 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 	});
 
 	it('updates title and syncs display_name on the members record', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const agent = agents.find((a: Record<string, unknown>) => a.slug === 'researcher');
 
-		const res = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Senior Researcher' }),
@@ -423,13 +420,13 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 	});
 
 	it('returns current state when PATCH body has no recognised fields', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const agent = agents[0];
 
-		const res = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({}),
@@ -439,14 +436,14 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 
 	it('clears reports_to when patched with null', async () => {
 		// Find an agent that has a reports_to set (any non-CEO)
-		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const subordinate = agents.find((a: Record<string, unknown>) => a.reports_to !== null);
 		expect(subordinate).toBeDefined();
 
-		const res = await app.request(`/api/companies/${companyId}/agents/${subordinate.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/${subordinate.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ reports_to: null }),
@@ -458,7 +455,7 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 
 	it('returns 404 when patching a non-existent agent', async () => {
 		const fakeId = '00000000-0000-0000-0000-000000000000';
-		const res = await app.request(`/api/companies/${companyId}/agents/${fakeId}`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/${fakeId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ role_description: 'Ghost agent' }),
@@ -467,13 +464,13 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 	});
 
 	it('sets and clears model_override_provider + model_override_model', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const agent = agents.find((a: Record<string, unknown>) => a.slug === 'architect');
 
-		const set = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+		const set = await app.request(`/api/teams/${teamId}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -486,7 +483,7 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 		expect(setBody.data.model_override_provider).toBe('openai');
 		expect(setBody.data.model_override_model).toBe('gpt-5-mini');
 
-		const clear = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+		const clear = await app.request(`/api/teams/${teamId}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ model_override_provider: null }),
@@ -498,12 +495,12 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 	});
 
 	it('rejects an unknown provider in model_override_provider', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agent = (await listRes.json()).data[0];
 
-		const res = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ model_override_provider: 'nope' }),
@@ -512,19 +509,19 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 	});
 
 	it('rejects a model without an existing or new provider', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		// Pick an agent with no override set; ensure cleared first.
 		const agent = agents[0];
-		await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+		await app.request(`/api/teams/${teamId}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ model_override_provider: null }),
 		});
 
-		const res = await app.request(`/api/companies/${companyId}/agents/${agent.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ model_override_model: 'gpt-5' }),
@@ -536,7 +533,7 @@ describe('PATCH /companies/:companyId/agents/:agentId (partial updates)', () => 
 describe('invalid reports_to reference', () => {
 	it('rejects creating an agent with a non-existent reports_to UUID', async () => {
 		const nonExistentId = '00000000-0000-0000-0000-000000000001';
-		const res = await app.request(`/api/companies/${companyId}/agents`, {
+		const res = await app.request(`/api/teams/${teamId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

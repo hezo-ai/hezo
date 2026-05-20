@@ -10,7 +10,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let db: PGlite;
 let app: Hono<Env>;
 let token: string;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -19,21 +19,21 @@ beforeAll(async () => {
 	app = ctx.app;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
-	const companyTypeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Orphan Test Co',
 
-			template_id: companyTypeId,
+			template_id: teamTemplateId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -51,7 +51,7 @@ async function insertOrphanRun(
 	const { retryCount = 0 } = opts;
 	const result = await db.query<{ id: string }>(
 		`INSERT INTO heartbeat_runs
-		   (company_id, member_id, status, started_at, process_loss_retry_count)
+		   (team_id, member_id, status, started_at, process_loss_retry_count)
 		 VALUES ($1, $2, $3::heartbeat_run_status, now() - interval '10 minutes', $4)
 		 RETURNING id`,
 		[coId, memberId, HeartbeatRunStatus.Running, retryCount],
@@ -75,14 +75,14 @@ async function insertLock(memberId: string, issueId: string): Promise<string> {
 }
 
 async function createIssue(coId: string): Promise<string> {
-	const projectRes = await app.request(`/api/companies/${coId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${coId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Orphan Project', description: 'Test project.' }),
 	});
 	const projectId = (await projectRes.json()).data.id;
 
-	const issueRes = await app.request(`/api/companies/${coId}/issues`, {
+	const issueRes = await app.request(`/api/teams/${coId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title: 'Orphan Issue', assignee_id: agentId }),
@@ -94,8 +94,8 @@ describe('detectOrphans', () => {
 	it('returns 0 when no orphaned runs exist', async () => {
 		// Clean state — no running heartbeat runs
 		await db.query(
-			`DELETE FROM heartbeat_runs WHERE company_id = $1 AND status = $2::heartbeat_run_status`,
-			[companyId, HeartbeatRunStatus.Running],
+			`DELETE FROM heartbeat_runs WHERE team_id = $1 AND status = $2::heartbeat_run_status`,
+			[teamId, HeartbeatRunStatus.Running],
 		);
 
 		const count = await detectOrphans(db, new Set());
@@ -103,7 +103,7 @@ describe('detectOrphans', () => {
 	});
 
 	it('detects orphaned heartbeat runs and marks them failed', async () => {
-		const runId = await insertOrphanRun(agentId, companyId);
+		const runId = await insertOrphanRun(agentId, teamId);
 
 		const count = await detectOrphans(db, new Set());
 		expect(count).toBeGreaterThanOrEqual(1);
@@ -118,7 +118,7 @@ describe('detectOrphans', () => {
 	});
 
 	it('skips runs whose id is in the live-run registry', async () => {
-		const runId = await insertOrphanRun(agentId, companyId);
+		const runId = await insertOrphanRun(agentId, teamId);
 
 		await detectOrphans(db, new Set([runId]));
 
@@ -133,11 +133,11 @@ describe('detectOrphans', () => {
 
 	it('resets member_agents.runtime_status from active to idle when no other live run remains', async () => {
 		await db.query(
-			`DELETE FROM heartbeat_runs WHERE company_id = $1 AND status = $2::heartbeat_run_status`,
-			[companyId, HeartbeatRunStatus.Running],
+			`DELETE FROM heartbeat_runs WHERE team_id = $1 AND status = $2::heartbeat_run_status`,
+			[teamId, HeartbeatRunStatus.Running],
 		);
 		await setAgentActive(agentId);
-		await insertOrphanRun(agentId, companyId);
+		await insertOrphanRun(agentId, teamId);
 
 		await detectOrphans(db, new Set());
 
@@ -149,9 +149,9 @@ describe('detectOrphans', () => {
 	});
 
 	it('releases execution locks for orphaned agents', async () => {
-		const issueId = await createIssue(companyId);
+		const issueId = await createIssue(teamId);
 		const lockId = await insertLock(agentId, issueId);
-		await insertOrphanRun(agentId, companyId);
+		await insertOrphanRun(agentId, teamId);
 
 		await detectOrphans(db, new Set());
 
@@ -165,7 +165,7 @@ describe('detectOrphans', () => {
 	it('creates a retry wakeup when retry count < 3', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
-		await insertOrphanRun(agentId, companyId, { retryCount: 1 });
+		await insertOrphanRun(agentId, teamId, { retryCount: 1 });
 
 		await detectOrphans(db, new Set());
 
@@ -182,19 +182,19 @@ describe('detectOrphans', () => {
 	});
 
 	it('creates an approval request when retry count >= 3 (MAX_RETRIES)', async () => {
-		await db.query('DELETE FROM approvals WHERE company_id = $1', [companyId]);
+		await db.query('DELETE FROM approvals WHERE team_id = $1', [teamId]);
 
 		// retry_count = 2, so process_loss_retry_count + 1 = 3 which is not < MAX_RETRIES (3)
-		await insertOrphanRun(agentId, companyId, { retryCount: 2 });
+		await insertOrphanRun(agentId, teamId, { retryCount: 2 });
 
 		await detectOrphans(db, new Set());
 
 		const approvals = await db.query<{ type: string; payload: unknown }>(
 			`SELECT type, payload FROM approvals
-			 WHERE company_id = $1 AND type = $2::approval_type
+			 WHERE team_id = $1 AND type = $2::approval_type
 			 ORDER BY created_at DESC
 			 LIMIT 1`,
-			[companyId, ApprovalType.Strategy],
+			[teamId, ApprovalType.Strategy],
 		);
 		expect(approvals.rows.length).toBeGreaterThanOrEqual(1);
 		const payload = approvals.rows[0].payload as Record<string, unknown>;
@@ -205,14 +205,14 @@ describe('detectOrphans', () => {
 	it('returns correct orphan count for multiple orphans', async () => {
 		// Remove all existing running runs
 		await db.query(
-			`DELETE FROM heartbeat_runs WHERE company_id = $1 AND status = $2::heartbeat_run_status`,
-			[companyId, HeartbeatRunStatus.Running],
+			`DELETE FROM heartbeat_runs WHERE team_id = $1 AND status = $2::heartbeat_run_status`,
+			[teamId, HeartbeatRunStatus.Running],
 		);
 
 		// Insert 3 orphaned runs (no PIDs)
-		await insertOrphanRun(agentId, companyId);
-		await insertOrphanRun(agentId, companyId);
-		await insertOrphanRun(agentId, companyId);
+		await insertOrphanRun(agentId, teamId);
+		await insertOrphanRun(agentId, teamId);
+		await insertOrphanRun(agentId, teamId);
 
 		const count = await detectOrphans(db, new Set());
 		expect(count).toBe(3);

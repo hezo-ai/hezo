@@ -26,7 +26,7 @@ export function AiProviderSetupModal() {
 				</div>
 				<p className="text-[13px] text-text-muted mb-6">
 					Configure at least one AI provider so your agents can run. These credentials are shared
-					across every company in this Hezo instance.
+					across every team in this Hezo instance.
 				</p>
 
 				<div className="space-y-3">

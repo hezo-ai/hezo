@@ -5,7 +5,7 @@ import type { WebSocketManager } from './ws';
 
 export interface DocumentRow {
 	id: string;
-	company_id: string;
+	team_id: string;
 	project_id: string | null;
 	member_agent_id: string | null;
 	type: DocumentType;
@@ -37,25 +37,25 @@ export interface DocumentRevisionRowWithAuthor extends DocumentRevisionRow {
 
 interface ScopeProjectDoc {
 	type: typeof DocumentType.ProjectDoc;
-	companyId: string;
+	teamId: string;
 	projectId: string;
 	slug: string;
 }
 
 interface ScopeKbDoc {
 	type: typeof DocumentType.KbDoc;
-	companyId: string;
+	teamId: string;
 	slug: string;
 }
 
 interface ScopePreferences {
-	type: typeof DocumentType.CompanyPreferences;
-	companyId: string;
+	type: typeof DocumentType.TeamPreferences;
+	teamId: string;
 }
 
 interface ScopeAgentSystemPrompt {
 	type: typeof DocumentType.AgentSystemPrompt;
-	companyId: string;
+	teamId: string;
 	memberAgentId: string;
 }
 
@@ -72,31 +72,31 @@ function scopeWhere(scope: DocumentScope, alias = ''): { sql: string; params: un
 	const p = alias ? `${alias}.` : '';
 	if (scope.type === DocumentType.ProjectDoc) {
 		return {
-			sql: `${p}type = $1 AND ${p}company_id = $2 AND ${p}project_id = $3 AND ${p}slug = $4`,
-			params: [scope.type, scope.companyId, scope.projectId, scope.slug],
+			sql: `${p}type = $1 AND ${p}team_id = $2 AND ${p}project_id = $3 AND ${p}slug = $4`,
+			params: [scope.type, scope.teamId, scope.projectId, scope.slug],
 		};
 	}
 	if (scope.type === DocumentType.KbDoc) {
 		return {
-			sql: `${p}type = $1 AND ${p}company_id = $2 AND ${p}slug = $3`,
-			params: [scope.type, scope.companyId, scope.slug],
+			sql: `${p}type = $1 AND ${p}team_id = $2 AND ${p}slug = $3`,
+			params: [scope.type, scope.teamId, scope.slug],
 		};
 	}
 	if (scope.type === DocumentType.AgentSystemPrompt) {
 		return {
-			sql: `${p}type = $1 AND ${p}company_id = $2 AND ${p}member_agent_id = $3`,
-			params: [scope.type, scope.companyId, scope.memberAgentId],
+			sql: `${p}type = $1 AND ${p}team_id = $2 AND ${p}member_agent_id = $3`,
+			params: [scope.type, scope.teamId, scope.memberAgentId],
 		};
 	}
 	return {
-		sql: `${p}type = $1 AND ${p}company_id = $2`,
-		params: [scope.type, scope.companyId],
+		sql: `${p}type = $1 AND ${p}team_id = $2`,
+		params: [scope.type, scope.teamId],
 	};
 }
 
 // Explicit column list — `embedding` (vector(384)) is server-internal and
 // adds ~4KB of float noise per row in JSON responses for zero downstream value.
-const SELECT_WITH_AUTHOR = `SELECT d.id, d.company_id, d.project_id, d.member_agent_id,
+const SELECT_WITH_AUTHOR = `SELECT d.id, d.team_id, d.project_id, d.member_agent_id,
 	        d.type, d.slug, d.title, d.content,
 	        d.last_updated_by_member_id, d.created_at, d.updated_at,
 	        COALESCE(ma.title, m.display_name) AS last_updated_by_name
@@ -118,7 +118,7 @@ export async function getDocument(
 
 export interface ListDocumentsOptions {
 	type: DocumentType;
-	companyId: string;
+	teamId: string;
 	projectId?: string;
 }
 
@@ -126,8 +126,8 @@ export async function listDocuments(
 	db: PGlite,
 	options: ListDocumentsOptions,
 ): Promise<DocumentRowWithAuthor[]> {
-	const params: unknown[] = [options.type, options.companyId];
-	let where = 'd.type = $1 AND d.company_id = $2';
+	const params: unknown[] = [options.type, options.teamId];
+	let where = 'd.type = $1 AND d.team_id = $2';
 	if (options.projectId !== undefined) {
 		params.push(options.projectId);
 		where += ' AND d.project_id = $3';
@@ -196,7 +196,7 @@ export async function upsertDocument(
 
 	broadcastRowChange(
 		wsManager,
-		wsRoom.company(row.company_id),
+		wsRoom.team(row.team_id),
 		'documents',
 		action,
 		row as unknown as Record<string, unknown>,
@@ -210,11 +210,11 @@ async function insertDocument(db: PGlite, input: UpsertDocumentInput): Promise<D
 	const memberAgentId = scope.type === DocumentType.AgentSystemPrompt ? scope.memberAgentId : null;
 	const slug = resolveSlug(scope);
 	const result = await db.query<DocumentRow>(
-		`INSERT INTO documents (company_id, project_id, member_agent_id, type, slug, title, content, last_updated_by_member_id)
+		`INSERT INTO documents (team_id, project_id, member_agent_id, type, slug, title, content, last_updated_by_member_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING *`,
 		[
-			scope.companyId,
+			scope.teamId,
 			projectId,
 			memberAgentId,
 			scope.type,
@@ -228,7 +228,7 @@ async function insertDocument(db: PGlite, input: UpsertDocumentInput): Promise<D
 }
 
 function resolveSlug(scope: DocumentScope): string {
-	if (scope.type === DocumentType.CompanyPreferences) return PREFERENCES_SLUG;
+	if (scope.type === DocumentType.TeamPreferences) return PREFERENCES_SLUG;
 	if (scope.type === DocumentType.AgentSystemPrompt) return AGENT_SYSTEM_PROMPT_SLUG;
 	return scope.slug;
 }
@@ -267,7 +267,7 @@ export async function deleteDocument(
 	const row = result.rows[0];
 	broadcastRowChange(
 		wsManager,
-		wsRoom.company(row.company_id),
+		wsRoom.team(row.team_id),
 		'documents',
 		'DELETE',
 		row as unknown as Record<string, unknown>,
@@ -302,8 +302,8 @@ export async function restoreRevision(
 	wsManager: WebSocketManager | undefined,
 	input: RestoreRevisionInput,
 ): Promise<DocumentRow | null> {
-	const doc = await db.query<{ id: string; content: string; company_id: string }>(
-		'SELECT id, content, company_id FROM documents WHERE id = $1',
+	const doc = await db.query<{ id: string; content: string; team_id: string }>(
+		'SELECT id, content, team_id FROM documents WHERE id = $1',
 		[input.documentId],
 	);
 	if (doc.rows.length === 0) return null;
@@ -340,7 +340,7 @@ export async function restoreRevision(
 
 	broadcastRowChange(
 		wsManager,
-		wsRoom.company(row.company_id),
+		wsRoom.team(row.team_id),
 		'documents',
 		'UPDATE',
 		row as unknown as Record<string, unknown>,
@@ -350,12 +350,12 @@ export async function restoreRevision(
 
 export async function getAgentSystemPrompt(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	memberAgentId: string,
 ): Promise<string> {
 	const doc = await getDocument(db, {
 		type: DocumentType.AgentSystemPrompt,
-		companyId,
+		teamId,
 		memberAgentId,
 	});
 	return doc?.content ?? '';
@@ -364,12 +364,12 @@ export async function getAgentSystemPrompt(
 /**
  * Inserts the initial agent_system_prompt document without wrapping its own
  * transaction. Safe to call inside a caller-managed BEGIN/COMMIT (seed,
- * company bootstrap, initial agent creation). Subsequent updates must go
+ * team bootstrap, initial agent creation). Subsequent updates must go
  * through `upsertDocument` so that revision history is recorded.
  */
 export async function initAgentSystemPrompt(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	memberAgentId: string,
 	content: string,
 	authorMemberId: string | null,
@@ -377,7 +377,7 @@ export async function initAgentSystemPrompt(
 	return insertDocument(db, {
 		scope: {
 			type: DocumentType.AgentSystemPrompt,
-			companyId,
+			teamId,
 			memberAgentId,
 		},
 		content,

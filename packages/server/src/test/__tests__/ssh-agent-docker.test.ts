@@ -21,7 +21,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import { SshAgentServer, sshPublicKeyToBlob } from '../../services/ssh-agent/server';
-import { generateCompanySSHKey } from '../../services/ssh-keys';
+import { generateTeamSSHKey } from '../../services/ssh-keys';
 import { safeClose } from '../helpers';
 import { createTestApp } from '../helpers/app';
 
@@ -40,7 +40,7 @@ const finalSkipReason = skipReason ?? imageSkipReason;
 
 let db: PGlite;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 let publicKey: string;
 let server: SshAgentServer;
@@ -52,21 +52,21 @@ beforeAll(async () => {
 	db = ctx.db;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const companyRes = await ctx.app.request('/api/companies', {
+	const teamRes = await ctx.app.request('/api/teams', {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'SSH Docker Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentRes = await ctx.app.request(`/api/companies/${companyId}/agents`, {
+	const agentRes = await ctx.app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'SSH Docker Agent' }),
 	});
 	agentId = (await agentRes.json()).data.id;
 
-	const ssh = await generateCompanySSHKey(db, companyId, masterKeyManager);
+	const ssh = await generateTeamSSHKey(db, teamId, masterKeyManager);
 	publicKey = ssh.publicKey;
 
 	server = new SshAgentServer({ db, masterKeyManager });
@@ -80,10 +80,10 @@ afterAll(async () => {
 });
 
 describe.skipIf(finalSkipReason !== null)('SSH agent — Docker integration', () => {
-	it('agent protocol over the in-container socat bridge surfaces the company key via ssh-add -L', async () => {
+	it('agent protocol over the in-container socat bridge surfaces the team key via ssh-add -L', async () => {
 		const runId = `docker-run-${Date.now()}`;
 		const socketHostPath = join(socketDir, `${runId}.sock`);
-		const allocated = await server.allocateRunSocket(runId, { companyId, agentId }, socketHostPath);
+		const allocated = await server.allocateRunSocket(runId, { teamId, agentId }, socketHostPath);
 
 		const containerSocketPath = `/run/hezo/${runId}.sock`;
 		const result = await runInContainer({
@@ -112,13 +112,13 @@ describe.skipIf(finalSkipReason !== null)('SSH agent — Docker integration', ()
 		const advertisedBlob = sshPublicKeyToBlob(stdoutKey);
 		const expectedBlob = sshPublicKeyToBlob(publicKey);
 		expect(advertisedBlob).toEqual(expectedBlob);
-		expect(stdoutKey).toContain(`hezo:${companyId}`);
+		expect(stdoutKey).toContain(`hezo:${teamId}`);
 	}, 90_000);
 
 	it('container has no private key file in the SSH config or temp dirs after the run', async () => {
 		const runId = `docker-leak-${Date.now()}`;
 		const socketHostPath = join(socketDir, `${runId}.sock`);
-		const allocated = await server.allocateRunSocket(runId, { companyId, agentId }, socketHostPath);
+		const allocated = await server.allocateRunSocket(runId, { teamId, agentId }, socketHostPath);
 
 		const containerSocketPath = `/run/hezo/${runId}.sock`;
 		const result = await runInContainer({
@@ -149,7 +149,7 @@ describe.skipIf(finalSkipReason !== null)('SSH agent — Docker integration', ()
 	it('signs ssh-keygen -Y sign challenges from inside the container and verifies on the host', async () => {
 		const runId = `docker-sign-${Date.now()}`;
 		const socketHostPath = join(socketDir, `${runId}.sock`);
-		const allocated = await server.allocateRunSocket(runId, { companyId, agentId }, socketHostPath);
+		const allocated = await server.allocateRunSocket(runId, { teamId, agentId }, socketHostPath);
 
 		const containerSocketPath = `/run/hezo/${runId}.sock`;
 		const containerPubFile = '/tmp/key.pub';
@@ -188,7 +188,7 @@ describe.skipIf(finalSkipReason !== null)('SSH agent — Docker integration', ()
 		const signersPath = join(socketDir, `${runId}.signers`);
 		writeFileSync(sigPath, sigPem);
 		writeFileSync(dataPath, 'verify-payload\n');
-		const signerLine = `agent-${companyId}@hezo.local ${publicKey.split(/\s+/).slice(0, 2).join(' ')}`;
+		const signerLine = `agent-${teamId}@hezo.local ${publicKey.split(/\s+/).slice(0, 2).join(' ')}`;
 		writeFileSync(signersPath, `${signerLine}\n`);
 
 		const verify = await runCommand(
@@ -199,7 +199,7 @@ describe.skipIf(finalSkipReason !== null)('SSH agent — Docker integration', ()
 				'-f',
 				signersPath,
 				'-I',
-				`agent-${companyId}@hezo.local`,
+				`agent-${teamId}@hezo.local`,
 				'-n',
 				'git',
 				'-s',

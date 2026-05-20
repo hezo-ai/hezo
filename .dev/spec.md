@@ -1,6 +1,6 @@
 # Hezo — Full Product Specification
 
-> Codename: Hezo. Open-source company orchestration platform.
+> Codename: Hezo. Open-source team orchestration platform.
 > Version: MVP spec v2.0
 > Date: March 2026
 
@@ -8,9 +8,9 @@
 
 ## 1. Product overview
 
-Hezo is a self-hosted web application that orchestrates teams of AI agents to run autonomous companies. Each agent plays a defined role (CEO, Product Lead, Architect, Engineer, etc.) and operates as a subprocess inside the project's Docker container (one container per project). Human users — **board members** — sit at the top as the board of directors, approving decisions, managing budgets, and steering strategy. Multiple board members can collaborate on the same company.
+Hezo is a self-hosted web application that orchestrates teams of AI agents to run autonomous teams. Each agent plays a defined role (CEO, Product Lead, Architect, Engineer, etc.) and operates as a subprocess inside the project's Docker container (one container per project). Human users — **board members** — sit at the top as the board of directors, approving decisions, managing budgets, and steering strategy. Multiple board members can collaborate on the same team.
 
-One Hezo instance supports multiple companies with full data isolation. The primary interaction surface is an issue tracker — agents receive work via tickets, report progress via threaded conversations, and present options and previews to the board for review.
+One Hezo instance supports multiple teams with full data isolation. The primary interaction surface is an issue tracker — agents receive work via tickets, report progress via threaded conversations, and present options and previews to the board for review.
 
 Hezo ships as a single executable binary. No external database required. No cloud account required.
 
@@ -18,8 +18,8 @@ Hezo ships as a single executable binary. No external database required. No clou
 
 - An org chart and governance layer for AI agents
 - An issue tracker where agents do work and report back
-- A cost control system with per-agent and per-company budgets
-- A multi-company runtime with full data isolation
+- A cost control system with per-agent and per-team budgets
+- A multi-team runtime with full data isolation
 - An observability platform with full tool-call tracing
 
 ### What Hezo is not
@@ -96,7 +96,7 @@ The master key is held in memory only — never written to disk. It encrypts all
 
 **Recovery options** (after failed canary decryption, via web UI):
 - **Re-enter a different master key.** Try again with the correct key.
-- **Generate a new master key and start fresh.** Warn that all existing instance data (secrets, companies, agents) will be lost. If confirmed, wipe the database, store a new canary, and proceed with a clean instance.
+- **Generate a new master key and start fresh.** Warn that all existing instance data (secrets, teams, agents) will be lost. If confirmed, wipe the database, store a new canary, and proceed with a clean instance.
 
 ### CLI interface and default configuration
 
@@ -116,7 +116,7 @@ hezo --reset                  # Wipe existing database and start fresh
 |---------|---------|-------|
 | Server port | `3100` | Main Hezo app |
 | Connect URL | `http://localhost:4100` | Matches local Hezo Connect default port |
-| Data directory | `~/.hezo/` | PGlite database, company data, assets |
+| Data directory | `~/.hezo/` | PGlite database, team data, assets |
 | Master key | *(set via web UI)* | Generated or entered in browser on first login. CLI `--master-key` for unlocking only. |
 
 Running `hezo` with zero arguments works for local development when Hezo Connect is running on its default port (4100). No configuration file needed for the common case.
@@ -218,12 +218,12 @@ MCP tools mirror the REST API surface. Both call the same underlying business lo
 
 | Tool | Description |
 |------|-------------|
-| `list_companies` | List all companies the caller has access to |
-| `create_company` | Create a new company |
+| `list_teams` | List all teams the caller has access to |
+| `create_team` | Create a new team |
 | `list_issues` | List issues with filtering (project, status, assignee) |
 | `create_issue` | Create a new issue in a project |
 | `update_issue` | Update issue status, assignee, priority, etc. |
-| `list_agents` | List agents in a company |
+| `list_agents` | List agents in a team |
 | `hire_agent` | Create a new agent from a role template or custom config |
 | `post_comment` | Post a comment on an issue |
 | `list_comments` | List comments on an issue |
@@ -233,8 +233,8 @@ MCP tools mirror the REST API surface. Both call the same underlying business lo
 | `search_kb` | Search knowledge base documents |
 | `update_kb_doc` | Create or update a KB document |
 | `get_cost_summary` | Get cost breakdown by agent, project, or time period |
-| `list_projects` | List projects in a company |
-| `list_secrets` | List secret names (not values) in a company |
+| `list_projects` | List projects in a team |
+| `list_secrets` | List secret names (not values) in a team |
 
 Additional tools are registered dynamically when plugins are activated.
 
@@ -258,7 +258,7 @@ Hezo serves a **skill file** that teaches external AI agents (like Claude Code) 
 
 ### Skills (DB-backed)
 
-Skills are reusable instruction documents stored in the `skills` table (company-scoped). They are injected into every agent's system prompt via the `{{skills_context}}` template variable.
+Skills are reusable instruction documents stored in the `skills` table (team-scoped). They are injected into every agent's system prompt via the `{{skills_context}}` template variable.
 
 Skills have: name, slug, description, content (markdown), tags (JSONB array), source URL (optional, for skills downloaded from GitHub), content hash, creator tracking, and revision history (`skill_revisions` table).
 
@@ -277,17 +277,17 @@ Hezo includes built-in semantic search powered by pgvector (enabled in PGlite) a
 
 **Agent access:** `semantic_search` MCP tool searches across all content types by natural language query, returning ranked results with relevance scores. Scope can be limited to specific content types.
 
-**REST endpoint:** `GET /companies/:companyId/search?q=...&scope=...` for the UI.
+**REST endpoint:** `GET /teams/:teamId/search?q=...&scope=...` for the UI.
 
 ---
 
-## 3. Multi-company management
+## 3. Multi-team management
 
-- One Hezo instance supports unlimited companies
-- Full data isolation between companies (every entity is company-scoped)
-- Home screen shows a card grid of all companies
-- Each company card displays: name, description snippet, agent count, open issue count, budget burn bar
-- Click a company card to enter its workspace
+- One Hezo instance supports unlimited teams
+- Full data isolation between teams (every entity is team-scoped)
+- Home screen shows a card grid of all teams
+- Each team card displays: name, description snippet, agent count, open issue count, budget burn bar
+- Click a team card to enter its workspace
 
 ### API access for external orchestrators
 
@@ -297,13 +297,13 @@ Hezo can be controlled programmatically by external AI agents (OpenClaw, custom 
 - **User JWT** — stateless JWT issued after OAuth login. Required for all human users. The `hezo_` prefix on API keys distinguishes them from user/agent JWTs.
 - **API key (remote)** — for OpenClaw, AI orchestrators, scripts. Header: `Authorization: Bearer hezo_<key>`.
 
-API keys are company-scoped. A key grants full board-level access to that company: create/manage issues, hire agents, approve requests, manage secrets — everything the board UI can do. Keys are stored hashed (bcrypt), shown once at creation, never again. Managed in company settings (generate, revoke, view last-used).
+API keys are team-scoped. A key grants full board-level access to that team: create/manage issues, hire agents, approve requests, manage secrets — everything the board UI can do. Keys are stored hashed (bcrypt), shown once at creation, never again. Managed in team settings (generate, revoke, view last-used).
 
-This means an OpenClaw instance or any AI agent with an API key can fully orchestrate a Hezo company: create issues, assign work, approve hires, review agent output, and steer strategy — all via REST.
+This means an OpenClaw instance or any AI agent with an API key can fully orchestrate a Hezo team: create issues, assign work, approve hires, review agent output, and steer strategy — all via REST.
 
-### Company types
+### Team types
 
-A **company type** (also called a template or recipe) defines the blueprint for a new company. A company type is a grouping of **agent types** plus default KB docs, preferences, and MCP servers.
+A **team type** (also called a template or recipe) defines the blueprint for a new team. A team type is a grouping of **agent types** plus default KB docs, preferences, and MCP servers.
 
 **Agent types** are first-class entities stored in the `agent_types` table. Each agent type defines:
 - **Name and slug** — e.g., "CEO" / `ceo`
@@ -312,15 +312,15 @@ A **company type** (also called a template or recipe) defines the blueprint for 
 - **Default config** — runtime type, default reasoning effort, heartbeat interval, monthly budget
 - **Source** — `builtin` (shipped with Hezo), `custom` (user-created), or `remote` (loaded from hezo connect marketplace)
 
-A **team type** (stored as `company_types`) specifies:
+A **team type** (stored as `team_templates`) specifies:
 - **Name** — e.g., "Software Development", "Research Lab", "Marketing Agency"
 - **Description** — what this type of team does
-- **Agent types** — which agent types to include, their org chart hierarchy (reports_to), and optional config overrides (via the `company_type_agent_types` join table)
+- **Agent types** — which agent types to include, their org chart hierarchy (reports_to), and optional config overrides (via the `team_template_agent_types` join table)
 - **Default KB documents** — starter knowledge base content (coding standards, guidelines, etc.)
-- **Default preferences** — initial company preferences
-- **Default MCP servers** — company-level MCP server configuration
+- **Default preferences** — initial team preferences
+- **Default MCP servers** — team-level MCP server configuration
 
-A company is created from a single **template** (`template_id`). The selected template determines the starting agent roster, knowledge base, and preferences.
+A team is created from a single **template** (`template_id`). The selected template determines the starting agent roster, knowledge base, and preferences.
 
 The current 11-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher, Security Engineer, Coach) is the built-in **"Software Development"** team type. It ships with Hezo and is pre-selected by default in the UI. Users are not limited to the agent types that come with their template — they can add other agent types later.
 
@@ -329,16 +329,16 @@ The current 11-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer, 
 - Users can create custom agent types via the API
 - Future: agent types can be loaded from hezo connect (remote marketplace)
 
-**Creating company types:**
-- Users can create new company types from scratch (select agent types, define KB docs and preferences)
-- Users can save an existing company as a new company type (snapshots current agents, KB, and preferences)
-- Company types are stored locally in the Hezo instance
+**Creating team types:**
+- Users can create new team types from scratch (select agent types, define KB docs and preferences)
+- Users can save an existing team as a new team type (snapshots current agents, KB, and preferences)
+- Team types are stored locally in the Hezo instance
 
-**Future:** Agent types and company types will be distributable as recipes from the Hezo Connect platform, enabling the community to create and sell blueprints for different kinds of AI companies.
+**Future:** Agent types and team types will be distributable as recipes from the Hezo Connect platform, enabling the community to create and sell blueprints for different kinds of AI teams.
 
-### Company onboarding flow
+### Team onboarding flow
 
-When a new company is created, the user selects a **company type** (see above). The system then clones from that type and automatically:
+When a new team is created, the user selects a **team type** (see above). The system then clones from that type and automatically:
 
 1. **Creates the full 11-agent team** defined by the selected template. For the built-in "Software Development" type, this includes (see `agents/` for full specs):
    - CEO (reports to board)
@@ -356,20 +356,20 @@ When a new company is created, the user selects a **company type** (see above). 
    - GitHub (required for repo access)
    - Gmail (recommended for agent email)
    - Others optional: Stripe, PostHog, Railway, Vercel, DigitalOcean, X, GitLab
-3. **Generates an SSH key pair** for the company and registers it on the connected GitHub account via OAuth API
+3. **Generates an SSH key pair** for the team and registers it on the connected GitHub account via OAuth API
 4. **Creates a "Setup" project** with an onboarding issue assigned to the CEO: *"Set up repository access — configure deploy keys for connected GitHub account."*
-5. **Creates the `~/.hezo/companies/{slug}/` folder structure** on the host machine with AGENTS.md in the project root
-6. **Provisions the project's Docker container** when the first project is created (not at company creation)
+5. **Creates the `~/.hezo/teams/{slug}/` folder structure** on the host machine with AGENTS.md in the project root
+6. **Provisions the project's Docker container** when the first project is created (not at team creation)
 
-All agent system prompts are pre-filled from templates and editable. The user can delete, modify, or add agents after creation. Connected platforms can be added or removed at any time in company settings.
+All agent system prompts are pre-filled from templates and editable. The user can delete, modify, or add agents after creation. Connected platforms can be added or removed at any time in team settings.
 
-**Note:** The DevOps Engineer is part of the core 11-agent team but starts in `idle` status. It does not auto-activate at company creation. The DevOps Engineer activates when the board is ready for staging/production deployment — the board changes its status to `active` when needed.
+**Note:** The DevOps Engineer is part of the core 11-agent team but starts in `idle` status. It does not auto-activate at team creation. The DevOps Engineer activates when the board is ready for staging/production deployment — the board changes its status to `active` when needed.
 
-**First-run flow:** Hezo Connect must be running. The first user logs in via GitHub or GitLab OAuth → master key gate modal in the UI → forced company creation. No admin-without-company state.
+**First-run flow:** Hezo Connect must be running. The first user logs in via GitHub or GitLab OAuth → master key gate modal in the UI → forced team creation. No admin-without-team state.
 
 ### Connected platforms (via Hezo Connect)
 
-Instead of manually managing API keys and OAuth tokens, Hezo uses a centralized OAuth gateway called **Hezo Connect** (see section 5b for full architecture). Each company connects to third-party platforms via OAuth. All agents in the company share these connections.
+Instead of manually managing API keys and OAuth tokens, Hezo uses a centralized OAuth gateway called **Hezo Connect** (see section 5b for full architecture). Each team connects to third-party platforms via OAuth. All agents in the team share these connections.
 
 **Supported platforms (MVP):**
 
@@ -385,18 +385,18 @@ Instead of manually managing API keys and OAuth tokens, Hezo uses a centralized 
 | DigitalOcean | Infrastructure provisioning |
 | X (Twitter) | Social media posting, monitoring |
 
-Each connected platform auto-registers as a **company-level MCP server** so agents can discover and use the tools immediately. Tokens are stored encrypted in the local secrets vault. Refresh is handled automatically by the Hezo app.
+Each connected platform auto-registers as a **team-level MCP server** so agents can discover and use the tools immediately. Tokens are stored encrypted in the local secrets vault. Refresh is handled automatically by the Hezo app.
 
-### Company creation and team types
+### Team creation and team types
 
-A company is created from a single **template** (`template_id`). The selected template determines the starting agent roster, knowledge base, and preferences. Agents are provisioned by querying the `company_type_agent_types` join table for the selected template and creating instances from each referenced agent type. Each created agent stores an `agent_type_id` for provenance tracking. After creation, the company is fully independent of its source template — changes to the company do not affect the template, and vice versa.
+A team is created from a single **template** (`template_id`). The selected template determines the starting agent roster, knowledge base, and preferences. Agents are provisioned by querying the `team_template_agent_types` join table for the selected template and creating instances from each referenced agent type. Each created agent stores an `agent_type_id` for provenance tracking. After creation, the team is fully independent of its source template — changes to the team do not affect the template, and vice versa.
 
-Users can also **save an existing company as a new company type**. This snapshots:
+Users can also **save an existing team as a new team type**. This snapshots:
 
 - **Agent type references** — which agent types to include, their org chart hierarchy, and any config overrides
 - **Knowledge base** — all documents (coding standards, guidelines, etc.)
-- **Company preferences** — board working style preferences
-- **MCP server config** — company-level MCP servers
+- **Team preferences** — board working style preferences
+- **MCP server config** — team-level MCP servers
 - **MPP config** — wallet config structure (not actual wallet keys)
 - **Filesystem artifacts** — AGENTS.md and other project root files (stored as JSONB blobs)
 
@@ -406,7 +406,7 @@ Saving as a type does **not** include: projects, repos, issues, secrets, connect
 
 ## 4. Org structure and roles
 
-- Each company auto-creates a full agent team on setup (see onboarding flow above)
+- Each team auto-creates a full agent team on setup (see onboarding flow above)
 - Agents are organized in a hierarchy with reporting lines
 - Board members (human users) sit above the entire hierarchy
 - Org chart is viewable as a read-only tree (MVP)
@@ -416,14 +416,14 @@ Saving as a type does **not** include: projects, repos, issues, secrets, connect
 | Field | Description |
 |-------|-------------|
 | Title | Role name (e.g. "Frontend Engineer") |
-| Slug | Auto-derived from title (lowercased, hyphenated). Used for @-mentions. Unique per company. |
+| Slug | Auto-derived from title (lowercased, hyphenated). Used for @-mentions. Unique per team. |
 | Role description | Short description of responsibilities |
 | System prompt | Full prompt with variable templating (see below) |
 | Reports to | Parent agent in org chart |
 | Runtime type | `claude_code`, `codex`, `gemini` |
 | Heartbeat interval | How often the agent wakes up (default: 60 min) |
 | Monthly budget | Hard spending limit in cents |
-| MCP servers | Agent-level MCP server list (merged with company-level at runtime) |
+| MCP servers | Agent-level MCP server list (merged with team-level at runtime) |
 | Runtime status | `active` (currently executing), `idle` (not running) — set by system |
 | Admin status | `enabled`, `disabled`, `terminated` — set by user |
 
@@ -433,12 +433,12 @@ The system prompt editor supports variables that are resolved at runtime:
 
 | Variable | Resolves to |
 |----------|------------|
-| `{{company_name}}` | Company name |
-| `{{company_description}}` | Company description |
+| `{{team_name}}` | Team name |
+| `{{team_description}}` | Team description |
 | `{{reports_to}}` | Title of the agent's manager |
 | `{{project_context}}` | Current project goal + recent issue summaries |
 | `{{kb_context}}` | Relevant knowledge base documents (auto-selected based on current task) |
-| `{{company_preferences_context}}` | Company preferences document — board working style preferences observed by agents |
+| `{{team_preferences_context}}` | Team preferences document — board working style preferences observed by agents |
 | `{{project_docs_context}}` | All project documents for the current issue's project (tech spec, implementation plan, research, UI decisions, marketing plan) |
 | `{{agent_role}}` | The agent's own title |
 | `{{requester_context}}` | When processing a human request: the requester's role (board/member), title, and permissions_text. Agents use this to decide whether to accept direction or escalate. |
@@ -448,7 +448,7 @@ On agent creation, the UI provides a monospace editor with a toolbar for inserti
 
 ### Hire workflow (CEO-mediated)
 
-New agents are not created by the board directly. When a board member submits the hire form (`POST /api/companies/:companyId/agents/onboard`), the server:
+New agents are not created by the board directly. When a board member submits the hire form (`POST /api/teams/:teamId/agents/onboard`), the server:
 
 1. Validates the proposed title, slug uniqueness, and effort value.
 2. Inserts an `approvals` row of type `hire` whose payload holds the full draft spec (`title`, `slug`, `role_description`, `system_prompt`, `default_effort`, `heartbeat_interval_min`, `monthly_budget_cents`, `touches_code`).
@@ -462,11 +462,11 @@ The board reviews the draft in the approvals inbox and either approves or denies
 - **Approved** → the `applyApprovalSideEffect` hook in `packages/server/src/routes/approvals.ts` inserts the `members` and `member_agents` rows from the latest payload, marks the agent as `enabled`, transitions the onboarding issue to `done`, and broadcasts both row changes so the UI and org chart update live. Agent and team description refresh tasks are enqueued.
 - **Denied** → no agent is created; the CEO is expected to close the onboarding issue as `cancelled` with a brief note.
 
-Bootstrap exception: if the company has no enabled CEO or no Operations project (e.g., the CEO itself is being hired first), the endpoint falls back to creating the agent directly as `enabled` without an approval or ticket. This is the only way to create an agent without the CEO-mediated flow and is intended solely for early setup.
+Bootstrap exception: if the team has no enabled CEO or no Operations project (e.g., the CEO itself is being hired first), the endpoint falls back to creating the agent directly as `enabled` without an approval or ticket. This is the only way to create an agent without the CEO-mediated flow and is intended solely for early setup.
 
 ### Built-in role templates
 
-Hezo ships with 11 built-in agent types that form the default team for the "Software Development" company type. Full specifications for each role are in `agents/{slug}.md`. Role-specific instructions are embedded directly in the system prompt template — no separate skill files. Users can customize every field. All agent types are starting points, not fixed — agents can be added, removed, or reconfigured per-company.
+Hezo ships with 11 built-in agent types that form the default team for the "Software Development" team type. Full specifications for each role are in `agents/{slug}.md`. Role-specific instructions are embedded directly in the system prompt template — no separate skill files. Users can customize every field. All agent types are starting points, not fixed — agents can be added, removed, or reconfigured per-team.
 
 Users can also create **entirely new custom agent types** with arbitrary titles, descriptions, system prompts, runtime types, and reporting lines. For example, a user could create a "Data Scientist", "Security Auditor", or "Legal Researcher" agent type — any role needed. Custom agent types are first-class citizens — agents created from them appear in the org chart, receive issues, participate in delegation, and have their own budgets just like built-in types.
 
@@ -474,12 +474,12 @@ Agents can request updates to their own system prompts via `PATCH /agent-api/sel
 
 ### Role-doc partials
 
-Role docs for different company templates frequently share boilerplate — the same "no designated repo means no run" rule appears in every code-touching role, the same hire workflow belongs on every CEO prompt regardless of template. To avoid drift we resolve **section-level partials** at bundle time.
+Role docs for different team templates frequently share boilerplate — the same "no designated repo means no run" rule appears in every code-touching role, the same hire workflow belongs on every CEO prompt regardless of template. To avoid drift we resolve **section-level partials** at bundle time.
 
 - Partials live under `agents/_partials/**/*.md`. They are plain Markdown with no frontmatter and are not seeded as role docs themselves.
 - A role doc pulls one in with a **whole-line** directive: `{{> partials/<name>}}` (leading whitespace tolerated; anything else on the line makes it literal text). The name mirrors the path under `_partials/` without the `.md` suffix.
 - Resolution runs in `scripts/bundle-agents.ts` before the bundle is zipped into `packages/server/src/db/agents-bundle.json`, and in the filesystem fallback (`loadAgentRoles` in `packages/server/src/db/agent-roles.ts`) used by tests and dev mode. The DB still stores fully expanded prompts; nothing reads partials at runtime.
-- Partials may include other partials; cycles and unknown refs hard-fail the bundler. Runtime variable substitutions (`{{company_name}}`, `{{kb_context}}`, …) are untouched — those happen later in `template-resolver.ts` per-run.
+- Partials may include other partials; cycles and unknown refs hard-fail the bundler. Runtime variable substitutions (`{{team_name}}`, `{{kb_context}}`, …) are untouched — those happen later in `template-resolver.ts` per-run.
 
 Scope note: partials are strictly an **authoring-time convenience inside the Hezo repo**. Bundle-time resolution means the on-disk contract with the seed system is unchanged (flat Markdown). Future downloadable team bundles from a marketplace are expected to ship pre-expanded prompts; we do not plan to treat platform partials as a live dependency of third-party bundles, because that would force a compat contract across Hezo versions that we are not ready to make.
 
@@ -493,7 +493,7 @@ Current partials:
 
 ### Agent and team auto-descriptions
 
-Every agent carries a short summary (≤5 lines) describing its role and capabilities. Every company carries a team summary (≤20 lines) describing how the agents collaborate. Built-in agent types ship with pre-baked defaults from `packages/server/src/db/agent-summaries.json`, copied to each agent and company during provisioning. At runtime the CEO can regenerate descriptions via `description-update` issues in Operations, calling the `set_agent_summary` and `set_team_summary` MCP tools.
+Every agent carries a short summary (≤5 lines) describing its role and capabilities. Every team carries a team summary (≤20 lines) describing how the agents collaborate. Built-in agent types ship with pre-baked defaults from `packages/server/src/db/agent-summaries.json`, copied to each agent and team during provisioning. At runtime the CEO can regenerate descriptions via `description-update` issues in Operations, calling the `set_agent_summary` and `set_team_summary` MCP tools.
 
 ### Ticket workflow
 
@@ -527,7 +527,7 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **CEO** — strategic direction, delegation, dispute resolution, escalation to board. Reports to board.
 
-**Product Lead** — owns product requirements. Writes PRDs with acceptance criteria. Posts clarifying ticket comments (and structured-option cards when helpful) to resolve ambiguous requirements with the board. Ensures development aligns with company goals. Reports to CEO.
+**Product Lead** — owns product requirements. Writes PRDs with acceptance criteria. Posts clarifying ticket comments (and structured-option cards when helpful) to resolve ambiguous requirements with the board. Ensures development aligns with team goals. Reports to CEO.
 
 **Architect** — owns technical vision. Adds technical specs, architecture decisions, and implementation phases to tickets after the Product Lead's PRD. Reviews and approves the Engineer's implementation plans. Has technical authority — decides HOW to build things. Reports to CEO. Direct reports: Engineer, QA Engineer, UI Designer, DevOps Engineer.
 
@@ -549,7 +549,7 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 ### AGENTS.md — two tiers
 
-**Company-level AGENTS.md** is a KB doc stored in the `kb_docs` table. It contains company-wide rules and conventions. Editable via the Hezo UI. Injected into agent context at runtime via `{{kb_context}}` or `{{company_agents_md}}`. It is NOT written to disk or symlinked — it lives purely in the DB.
+**Team-level AGENTS.md** is a KB doc stored in the `kb_docs` table. It contains team-wide rules and conventions. Editable via the Hezo UI. Injected into agent context at runtime via `{{kb_context}}` or `{{team_agents_md}}`. It is NOT written to disk or symlinked — it lives purely in the DB.
 
 **Project-level AGENTS.md** lives at the root of each project's designated repo. This is the primary mechanism for enforcing project-specific engineering standards. Any coding agent (Claude Code, Codex, Gemini) automatically reads it from the repo root — no runtime-specific configuration needed.
 
@@ -575,7 +575,7 @@ Role-specific instructions are embedded directly in each agent's system prompt t
 
 ## 5a. Engineering rules and testing philosophy
 
-These rules are embedded in the engineer agent's system prompt and in the company AGENTS.md. They apply to **any agent that modifies the codebase** — not just the engineer role.
+These rules are embedded in the engineer agent's system prompt and in the team AGENTS.md. They apply to **any agent that modifies the codebase** — not just the engineer role.
 
 ### Mandatory practices for all code-modifying agents
 
@@ -705,7 +705,7 @@ Production deploys are **never automatic**. They always require explicit human a
 
 Hezo auto-generates a `.github/workflows/deploy.yml` in each repo when staging is first configured. The workflow handles both staging (on push to main) and production (on manual dispatch with approval). Database migrations use the repo's migration tooling (detected automatically or configured in project settings).
 
-### What goes in AGENTS.md (company-level)
+### What goes in AGENTS.md (team-level)
 
 The auto-generated AGENTS.md includes:
 - All engineering rules above (testing, parallelization, documentation)
@@ -741,15 +741,15 @@ Role-specific instructions are embedded directly in each agent's system prompt t
 
 ### Host filesystem layout
 
-All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors the company → project → repo hierarchy:
+All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors the team → project → repo hierarchy:
 
 ```
 ~/.hezo/
 ├── pgdata/                              # PGlite database (NodeFS persistence)
 ├── data/                                # Previews, temp files, assets
 │
-└── companies/
-    ├── acme-corp/                        # Company folder
+└── teams/
+    ├── acme-corp/                        # Team folder
     │   └── projects/
     │       ├── backend-api/              # Project folder
     │       │   ├── api/                  # Git clone of org/api — DESIGNATED REPO
@@ -771,7 +771,7 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
     │           ├── worktrees/
     │           └── .previews/
     │
-    └── notegenius/                       # Another company
+    └── notegenius/                       # Another team
         └── projects/
 ```
 
@@ -779,7 +779,7 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
 
 `AGENTS.md` lives at the **repo root** of each project's designated repo. Project documents live in the `project_docs` DB table, accessible to agents via MCP tools. This means:
 - Each project has its own AGENTS.md with project-specific rules
-- Company-level rules are in the KB docs DB table, injected at runtime
+- Team-level rules are in the KB docs DB table, injected at runtime
 - Any coding agent (Claude Code, Codex, Gemini) automatically reads AGENTS.md from the repo root
 - Project documents have full revision history in `project_doc_revisions`
 - Non-designated repos defer to the designated repo's AGENTS.md and access shared project docs through the same MCP tools
@@ -792,7 +792,7 @@ Repos are cloned once (via SSH) into the project's `workspace/<repo-short-name>/
 - Repeated runs on the same issue reuse the existing worktree, pulling latest changes via `git fetch` + fast-forward merge.
 - The agent's working directory is the **designated repo's worktree**; other repos sit alongside and the agent can `cd` into them.
 
-Worktree layout: `~/.hezo/companies/{company}/projects/{project}/worktrees/{issue-identifier}/{repo-short-name}/`
+Worktree layout: `~/.hezo/teams/{team}/projects/{project}/worktrees/{issue-identifier}/{repo-short-name}/`
 Branch name: `hezo/{issue-identifier}`
 
 Worktrees are created on first run of an issue and removed when the issue transitions to a terminal status (done/cancelled) or its repo is detached.
@@ -801,14 +801,14 @@ Worktrees are created on first run of an issue and removed when the issue transi
 
 Each project gets its own Docker container. All repositories linked to the project are checked out inside the container under `/workspace/`. Agents working on issues in that project run as **subprocesses** inside the project's container, making them easy to kill and restart independently.
 
-If a company has 3 projects, 3 containers run. If a project has multiple repos, they all live inside the single project container.
+If a team has 3 projects, 3 containers run. If a project has multiple repos, they all live inside the single project container.
 
 | Aspect | Configuration |
 |--------|-------------|
 | Base image | Configurable per project (default: `hezo/agent-base:latest`, built from `docker/Dockerfile.agent-base` with `claude`, `codex`, and `gemini` CLIs pre-installed) |
-| Project mount | Host `~/.hezo/companies/{company}/projects/{project}/` → Container `/workspace/` (rw) |
-| Worktrees mount | Host `~/.hezo/companies/{company}/projects/{project}/worktrees/` → Container `/worktrees/` (rw) |
-| SSH keys | Company-generated SSH key injected per subprocess (from secrets vault). Host `~/.ssh/` also mounted (ro) for fallback. |
+| Project mount | Host `~/.hezo/teams/{team}/projects/{project}/` → Container `/workspace/` (rw) |
+| Worktrees mount | Host `~/.hezo/teams/{team}/projects/{project}/worktrees/` → Container `/worktrees/` (rw) |
+| SSH keys | Team-generated SSH key injected per subprocess (from secrets vault). Host `~/.ssh/` also mounted (ro) for fallback. |
 | Git config | Host `~/.gitconfig` → Container `/root/.gitconfig` (ro) |
 | SSH agent | Host `$SSH_AUTH_SOCK` → Container `/tmp/ssh-agent.sock` (if available) |
 | AGENTS.md | Per-repo at repo root. Designated repo's AGENTS.md is the primary source. Non-designated repos reference it. |
@@ -831,15 +831,15 @@ Project containers support **port forwarding** so users can interact with the ru
 
 ### SSH and Git authentication
 
-Hezo generates an SSH key pair per company and registers it on the connected GitHub account via the OAuth API (`POST /user/keys`). The private key is stored encrypted in the secrets vault.
+Hezo generates an SSH key pair per team and registers it on the connected GitHub account via the OAuth API (`POST /user/keys`). The private key is stored encrypted in the secrets vault.
 
-At runtime, the company's SSH private key is injected into agent subprocesses for git operations:
+At runtime, the team's SSH private key is injected into agent subprocesses for git operations:
 
-1. Company SSH key is written to a temporary file inside the container and configured via `GIT_SSH_COMMAND`
+1. Team SSH key is written to a temporary file inside the container and configured via `GIT_SSH_COMMAND`
 2. Host `~/.ssh/` is also mounted read-only as a fallback (known_hosts, SSH config)
 3. Host `~/.gitconfig` is mounted so git identity (name, email) is consistent
 4. If the host has an SSH agent running (`SSH_AUTH_SOCK`), the socket is forwarded into the container
-5. Git clone/push/pull use SSH with the company-generated key
+5. Git clone/push/pull use SSH with the team-generated key
 6. GitHub OAuth token is used for GitHub API calls (repo validation, PRs, Actions) — not for git operations
 
 ### Container lifecycle
@@ -852,7 +852,7 @@ At runtime, the company's SSH private key is injected into agent subprocesses fo
 | Agent terminated | Subprocess killed. Container unaffected. Agent record kept for audit. |
 | Container rebuilt | All agent subprocesses killed, container destroyed, new one provisioned. |
 | Project deleted | Container destroyed. All associated worktrees cleaned up. |
-| Company deleted | All project containers destroyed. |
+| Team deleted | All project containers destroyed. |
 | Server startup / every 5s | Container status sync — DB state reconciled with Docker. Stale "running" status corrected to "stopped" or "error". Changes broadcast via WebSocket. |
 | Issue assigned | No-op until the first run. Worktrees are created lazily when an agent starts executing against the issue. |
 | Issue first run | Runner creates `/worktrees/{issue-identifier}/{repo-short-name}/` on branch `hezo/{issue-identifier}` for every linked repo, then runs the agent with the designated repo's worktree as its working directory. |
@@ -867,7 +867,7 @@ Each heartbeat spawns a **fresh subprocess** inside the project's container via 
 - The agent's runtime command (e.g., `claude-code`, `codex`, `gemini`)
 - Handoff markdown from the previous session as initial context (for session continuity)
 
-All template variables (`{{kb_context}}`, `{{project_docs_context}}`, `{{company_preferences_context}}`, etc.) are pre-resolved by the orchestrator before spawning. All KB docs and project docs are included for MVP.
+All template variables (`{{kb_context}}`, `{{project_docs_context}}`, `{{team_preferences_context}}`, etc.) are pre-resolved by the orchestrator before spawning. All KB docs and project docs are included for MVP.
 
 Agents can be killed and restarted independently without affecting the container or other agents. When budget is exceeded, the subprocess is terminated immediately. If a project container leaves the `running` state — whether through removal (`error`) or stop (`stopped`) — the container-sync loop synchronously fails every in-flight heartbeat run for that project's issues with an `error` of `container_error` or `container_stopped` respectively, resets the affected agents' `runtime_status` to `idle`, releases their execution locks, and broadcasts the row changes. When the container is later rebuilt or re-provisioned, runs that died with `container_error` are auto-re-queued via fresh wakeups; runs that died with `container_stopped` are intentionally left alone (the user paused work; they restart it manually).
 
@@ -886,19 +886,19 @@ Rules:
 
 Agents can connect to MCP servers for tool discovery and external service access. MCP servers are configured at two levels:
 
-**Company-level** — shared by all agents. Configured in company settings. Good for shared infrastructure: team Slack, company database, shared SaaS tools.
+**Team-level** — shared by all agents. Configured in team settings. Good for shared infrastructure: team Slack, team database, shared SaaS tools.
 
 **Agent-level** — specific to one agent. Configured in agent settings. Good for role-specific tools: a dev engineer's database access, a Marketing Lead's analytics platform.
 
-At runtime, company-level and agent-level servers are merged. Agent-level takes precedence on name conflicts. The merged list is injected into the agent's subprocess as MCP configuration for the runtime (Claude Code, Codex, etc.) to discover and use.
+At runtime, team-level and agent-level servers are merged. Agent-level takes precedence on name conflicts. The merged list is injected into the agent's subprocess as MCP configuration for the runtime (Claude Code, Codex, etc.) to discover and use.
 
-MCP server config per entry: `{ "name": "...", "url": "...", "description": "..." }`. Stored as JSONB arrays on both `companies` and `agents`.
+MCP server config per entry: `{ "name": "...", "url": "...", "description": "..." }`. Stored as JSONB arrays on both `teams` and `agents`.
 
 ### MPP (Machine Payments Protocol)
 
 Agents can pay for third-party APIs autonomously using the Stripe/Tempo Machine Payments Protocol. When an agent hits an HTTP 402 response from an MPP-compatible service, it can authorize payment and receive the resource in one round-trip.
 
-**Company-level config:**
+**Team-level config:**
 - MPP wallet address (Tempo or Stripe)
 - Wallet private key stored in the secrets vault (referenced by name, never exposed)
 - Default currency (USD, EUR, USDC, etc.)
@@ -941,7 +941,7 @@ Two components work together:
 - Receives tokens via browser redirect to the callback URL
 - Verifies state signature, encrypts and stores tokens in the local secrets vault
 - Handles token refresh locally using refresh tokens
-- Exposes connected platforms as company-level MCP servers
+- Exposes connected platforms as team-level MCP servers
 - Manages connection lifecycle: connect, disconnect, health check, refresh
 
 ### OAuth flow
@@ -950,7 +950,7 @@ Two components work together:
 1. User clicks "Connect GitHub" in Hezo UI
 2. Hezo app redirects to: localhost:4100/auth/github/start
      ?callback=http://localhost:3100/oauth/callback
-     &state={signed_payload_with_company_id}
+     &state={signed_payload_with_team_id}
 3. Hezo Connect redirects user to GitHub OAuth consent screen
 4. User authorizes
 5. GitHub redirects to localhost:4100/auth/github/callback
@@ -982,7 +982,7 @@ Each connection is stored in a `connected_platforms` table:
 
 | Field | Description |
 |-------|-------------|
-| `company_id` | Which company owns this connection |
+| `team_id` | Which team owns this connection |
 | `platform` | `github`, `gmail`, `gitlab`, `stripe`, `posthog`, `railway`, `vercel`, `digitalocean`, `x` |
 | `status` | `active`, `expired`, `disconnected` |
 | `access_token_secret_id` | FK to secrets table (encrypted access token) |
@@ -992,7 +992,7 @@ Each connection is stored in a `connected_platforms` table:
 | `token_expires_at` | When the current access token expires |
 | `connected_at` | When the connection was established |
 
-When a platform is connected, it is automatically registered as a company-level MCP server entry. Agents can then use the platform's tools via MCP tool calls without knowing anything about OAuth.
+When a platform is connected, it is automatically registered as a team-level MCP server entry. Agents can then use the platform's tools via MCP tool calls without knowing anything about OAuth.
 
 ### Self-hosting Hezo Connect
 
@@ -1025,18 +1025,18 @@ GitHub only (MVP). Repos are stored as `org/repo` identifiers (e.g. `acme-corp/f
 
 ### Repo access — OAuth for API, SSH for git
 
-Git operations (clone, push, pull) use **SSH** with a company-generated SSH key pair. The GitHub **OAuth token** is used for API calls (repo validation, PRs, Actions, issues).
+Git operations (clone, push, pull) use **SSH** with a team-generated SSH key pair. The GitHub **OAuth token** is used for API calls (repo validation, PRs, Actions, issues).
 
 ```
 git clone git@github.com:org/repo.git
 ```
 
-Hezo generates an SSH key pair per company, stores the private key encrypted in the secrets vault, and registers the public key on the connected GitHub account via the OAuth API (`POST /user/keys`). When a new repo is added, the system tests access using the OAuth token (GitHub API) before saving. If access fails, the board is told which GitHub account needs access.
+Hezo generates an SSH key pair per team, stores the private key encrypted in the secrets vault, and registers the public key on the connected GitHub account via the OAuth API (`POST /user/keys`). When a new repo is added, the system tests access using the OAuth token (GitHub API) before saving. If access fails, the board is told which GitHub account needs access.
 
 **Prerequisites:**
-- The company must have GitHub connected via Hezo Connect
+- The team must have GitHub connected via Hezo Connect
 - The connected GitHub account must have access to the repo
-- The company SSH key is auto-registered on the GitHub account
+- The team SSH key is auto-registered on the GitHub account
 
 ### Repos belong to projects
 
@@ -1050,16 +1050,16 @@ Hezo generates an SSH key pair per company, stores the private key encrypted in 
 
 When a repo is added to a project via the API:
 
-1. **GitHub connection check** — the system checks whether the company has an active GitHub OAuth connection (`connected_platforms` table). If not:
+1. **GitHub connection check** — the system checks whether the team has an active GitHub OAuth connection (`connected_platforms` table). If not:
    - The request fails with `GITHUB_NOT_CONNECTED`
    - A board inbox item of type `oauth_request` is created automatically, prompting the board to connect GitHub via Hezo Connect
    - The inbox item includes an actionable link to start the OAuth flow
-2. **Repo access validation** — using the company's GitHub OAuth token, the system calls the GitHub API (`GET /repos/{owner}/{repo}`) to verify the authorized GitHub user has access. If access fails (403/404):
+2. **Repo access validation** — using the team's GitHub OAuth token, the system calls the GitHub API (`GET /repos/{owner}/{repo}`) to verify the authorized GitHub user has access. If access fails (403/404):
    - The request fails with `REPO_ACCESS_FAILED`
    - The error message includes the GitHub username from `connected_platforms.metadata` so the board knows which account needs access: *"Cannot access this repo — the GitHub user '{username}' needs to be added to {owner}/{repo}"*
-3. The repo is cloned (via SSH using the company's generated key) into `~/.hezo/companies/{company}/projects/{project}/{short_name}/`
-4. A symlink is created: `{short_name}/AGENTS.md → ../../../AGENTS.md` (pointing to company-level AGENTS.md)
-5. Git SSH command is configured to use the company's SSH key for all operations
+3. The repo is cloned (via SSH using the team's generated key) into `~/.hezo/teams/{team}/projects/{project}/{short_name}/`
+4. A symlink is created: `{short_name}/AGENTS.md → ../../../AGENTS.md` (pointing to team-level AGENTS.md)
+5. Git SSH command is configured to use the team's SSH key for all operations
 6. The repo is now available to any agent working on issues in this project
 
 ### Agent access to repos
@@ -1070,13 +1070,13 @@ Agents don't configure repos directly. They get access to repos through whicheve
 
 A project starts with no repo. The first time an agent whose `member_agents.touches_code = true` is activated on an issue, the runtime pauses the run and surfaces a board-facing action. The `touches_code` flag is seeded from `agent_types.touches_code` at hire time (builtin coder roles — engineer, architect, qa-engineer, devops-engineer, security-engineer, ui-designer — ship with it set), copied onto `member_agents` so per-agent overrides are possible, and editable from the agent creation and settings forms for any custom or onboarded agent:
 
-1. The job manager upserts a single pending `oauth_request` approval per `(company, project)` with `payload.reason = 'designated_repo'`. Concurrent runs on different issues of the same project share this one approval (partial unique index).
+1. The job manager upserts a single pending `oauth_request` approval per `(team, project)` with `payload.reason = 'designated_repo'`. Concurrent runs on different issues of the same project share this one approval (partial unique index).
 2. An `action` comment with `content.kind = 'setup_repo'` is posted on the triggering issue. Each issue gets its own comment so the blocker is visible in-thread, but all comments point at the same approval.
 3. The agent's wakeup is marked `Deferred`.
 
 Clicking the comment (or opening the approval from the inbox) launches the repo-setup wizard:
 
-- **Step 1 (skipped if already connected):** "Connect GitHub" redirects through Hezo Connect. On callback, the server auto-generates an Ed25519 SSH key for the company, uploads the public key to GitHub via `POST /user/keys`, and stores the encrypted private key in the secrets vault. This step is idempotent — re-clicking after GitHub is already connected skips the regenerate/upload.
+- **Step 1 (skipped if already connected):** "Connect GitHub" redirects through Hezo Connect. On callback, the server auto-generates an Ed25519 SSH key for the team, uploads the public key to GitHub via `POST /user/keys`, and stores the encrypted private key in the secrets vault. This step is idempotent — re-clicking after GitHub is already connected skips the regenerate/upload.
 - **Step 2:** Pick an org (the authenticated user's personal namespace plus every org they belong to) and choose between **Create new** (default — name + private/public toggle) or **Select existing** (typeahead across accessible repos in that owner).
 
 Submitting the wizard calls `POST /repos` which, in one transaction:
@@ -1101,17 +1101,17 @@ Once set, `designated_repo_id` cannot be changed and the designated repo cannot 
 Four-level hierarchy with full goal ancestry:
 
 ```
-Company Description
+Team Description
   └── Project Goal
         └── Agent Goal (implicit from assigned issues)
               └── Task / Issue
 ```
 
-Every issue carries context tracing back to the company description. Agents always know *what* to do and *why*. The goal chain is visible in the issue detail sidebar.
+Every issue carries context tracing back to the team description. Agents always know *what* to do and *why*. The goal chain is visible in the issue detail sidebar.
 
 ### Projects
 
-- Group related work under a company
+- Group related work under a team
 - Have a name and a goal statement
 - Own repos (see section 6)
 - Own project-scoped secrets
@@ -1135,7 +1135,7 @@ GitHub-style issue tracker. Issues are the primary interaction surface for the e
 | Labels | No | Free-form tags (JSONB array) |
 | Parent issue | No | For sub-issues / delegation |
 | Number | Auto | Per-project auto-incrementing (atomic) |
-| Identifier | Auto | Linear-style: `{project.issue_prefix}-{number}` (e.g. `OP-42`). Unique per company. |
+| Identifier | Auto | Linear-style: `{project.issue_prefix}-{number}` (e.g. `OP-42`). Unique per team. |
 | Blocked by | No | References to other issues blocking this one (many-to-many via `issue_dependencies` table) |
 | Progress summary | No | Concise markdown summary of requirements, what's done, and what's next. Updated by agents when they start/finish work on the issue. Collapsed by default in UI. |
 | Progress summary updated at | Auto | Timestamp of last progress summary update |
@@ -1181,7 +1181,7 @@ The primary work surface. Contains two tabs:
 **Header (always visible):**
 - Title, description, metadata (project tag, identifier, status, priority, assignee)
 - Quick action buttons: reassign, change status, escalate, pause agent
-- Goal chain sidebar (company description → project → task)
+- Goal chain sidebar (team description → project → task)
 - Cost for this issue
 - Process status of the assigned agent
 
@@ -1218,9 +1218,9 @@ The hierarchy is capped at depth 2 — top-level tickets can have sub-issues, an
 
 All inter-agent communication happens through @-mentions in issue comments — same as GitHub. No side channels, no direct messaging, no hidden state. Everything is on the record and fully traceable.
 
-An agent can `@architect` or `@engineer` in a comment. The mentioned agent wakes immediately (see §Event-based triggers). The slug for @-mentions is derived from the agent title (lowercased, spaces → hyphens). Slugs are unique within a company.
+An agent can `@architect` or `@engineer` in a comment. The mentioned agent wakes immediately (see §Event-based triggers). The slug for @-mentions is derived from the agent title (lowercased, spaces → hyphens). Slugs are unique within a team.
 
-Every agent's resolved system prompt is auto-appended with a **Teammates** block listing each enabled peer in the company in `@<slug> — Title` form, sourced from `member_agents` filtered by `admin_status = 'enabled'` and excluding the running agent itself. This is the authoritative slug list at compose time — agents read it inline rather than calling `list_agents` on every reference. The block sits between the Project State block and the shared working guidelines.
+Every agent's resolved system prompt is auto-appended with a **Teammates** block listing each enabled peer in the team in `@<slug> — Title` form, sourced from `member_agents` filtered by `admin_status = 'enabled'` and excluding the running agent itself. This is the authoritative slug list at compose time — agents read it inline rather than calling `list_agents` on every reference. The block sits between the Project State block and the shared working guidelines.
 
 Repo short names can also be @-mentioned: `@frontend`, `@api` — these reference the repo, not an agent.
 
@@ -1231,7 +1231,7 @@ Repo short names can also be @-mentioned: `@frontend`, `@api` — these referenc
 - The agent then posts a single meaningful acknowledgement comment on the triggering ticket, optionally referencing the new ticket by identifier, and ends the turn. The next heartbeat picks up the agent's own ticket if any.
 - The only exception is when the mention is a direct question the mentioned agent can answer inline as the authority on the triggering ticket — in that case the agent replies in-thread and ends the turn.
 
-**Closing the loop.** Posting that acknowledgement comment fires a `reply`-source wakeup for the original mentioner (when the mentioner is an agent and `companies.settings.wake_mentioner_on_reply` is true — the default). The mentioner's next run opens with a "Reply Received" prompt block showing the responder, the reply excerpt, and any tickets the reply referenced. When a single comment @-mentions several agents and the mentioner prefers to batch their responses on a heartbeat instead of waking on every reply, disable the company setting.
+**Closing the loop.** Posting that acknowledgement comment fires a `reply`-source wakeup for the original mentioner (when the mentioner is an agent and `teams.settings.wake_mentioner_on_reply` is true — the default). The mentioner's next run opens with a "Reply Received" prompt block showing the responder, the reply excerpt, and any tickets the reply referenced. When a single comment @-mentions several agents and the mentioner prefers to batch their responses on a heartbeat instead of waking on every reply, disable the team setting.
 
 **Spawned-from provenance.** Any issue created during an agent run carries `created_by_run_id`. When the agent later picks the new ticket up, its task prompt is prefixed with a **Spawned from:** line (or, when the new ticket is structurally parented to the spawning ticket, a single **Parent ticket:** line) so the provenance chain is visible without the agent needing to encode it in the description.
 
@@ -1253,7 +1253,7 @@ All secret values are encrypted at the app layer using AES-256-GCM with the mast
 
 ### Scoping
 
-- **Company-scoped secrets**: `project_id = NULL`. Available to any agent in the company (with approval).
+- **Team-scoped secrets**: `project_id = NULL`. Available to any agent in the team (with approval).
 - **Project-scoped secrets**: `project_id` set. Available to agents working on that project (with approval).
 - Same secret name can exist at both scopes. Project scope takes precedence when both exist.
 
@@ -1269,14 +1269,14 @@ All secret values are encrypted at the app layer using AES-256-GCM with the mast
 4. Board can approve with a scope:
    - **Single**: just the requested secret
    - **Project**: all secrets in the same project
-   - **Company**: all secrets in the company
+   - **Team**: all secrets in the team
 5. On approval, grants are created and secrets are injected as env vars into the agent's subprocess
 6. Grants are persistent and auditable
 7. Grants can be revoked at any time (agent loses access on next subprocess invocation)
 
 ### Platform tokens (from Hezo Connect)
 
-OAuth tokens for connected platforms (GitHub, Gmail, Stripe, etc.) are stored as company-scoped secrets with auto-generated names (e.g. `GITHUB_ACCESS_TOKEN`, `GMAIL_REFRESH_TOKEN`). These are managed automatically by the connection lifecycle — agents don't request access to them via the approval flow. They're injected into agent subprocesses for any agent in the company.
+OAuth tokens for connected platforms (GitHub, Gmail, Stripe, etc.) are stored as team-scoped secrets with auto-generated names (e.g. `GITHUB_ACCESS_TOKEN`, `GMAIL_REFRESH_TOKEN`). These are managed automatically by the connection lifecycle — agents don't request access to them via the approval flow. They're injected into agent subprocesses for any agent in the team.
 
 ---
 
@@ -1311,12 +1311,12 @@ Agents can write temporary HTML files (mockups, prototypes, reports, visualizati
 Agents write previews to a well-known location inside the shared workspace volume:
 ```
 Container: /workspace/.previews/{agent_id}/
-Host:      ~/.hezo/companies/{slug}/projects/{project}/.previews/{agent_id}/
+Host:      ~/.hezo/teams/{slug}/projects/{project}/.previews/{agent_id}/
 ```
 
 Since the workspace is a shared volume, preview files are immediately visible on the host. The web app serves files via a proxy route:
 ```
-GET /preview/{company_id}/{project_id}/{agent_id}/{filename}
+GET /preview/{team_id}/{project_id}/{agent_id}/{filename}
 ```
 
 Agent emits:
@@ -1339,7 +1339,7 @@ The UI renders a clickable card. Clicking opens the preview in a sandboxed ifram
 - Allowed types: `.html`, `.htm`, `.svg`, `.png`, `.jpg`, `.css`, `.js`
 - Preview directory is writable by the agent subprocess inside the project container
 - Filenames sanitized — no path traversal
-- Board access to company is validated before serving
+- Board access to team is validated before serving
 
 #### Cleanup
 
@@ -1349,14 +1349,14 @@ Previews are ephemeral. Auto-deleted after 72 hours, or when the issue is closed
 
 ## 11. Cost and budget
 
-### Company-level budget
+### Team-level budget
 
-Each company has a monthly budget cap (`budget_monthly_cents` and `budget_used_cents`). The company budget is the aggregate cap for all agent spending within the company. When company budget is exhausted, a budget-exceeded notification is sent to the board inbox.
+Each team has a monthly budget cap (`budget_monthly_cents` and `budget_used_cents`). The team budget is the aggregate cap for all agent spending within the team. When team budget is exhausted, a budget-exceeded notification is sent to the board inbox.
 
 ### Per-agent budgets
 
 - Each agent has a monthly budget in cents (default: $30 / 3000 cents)
-- Budget enforcement is atomic: `debit_agent_budget()` row-locks the agent before checking + debiting, and also checks the company-level budget
+- Budget enforcement is atomic: `debit_agent_budget()` row-locks the agent before checking + debiting, and also checks the team-level budget
 - At 80% usage → `budget.warning` event emitted, system comment on active issues
 - At 100% usage → budget exceeded, notification sent to board inbox, system comment posted
 - Board can adjust budget at any time
@@ -1383,7 +1383,7 @@ Board members (human users) collectively act as the board of directors. All boar
 
 | Action | Requires approval? |
 |--------|-------------------|
-| Board hires an agent | Yes — CEO refines a draft via `update_hire_proposal` MCP tool, then the board approves the pending `hire` approval to materialise the agent. Bypassed only in the bootstrap case where the company has no enabled CEO or no Operations project (the agent is then created directly as enabled). |
+| Board hires an agent | Yes — CEO refines a draft via `update_hire_proposal` MCP tool, then the board approves the pending `hire` approval to materialise the agent. Bypassed only in the bootstrap case where the team has no enabled CEO or no Operations project (the agent is then created directly as enabled). |
 | Agent requests to hire | Yes — same `hire` approval type, routed through the CEO for refinement first. |
 | Board grants secret access | No — direct action |
 | Agent requests secret access | Yes — pending approval |
@@ -1397,14 +1397,14 @@ A unified notification center accessible from any screen. The board inbox surfac
 - **Pending approvals** — secret access, hire requests, strategy reviews, plan reviews, KB updates, deploy requests
 - **UI design reviews** — preview mockups from the UI Designer awaiting approval. Board can approve directly or delegate approval to the Product Lead.
 - **Escalations** — disputes between agents that the CEO couldn't resolve
-- **Budget alerts** — agents approaching or exceeding budget limits, company budget alerts
+- **Budget alerts** — agents approaching or exceeding budget limits, team budget alerts
 - **Agent errors** — container failures, repeated task failures, agents stuck in error states
 - **QA critical findings** — security vulnerabilities, critical bugs found during audits
 - **OAuth link requests** — agents requesting access to external resources via Hezo Connect
 
 Each item is actionable — approve/deny buttons, links to relevant issues, quick actions. Unread badge appears in the navigation. Board members can delegate certain approvals (e.g. Product Lead approves UI designs).
 
-For secret access requests, the board can choose the grant scope (single / project / company) before approving.
+For secret access requests, the board can choose the grant scope (single / project / team) before approving.
 
 ### Board powers (board role only)
 
@@ -1414,7 +1414,7 @@ For secret access requests, the board can choose the grant scope (single / proje
 - Approve or deny any pending request
 - View full audit log
 - Delegate specific approval types to agents
-- Access company settings, secrets vault, and plugin management
+- Access team settings, secrets vault, and plugin management
 - Invite new members (board or member role)
 
 ### Member capabilities (member role)
@@ -1426,7 +1426,7 @@ Members can participate in the day-to-day work within their project scope:
 - Read knowledge base and project documents
 - Receive notifications via inbox and configured messaging channels (Telegram, Slack)
 
-Members **cannot**: modify company settings, manage budgets, hire/fire agents, access secrets, view audit log, manage plugins, or create invites.
+Members **cannot**: modify team settings, manage budgets, hire/fire agents, access secrets, view audit log, manage plugins, or create invites.
 
 ### Audit log
 
@@ -1436,15 +1436,15 @@ Full action reference:
 
 | Action | Entity | Trigger |
 |--------|--------|---------|
-| `company.created` | company | Board |
-| `company.updated` | company | Board |
-| `company.deleted` | company | Board |
+| `team.created` | team | Board |
+| `team.updated` | team | Board |
+| `team.deleted` | team | Board |
 | `agent.created` | agent | Board or approval resolved |
 | `agent.updated` | agent | Board |
 | `agent.disabled` | agent | Board manually disables agent |
 | `agent.resumed` | agent | Board |
 | `agent.terminated` | agent | Board |
-| `company.container_rebuilt` | company | Board |
+| `team.container_rebuilt` | team | Board |
 | `project.created` | project | Board |
 | `project.updated` | project | Board |
 | `project.deleted` | project | Board |
@@ -1473,14 +1473,14 @@ Full action reference:
 | `kb_update.proposed` | approval | Agent |
 | `kb_update.approved` | approval | Board |
 | `kb_update.denied` | approval | Board |
-| `company_preferences.updated` | company_preferences | Board or agent |
+| `team_preferences.updated` | team_preferences | Board or agent |
 | `project_doc.created` | project_doc | Board or agent |
 | `project_doc.updated` | project_doc | Board or agent |
 | `project_doc.deleted` | project_doc | Board |
 | `plan_review.submitted` | approval | Agent |
 | `plan_review.approved` | approval | Board or Product Lead |
 | `plan_review.denied` | approval | Board or Product Lead |
-| `company.created_from_type` | company | Board creates company from company type |
+| `team.created_from_type` | team | Board creates team from team type |
 | `connection.created` | connected_platform | Board connects via OAuth |
 | `connection.refreshed` | connected_platform | System or board |
 | `connection.expired` | connected_platform | System |
@@ -1522,7 +1522,7 @@ Every agent has a heartbeat interval. Default is **60 minutes**. Configurable pe
 3. Server returns: assigned issues, unread comments, notifications, budget remaining
 4. Agent works on its highest-priority issue
 5. Agent posts comments, reports tool calls, creates sub-issues as needed
-6. Company container stays running for next heartbeat
+6. Team container stays running for next heartbeat
 
 ### Event-based triggers (immediate wakeup)
 
@@ -1595,7 +1595,7 @@ The `lock_type` column is retained (`read` / `write`) for future use but is not 
 
 The orchestrator keeps an in-process **live-run registry** keyed by `heartbeat_runs.id` for every run it has launched. Three reconciliation paths converge on the same outcome (run flipped to `failed`, agent reset to `idle`, locks released, broadcasts emitted, retry wakeup created if applicable):
 
-- **Startup reconciliation.** Every run in the DB whose status is `running` or `queued` at boot is necessarily orphaned (the previous process owned the only reference to it). The reconciler fails them with `error='Server restarted while run in flight'`, resets every `member_agents.runtime_status='active'` to `idle`, releases all open execution locks, broadcasts `heartbeat_runs` and `member_agents` UPDATEs, and enqueues a `startup_recovery` wakeup per run so work resumes immediately. The same pass also self-heals projects that are stuck in `container_status='error'` whose canonical container `hezo-<companySlug>-<projectSlug>` is actually alive in Docker — it re-attaches the project to the live container.
+- **Startup reconciliation.** Every run in the DB whose status is `running` or `queued` at boot is necessarily orphaned (the previous process owned the only reference to it). The reconciler fails them with `error='Server restarted while run in flight'`, resets every `member_agents.runtime_status='active'` to `idle`, releases all open execution locks, broadcasts `heartbeat_runs` and `member_agents` UPDATEs, and enqueues a `startup_recovery` wakeup per run so work resumes immediately. The same pass also self-heals projects that are stuck in `container_status='error'` whose canonical container `hezo-<teamSlug>-<projectSlug>` is actually alive in Docker — it re-attaches the project to the live container.
 - **Cron orphan detector.** Every 30s the detector scans for `status='running'` rows older than 30 seconds whose id is NOT in the live registry, fails them with `error='Orphaned: process no longer running'`, resets the agent to idle if it has no other live run, and either creates an `orphan_retry` wakeup (when `process_loss_retry_count + 1 < 3`) or escalates to a board approval as `agent_error` (at the cap).
 - **Container-state transition.** The container-sync cron tick (1s) only runs after `docker.ping()` succeeds; it returns the set of `(projectId, oldStatus, newStatus)` transitions and the JobManager fans `running → error/stopped` transitions out to the per-project run failure path described in §13 above.
 
@@ -1671,7 +1671,7 @@ Every agent message in an issue thread can have associated tool calls. These are
 
 ### Cost dashboard
 
-Accessible from company settings. Shows cost breakdown by agent, project, provider, model, and time period. Budget bars with color coding (green → yellow → red as usage increases). Company-level budget overview at the top.
+Accessible from team settings. Shows cost breakdown by agent, project, provider, model, and time period. Budget bars with color coding (green → yellow → red as usage increases). Team-level budget overview at the top.
 
 ### Audit log viewer
 
@@ -1679,27 +1679,27 @@ Paginated, filterable by entity type, action, actor, and date range. Read-only.
 
 ---
 
-## 15. Company knowledge base (DB-stored, company-level)
+## 15. Team knowledge base (DB-stored, team-level)
 
-Each company has a knowledge base — a collection of Markdown documents stored in the `kb_docs` table that define company-wide standards across all projects. These include company-level AGENTS.md. They are living documents that agents reference and update as the company evolves.
+Each team has a knowledge base — a collection of Markdown documents stored in the `kb_docs` table that define team-wide standards across all projects. These include team-level AGENTS.md. They are living documents that agents reference and update as the team evolves.
 
 Note: project-level documents (tech spec, PRD, implementation plan) are stored in the `project_docs` table, not in the KB. See section 17.
 
 ### Purpose
 
-The knowledge base holds company-wide standards and practices:
+The knowledge base holds team-wide standards and practices:
 - Coding standards and conventions
 - UX design guidelines
 - Architecture decision records
-- Company ethos and communication style
+- Team ethos and communication style
 - Testing and QA processes
 - Deployment and DevOps procedures
 - Onboarding guides for new agents
-- Company-level AGENTS.md (rules for all agents across all projects)
+- Team-level AGENTS.md (rules for all agents across all projects)
 
 ### How it works
 
-Knowledge base documents are stored in the `kb_docs` table, scoped to a company. Every agent in the company can read them. The knowledge base content is injected into agent context at runtime via the `{{kb_context}}` template variable. Company-level AGENTS.md is injected via `{{company_agents_md}}`.
+Knowledge base documents are stored in the `kb_docs` table, scoped to a team. Every agent in the team can read them. The knowledge base content is injected into agent context at runtime via the `{{kb_context}}` template variable. Team-level AGENTS.md is injected via `{{team_agents_md}}`.
 
 ### Agent-driven updates
 
@@ -1725,17 +1725,17 @@ The UI shows version history for each document with the ability to view diffs be
 
 ### Knowledge base in the UI
 
-Accessible from the company workspace as a new **Knowledge base** tab. Shows a list of documents with title, last updated, last updated by (agent). Click to view/edit. Board can also create and edit docs directly. Version history accessible from the document view.
+Accessible from the team workspace as a new **Knowledge base** tab. Shows a list of documents with title, last updated, last updated by (agent). Click to view/edit. Board can also create and edit docs directly. Version history accessible from the document view.
 
 ---
 
-## 16. Company preferences
+## 16. Team preferences
 
-Each company has a single preferences document that captures the board's working style — how they prefer things to be done across code architecture, design, research, and team collaboration.
+Each team has a single preferences document that captures the board's working style — how they prefer things to be done across code architecture, design, research, and team collaboration.
 
 ### Purpose
 
-Company preferences record observed patterns in board feedback so agents can proactively align with the board's style without requiring repeated corrections. This is company-level (not per-member) — even with multiple board members, the company has one unified set of preferences.
+Team preferences record observed patterns in board feedback so agents can proactively align with the board's style without requiring repeated corrections. This is team-level (not per-member) — even with multiple board members, the team has one unified set of preferences.
 
 Example preference categories:
 - **Code architecture** — preferred patterns, frameworks, monolith vs microservices, language style
@@ -1745,21 +1745,21 @@ Example preference categories:
 
 ### How it works
 
-The company preferences document is a Markdown file stored in the `company_preferences` table (one row per company). All agents can read it via the `{{company_preferences_context}}` template variable injected into their system prompts.
+The team preferences document is a Markdown file stored in the `team_preferences` table (one row per team). All agents can read it via the `{{team_preferences_context}}` template variable injected into their system prompts.
 
 ### Agent-driven updates
 
 Agents update the preferences document directly (no approval required) as they observe patterns in board feedback. For example, if the board consistently prefers functional programming patterns over class-based ones, an agent records this preference with evidence (e.g. "Board preferred functional approach in issue ACME-42").
 
-Every update creates a revision in `company_preference_revisions` for auditability. The board can review history and revert.
+Every update creates a revision in `team_preference_revisions` for auditability. The board can review history and revert.
 
 ### Board-driven updates
 
 Board members can also edit the preferences document directly via the UI, to explicitly set preferences rather than waiting for agents to observe them.
 
-### Company preferences in the UI
+### Team preferences in the UI
 
-Accessible from the company workspace **Settings tab** as a "Preferences" subsection. Shows the current document with a Markdown editor. Revision history accessible from the document view.
+Accessible from the team workspace **Settings tab** as a "Preferences" subsection. Shows the current document with a Markdown editor. Revision history accessible from the document view.
 
 ---
 
@@ -1828,7 +1828,7 @@ Plugins declare required capabilities in their manifest. The board must approve 
 | `events` | Subscribe to Hezo events (issue created, agent heartbeat, etc.) |
 | `tools` | Register new tools that agents can use |
 | `http` | Make outbound HTTP requests (with allowlisted domains) |
-| `secrets` | Read company secrets (with per-secret approval) |
+| `secrets` | Read team secrets (with per-secret approval) |
 | `cron` | Register scheduled tasks |
 
 ### Plugin lifecycle
@@ -1886,18 +1886,18 @@ Email/password authentication may be added in a future release. Sessions are sta
 
 Authentication is always required — there is no unauthenticated "local_trusted" mode.
 
-### Company members
+### Team members
 
-Users are linked to companies through the `members` + `member_users` tables with one of two roles:
+Users are linked to teams through the `members` + `member_users` tables with one of two roles:
 
 | Role | Authority |
 |------|-----------|
 | **Board** | Full authority. Can direct all agents including CEO. Access all projects, settings, budgets, audit log. Hire/fire agents. Approve all requests. Invite new members. |
-| **Member** | Scoped authority. Can create issues, post comments, be assigned issues. Can direct agents (except CEO by default). Cannot modify company settings, budgets, secrets, or agent configurations. Can be restricted to specific projects. |
+| **Member** | Scoped authority. Can create issues, post comments, be assigned issues. Can direct agents (except CEO by default). Cannot modify team settings, budgets, secrets, or agent configurations. Can be restricted to specific projects. |
 
-Both roles sign in via GitHub or GitLab OAuth. All board members have **equal authority** — any board member can take any board action. Board member conflicts are resolved first-come-first-served (first to approve/deny locks the decision). A user can belong to multiple companies with different roles in each.
+Both roles sign in via GitHub or GitLab OAuth. All board members have **equal authority** — any board member can take any board action. Board member conflicts are resolved first-come-first-served (first to approve/deny locks the decision). A user can belong to multiple teams with different roles in each.
 
-The first user to sign in becomes the instance admin. They must create their first company immediately (no admin-without-company state).
+The first user to sign in becomes the instance admin. They must create their first team immediately (no admin-without-team state).
 
 #### Member configuration
 
@@ -1917,20 +1917,20 @@ When a member is added, the inviting board member specifies:
 
 ### Invites
 
-Board members can invite others to join a company:
+Board members can invite others to join a team:
 1. Board member creates an invite specifying: email, role (board/member), and for members: role title, permissions text, and optionally project scope
-2. System sends an invitation email **from the company email address** (see company onboarding, section 3) containing a unique invite link
+2. System sends an invitation email **from the team email address** (see team onboarding, section 3) containing a unique invite link
 3. Invite is valid for **7 days**
 4. Recipient clicks the link and signs in via GitHub or GitLab OAuth
-5. After authenticating, the recipient is added to the company with the specified role and permissions
+5. After authenticating, the recipient is added to the team with the specified role and permissions
 6. Expired invites must be re-created
 
-If the company has no email address configured, invites are still generated but must be shared manually (the invite link is displayed in the UI for copying). Only board members can create invites.
+If the team has no email address configured, invites are still generated but must be shared manually (the invite link is displayed in the UI for copying). Only board members can create invites.
 
 ### Instance admin
 
 The first user to create an account is the instance admin. The instance admin can:
-- Access all companies (regardless of membership)
+- Access all teams (regardless of membership)
 - Manage the Hezo instance settings
 - View system-wide audit log
 
@@ -1952,7 +1952,7 @@ Per-user setup in account settings. A single Telegram bot serves the entire Hezo
 
 #### Slack integration
 
-Per-company setup in company settings. A single Slack app is installed per company workspace. Each role agent posts messages with a distinct display name and avatar using `chat.postMessage` `username` and `icon_url` overrides, so agents appear as separate identities in Slack.
+Per-team setup in team settings. A single Slack app is installed per team workspace. Each role agent posts messages with a distinct display name and avatar using `chat.postMessage` `username` and `icon_url` overrides, so agents appear as separate identities in Slack.
 
 **Capabilities:**
 - Board members receive notifications in a designated channel
@@ -1960,7 +1960,7 @@ Per-company setup in company settings. A single Slack app is installed per compa
 - Create issues, post comments, and @-mention agents in channels
 - Each agent's messages appear under its own name and avatar
 
-**Technical:** Events received via Slack Events API webhook (`POST /webhooks/slack`). Bot token stored encrypted in secrets vault. Configured in company settings.
+**Technical:** Events received via Slack Events API webhook (`POST /webhooks/slack`). Bot token stored encrypted in secrets vault. Configured in team settings.
 
 #### Notification preferences
 
@@ -1982,7 +1982,7 @@ Issues and comments can have file attachments. Files are stored locally on the h
 
 The `assets` table stores metadata for uploaded files:
 - `id` — UUID
-- `company_id` — company scope
+- `team_id` — team scope
 - `filename` — original filename (sanitized)
 - `content_type` — MIME type
 - `size_bytes` — file size
@@ -2002,12 +2002,12 @@ The `issue_attachments` join table links assets to issues:
 
 MVP uses local filesystem storage:
 ```
-~/.hezo/data/assets/{company_id}/{asset_id}/{filename}
+~/.hezo/data/assets/{team_id}/{asset_id}/{filename}
 ```
 
 Files are served via:
 ```
-GET /api/companies/:id/assets/:asset_id
+GET /api/teams/:id/assets/:asset_id
 ```
 
 ### Upload pipeline
@@ -2022,7 +2022,7 @@ GET /api/companies/:id/assets/:asset_id
 
 - Maximum file size: 10MB per file
 - Filename sanitized — no path traversal, special characters stripped
-- Files are company-scoped — access validated against company membership
+- Files are team-scoped — access validated against team membership
 - Deleting an issue does not delete attachments (they may be referenced elsewhere)
 - Orphaned assets can be cleaned up via a maintenance task
 
@@ -2047,7 +2047,7 @@ The board inbox is the primary notification center. It surfaces everything that 
 | Pending approvals | Secret access, hire, strategy, plan review, KB update, deploy | Approve / Deny |
 | UI design reviews | UI Designer submits preview mockups | Approve / Deny / Delegate to Product Lead |
 | Escalations | CEO escalates unresolved disputes | Review issue, make decision |
-| Budget alerts | System detects 80%+ usage or company budget approaching limit | Adjust budget, acknowledge |
+| Budget alerts | System detects 80%+ usage or team budget approaching limit | Adjust budget, acknowledge |
 | Agent errors | Container crash, repeated failures, stuck agents | Restart, investigate, terminate |
 | QA critical findings | QA agent finds security or critical issues | Review, prioritize |
 | OAuth link requests | Agent needs external resource access | Authorize (click OAuth link) |
@@ -2072,32 +2072,32 @@ All of this happens within one ticket. The Comments thread is the single convers
 
 | # | Screen | Purpose |
 |---|--------|---------|
-| 1 | **Home — Company list** | Card grid of all companies. Stats + budget bar per card. "New company" (select company type). Board inbox badge. |
-| 2 | **Company workspace — Issues tab** | Default view. Filterable issue list. Every row shows identifier, project tag, assignee, status, priority. |
+| 1 | **Home — Team list** | Card grid of all teams. Stats + budget bar per card. "New team" (select team type). Board inbox badge. |
+| 2 | **Team workspace — Issues tab** | Default view. Filterable issue list. Every row shows identifier, project tag, assignee, status, priority. |
 | 3 | **Issue detail** | Primary work surface. Single Comments view (threaded conversation, traces, goal chain sidebar, quick actions). |
-| 4 | **Company workspace — Agents tab** | Card grid of agents. Runtime, heartbeat, process status, budget bar per card. |
+| 4 | **Team workspace — Agents tab** | Card grid of agents. Runtime, heartbeat, process status, budget bar per card. |
 | 6 | **New agent / edit agent** | Form with system prompt editor (monospace, variable chips, role templates), reporting line, budget. |
 | 7 | **Board inbox** | Drawer accessible from any screen. Pending approvals, design reviews, escalations, budget alerts, agent errors, QA findings, OAuth requests. One-click actionable. Unread badge. |
-| 8 | **Company workspace — Team page** | Reached via the sidebar "Team" link. Read-only org chart tree with status indicators, team summary, and a "Hire agent" action. Click a node to inspect the agent. |
-| 9 | **Company workspace — Projects tab** | List of projects with goal, repo count, issue count. Click to see filtered issue list + repo management. Project detail includes a Documents tab showing project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan). |
-| 10 | **Company workspace — Knowledge base tab** | List of .md docs with title, last updated, updated by. Click to view/edit. Version history. Board can create docs directly. |
-| 11 | **Company workspace — Settings tab** | Board-only. Company description editor, connected platforms (OAuth), secrets vault, MCP servers, MPP config, budget overview, company preferences, plugin management, Slack integration, member management. |
+| 8 | **Team workspace — Team page** | Reached via the sidebar "Team" link. Read-only org chart tree with status indicators, team summary, and a "Hire agent" action. Click a node to inspect the agent. |
+| 9 | **Team workspace — Projects tab** | List of projects with goal, repo count, issue count. Click to see filtered issue list + repo management. Project detail includes a Documents tab showing project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan). |
+| 10 | **Team workspace — Knowledge base tab** | List of .md docs with title, last updated, updated by. Click to view/edit. Version history. Board can create docs directly. |
+| 11 | **Team workspace — Settings tab** | Board-only. Team description editor, connected platforms (OAuth), secrets vault, MCP servers, MPP config, budget overview, team preferences, plugin management, Slack integration, member management. |
 | 12 | **Account settings** | All roles. Profile, Telegram bot setup, notification preferences. |
 
 ### Navigation structure
 
-The UI uses a three-column layout: a narrow company icon rail on the far left, a side menu for the selected company, and the main content area.
+The UI uses a three-column layout: a narrow team icon rail on the far left, a side menu for the selected team, and the main content area.
 
-**Company Rail** (60px icon sidebar, always visible):
-- Home icon at top → company list page
-- Company avatars (click to select)
-- "+" button to create new company (from company template)
+**Team Rail** (60px icon sidebar, always visible):
+- Home icon at top → team list page
+- Team avatars (click to select)
+- "+" button to create new team (from team template)
 - Bottom section: theme switcher, inbox badge
 
-**Side Menu** (200px, visible when a company is selected):
+**Side Menu** (200px, visible when a team is selected):
 - Inbox (pending approvals — full page)
 - Work
-  - Issues (company-level)
+  - Issues (team-level)
   - Goals
 - Projects (collapsible section; header links to the projects list, children are per-project links)
 - Team (collapsible section; header links to the team org chart page, children are per-agent links)
@@ -2109,10 +2109,10 @@ The UI uses a three-column layout: a narrow company icon rail on the far left, a
 **Project view** uses tabs (Issues, Agents, Container, Settings) instead of a sidebar. Selecting a project adds its slug to the URL.
 
 ```
-Company Rail → Company List (home)
-                └── Create Company (select company template)
+Team Rail → Team List (home)
+                └── Create Team (select team template)
 
-Company Rail → Company workspace (side menu)
+Team Rail → Team workspace (side menu)
         ├── Inbox (pending approvals)
         ├── Work
         │     ├── Issues
@@ -2137,16 +2137,16 @@ Company Rail → Company workspace (side menu)
               │     ├── API keys
               │     ├── MCP servers
               │     ├── Budget overview
-              │     ├── Company preferences
+              │     ├── Team preferences
               │     └── Skill file
               └── Audit log
 ```
 
-### Company creation and templates
+### Team creation and templates
 
-When creating a company, the user selects one or more company templates (default: "Software Development"). A template includes a team of agents with defined roles and reporting hierarchy, plus optional KB docs and preferences.
+When creating a team, the user selects one or more team templates (default: "Software Development"). A template includes a team of agents with defined roles and reporting hierarchy, plus optional KB docs and preferences.
 
-Every company gets an auto-created **Operations** project (`is_internal = true`) for administrative issues like agent onboarding. Internal projects are visible but not deletable. Every issue in the Operations project must be assigned to the CEO — the server rejects any `POST /companies/:companyId/issues`, `PATCH /companies/:companyId/issues/:issueId`, `POST .../sub-issues`, or MCP `create_issue` / `update_issue` call that would leave an Operations-project issue assigned to anyone else. The create-issue dialog and the issue-detail assignee picker reflect this by filtering the agent list to the CEO when Operations is selected.
+Every team gets an auto-created **Operations** project (`is_internal = true`) for administrative issues like agent onboarding. Internal projects are visible but not deletable. Every issue in the Operations project must be assigned to the CEO — the server rejects any `POST /teams/:teamId/issues`, `PATCH /teams/:teamId/issues/:issueId`, `POST .../sub-issues`, or MCP `create_issue` / `update_issue` call that would leave an Operations-project issue assigned to anyone else. The create-issue dialog and the issue-detail assignee picker reflect this by filtering the agent list to the CEO when Operations is selected.
 
 ### Agent onboarding
 
@@ -2165,36 +2165,36 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `system_meta` | Key-value store for system config (master key canary) |
 | `users` | Global human identity (display_name, avatar_url). No email. |
 | `user_auth_methods` | OAuth login methods (GitHub, GitLab). Links provider to user. |
-| `members` | Base table for all company participants. Has `member_type` enum ('agent'/'user'). |
+| `members` | Base table for all team participants. Has `member_type` enum ('agent'/'user'). |
 | `member_agents` | Agent-specific extension (system_prompt, runtime, budget, heartbeat, org chart). |
-| `member_users` | User-in-company extension (role, role_title, permissions_text, project_ids). |
+| `member_users` | User-in-team extension (role, role_title, permissions_text, project_ids). |
 | `agent_types` | First-class agent type catalog with role templates, system prompts, and default configs. Sources: builtin, custom, remote. |
-| `company_types` | Team type blueprints (recipes). Groups of agent types plus default KB docs, preferences. |
-| `company_type_agent_types` | Join table linking team types to agent types with org chart and config overrides. |
-| `company_team_types` | Many-to-many join table linking companies to the team types they were created from. |
-| `companies` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), budget. |
-| `invites` | Pending invitations to join a company (7-day expiry) |
-| `api_keys` | Company-scoped API keys for external orchestrators. Stored hashed. |
-| `company_ssh_keys` | Generated SSH key pairs per company. Registered on GitHub via OAuth API. |
-| `projects` | Groups of work under a company. Each gets its own Docker container. |
+| `team_templates` | Team type blueprints (recipes). Groups of agent types plus default KB docs, preferences. |
+| `team_template_agent_types` | Join table linking team types to agent types with org chart and config overrides. |
+| `team_template_assignments` | Many-to-many join table linking teams to the team types they were created from. |
+| `teams` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), budget. |
+| `invites` | Pending invitations to join a team (7-day expiry) |
+| `api_keys` | Team-scoped API keys for external orchestrators. Stored hashed. |
+| `team_ssh_keys` | Generated SSH key pairs per team. Registered on GitHub via OAuth API. |
+| `projects` | Groups of work under a team. Each gets its own Docker container. |
 | `repos` | Git repos (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. |
 | `issues` | Tickets. Must have a project. Assignee references `members.id`. |
 | `issue_dependencies` | Many-to-many blocking relationships between issues. |
 | `issue_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. |
 | `execution_locks` | Issue work ownership tracking — read/write locks. Multiple readers (reviewers) or one exclusive writer. |
-| `secrets` | Encrypted key-value. Scoped to company or company+project. |
+| `secrets` | Encrypted key-value. Scoped to team or team+project. |
 | `secret_grants` | Links secrets to agents. Revocable. |
 | `approvals` | Pending board decisions. Polymorphic payload. |
 | `cost_entries` | Immutable spend records. Includes `provider` and `model` fields. |
 | `audit_log` | Append-only. Never updated or deleted. |
 | `kb_docs` | Knowledge base documents. AGENTS.md is a special KB doc written to disk. |
-| `project_docs` | Project documentation (PRD, spec, implementation plan, etc.) — DB-backed, company-scoped, with embeddings. |
-| `skills` | Reusable instruction documents — DB-backed, company-scoped, with tags, revisions, and embeddings. |
+| `project_docs` | Project documentation (PRD, spec, implementation plan, etc.) — DB-backed, team-scoped, with embeddings. |
+| `skills` | Reusable instruction documents — DB-backed, team-scoped, with tags, revisions, and embeddings. |
 | `skill_revisions` | Version history for skills. |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. |
 | `plugins` | Installed plugins. Config, capabilities, status. Local-only for MVP. |
 | `notification_preferences` | Per-user notification routing. |
-| `slack_connections` | Per-company Slack app config. |
+| `slack_connections` | Per-team Slack app config. |
 
 ### Enums
 
@@ -2211,7 +2211,7 @@ comment_author_type:  board, agent, system
 comment_content_type: text, options, preview, trace, system
 tool_call_status:     running, success, error
 secret_category:      ssh_key, credential, api_token, certificate, other
-grant_scope:          single, project, company
+grant_scope:          single, project, team
 approval_type:        secret_access, hire, strategy, plan_review, kb_update, deploy_production
 approval_status:      pending, approved, denied
 audit_actor_type:     board, agent, system
@@ -2229,19 +2229,19 @@ auth_provider:        github, gitlab
 
 **`next_project_issue_number(project_id)`** — Upsert + returning for gap-free per-project issue numbering.
 
-**`debit_agent_budget(agent_id, amount_cents)`** — SELECT FOR UPDATE to row-lock, check agent budget AND company budget, debit both. Returns FALSE if either budget is exceeded.
+**`debit_agent_budget(agent_id, amount_cents)`** — SELECT FOR UPDATE to row-lock, check agent budget AND team budget, debit both. Returns FALSE if either budget is exceeded.
 
 ### Key constraints
 
-- `agents(company_id, slug)` UNIQUE: slugs unique within company (for unambiguous @-mentions)
+- `agents(team_id, slug)` UNIQUE: slugs unique within team (for unambiguous @-mentions)
 - `repos.url` CHECK: must match `github.com`
 - `repos(project_id, short_name)` UNIQUE: short names unique within project
-- `issues(company_id, number)` UNIQUE: issue numbers unique within company
-- `issues(company_id, identifier)` UNIQUE: identifiers unique within company
+- `issues(team_id, number)` UNIQUE: issue numbers unique within team
+- `issues(team_id, identifier)` UNIQUE: identifiers unique within team
 - `issues.project_id` NOT NULL: every issue must belong to a project
-- `secrets(company_id, project_id, name)` UNIQUE: secret names unique within scope
+- `secrets(team_id, project_id, name)` UNIQUE: secret names unique within scope
 - `secret_grants(secret_id, agent_id)` UNIQUE: no duplicate active grants
-- `company_memberships(user_id, company_id)` UNIQUE: no duplicate memberships
+- `team_memberships(user_id, team_id)` UNIQUE: no duplicate memberships
 - `invites.token` UNIQUE: invite tokens globally unique
 - `invites.expires_at` CHECK: must be in the future at creation
 
@@ -2258,15 +2258,15 @@ The full API reference is maintained separately. See `api.md` for the complete e
 ### Authentication
 
 Three token types:
-- **User JWT** — stateless JWT signed with master key. Set after GitHub/GitLab OAuth login. Contains `user_id`, `member_id`, `company_id`. Always required for human users.
-- **API key (remote orchestrators)** — `Authorization: Bearer hezo_<key>`. Company-scoped, full board access. For OpenClaw, scripts, AI agents controlling Hezo remotely.
-- **Agent JWT** — `Authorization: Bearer <jwt>`. Signed with master key. Minted per run; claims are `member_id` (= agent_id), `company_id`, `run_id`, with a four-hour `exp`. On every request the server looks up the `heartbeat_runs` row matching `run_id` and rejects unless its status is `running`, so tokens become invalid the moment the run finalizes.
+- **User JWT** — stateless JWT signed with master key. Set after GitHub/GitLab OAuth login. Contains `user_id`, `member_id`, `team_id`. Always required for human users.
+- **API key (remote orchestrators)** — `Authorization: Bearer hezo_<key>`. Team-scoped, full board access. For OpenClaw, scripts, AI agents controlling Hezo remotely.
+- **Agent JWT** — `Authorization: Bearer <jwt>`. Signed with master key. Minted per run; claims are `member_id` (= agent_id), `team_id`, `run_id`, with a four-hour `exp`. On every request the server looks up the `heartbeat_runs` row matching `run_id` and rejects unless its status is `running`, so tokens become invalid the moment the run finalizes.
 
 ### API surfaces
 
 | Surface | Description |
 |---------|-------------|
-| Board API | Full CRUD for companies, agents, projects, repos, issues, secrets, approvals, KB, connections, plugins, users, etc. |
+| Board API | Full CRUD for teams, agents, projects, repos, issues, secrets, approvals, KB, connections, plugins, users, etc. |
 | Agent API | Heartbeat, context, comments, tool calls, delegation, secret requests, KB proposals, deploy requests. |
 | MCP Endpoint | Streamable HTTP at `/mcp`. Mirrors Board API as MCP tools for external AI agents. |
 | Skill File | `GET /skill.md`. Dynamically generated documentation for AI agent onboarding. |
@@ -2279,11 +2279,11 @@ Three token types:
 | Feature | Notes |
 |---------|-------|
 | 1Password integration | Replace local encrypted secrets with 1Password Connect Server |
-| Agent type & company type marketplace | Community marketplace on hezo connect for creating, sharing, and selling agent types and company types |
+| Agent type & team type marketplace | Community marketplace on hezo connect for creating, sharing, and selling agent types and team types |
 | Config versioning with rollback | Revisioned config changes, safe rollback |
 | Visual drag-to-reorganize org chart | Interactive reordering of reporting lines |
 | Mobile-optimized UX | Responsive but not phone-first in MVP |
-| ClipMart / marketplace | Browse and download pre-built company templates |
+| ClipMart / marketplace | Browse and download pre-built team templates |
 | External integrations | Asana, Trello, Linear, etc. |
 | Bring-your-own-ticket-system | Sync with external issue trackers |
 
@@ -2297,7 +2297,7 @@ The following specification details are maintained in separate files:
 - **`api.md`** — Complete API reference with all endpoints, request/response shapes, query parameters, and WebSocket event types
 - **`connect-spec.md`** — Hezo Connect OAuth gateway specification (self-hosted and centrally hosted modes)
 - **`implementation-phases.md`** — 12 implementation phases from Phase 0 (Hezo Connect) through Phase 11 (Deploy + Messaging)
-- **`agents/<template>/`** — Full role specifications per company template. `software-development/` contains the 11 Software Development roles (`ceo.md`, `product-lead.md`, `architect.md`, `engineer.md`, `qa-engineer.md`, `ui-designer.md`, `devops-engineer.md`, `marketing-lead.md`, `researcher.md`, `security-engineer.md`, `coach.md`); `blank/` contains the pared-down `ceo.md` and `coach.md` used when the Blank template is selected.
+- **`agents/<template>/`** — Full role specifications per team template. `software-development/` contains the 11 Software Development roles (`ceo.md`, `product-lead.md`, `architect.md`, `engineer.md`, `qa-engineer.md`, `ui-designer.md`, `devops-engineer.md`, `marketing-lead.md`, `researcher.md`, `security-engineer.md`, `coach.md`); `blank/` contains the pared-down `ceo.md` and `coach.md` used when the Blank template is selected.
 
 ## Appendix B: Endpoint count
 

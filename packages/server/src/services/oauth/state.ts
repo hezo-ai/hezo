@@ -14,7 +14,7 @@ export interface ManualOAuthConfig {
 }
 
 export interface StatePayload {
-	companyId: string;
+	teamId: string;
 	provider: string;
 	nonce: string;
 	codeVerifier: string;
@@ -28,7 +28,7 @@ export interface StatePayload {
 }
 
 export interface NewStateInput {
-	companyId: string;
+	teamId: string;
 	provider: string;
 	redirectUri: string;
 	returnTo: string;
@@ -49,7 +49,7 @@ export async function signState(
 	const codeChallenge = base64url(await sha256(codeVerifier));
 
 	const payload: StatePayload = {
-		companyId: input.companyId,
+		teamId: input.teamId,
 		provider: input.provider,
 		nonce: randomBytes(16).toString('hex'),
 		codeVerifier,

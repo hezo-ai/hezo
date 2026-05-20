@@ -3,12 +3,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { generateMasterKey, MasterKeyManager } from '../../crypto/master-key';
 import { loadAgentRoles } from '../../db/agent-roles';
 import { seedBuiltins } from '../../db/seed';
-import { generateCompanySSHKey, getCompanySSHKey } from '../../services/ssh-keys';
+import { generateTeamSSHKey, getTeamSSHKey } from '../../services/ssh-keys';
 import { createTestDbWithMigrations } from '../helpers/db';
 
 let db: PGlite;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 
 beforeAll(async () => {
 	db = await createTestDbWithMigrations();
@@ -16,12 +16,12 @@ beforeAll(async () => {
 	await masterKeyManager.initialize(db, generateMasterKey());
 	await seedBuiltins(db, await loadAgentRoles());
 
-	// Create a company
-	const companyRes = await db.query<{ id: string }>(
-		`INSERT INTO companies (name, slug)
+	// Create a team
+	const teamRes = await db.query<{ id: string }>(
+		`INSERT INTO teams (name, slug)
 		 VALUES ('SSH Test Co', 'ssh-test-co') RETURNING id`,
 	);
-	companyId = companyRes.rows[0].id;
+	teamId = teamRes.rows[0].id;
 });
 
 afterAll(async () => {
@@ -30,17 +30,17 @@ afterAll(async () => {
 
 describe('SSH key management', () => {
 	it('generates an Ed25519 SSH key pair', async () => {
-		const result = await generateCompanySSHKey(db, companyId, masterKeyManager);
+		const result = await generateTeamSSHKey(db, teamId, masterKeyManager);
 
 		expect(result.publicKey).toContain('ssh-ed25519');
 		expect(result.fingerprint).toBeTruthy();
 		expect(result.secretId).toBeTruthy();
 	});
 
-	it('stores the public key in company_ssh_keys', async () => {
+	it('stores the public key in team_ssh_keys', async () => {
 		const row = await db.query<{ public_key: string; fingerprint: string }>(
-			'SELECT public_key, fingerprint FROM company_ssh_keys WHERE company_id = $1',
-			[companyId],
+			'SELECT public_key, fingerprint FROM team_ssh_keys WHERE team_id = $1',
+			[teamId],
 		);
 		expect(row.rows.length).toBe(1);
 		expect(row.rows[0].public_key).toContain('ssh-ed25519');
@@ -49,8 +49,8 @@ describe('SSH key management', () => {
 
 	it('stores the private key encrypted in secrets', async () => {
 		const row = await db.query<{ encrypted_value: string; category: string }>(
-			"SELECT encrypted_value, category FROM secrets WHERE company_id = $1 AND name = 'ssh_private_key'",
-			[companyId],
+			"SELECT encrypted_value, category FROM secrets WHERE team_id = $1 AND name = 'ssh_private_key'",
+			[teamId],
 		);
 		expect(row.rows.length).toBe(1);
 		expect(row.rows[0].category).toBe('ssh_key');
@@ -59,26 +59,26 @@ describe('SSH key management', () => {
 	});
 
 	it('retrieves and decrypts the key pair', async () => {
-		const result = await getCompanySSHKey(db, companyId, masterKeyManager);
+		const result = await getTeamSSHKey(db, teamId, masterKeyManager);
 
 		expect(result).not.toBeNull();
 		expect(result!.publicKey).toContain('ssh-ed25519');
 		expect(result!.privateKey).toContain('-----BEGIN PRIVATE KEY-----');
 	});
 
-	it('returns null for company without SSH key', async () => {
-		const otherCompanyRes = await db.query<{ id: string }>(
-			`INSERT INTO companies (name, slug)
+	it('returns null for team without SSH key', async () => {
+		const otherTeamRes = await db.query<{ id: string }>(
+			`INSERT INTO teams (name, slug)
 			 VALUES ('No Key Co', 'no-key-co') RETURNING id`,
 		);
-		const result = await getCompanySSHKey(db, otherCompanyRes.rows[0].id, masterKeyManager);
+		const result = await getTeamSSHKey(db, otherTeamRes.rows[0].id, masterKeyManager);
 		expect(result).toBeNull();
 	});
 
 	it('idempotent — regenerating overwrites existing key', async () => {
-		const first = await getCompanySSHKey(db, companyId, masterKeyManager);
-		await generateCompanySSHKey(db, companyId, masterKeyManager);
-		const second = await getCompanySSHKey(db, companyId, masterKeyManager);
+		const first = await getTeamSSHKey(db, teamId, masterKeyManager);
+		await generateTeamSSHKey(db, teamId, masterKeyManager);
+		const second = await getTeamSSHKey(db, teamId, masterKeyManager);
 
 		expect(second!.publicKey).not.toBe(first!.publicKey);
 		expect(second!.privateKey).not.toBe(first!.privateKey);

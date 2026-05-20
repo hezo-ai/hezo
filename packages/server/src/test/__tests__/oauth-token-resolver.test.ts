@@ -10,7 +10,7 @@ import {
 import {
 	clearRefreshFns,
 	type RefreshFn,
-	refreshExpiringTokensForCompany,
+	refreshExpiringTokensForTeam,
 	registerRefreshFn,
 } from '../../services/oauth/token-resolver';
 import { safeClose } from '../helpers';
@@ -18,17 +18,17 @@ import { createTestApp } from '../helpers/app';
 
 let db: PGlite;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
 	db = ctx.db;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const company = await db.query<{ id: string }>(
-		`INSERT INTO companies (name, slug) VALUES ('Refresh Co', 'refresh-co') RETURNING id`,
+	const team = await db.query<{ id: string }>(
+		`INSERT INTO teams (name, slug) VALUES ('Refresh Co', 'refresh-co') RETURNING id`,
 	);
-	companyId = company.rows[0].id;
+	teamId = team.rows[0].id;
 });
 
 afterEach(() => {
@@ -48,7 +48,7 @@ async function makeConnection(opts: {
 	return createConnection(
 		{ db, masterKeyManager },
 		{
-			companyId,
+			teamId,
 			provider: opts.provider,
 			providerAccountId: opts.providerAccountId,
 			providerAccountLabel: `${opts.provider}-${opts.providerAccountId}`,
@@ -61,7 +61,7 @@ async function makeConnection(opts: {
 	);
 }
 
-describe('refreshExpiringTokensForCompany', () => {
+describe('refreshExpiringTokensForTeam', () => {
 	it('refreshes tokens that expire inside the refresh window', async () => {
 		const conn = await makeConnection({
 			provider: 'p1',
@@ -77,7 +77,7 @@ describe('refreshExpiringTokensForCompany', () => {
 		});
 		registerRefreshFn('p1', refreshFn);
 
-		await refreshExpiringTokensForCompany({ db, masterKeyManager }, companyId);
+		await refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId);
 
 		const refreshed = await getConnection({ db, masterKeyManager }, conn.id);
 		expect(refreshed?.expiresAt?.getTime()).toBeGreaterThan(Date.now());
@@ -104,7 +104,7 @@ describe('refreshExpiringTokensForCompany', () => {
 			return { accessToken: 'never' };
 		});
 
-		await refreshExpiringTokensForCompany({ db, masterKeyManager }, companyId);
+		await refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId);
 		expect(called).toBe(false);
 
 		const after = await getConnection({ db, masterKeyManager }, conn.id);
@@ -130,7 +130,7 @@ describe('refreshExpiringTokensForCompany', () => {
 			return { accessToken: 'wrong' };
 		});
 
-		await refreshExpiringTokensForCompany({ db, masterKeyManager }, companyId);
+		await refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId);
 		expect(called).toBe(false);
 
 		const after = await getConnection({ db, masterKeyManager }, conn.id);
@@ -163,9 +163,9 @@ describe('refreshExpiringTokensForCompany', () => {
 		});
 
 		await Promise.all([
-			refreshExpiringTokensForCompany({ db, masterKeyManager }, companyId),
-			refreshExpiringTokensForCompany({ db, masterKeyManager }, companyId),
-			refreshExpiringTokensForCompany({ db, masterKeyManager }, companyId),
+			refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId),
+			refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId),
+			refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId),
 		]);
 
 		expect(calls).toBe(1);
@@ -192,7 +192,7 @@ describe('refreshExpiringTokensForCompany', () => {
 		});
 
 		await expect(
-			refreshExpiringTokensForCompany({ db, masterKeyManager }, companyId),
+			refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId),
 		).resolves.toBeUndefined();
 	});
 });

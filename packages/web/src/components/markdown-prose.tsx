@@ -28,7 +28,7 @@ interface MarkdownProseProps {
 	children: string;
 	testId?: string;
 	className?: string;
-	companyId?: string;
+	teamId?: string;
 	projectSlug?: string;
 }
 
@@ -36,17 +36,17 @@ export function MarkdownProse({
 	children,
 	testId,
 	className,
-	companyId,
+	teamId,
 	projectSlug,
 }: MarkdownProseProps) {
-	const { data: agents } = useAgents(companyId ?? '');
+	const { data: agents } = useAgents(teamId ?? '');
 	const issueCandidates = useMemo(() => extractIssueCandidates(children), [children]);
-	const { data: resolvedIssues } = useIssueMentions(companyId ?? '', issueCandidates);
+	const { data: resolvedIssues } = useIssueMentions(teamId ?? '', issueCandidates);
 	const docCandidates = useMemo(
 		() => extractDocCandidates(children, projectSlug),
 		[children, projectSlug],
 	);
-	const { data: resolvedDocs } = useDocMentions(companyId ?? '', docCandidates);
+	const { data: resolvedDocs } = useDocMentions(teamId ?? '', docCandidates);
 
 	const agentsMap = useMemo<Map<string, AgentMentionData>>(() => {
 		const m = new Map<string, AgentMentionData>();
@@ -91,13 +91,13 @@ export function MarkdownProse({
 	const remarkPlugins = useMemo<RemarkPlugin>(() => {
 		const plugins: NonNullable<RemarkPlugin> = [remarkGfm];
 		if (
-			companyId &&
+			teamId &&
 			(agentsMap.size > 0 || issuesMap.size > 0 || kbDocsMap.size > 0 || projectDocsMap.size > 0)
 		) {
 			plugins.push([
 				remarkMentions,
 				{
-					companyId,
+					teamId,
 					projectSlug,
 					agents: agentsMap,
 					issues: issuesMap,
@@ -107,7 +107,7 @@ export function MarkdownProse({
 			]);
 		}
 		return plugins;
-	}, [companyId, projectSlug, agentsMap, issuesMap, kbDocsMap, projectDocsMap]);
+	}, [teamId, projectSlug, agentsMap, issuesMap, kbDocsMap, projectDocsMap]);
 
 	const components = useMemo<Components>(
 		() => ({
@@ -128,7 +128,7 @@ export function MarkdownProse({
 
 				const kbSlug = attrs['data-mention-kb-slug'];
 				const kbTitle = attrs['data-mention-kb-title'];
-				if (kbSlug && kbTitle && companyId) {
+				if (kbSlug && kbTitle && teamId) {
 					return (
 						<Tooltip
 							content={
@@ -140,8 +140,8 @@ export function MarkdownProse({
 							}
 						>
 							<Link
-								to="/companies/$companyId/kb"
-								params={{ companyId }}
+								to="/teams/$teamId/kb"
+								params={{ teamId }}
 								search={{ slug: kbSlug }}
 								className={MENTION_CLASSES}
 								data-testid="kb-mention-link"
@@ -154,7 +154,7 @@ export function MarkdownProse({
 
 				const docProject = attrs['data-mention-doc-project-slug'];
 				const docFilename = attrs['data-mention-doc-filename'];
-				if (docProject && docFilename && companyId) {
+				if (docProject && docFilename && teamId) {
 					return (
 						<Tooltip
 							content={
@@ -166,8 +166,8 @@ export function MarkdownProse({
 							}
 						>
 							<Link
-								to="/companies/$companyId/projects/$projectId/documents"
-								params={{ companyId, projectId: docProject }}
+								to="/teams/$teamId/projects/$projectId/documents"
+								params={{ teamId, projectId: docProject }}
 								search={{ file: docFilename }}
 								className={MENTION_CLASSES}
 								data-testid="doc-mention-link"
@@ -181,13 +181,13 @@ export function MarkdownProse({
 				const issueIdentifier = attrs['data-mention-issue-identifier'];
 				const issueTitle = attrs['data-mention-issue-title'];
 				const issueProjectSlug = attrs['data-mention-project-slug'];
-				if (issueIdentifier && issueTitle && issueProjectSlug && companyId) {
+				if (issueIdentifier && issueTitle && issueProjectSlug && teamId) {
 					return (
 						<Tooltip content={issueTitle}>
 							<Link
-								to="/companies/$companyId/projects/$projectId/issues/$issueId"
+								to="/teams/$teamId/projects/$projectId/issues/$issueId"
 								params={{
-									companyId,
+									teamId,
 									projectId: issueProjectSlug,
 									issueId: issueIdentifier.toLowerCase(),
 								}}
@@ -202,12 +202,12 @@ export function MarkdownProse({
 
 				const agentSlug = attrs['data-mention-agent-slug'];
 				const agentTitle = attrs['data-mention-agent-title'];
-				if (agentSlug && companyId) {
+				if (agentSlug && teamId) {
 					return (
 						<Tooltip content={agentTitle ?? `@${agentSlug}`}>
 							<Link
-								to="/companies/$companyId/agents/$agentId"
-								params={{ companyId, agentId: agentSlug }}
+								to="/teams/$teamId/agents/$agentId"
+								params={{ teamId, agentId: agentSlug }}
 								className={MENTION_CLASSES}
 								data-testid="agent-mention-link"
 							>
@@ -223,7 +223,7 @@ export function MarkdownProse({
 				);
 			},
 		}),
-		[companyId],
+		[teamId],
 	);
 
 	return (

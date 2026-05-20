@@ -4,7 +4,7 @@ import { queryClient } from '../lib/query-client';
 
 export interface ApiKey {
 	id: string;
-	company_id: string;
+	team_id: string;
 	name: string;
 	prefix: string;
 	key?: string;
@@ -12,27 +12,23 @@ export interface ApiKey {
 	created_at: string;
 }
 
-export function useApiKeys(companyId: string) {
+export function useApiKeys(teamId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'api-keys'],
-		queryFn: () => api.get<ApiKey[]>(`/api/companies/${companyId}/api-keys`),
+		queryKey: ['teams', teamId, 'api-keys'],
+		queryFn: () => api.get<ApiKey[]>(`/api/teams/${teamId}/api-keys`),
 	});
 }
 
-export function useCreateApiKey(companyId: string) {
+export function useCreateApiKey(teamId: string) {
 	return useMutation({
-		mutationFn: (data: { name: string }) =>
-			api.post<ApiKey>(`/api/companies/${companyId}/api-keys`, data),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'api-keys'] }),
+		mutationFn: (data: { name: string }) => api.post<ApiKey>(`/api/teams/${teamId}/api-keys`, data),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'api-keys'] }),
 	});
 }
 
-export function useDeleteApiKey(companyId: string) {
+export function useDeleteApiKey(teamId: string) {
 	return useMutation({
-		mutationFn: (apiKeyId: string) =>
-			api.delete(`/api/companies/${companyId}/api-keys/${apiKeyId}`),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'api-keys'] }),
+		mutationFn: (apiKeyId: string) => api.delete(`/api/teams/${teamId}/api-keys/${apiKeyId}`),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'api-keys'] }),
 	});
 }

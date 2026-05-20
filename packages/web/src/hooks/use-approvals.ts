@@ -5,15 +5,15 @@ import { queryClient } from '../lib/query-client';
 
 export interface Approval {
 	id: string;
-	company_id: string;
+	team_id: string;
 	type: string;
 	status: string;
 	payload: Record<string, unknown>;
 	resolution_note: string | null;
 	resolved_at: string | null;
 	created_at: string;
-	company_name: string;
-	company_slug: string;
+	team_name: string;
+	team_slug: string;
 	requested_by_name: string | null;
 	requested_by_member_id: string | null;
 	payload_member_name: string | null;
@@ -24,45 +24,43 @@ export interface Approval {
 }
 
 export function useApprovals(
-	companyId: string,
+	teamId: string,
 	status: string = ApprovalStatus.Pending,
 	enabled = true,
 ) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'approvals', { status }],
-		queryFn: () => api.get<Approval[]>(`/api/companies/${companyId}/approvals`, { status }),
+		queryKey: ['teams', teamId, 'approvals', { status }],
+		queryFn: () => api.get<Approval[]>(`/api/teams/${teamId}/approvals`, { status }),
 		enabled,
 	});
 }
 
-export function useAllPendingApprovals(companyIds: string[]) {
+export function useAllPendingApprovals(teamIds: string[]) {
 	return useQuery({
-		queryKey: ['approvals', 'pending', companyIds],
+		queryKey: ['approvals', 'pending', teamIds],
 		queryFn: async () => {
 			const results = await Promise.all(
-				companyIds.map((id) =>
-					api.get<Approval[]>(`/api/companies/${id}/approvals`, {
+				teamIds.map((id) =>
+					api.get<Approval[]>(`/api/teams/${id}/approvals`, {
 						status: ApprovalStatus.Pending,
 					}),
 				),
 			);
 			return results.flat();
 		},
-		enabled: companyIds.length > 0,
+		enabled: teamIds.length > 0,
 	});
 }
 
 export function useBlockedTickets(
-	companyId: string,
+	teamId: string,
 	approvalId: string | null | undefined,
 	enabled = true,
 ) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'approvals', approvalId, 'blocked-tickets'],
+		queryKey: ['teams', teamId, 'approvals', approvalId, 'blocked-tickets'],
 		queryFn: () =>
-			api.get<BlockedTicket[]>(
-				`/api/companies/${companyId}/approvals/${approvalId}/blocked-tickets`,
-			),
+			api.get<BlockedTicket[]>(`/api/teams/${teamId}/approvals/${approvalId}/blocked-tickets`),
 		enabled: enabled && !!approvalId,
 	});
 }

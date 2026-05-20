@@ -25,7 +25,7 @@ import { toSlug } from '../lib/slug';
 import { buildUpdateSet, terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 import {
 	AgentSystemPromptError,
 	fetchAgentSystemPromptForBatch,
@@ -58,7 +58,7 @@ export const agentsRoutes = new Hono<Env>();
  * Common projection for agent rows. JOIN against `members m` and `member_agents ma`.
  * `assigned_issue_count` requires the caller to bind terminal statuses via `terminalStatusParams`.
  */
-const AGENT_BASE_COLUMNS = `m.id, m.company_id, m.display_name, m.created_at,
+const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary, ma.team_context,
 	ma.default_effort,
 	ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
@@ -66,7 +66,7 @@ const AGENT_BASE_COLUMNS = `m.id, m.company_id, m.display_name, m.created_at,
 	ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
 	ma.mcp_servers, ma.model_override_provider, ma.model_override_model, ma.updated_at`;
 
-const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.company_id, hr.wakeup_id, hr.issue_id,
+const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr.issue_id,
 	hr.status, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
 	hr.input_tokens, hr.output_tokens, hr.cost_cents,
 	hr.invocation_command, hr.log_text, hr.working_dir,
@@ -104,12 +104,12 @@ const HEARTBEAT_RUN_TRIGGER_JOINS = `LEFT JOIN agent_wakeup_requests aw ON aw.id
 	LEFT JOIN issues tii ON tii.id = tic.issue_id
 	LEFT JOIN projects tip ON tip.id = tii.project_id`;
 
-agentsRoutes.get('/companies/:companyId/agents', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.get('/teams/:teamId/agents', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const adminFilter = c.req.query('admin_status');
 
 	const ts = terminalStatusParams(2);
@@ -119,8 +119,8 @@ agentsRoutes.get('/companies/:companyId/agents', async (c) => {
 			(SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts.placeholders}))::int AS assigned_issue_count
 		FROM members m
 		JOIN member_agents ma ON ma.id = m.id
-		WHERE m.company_id = $1`;
-	const params: unknown[] = [companyId, ...ts.values];
+		WHERE m.team_id = $1`;
+	const params: unknown[] = [teamId, ...ts.values];
 
 	if (adminFilter) {
 		const statuses = adminFilter.split(',').map((s) => s.trim());
@@ -137,16 +137,16 @@ agentsRoutes.get('/companies/:companyId/agents', async (c) => {
 	return ok(c, result.rows);
 });
 
-agentsRoutes.post('/companies/:companyId/agents', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.post('/teams/:teamId/agents', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
-	const companyCheck = await db.query('SELECT id FROM companies WHERE id = $1', [companyId]);
-	if (companyCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Company not found', 404);
+	const teamCheck = await db.query('SELECT id FROM teams WHERE id = $1', [teamId]);
+	if (teamCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Team not found', 404);
 	}
 
 	const body = await c.req.json<{
@@ -174,20 +174,20 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 	const slugCheck = await db.query(
 		`SELECT ma.id FROM member_agents ma
      JOIN members m ON m.id = ma.id
-     WHERE m.company_id = $1 AND ma.slug = $2`,
-		[companyId, slug],
+     WHERE m.team_id = $1 AND ma.slug = $2`,
+		[teamId, slug],
 	);
 	if (slugCheck.rows.length > 0) {
-		return err(c, 'CONFLICT', `Agent with slug '${slug}' already exists in this company`, 409);
+		return err(c, 'CONFLICT', `Agent with slug '${slug}' already exists in this team`, 409);
 	}
 
 	await db.query('BEGIN');
 	try {
 		const memberResult = await db.query<{ id: string }>(
-			`INSERT INTO members (company_id, member_type, display_name)
+			`INSERT INTO members (team_id, member_type, display_name)
        VALUES ($1, $2, $3)
        RETURNING id`,
-			[companyId, MemberType.Agent, body.title.trim()],
+			[teamId, MemberType.Agent, body.title.trim()],
 		);
 		const memberId = memberResult.rows[0].id;
 
@@ -208,7 +208,7 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 			],
 		);
 
-		await initAgentSystemPrompt(db, companyId, memberId, body.system_prompt ?? '', null);
+		await initAgentSystemPrompt(db, teamId, memberId, body.system_prompt ?? '', null);
 
 		await db.query('COMMIT');
 
@@ -222,22 +222,22 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 
 		broadcastChange(
 			c,
-			wsRoom.company(companyId),
+			wsRoom.team(teamId),
 			'member_agents',
 			'INSERT',
 			result.rows[0] as Record<string, unknown>,
 		);
 
-		enqueueAgentSummaryTask(db, companyId, memberId, 'created').catch((e) =>
+		enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
 			log.error('Failed to enqueue agent summary task:', e),
 		);
-		enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
+		enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
 			log.error('Failed to enqueue team summary task:', e),
 		);
-		enqueueAgentTeamContextTask(db, companyId, memberId, 'initial').catch((e) =>
+		enqueueAgentTeamContextTask(db, teamId, memberId, 'initial').catch((e) =>
 			log.error('Failed to enqueue team_context task for new agent:', e),
 		);
-		enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added', memberId).catch((e) =>
+		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
 			log.error('Failed to fan out team_context tasks for existing agents:', e),
 		);
 
@@ -248,12 +248,12 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 	}
 });
 
-agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const body = await c.req.json<{
 		title: string;
@@ -277,18 +277,18 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 	const slugCheck = await db.query(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = $2`,
-		[companyId, slug],
+		 WHERE m.team_id = $1 AND ma.slug = $2`,
+		[teamId, slug],
 	);
 	if (slugCheck.rows.length > 0) {
-		return err(c, 'CONFLICT', `Agent with slug '${slug}' already exists in this company`, 409);
+		return err(c, 'CONFLICT', `Agent with slug '${slug}' already exists in this team`, 409);
 	}
 
 	const pendingCheck = await db.query(
 		`SELECT id FROM approvals
-		 WHERE company_id = $1 AND type = $2::approval_type AND status = $3::approval_status
+		 WHERE team_id = $1 AND type = $2::approval_type AND status = $3::approval_status
 		   AND payload->>'slug' = $4`,
-		[companyId, ApprovalType.Hire, ApprovalStatus.Pending, slug],
+		[teamId, ApprovalType.Hire, ApprovalStatus.Pending, slug],
 	);
 	if (pendingCheck.rows.length > 0) {
 		return err(c, 'CONFLICT', `A pending hire proposal for slug '${slug}' already exists`, 409);
@@ -297,13 +297,13 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 	const ceoResult = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status`,
-		[companyId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status`,
+		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
 	);
 
 	const opsProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE company_id = $1 AND is_internal = true AND slug = $2`,
-		[companyId, OPERATIONS_PROJECT_SLUG],
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true AND slug = $2`,
+		[teamId, OPERATIONS_PROJECT_SLUG],
 	);
 
 	const hasCeo = ceoResult.rows.length > 0;
@@ -324,10 +324,10 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 		await db.query('BEGIN');
 		try {
 			const memberResult = await db.query<{ id: string }>(
-				`INSERT INTO members (company_id, member_type, display_name)
+				`INSERT INTO members (team_id, member_type, display_name)
 				 VALUES ($1, $2, $3)
 				 RETURNING id`,
-				[companyId, MemberType.Agent, proposal.title],
+				[teamId, MemberType.Agent, proposal.title],
 			);
 			const memberId = memberResult.rows[0].id;
 
@@ -349,7 +349,7 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 				],
 			);
 
-			await initAgentSystemPrompt(db, companyId, memberId, proposal.system_prompt, null);
+			await initAgentSystemPrompt(db, teamId, memberId, proposal.system_prompt, null);
 
 			await db.query('COMMIT');
 		} catch (e) {
@@ -361,22 +361,22 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 			`SELECT ${AGENT_BASE_COLUMNS}
 			 FROM members m
 			 JOIN member_agents ma ON ma.id = m.id
-			 WHERE ma.slug = $1 AND m.company_id = $2`,
-			[slug, companyId],
+			 WHERE ma.slug = $1 AND m.team_id = $2`,
+			[slug, teamId],
 		);
 		const agentRow = agentResult.rows[0] as Record<string, unknown>;
 
-		broadcastChange(c, wsRoom.company(companyId), 'member_agents', 'INSERT', agentRow);
-		enqueueAgentSummaryTask(db, companyId, agentRow.id as string, 'created').catch((e) =>
+		broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'INSERT', agentRow);
+		enqueueAgentSummaryTask(db, teamId, agentRow.id as string, 'created').catch((e) =>
 			log.error('Failed to enqueue agent summary task:', e),
 		);
-		enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
+		enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
 			log.error('Failed to enqueue team summary task:', e),
 		);
-		enqueueAgentTeamContextTask(db, companyId, agentRow.id as string, 'initial').catch((e) =>
+		enqueueAgentTeamContextTask(db, teamId, agentRow.id as string, 'initial').catch((e) =>
 			log.error('Failed to enqueue team_context task for bootstrapped agent:', e),
 		);
-		enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added', agentRow.id as string).catch(
+		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentRow.id as string).catch(
 			(e) => log.error('Failed to fan out team_context tasks for existing agents:', e),
 		);
 
@@ -391,8 +391,8 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 	if (auth.type === AuthType.Board && !auth.isSuperuser) {
 		const me = await db.query<{ id: string }>(
 			`SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id
-			 WHERE mu.user_id = $1 AND m.company_id = $2`,
-			[auth.userId, companyId],
+			 WHERE mu.user_id = $1 AND m.team_id = $2`,
+			[auth.userId, teamId],
 		);
 		requestedByMemberId = me.rows[0]?.id ?? null;
 	}
@@ -400,11 +400,11 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 	await db.query('BEGIN');
 	try {
 		const approvalResult = await db.query<Record<string, unknown>>(
-			`INSERT INTO approvals (company_id, type, requested_by_member_id, payload, status)
+			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload, status)
 			 VALUES ($1, $2::approval_type, $3, $4::jsonb, $5::approval_status)
 			 RETURNING *`,
 			[
-				companyId,
+				teamId,
 				ApprovalType.Hire,
 				requestedByMemberId,
 				JSON.stringify(proposal),
@@ -416,8 +416,8 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 		const existingAgents = await db.query<{ title: string; role_description: string }>(
 			`SELECT ma.title, ma.role_description
 			 FROM member_agents ma JOIN members m ON m.id = ma.id
-			 WHERE m.company_id = $1 AND ma.admin_status = $2::agent_admin_status`,
-			[companyId, AgentAdminStatus.Enabled],
+			 WHERE m.team_id = $1 AND ma.admin_status = $2::agent_admin_status`,
+			[teamId, AgentAdminStatus.Enabled],
 		);
 		const teamRoster = existingAgents.rows
 			.map((a) => `- **${a.title}**: ${a.role_description || 'No description'}`)
@@ -444,12 +444,12 @@ ${teamRoster}`;
 		const { number: issueNumber, identifier } = await allocateIssueIdentifier(db, projectId);
 
 		const issueResult = await db.query<Record<string, unknown>>(
-			`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier,
+			`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier,
 			                     title, description, status, priority, labels)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
 			 RETURNING *`,
 			[
-				companyId,
+				teamId,
 				projectId,
 				ceoId,
 				issueNumber,
@@ -474,10 +474,10 @@ ${teamRoster}`;
 
 		await db.query('COMMIT');
 
-		broadcastChange(c, wsRoom.company(companyId), 'approvals', 'INSERT', finalApproval.rows[0]);
-		broadcastChange(c, wsRoom.company(companyId), 'issues', 'INSERT', issue);
+		broadcastChange(c, wsRoom.team(teamId), 'approvals', 'INSERT', finalApproval.rows[0]);
+		broadcastChange(c, wsRoom.team(teamId), 'issues', 'INSERT', issue);
 
-		createWakeup(db, ceoId, companyId, WakeupSource.Assignment, { issue_id: issue.id }).catch((e) =>
+		createWakeup(db, ceoId, teamId, WakeupSource.Assignment, { issue_id: issue.id }).catch((e) =>
 			log.error('Failed to wake CEO for hire request:', e),
 		);
 
@@ -488,13 +488,13 @@ ${teamRoster}`;
 	}
 });
 
-agentsRoutes.get('/companies/:companyId/agents/:agentId', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.get('/teams/:teamId/agents/:agentId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	const { teamId } = access;
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const ts2 = terminalStatusParams(3);
@@ -504,60 +504,60 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId', async (c) => {
 			(SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts2.placeholders}))::int AS assigned_issue_count
 		 FROM members m
 		 JOIN member_agents ma ON ma.id = m.id
-		 WHERE m.id = $1 AND m.company_id = $2`,
-		[agentId, companyId, ...ts2.values],
+		 WHERE m.id = $1 AND m.team_id = $2`,
+		[agentId, teamId, ...ts2.values],
 	);
 
 	return ok(c, result.rows[0]);
 });
 
-agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	const { teamId } = access;
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const doc = await getDocument(db, {
 		type: DocumentType.AgentSystemPrompt,
-		companyId,
+		teamId,
 		memberAgentId: agentId,
 	});
 	return ok(c, doc);
 });
 
-agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt/preview', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt/preview', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	const { teamId } = access;
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const doc = await getDocument(db, {
 		type: DocumentType.AgentSystemPrompt,
-		companyId,
+		teamId,
 		memberAgentId: agentId,
 	});
 	if (!doc) return err(c, 'NOT_FOUND', 'Agent system prompt not found', 404);
 
 	const resolved = await resolveSystemPrompt(db, doc.content, {
-		companyId,
+		teamId,
 		agentId,
 		mode: 'preview',
 	});
 	return ok(c, { content: resolved });
 });
 
-agentsRoutes.post('/companies/:companyId/agents/system-prompts/batch', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.post('/teams/:teamId/agents/system-prompts/batch', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const body = await c.req.json<{ items?: unknown }>();
 	const raw = body.items;
@@ -597,7 +597,7 @@ agentsRoutes.post('/companies/:companyId/agents/system-prompts/batch', async (c)
 			}
 
 			try {
-				const out = await fetchAgentSystemPromptForBatch(db, companyId, agentRef, mode);
+				const out = await fetchAgentSystemPromptForBatch(db, teamId, agentRef, mode);
 				return { index, ok: true as const, ...out };
 			} catch (e) {
 				if (e instanceof AgentSystemPromptError) {
@@ -617,18 +617,18 @@ agentsRoutes.post('/companies/:companyId/agents/system-prompts/batch', async (c)
 	return ok(c, results);
 });
 
-agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt/revisions', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt/revisions', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	const { teamId } = access;
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const doc = await getDocument(db, {
 		type: DocumentType.AgentSystemPrompt,
-		companyId,
+		teamId,
 		memberAgentId: agentId,
 	});
 	if (!doc) return err(c, 'NOT_FOUND', 'Agent system prompt not found', 404);
@@ -637,8 +637,8 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt/revisions'
 	return ok(c, revisions);
 });
 
-agentsRoutes.post('/companies/:companyId/agents/:agentId/system-prompt/restore', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.post('/teams/:teamId/agents/:agentId/system-prompt/restore', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const auth = c.get('auth');
@@ -647,8 +647,8 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/system-prompt/restore',
 	}
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	const { teamId } = access;
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const body = await c.req.json<{ revision_number: number }>();
@@ -658,7 +658,7 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/system-prompt/restore',
 
 	const doc = await getDocument(db, {
 		type: DocumentType.AgentSystemPrompt,
-		companyId,
+		teamId,
 		memberAgentId: agentId,
 	});
 	if (!doc) return err(c, 'NOT_FOUND', 'Agent system prompt not found', 404);
@@ -673,13 +673,13 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/system-prompt/restore',
 	return ok(c, restored);
 });
 
-agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	const { teamId } = access;
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const body = await c.req.json<{
@@ -808,7 +808,7 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		await upsertDocument(db, undefined, {
 			scope: {
 				type: DocumentType.AgentSystemPrompt,
-				companyId,
+				teamId,
 				memberAgentId: agentId,
 			},
 			content: body.system_prompt,
@@ -817,26 +817,26 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		});
 	}
 
-	broadcastChange(c, wsRoom.company(companyId), 'member_agents', 'UPDATE', updatedRow);
+	broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'UPDATE', updatedRow);
 
 	if (body.system_prompt !== undefined || body.role_description !== undefined) {
 		const reason = body.system_prompt !== undefined ? 'prompt_updated' : 'role_updated';
-		enqueueAgentSummaryTask(db, companyId, agentId, reason).catch((e) =>
+		enqueueAgentSummaryTask(db, teamId, agentId, reason).catch((e) =>
 			log.error('Failed to enqueue agent summary task:', e),
 		);
-		enqueueTeamSummaryTask(db, companyId, 'prompt_updated').catch((e) =>
+		enqueueTeamSummaryTask(db, teamId, 'prompt_updated').catch((e) =>
 			log.error('Failed to enqueue team summary task:', e),
 		);
-		enqueueAgentTeamContextTask(db, companyId, agentId, 'prompt_updated').catch((e) =>
+		enqueueAgentTeamContextTask(db, teamId, agentId, 'prompt_updated').catch((e) =>
 			log.error('Failed to enqueue team_context task on prompt change:', e),
 		);
 	}
 
 	if (body.reports_to !== undefined && (body.reports_to ?? null) !== (priorReportsTo ?? null)) {
-		enqueueTeamSummaryTask(db, companyId, 'reports_to_changed').catch((e) =>
+		enqueueTeamSummaryTask(db, teamId, 'reports_to_changed').catch((e) =>
 			log.error('Failed to enqueue team summary task on reports_to change:', e),
 		);
-		enqueueTeamContextTaskForAllAgents(db, companyId, 'reports_to_changed').catch((e) =>
+		enqueueTeamContextTaskForAllAgents(db, teamId, 'reports_to_changed').catch((e) =>
 			log.error('Failed to fan out team_context tasks on reports_to change:', e),
 		);
 	}
@@ -844,13 +844,13 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 	return ok(c, updatedRow);
 });
 
-agentsRoutes.post('/companies/:companyId/agents/:agentId/disable', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.post('/teams/:teamId/agents/:agentId/disable', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	const { teamId } = access;
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const existing = await db.query<{ admin_status: string }>(
@@ -872,28 +872,28 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/disable', async (c) => 
 		[agentId, ...ts.values],
 	);
 
-	broadcastChange(c, wsRoom.company(companyId), 'member_agents', 'UPDATE', {
+	broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
 		id: agentId,
 		admin_status: AgentAdminStatus.Disabled,
 	});
 
-	enqueueTeamSummaryTask(db, companyId, 'enabled_changed').catch((e) =>
+	enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
 		log.error('Failed to enqueue team summary task:', e),
 	);
-	enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_removed', agentId).catch((e) =>
+	enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_removed', agentId).catch((e) =>
 		log.error('Failed to fan out team_context tasks on disable:', e),
 	);
 
 	return ok(c, { admin_status: AgentAdminStatus.Disabled });
 });
 
-agentsRoutes.post('/companies/:companyId/agents/:agentId/enable', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.post('/teams/:teamId/agents/:agentId/enable', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	const { teamId } = access;
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const existing = await db.query<{ admin_status: string }>(
@@ -909,37 +909,37 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/enable', async (c) => {
 		agentId,
 	]);
 
-	broadcastChange(c, wsRoom.company(companyId), 'member_agents', 'UPDATE', {
+	broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
 		id: agentId,
 		admin_status: AgentAdminStatus.Enabled,
 	});
 
-	enqueueTeamSummaryTask(db, companyId, 'enabled_changed').catch((e) =>
+	enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
 		log.error('Failed to enqueue team summary task:', e),
 	);
-	enqueueAgentTeamContextTask(db, companyId, agentId, 'agent_added').catch((e) =>
+	enqueueAgentTeamContextTask(db, teamId, agentId, 'agent_added').catch((e) =>
 		log.error('Failed to enqueue team_context task for re-enabled agent:', e),
 	);
-	enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added', agentId).catch((e) =>
+	enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentId).catch((e) =>
 		log.error('Failed to fan out team_context tasks on enable:', e),
 	);
 
 	return ok(c, { admin_status: AgentAdminStatus.Enabled });
 });
 
-agentsRoutes.get('/companies/:companyId/org-chart', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.get('/teams/:teamId/org-chart', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const result = await db.query(
 		`SELECT m.id, ma.title, ma.slug, ma.runtime_status, ma.admin_status, ma.reports_to
      FROM members m
      JOIN member_agents ma ON ma.id = m.id
-     WHERE m.company_id = $1`,
-		[companyId],
+     WHERE m.team_id = $1`,
+		[teamId],
 	);
 
 	const agents = result.rows as {
@@ -965,13 +965,13 @@ agentsRoutes.get('/companies/:companyId/org-chart', async (c) => {
 	return ok(c, { board: { children: roots } });
 });
 
-agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	const { teamId } = access;
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const result = await db.query(
@@ -989,13 +989,13 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs', async (
 	return ok(c, result.rows);
 });
 
-agentsRoutes.get('/companies/:companyId/agents/:agentId/heartbeat-runs/:runId', async (c) => {
-	const access = await requireCompanyAccess(c);
+agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs/:runId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	const { teamId } = access;
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 	const runId = c.req.param('runId');
 

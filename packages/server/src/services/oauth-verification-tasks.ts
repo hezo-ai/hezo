@@ -21,24 +21,24 @@ const log = logger.child('oauth-verification-tasks');
 
 export const OAUTH_VERIFICATION_LABEL = 'oauth-verification';
 
-interface CompanyContext {
+interface TeamContext {
 	ceoMemberId: string;
 	operationsProjectId: string;
 }
 
-async function loadCompanyContext(db: PGlite, companyId: string): Promise<CompanyContext | null> {
+async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
 	const ceo = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
+		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[companyId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
 	);
 	const ops = await db.query<{ id: string }>(
 		`SELECT id FROM projects
-		 WHERE company_id = $1 AND is_internal = true AND slug = $2
+		 WHERE team_id = $1 AND is_internal = true AND slug = $2
 		 LIMIT 1`,
-		[companyId, OPERATIONS_PROJECT_SLUG],
+		[teamId, OPERATIONS_PROJECT_SLUG],
 	);
 	if (!ceo.rows[0] || !ops.rows[0]) return null;
 	return {
@@ -77,13 +77,13 @@ function buildVerificationBody(
 			: '';
 	const parentRef = originatingIssueIdentifier
 		? `\nThis ticket was created because ${originatingIssueIdentifier} requested ${name} access. When you move this ticket to **done**, the system will post a confirmation comment on ${originatingIssueIdentifier} automatically.\n`
-		: `\nThis ticket was opened because a human connected a ${name} account from company settings. There is no originating ticket to notify.\n`;
+		: `\nThis ticket was opened because a human connected a ${name} account from team settings. There is no originating ticket to notify.\n`;
 
 	return `<!-- oauth-verify platform=${platform} -->
 
 ## Verify the ${name} connector
 
-A human has just completed the ${name} OAuth flow for this company. Confirm the connection works end-to-end before marking this ticket done.
+A human has just completed the ${name} OAuth flow for this team. Confirm the connection works end-to-end before marking this ticket done.
 ${parentRef}${metadataBlock}
 **Steps**
 
@@ -101,16 +101,16 @@ export interface EnqueueResult {
 
 export async function enqueueOAuthVerificationTask(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	platform: PlatformType,
 	originatingIssueId: string | null,
 	metadata: Record<string, unknown>,
 	wsManager?: WebSocketManager,
 ): Promise<EnqueueResult | null> {
-	const ctx = await loadCompanyContext(db, companyId);
+	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) {
 		log.warn(
-			`Cannot enqueue OAuth verification task; missing CEO or Operations project for ${companyId}`,
+			`Cannot enqueue OAuth verification task; missing CEO or Operations project for ${teamId}`,
 		);
 		return null;
 	}
@@ -121,12 +121,12 @@ export async function enqueueOAuthVerificationTask(
 	const marker = `oauth-verify platform=${platform}`;
 	const existing = await db.query<{ id: string; identifier: string }>(
 		`SELECT id, identifier FROM issues
-		 WHERE company_id = $1
+		 WHERE team_id = $1
 		   AND labels @> $2::jsonb
 		   AND status NOT IN (${terminalPlaceholders})
 		   AND description LIKE '%${marker}%'
 		 LIMIT 1`,
-		[companyId, JSON.stringify([OAUTH_VERIFICATION_LABEL]), ...TERMINAL_ISSUE_STATUSES],
+		[teamId, JSON.stringify([OAUTH_VERIFICATION_LABEL]), ...TERMINAL_ISSUE_STATUSES],
 	);
 
 	if (existing.rows[0]) {
@@ -143,7 +143,7 @@ export async function enqueueOAuthVerificationTask(
 			],
 		);
 		try {
-			await createWakeup(db, ctx.ceoMemberId, companyId, WakeupSource.Comment, {
+			await createWakeup(db, ctx.ceoMemberId, teamId, WakeupSource.Comment, {
 				issue_id: existingId,
 			});
 		} catch (e) {
@@ -154,11 +154,11 @@ export async function enqueueOAuthVerificationTask(
 
 	let parentIdentifier: string | null = null;
 	if (originatingIssueId) {
-		const parent = await db.query<{ identifier: string; company_id: string }>(
-			'SELECT identifier, company_id FROM issues WHERE id = $1',
+		const parent = await db.query<{ identifier: string; team_id: string }>(
+			'SELECT identifier, team_id FROM issues WHERE id = $1',
 			[originatingIssueId],
 		);
-		if (parent.rows[0] && parent.rows[0].company_id === companyId) {
+		if (parent.rows[0] && parent.rows[0].team_id === teamId) {
 			parentIdentifier = parent.rows[0].identifier;
 		}
 	}
@@ -172,12 +172,12 @@ export async function enqueueOAuthVerificationTask(
 	const description = buildVerificationBody(platform, metadata, parentIdentifier);
 
 	const insertResult = await db.query<Record<string, unknown>>(
-		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, number, identifier,
+		`INSERT INTO issues (team_id, project_id, assignee_id, parent_issue_id, number, identifier,
 		                     title, description, status, priority, labels)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb)
 		 RETURNING *`,
 		[
-			companyId,
+			teamId,
 			ctx.operationsProjectId,
 			ctx.ceoMemberId,
 			parentIdentifier ? originatingIssueId : null,
@@ -194,11 +194,11 @@ export async function enqueueOAuthVerificationTask(
 	const issueId = issue.id as string;
 
 	if (wsManager) {
-		broadcastRowChange(wsManager, wsRoom.company(companyId), 'issues', 'INSERT', issue);
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'issues', 'INSERT', issue);
 	}
 
 	try {
-		await createWakeup(db, ctx.ceoMemberId, companyId, WakeupSource.Assignment, {
+		await createWakeup(db, ctx.ceoMemberId, teamId, WakeupSource.Assignment, {
 			issue_id: issueId,
 		});
 	} catch (e) {

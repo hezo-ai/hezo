@@ -5,13 +5,13 @@ type Page = import('@playwright/test').Page;
 
 async function createProjectViaApi(
 	page: Page,
-	companyId: string,
+	teamId: string,
 	token: string,
 	name: string,
 	description: string,
 ): Promise<{ id: string; slug: string }> {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const res = await page.request.post(`/api/companies/${companyId}/projects`, {
+	const res = await page.request.post(`/api/teams/${teamId}/projects`, {
 		headers,
 		data: { name, description },
 	});
@@ -20,12 +20,12 @@ async function createProjectViaApi(
 
 async function createIssueViaApi(
 	page: Page,
-	companyId: string,
+	teamId: string,
 	token: string,
 	data: { project_id: string; title: string; assignee_id: string; description?: string },
 ) {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const res = await page.request.post(`/api/companies/${companyId}/issues`, { headers, data });
+	const res = await page.request.post(`/api/teams/${teamId}/issues`, { headers, data });
 	return (
 		(await res.json()) as {
 			data: { id: string; identifier: string; title: string };
@@ -35,13 +35,13 @@ async function createIssueViaApi(
 
 async function createSubIssueViaApi(
 	page: Page,
-	companyId: string,
+	teamId: string,
 	token: string,
 	parentId: string,
 	data: { title: string; assignee_id: string },
 ) {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const res = await page.request.post(`/api/companies/${companyId}/issues/${parentId}/sub-issues`, {
+	const res = await page.request.post(`/api/teams/${teamId}/issues/${parentId}/sub-issues`, {
 		headers,
 		data,
 	});
@@ -50,33 +50,33 @@ async function createSubIssueViaApi(
 
 test.describe('Issue detail — breadcrumbs and depth', () => {
 	test('breadcrumb walks the parent chain on a sub-sub-issue', async ({ page, freshWorkspace }) => {
-		const { company, agents, token } = freshWorkspace;
+		const { team, agents, token } = freshWorkspace;
 		const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
 		const project = await createProjectViaApi(
 			page,
-			company.id,
+			team.id,
 			token,
 			'Breadcrumb Project',
 			'Seeded for breadcrumb test.',
 		);
 
-		const root = await createIssueViaApi(page, company.id, token, {
+		const root = await createIssueViaApi(page, team.id, token, {
 			project_id: project.id,
 			title: 'Root Issue',
 			assignee_id: engineer.id,
 		});
-		const sub = await createSubIssueViaApi(page, company.id, token, root.id, {
+		const sub = await createSubIssueViaApi(page, team.id, token, root.id, {
 			title: 'Sub Issue',
 			assignee_id: engineer.id,
 		});
-		const subSub = await createSubIssueViaApi(page, company.id, token, sub.id, {
+		const subSub = await createSubIssueViaApi(page, team.id, token, sub.id, {
 			title: 'Sub-Sub Issue',
 			assignee_id: engineer.id,
 		});
 
 		await page.goto(
-			`/companies/${company.id}/projects/${project.slug}/issues/${subSub.identifier.toLowerCase()}`,
+			`/teams/${team.id}/projects/${project.slug}/issues/${subSub.identifier.toLowerCase()}`,
 		);
 		await waitForPageLoad(page);
 		await expect(page.getByRole('heading', { name: 'Sub-Sub Issue' })).toBeVisible({
@@ -97,24 +97,24 @@ test.describe('Issue detail — breadcrumbs and depth', () => {
 	});
 
 	test('breadcrumb on a top-level issue shows no ancestors', async ({ page, freshWorkspace }) => {
-		const { company, agents, token } = freshWorkspace;
+		const { team, agents, token } = freshWorkspace;
 		const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
 		const project = await createProjectViaApi(
 			page,
-			company.id,
+			team.id,
 			token,
 			'Top Project',
 			'Top-level breadcrumb check.',
 		);
-		const issue = await createIssueViaApi(page, company.id, token, {
+		const issue = await createIssueViaApi(page, team.id, token, {
 			project_id: project.id,
 			title: 'Top-Level Issue',
 			assignee_id: engineer.id,
 		});
 
 		await page.goto(
-			`/companies/${company.id}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
+			`/teams/${team.id}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
 		);
 		await waitForPageLoad(page);
 		await expect(page.getByRole('heading', { name: 'Top-Level Issue' })).toBeVisible({
@@ -131,32 +131,32 @@ test.describe('Issue detail — breadcrumbs and depth', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents, token } = freshWorkspace;
+		const { team, agents, token } = freshWorkspace;
 		const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
 		const project = await createProjectViaApi(
 			page,
-			company.id,
+			team.id,
 			token,
 			'Depth Project',
 			'Depth-cap UI check.',
 		);
-		const root = await createIssueViaApi(page, company.id, token, {
+		const root = await createIssueViaApi(page, team.id, token, {
 			project_id: project.id,
 			title: 'Depth Root',
 			assignee_id: engineer.id,
 		});
-		const sub = await createSubIssueViaApi(page, company.id, token, root.id, {
+		const sub = await createSubIssueViaApi(page, team.id, token, root.id, {
 			title: 'Depth Sub',
 			assignee_id: engineer.id,
 		});
-		const subSub = await createSubIssueViaApi(page, company.id, token, sub.id, {
+		const subSub = await createSubIssueViaApi(page, team.id, token, sub.id, {
 			title: 'Depth Sub-Sub',
 			assignee_id: engineer.id,
 		});
 
 		await page.goto(
-			`/companies/${company.id}/projects/${project.slug}/issues/${subSub.identifier.toLowerCase()}`,
+			`/teams/${team.id}/projects/${project.slug}/issues/${subSub.identifier.toLowerCase()}`,
 		);
 		await waitForPageLoad(page);
 		await expect(page.getByRole('heading', { name: 'Depth Sub-Sub' })).toBeVisible({
@@ -176,36 +176,36 @@ test.describe('Issue detail — friendly URLs and mentions', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents, token } = freshWorkspace;
+		const { team, agents, token } = freshWorkspace;
 		const ceo = agents.find((a) => a.slug === 'ceo')!;
 
-		const project = await createProjectAndClearPlanning(page, company.id, token, {
+		const project = await createProjectAndClearPlanning(page, team.id, token, {
 			name: 'URL Test Project',
 			description: 'Validates friendly issue URLs.',
 		});
-		const issue = await createIssueViaApi(page, company.id, token, {
+		const issue = await createIssueViaApi(page, team.id, token, {
 			project_id: project.id,
 			title: 'Friendly URL issue',
 			assignee_id: ceo.id,
 		});
 
 		const friendly = issue.identifier.toLowerCase();
-		const canonicalPath = `/companies/${company.slug}/projects/${project.slug}/issues/${friendly}`;
+		const canonicalPath = `/teams/${team.slug}/projects/${project.slug}/issues/${friendly}`;
 
 		await page.goto(canonicalPath);
 		await expect(page.getByRole('heading', { name: issue.title })).toBeVisible();
 		expect(new URL(page.url()).pathname).toBe(canonicalPath);
 
-		await page.goto(`/companies/${company.slug}/issues/${friendly}`);
+		await page.goto(`/teams/${team.slug}/issues/${friendly}`);
 		await page.waitForURL(`**${canonicalPath}`, { timeout: 20000 });
 		expect(new URL(page.url()).pathname).toBe(canonicalPath);
 		await expect(page.getByRole('heading', { name: issue.title })).toBeVisible();
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await page.waitForURL(`**${canonicalPath}`, { timeout: 20000 });
 		expect(new URL(page.url()).pathname).toBe(canonicalPath);
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/issues/${issue.id}`);
 		await page.waitForURL(`**${canonicalPath}`, { timeout: 20000 });
 		expect(new URL(page.url()).pathname).toBe(canonicalPath);
 	});
@@ -214,24 +214,24 @@ test.describe('Issue detail — friendly URLs and mentions', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents, token } = freshWorkspace;
+		const { team, agents, token } = freshWorkspace;
 		const ceo = agents.find((a) => a.slug === 'ceo')!;
 
-		const projA = await createProjectAndClearPlanning(page, company.id, token, {
+		const projA = await createProjectAndClearPlanning(page, team.id, token, {
 			name: 'Mention Source',
 			description: 'Source project for mention test.',
 		});
-		const projB = await createProjectAndClearPlanning(page, company.id, token, {
+		const projB = await createProjectAndClearPlanning(page, team.id, token, {
 			name: 'Mention Target',
 			description: 'Target project for mention test.',
 		});
 
-		const target = await createIssueViaApi(page, company.id, token, {
+		const target = await createIssueViaApi(page, team.id, token, {
 			project_id: projB.id,
 			title: 'Target issue title goes here',
 			assignee_id: ceo.id,
 		});
-		const source = await createIssueViaApi(page, company.id, token, {
+		const source = await createIssueViaApi(page, team.id, token, {
 			project_id: projA.id,
 			title: 'Source issue',
 			description: `See also ${target.identifier} for related work.`,
@@ -239,7 +239,7 @@ test.describe('Issue detail — friendly URLs and mentions', () => {
 		});
 
 		await page.goto(
-			`/companies/${company.slug}/projects/${projA.slug}/issues/${source.identifier.toLowerCase()}`,
+			`/teams/${team.slug}/projects/${projA.slug}/issues/${source.identifier.toLowerCase()}`,
 		);
 		await expect(page.getByRole('heading', { name: 'Source issue' })).toBeVisible();
 
@@ -252,7 +252,7 @@ test.describe('Issue detail — friendly URLs and mentions', () => {
 
 		await mentionLink.click();
 		await expect(page.getByRole('heading', { name: target.title })).toBeVisible();
-		const targetPath = `/companies/${company.slug}/projects/${projB.slug}/issues/${target.identifier.toLowerCase()}`;
+		const targetPath = `/teams/${team.slug}/projects/${projB.slug}/issues/${target.identifier.toLowerCase()}`;
 		expect(new URL(page.url()).pathname).toBe(targetPath);
 	});
 });
@@ -262,25 +262,25 @@ test.describe('Issue detail — right sidebar', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents, token } = freshWorkspace;
+		const { team, agents, token } = freshWorkspace;
 		await page.setViewportSize({ width: 1280, height: 720 });
 
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 		const project = await createProjectViaApi(
 			page,
-			company.id,
+			team.id,
 			token,
 			'Sidebar Project',
 			'Sidebar test project.',
 		);
-		const issue = await createIssueViaApi(page, company.id, token, {
+		const issue = await createIssueViaApi(page, team.id, token, {
 			project_id: project.id,
 			title: 'Sidebar Test Issue',
 			assignee_id: agents[0].id,
 		});
 
 		for (let i = 0; i < 25; i++) {
-			await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+			await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 				headers,
 				data: {
 					content_type: 'text',
@@ -289,7 +289,7 @@ test.describe('Issue detail — right sidebar', () => {
 			});
 		}
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		const sidebar = page.getByTestId('issue-sidebar');
@@ -326,24 +326,24 @@ test.describe('Issue detail — info tooltips on pinned cards', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents, token } = freshWorkspace;
+		const { team, agents, token } = freshWorkspace;
 		await page.setViewportSize({ width: 375, height: 720 });
 
 		const project = await createProjectViaApi(
 			page,
-			company.id,
+			team.id,
 			token,
 			'Tooltip Project',
 			'Info tooltip coverage.',
 		);
-		const issue = await createIssueViaApi(page, company.id, token, {
+		const issue = await createIssueViaApi(page, team.id, token, {
 			project_id: project.id,
 			title: 'Tooltip Test Issue',
 			assignee_id: agents[0].id,
 		});
 
 		await page.goto(
-			`/companies/${company.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
+			`/teams/${team.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
 		);
 		await waitForPageLoad(page);
 		await expect(page.getByRole('heading', { name: 'Tooltip Test Issue' })).toBeVisible({
@@ -373,18 +373,18 @@ test.describe('Issue detail — initial scroll and scroll-to-bottom button', () 
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents, token } = freshWorkspace;
+		const { team, agents, token } = freshWorkspace;
 		await page.setViewportSize({ width: 1280, height: 720 });
 
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 		const project = await createProjectViaApi(
 			page,
-			company.id,
+			team.id,
 			token,
 			'Scroll Project',
 			'Scroll behavior test.',
 		);
-		const issue = await createIssueViaApi(page, company.id, token, {
+		const issue = await createIssueViaApi(page, team.id, token, {
 			project_id: project.id,
 			title: 'Scroll Test Issue',
 			assignee_id: agents[0].id,
@@ -392,7 +392,7 @@ test.describe('Issue detail — initial scroll and scroll-to-bottom button', () 
 		});
 
 		for (let i = 0; i < 30; i++) {
-			await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+			await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 				headers,
 				data: {
 					content_type: 'text',
@@ -402,7 +402,7 @@ test.describe('Issue detail — initial scroll and scroll-to-bottom button', () 
 		}
 
 		await page.goto(
-			`/companies/${company.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
+			`/teams/${team.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
 		);
 		await waitForPageLoad(page);
 		await expect(page.getByRole('heading', { name: 'Scroll Test Issue' })).toBeInViewport();
@@ -420,25 +420,25 @@ test.describe('Issue detail — initial scroll and scroll-to-bottom button', () 
 	});
 
 	test('button is also functional at mobile viewport', async ({ page, freshWorkspace }) => {
-		const { company, agents, token } = freshWorkspace;
+		const { team, agents, token } = freshWorkspace;
 		await page.setViewportSize({ width: 375, height: 720 });
 
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 		const project = await createProjectViaApi(
 			page,
-			company.id,
+			team.id,
 			token,
 			'Mobile Scroll Project',
 			'Mobile scroll behavior test.',
 		);
-		const issue = await createIssueViaApi(page, company.id, token, {
+		const issue = await createIssueViaApi(page, team.id, token, {
 			project_id: project.id,
 			title: 'Mobile Scroll Issue',
 			assignee_id: agents[0].id,
 		});
 
 		for (let i = 0; i < 30; i++) {
-			await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+			await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 				headers,
 				data: {
 					content_type: 'text',
@@ -448,7 +448,7 @@ test.describe('Issue detail — initial scroll and scroll-to-bottom button', () 
 		}
 
 		await page.goto(
-			`/companies/${company.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
+			`/teams/${team.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
 		);
 		await waitForPageLoad(page);
 		await expect(page.getByRole('heading', { name: 'Mobile Scroll Issue' })).toBeInViewport();

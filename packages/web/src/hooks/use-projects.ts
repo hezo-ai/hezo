@@ -4,7 +4,7 @@ import { queryClient } from '../lib/query-client';
 
 export interface Project {
 	id: string;
-	company_id: string;
+	team_id: string;
 	name: string;
 	slug: string;
 	issue_prefix: string;
@@ -33,52 +33,49 @@ export interface Repo {
 	is_designated?: boolean;
 }
 
-export function useProjects(companyId: string) {
+export function useProjects(teamId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'projects'],
-		queryFn: () => api.get<Project[]>(`/api/companies/${companyId}/projects`),
+		queryKey: ['teams', teamId, 'projects'],
+		queryFn: () => api.get<Project[]>(`/api/teams/${teamId}/projects`),
 		staleTime: 0,
 		refetchOnMount: 'always',
 	});
 }
 
-export function useProject(companyId: string, projectId: string, options?: { enabled?: boolean }) {
+export function useProject(teamId: string, projectId: string, options?: { enabled?: boolean }) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'projects', projectId],
-		queryFn: () => api.get<Project>(`/api/companies/${companyId}/projects/${projectId}`),
+		queryKey: ['teams', teamId, 'projects', projectId],
+		queryFn: () => api.get<Project>(`/api/teams/${teamId}/projects/${projectId}`),
 		enabled: options?.enabled,
 	});
 }
 
-export function useCreateProject(companyId: string) {
+export function useCreateProject(teamId: string) {
 	return useMutation({
 		mutationFn: (data: {
 			name: string;
 			description: string;
 			initial_prd?: string;
 			issue_prefix?: string;
-		}) => api.post<Project>(`/api/companies/${companyId}/projects`, data),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] }),
+		}) => api.post<Project>(`/api/teams/${teamId}/projects`, data),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] }),
 	});
 }
 
-export function useUpdateProject(companyId: string, projectId: string) {
+export function useUpdateProject(teamId: string, projectId: string) {
 	return useMutation({
 		mutationFn: (data: { name?: string; description?: string }) =>
-			api.patch<Project>(`/api/companies/${companyId}/projects/${projectId}`, data),
+			api.patch<Project>(`/api/teams/${teamId}/projects/${projectId}`, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] });
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects', projectId] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects', projectId] });
 		},
 	});
 }
 
-export function useDeleteProject(companyId: string) {
+export function useDeleteProject(teamId: string) {
 	return useMutation({
-		mutationFn: (projectId: string) =>
-			api.delete(`/api/companies/${companyId}/projects/${projectId}`),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] }),
+		mutationFn: (projectId: string) => api.delete(`/api/teams/${teamId}/projects/${projectId}`),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] }),
 	});
 }

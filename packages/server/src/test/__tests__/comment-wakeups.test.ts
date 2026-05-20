@@ -12,7 +12,7 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let productLeadId: string;
 let architectId: string;
@@ -47,10 +47,10 @@ async function insertIssue(assigneeId: string, title: string): Promise<string> {
 	);
 	const n = meta.rows[0].number;
 	const res = await db.query<{ id: string }>(
-		`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
+		`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
 		 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
 		 RETURNING id`,
-		[companyId, projectId, assigneeId, n, `${meta.rows[0].issue_prefix}-${n}`, title],
+		[teamId, projectId, assigneeId, n, `${meta.rows[0].issue_prefix}-${n}`, title],
 	);
 	return res.rows[0].id;
 }
@@ -65,7 +65,7 @@ async function setup(
 		db,
 		masterKeyManager,
 		authorAgentId,
-		companyId,
+		teamId,
 		issueId,
 	);
 	return { issueId, agentToken };
@@ -84,7 +84,7 @@ async function postMcpComment(
 			method: 'tools/call',
 			params: {
 				name: 'create_comment',
-				arguments: { company_id: companyId, issue_id: issueId, content },
+				arguments: { team_id: teamId, issue_id: issueId, content },
 			},
 			id: 1,
 		}),
@@ -121,12 +121,12 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -134,9 +134,9 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -144,7 +144,7 @@ beforeAll(async () => {
 	architectId = agents.find((a) => a.slug === 'architect')!.id;
 	productLeadId = agents.find((a) => a.slug === 'product-lead')!.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Test Project', description: 'x' }),
@@ -279,7 +279,7 @@ describe('agent-api POST comments fires mention-only wakeups', () => {
 
 describe('board POST comments honors wake_assignee opt-in', () => {
 	async function postBoardComment(issueId: string, body: Record<string, unknown>): Promise<string> {
-		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
@@ -375,10 +375,10 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 		return res.rows[0].id;
 	}
 
-	async function setCompanySetting(key: string, value: unknown): Promise<void> {
-		await db.query(`UPDATE companies SET settings = settings || $1::jsonb WHERE id = $2`, [
+	async function setTeamSetting(key: string, value: unknown): Promise<void> {
+		await db.query(`UPDATE teams SET settings = settings || $1::jsonb WHERE id = $2`, [
 			JSON.stringify({ [key]: value }),
-			companyId,
+			teamId,
 		]);
 	}
 
@@ -397,7 +397,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 				params: {
 					name: 'create_comment',
 					arguments: {
-						company_id: companyId,
+						team_id: teamId,
 						issue_id: issueId,
 						content: text,
 						parent_comment_id: parentCommentId,
@@ -417,7 +417,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 		await db.query('DELETE FROM agent_wakeup_requests');
 		await db.query('DELETE FROM heartbeat_runs');
 		await db.query('DELETE FROM issue_comments');
-		await setCompanySetting('wake_mentioner_on_reply', true);
+		await setTeamSetting('wake_mentioner_on_reply', true);
 	});
 
 	it('wakes the parent comment author when an agent replies via MCP create_comment', async () => {
@@ -427,7 +427,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 			db,
 			masterKeyManager,
 			architectId,
-			companyId,
+			teamId,
 			issueId,
 		);
 
@@ -450,7 +450,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 			db,
 			masterKeyManager,
 			architectId,
-			companyId,
+			teamId,
 			issueId,
 		);
 
@@ -476,7 +476,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 		const issueId = await insertIssue(architectId, 'Board reply');
 		const parentId = await insertCommentBy(issueId, architectId, 'Update from architect.');
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -502,7 +502,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 			db,
 			masterKeyManager,
 			architectId,
-			companyId,
+			teamId,
 			issueId,
 		);
 
@@ -518,7 +518,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 			db,
 			masterKeyManager,
 			architectId,
-			companyId,
+			teamId,
 			issueId,
 		);
 
@@ -528,14 +528,14 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 	});
 
 	it('suppresses reply wakeups when wake_mentioner_on_reply is false', async () => {
-		await setCompanySetting('wake_mentioner_on_reply', false);
+		await setTeamSetting('wake_mentioner_on_reply', false);
 		const issueId = await insertIssue(ceoId, 'Reply disabled');
 		const parentId = await insertCommentBy(issueId, ceoId, '@architect please take a look.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			architectId,
-			companyId,
+			teamId,
 			issueId,
 		);
 
@@ -551,7 +551,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 			db,
 			masterKeyManager,
 			architectId,
-			companyId,
+			teamId,
 			issueId,
 		);
 
@@ -576,7 +576,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 			db,
 			masterKeyManager,
 			architectId,
-			companyId,
+			teamId,
 			issueB,
 		);
 
@@ -589,7 +589,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 				params: {
 					name: 'create_comment',
 					arguments: {
-						company_id: companyId,
+						team_id: teamId,
 						issue_id: issueB,
 						content: 'Cross-issue reply.',
 						parent_comment_id: parentIdInA,
@@ -612,7 +612,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 			db,
 			masterKeyManager,
 			architectId,
-			companyId,
+			teamId,
 			issueId,
 		);
 

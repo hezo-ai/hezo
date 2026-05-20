@@ -23,8 +23,6 @@ import { approvalsRoutes } from './routes/approvals';
 import { auditLogRoutes } from './routes/audit-log';
 import { authRoutes } from './routes/auth';
 import { commentsRoutes } from './routes/comments';
-import { companiesRoutes } from './routes/companies';
-import { companyTypesRoutes } from './routes/company-types';
 import { costsRoutes } from './routes/costs';
 import { executionLocksRoutes } from './routes/execution-locks';
 import { goalsRoutes } from './routes/goals';
@@ -42,6 +40,8 @@ import { reposRoutes } from './routes/repos';
 import { searchRoutes } from './routes/search';
 import { secretsRoutes } from './routes/secrets';
 import { skillsRoutes } from './routes/skills';
+import { teamTemplatesRoutes } from './routes/team-templates';
+import { teamsRoutes } from './routes/teams';
 import { uiStateRoutes } from './routes/ui-state';
 import { DockerClient } from './services/docker';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
@@ -249,8 +249,8 @@ export function buildApp(
 
 	// CRUD routes
 	app.route('/api', agentTypesRoutes);
-	app.route('/api', companyTypesRoutes);
-	app.route('/api', companiesRoutes);
+	app.route('/api', teamTemplatesRoutes);
+	app.route('/api', teamsRoutes);
 	app.route('/api', agentsRoutes);
 	app.route('/api', projectsRoutes);
 	app.route('/api', goalsRoutes);

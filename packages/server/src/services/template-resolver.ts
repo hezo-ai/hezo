@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { terminalStatusParams } from '../lib/sql';
 
 interface ResolveContext {
-	companyId: string;
+	teamId: string;
 	projectId?: string;
 	issueId?: string;
 	agentId?: string;
@@ -18,7 +18,7 @@ const SHARED_INSTRUCTIONS = `
 
 ### Ticket Maintenance
 - **Progress**: Update the current ticket's progress_summary via \`update_issue\` at natural milestones to reflect what you've accomplished and what remains.
-- **Rules**: The ticket \`rules\` field captures *how this ticket should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_issue\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the ticket \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or company-wide knowledge belongs in project docs (\`write_project_doc\`) or the company KB (\`upsert_kb_doc\`).
+- **Rules**: The ticket \`rules\` field captures *how this ticket should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_issue\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the ticket \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or team-wide knowledge belongs in project docs (\`write_project_doc\`) or the team KB (\`upsert_kb_doc\`).
 - **Status**: Update the ticket status as you progress:
   - \`in_progress\` — when you begin active work
   - \`review\` — when handing off for review
@@ -33,7 +33,7 @@ const SHARED_INSTRUCTIONS = `
 ### Knowledge Maintenance
 - **Project docs**: Use \`list_project_docs\`, \`read_project_doc\`, and \`write_project_doc\` for high-level project context — PRDs, architecture decisions, API designs, schemas, implementation plans. Docs live in the project-doc store and are addressed by bare filename (e.g. \`prd.md\`, \`spec.md\`, \`research.md\`) — they are NOT filesystem paths, so never prefix a folder. Keep them aligned with the actual codebase. Do NOT put agent-specific working knowledge here.
 - **AGENTS.md**: For practical conventions, commands, and constraints that agents need when working on this project. Update via git in the repo.
-- **Company KB**: Use the \`upsert_kb_doc\` tool for organizational knowledge that spans projects — company policies, standards, and shared conventions.
+- **Team KB**: Use the \`upsert_kb_doc\` tool for organizational knowledge that spans projects — team policies, standards, and shared conventions.
 
 ### Sub-Agents & Parallel Exploration
 - Use sub-agents aggressively to split up your work and explore alternative approaches in parallel.
@@ -62,20 +62,20 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{current_date\}\}/g, new Date().toISOString().slice(0, 10));
 	}
 
-	const needsCompany =
-		resolved.includes('{{company_name}}') ||
-		resolved.includes('{{company_description}}') ||
-		resolved.includes('{{company_mission}}');
+	const needsTeam =
+		resolved.includes('{{team_name}}') ||
+		resolved.includes('{{team_description}}') ||
+		resolved.includes('{{team_mission}}');
 
-	if (needsCompany) {
+	if (needsTeam) {
 		const result = await db.query<{ name: string; slug: string; description: string }>(
-			'SELECT name, slug, description FROM companies WHERE id = $1',
-			[ctx.companyId],
+			'SELECT name, slug, description FROM teams WHERE id = $1',
+			[ctx.teamId],
 		);
 		const row = result.rows[0];
-		resolved = resolved.replace(/\{\{company_name\}\}/g, row?.name ?? '');
-		resolved = resolved.replace(/\{\{company_description\}\}/g, row?.description ?? '');
-		resolved = resolved.replace(/\{\{company_mission\}\}/g, row?.description ?? '');
+		resolved = resolved.replace(/\{\{team_name\}\}/g, row?.name ?? '');
+		resolved = resolved.replace(/\{\{team_description\}\}/g, row?.description ?? '');
+		resolved = resolved.replace(/\{\{team_mission\}\}/g, row?.description ?? '');
 	}
 
 	if (resolved.includes('{{reports_to}}')) {
@@ -106,8 +106,8 @@ export async function resolveSystemPrompt(
 
 	if (resolved.includes('{{kb_context}}')) {
 		const docs = await db.query<{ title: string; slug: string; content: string }>(
-			"SELECT title, slug, content FROM documents WHERE type = 'kb_doc' AND company_id = $1 ORDER BY title",
-			[ctx.companyId],
+			"SELECT title, slug, content FROM documents WHERE type = 'kb_doc' AND team_id = $1 ORDER BY title",
+			[ctx.teamId],
 		);
 		const kbText =
 			docs.rows.length > 0
@@ -119,8 +119,8 @@ export async function resolveSystemPrompt(
 	if (resolved.includes('{{skills_context}}')) {
 		let skillsText = 'No skills configured.';
 		const dbSkills = await db.query<{ name: string; content: string }>(
-			'SELECT name, content FROM skills WHERE company_id = $1 AND is_active = true ORDER BY name',
-			[ctx.companyId],
+			'SELECT name, content FROM skills WHERE team_id = $1 AND is_active = true ORDER BY name',
+			[ctx.teamId],
 		);
 		if (dbSkills.rows.length > 0) {
 			skillsText = dbSkills.rows
@@ -130,16 +130,16 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{skills_context\}\}/g, skillsText);
 	}
 
-	if (resolved.includes('{{company_preferences_context}}')) {
+	if (resolved.includes('{{team_preferences_context}}')) {
 		const prefs = await db.query<{ content: string }>(
-			"SELECT content FROM documents WHERE type = 'company_preferences' AND company_id = $1",
-			[ctx.companyId],
+			"SELECT content FROM documents WHERE type = 'team_preferences' AND team_id = $1",
+			[ctx.teamId],
 		);
 		const prefsText =
 			prefs.rows.length > 0 && prefs.rows[0].content
 				? prefs.rows[0].content
 				: 'No preferences set.';
-		resolved = resolved.replace(/\{\{company_preferences_context\}\}/g, prefsText);
+		resolved = resolved.replace(/\{\{team_preferences_context\}\}/g, prefsText);
 	}
 
 	if (resolved.includes('{{project_docs_context}}')) {
@@ -163,7 +163,7 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{project_docs_context\}\}/g, docsText);
 	}
 
-	if (resolved.includes('{{company_goals}}')) {
+	if (resolved.includes('{{team_goals}}')) {
 		const goals = await db.query<{
 			title: string;
 			description: string;
@@ -172,21 +172,21 @@ export async function resolveSystemPrompt(
 			`SELECT g.title, g.description,
 			        (SELECT name FROM projects p WHERE p.id = g.project_id) AS project_name
 			 FROM goals g
-			 WHERE g.company_id = $1 AND g.status = 'active'
+			 WHERE g.team_id = $1 AND g.status = 'active'
 			 ORDER BY g.created_at DESC`,
-			[ctx.companyId],
+			[ctx.teamId],
 		);
 		const goalsText =
 			goals.rows.length === 0
 				? 'No active goals.'
 				: goals.rows
 						.map((g) => {
-							const scope = g.project_name ? `Project: ${g.project_name}` : 'Company-wide';
+							const scope = g.project_name ? `Project: ${g.project_name}` : 'Team-wide';
 							const desc = g.description?.trim() ? `\n  ${g.description}` : '';
 							return `- **${g.title}** _(${scope})_${desc}`;
 						})
 						.join('\n\n');
-		resolved = resolved.replace(/\{\{company_goals\}\}/g, goalsText);
+		resolved = resolved.replace(/\{\{team_goals\}\}/g, goalsText);
 	}
 
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
@@ -222,7 +222,7 @@ async function buildTeamContextBlock(db: PGlite, ctx: ResolveContext): Promise<s
 
 ## Your Team
 
-Your relationship to every other employee in the company, precomputed so you don't need to derive the org chart from scratch. Regenerated by the CEO when teammates are added, removed, or restructured.
+Your relationship to every other employee in the team, precomputed so you don't need to derive the org chart from scratch. Regenerated by the CEO when teammates are added, removed, or restructured.
 
 ${content}`;
 }
@@ -232,16 +232,16 @@ async function buildTeammatesBlock(db: PGlite, ctx: ResolveContext): Promise<str
 		`SELECT ma.slug, ma.title
 		 FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1
+		 WHERE m.team_id = $1
 		   AND ma.admin_status = 'enabled'
 		   AND ($2::uuid IS NULL OR ma.id <> $2::uuid)
 		 ORDER BY ma.title`,
-		[ctx.companyId, ctx.agentId ?? null],
+		[ctx.teamId, ctx.agentId ?? null],
 	);
 
 	const list =
 		teammates.rows.length === 0
-			? '_No other enabled teammates in this company._'
+			? '_No other enabled teammates in this team._'
 			: teammates.rows.map((t) => `- @${t.slug} — ${t.title}`).join('\n');
 
 	return `
@@ -352,7 +352,7 @@ function formatCreatedTicket(t: {
 }
 
 function buildRunContextBlock(ctx: ResolveContext): string {
-	const lines = [`- Company ID: ${ctx.companyId}`];
+	const lines = [`- Team ID: ${ctx.teamId}`];
 	if (ctx.projectId) lines.push(`- Project ID: ${ctx.projectId}`);
 	if (ctx.issueId) lines.push(`- Issue ID: ${ctx.issueId}`);
 	return `
@@ -361,7 +361,7 @@ function buildRunContextBlock(ctx: ResolveContext): string {
 
 ## Run Context
 
-You are currently running with the following identifiers. Pass them directly to MCP tools that take \`company_id\` / \`project_id\` / \`issue_id\` — do not guess or re-derive them.
+You are currently running with the following identifiers. Pass them directly to MCP tools that take \`team_id\` / \`project_id\` / \`issue_id\` — do not guess or re-derive them.
 
 ${lines.join('\n')}`;
 }

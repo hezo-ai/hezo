@@ -19,7 +19,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let boardToken: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -29,18 +29,18 @@ beforeAll(async () => {
 	boardToken = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	// Create a company to get agents
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(boardToken) });
+	// Create a team to get agents
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(boardToken) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Auth Test Co', template_id: typeId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(boardToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -105,21 +105,21 @@ describe('signBoardJwt + verifyToken', () => {
 
 describe('signAgentJwt + verifyToken', () => {
 	it('signs and verifies an agent JWT bound to an active run', async () => {
-		const { token, runId } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const { token, runId } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 		const auth = await verifyToken(token, db, masterKeyManager);
 
 		expect(auth).not.toBeNull();
 		expect(auth!.type).toBe(AuthType.Agent);
 		if (auth!.type === AuthType.Agent) {
 			expect(auth!.memberId).toBe(agentId);
-			expect(auth!.companyId).toBe(companyId);
+			expect(auth!.teamId).toBe(teamId);
 			expect(auth!.runId).toBe(runId);
 		}
 	});
 
 	it('rejects an agent JWT with no run_id claim', async () => {
-		const runId = await createAgentRun(db, agentId, companyId);
-		const token = await signAgentJwt(masterKeyManager, agentId, companyId, runId);
+		const runId = await createAgentRun(db, agentId, teamId);
+		const token = await signAgentJwt(masterKeyManager, agentId, teamId, runId);
 		// Sanity: the valid token works
 		expect(await verifyToken(token, db, masterKeyManager)).not.toBeNull();
 
@@ -129,7 +129,7 @@ describe('signAgentJwt + verifyToken', () => {
 		const noRunIdToken = await sign(
 			{
 				member_id: agentId,
-				company_id: companyId,
+				team_id: teamId,
 				iat: Math.floor(Date.now() / 1000),
 				exp: Math.floor(Date.now() / 1000) + 3600,
 			},
@@ -141,7 +141,7 @@ describe('signAgentJwt + verifyToken', () => {
 
 	it('rejects an agent JWT pointing at a nonexistent run', async () => {
 		const fakeRunId = '00000000-0000-0000-0000-000000000000';
-		const token = await signAgentJwt(masterKeyManager, agentId, companyId, fakeRunId);
+		const token = await signAgentJwt(masterKeyManager, agentId, teamId, fakeRunId);
 		expect(await verifyToken(token, db, masterKeyManager)).toBeNull();
 	});
 
@@ -151,22 +151,22 @@ describe('signAgentJwt + verifyToken', () => {
 		HeartbeatRunStatus.Cancelled,
 		HeartbeatRunStatus.TimedOut,
 	])('rejects agent JWT once its run has status=%s', async (terminalStatus) => {
-		const { token, runId } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const { token, runId } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 		await finalizeAgentRun(db, runId, terminalStatus);
 		expect(await verifyToken(token, db, masterKeyManager)).toBeNull();
 	});
 
 	it('rejects an agent JWT whose run belongs to a different member', async () => {
 		// Create a run for one member, sign a token claiming a different member
-		const runId = await createAgentRun(db, agentId, companyId);
+		const runId = await createAgentRun(db, agentId, teamId);
 		// Create a second agent
 		const otherAgentRes = await db.query<{ id: string }>(
-			`SELECT id FROM members WHERE company_id = $1 AND id != $2 LIMIT 1`,
-			[companyId, agentId],
+			`SELECT id FROM members WHERE team_id = $1 AND id != $2 LIMIT 1`,
+			[teamId, agentId],
 		);
 		const otherAgentId = otherAgentRes.rows[0]?.id;
 		if (!otherAgentId) return; // only one seeded agent — skip
-		const spoofed = await signAgentJwt(masterKeyManager, otherAgentId, companyId, runId);
+		const spoofed = await signAgentJwt(masterKeyManager, otherAgentId, teamId, runId);
 		expect(await verifyToken(spoofed, db, masterKeyManager)).toBeNull();
 	});
 });
@@ -187,7 +187,7 @@ describe('verifyToken with API key', () => {
 	let apiKey: string;
 
 	beforeAll(async () => {
-		const res = await app.request(`/api/companies/${companyId}/api-keys`, {
+		const res = await app.request(`/api/teams/${teamId}/api-keys`, {
 			method: 'POST',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'test-key' }),
@@ -201,7 +201,7 @@ describe('verifyToken with API key', () => {
 		expect(auth).not.toBeNull();
 		expect(auth!.type).toBe(AuthType.ApiKey);
 		if (auth!.type === AuthType.ApiKey) {
-			expect(auth!.companyId).toBe(companyId);
+			expect(auth!.teamId).toBe(teamId);
 		}
 	});
 
@@ -236,21 +236,21 @@ describe('authMiddleware (via HTTP)', () => {
 	});
 
 	it('rejects API requests without auth header', async () => {
-		const res = await app.request('/api/companies');
+		const res = await app.request('/api/teams');
 		expect(res.status).toBe(401);
 		const body = await res.json();
 		expect(body.error.code).toBe('UNAUTHORIZED');
 	});
 
 	it('rejects API requests with malformed auth header', async () => {
-		const res = await app.request('/api/companies', {
+		const res = await app.request('/api/teams', {
 			headers: { Authorization: 'Basic abc123' },
 		});
 		expect(res.status).toBe(401);
 	});
 
 	it('rejects API requests with invalid token', async () => {
-		const res = await app.request('/api/companies', {
+		const res = await app.request('/api/teams', {
 			headers: { Authorization: 'Bearer invalid.token.here' },
 		});
 		expect(res.status).toBe(401);
@@ -259,14 +259,14 @@ describe('authMiddleware (via HTTP)', () => {
 	});
 
 	it('allows API requests with valid board token', async () => {
-		const res = await app.request('/api/companies', {
+		const res = await app.request('/api/teams', {
 			headers: authHeader(boardToken),
 		});
 		expect(res.status).toBe(200);
 	});
 
 	it('allows API requests with valid agent token', async () => {
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 		const res = await app.request('/agent-api/secrets/mine', {
 			headers: authHeader(agentToken),
 		});
@@ -279,9 +279,9 @@ describe('authMiddleware (via HTTP)', () => {
 	});
 });
 
-describe('requireCompanyAccess (via route)', () => {
-	it('rejects access to nonexistent company by slug', async () => {
-		const res = await app.request('/api/companies/nonexistent-slug/agents', {
+describe('requireTeamAccess (via route)', () => {
+	it('rejects access to nonexistent team by slug', async () => {
+		const res = await app.request('/api/teams/nonexistent-slug/agents', {
 			headers: authHeader(boardToken),
 		});
 		expect(res.status).toBe(404);
@@ -299,12 +299,12 @@ describe('requireSuperuser (via route)', () => {
 
 		const normalToken = await signBoardJwt(masterKeyManager, userId);
 
-		// company-types POST requires superuser (if such an endpoint exists)
+		// team-templates POST requires superuser (if such an endpoint exists)
 		// Instead, verify that the token works but user has limited access
-		const res = await app.request('/api/companies', {
+		const res = await app.request('/api/teams', {
 			headers: authHeader(normalToken),
 		});
-		// Non-superuser should still be able to list companies they are members of
+		// Non-superuser should still be able to list teams they are members of
 		expect(res.status).toBe(200);
 	});
 });

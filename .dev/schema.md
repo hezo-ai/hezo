@@ -5,66 +5,66 @@
 | Table | Purpose | Key relationships |
 |-------|---------|-------------------|
 | `system_meta` | Key-value config store. Holds master key canary. | Standalone. |
-| `users` | Global human identity. Display name, avatar. One per human across all companies. | Standalone (identity). |
+| `users` | Global human identity. Display name, avatar. One per human across all teams. | Standalone (identity). |
 | `user_auth_methods` | OAuth login methods (GitHub, GitLab). Links provider identity to user. | belongs to user |
-| `members` | Base table for all company participants (agents and users). Has `member_type` enum discriminator. Shared UUID used by child tables. | belongs to company |
+| `members` | Base table for all team participants (agents and users). Has `member_type` enum discriminator. Shared UUID used by child tables. | belongs to team |
 | `member_agents` | Agent-specific extension. System prompt, runtime type, `default_effort` (reasoning level applied to runs), budget, heartbeat, org chart, `summary` (auto-generated agent description, ≤5 lines), `touches_code` (capability flag used by the job manager to gate runs on designated-repo setup). `model_override_provider` + `model_override_model` let a single agent target a specific provider/model; when set they take precedence over the instance-default provider and the provider config's `default_model` (both must be set together — enforced by `model_override_requires_provider` CHECK). References agent_type_id for provenance. | extends member (PK = member.id), optionally references agent_type |
-| `member_users` | User-in-company extension. Role (board/member), role_title, permissions_text, project_ids. Links to global user. | extends member (PK = member.id), references user |
-| `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget, `default_summary` (pre-generated description loaded from `packages/server/src/db/agent-summaries.json`), `touches_code` (default capability flag — seeded true for builder roles, copied onto `member_agents` at hire time). Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by company_type_agent_types, member_agents. |
-| `company_types` | Company blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers, `default_team_summary` (pre-generated team collaboration description). | Referenced by company_team_types. |
-| `company_type_agent_types` | Join table linking company types to agent types. Stores org chart hierarchy (reports_to_slug) and per-company-type config overrides (runtime type, heartbeat, budget). | belongs to company_type + agent_type |
-| `companies` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), company-level budget, `team_summary` (auto-generated team collaboration description, ≤20 lines). | Parent of everything. |
-| `company_team_types` | Many-to-many join table linking companies to the team types they were created from. | belongs to company + company_type |
-| `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to company |
-| `api_keys` | Company-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to company |
-| `projects` | Group of related work under a company. Has `issue_prefix` (2–4 uppercase chars used for issue identifiers), Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Operations) that cannot be deleted. | belongs to company |
+| `member_users` | User-in-team extension. Role (board/member), role_title, permissions_text, project_ids. Links to global user. | extends member (PK = member.id), references user |
+| `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget, `default_summary` (pre-generated description loaded from `packages/server/src/db/agent-summaries.json`), `touches_code` (default capability flag — seeded true for builder roles, copied onto `member_agents` at hire time). Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by team_template_agent_types, member_agents. |
+| `team_templates` | Team blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers, `default_summary` (pre-generated team collaboration description). | Referenced by team_template_assignments. |
+| `team_template_agent_types` | Join table linking team types to agent types. Stores org chart hierarchy (reports_to_slug) and per-team-type config overrides (runtime type, heartbeat, budget). | belongs to team_template + agent_type |
+| `teams` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), team-level budget, `summary` (auto-generated team collaboration description, ≤20 lines). | Parent of everything. |
+| `team_template_assignments` | Many-to-many join table linking teams to the team types they were created from. | belongs to team + team_template |
+| `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to team |
+| `api_keys` | Team-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to team |
+| `projects` | Group of related work under a team. Has `issue_prefix` (2–4 uppercase chars used for issue identifiers), Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Operations) that cannot be deleted. | belongs to team |
 | `repos` | Git repo (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. | belongs to project |
-| `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `OP-42`) built from the project's `issue_prefix` + per-project number. Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to company + project, assigned to member |
+| `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `OP-42`) built from the project's `issue_prefix` + per-project number. Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to team + project, assigned to member |
 | `issue_dependencies` | Many-to-many blocking relationships between issues. | links issue ↔ issue |
 | `issue_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. Includes execution-type comments auto-created when agent runs complete. | belongs to issue |
 | `issue_attachments` | Links uploaded files to issues. | links asset ↔ issue |
 | `tool_calls` | Trace log entries. Linked to a comment (the agent message that triggered them). | belongs to comment + member_agent |
-| `secrets` | Encrypted key/value. Scoped to company or company+project. | belongs to company, optionally project |
+| `secrets` | Encrypted key/value. Scoped to team or team+project. | belongs to team, optionally project |
 | `secret_grants` | Which agent has access to which secret. Revocable. | links secret ↔ member_agent |
-| `approvals` | Pending board decisions. Polymorphic payload. | belongs to company, requested by member_agent |
-| `cost_entries` | Immutable spend records per agent per issue. | belongs to company + member_agent, optionally issue/project |
-| `audit_log` | Append-only. Never updated or deleted. | belongs to company |
-| `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `kb_doc` / `company_preferences` / `agent_system_prompt`). Project docs scope by `(project_id, slug)`; KB docs by `(company_id, slug)`; preferences by `(company_id)` (one per company); agent system prompts by `(member_agent_id)` (one per agent). Embeddings live on this table for KB and project docs. | belongs to company, optionally project or member_agent |
+| `approvals` | Pending board decisions. Polymorphic payload. | belongs to team, requested by member_agent |
+| `cost_entries` | Immutable spend records per agent per issue. | belongs to team + member_agent, optionally issue/project |
+| `audit_log` | Append-only. Never updated or deleted. | belongs to team |
+| `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `kb_doc` / `team_preferences` / `agent_system_prompt`). Project docs scope by `(project_id, slug)`; KB docs by `(team_id, slug)`; preferences by `(team_id)` (one per team); agent system prompts by `(member_agent_id)` (one per agent). Embeddings live on this table for KB and project docs. | belongs to team, optionally project or member_agent |
 | `document_revisions` | Snapshot of prior content created on every change. `change_summary` captures intent; `Restored to revision N` is set automatically by the rollback path. Shared by all document types — agent system prompt history lives here too. | belongs to document |
-| `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to company |
-| `company_ssh_keys` | Generated SSH key pairs per company. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to company |
+| `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to team |
+| `team_ssh_keys` | Generated SSH key pairs per team. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to team |
 | `execution_locks` | Issue work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to issue + member_agent |
-| `skills` | Reusable instruction documents (DB-backed). Tags, content, source URL, creator tracking, embeddings. | belongs to company |
+| `skills` | Reusable instruction documents (DB-backed). Tags, content, source URL, creator tracking, embeddings. | belongs to team |
 | `skill_revisions` | Version history for skills. | belongs to skill |
-| `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. Every run row points back to the wakeup that triggered it via `heartbeat_runs.wakeup_id`. | belongs to member_agent + company |
-| `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the issue being worked on via `issue_id`, and to the wakeup that triggered the run via `wakeup_id`. | belongs to member_agent + company, optionally issue, optionally wakeup |
+| `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. Every run row points back to the wakeup that triggered it via `heartbeat_runs.wakeup_id`. | belongs to member_agent + team |
+| `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the issue being worked on via `issue_id`, and to the wakeup that triggered the run via `wakeup_id`. | belongs to member_agent + team, optionally issue, optionally wakeup |
 | `agent_task_sessions` | Per-task session persistence for session compaction. | belongs to member_agent, keyed by task |
-| `assets` | Uploaded files. Provider, object key, content type, SHA-256 hash. | belongs to company |
-| `plugins` | Installed plugins. Manifest, status, config. | belongs to company |
-| `plugin_state` | Scoped key-value store for plugin data. | belongs to plugin + company |
+| `assets` | Uploaded files. Provider, object key, content type, SHA-256 hash. | belongs to team |
+| `plugins` | Installed plugins. Manifest, status, config. | belongs to team |
+| `plugin_state` | Scoped key-value store for plugin data. | belongs to plugin + team |
 | `plugin_jobs` | Cron job declarations for plugins. | belongs to plugin |
 | `instance_user_roles` | Instance-level admin roles for users. First user gets instance_admin. | belongs to user |
 | `project_issue_counters` | Helper for atomic issue numbering per project. | belongs to project |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
-| `slack_connections` | Per-company Slack app config. Bot token encrypted in secrets. | belongs to company |
-| `ai_provider_configs` | Instance-level AI provider credentials shared across every company in the Hezo instance. The `provider` enum is `anthropic \| openai \| google \| deepseek`; each value carries its own runtime mapping, env-var contract, and (optionally) static env entries via `PROVIDER_RUNTIME_ADAPTERS` in `packages/shared/src/types/common.ts`. Multiple providers can target the same runtime (Anthropic and DeepSeek both run via `claude_code`, with DeepSeek injecting `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at DeepSeek's Anthropic-compatible gateway). Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription credential blob (DeepSeek and Anthropic do not support subscription auth). A partial unique index on `is_default` enforces one default per provider; `(provider, label)` is unique so multiple rows per provider coexist — typically one `api_key` and one `subscription` — and `getProviderCredential` / `resolveRuntimeForIssue` pick the `is_default` row at runtime. When several providers share a runtime, `resolveRuntimeForIssue` filters via `PROVIDERS_BY_RUNTIME[runtime]` then orders by `is_default DESC, created_at ASC`. `default_model` (nullable) holds the CLI `--model` value applied to every run that uses this config when the agent has no explicit override. Agent runner decrypts at execution time and either injects as env var (api keys) or materialises to a per-run mount inside the container (subscriptions). | instance-scoped |
+| `slack_connections` | Per-team Slack app config. Bot token encrypted in secrets. | belongs to team |
+| `ai_provider_configs` | Instance-level AI provider credentials shared across every team in the Hezo instance. The `provider` enum is `anthropic \| openai \| google \| deepseek`; each value carries its own runtime mapping, env-var contract, and (optionally) static env entries via `PROVIDER_RUNTIME_ADAPTERS` in `packages/shared/src/types/common.ts`. Multiple providers can target the same runtime (Anthropic and DeepSeek both run via `claude_code`, with DeepSeek injecting `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at DeepSeek's Anthropic-compatible gateway). Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription credential blob (DeepSeek and Anthropic do not support subscription auth). A partial unique index on `is_default` enforces one default per provider; `(provider, label)` is unique so multiple rows per provider coexist — typically one `api_key` and one `subscription` — and `getProviderCredential` / `resolveRuntimeForIssue` pick the `is_default` row at runtime. When several providers share a runtime, `resolveRuntimeForIssue` filters via `PROVIDERS_BY_RUNTIME[runtime]` then orders by `is_default DESC, created_at ASC`. `default_model` (nullable) holds the CLI `--model` value applied to every run that uses this config when the agent has no explicit override. Agent runner decrypts at execution time and either injects as env var (api keys) or materialises to a per-run mount inside the container (subscriptions). | instance-scoped |
 
 ## Key design decisions
 
 ### Members base table (unified identity)
 
-Both agents and human users participate in companies as "members." The `members`
-table is the base identity table for all company participants:
+Both agents and human users participate in teams as "members." The `members`
+table is the base identity table for all team participants:
 
-- `members(id UUID PK, company_id FK, member_type ENUM('agent','user'), display_name TEXT, created_at)`
+- `members(id UUID PK, team_id FK, member_type ENUM('agent','user'), display_name TEXT, created_at)`
 - `member_agents(id PK/FK → members.id, system_prompt, default_effort, ...)` — agent-specific fields
-- `member_users(id PK/FK → members.id, user_id FK → users.id, role, role_title, permissions_text, project_ids)` — user-in-company fields
+- `member_users(id PK/FK → members.id, user_id FK → users.id, role, role_title, permissions_text, project_ids)` — user-in-team fields
 
-`members.id` is the shared UUID — it IS the agent or user-in-company ID. No
+`members.id` is the shared UUID — it IS the agent or user-in-team ID. No
 separate FK needed. All references to assignees, authors, and actors point to
 `members.id` with a single FK.
 
-The global `users` table stores cross-company identity (display_name, avatar_url).
+The global `users` table stores cross-team identity (display_name, avatar_url).
 `user_auth_methods` stores OAuth providers (GitHub, GitLab). No email field on
 users — email may be added as an auth type later.
 
@@ -75,11 +75,11 @@ Hezo uses custom auth (no third-party auth library). OAuth only for MVP:
 - `users` — global identity, one per human
 - `user_auth_methods(id, user_id FK, provider ENUM, provider_user_id, created_at)` — OAuth links
 - Sessions are stateless JWTs signed with the master key. No sessions table.
-- JWT contains: `{ user_id, member_id, company_id, iat, exp }`
+- JWT contains: `{ user_id, member_id, team_id, iat, exp }`
 - Always authenticated — no unauthenticated "local_trusted" mode
 
 First-run flow: Hezo Connect must be running → user logs in via OAuth → master
-key set in web UI → forced company creation.
+key set in web UI → forced team creation.
 
 ### Polymorphic JSONB columns
 
@@ -127,14 +127,14 @@ generate a new key and start fresh (all existing data is wiped).
 All secret values are encrypted at the app layer using AES-256-GCM with the
 `MASTER_KEY` (derived via HKDF). The DB stores ciphertext only.
 
-Platform OAuth tokens (GitHub, Gmail, Stripe, etc.) are stored as company-scoped
+Platform OAuth tokens (GitHub, Gmail, Stripe, etc.) are stored as team-scoped
 secrets, managed automatically by the Hezo Connect OAuth flow. Each connected
 platform has its access and refresh tokens stored as separate secrets, referenced
 by ID from the `connected_platforms` table.
 
-Company-wide secrets have `project_id = NULL`. Project-scoped secrets have both
-`company_id` and `project_id` set. The unique constraint `(company_id, project_id, name)`
-allows the same secret name at different scopes (e.g. a company-level secret
+Team-wide secrets have `project_id = NULL`. Project-scoped secrets have both
+`team_id` and `project_id` set. The unique constraint `(team_id, project_id, name)`
+allows the same secret name at different scopes (e.g. a team-level secret
 and a project-level secret with the same name — project scope takes precedence).
 
 ### Repo storage and validation
@@ -146,7 +146,7 @@ layer.
 
 The app layer performs a two-step validation before inserting:
 
-1. **GitHub connection check** — verifies the company has an active GitHub OAuth
+1. **GitHub connection check** — verifies the team has an active GitHub OAuth
    connection in `connected_platforms`. If not, the request fails with
    `GITHUB_NOT_CONNECTED` and a board inbox item of type `oauth_request` is
    created to prompt the user to connect GitHub via Hezo Connect.
@@ -177,7 +177,7 @@ Projects start without a designated repo. When an agent with
 `member_agents.touches_code = true` is activated on an issue whose project
 still has `designated_repo_id IS NULL`, the job manager:
 
-1. Upserts a single pending `oauth_request` approval per `(company_id,
+1. Upserts a single pending `oauth_request` approval per `(team_id,
    project_id)` with `payload.reason = 'designated_repo'`. A partial unique
    index `idx_one_pending_repo_setup` dedupes concurrent runs.
 2. Inserts a comment of type `action` on the triggering issue with content
@@ -196,17 +196,17 @@ When the board drives the wizard to completion (via `POST /repos`):
 - Each deferred wakeup is re-enqueued as a fresh `Automation` wakeup with
   `payload.reason = 'repo_setup_complete'`.
 
-### SSH keys per company
+### SSH keys per team
 
-Hezo generates an SSH key pair per company for git operations. The private key
+Hezo generates an SSH key pair per team for git operations. The private key
 is stored encrypted in the secrets vault. The public key is registered on the
 connected GitHub account via the OAuth API (`POST /user/keys`).
 
-The `company_ssh_keys` table tracks: `company_id`, `public_key`, `fingerprint`,
+The `team_ssh_keys` table tracks: `team_id`, `public_key`, `fingerprint`,
 `private_key_secret_id` (FK to secrets), `github_key_id` (for cleanup on
 disconnect), `created_at`.
 
-Git clone/push/pull uses SSH with the company's generated key. GitHub OAuth
+Git clone/push/pull uses SSH with the team's generated key. GitHub OAuth
 token is used for API calls (repo validation, PRs, Actions).
 
 ### Audit log immutability
@@ -236,15 +236,15 @@ HTML previews are ephemeral filesystem artifacts, not DB records. The agent writ
 to `/workspace/.previews/{agent_id}/` inside the project container, which is
 visible on the host via the shared workspace volume at:
 ```
-~/.hezo/companies/{slug}/projects/{project}/.previews/{agent_id}/
+~/.hezo/teams/{slug}/projects/{project}/.previews/{agent_id}/
 ```
-The web app serves these via `/preview/{company_id}/{project_id}/{agent_id}/{filename}`.
+The web app serves these via `/preview/{team_id}/{project_id}/{agent_id}/{filename}`.
 A cron job expires files older than 72 hours. The only DB reference is the
 `preview` content_type in `issue_comments` which stores the filename.
 
 ### API keys for external orchestrators
 
-The `api_keys` table stores company-scoped API keys for remote access by
+The `api_keys` table stores team-scoped API keys for remote access by
 OpenClaw, scripts, or other AI agents orchestrating Hezo. Keys are bcrypt-hashed
 — the raw key is shown once at creation and never returned again. A `prefix`
 column stores the first 8 characters for display ("hezo_a3b8...").
@@ -256,8 +256,8 @@ middleware parsing.
 ### Agent slugs and @-mentions
 
 Each agent has a `slug` derived from its title (lowercased, spaces → hyphens).
-For example, "Dev Engineer" → `dev-engineer`. Slugs are unique within a company
-(enforced via `members.company_id` + `member_agents.slug` unique index) to
+For example, "Dev Engineer" → `dev-engineer`. Slugs are unique within a team
+(enforced via `members.team_id` + `member_agents.slug` unique index) to
 ensure unambiguous @-mentions.
 
 All inter-agent communication happens via @-mentions in issue comments — no
@@ -275,23 +275,23 @@ their lifecycle.
 
 ### MCP servers
 
-Both `companies.mcp_servers` and `member_agents.mcp_servers` are JSONB arrays
+Both `teams.mcp_servers` and `member_agents.mcp_servers` are JSONB arrays
 storing manually configured MCP server entries:
 `[{ "name": "...", "url": "...", "description": "..." }]`.
 
 At runtime, the effective MCP server list is computed by merging:
-1. Manually configured company-level servers (`companies.mcp_servers`)
+1. Manually configured team-level servers (`teams.mcp_servers`)
 2. Manually configured agent-level servers (`member_agents.mcp_servers`)
 3. Active connected platforms (auto-derived from `connected_platforms` table)
 
-Agent-level takes precedence on name conflicts with company-level. Connected
+Agent-level takes precedence on name conflicts with team-level. Connected
 platform servers are added automatically — they are NOT written to the JSONB
 columns. The merged list is injected into the agent's subprocess runtime
 configuration.
 
-### Company Settings
+### Team Settings
 
-`companies.settings` is a JSONB object for company-level configuration:
+`teams.settings` is a JSONB object for team-level configuration:
 ```json
 {
   "wake_mentioner_on_reply": true
@@ -304,7 +304,7 @@ Settings are merged on PATCH (`settings = settings || $1::jsonb`), so partial up
 
 ### MPP (Machine Payments Protocol)
 
-`companies.mpp_config` is a JSONB object:
+`teams.mpp_config` is a JSONB object:
 ```json
 {
   "wallet_address": "0x...",
@@ -320,45 +320,45 @@ the project container gets `mppx` CLI and wallet credentials are injected into a
 payment is reported as a tool call cost and debited against the agent's budget
 via the same `debit_agent_budget()` atomic function.
 
-### Company onboarding
+### Team onboarding
 
-When a company is created via `POST /companies`, the server automatically:
-1. Creates the `~/.hezo/companies/{slug}/` folder structure
+When a team is created via `POST /teams`, the server automatically:
+1. Creates the `~/.hezo/teams/{slug}/` folder structure
 2. Creates the full 11-agent team (CEO, Product Lead, Architect, Engineer, QA Engineer,
    Security Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher, Coach)
    with pre-filled system prompts from built-in role templates. DevOps Engineer starts
    in `idle` status.
 3. Prompts the owner to connect platforms via OAuth (GitHub required, Gmail recommended)
 4. Creates an "Operations" project (`is_internal = true`) with an onboarding issue assigned to the CEO
-5. Generates an SSH key pair for the company and registers it on the connected GitHub account
-6. Auto-generates the company AGENTS.md KB doc with default engineering rules and writes it to disk
+5. Generates an SSH key pair for the team and registers it on the connected GitHub account
+6. Auto-generates the team AGENTS.md KB doc with default engineering rules and writes it to disk
 7. Auto-provisions a Docker container for the Operations project in the background
 
-This ensures the user never lands on an empty company.
+This ensures the user never lands on an empty team.
 
 ### Team type provisioning
 
-`POST /companies` accepts an optional `template_id` (a single company type UUID). The server provisions
-agents from the selected team type via the `company_type_agent_types` join table:
+`POST /teams` accepts an optional `template_id` (a single team type UUID). The server provisions
+agents from the selected team type via the `team_template_agent_types` join table:
 
-1. Queries `company_type_agent_types JOIN agent_types` for the selected template, ordered by `sort_order`
+1. Queries `team_template_agent_types JOIN agent_types` for the selected template, ordered by `sort_order`
 2. For each agent type, creates `members` + `member_agents` rows with:
    - `agent_type_id` set to the originating agent type (for provenance tracking)
    - System prompt copied from `agent_types.system_prompt_template`
    - Config overrides applied from the join table (runtime type, heartbeat, budget)
    - `budget_used_cents` reset to 0
 4. Second pass resolves `reports_to_slug` → `reports_to` UUID for the org chart
-5. Creates `documents` rows of type `kb_doc` from `company_types.kb_docs_config`
-6. Creates `documents` row of type `company_preferences` from `company_types.preferences_config`
-7. Copies `mcp_servers` array from company type
+5. Creates `documents` rows of type `kb_doc` from `team_templates.kb_docs_config`
+6. Creates `documents` row of type `team_preferences` from `team_templates.preferences_config`
+7. Copies `mcp_servers` array from team type
 8. Copies `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
-9. Inserts rows into `company_team_types` to record the association
+9. Inserts rows into `team_template_assignments` to record the association
 
-Project containers are provisioned when projects are created (not at company creation).
+Project containers are provisioned when projects are created (not at team creation).
 
 NOT copied: projects, repos, issues, secrets, cost_entries, audit_log, api_keys,
 secret_grants, approvals, connected_platforms, SSH keys. Platform connections
-and SSH keys are generated fresh for each company.
+and SSH keys are generated fresh for each team.
 
 ### Agent types
 
@@ -374,13 +374,13 @@ defines a reusable role template with a system prompt template, default config
 The `source_url` and `source_version` fields support future remote type loading
 without schema changes.
 
-Agent types are linked to company types through the `company_type_agent_types`
+Agent types are linked to team types through the `team_template_agent_types`
 join table, which stores:
-- `reports_to_slug` — org chart hierarchy specific to this company type composition
-- Override columns — allow a company type to customize an agent type's defaults
+- `reports_to_slug` — org chart hierarchy specific to this team type composition
+- Override columns — allow a team type to customize an agent type's defaults
 - `sort_order` — ensures parents are created before children during agent provisioning
 
-When agents are created from a company type, `member_agents.agent_type_id`
+When agents are created from a team type, `member_agents.agent_type_id`
 records which agent type was used. This is for provenance tracking only — the
 system prompt is copied at creation time, giving each agent instance its own
 mutable copy.
@@ -389,31 +389,31 @@ mutable copy.
 
 Each agent has a `summary` (TEXT, ≤1000 chars) on `member_agents` — a short
 auto-generated description of the agent's role and capabilities (≤5 lines).
-Each company has a `team_summary` (TEXT, ≤4000 chars) on `companies` — a
+Each team has a `summary` (TEXT, ≤4000 chars) on `teams` — a
 description of how the team collaborates (≤20 lines).
 
 **Pre-baked defaults:** Built-in agent types carry a `default_summary` on
 `agent_types`, loaded from committed source data at
-`packages/server/src/db/agent-summaries.json`. Company types carry a
-`default_team_summary` on `company_types`. These defaults are copied to
-`member_agents.summary` and `companies.team_summary` during company
+`packages/server/src/db/agent-summaries.json`. Team types carry a
+`default_summary` on `team_templates`. These defaults are copied to
+`member_agents.summary` and `teams.summary` during team
 provisioning.
 
 **Runtime updates:** The CEO agent can regenerate descriptions at runtime by
 processing `description-update` issues (created in the Operations project).
 Two MCP tools — `set_agent_summary` and `set_team_summary` — write the new
 text directly to the database. Only agents and board members within the
-company can set agent summaries; only the CEO agent can set the team summary.
+team can set agent summaries; only the CEO agent can set the team summary.
 
 ### Agent system prompts
 
 Agent system prompts live as `agent_system_prompt` documents, one per agent,
-keyed by `(company_id, member_agent_id)`. Reads go through the unified
+keyed by `(team_id, member_agent_id)`. Reads go through the unified
 `documents` service; history, restore, and WS broadcasts are inherited from
 the document revisioning machinery. There is no dedicated agent self-update
 endpoint — agents cannot change their own prompts. Only the Coach agent (via
 the `update_agent_system_prompt` MCP tool) and the board (via
-`PATCH /companies/:companyId/agents/:agentId` with a `system_prompt` field)
+`PATCH /teams/:teamId/agents/:agentId` with a `system_prompt` field)
 can write. Coach writes apply immediately and a revision snapshot is recorded
 for undo; the board surface is the revisions panel on the agent settings page.
 
@@ -421,7 +421,7 @@ for undo; the board surface is the revisions panel on the agent settings page.
 
 `documents` is a single table that backs four kinds of Markdown content,
 distinguished by the `type` column (`project_doc` / `kb_doc` /
-`company_preferences` / `agent_system_prompt`). The same write path, revision
+`team_preferences` / `agent_system_prompt`). The same write path, revision
 capture, restore, embedding, and broadcast logic apply to all of them;
 per-type quirks (URL surface, agent approval gates) live in thin route
 handlers.
@@ -430,11 +430,11 @@ Scoping is enforced by partial unique indexes:
 
 - `project_doc` — unique on `(project_id, slug)`. Slug holds the filename
   (e.g. `spec.md`); `title` is empty (the filename is the display label).
-- `kb_doc` — unique on `(company_id, slug)`. Slug is the Markdown filename
+- `kb_doc` — unique on `(team_id, slug)`. Slug is the Markdown filename
   (e.g. `coding-standards.md`); auto-derived as `${toSlug(title)}.md` when
   not provided. `title` carries the human label.
-- `company_preferences` — partial unique on `(company_id)` with slug fixed
-  to `preferences`. Enforces one row per company.
+- `team_preferences` — partial unique on `(team_id)` with slug fixed
+  to `preferences`. Enforces one row per team.
 - `agent_system_prompt` — partial unique on `(member_agent_id)` with slug
   fixed to `system-prompt`. Enforces one row per agent; a CHECK constraint
   requires `member_agent_id IS NOT NULL` for this type.
@@ -452,14 +452,14 @@ KbUpdate approval. Preferences updates from agents apply directly. Approval
 apply paths flow through the same `upsertDocument` service so revisions are
 recorded on materialisation.
 
-The `{{kb_context}}`, `{{company_preferences_context}}`, and
+The `{{kb_context}}`, `{{team_preferences_context}}`, and
 `{{project_docs_context}}` template variables in system prompts pull from
 this table filtered by type, so agents see the current document set.
 
 AGENTS.md remains a filesystem file in the repo (git tracks its history) and
 is not part of the documents table.
 
-**AGENTS.md** is a special KB doc that contains company-wide engineering rules
+**AGENTS.md** is a special KB doc that contains team-wide engineering rules
 and agent conventions. It is stored in the database like any other KB doc but
 also written to the project root filesystem (`AGENTS.md`) so that any coding
 agent (Claude Code, Codex, Gemini) automatically reads it. On every update to
@@ -467,8 +467,8 @@ this KB doc, the file on disk is re-written.
 
 ### Connected platforms (Hezo Connect)
 
-`connected_platforms` stores OAuth connections to external services. Each company
-can have one connection per platform (enforced by `UNIQUE (company_id, platform)`).
+`connected_platforms` stores OAuth connections to external services. Each team
+can have one connection per platform (enforced by `UNIQUE (team_id, platform)`).
 
 The table references the `secrets` table for token storage — `access_token_secret_id`
 and `refresh_token_secret_id` point to encrypted secret entries. This means tokens
@@ -491,7 +491,7 @@ stateless — no database needed, just OAuth app credentials as environment vari
 public endpoint (`GET /signing-key`). The Hezo app fetches it on startup — no
 shared secret configuration needed.
 
-**Platform token access:** All agents in a company automatically receive all
+**Platform token access:** All agents in a team automatically receive all
 connected platform OAuth tokens as environment variables in their subprocess.
 No per-agent role-based filtering — all agents get all tokens.
 
@@ -504,7 +504,7 @@ No per-agent role-based filtering — all agents get all tokens.
   username, Gmail address, or Stripe account ID.
 
 **MCP auto-registration:** When a platform is connected, it is automatically
-added to the company's `mcp_servers` list so agents can discover and use the
+added to the team's `mcp_servers` list so agents can discover and use the
 platform's tools via MCP tool calls.
 
 **Self-hosting:** Users who want full control can deploy their own Hezo Connect
@@ -518,12 +518,12 @@ e.g. `OP` for "Operations", `WA` for "Web App") auto-derived from the project
 name at creation time. Single-word names use the first two characters;
 multi-word names use the initials, capped at four characters. Callers may
 override via the project-creation `issue_prefix` field. On collision within a
-company, a numeric suffix is appended (`OP`, `OP2`, `OP3`). Prefixes are
-unique per company, not globally.
+team, a numeric suffix is appended (`OP`, `OP2`, `OP3`). Prefixes are
+unique per team, not globally.
 
 Issues have an `identifier` column computed at creation as `{project_prefix}-{number}`
 (e.g. `OP-42`), with `number` being the per-project issue counter. Identifiers
-are unique per company. The identifier is the primary human-facing reference
+are unique per team. The identifier is the primary human-facing reference
 for issues — used in UI, API responses, @-mentions (`@OP-42`), and git branch
 names. Identifiers are frozen at creation time: renaming a project does not
 retroactively change the prefix on existing issues.
@@ -532,7 +532,7 @@ retroactively change the prefix on existing issues.
 
 Issues have a required `assignee_id` FK pointing to `members.id`. Every issue
 must have an assignee — the API enforces this on creation and prevents
-unsetting it. Both agents and human users (board members and company members)
+unsetting it. Both agents and human users (board members and team members)
 can be assigned tickets.
 
 When a human is assigned an issue, they can work on it outside Hezo, pass it
@@ -585,12 +585,12 @@ events.
 | `automation` | Server-side automation rule. |
 | `option_chosen` | Board user resolved an options comment. |
 | `comment` | Opt-in wake of the issue assignee from a plain Board comment (`wake_assignee=true`). |
-| `reply` | An agent whose run was mention-triggered posts a comment in the triggering ticket. The original mentioner (when an agent) is woken so it can pick up the response. Gated by `companies.settings.wake_mentioner_on_reply` (default `true`). Payload: `{ source, issue_id, comment_id, triggering_comment_id, responder_member_id }`. Idempotency key: `reply:<triggering_comment_id>:<reply_comment_id>`. |
+| `reply` | An agent whose run was mention-triggered posts a comment in the triggering ticket. The original mentioner (when an agent) is woken so it can pick up the response. Gated by `teams.settings.wake_mentioner_on_reply` (default `true`). Payload: `{ source, issue_id, comment_id, triggering_comment_id, responder_member_id }`. Idempotency key: `reply:<triggering_comment_id>:<reply_comment_id>`. |
 
-### Company settings (`companies.settings` JSONB)
+### Team settings (`teams.settings` JSONB)
 
-Per-company toggles stored in the `companies.settings` JSONB column. Patched
-via `PATCH /api/companies/:id` (shallow merge — missing keys preserve existing
+Per-team toggles stored in the `teams.settings` JSONB column. Patched
+via `PATCH /api/teams/:id` (shallow merge — missing keys preserve existing
 values).
 
 | Key | Default | Effect |
@@ -607,7 +607,7 @@ activation time with this precedence:
    human who posted a comment or by an MCP caller that wants to bump up
    reasoning for a specific run.
 2. The agent's `member_agents.default_effort` column (copied from
-   `agent_types.default_effort` at company creation time).
+   `agent_types.default_effort` at team creation time).
 3. The global `DEFAULT_EFFORT` fallback (`medium`).
 
 Planning-heavy roles (CEO, Architect) default to `max` so their plans go
@@ -664,7 +664,7 @@ Each row captures:
 Each project has a single container and a per-project directory on disk that
 is bind-mounted into the container:
 
-- `<dataDir>/companies/<company-slug>/projects/<project-slug>/workspace/` ↔
+- `<dataDir>/teams/<team-slug>/projects/<project-slug>/workspace/` ↔
   `/workspace/` in the container. For every repo linked to the project,
   `ensureProjectRepos` populates a subdirectory `<workspace>/<short-name>/`.
   The repo-add route (`POST /repos`), container provision, and the agent
@@ -697,12 +697,12 @@ with the master key — no sessions table.
 The `users` table stores global identity (display_name, avatar_url).
 `user_auth_methods` stores OAuth provider links (provider, provider_user_id).
 
-`member_users` links users to companies with two roles: `board` (full authority)
+`member_users` links users to teams with two roles: `board` (full authority)
 and `member` (scoped authority). Members have a `role_title` (arbitrary, e.g.
 "Frontend Developer"), `permissions_text` (free-text description of what they
 can do, injected into agent prompts), and optional `project_ids` (JSONB array
 restricting which projects they can access). Board members always have full access.
-A user can belong to multiple companies — each company membership is a separate
+A user can belong to multiple teams — each team membership is a separate
 `members` + `member_users` row pair.
 
 Permission enforcement is two-layered: the API layer enforces structural
@@ -725,26 +725,26 @@ filesystem for MVP (`~/.hezo/data/assets/`), with S3 support planned for V2.
 ### Plugins
 
 `plugins` stores installed plugin metadata (manifest JSON, status, config).
-`plugin_state` provides scoped key-value persistence (plugin_id + company_id +
+`plugin_state` provides scoped key-value persistence (plugin_id + team_id +
 namespace + key). `plugin_jobs` declares cron schedules for plugin-registered
 jobs.
 
-### Company-level budget
+### Team-level budget
 
-`companies.budget_monthly_cents` and `companies.budget_used_cents` provide an
+`teams.budget_monthly_cents` and `teams.budget_used_cents` provide an
 aggregate spending cap across all agents. The `debit_agent_budget()` function
-checks both agent-level and company-level budgets atomically.
+checks both agent-level and team-level budgets atomically.
 
 ### Messaging integrations (optional)
 
 `notification_preferences` stores per-user notification routing (keyed by
-`users.id`, not company-scoped members). Each row represents a channel
+`users.id`, not team-scoped members). Each row represents a channel
 (web, telegram, slack) with a JSONB array of subscribed event types and an
 enabled flag. Unique on `(user_id, channel)`.
 
-`slack_connections` stores per-company Slack app configuration. The bot token
+`slack_connections` stores per-team Slack app configuration. The bot token
 is stored encrypted in the `secrets` table (referenced via `bot_token_secret_id`).
-A single Slack app per company — agents post with distinct display names and
+A single Slack app per team — agents post with distinct display names and
 avatars using `chat.postMessage` overrides.
 
 Telegram is configured per-user via `notification_preferences.telegram_chat_id`.

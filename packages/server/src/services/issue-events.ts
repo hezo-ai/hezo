@@ -60,7 +60,7 @@ async function resolveActor(db: PGlite, actorMemberId: string | null): Promise<A
 
 export async function recordStatusChange(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	issueId: string,
 	oldStatus: string,
 	newStatus: string,
@@ -84,13 +84,13 @@ export async function recordStatusChange(
 		],
 	);
 	if (r.rows[0] && wsManager) {
-		broadcastRowChange(wsManager, wsRoom.company(companyId), 'issue_comments', 'INSERT', r.rows[0]);
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'issue_comments', 'INSERT', r.rows[0]);
 	}
 }
 
 export async function recordTitleChange(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	issueId: string,
 	oldTitle: string,
 	newTitle: string,
@@ -117,13 +117,13 @@ export async function recordTitleChange(
 		],
 	);
 	if (r.rows[0] && wsManager) {
-		broadcastRowChange(wsManager, wsRoom.company(companyId), 'issue_comments', 'INSERT', r.rows[0]);
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'issue_comments', 'INSERT', r.rows[0]);
 	}
 }
 
 export async function recordAssigneeChange(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	issueId: string,
 	oldAssigneeId: string | null,
 	newAssigneeId: string | null,
@@ -156,13 +156,13 @@ export async function recordAssigneeChange(
 		],
 	);
 	if (r.rows[0] && wsManager) {
-		broadcastRowChange(wsManager, wsRoom.company(companyId), 'issue_comments', 'INSERT', r.rows[0]);
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'issue_comments', 'INSERT', r.rows[0]);
 	}
 }
 
 export async function recordIssueLinks(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	sourceIssueId: string,
 	text: string | null | undefined,
 	actorMemberId: string | null,
@@ -173,8 +173,8 @@ export async function recordIssueLinks(
 
 	const targets = await db.query<{ id: string; identifier: string }>(
 		`SELECT id, identifier FROM issues
-		  WHERE company_id = $1 AND identifier = ANY($2::text[]) AND id <> $3`,
-		[companyId, ids, sourceIssueId],
+		  WHERE team_id = $1 AND identifier = ANY($2::text[]) AND id <> $3`,
+		[teamId, ids, sourceIssueId],
 	);
 	if (targets.rows.length === 0) return;
 
@@ -223,13 +223,7 @@ export async function recordIssueLinks(
 			],
 		);
 		if (r.rows[0] && wsManager) {
-			broadcastRowChange(
-				wsManager,
-				wsRoom.company(companyId),
-				'issue_comments',
-				'INSERT',
-				r.rows[0],
-			);
+			broadcastRowChange(wsManager, wsRoom.team(teamId), 'issue_comments', 'INSERT', r.rows[0]);
 		}
 	}
 }

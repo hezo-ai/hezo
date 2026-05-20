@@ -14,12 +14,12 @@ export interface CostSummary {
 }
 
 export function useCosts(
-	companyId: string,
+	teamId: string,
 	params?: { group_by?: string; agent_id?: string; project_id?: string },
 ) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'costs', params],
+		queryKey: ['teams', teamId, 'costs', params],
 		queryFn: () =>
-			api.get<CostSummary>(`/api/companies/${companyId}/costs`, params as Record<string, string>),
+			api.get<CostSummary>(`/api/teams/${teamId}/costs`, params as Record<string, string>),
 	});
 }

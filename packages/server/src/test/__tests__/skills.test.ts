@@ -19,7 +19,7 @@ import { createTestDbWithMigrations } from '../helpers/db';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 let tempDataDir: string;
 
 function makeFetchResponse(body: string, status = 200): Response {
@@ -54,13 +54,13 @@ beforeAll(async () => {
 	);
 	token = await signBoardJwt(masterKeyManager, userResult.rows[0].id);
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Skills Co' }),
 	});
-	const companyBody = await companyRes.json();
-	companyId = companyBody.data.id;
+	const teamBody = await teamRes.json();
+	teamId = teamBody.data.id;
 });
 
 afterAll(async () => {
@@ -100,7 +100,7 @@ describe('Skills API', () => {
 	it('creates a skill by downloading from a URL', async () => {
 		stubFetch('# Git Best Practices\n\nDo good things.');
 
-		const res = await app.request(`/api/companies/${companyId}/skills`, {
+		const res = await app.request(`/api/teams/${teamId}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -120,18 +120,18 @@ describe('Skills API', () => {
 	it('lists skills', async () => {
 		stubFetch('# Content');
 
-		await app.request(`/api/companies/${companyId}/skills`, {
+		await app.request(`/api/teams/${teamId}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Alpha', source_url: 'https://example.com/a.md' }),
 		});
-		await app.request(`/api/companies/${companyId}/skills`, {
+		await app.request(`/api/teams/${teamId}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Beta', source_url: 'https://example.com/b.md' }),
 		});
 
-		const res = await app.request(`/api/companies/${companyId}/skills`, {
+		const res = await app.request(`/api/teams/${teamId}/skills`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -146,13 +146,13 @@ describe('Skills API', () => {
 	it('gets skill by slug with content', async () => {
 		stubFetch('# Code Review');
 
-		await app.request(`/api/companies/${companyId}/skills`, {
+		await app.request(`/api/teams/${teamId}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Code Review', source_url: 'https://example.com/cr.md' }),
 		});
 
-		const res = await app.request(`/api/companies/${companyId}/skills/code-review`, {
+		const res = await app.request(`/api/teams/${teamId}/skills/code-review`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -163,13 +163,13 @@ describe('Skills API', () => {
 	it('updates skill metadata', async () => {
 		stubFetch('# X');
 
-		await app.request(`/api/companies/${companyId}/skills`, {
+		await app.request(`/api/teams/${teamId}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Original', source_url: 'https://example.com/x.md' }),
 		});
 
-		const res = await app.request(`/api/companies/${companyId}/skills/original`, {
+		const res = await app.request(`/api/teams/${teamId}/skills/original`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Updated Name', description: 'New desc' }),
@@ -183,14 +183,14 @@ describe('Skills API', () => {
 	it('syncs a skill by re-downloading', async () => {
 		stubFetch('# Version 1');
 
-		await app.request(`/api/companies/${companyId}/skills`, {
+		await app.request(`/api/teams/${teamId}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Sync Test', source_url: 'https://example.com/s.md' }),
 		});
 
 		stubFetch('# Version 2');
-		const res = await app.request(`/api/companies/${companyId}/skills/sync-test/sync`, {
+		const res = await app.request(`/api/teams/${teamId}/skills/sync-test/sync`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: '{}',
@@ -203,26 +203,26 @@ describe('Skills API', () => {
 	it('deletes a skill', async () => {
 		stubFetch('# Del');
 
-		await app.request(`/api/companies/${companyId}/skills`, {
+		await app.request(`/api/teams/${teamId}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Delete Me', source_url: 'https://example.com/d.md' }),
 		});
 
-		const res = await app.request(`/api/companies/${companyId}/skills/delete-me`, {
+		const res = await app.request(`/api/teams/${teamId}/skills/delete-me`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 
-		const getRes = await app.request(`/api/companies/${companyId}/skills/delete-me`, {
+		const getRes = await app.request(`/api/teams/${teamId}/skills/delete-me`, {
 			headers: authHeader(token),
 		});
 		expect(getRes.status).toBe(404);
 	});
 
 	it('returns 404 for nonexistent skill', async () => {
-		const res = await app.request(`/api/companies/${companyId}/skills/does-not-exist`, {
+		const res = await app.request(`/api/teams/${teamId}/skills/does-not-exist`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(404);
@@ -232,7 +232,7 @@ describe('Skills API', () => {
 		const huge = 'x'.repeat(600 * 1024);
 		stubFetch(huge);
 
-		const res = await app.request(`/api/companies/${companyId}/skills`, {
+		const res = await app.request(`/api/teams/${teamId}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Too Big', source_url: 'https://example.com/big.md' }),
@@ -243,7 +243,7 @@ describe('Skills API', () => {
 	it('rejects download when 404', async () => {
 		stubFetch('Not found', 404);
 
-		const res = await app.request(`/api/companies/${companyId}/skills`, {
+		const res = await app.request(`/api/teams/${teamId}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Missing', source_url: 'https://example.com/missing.md' }),
@@ -252,7 +252,7 @@ describe('Skills API', () => {
 	});
 
 	it('requires auth', async () => {
-		const res = await app.request(`/api/companies/${companyId}/skills`);
+		const res = await app.request(`/api/teams/${teamId}/skills`);
 		expect(res.status).toBe(401);
 	});
 });
@@ -260,17 +260,17 @@ describe('Skills API', () => {
 describe('Template resolver with skills_context', () => {
 	it('injects skill contents into the prompt from DB', async () => {
 		// Clean DB skills for this test
-		await db.query('DELETE FROM skills WHERE company_id = $1', [companyId]);
+		await db.query('DELETE FROM skills WHERE team_id = $1', [teamId]);
 
 		// Insert a skill directly into DB
 		await db.query(
-			`INSERT INTO skills (company_id, name, slug, content, content_hash, is_active)
+			`INSERT INTO skills (team_id, name, slug, content, content_hash, is_active)
 			 VALUES ($1, 'Direct Skill', 'direct-skill', '# Direct Skill\nDo the thing.', 'hash', true)`,
-			[companyId],
+			[teamId],
 		);
 
 		const resolved = await resolveSystemPrompt(db, 'Agent prompt.\n\n{{skills_context}}\n\nEnd.', {
-			companyId,
+			teamId,
 			dataDir: tempDataDir,
 		});
 
@@ -279,10 +279,10 @@ describe('Template resolver with skills_context', () => {
 	});
 
 	it('falls back to placeholder when no skills', async () => {
-		await db.query('DELETE FROM skills WHERE company_id = $1', [companyId]);
+		await db.query('DELETE FROM skills WHERE team_id = $1', [teamId]);
 
 		const resolved = await resolveSystemPrompt(db, '{{skills_context}}', {
-			companyId,
+			teamId,
 			dataDir: tempDataDir,
 		});
 		expect(resolved).toContain('No skills configured.');
@@ -296,7 +296,7 @@ describe('skills DB operations', () => {
 			new Response('# Test skill content', { status: 200, headers: { 'content-length': '22' } }),
 		);
 
-		const res = await app.request(`/api/companies/${companyId}/skills`, {
+		const res = await app.request(`/api/teams/${teamId}/skills`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', ...authHeader(token) },
 			body: JSON.stringify({
@@ -314,15 +314,15 @@ describe('skills DB operations', () => {
 		expect(body.data.content).toBe('# Test skill content');
 
 		// Verify it's in the database
-		const dbResult = await db.query('SELECT * FROM skills WHERE company_id = $1 AND slug = $2', [
-			companyId,
+		const dbResult = await db.query('SELECT * FROM skills WHERE team_id = $1 AND slug = $2', [
+			teamId,
 			'db-test-skill',
 		]);
 		expect(dbResult.rows.length).toBe(1);
 	});
 
 	it('lists skills from DB', async () => {
-		const res = await app.request(`/api/companies/${companyId}/skills`, {
+		const res = await app.request(`/api/teams/${teamId}/skills`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);

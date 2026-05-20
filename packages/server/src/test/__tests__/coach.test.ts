@@ -10,7 +10,7 @@ import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let boardToken: string;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let issueId: string;
 let coachId: string;
@@ -26,27 +26,27 @@ beforeAll(async () => {
 	boardToken = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(boardToken) });
-	const companyTypeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(boardToken) });
+	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Coach Test Co',
-			template_id: companyTypeId,
+			template_id: teamTemplateId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Coach Test Project', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(boardToken),
 	});
 	const agents = (await agentsRes.json()).data;
@@ -63,9 +63,9 @@ beforeAll(async () => {
 	engineerId = engineer.id;
 	architectId = architect.id;
 
-	({ token: engineerToken } = await mintAgentToken(db, masterKeyManager, engineerId, companyId));
+	({ token: engineerToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId));
 
-	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -82,8 +82,8 @@ afterAll(async () => {
 });
 
 describe('Coach agent provisioning', () => {
-	it('Coach is auto-provisioned when company is created with Startup template', async () => {
-		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	it('Coach is auto-provisioned when team is created with Startup template', async () => {
+		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(boardToken),
 		});
 		const agents = (await agentsRes.json()).data;
@@ -93,10 +93,9 @@ describe('Coach agent provisioning', () => {
 		expect(coach.title).toBe('Coach');
 		expect(coach.admin_status).toBe('enabled');
 
-		const promptRes = await app.request(
-			`/api/companies/${companyId}/agents/${coach.id}/system-prompt`,
-			{ headers: authHeader(boardToken) },
-		);
+		const promptRes = await app.request(`/api/teams/${teamId}/agents/${coach.id}/system-prompt`, {
+			headers: authHeader(boardToken),
+		});
 		const promptDoc = (await promptRes.json()).data;
 		expect(promptDoc?.content).toBeTruthy();
 	});
@@ -116,7 +115,7 @@ describe('Coach agent provisioning', () => {
 
 describe('Coach wakeup on issue done', () => {
 	it('creates a wakeup for Coach when issue is marked done', async () => {
-		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
@@ -155,7 +154,7 @@ describe('Coach review prompt builder', () => {
 		);
 		expect(issueRow.rows.length).toBe(1);
 
-		const prompt = await buildCoachReviewPrompt(db, 'SYSTEM_PROMPT', issueRow.rows[0], companyId);
+		const prompt = await buildCoachReviewPrompt(db, 'SYSTEM_PROMPT', issueRow.rows[0], teamId);
 
 		expect(prompt).toContain('SYSTEM_PROMPT');
 		expect(prompt).toContain(issueRow.rows[0].identifier);
@@ -209,7 +208,7 @@ describe('Agent system-prompt access', () => {
 				params: {
 					name: 'update_agent_system_prompt',
 					arguments: {
-						company_id: companyId,
+						team_id: teamId,
 						agent_id: architectId,
 						new_system_prompt: 'hostile rewrite',
 						change_summary: 'unauthorized',
@@ -226,13 +225,13 @@ describe('Agent system-prompt access', () => {
 
 describe('System prompt revision tracking', () => {
 	it('records revision on manual board edit', async () => {
-		await app.request(`/api/companies/${companyId}/agents/${architectId}`, {
+		await app.request(`/api/teams/${teamId}/agents/${architectId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Before manual edit' }),
 		});
 
-		const res = await app.request(`/api/companies/${companyId}/agents/${architectId}`, {
+		const res = await app.request(`/api/teams/${teamId}/agents/${architectId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'After manual edit by board' }),
@@ -240,7 +239,7 @@ describe('System prompt revision tracking', () => {
 		expect(res.status).toBe(200);
 
 		const revisionsRes = await app.request(
-			`/api/companies/${companyId}/agents/${architectId}/system-prompt/revisions`,
+			`/api/teams/${teamId}/agents/${architectId}/system-prompt/revisions`,
 			{ headers: authHeader(boardToken) },
 		);
 		const revisions = (await revisionsRes.json()).data as Array<{
@@ -255,24 +254,24 @@ describe('System prompt revision tracking', () => {
 	});
 
 	it('revision numbers increment correctly', async () => {
-		await app.request(`/api/companies/${companyId}/agents/${engineerId}`, {
+		await app.request(`/api/teams/${teamId}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Version A' }),
 		});
-		await app.request(`/api/companies/${companyId}/agents/${engineerId}`, {
+		await app.request(`/api/teams/${teamId}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Version B' }),
 		});
-		await app.request(`/api/companies/${companyId}/agents/${engineerId}`, {
+		await app.request(`/api/teams/${teamId}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Version C' }),
 		});
 
 		const revisionsRes = await app.request(
-			`/api/companies/${companyId}/agents/${engineerId}/system-prompt/revisions`,
+			`/api/teams/${teamId}/agents/${engineerId}/system-prompt/revisions`,
 			{ headers: authHeader(boardToken) },
 		);
 		const revisions = (await revisionsRes.json()).data as Array<{ revision_number: number }>;
@@ -284,24 +283,24 @@ describe('System prompt revision tracking', () => {
 	});
 });
 
-describe('company settings JSONB', () => {
+describe('team settings JSONB', () => {
 	it('has correct default values', async () => {
-		const res = await app.request(`/api/companies/${companyId}`, {
+		const res = await app.request(`/api/teams/${teamId}`, {
 			headers: authHeader(boardToken),
 		});
-		const company = (await res.json()).data;
-		expect(company.settings).toEqual({ wake_mentioner_on_reply: true });
+		const team = (await res.json()).data;
+		expect(team.settings).toEqual({ wake_mentioner_on_reply: true });
 	});
 
 	it('merges settings without clobbering existing keys', async () => {
-		const res = await app.request(`/api/companies/${companyId}`, {
+		const res = await app.request(`/api/teams/${teamId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ settings: { custom_key: 'hello' } }),
 		});
 		expect(res.status).toBe(200);
-		const company = (await res.json()).data;
-		expect(company.settings.custom_key).toBe('hello');
-		expect(company.settings.wake_mentioner_on_reply).toBe(true);
+		const team = (await res.json()).data;
+		expect(team.settings.custom_key).toBe('hello');
+		expect(team.settings.wake_mentioner_on_reply).toBe(true);
 	});
 });

@@ -22,7 +22,7 @@ export type McpConnectionConfig = SaasMcpConfig | LocalMcpConfig;
 
 export interface McpConnectionRow {
 	id: string;
-	company_id: string;
+	team_id: string;
 	project_id: string | null;
 	name: string;
 	kind: McpConnectionKind;
@@ -36,23 +36,23 @@ export interface McpConnectionRow {
 
 /**
  * Load MCP connections that should be exposed to the given agent run scope:
- * connections scoped to the project AND company-wide (project_id IS NULL)
+ * connections scoped to the project AND team-wide (project_id IS NULL)
  * connections, deduped by name with project-scoped winning.
  */
 export async function loadMcpConnectionsForRun(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	projectId: string,
 ): Promise<McpConnectionRow[]> {
 	const result = await db.query<McpConnectionRow>(
-		`SELECT id, company_id, project_id, name, kind::text AS kind,
+		`SELECT id, team_id, project_id, name, kind::text AS kind,
 		        config, oauth_connection_id, install_status::text AS install_status, install_error,
 		        created_at::text, updated_at::text
 		 FROM mcp_connections
-		 WHERE company_id = $1
+		 WHERE team_id = $1
 		   AND (project_id IS NULL OR project_id = $2)
 		 ORDER BY project_id NULLS FIRST`,
-		[companyId, projectId],
+		[teamId, projectId],
 	);
 
 	const out = new Map<string, McpConnectionRow>();
@@ -70,17 +70,17 @@ interface OAuthSecretLookup {
  * the descriptor builder so each MCP injection can substitute the correct
  * placeholder header at proxy time.
  */
-async function loadOAuthSecretNamesForCompany(
+async function loadOAuthSecretNamesForTeam(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 ): Promise<Map<string, string>> {
 	const out = new Map<string, string>();
 	const result = await db.query<OAuthSecretLookup>(
 		`SELECT oc.id AS connection_id, s.name AS secret_name
 		 FROM oauth_connections oc
 		 JOIN secrets s ON s.id = oc.access_token_secret_id
-		 WHERE oc.company_id = $1`,
-		[companyId],
+		 WHERE oc.team_id = $1`,
+		[teamId],
 	);
 	for (const row of result.rows) {
 		const connectionId = (row as unknown as { connection_id: string }).connection_id;
@@ -97,11 +97,11 @@ async function loadOAuthSecretNamesForCompany(
  */
 export async function loadMcpConnectionDescriptors(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	projectId: string,
 ): Promise<McpDescriptor[]> {
-	const rows = await loadMcpConnectionsForRun(db, companyId, projectId);
-	const oauthSecretNames = await loadOAuthSecretNamesForCompany(db, companyId);
+	const rows = await loadMcpConnectionsForRun(db, teamId, projectId);
+	const oauthSecretNames = await loadOAuthSecretNamesForTeam(db, teamId);
 	const descriptors: McpDescriptor[] = [];
 	for (const row of rows) {
 		if (row.kind === McpConnectionKind.Saas) {

@@ -7,70 +7,70 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export async function resolveActorMemberId(
 	db: PGlite,
 	auth: AuthInfo,
-	companyId: string,
+	teamId: string,
 ): Promise<string | null> {
 	if (auth.type === AuthType.Agent) return auth.memberId;
 	if (auth.type === AuthType.Board) {
 		const result = await db.query<{ id: string }>(
-			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.company_id = $2',
-			[auth.userId, companyId],
+			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
+			[auth.userId, teamId],
 		);
 		return result.rows[0]?.id ?? null;
 	}
 	return null;
 }
 
-export async function resolveCompanyId(db: PGlite, raw: string): Promise<string | null> {
+export async function resolveTeamId(db: PGlite, raw: string): Promise<string | null> {
 	if (UUID_RE.test(raw)) return raw;
-	const result = await db.query<{ id: string }>('SELECT id FROM companies WHERE slug = $1', [raw]);
+	const result = await db.query<{ id: string }>('SELECT id FROM teams WHERE slug = $1', [raw]);
 	return result.rows[0]?.id ?? null;
 }
 
 export async function resolveProjectId(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	raw: string,
 ): Promise<string | null> {
 	if (UUID_RE.test(raw)) return raw;
 	const result = await db.query<{ id: string }>(
-		'SELECT id FROM projects WHERE company_id = $1 AND slug = $2',
-		[companyId, raw],
+		'SELECT id FROM projects WHERE team_id = $1 AND slug = $2',
+		[teamId, raw],
 	);
 	return result.rows[0]?.id ?? null;
 }
 
 export async function resolveIssueId(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	raw: string,
 ): Promise<string | null> {
 	if (UUID_RE.test(raw)) return raw;
 	const result = await db.query<{ id: string }>(
-		'SELECT id FROM issues WHERE company_id = $1 AND LOWER(identifier) = LOWER($2)',
-		[companyId, raw],
+		'SELECT id FROM issues WHERE team_id = $1 AND LOWER(identifier) = LOWER($2)',
+		[teamId, raw],
 	);
 	return result.rows[0]?.id ?? null;
 }
 
 export async function resolveAgentId(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	raw: string,
 ): Promise<string | null> {
 	if (UUID_RE.test(raw)) {
 		const result = await db.query<{ id: string }>(
 			`SELECT m.id FROM members m
 			 JOIN member_agents ma ON ma.id = m.id
-			 WHERE m.company_id = $1 AND m.id = $2`,
-			[companyId, raw],
+			 WHERE m.team_id = $1 AND m.id = $2`,
+			[teamId, raw],
 		);
 		return result.rows[0]?.id ?? null;
 	}
 	const result = await db.query<{ id: string }>(
 		`SELECT m.id FROM members m
 		 JOIN member_agents ma ON ma.id = m.id
-		 WHERE m.company_id = $1 AND ma.slug = $2`,
-		[companyId, raw],
+		 WHERE m.team_id = $1 AND ma.slug = $2`,
+		[teamId, raw],
 	);
 	return result.rows[0]?.id ?? null;
 }
@@ -78,8 +78,8 @@ export async function resolveAgentId(
 export interface ProjectLocator {
 	id: string;
 	slug: string;
-	companyId: string;
-	companySlug: string;
+	teamId: string;
+	teamSlug: string;
 }
 
 export async function getProjectLocator(
@@ -89,11 +89,11 @@ export async function getProjectLocator(
 	const result = await db.query<{
 		id: string;
 		slug: string;
-		company_id: string;
-		company_slug: string;
+		team_id: string;
+		team_slug: string;
 	}>(
-		`SELECT p.id, p.slug, p.company_id, c.slug AS company_slug
-		 FROM projects p JOIN companies c ON c.id = p.company_id
+		`SELECT p.id, p.slug, p.team_id, c.slug AS team_slug
+		 FROM projects p JOIN teams c ON c.id = p.team_id
 		 WHERE p.id = $1`,
 		[projectId],
 	);
@@ -102,7 +102,7 @@ export async function getProjectLocator(
 	return {
 		id: row.id,
 		slug: row.slug,
-		companyId: row.company_id,
-		companySlug: row.company_slug,
+		teamId: row.team_id,
+		teamSlug: row.team_slug,
 	};
 }

@@ -5,7 +5,7 @@ import { queryClient } from '../lib/query-client';
 
 export interface Agent {
 	id: string;
-	company_id: string;
+	team_id: string;
 	display_name: string;
 	title: string;
 	slug: string;
@@ -47,26 +47,26 @@ export interface AgentSystemPromptRevision {
 	created_at: string;
 }
 
-export function useAgents(companyId: string, adminStatus?: string) {
+export function useAgents(teamId: string, adminStatus?: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'agents', { admin_status: adminStatus }],
+		queryKey: ['teams', teamId, 'agents', { admin_status: adminStatus }],
 		queryFn: () =>
 			api.get<Agent[]>(
-				`/api/companies/${companyId}/agents`,
+				`/api/teams/${teamId}/agents`,
 				adminStatus ? { admin_status: adminStatus } : undefined,
 			),
-		enabled: !!companyId,
+		enabled: !!teamId,
 	});
 }
 
-export function useAgent(companyId: string, agentId: string) {
+export function useAgent(teamId: string, agentId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'agents', agentId],
-		queryFn: () => api.get<Agent>(`/api/companies/${companyId}/agents/${agentId}`),
+		queryKey: ['teams', teamId, 'agents', agentId],
+		queryFn: () => api.get<Agent>(`/api/teams/${teamId}/agents/${agentId}`),
 	});
 }
 
-export function useUpdateAgent(companyId: string, agentId: string) {
+export function useUpdateAgent(teamId: string, agentId: string) {
 	return useMutation({
 		mutationFn: (data: {
 			title?: string;
@@ -79,83 +79,75 @@ export function useUpdateAgent(companyId: string, agentId: string) {
 			touches_code?: boolean;
 			model_override_provider?: string | null;
 			model_override_model?: string | null;
-		}) => api.patch<Agent>(`/api/companies/${companyId}/agents/${agentId}`, data),
+		}) => api.patch<Agent>(`/api/teams/${teamId}/agents/${agentId}`, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] });
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents', agentId] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'agents'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'agents', agentId] });
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'agents', agentId, 'system-prompt'],
+				queryKey: ['teams', teamId, 'agents', agentId, 'system-prompt'],
 			});
 		},
 	});
 }
 
-export function useAgentSystemPrompt(companyId: string, agentId: string) {
+export function useAgentSystemPrompt(teamId: string, agentId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'agents', agentId, 'system-prompt'],
+		queryKey: ['teams', teamId, 'agents', agentId, 'system-prompt'],
 		queryFn: () =>
-			api.get<AgentSystemPromptDoc | null>(
-				`/api/companies/${companyId}/agents/${agentId}/system-prompt`,
-			),
-		enabled: !!companyId && !!agentId,
+			api.get<AgentSystemPromptDoc | null>(`/api/teams/${teamId}/agents/${agentId}/system-prompt`),
+		enabled: !!teamId && !!agentId,
 	});
 }
 
-export function useAgentSystemPromptPreview(companyId: string, agentId: string, enabled: boolean) {
+export function useAgentSystemPromptPreview(teamId: string, agentId: string, enabled: boolean) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'agents', agentId, 'system-prompt', 'preview'],
+		queryKey: ['teams', teamId, 'agents', agentId, 'system-prompt', 'preview'],
 		queryFn: () =>
-			api.get<{ content: string }>(
-				`/api/companies/${companyId}/agents/${agentId}/system-prompt/preview`,
-			),
-		enabled: enabled && !!companyId && !!agentId,
+			api.get<{ content: string }>(`/api/teams/${teamId}/agents/${agentId}/system-prompt/preview`),
+		enabled: enabled && !!teamId && !!agentId,
 	});
 }
 
-export function useAgentSystemPromptRevisions(companyId: string, agentId: string) {
+export function useAgentSystemPromptRevisions(teamId: string, agentId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'agents', agentId, 'system-prompt', 'revisions'],
+		queryKey: ['teams', teamId, 'agents', agentId, 'system-prompt', 'revisions'],
 		queryFn: () =>
 			api.get<AgentSystemPromptRevision[]>(
-				`/api/companies/${companyId}/agents/${agentId}/system-prompt/revisions`,
+				`/api/teams/${teamId}/agents/${agentId}/system-prompt/revisions`,
 			),
-		enabled: !!companyId && !!agentId,
+		enabled: !!teamId && !!agentId,
 	});
 }
 
-export function useRestoreAgentSystemPrompt(companyId: string, agentId: string) {
+export function useRestoreAgentSystemPrompt(teamId: string, agentId: string) {
 	return useMutation({
 		mutationFn: (revisionNumber: number) =>
-			api.post(`/api/companies/${companyId}/agents/${agentId}/system-prompt/restore`, {
+			api.post(`/api/teams/${teamId}/agents/${agentId}/system-prompt/restore`, {
 				revision_number: revisionNumber,
 			}),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'agents', agentId, 'system-prompt'],
+				queryKey: ['teams', teamId, 'agents', agentId, 'system-prompt'],
 			});
 		},
 	});
 }
 
-export function useDisableAgent(companyId: string) {
+export function useDisableAgent(teamId: string) {
 	return useMutation({
-		mutationFn: (agentId: string) =>
-			api.post(`/api/companies/${companyId}/agents/${agentId}/disable`),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] }),
+		mutationFn: (agentId: string) => api.post(`/api/teams/${teamId}/agents/${agentId}/disable`),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'agents'] }),
 	});
 }
 
-export function useEnableAgent(companyId: string) {
+export function useEnableAgent(teamId: string) {
 	return useMutation({
-		mutationFn: (agentId: string) =>
-			api.post(`/api/companies/${companyId}/agents/${agentId}/enable`),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] }),
+		mutationFn: (agentId: string) => api.post(`/api/teams/${teamId}/agents/${agentId}/enable`),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'agents'] }),
 	});
 }
 
-export function useOnboardAgent(companyId: string) {
+export function useOnboardAgent(teamId: string) {
 	return useMutation({
 		mutationFn: (data: {
 			title: string;
@@ -170,11 +162,11 @@ export function useOnboardAgent(companyId: string) {
 				issue: { id: string; identifier: string } | null;
 				approval: { id: string } | null;
 				bootstrap: boolean;
-			}>(`/api/companies/${companyId}/agents/onboard`, data),
+			}>(`/api/teams/${teamId}/agents/onboard`, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'agents'] });
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'issues'] });
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'approvals'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'agents'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'issues'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'approvals'] });
 		},
 	});
 }

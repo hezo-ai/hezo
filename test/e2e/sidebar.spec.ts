@@ -15,12 +15,12 @@ async function suppressAiModal(page: Page) {
 
 async function createProject(
 	page: Page,
-	companyId: string,
+	teamId: string,
 	token: string,
 	name: string,
 ): Promise<{ id: string; slug: string; name: string }> {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const res = await page.request.post(`/api/companies/${companyId}/projects`, {
+	const res = await page.request.post(`/api/teams/${teamId}/projects`, {
 		headers,
 		data: { name, description: 'Test project.' },
 	});
@@ -32,9 +32,9 @@ test.describe('Sidebar — sections and nav targets', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company } = freshWorkspace;
+		const { team } = freshWorkspace;
 		await suppressAiModal(page);
-		await page.goto(`/companies/${company.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/issues`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
@@ -53,13 +53,13 @@ test.describe('Sidebar — sections and nav targets', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company } = freshWorkspace;
+		const { team } = freshWorkspace;
 		await suppressAiModal(page);
-		await page.goto(`/companies/${company.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/issues`);
 		await waitForPageLoad(page);
 
 		await page.locator('nav').getByRole('link', { name: 'Team' }).click();
-		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/agents/?$`), {
+		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/agents/?$`), {
 			timeout: 15000,
 		});
 		await expect(page.getByTestId('team-summary')).toBeVisible();
@@ -69,13 +69,13 @@ test.describe('Sidebar — sections and nav targets', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company } = freshWorkspace;
+		const { team } = freshWorkspace;
 		await suppressAiModal(page);
-		await page.goto(`/companies/${company.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/issues`);
 		await waitForPageLoad(page);
 
 		await page.locator('nav').getByRole('link', { name: 'Projects' }).click();
-		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/projects/?$`), {
+		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/?$`), {
 			timeout: 15000,
 		});
 		await expect(page.getByRole('heading', { name: 'Projects', level: 1 })).toBeVisible();
@@ -87,11 +87,11 @@ test.describe('Sidebar — Team section', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents } = freshWorkspace;
+		const { team, agents } = freshWorkspace;
 		const ceo = agents.find((a) => (a as { slug?: string }).slug === 'ceo') ?? agents[0];
 
 		await suppressAiModal(page);
-		await page.goto(`/companies/${company.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/issues`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
@@ -100,7 +100,7 @@ test.describe('Sidebar — Team section', () => {
 
 		await nav.getByText('CEO').click();
 		await expect(page).toHaveURL(
-			new RegExp(`/companies/${company.slug}/agents/${(ceo as { slug: string }).slug}`),
+			new RegExp(`/teams/${team.slug}/agents/${(ceo as { slug: string }).slug}`),
 			{ timeout: 15000 },
 		);
 	});
@@ -109,9 +109,9 @@ test.describe('Sidebar — Team section', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company } = freshWorkspace;
+		const { team } = freshWorkspace;
 		await suppressAiModal(page);
-		await page.goto(`/companies/${company.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/issues`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
@@ -134,13 +134,13 @@ test.describe('Sidebar — Projects section', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, token } = freshWorkspace;
+		const { team, token } = freshWorkspace;
 
-		await createProject(page, company.id, token, 'Aardvark');
-		await createProject(page, company.id, token, 'Zebra');
+		await createProject(page, team.id, token, 'Aardvark');
+		await createProject(page, team.id, token, 'Zebra');
 
 		await suppressAiModal(page);
-		await page.goto(`/companies/${company.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/issues`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
@@ -155,7 +155,7 @@ test.describe('Sidebar — Projects section', () => {
 		expect(texts[2]).toBe('Zebra');
 
 		await nav.getByText('Aardvark').click();
-		await expect(page).toHaveURL(new RegExp(`/companies/${company.slug}/projects/aardvark`), {
+		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/aardvark`), {
 			timeout: 15000,
 		});
 	});
@@ -164,9 +164,9 @@ test.describe('Sidebar — Projects section', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company } = freshWorkspace;
+		const { team } = freshWorkspace;
 		await suppressAiModal(page);
-		await page.goto(`/companies/${company.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/issues`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
@@ -187,9 +187,9 @@ test.describe('Sidebar — Projects section', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company } = freshWorkspace;
+		const { team } = freshWorkspace;
 		await suppressAiModal(page);
-		await page.goto(`/companies/${company.slug}/projects`);
+		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
 		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
@@ -216,12 +216,12 @@ test.describe('Sidebar — Projects section', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, token } = freshWorkspace;
-		const alpha = await createProject(page, company.id, token, 'Alpha');
-		const beta = await createProject(page, company.id, token, 'Beta');
+		const { team, token } = freshWorkspace;
+		const alpha = await createProject(page, team.id, token, 'Alpha');
+		const beta = await createProject(page, team.id, token, 'Beta');
 
 		await suppressAiModal(page);
-		await page.goto(`/companies/${company.slug}/projects/${alpha.slug}`);
+		await page.goto(`/teams/${team.slug}/projects/${alpha.slug}`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
@@ -237,7 +237,7 @@ test.describe('Sidebar — Projects section', () => {
 
 		await nav.locator(`a[href$="/projects/${alpha.slug}/documents"]`).click();
 		await expect(page).toHaveURL(
-			new RegExp(`/companies/${company.slug}/projects/${alpha.slug}/documents`),
+			new RegExp(`/teams/${team.slug}/projects/${alpha.slug}/documents`),
 			{ timeout: 15000 },
 		);
 		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/settings"]`)).toBeVisible();
@@ -253,30 +253,30 @@ test.describe('Sidebar — Issues count and mobile drawer', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents, token } = freshWorkspace;
+		const { team, agents, token } = freshWorkspace;
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-		const project = await createProjectAndClearPlanning(page, company.id, token, {
+		const project = await createProjectAndClearPlanning(page, team.id, token, {
 			name: 'Count Project',
 			description: 'Sidebar count test.',
 		});
 
 		const issueIds: string[] = [];
 		for (const title of ['Alpha', 'Beta', 'Gamma']) {
-			const r = await page.request.post(`/api/companies/${company.id}/issues`, {
+			const r = await page.request.post(`/api/teams/${team.id}/issues`, {
 				headers,
 				data: { project_id: project.id, title, assignee_id: agents[0].id },
 			});
 			issueIds.push(((await r.json()) as { data: { id: string } }).data.id);
 		}
 
-		await page.goto(`/companies/${company.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/issues`);
 		await waitForPageLoad(page);
 
 		const sidebarIssues = page.getByTestId('sidebar-link-issues');
 		await expect(sidebarIssues).toContainText('Issues');
 		await expect(sidebarIssues).toContainText('3');
 
-		await page.request.patch(`/api/companies/${company.id}/issues/${issueIds[0]}`, {
+		await page.request.patch(`/api/teams/${team.id}/issues/${issueIds[0]}`, {
 			headers,
 			data: { status: 'closed' },
 		});
@@ -290,9 +290,9 @@ test.describe('Sidebar — Issues count and mobile drawer', () => {
 		freshWorkspace,
 	}) => {
 		await page.setViewportSize({ width: 375, height: 812 });
-		const { company } = freshWorkspace;
+		const { team } = freshWorkspace;
 
-		await page.goto(`/companies/${company.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/issues`);
 		await waitForPageLoad(page);
 
 		await expect(page.getByTestId('sidebar-link-issues')).toBeHidden();
@@ -315,8 +315,8 @@ test.describe('Sidebar — collapse', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company } = freshWorkspace;
-		await page.goto(`/companies/${company.slug}/inbox`);
+		const { team } = freshWorkspace;
+		await page.goto(`/teams/${team.slug}/inbox`);
 
 		await expect(page.getByText('Resources').first()).toBeVisible({ timeout: 20000 });
 
@@ -348,11 +348,11 @@ test.describe('Sidebar — collapse', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company } = freshWorkspace;
+		const { team } = freshWorkspace;
 
 		const fakeProject = {
 			id: '11111111-1111-1111-1111-000000000099',
-			company_id: company.id,
+			team_id: team.id,
 			name: 'Banner Regression Project',
 			slug: 'banner-regression-project',
 			issue_prefix: 'BR',
@@ -368,7 +368,7 @@ test.describe('Sidebar — collapse', () => {
 			created_at: new Date().toISOString(),
 		};
 
-		await page.route(`**/api/companies/*/projects`, async (route) => {
+		await page.route(`**/api/teams/*/projects`, async (route) => {
 			if (route.request().method() !== 'GET') return route.continue();
 			await route.fulfill({
 				status: 200,
@@ -377,7 +377,7 @@ test.describe('Sidebar — collapse', () => {
 			});
 		});
 
-		await page.goto(`/companies/${company.slug}/inbox`);
+		await page.goto(`/teams/${team.slug}/inbox`);
 
 		await expect(page.getByTestId('container-status-banner')).toBeVisible({ timeout: 20000 });
 		await expect(page.getByTestId('container-status-banner')).toContainText(/container failed/i);

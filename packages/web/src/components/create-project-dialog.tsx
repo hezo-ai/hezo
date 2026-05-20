@@ -9,7 +9,7 @@ import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 
 interface CreateProjectDialogProps {
-	companyId: string;
+	teamId: string;
 	open: boolean;
 	onOpenChange: (v: boolean) => void;
 }
@@ -26,7 +26,7 @@ function derivePrefix(name: string): string {
 		.toUpperCase();
 }
 
-export function CreateProjectDialog({ companyId, open, onOpenChange }: CreateProjectDialogProps) {
+export function CreateProjectDialog({ teamId, open, onOpenChange }: CreateProjectDialogProps) {
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [initialPrd, setInitialPrd] = useState('');
@@ -34,7 +34,7 @@ export function CreateProjectDialog({ companyId, open, onOpenChange }: CreatePro
 	const [issuePrefix, setIssuePrefix] = useState('');
 	const [prefixTouched, setPrefixTouched] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
-	const createProject = useCreateProject(companyId);
+	const createProject = useCreateProject(teamId);
 	const navigate = useNavigate();
 
 	const derivedPrefix = derivePrefix(name);
@@ -71,9 +71,9 @@ export function CreateProjectDialog({ companyId, open, onOpenChange }: CreatePro
 		setPrefixTouched(false);
 		if (project.planning_issue_identifier) {
 			navigate({
-				to: '/companies/$companyId/projects/$projectId/issues/$issueId',
+				to: '/teams/$teamId/projects/$projectId/issues/$issueId',
 				params: {
-					companyId,
+					teamId,
 					projectId: project.slug,
 					issueId: project.planning_issue_identifier.toLowerCase(),
 				},

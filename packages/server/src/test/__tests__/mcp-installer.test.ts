@@ -6,7 +6,7 @@ import { safeClose } from '../helpers';
 import { createTestApp } from '../helpers/app';
 
 let db: PGlite;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 
 interface DockerCall {
@@ -43,16 +43,16 @@ beforeAll(async () => {
 	const ctx = await createTestApp();
 	db = ctx.db;
 
-	const co = await ctx.app.request('/api/companies', {
+	const co = await ctx.app.request('/api/teams', {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Inst' }),
 	});
-	companyId = (await co.json()).data.id;
+	teamId = (await co.json()).data.id;
 	const proj = await db.query<{ id: string }>(
-		`INSERT INTO projects (company_id, name, slug, issue_prefix, docker_base_image)
+		`INSERT INTO projects (team_id, name, slug, issue_prefix, docker_base_image)
 		 VALUES ($1, 'P', 'p', 'P', 'hezo/agent-base:latest') RETURNING id`,
-		[companyId],
+		[teamId],
 	);
 	projectId = proj.rows[0].id;
 });
@@ -65,10 +65,10 @@ describe('installPendingLocalMcps', () => {
 	it('installs a row whose package npm-installs successfully and marks status=installed', async () => {
 		const { id } = (
 			await db.query<{ id: string }>(
-				`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+				`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 				 VALUES ($1, NULL, 'fs-ok', 'local', $2::jsonb, 'pending') RETURNING id`,
 				[
-					companyId,
+					teamId,
 					JSON.stringify({
 						command: '/workspace/.hezo/mcp/fs-ok/node_modules/.bin/server-filesystem',
 						args: ['/workspace'],
@@ -83,7 +83,7 @@ describe('installPendingLocalMcps', () => {
 			db,
 			docker,
 			containerId: 'c',
-			companyId,
+			teamId,
 			projectId,
 		});
 		const result = results.find((r) => r.id === id);
@@ -104,9 +104,9 @@ describe('installPendingLocalMcps', () => {
 	it('marks status=failed with the npm exit-code message when install exits non-zero', async () => {
 		const { id } = (
 			await db.query<{ id: string }>(
-				`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+				`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 				 VALUES ($1, NULL, 'fs-bad', 'local', $2::jsonb, 'pending') RETURNING id`,
-				[companyId, JSON.stringify({ command: 'x', package: 'no-such-pkg-xyz-99999' })],
+				[teamId, JSON.stringify({ command: 'x', package: 'no-such-pkg-xyz-99999' })],
 			)
 		).rows[0];
 
@@ -118,7 +118,7 @@ describe('installPendingLocalMcps', () => {
 			db,
 			docker,
 			containerId: 'c',
-			companyId,
+			teamId,
 			projectId,
 		});
 		const result = results.find((r) => r.id === id);
@@ -137,9 +137,9 @@ describe('installPendingLocalMcps', () => {
 	it('rejects shell-injection package names without invoking npm', async () => {
 		const { id } = (
 			await db.query<{ id: string }>(
-				`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+				`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 				 VALUES ($1, NULL, 'evil-pkg', 'local', $2::jsonb, 'pending') RETURNING id`,
-				[companyId, JSON.stringify({ command: 'x', package: 'good-pkg; rm -rf /' })],
+				[teamId, JSON.stringify({ command: 'x', package: 'good-pkg; rm -rf /' })],
 			)
 		).rows[0];
 
@@ -148,7 +148,7 @@ describe('installPendingLocalMcps', () => {
 			db,
 			docker,
 			containerId: 'c',
-			companyId,
+			teamId,
 			projectId,
 		});
 		const result = results.find((r) => r.id === id);
@@ -161,9 +161,9 @@ describe('installPendingLocalMcps', () => {
 	it('marks rows with no package as installed (operator-provided binary)', async () => {
 		const { id } = (
 			await db.query<{ id: string }>(
-				`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+				`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 				 VALUES ($1, NULL, 'bring-your-own', 'local', $2::jsonb, 'pending') RETURNING id`,
-				[companyId, JSON.stringify({ command: '/usr/local/bin/already-here' })],
+				[teamId, JSON.stringify({ command: '/usr/local/bin/already-here' })],
 			)
 		).rows[0];
 
@@ -172,7 +172,7 @@ describe('installPendingLocalMcps', () => {
 			db,
 			docker,
 			containerId: 'c',
-			companyId,
+			teamId,
 			projectId,
 		});
 		const result = results.find((r) => r.id === id);
@@ -183,9 +183,9 @@ describe('installPendingLocalMcps', () => {
 
 	it('skips rows already in installed status (idempotent)', async () => {
 		await db.query(
-			`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 			 VALUES ($1, NULL, 'already-done', 'local', $2::jsonb, 'installed')`,
-			[companyId, JSON.stringify({ command: '/x', package: 'foo' })],
+			[teamId, JSON.stringify({ command: '/x', package: 'foo' })],
 		);
 
 		const { docker, calls } = makeFakeDocker({ exitCode: 0 });
@@ -193,7 +193,7 @@ describe('installPendingLocalMcps', () => {
 			db,
 			docker,
 			containerId: 'c',
-			companyId,
+			teamId,
 			projectId,
 		});
 		expect(results.find((r) => r.name === 'already-done')).toBeUndefined();
@@ -205,24 +205,24 @@ describe('installLocalMcpById', () => {
 	it('installs only the requested row', async () => {
 		const { id } = (
 			await db.query<{ id: string }>(
-				`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+				`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 				 VALUES ($1, NULL, 'single', 'local', $2::jsonb, 'pending') RETURNING id`,
-				[companyId, JSON.stringify({ command: '/x', package: 'pkg' })],
+				[teamId, JSON.stringify({ command: '/x', package: 'pkg' })],
 			)
 		).rows[0];
 
 		const { docker } = makeFakeDocker({ exitCode: 0 });
 		const result = await installLocalMcpById(
-			{ db, docker, containerId: 'c', companyId, projectId },
+			{ db, docker, containerId: 'c', teamId, projectId },
 			id,
 		);
 		expect(result?.status).toBe('installed');
 	});
 
-	it("returns null for an id that doesn't belong to the company", async () => {
+	it("returns null for an id that doesn't belong to the team", async () => {
 		const { docker } = makeFakeDocker({ exitCode: 0 });
 		const result = await installLocalMcpById(
-			{ db, docker, containerId: 'c', companyId, projectId },
+			{ db, docker, containerId: 'c', teamId, projectId },
 			'00000000-0000-0000-0000-000000000000',
 		);
 		expect(result).toBeNull();

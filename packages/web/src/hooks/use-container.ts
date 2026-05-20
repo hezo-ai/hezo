@@ -2,31 +2,28 @@ import { useMutation } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
-function invalidateProject(companyId: string, projectId: string) {
-	queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] });
-	queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects', projectId] });
+function invalidateProject(teamId: string, projectId: string) {
+	queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] });
+	queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects', projectId] });
 }
 
-export function useStartContainer(companyId: string, projectId: string) {
+export function useStartContainer(teamId: string, projectId: string) {
 	return useMutation({
-		mutationFn: () =>
-			api.post(`/api/companies/${companyId}/projects/${projectId}/container/start`, {}),
-		onSuccess: () => invalidateProject(companyId, projectId),
+		mutationFn: () => api.post(`/api/teams/${teamId}/projects/${projectId}/container/start`, {}),
+		onSuccess: () => invalidateProject(teamId, projectId),
 	});
 }
 
-export function useStopContainer(companyId: string, projectId: string) {
+export function useStopContainer(teamId: string, projectId: string) {
 	return useMutation({
-		mutationFn: () =>
-			api.post(`/api/companies/${companyId}/projects/${projectId}/container/stop`, {}),
-		onSuccess: () => invalidateProject(companyId, projectId),
+		mutationFn: () => api.post(`/api/teams/${teamId}/projects/${projectId}/container/stop`, {}),
+		onSuccess: () => invalidateProject(teamId, projectId),
 	});
 }
 
-export function useRebuildContainer(companyId: string, projectId: string) {
+export function useRebuildContainer(teamId: string, projectId: string) {
 	return useMutation({
-		mutationFn: () =>
-			api.post(`/api/companies/${companyId}/projects/${projectId}/container/rebuild`, {}),
-		onSuccess: () => invalidateProject(companyId, projectId),
+		mutationFn: () => api.post(`/api/teams/${teamId}/projects/${projectId}/container/rebuild`, {}),
+		onSuccess: () => invalidateProject(teamId, projectId),
 	});
 }

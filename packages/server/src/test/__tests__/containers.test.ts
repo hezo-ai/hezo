@@ -31,7 +31,7 @@ describe('workspace filesystem', () => {
 		ensureProjectWorkspace(testDataDir, 'acme', 'backend-api');
 		ensureProjectWorkspace(testDataDir, 'acme', 'backend-api');
 		expect(
-			existsSync(join(testDataDir, 'companies', 'acme', 'projects', 'backend-api', 'workspace')),
+			existsSync(join(testDataDir, 'teams', 'acme', 'projects', 'backend-api', 'workspace')),
 		).toBe(true);
 	});
 
@@ -58,7 +58,7 @@ describe('workspace filesystem', () => {
 
 	it('returns correct paths', () => {
 		const dir = getProjectDir(testDataDir, 'acme', 'api');
-		expect(dir).toBe(join(testDataDir, 'companies', 'acme', 'projects', 'api'));
+		expect(dir).toBe(join(testDataDir, 'teams', 'acme', 'projects', 'api'));
 
 		expect(getWorkspacePath(testDataDir, 'acme', 'api')).toBe(join(dir, 'workspace'));
 		expect(getWorktreesPath(testDataDir, 'acme', 'api')).toBe(join(dir, 'worktrees'));

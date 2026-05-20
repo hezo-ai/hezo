@@ -4,7 +4,7 @@ import { resolveAgentsMdPath } from '../lib/docs';
 import { resolveActorMemberId, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 import {
 	deleteDocument,
 	getDocument,
@@ -16,17 +16,17 @@ import {
 
 export const projectDocsRoutes = new Hono<Env>();
 
-projectDocsRoutes.get('/companies/:companyId/projects/:projectId/docs', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectDocsRoutes.get('/teams/:teamId/projects/:projectId/docs', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
+	const projectId = await resolveProjectId(db, access.teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const docs = await listDocuments(db, {
 		type: DocumentType.ProjectDoc,
-		companyId: access.companyId,
+		teamId: access.teamId,
 		projectId,
 	});
 
@@ -36,18 +36,18 @@ projectDocsRoutes.get('/companies/:companyId/projects/:projectId/docs', async (c
 	);
 });
 
-projectDocsRoutes.get('/companies/:companyId/projects/:projectId/docs/:filename', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectDocsRoutes.get('/teams/:teamId/projects/:projectId/docs/:filename', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const filename = c.req.param('filename');
-	const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
+	const projectId = await resolveProjectId(db, access.teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const doc = await getDocument(db, {
 		type: DocumentType.ProjectDoc,
-		companyId: access.companyId,
+		teamId: access.teamId,
 		projectId,
 		slug: filename,
 	});
@@ -61,14 +61,14 @@ projectDocsRoutes.get('/companies/:companyId/projects/:projectId/docs/:filename'
 	});
 });
 
-projectDocsRoutes.put('/companies/:companyId/projects/:projectId/docs/:filename', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectDocsRoutes.put('/teams/:teamId/projects/:projectId/docs/:filename', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const filename = c.req.param('filename');
 	const auth = c.get('auth');
-	const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
+	const projectId = await resolveProjectId(db, access.teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const body = await c.req.json<{ content: string; change_summary?: string }>();
@@ -78,10 +78,10 @@ projectDocsRoutes.put('/companies/:companyId/projects/:projectId/docs/:filename'
 
 	if (filename === 'prd.md' && auth.type === AuthType.Agent) {
 		await db.query(
-			`INSERT INTO approvals (company_id, type, requested_by_member_id, payload)
+			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
 			 VALUES ($1, $2::approval_type, $3, $4::jsonb)`,
 			[
-				access.companyId,
+				access.teamId,
 				ApprovalType.Strategy,
 				auth.memberId,
 				JSON.stringify({
@@ -95,12 +95,12 @@ projectDocsRoutes.put('/companies/:companyId/projects/:projectId/docs/:filename'
 		return c.json({ data: { pending_approval: true, filename } }, 202);
 	}
 
-	const memberId = await resolveActorMemberId(db, auth, access.companyId);
+	const memberId = await resolveActorMemberId(db, auth, access.teamId);
 
 	const doc = await upsertDocument(db, c.get('wsManager'), {
 		scope: {
 			type: DocumentType.ProjectDoc,
-			companyId: access.companyId,
+			teamId: access.teamId,
 			projectId,
 			slug: filename,
 		},
@@ -117,18 +117,18 @@ projectDocsRoutes.put('/companies/:companyId/projects/:projectId/docs/:filename'
 	});
 });
 
-projectDocsRoutes.delete('/companies/:companyId/projects/:projectId/docs/:filename', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectDocsRoutes.delete('/teams/:teamId/projects/:projectId/docs/:filename', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const filename = c.req.param('filename');
-	const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
+	const projectId = await resolveProjectId(db, access.teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const removed = await deleteDocument(db, c.get('wsManager'), {
 		type: DocumentType.ProjectDoc,
-		companyId: access.companyId,
+		teamId: access.teamId,
 		projectId,
 		slug: filename,
 	});
@@ -137,91 +137,85 @@ projectDocsRoutes.delete('/companies/:companyId/projects/:projectId/docs/:filena
 	return c.json({ data: null }, 200);
 });
 
-projectDocsRoutes.get(
-	'/companies/:companyId/projects/:projectId/docs/:filename/revisions',
-	async (c) => {
-		const access = await requireCompanyAccess(c);
-		if (access instanceof Response) return access;
+projectDocsRoutes.get('/teams/:teamId/projects/:projectId/docs/:filename/revisions', async (c) => {
+	const access = await requireTeamAccess(c);
+	if (access instanceof Response) return access;
 
-		const db = c.get('db');
-		const filename = c.req.param('filename');
-		const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
-		if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	const db = c.get('db');
+	const filename = c.req.param('filename');
+	const projectId = await resolveProjectId(db, access.teamId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-		const doc = await getDocument(db, {
-			type: DocumentType.ProjectDoc,
-			companyId: access.companyId,
-			projectId,
-			slug: filename,
-		});
-		if (!doc) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
+	const doc = await getDocument(db, {
+		type: DocumentType.ProjectDoc,
+		teamId: access.teamId,
+		projectId,
+		slug: filename,
+	});
+	if (!doc) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
 
-		const revisions = await listRevisions(db, doc.id);
-		return ok(c, revisions);
-	},
-);
+	const revisions = await listRevisions(db, doc.id);
+	return ok(c, revisions);
+});
 
-projectDocsRoutes.post(
-	'/companies/:companyId/projects/:projectId/docs/:filename/restore',
-	async (c) => {
-		const access = await requireCompanyAccess(c);
-		if (access instanceof Response) return access;
+projectDocsRoutes.post('/teams/:teamId/projects/:projectId/docs/:filename/restore', async (c) => {
+	const access = await requireTeamAccess(c);
+	if (access instanceof Response) return access;
 
-		const auth = c.get('auth');
-		if (auth.type === AuthType.Agent) {
-			return err(c, 'FORBIDDEN', 'Only board members can restore revisions', 403);
-		}
+	const auth = c.get('auth');
+	if (auth.type === AuthType.Agent) {
+		return err(c, 'FORBIDDEN', 'Only board members can restore revisions', 403);
+	}
 
-		const db = c.get('db');
-		const filename = c.req.param('filename');
-		const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
-		if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	const db = c.get('db');
+	const filename = c.req.param('filename');
+	const projectId = await resolveProjectId(db, access.teamId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-		const body = await c.req.json<{ revision_number: number }>();
-		if (typeof body.revision_number !== 'number') {
-			return err(c, 'INVALID_REQUEST', 'revision_number is required', 400);
-		}
+	const body = await c.req.json<{ revision_number: number }>();
+	if (typeof body.revision_number !== 'number') {
+		return err(c, 'INVALID_REQUEST', 'revision_number is required', 400);
+	}
 
-		const doc = await getDocument(db, {
-			type: DocumentType.ProjectDoc,
-			companyId: access.companyId,
-			projectId,
-			slug: filename,
-		});
-		if (!doc) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
+	const doc = await getDocument(db, {
+		type: DocumentType.ProjectDoc,
+		teamId: access.teamId,
+		projectId,
+		slug: filename,
+	});
+	if (!doc) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
 
-		const restoredByMemberId = await resolveActorMemberId(db, auth, access.companyId);
-		const restored = await restoreRevision(db, c.get('wsManager'), {
-			documentId: doc.id,
-			revisionNumber: body.revision_number,
-			restoredByMemberId,
-		});
-		if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);
+	const restoredByMemberId = await resolveActorMemberId(db, auth, access.teamId);
+	const restored = await restoreRevision(db, c.get('wsManager'), {
+		documentId: doc.id,
+		revisionNumber: body.revision_number,
+		restoredByMemberId,
+	});
+	if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);
 
-		return ok(c, {
-			id: restored.id,
-			filename: restored.slug,
-			content: restored.content,
-			updated_at: restored.updated_at,
-		});
-	},
-);
+	return ok(c, {
+		id: restored.id,
+		filename: restored.slug,
+		content: restored.content,
+		updated_at: restored.updated_at,
+	});
+});
 
-projectDocsRoutes.get('/companies/:companyId/projects/:projectId/agents-md', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectDocsRoutes.get('/teams/:teamId/projects/:projectId/agents-md', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
-	const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
+	const projectId = await resolveProjectId(db, access.teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const info = await getDesignatedRepoInfo(db, access.companyId, projectId);
+	const info = await getDesignatedRepoInfo(db, access.teamId, projectId);
 	if (!info) return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
 
 	const agentsMdPath = resolveAgentsMdPath(
 		dataDir,
-		info.companySlug,
+		info.teamSlug,
 		info.projectSlug,
 		info.repoShortName,
 	);
@@ -233,16 +227,16 @@ projectDocsRoutes.get('/companies/:companyId/projects/:projectId/agents-md', asy
 	return ok(c, { filename: 'AGENTS.md', content: readFileSync(agentsMdPath, 'utf-8') });
 });
 
-projectDocsRoutes.put('/companies/:companyId/projects/:projectId/agents-md', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectDocsRoutes.put('/teams/:teamId/projects/:projectId/agents-md', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
-	const projectId = await resolveProjectId(db, access.companyId, c.req.param('projectId'));
+	const projectId = await resolveProjectId(db, access.teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const info = await getDesignatedRepoInfo(db, access.companyId, projectId);
+	const info = await getDesignatedRepoInfo(db, access.teamId, projectId);
 	if (!info) return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
 
 	const body = await c.req.json<{ content: string }>();
@@ -252,7 +246,7 @@ projectDocsRoutes.put('/companies/:companyId/projects/:projectId/agents-md', asy
 
 	const agentsMdPath = resolveAgentsMdPath(
 		dataDir,
-		info.companySlug,
+		info.teamSlug,
 		info.projectSlug,
 		info.repoShortName,
 	);
@@ -266,25 +260,25 @@ projectDocsRoutes.put('/companies/:companyId/projects/:projectId/agents-md', asy
 
 async function getDesignatedRepoInfo(
 	db: import('@electric-sql/pglite').PGlite,
-	companyId: string,
+	teamId: string,
 	projectId: string,
-): Promise<{ companySlug: string; projectSlug: string; repoShortName: string } | null> {
+): Promise<{ teamSlug: string; projectSlug: string; repoShortName: string } | null> {
 	const result = await db.query<{
-		company_slug: string;
+		team_slug: string;
 		project_slug: string;
 		repo_short_name: string;
 	}>(
-		`SELECT co.slug AS company_slug, p.slug AS project_slug, r.short_name AS repo_short_name
+		`SELECT co.slug AS team_slug, p.slug AS project_slug, r.short_name AS repo_short_name
 		 FROM projects p
-		 JOIN companies co ON co.id = p.company_id
+		 JOIN teams co ON co.id = p.team_id
 		 JOIN repos r ON r.id = p.designated_repo_id
-		 WHERE p.id = $1 AND p.company_id = $2 AND p.designated_repo_id IS NOT NULL`,
-		[projectId, companyId],
+		 WHERE p.id = $1 AND p.team_id = $2 AND p.designated_repo_id IS NOT NULL`,
+		[projectId, teamId],
 	);
 	const row = result.rows[0];
 	if (!row) return null;
 	return {
-		companySlug: row.company_slug,
+		teamSlug: row.team_slug,
 		projectSlug: row.project_slug,
 		repoShortName: row.repo_short_name,
 	};

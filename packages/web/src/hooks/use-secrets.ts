@@ -4,7 +4,7 @@ import { queryClient } from '../lib/query-client';
 
 export interface Secret {
 	id: string;
-	company_id: string;
+	team_id: string;
 	project_id: string | null;
 	name: string;
 	category: string;
@@ -25,23 +25,22 @@ export interface CreateSecretPayload {
 	allow_all_hosts?: boolean;
 }
 
-export function useSecrets(companyId: string) {
+export function useSecrets(teamId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'secrets'],
-		queryFn: () => api.get<Secret[]>(`/api/companies/${companyId}/secrets`),
+		queryKey: ['teams', teamId, 'secrets'],
+		queryFn: () => api.get<Secret[]>(`/api/teams/${teamId}/secrets`),
 	});
 }
 
-export function useCreateSecret(companyId: string) {
+export function useCreateSecret(teamId: string) {
 	return useMutation({
 		mutationFn: (data: CreateSecretPayload) =>
-			api.post<Secret>(`/api/companies/${companyId}/secrets`, data),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'secrets'] }),
+			api.post<Secret>(`/api/teams/${teamId}/secrets`, data),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'secrets'] }),
 	});
 }
 
-export function useUpdateSecret(companyId: string) {
+export function useUpdateSecret(teamId: string) {
 	return useMutation({
 		mutationFn: ({
 			secretId,
@@ -52,16 +51,14 @@ export function useUpdateSecret(companyId: string) {
 			category?: string;
 			allowed_hosts?: string[];
 			allow_all_hosts?: boolean;
-		}) => api.patch<Secret>(`/api/companies/${companyId}/secrets/${secretId}`, data),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'secrets'] }),
+		}) => api.patch<Secret>(`/api/teams/${teamId}/secrets/${secretId}`, data),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'secrets'] }),
 	});
 }
 
-export function useDeleteSecret(companyId: string) {
+export function useDeleteSecret(teamId: string) {
 	return useMutation({
-		mutationFn: (secretId: string) => api.delete(`/api/companies/${companyId}/secrets/${secretId}`),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'secrets'] }),
+		mutationFn: (secretId: string) => api.delete(`/api/teams/${teamId}/secrets/${secretId}`),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'secrets'] }),
 	});
 }

@@ -70,14 +70,14 @@ describe('verifyConnectState (Ed25519)', () => {
 });
 
 describe('signOAuthState + verifyOAuthState', () => {
-	it('roundtrips company_id', async () => {
+	it('roundtrips team_id', async () => {
 		const db = await createTestDbWithMigrations();
 		const mkm = new MasterKeyManager();
 		await mkm.initialize(db, generateMasterKey());
 
-		const signed = await signOAuthState({ company_id: 'abc-123' }, mkm);
+		const signed = await signOAuthState({ team_id: 'abc-123' }, mkm);
 		const result = await verifyOAuthState(signed, mkm);
-		expect(result).toEqual({ company_id: 'abc-123' });
+		expect(result).toEqual({ team_id: 'abc-123' });
 		await db.close();
 	});
 
@@ -86,7 +86,7 @@ describe('signOAuthState + verifyOAuthState', () => {
 		const mkm = new MasterKeyManager();
 		await mkm.initialize(db, generateMasterKey());
 
-		const signed = await signOAuthState({ company_id: 'abc-123' }, mkm);
+		const signed = await signOAuthState({ team_id: 'abc-123' }, mkm);
 		const tampered = `${signed.slice(0, -4)}xxxx`;
 		const result = await verifyOAuthState(tampered, mkm);
 		expect(result).toBeNull();
@@ -102,7 +102,7 @@ describe('signOAuthState + verifyOAuthState', () => {
 		const mkm2 = new MasterKeyManager();
 		await mkm2.initialize(db2, generateMasterKey());
 
-		const signed = await signOAuthState({ company_id: 'abc' }, mkm1);
+		const signed = await signOAuthState({ team_id: 'abc' }, mkm1);
 		const result = await verifyOAuthState(signed, mkm2);
 		expect(result).toBeNull();
 
@@ -120,14 +120,14 @@ describe('signOAuthState + verifyOAuthState', () => {
 		await db.close();
 	});
 
-	it('roundtrips a payload that includes an issue_id alongside company_id', async () => {
+	it('roundtrips a payload that includes an issue_id alongside team_id', async () => {
 		const db = await createTestDbWithMigrations();
 		const mkm = new MasterKeyManager();
 		await mkm.initialize(db, generateMasterKey());
 
-		const signed = await signOAuthState({ company_id: 'co-1', issue_id: 'iss-9' }, mkm);
+		const signed = await signOAuthState({ team_id: 'co-1', issue_id: 'iss-9' }, mkm);
 		const result = await verifyOAuthState(signed, mkm);
-		expect(result).toEqual({ company_id: 'co-1', issue_id: 'iss-9' });
+		expect(result).toEqual({ team_id: 'co-1', issue_id: 'iss-9' });
 		await db.close();
 	});
 });

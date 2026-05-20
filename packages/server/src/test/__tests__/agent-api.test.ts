@@ -10,7 +10,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let boardToken: string;
 let agentToken: string;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let issueId: string;
 let agentId: string;
@@ -22,33 +22,33 @@ beforeAll(async () => {
 	db = ctx.db;
 	boardToken = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(boardToken) });
-	const companyTypeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(boardToken) });
+	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Agent API Co',
 
-			template_id: companyTypeId,
+			template_id: teamTemplateId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Agent API Project', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(boardToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -60,7 +60,7 @@ beforeAll(async () => {
 	issueId = (await issueRes.json()).data.id;
 
 	masterKeyManager = ctx.masterKeyManager;
-	({ token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId, issueId));
+	({ token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId, issueId));
 });
 
 afterAll(async () => {
@@ -215,7 +215,7 @@ describe('agent API - heartbeat edge cases', () => {
 	});
 
 	it('returns empty issues when agent is disabled', async () => {
-		await app.request(`/api/companies/${companyId}/agents/${agentId}/disable`, {
+		await app.request(`/api/teams/${teamId}/agents/${agentId}/disable`, {
 			method: 'POST',
 			headers: authHeader(boardToken),
 		});
@@ -230,7 +230,7 @@ describe('agent API - heartbeat edge cases', () => {
 		expect(body.data.agent.admin_status).toBe('disabled');
 		expect(body.data.assigned_issues).toEqual([]);
 
-		await app.request(`/api/companies/${companyId}/agents/${agentId}/enable`, {
+		await app.request(`/api/teams/${teamId}/agents/${agentId}/enable`, {
 			method: 'POST',
 			headers: authHeader(boardToken),
 		});
@@ -255,20 +255,15 @@ describe('agent API - self system prompt (removed)', () => {
 
 describe('agent API - budget enforcement', () => {
 	it('returns 402 and pauses agent when tool call exceeds budget', async () => {
-		const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Budget Test Agent', monthly_budget_cents: 10 }),
 		});
 		const cheapAgent = (await agentRes.json()).data;
-		const { token: cheapToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			cheapAgent.id,
-			companyId,
-		);
+		const { token: cheapToken } = await mintAgentToken(db, masterKeyManager, cheapAgent.id, teamId);
 
-		await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		await app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: cheapAgent.id }),
@@ -298,7 +293,7 @@ describe('agent API - budget enforcement', () => {
 		);
 		expect(agentCheck.rows[0].runtime_status).toBe('paused');
 
-		await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		await app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: agentId }),

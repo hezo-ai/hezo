@@ -13,11 +13,10 @@ export interface ExecutionLockState {
 	locks: ExecutionLock[];
 }
 
-export function useExecutionLock(companyId: string, issueId: string) {
+export function useExecutionLock(teamId: string, issueId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'issues', issueId, 'lock'],
-		queryFn: () =>
-			api.get<ExecutionLockState>(`/api/companies/${companyId}/issues/${issueId}/lock`),
+		queryKey: ['teams', teamId, 'issues', issueId, 'lock'],
+		queryFn: () => api.get<ExecutionLockState>(`/api/teams/${teamId}/issues/${issueId}/lock`),
 		refetchInterval: 5_000,
 	});
 }

@@ -31,7 +31,7 @@ if (opts.reset) {
 
 const cleared = clearAllProjectWorkspaces(dataDir);
 if (cleared.length > 0) {
-	console.log(`Cleared ${cleared.length} project workspace(s) under ${dataDir}/companies`);
+	console.log(`Cleared ${cleared.length} project workspace(s) under ${dataDir}/teams`);
 }
 
 // Duplicated from @hezo/shared (DEFAULT_WEB_PORT) to avoid adding a root-level

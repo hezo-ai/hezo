@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -17,12 +17,12 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', {
+	const typesRes = await app.request('/api/team-templates', {
 		headers: authHeader(token),
 	});
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -30,9 +30,9 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	// Use the engineer (has 5000 budget)
@@ -47,7 +47,7 @@ afterAll(async () => {
 
 describe('costs CRUD', () => {
 	it('creates a cost entry with budget debit', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs`, {
+		const res = await app.request(`/api/teams/${teamId}/costs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -62,7 +62,7 @@ describe('costs CRUD', () => {
 	});
 
 	it('lists cost entries', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs`, {
+		const res = await app.request(`/api/teams/${teamId}/costs`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -72,7 +72,7 @@ describe('costs CRUD', () => {
 	});
 
 	it('groups costs by agent', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs?group_by=agent`, {
+		const res = await app.request(`/api/teams/${teamId}/costs?group_by=agent`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -83,7 +83,7 @@ describe('costs CRUD', () => {
 
 	it('rejects budget-exceeding cost', async () => {
 		// Engineer budget is 5000 cents
-		const res = await app.request(`/api/companies/${companyId}/costs`, {
+		const res = await app.request(`/api/teams/${teamId}/costs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

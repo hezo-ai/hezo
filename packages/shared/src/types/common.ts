@@ -172,7 +172,7 @@ export const SecretCategory = {
 } as const;
 export type SecretCategory = (typeof SecretCategory)[keyof typeof SecretCategory];
 
-export const GrantScope = { Single: 'single', Project: 'project', Company: 'company' } as const;
+export const GrantScope = { Single: 'single', Project: 'project', Team: 'team' } as const;
 export type GrantScope = (typeof GrantScope)[keyof typeof GrantScope];
 
 export const ApprovalType = {
@@ -275,7 +275,7 @@ export type PluginStatus = (typeof PluginStatus)[keyof typeof PluginStatus];
 export const DocumentType = {
 	ProjectDoc: 'project_doc',
 	KbDoc: 'kb_doc',
-	CompanyPreferences: 'company_preferences',
+	TeamPreferences: 'team_preferences',
 	AgentSystemPrompt: 'agent_system_prompt',
 } as const;
 export type DocumentType = (typeof DocumentType)[keyof typeof DocumentType];
@@ -293,7 +293,7 @@ export const AuditEntityType = {
 	Issue: 'issue',
 	Project: 'project',
 	Agent: 'agent',
-	Company: 'company',
+	Team: 'team',
 	Secret: 'secret',
 	Document: 'document',
 	EgressRequest: 'egress_request',
@@ -317,12 +317,12 @@ export const AgentTypeSource = {
 } as const;
 export type AgentTypeSource = (typeof AgentTypeSource)[keyof typeof AgentTypeSource];
 
-export const CompanyTypeSource = {
+export const TeamTemplateSource = {
 	Builtin: 'builtin',
 	Custom: 'custom',
 	Marketplace: 'marketplace',
 } as const;
-export type CompanyTypeSource = (typeof CompanyTypeSource)[keyof typeof CompanyTypeSource];
+export type TeamTemplateSource = (typeof TeamTemplateSource)[keyof typeof TeamTemplateSource];
 
 export const GoalStatus = {
 	Active: 'active',
@@ -335,7 +335,7 @@ export const TERMINAL_GOAL_STATUSES = [GoalStatus.Achieved, GoalStatus.Archived]
 
 export interface Goal {
 	id: string;
-	company_id: string;
+	team_id: string;
 	project_id: string | null;
 	title: string;
 	description: string;
@@ -358,7 +358,7 @@ export interface SkillTemplateConfig {
 
 export interface SkillRecord {
 	id: string;
-	company_id: string;
+	team_id: string;
 	name: string;
 	slug: string;
 	description: string;

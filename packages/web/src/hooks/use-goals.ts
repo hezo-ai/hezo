@@ -8,38 +8,38 @@ export interface GoalWithProject extends Goal {
 	project_slug: string | null;
 }
 
-export function useGoals(companyId: string) {
+export function useGoals(teamId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'goals'],
-		queryFn: () => api.get<GoalWithProject[]>(`/api/companies/${companyId}/goals`),
+		queryKey: ['teams', teamId, 'goals'],
+		queryFn: () => api.get<GoalWithProject[]>(`/api/teams/${teamId}/goals`),
 	});
 }
 
-export function useCreateGoal(companyId: string) {
+export function useCreateGoal(teamId: string) {
 	return useMutation({
 		mutationFn: (data: { title: string; description?: string; project_id?: string | null }) =>
-			api.post<Goal>(`/api/companies/${companyId}/goals`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'goals'] }),
+			api.post<Goal>(`/api/teams/${teamId}/goals`, data),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'goals'] }),
 	});
 }
 
-export function useUpdateGoal(companyId: string, goalId: string) {
+export function useUpdateGoal(teamId: string, goalId: string) {
 	return useMutation({
 		mutationFn: (data: {
 			title?: string;
 			description?: string;
 			project_id?: string | null;
 			status?: GoalStatus;
-		}) => api.patch<Goal>(`/api/companies/${companyId}/goals/${goalId}`, data),
+		}) => api.patch<Goal>(`/api/teams/${teamId}/goals/${goalId}`, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'goals'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'goals'] });
 		},
 	});
 }
 
-export function useArchiveGoal(companyId: string) {
+export function useArchiveGoal(teamId: string) {
 	return useMutation({
-		mutationFn: (goalId: string) => api.delete<Goal>(`/api/companies/${companyId}/goals/${goalId}`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'goals'] }),
+		mutationFn: (goalId: string) => api.delete<Goal>(`/api/teams/${teamId}/goals/${goalId}`),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'goals'] }),
 	});
 }

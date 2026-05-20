@@ -17,58 +17,58 @@ export interface ProjectAgentsMd {
 	content: string;
 }
 
-export function useProjectDocs(companyId: string, projectId: string) {
+export function useProjectDocs(teamId: string, projectId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'projects', projectId, 'docs'],
-		queryFn: () => api.get<ProjectDoc[]>(`/api/companies/${companyId}/projects/${projectId}/docs`),
+		queryKey: ['teams', teamId, 'projects', projectId, 'docs'],
+		queryFn: () => api.get<ProjectDoc[]>(`/api/teams/${teamId}/projects/${projectId}/docs`),
 		enabled: !!projectId,
 	});
 }
 
-export function useProjectDoc(companyId: string, projectId: string, filename: string | null) {
+export function useProjectDoc(teamId: string, projectId: string, filename: string | null) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'projects', projectId, 'docs', filename],
+		queryKey: ['teams', teamId, 'projects', projectId, 'docs', filename],
 		queryFn: () =>
-			api.get<ProjectDoc>(`/api/companies/${companyId}/projects/${projectId}/docs/${filename}`),
+			api.get<ProjectDoc>(`/api/teams/${teamId}/projects/${projectId}/docs/${filename}`),
 		enabled: !!filename,
 	});
 }
 
-export function useUpdateProjectDoc(companyId: string, projectId: string) {
+export function useUpdateProjectDoc(teamId: string, projectId: string) {
 	return useMutation({
 		mutationFn: ({ filename, content }: { filename: string; content: string }) =>
-			api.put<ProjectDoc>(`/api/companies/${companyId}/projects/${projectId}/docs/${filename}`, {
+			api.put<ProjectDoc>(`/api/teams/${teamId}/projects/${projectId}/docs/${filename}`, {
 				content,
 			}),
 		onSuccess: (_data, { filename }) => {
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'projects', projectId, 'docs'],
+				queryKey: ['teams', teamId, 'projects', projectId, 'docs'],
 			});
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'projects', projectId, 'docs', filename],
+				queryKey: ['teams', teamId, 'projects', projectId, 'docs', filename],
 			});
 		},
 	});
 }
 
-export function useDeleteProjectDoc(companyId: string, projectId: string) {
+export function useDeleteProjectDoc(teamId: string, projectId: string) {
 	return useMutation({
 		mutationFn: (filename: string) =>
-			api.delete(`/api/companies/${companyId}/projects/${projectId}/docs/${filename}`),
+			api.delete(`/api/teams/${teamId}/projects/${projectId}/docs/${filename}`),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'projects', projectId, 'docs'],
+				queryKey: ['teams', teamId, 'projects', projectId, 'docs'],
 			}),
 	});
 }
 
-export function useProjectAgentsMd(companyId: string, projectId: string) {
+export function useProjectAgentsMd(teamId: string, projectId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'projects', projectId, 'agents-md'],
+		queryKey: ['teams', teamId, 'projects', projectId, 'agents-md'],
 		queryFn: async () => {
 			try {
 				return await api.get<ProjectAgentsMd>(
-					`/api/companies/${companyId}/projects/${projectId}/agents-md`,
+					`/api/teams/${teamId}/projects/${projectId}/agents-md`,
 				);
 			} catch (e) {
 				if ((e as ApiError).status === 404) return null;
@@ -79,55 +79,46 @@ export function useProjectAgentsMd(companyId: string, projectId: string) {
 	});
 }
 
-export function useProjectDocRevisions(
-	companyId: string,
-	projectId: string,
-	filename: string | null,
-) {
+export function useProjectDocRevisions(teamId: string, projectId: string, filename: string | null) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'projects', projectId, 'docs', filename, 'revisions'],
+		queryKey: ['teams', teamId, 'projects', projectId, 'docs', filename, 'revisions'],
 		queryFn: () =>
 			api.get<ProjectDocRevision[]>(
-				`/api/companies/${companyId}/projects/${projectId}/docs/${filename}/revisions`,
+				`/api/teams/${teamId}/projects/${projectId}/docs/${filename}/revisions`,
 			),
 		enabled: !!filename,
 	});
 }
 
-export function useRestoreProjectDocRevision(
-	companyId: string,
-	projectId: string,
-	filename: string,
-) {
+export function useRestoreProjectDocRevision(teamId: string, projectId: string, filename: string) {
 	return useMutation({
 		mutationFn: (revisionNumber: number) =>
-			api.post<ProjectDoc>(
-				`/api/companies/${companyId}/projects/${projectId}/docs/${filename}/restore`,
-				{ revision_number: revisionNumber },
-			),
+			api.post<ProjectDoc>(`/api/teams/${teamId}/projects/${projectId}/docs/${filename}/restore`, {
+				revision_number: revisionNumber,
+			}),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'projects', projectId, 'docs'],
+				queryKey: ['teams', teamId, 'projects', projectId, 'docs'],
 			});
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'projects', projectId, 'docs', filename],
+				queryKey: ['teams', teamId, 'projects', projectId, 'docs', filename],
 			});
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'projects', projectId, 'docs', filename, 'revisions'],
+				queryKey: ['teams', teamId, 'projects', projectId, 'docs', filename, 'revisions'],
 			});
 		},
 	});
 }
 
-export function useUpdateProjectAgentsMd(companyId: string, projectId: string) {
+export function useUpdateProjectAgentsMd(teamId: string, projectId: string) {
 	return useMutation({
 		mutationFn: (content: string) =>
-			api.put<ProjectAgentsMd>(`/api/companies/${companyId}/projects/${projectId}/agents-md`, {
+			api.put<ProjectAgentsMd>(`/api/teams/${teamId}/projects/${projectId}/agents-md`, {
 				content,
 			}),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'projects', projectId, 'agents-md'],
+				queryKey: ['teams', teamId, 'projects', projectId, 'agents-md'],
 			}),
 	});
 }

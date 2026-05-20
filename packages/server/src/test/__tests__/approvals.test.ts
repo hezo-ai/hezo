@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -17,14 +17,14 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', {
+	const typesRes = await app.request('/api/team-templates', {
 		headers: authHeader(token),
 	});
 	const typeId = (await typesRes.json()).data.find(
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -32,9 +32,9 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -47,7 +47,7 @@ afterAll(async () => {
 describe('approvals CRUD', () => {
 	it('creates and resolves an approval', async () => {
 		// Create
-		const createRes = await app.request(`/api/companies/${companyId}/approvals`, {
+		const createRes = await app.request(`/api/teams/${teamId}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -61,7 +61,7 @@ describe('approvals CRUD', () => {
 		expect(approval.status).toBe('pending');
 
 		// List pending
-		const listRes = await app.request(`/api/companies/${companyId}/approvals`, {
+		const listRes = await app.request(`/api/teams/${teamId}/approvals`, {
 			headers: authHeader(token),
 		});
 		expect(listRes.status).toBe(200);
@@ -84,7 +84,7 @@ describe('approvals CRUD', () => {
 
 	it('rejects resolving an already-resolved approval', async () => {
 		// Create and resolve
-		const createRes = await app.request(`/api/companies/${companyId}/approvals`, {
+		const createRes = await app.request(`/api/teams/${teamId}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

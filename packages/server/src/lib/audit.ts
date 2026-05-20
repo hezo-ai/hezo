@@ -3,7 +3,7 @@ import type { AuditAction, AuditActorType, AuditEntityType } from '@hezo/shared'
 
 export async function auditLog(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	actorType: AuditActorType,
 	actorMemberId: string | null,
 	action: AuditAction,
@@ -12,16 +12,8 @@ export async function auditLog(
 	details?: Record<string, unknown>,
 ): Promise<void> {
 	await db.query(
-		`INSERT INTO audit_log (company_id, actor_type, actor_member_id, action, entity_type, entity_id, details)
+		`INSERT INTO audit_log (team_id, actor_type, actor_member_id, action, entity_type, entity_id, details)
 		 VALUES ($1, $2::audit_actor_type, $3, $4, $5, $6, $7::jsonb)`,
-		[
-			companyId,
-			actorType,
-			actorMemberId,
-			action,
-			entityType,
-			entityId,
-			JSON.stringify(details ?? {}),
-		],
+		[teamId, actorType, actorMemberId, action, entityType, entityId, JSON.stringify(details ?? {})],
 	);
 }

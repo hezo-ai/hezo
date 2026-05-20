@@ -15,7 +15,7 @@
 
 ## Layout
 
-- `agents/<template>/*.md` — single source of truth for agent system prompts. Each company template (e.g. `software-development/`, `blank/`) owns its own role docs. The seed in `packages/server/src/db/seed.ts` reads these at startup. Edit them directly. Hezo-specific tooling/file-paths/conventions belong here in AGENTS.md, not in role docs.
+- `agents/<template>/*.md` — single source of truth for agent system prompts. Each team template (e.g. `software-development/`, `blank/`) owns its own role docs. The seed in `packages/server/src/db/seed.ts` reads these at startup. Edit them directly. Hezo-specific tooling/file-paths/conventions belong here in AGENTS.md, not in role docs.
 - `.dev/` — specs, schema, API, implementation plans. Keep in sync with code: describe what the system **does**, not what changed. No backwards-compat concerns pre-v1.
 
 ## Database migrations
@@ -53,10 +53,10 @@ Never commit `.js`/`.d.ts`/`.js.map`/`.d.ts.map` alongside source. Compiled outp
 
 ## Slugs vs UUIDs
 
-Browser URLs use slugs (e.g. `/companies/test/projects/operations`). Internal IDs (DB keys, WebSocket rooms, server broadcasts) use UUIDs.
+Browser URLs use slugs (e.g. `/teams/test/projects/operations`). Internal IDs (DB keys, WebSocket rooms, server broadcasts) use UUIDs.
 
 - Route params are slugs. TanStack Query keys must use the route-param slug (not a resolved UUID), so WebSocket-driven `invalidateQueries` matches.
-- WebSocket rooms use UUIDs (`company:${uuid}`). `useWebSocket` takes both: UUID for subscription, slug for query invalidation.
+- WebSocket rooms use UUIDs (`team:${uuid}`). `useWebSocket` takes both: UUID for subscription, slug for query invalidation.
 - Server broadcasts use UUIDs.
 
 Mixing the two — UUID in a query key, or slug in a room name — silently breaks realtime updates.
@@ -68,7 +68,7 @@ Mixing the two — UUID in a query key, or slug in a room name — silently brea
 Three breakpoints:
 
 - **Mobile** (<768px): single-column, hamburger drawer, stacked fields, near full-screen dialogs, 16px padding.
-- **Tablet** (768–1023px): company rail visible (60px), text sidebar hidden, 2-column form grids at `sm:`, centered modals, 24px padding.
+- **Tablet** (768–1023px): team rail visible (60px), text sidebar hidden, 2-column form grids at `sm:`, centered modals, 24px padding.
 - **Desktop** (1024px+): full rail + sidebar (260px), all table columns, 2–3 column grids, 32px padding.
 
 Base Tailwind targets mobile; use `sm:`/`md:`/`lg:` to enhance. Every UI change must work at all three breakpoints, and every e2e test for a UI change must verify the mobile layout.
@@ -89,7 +89,7 @@ When you wire a new agent integration that needs a credential:
 
 - Don't put the real value in the agent's container env. Put the placeholder there. The real value lives in the `secrets` table with `allowed_hosts` constraining which upstream hosts the substitution may fire for.
 - If the agent needs to obtain a raw secret at runtime (API key, webhook secret, …), it calls `request_credential` (MCP tool) and the human pastes the value via the issue thread.
-- For GitHub repo access, the human connects a GitHub OAuth account once via device flow on the company Connections page; subsequent repos pick that connection. The OAuth token is used for REST API calls only (listing orgs/repos, creating repos). Repo clone/fetch/push runs over **SSH** (`git@github.com:owner/repo.git`) authenticated by the company Ed25519 key — the same key used for commit signing. On first OAuth connect the public key is auto-registered on the connecting user's GitHub account as both a *signing* key (commits land as Verified) and an *authentication* key (so SSH git ops work). Both host-side and in-container git ops go through the existing `SshAgentServer` — host via its Unix socket directly, container via the per-run socat bridge. Full design: `.dev/oauth.md`. ssh-agent details: `.dev/ssh-signing.md`.
+- For GitHub repo access, the human connects a GitHub OAuth account once via device flow on the team Connections page; subsequent repos pick that connection. The OAuth token is used for REST API calls only (listing orgs/repos, creating repos). Repo clone/fetch/push runs over **SSH** (`git@github.com:owner/repo.git`) authenticated by the team Ed25519 key — the same key used for commit signing. On first OAuth connect the public key is auto-registered on the connecting user's GitHub account as both a *signing* key (commits land as Verified) and an *authentication* key (so SSH git ops work). Both host-side and in-container git ops go through the existing `SshAgentServer` — host via its Unix socket directly, container via the per-run socat bridge. Full design: `.dev/oauth.md`. ssh-agent details: `.dev/ssh-signing.md`.
 - For SaaS MCPs requiring OAuth (DatoCMS, Linear, …), the operator starts the auth-code flow from the MCP-connection form. The resulting `oauth_connection_id` is linked to the `mcp_connections` row; the injector emits a placeholder Authorization header and the egress proxy substitutes at request time.
 
 The egress audit log records substitution events by **secret name** only, never the value. No-op requests (no placeholder anywhere) are not audited.
@@ -98,11 +98,11 @@ The egress audit log records substitution events by **secret name** only, never 
 
 Every route enforces authorization — never trust URL params alone.
 
-- Routes with `:companyId` verify the authenticated user has access per request (board users can be in multiple companies; agent / API-key auth carries `companyId` and must match the route param).
-- Nested resources (`:issueId`, `:secretId`, `:commentId`, …) verify the resource belongs to the parent `:companyId` via WHERE/JOIN before any read or write.
-- Global endpoints (no `:companyId` in path) still verify the authenticated user has access to the resource's company.
-- WebSocket subscriptions verify company membership matches the room.
-- MCP tool handlers enforce the same authorization as their REST equivalents — pass caller identity in and validate company access.
+- Routes with `:teamId` verify the authenticated user has access per request (board users can be in multiple teams; agent / API-key auth carries `teamId` and must match the route param).
+- Nested resources (`:issueId`, `:secretId`, `:commentId`, …) verify the resource belongs to the parent `:teamId` via WHERE/JOIN before any read or write.
+- Global endpoints (no `:teamId` in path) still verify the authenticated user has access to the resource's team.
+- WebSocket subscriptions verify team membership matches the room.
+- MCP tool handlers enforce the same authorization as their REST equivalents — pass caller identity in and validate team access.
 
 ## Implementation phases
 

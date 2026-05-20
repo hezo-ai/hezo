@@ -4,12 +4,12 @@ import { ApprovalCard } from './approval-card';
 import { EmptyState } from './ui/empty-state';
 
 interface InboxViewProps {
-	companyIds: string[];
-	scope: 'company' | 'global';
+	teamIds: string[];
+	scope: 'team' | 'global';
 }
 
-export function InboxView({ companyIds, scope }: InboxViewProps) {
-	const { data: approvals, isLoading } = useAllPendingApprovals(companyIds);
+export function InboxView({ teamIds, scope }: InboxViewProps) {
+	const { data: approvals, isLoading } = useAllPendingApprovals(teamIds);
 
 	if (isLoading) {
 		return <div className="text-text-muted">Loading...</div>;
@@ -28,7 +28,7 @@ export function InboxView({ companyIds, scope }: InboxViewProps) {
 			) : (
 				<div className="flex flex-col gap-3">
 					{approvals.map((a) => (
-						<ApprovalCard key={a.id} approval={a} showCompany={scope === 'global'} />
+						<ApprovalCard key={a.id} approval={a} showTeam={scope === 'global'} />
 					))}
 				</div>
 			)}

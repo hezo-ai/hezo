@@ -26,14 +26,14 @@ export interface InstallerDeps {
 	db: PGlite;
 	docker: DockerClient;
 	containerId: string;
-	companyId: string;
+	teamId: string;
 	projectId: string;
 	emit?: (stream: 'stdout' | 'stderr', text: string) => void;
 }
 
 /**
  * Install (or reinstall) every `kind='local'` mcp_connection scoped to the
- * given company+project that is not already `installed`. Idempotent: rows
+ * given team+project that is not already `installed`. Idempotent: rows
  * already in `installed` are skipped, and the installer can be re-run after
  * a transient failure to retry.
  *
@@ -63,8 +63,8 @@ export async function installLocalMcpById(
 	const result = await deps.db.query<PendingRow & { kind: string; install_status: string }>(
 		`SELECT id, name, kind::text AS kind, config, install_status::text AS install_status
 		 FROM mcp_connections
-		 WHERE id = $1 AND company_id = $2`,
-		[rowId, deps.companyId],
+		 WHERE id = $1 AND team_id = $2`,
+		[rowId, deps.teamId],
 	);
 	const row = result.rows[0];
 	if (!row || row.kind !== McpConnectionKind.Local) return null;
@@ -75,11 +75,11 @@ async function loadPending(deps: InstallerDeps): Promise<PendingRow[]> {
 	const result = await deps.db.query<PendingRow>(
 		`SELECT id, name, config
 		 FROM mcp_connections
-		 WHERE company_id = $1
+		 WHERE team_id = $1
 		   AND kind = $2::mcp_connection_kind
 		   AND install_status <> $3::mcp_install_status
 		   AND (project_id IS NULL OR project_id = $4)`,
-		[deps.companyId, McpConnectionKind.Local, McpInstallStatus.Installed, deps.projectId],
+		[deps.teamId, McpConnectionKind.Local, McpInstallStatus.Installed, deps.projectId],
 	);
 	return result.rows;
 }

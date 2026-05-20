@@ -11,7 +11,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let ceoId: string;
 let engineerId: string;
 
@@ -43,19 +43,19 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Hire Proposal Co', template_id: typeId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data;
@@ -69,7 +69,7 @@ afterAll(async () => {
 
 describe('MCP tool update_hire_proposal', () => {
 	it('lets the CEO revise a pending hire proposal', async () => {
-		const onboardRes = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+		const onboardRes = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -80,7 +80,7 @@ describe('MCP tool update_hire_proposal', () => {
 		});
 		const { approval } = (await onboardRes.json()).data;
 
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, companyId);
+		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, teamId);
 		const result = (await callTool(ceoToken, 'update_hire_proposal', {
 			approval_id: approval.id,
 			system_prompt: 'You are the Support Lead. Own all customer support channels.',
@@ -101,14 +101,14 @@ describe('MCP tool update_hire_proposal', () => {
 	});
 
 	it('rejects non-CEO agents', async () => {
-		const onboardRes = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+		const onboardRes = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Sales Lead', role_description: 'x' }),
 		});
 		const { approval } = (await onboardRes.json()).data;
 
-		const { token: engToken } = await mintAgentToken(db, masterKeyManager, engineerId, companyId);
+		const { token: engToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId);
 		const result = (await callTool(engToken, 'update_hire_proposal', {
 			approval_id: approval.id,
 			system_prompt: 'hostile rewrite',
@@ -118,7 +118,7 @@ describe('MCP tool update_hire_proposal', () => {
 	});
 
 	it('rejects revisions to resolved proposals', async () => {
-		const onboardRes = await app.request(`/api/companies/${companyId}/agents/onboard`, {
+		const onboardRes = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Ops Lead', role_description: 'x' }),
@@ -131,7 +131,7 @@ describe('MCP tool update_hire_proposal', () => {
 			body: JSON.stringify({ status: 'denied', resolution_note: 'no' }),
 		});
 
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, companyId);
+		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, teamId);
 		const result = (await callTool(ceoToken, 'update_hire_proposal', {
 			approval_id: approval.id,
 			system_prompt: 'too late',

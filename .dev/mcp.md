@@ -1,6 +1,6 @@
 # MCP connections
 
-Persistent registration of MCP servers (SaaS HTTP and local stdio) made available to every agent run inside a company / project. Persisted in `mcp_connections` so registration survives container rebuild.
+Persistent registration of MCP servers (SaaS HTTP and local stdio) made available to every agent run inside a team / project. Persisted in `mcp_connections` so registration survives container rebuild.
 
 ## Schema
 
@@ -10,7 +10,7 @@ CREATE TYPE mcp_install_status AS ENUM ('pending', 'installed', 'failed');
 
 CREATE TABLE mcp_connections (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id           UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id           UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
     name                 TEXT NOT NULL,
     kind                 mcp_connection_kind NOT NULL,
@@ -20,11 +20,11 @@ CREATE TABLE mcp_connections (
     install_error        TEXT,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (company_id, project_id, name)
+    UNIQUE (team_id, project_id, name)
 );
 ```
 
-`project_id NULL` means company-wide. A project-scoped row with the same name shadows the company-wide one for runs in that project — useful for swapping a sandbox MCP server in dev while production agents use a different one.
+`project_id NULL` means team-wide. A project-scoped row with the same name shadows the team-wide one for runs in that project — useful for swapping a sandbox MCP server in dev while production agents use a different one.
 
 ## Config shapes
 
@@ -41,7 +41,7 @@ CREATE TABLE mcp_connections (
 
 Header values may contain `__HEZO_SECRET_*__` placeholders. The egress proxy substitutes them at request time exactly the same way it substitutes any other header. SaaS rows install instantly: `install_status='installed'` on insert.
 
-For SaaS MCPs that require OAuth (DatoCMS, Linear, Notion, …), set `oauth_connection_id` to the id of an `oauth_connections` row created via the OAuth auth-code flow (`.dev/oauth.md`). At descriptor build time the loader replaces any user-supplied `Authorization` header with `Bearer __HEZO_SECRET_OAUTH_<PROVIDER>_<HEX>__` and the egress proxy substitutes the live token at request time. The proxy's `loadSecretsForScope` calls `refreshExpiringTokensForCompany` first, so an expiring OAuth token is silently refreshed via its provider before the substitution fires.
+For SaaS MCPs that require OAuth (DatoCMS, Linear, Notion, …), set `oauth_connection_id` to the id of an `oauth_connections` row created via the OAuth auth-code flow (`.dev/oauth.md`). At descriptor build time the loader replaces any user-supplied `Authorization` header with `Bearer __HEZO_SECRET_OAUTH_<PROVIDER>_<HEX>__` and the egress proxy substitutes the live token at request time. The proxy's `loadSecretsForScope` calls `refreshExpiringTokensForTeam` first, so an expiring OAuth token is silently refreshed via its provider before the substitution fires.
 
 `kind = 'local'`:
 
@@ -62,19 +62,19 @@ Local MCPs default to `install_status='pending'` and are skipped from agent runt
 
 Three MCP tools, callable by board / api-key / agent auth:
 
-- `list_mcp_connections({ company_id, project_id? })`
-- `add_mcp_connection({ company_id, project_id?, name, kind, config })`
-- `remove_mcp_connection({ company_id, id })`
+- `list_mcp_connections({ team_id, project_id? })`
+- `add_mcp_connection({ team_id, project_id?, name, kind, config })`
+- `remove_mcp_connection({ team_id, id })`
 
 A REST surface mirrors them for board UIs:
 
-- `GET /api/companies/:companyId/mcp-connections?project_id=...`
-- `POST /api/companies/:companyId/mcp-connections`
-- `DELETE /api/companies/:companyId/mcp-connections/:id`
+- `GET /api/teams/:teamId/mcp-connections?project_id=...`
+- `POST /api/teams/:teamId/mcp-connections`
+- `DELETE /api/teams/:teamId/mcp-connections/:id`
 
 ## How runs see MCPs
 
-`agent-runner.buildRunContext` calls `loadMcpConnectionDescriptors(db, companyId, projectId)` and merges the result into the descriptor list **after** the built-in `hezo` descriptor. Each runtime adapter (Claude Code, Codex, Gemini) translates the descriptor list into the spawn-time artifacts the runtime CLI expects:
+`agent-runner.buildRunContext` calls `loadMcpConnectionDescriptors(db, teamId, projectId)` and merges the result into the descriptor list **after** the built-in `hezo` descriptor. Each runtime adapter (Claude Code, Codex, Gemini) translates the descriptor list into the spawn-time artifacts the runtime CLI expects:
 
 - `McpHttpDescriptor` carries `{ kind: 'http', name, url, headers?, bearerToken? }`.
 - `McpStdioDescriptor` carries `{ kind: 'stdio', name, command, args?, env? }`.
@@ -88,7 +88,7 @@ Local MCPs live under `${workspace}/.hezo/mcp/<name>/`. The workspace is host-bi
 ## Tests
 
 `packages/server/src/test/__tests__/`:
-- `mcp-connections.test.ts` — REST + service-layer unit tests including project-scoped overrides of company-wide entries.
+- `mcp-connections.test.ts` — REST + service-layer unit tests including project-scoped overrides of team-wide entries.
 - `mcp-connections-docker.test.ts` — Docker e2e against a custom test MCP server (`fixtures/test-mcp-stdio-server.mjs` and `helpers/test-mcp-http-server.ts`):
   1. SaaS substitution path: connection row with placeholder header → loader → egress proxy → real MCP server sees the real header value.
   2. SaaS no-op: forwards untouched when no placeholder is present (no audit row written).

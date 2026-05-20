@@ -1,40 +1,40 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
+import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Issue Comments', () => {
 	async function createProjectAndIssue(page: import('@playwright/test').Page) {
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
 		// Create project
-		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 			headers,
 			data: { name: 'Comment Project', description: 'Test project.' },
 		});
 		const project = ((await projRes.json()) as any).data;
 
 		// Get an agent for assignment
-		const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, {
+		const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
 			headers: { Authorization: `Bearer ${token}` },
 		});
 		const agents = ((await agentsRes.json()) as any).data;
 		const agent = agents[0];
 
 		// Create issue
-		const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 			headers,
 			data: { project_id: project.id, title: 'Comment Test Issue', assignee_id: agent.id },
 		});
 		const issue = ((await issueRes.json()) as any).data;
 
-		return { company, token, project, issue, agent, headers };
+		return { team, token, project, issue, agent, headers };
 	}
 
 	test('issue detail shows comments tab with count', async ({ page }) => {
 		await authenticate(page);
-		const { company, issue } = await createProjectAndIssue(page);
+		const { team, issue } = await createProjectAndIssue(page);
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		// Comments tab should be visible
@@ -43,9 +43,9 @@ test.describe('Issue Comments', () => {
 
 	test('can add a comment to an issue', async ({ page }) => {
 		await authenticate(page);
-		const { company, issue } = await createProjectAndIssue(page);
+		const { team, issue } = await createProjectAndIssue(page);
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		// Type a comment
@@ -62,15 +62,15 @@ test.describe('Issue Comments', () => {
 
 	test('comments persist after page reload', async ({ page }) => {
 		await authenticate(page);
-		const { company, issue, headers } = await createProjectAndIssue(page);
+		const { team, issue, headers } = await createProjectAndIssue(page);
 
 		// Create a comment via API
-		await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 			headers,
 			data: { content: 'API-created comment' },
 		});
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		// Verify the comment is visible
@@ -79,19 +79,19 @@ test.describe('Issue Comments', () => {
 
 	test('comment count updates after adding comment', async ({ page }) => {
 		await authenticate(page);
-		const { company, issue, headers } = await createProjectAndIssue(page);
+		const { team, issue, headers } = await createProjectAndIssue(page);
 
 		// Create two comments via API
-		await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 			headers,
 			data: { content: 'First comment' },
 		});
-		await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 			headers,
 			data: { content: 'Second comment' },
 		});
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		// Both comments should be visible
@@ -101,16 +101,16 @@ test.describe('Issue Comments', () => {
 
 	test('renders markdown in comment bodies and shows author label', async ({ page }) => {
 		await authenticate(page);
-		const { company, issue, headers } = await createProjectAndIssue(page);
+		const { team, issue, headers } = await createProjectAndIssue(page);
 
 		const markdownBody =
 			'## Execution Plan\n\nFirst paragraph of the plan.\n\nSecond paragraph after a blank line.\n\n**Objective:** Ship it.\n\n- one\n- two';
-		await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 			headers,
 			data: { content_type: 'text', content: { text: markdownBody } },
 		});
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		const body = page.getByTestId('text-comment-body').first();
@@ -129,7 +129,7 @@ test.describe('Issue Comments', () => {
 		page,
 	}) => {
 		await authenticate(page);
-		const { company, issue, agent } = await createProjectAndIssue(page);
+		const { team, issue, agent } = await createProjectAndIssue(page);
 
 		const expectedDefault =
 			agent.slug === 'ceo'
@@ -142,7 +142,7 @@ test.describe('Issue Comments', () => {
 						max: 'Max (ultrathink)',
 					}[agent.default_effort as 'minimal' | 'low' | 'medium' | 'high' | 'max'];
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		const select = page.getByLabel('Reasoning effort for the agent run triggered by this comment');
@@ -158,7 +158,7 @@ test.describe('Issue Comments', () => {
 		page.on('request', (req) => {
 			if (
 				req.method() === 'POST' &&
-				/\/api\/companies\/[^/]+\/issues\/[^/]+\/comments$/.test(req.url())
+				/\/api\/teams\/[^/]+\/issues\/[^/]+\/comments$/.test(req.url())
 			) {
 				postBodies.push(req.postDataJSON());
 			}
@@ -174,15 +174,15 @@ test.describe('Issue Comments', () => {
 
 	test('agent mentions render as bold anchor-colored links to agent page', async ({ page }) => {
 		await authenticate(page);
-		const { company, issue, headers, agent } = await createProjectAndIssue(page);
+		const { team, issue, headers, agent } = await createProjectAndIssue(page);
 
 		const body = `Hey @${agent.slug} please check this. Also @not-a-real-agent-xyz stays plain.`;
-		await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 			headers,
 			data: { content_type: 'text', content: { text: body } },
 		});
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		const comment = page.getByTestId('text-comment-body').first();
@@ -190,10 +190,7 @@ test.describe('Issue Comments', () => {
 
 		const mentionLink = comment.getByTestId('agent-mention-link');
 		await expect(mentionLink).toHaveText(`@${agent.slug}`);
-		await expect(mentionLink).toHaveAttribute(
-			'href',
-			`/companies/${company.slug}/agents/${agent.slug}`,
-		);
+		await expect(mentionLink).toHaveAttribute('href', `/teams/${team.slug}/agents/${agent.slug}`);
 		await expect(mentionLink).toHaveClass(/font-semibold/);
 		await expect(mentionLink).toHaveClass(/text-accent-blue-text/);
 
@@ -201,18 +198,16 @@ test.describe('Issue Comments', () => {
 		await expect(comment.locator('a', { hasText: '@not-a-real-agent-xyz' })).toHaveCount(0);
 
 		await mentionLink.click();
-		await expect(page).toHaveURL(
-			new RegExp(`/companies/${company.slug}/agents/${agent.slug}(/|$)`),
-		);
+		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/agents/${agent.slug}(/|$)`));
 	});
 
 	test('wake-assignee checkbox is visible, default-checked, and reflected in submit body', async ({
 		page,
 	}) => {
 		await authenticate(page);
-		const { company, issue } = await createProjectAndIssue(page);
+		const { team, issue } = await createProjectAndIssue(page);
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		const sidebar = page.getByTestId('issue-sidebar');
@@ -229,7 +224,7 @@ test.describe('Issue Comments', () => {
 		page.on('request', (req) => {
 			if (
 				req.method() === 'POST' &&
-				/\/api\/companies\/[^/]+\/issues\/[^/]+\/comments$/.test(req.url())
+				/\/api\/teams\/[^/]+\/issues\/[^/]+\/comments$/.test(req.url())
 			) {
 				postBodies.push(req.postDataJSON());
 			}
@@ -259,14 +254,14 @@ test.describe('Issue Comments', () => {
 
 	test('comment items render as bordered cards with a tinted header', async ({ page }) => {
 		await authenticate(page);
-		const { company, issue, headers } = await createProjectAndIssue(page);
+		const { team, issue, headers } = await createProjectAndIssue(page);
 
-		await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 			headers,
 			data: { content_type: 'text', content: { text: 'A boxed comment.' } },
 		});
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		const item = page.getByTestId('comment-item').first();
@@ -284,7 +279,7 @@ test.describe('Issue Comments', () => {
 	test('virtualizes a large comment thread and scrolls to deep-link target', async ({ page }) => {
 		test.setTimeout(60_000);
 		await authenticate(page);
-		const { company, issue, headers } = await createProjectAndIssue(page);
+		const { team, issue, headers } = await createProjectAndIssue(page);
 
 		const TOTAL = 120;
 		const created: { id: string; index: number }[] = [];
@@ -294,7 +289,7 @@ test.describe('Issue Comments', () => {
 			const batch = Array.from({ length: Math.min(BATCH, TOTAL - start) }, (_, i) => start + i);
 			const results = await Promise.all(
 				batch.map((i) =>
-					page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+					page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 						headers,
 						data: { content_type: 'text', content: { text: `seeded-comment-${i}` } },
 					}),
@@ -306,7 +301,7 @@ test.describe('Issue Comments', () => {
 			}
 		}
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		// Wait for the comments list and at least one row to mount — without a
@@ -332,7 +327,7 @@ test.describe('Issue Comments', () => {
 		// middle of the thread which lies outside the initial render window
 		// but is reliably reachable in a single scrollToIndex pass.
 		const target = created[Math.floor(TOTAL / 2)];
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}#comment-${target.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}#comment-${target.id}`);
 		await waitForPageLoad(page);
 		const anchored = page.locator(`#comment-${target.id}`);
 		await expect(anchored).toBeVisible({ timeout: 20_000 });
@@ -343,18 +338,15 @@ test.describe('Issue Comments', () => {
 		page,
 	}) => {
 		await authenticate(page);
-		const { company, issue, headers } = await createProjectAndIssue(page);
+		const { team, issue, headers } = await createProjectAndIssue(page);
 
-		const parentRes = await page.request.post(
-			`/api/companies/${company.id}/issues/${issue.id}/comments`,
-			{
-				headers,
-				data: { content: 'Original comment to reply to' },
-			},
-		);
+		const parentRes = await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
+			headers,
+			data: { content: 'Original comment to reply to' },
+		});
 		const parent = ((await parentRes.json()) as any).data;
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		const parentItem = page.locator(`#comment-${parent.id}`);
@@ -391,18 +383,15 @@ test.describe('Issue Comments', () => {
 	test('reply flow works on mobile viewport', async ({ page }) => {
 		await page.setViewportSize({ width: 390, height: 844 });
 		await authenticate(page);
-		const { company, issue, headers } = await createProjectAndIssue(page);
+		const { team, issue, headers } = await createProjectAndIssue(page);
 
-		const parentRes = await page.request.post(
-			`/api/companies/${company.id}/issues/${issue.id}/comments`,
-			{
-				headers,
-				data: { content: 'Mobile parent comment' },
-			},
-		);
+		const parentRes = await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
+			headers,
+			data: { content: 'Mobile parent comment' },
+		});
 		const parent = ((await parentRes.json()) as any).data;
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		const parentItem = page.locator(`#comment-${parent.id}`);

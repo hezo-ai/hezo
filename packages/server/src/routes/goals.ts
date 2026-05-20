@@ -4,7 +4,7 @@ import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 import { enqueueGoalReviewTask } from '../services/goal-tickets';
 
 const log = logger.child('routes/goals');
@@ -17,7 +17,7 @@ function isGoalStatus(value: unknown): value is GoalStatusType {
 
 async function requireBoardMemberId(
 	c: Context<Env>,
-	companyId: string,
+	teamId: string,
 ): Promise<string | null | Response> {
 	const auth = c.get('auth');
 	if (auth.type !== AuthType.Board) {
@@ -31,17 +31,17 @@ async function requireBoardMemberId(
 	const result = await db.query<{ id: string }>(
 		`SELECT m.id FROM members m
 		 JOIN member_users mu ON mu.id = m.id
-		 WHERE mu.user_id = $1 AND m.company_id = $2`,
-		[auth.userId, companyId],
+		 WHERE mu.user_id = $1 AND m.team_id = $2`,
+		[auth.userId, teamId],
 	);
 	return result.rows[0]?.id ?? null;
 }
 
-goalsRoutes.get('/companies/:companyId/goals', async (c) => {
-	const access = await requireCompanyAccess(c);
+goalsRoutes.get('/teams/:teamId/goals', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const result = await db.query(
 		`SELECT g.*,
@@ -49,7 +49,7 @@ goalsRoutes.get('/companies/:companyId/goals', async (c) => {
 		        p.slug AS project_slug
 		 FROM goals g
 		 LEFT JOIN projects p ON p.id = g.project_id
-		 WHERE g.company_id = $1
+		 WHERE g.team_id = $1
 		 ORDER BY
 		   CASE g.status
 		     WHEN 'active'   THEN 0
@@ -57,16 +57,16 @@ goalsRoutes.get('/companies/:companyId/goals', async (c) => {
 		     WHEN 'archived' THEN 2
 		   END,
 		   g.created_at DESC`,
-		[companyId],
+		[teamId],
 	);
 	return ok(c, result.rows);
 });
 
-goalsRoutes.get('/companies/:companyId/goals/:goalId', async (c) => {
-	const access = await requireCompanyAccess(c);
+goalsRoutes.get('/teams/:teamId/goals/:goalId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const goalId = c.req.param('goalId');
 
 	const result = await db.query(
@@ -75,8 +75,8 @@ goalsRoutes.get('/companies/:companyId/goals/:goalId', async (c) => {
 		        p.slug AS project_slug
 		 FROM goals g
 		 LEFT JOIN projects p ON p.id = g.project_id
-		 WHERE g.id = $1 AND g.company_id = $2`,
-		[goalId, companyId],
+		 WHERE g.id = $1 AND g.team_id = $2`,
+		[goalId, teamId],
 	);
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Goal not found', 404);
@@ -84,13 +84,13 @@ goalsRoutes.get('/companies/:companyId/goals/:goalId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-goalsRoutes.post('/companies/:companyId/goals', async (c) => {
-	const access = await requireCompanyAccess(c);
+goalsRoutes.post('/teams/:teamId/goals', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
-	const board = await requireBoardMemberId(c, companyId);
+	const board = await requireBoardMemberId(c, teamId);
 	if (board instanceof Response) return board;
 	const createdByMemberId = board;
 
@@ -106,28 +106,28 @@ goalsRoutes.post('/companies/:companyId/goals', async (c) => {
 
 	let projectId: string | null = null;
 	if (body.project_id) {
-		const projectCheck = await db.query(
-			'SELECT 1 FROM projects WHERE id = $1 AND company_id = $2',
-			[body.project_id, companyId],
-		);
+		const projectCheck = await db.query('SELECT 1 FROM projects WHERE id = $1 AND team_id = $2', [
+			body.project_id,
+			teamId,
+		]);
 		if (projectCheck.rows.length === 0) {
-			return err(c, 'INVALID_REQUEST', 'project_id does not belong to this company', 400);
+			return err(c, 'INVALID_REQUEST', 'project_id does not belong to this team', 400);
 		}
 		projectId = body.project_id;
 	}
 
 	const insertResult = await db.query<Record<string, unknown>>(
-		`INSERT INTO goals (company_id, project_id, title, description, created_by_member_id)
+		`INSERT INTO goals (team_id, project_id, title, description, created_by_member_id)
 		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING *`,
-		[companyId, projectId, body.title.trim(), body.description?.trim() ?? '', createdByMemberId],
+		[teamId, projectId, body.title.trim(), body.description?.trim() ?? '', createdByMemberId],
 	);
 	const goal = insertResult.rows[0];
 
-	broadcastChange(c, wsRoom.company(companyId), 'goals', 'INSERT', goal);
+	broadcastChange(c, wsRoom.team(teamId), 'goals', 'INSERT', goal);
 
 	try {
-		await enqueueGoalReviewTask(db, companyId, goal.id as string, 'created', c.get('wsManager'));
+		await enqueueGoalReviewTask(db, teamId, goal.id as string, 'created', c.get('wsManager'));
 	} catch (e) {
 		log.error('Failed to enqueue goal review task (create):', e);
 	}
@@ -135,14 +135,14 @@ goalsRoutes.post('/companies/:companyId/goals', async (c) => {
 	return ok(c, goal, 201);
 });
 
-goalsRoutes.patch('/companies/:companyId/goals/:goalId', async (c) => {
-	const access = await requireCompanyAccess(c);
+goalsRoutes.patch('/teams/:teamId/goals/:goalId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const goalId = c.req.param('goalId');
 
-	const board = await requireBoardMemberId(c, companyId);
+	const board = await requireBoardMemberId(c, teamId);
 	if (board instanceof Response) return board;
 
 	const existingResult = await db.query<{
@@ -152,8 +152,8 @@ goalsRoutes.patch('/companies/:companyId/goals/:goalId', async (c) => {
 		project_id: string | null;
 		status: GoalStatusType;
 	}>(
-		'SELECT id, title, description, project_id, status FROM goals WHERE id = $1 AND company_id = $2',
-		[goalId, companyId],
+		'SELECT id, title, description, project_id, status FROM goals WHERE id = $1 AND team_id = $2',
+		[goalId, teamId],
 	);
 	const existing = existingResult.rows[0];
 	if (!existing) return err(c, 'NOT_FOUND', 'Goal not found', 404);
@@ -188,12 +188,12 @@ goalsRoutes.patch('/companies/:companyId/goals/:goalId', async (c) => {
 	if (body.project_id !== undefined) {
 		let nextProject: string | null = null;
 		if (body.project_id) {
-			const projectCheck = await db.query(
-				'SELECT 1 FROM projects WHERE id = $1 AND company_id = $2',
-				[body.project_id, companyId],
-			);
+			const projectCheck = await db.query('SELECT 1 FROM projects WHERE id = $1 AND team_id = $2', [
+				body.project_id,
+				teamId,
+			]);
 			if (projectCheck.rows.length === 0) {
-				return err(c, 'INVALID_REQUEST', 'project_id does not belong to this company', 400);
+				return err(c, 'INVALID_REQUEST', 'project_id does not belong to this team', 400);
 			}
 			nextProject = body.project_id;
 		}
@@ -223,11 +223,11 @@ goalsRoutes.patch('/companies/:companyId/goals/:goalId', async (c) => {
 	);
 	const goal = updateResult.rows[0];
 
-	broadcastChange(c, wsRoom.company(companyId), 'goals', 'UPDATE', goal);
+	broadcastChange(c, wsRoom.team(teamId), 'goals', 'UPDATE', goal);
 
 	if (contentChanged) {
 		try {
-			await enqueueGoalReviewTask(db, companyId, goalId, 'updated', c.get('wsManager'));
+			await enqueueGoalReviewTask(db, teamId, goalId, 'updated', c.get('wsManager'));
 		} catch (e) {
 			log.error('Failed to enqueue goal review task (update):', e);
 		}
@@ -236,25 +236,25 @@ goalsRoutes.patch('/companies/:companyId/goals/:goalId', async (c) => {
 	return ok(c, goal);
 });
 
-goalsRoutes.delete('/companies/:companyId/goals/:goalId', async (c) => {
-	const access = await requireCompanyAccess(c);
+goalsRoutes.delete('/teams/:teamId/goals/:goalId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const goalId = c.req.param('goalId');
 
-	const board = await requireBoardMemberId(c, companyId);
+	const board = await requireBoardMemberId(c, teamId);
 	if (board instanceof Response) return board;
 
 	const result = await db.query<Record<string, unknown>>(
 		`UPDATE goals SET status = 'archived'::goal_status, updated_at = now()
-		 WHERE id = $1 AND company_id = $2
+		 WHERE id = $1 AND team_id = $2
 		 RETURNING *`,
-		[goalId, companyId],
+		[goalId, teamId],
 	);
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Goal not found', 404);
 	}
-	broadcastChange(c, wsRoom.company(companyId), 'goals', 'UPDATE', result.rows[0]);
+	broadcastChange(c, wsRoom.team(teamId), 'goals', 'UPDATE', result.rows[0]);
 	return ok(c, result.rows[0]);
 });

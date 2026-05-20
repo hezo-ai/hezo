@@ -9,7 +9,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let db: PGlite;
 let app: Hono<Env>;
 let token: string;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -18,21 +18,21 @@ beforeAll(async () => {
 	app = ctx.app;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
-	const companyTypeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Wakeup Co',
 
-			template_id: companyTypeId,
+			template_id: teamTemplateId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -44,7 +44,7 @@ afterAll(async () => {
 
 describe('wakeup service', () => {
 	it('creates a wakeup request', async () => {
-		const id = await createWakeup(db, agentId, companyId, 'assignment', {
+		const id = await createWakeup(db, agentId, teamId, 'assignment', {
 			issue_id: 'test-issue',
 		});
 		expect(id).toBeTruthy();
@@ -58,10 +58,10 @@ describe('wakeup service', () => {
 	it('does not coalesce wakeups targeting different issues', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
-		const id1 = await createWakeup(db, agentId, companyId, 'mention', {
+		const id1 = await createWakeup(db, agentId, teamId, 'mention', {
 			issue_id: 'coalesce-issue-a',
 		});
-		const id2 = await createWakeup(db, agentId, companyId, 'mention', {
+		const id2 = await createWakeup(db, agentId, teamId, 'mention', {
 			issue_id: 'coalesce-issue-b',
 		});
 
@@ -78,10 +78,10 @@ describe('wakeup service', () => {
 	it('coalesces wakeups for the same issue within the window', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
-		const id1 = await createWakeup(db, agentId, companyId, 'mention', {
+		const id1 = await createWakeup(db, agentId, teamId, 'mention', {
 			issue_id: 'same-issue',
 		});
-		const id2 = await createWakeup(db, agentId, companyId, 'mention', {
+		const id2 = await createWakeup(db, agentId, teamId, 'mention', {
 			issue_id: 'same-issue',
 		});
 
@@ -97,10 +97,10 @@ describe('wakeup service', () => {
 	it('coalesces wakeups that have no issue_id', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
-		const id1 = await createWakeup(db, agentId, companyId, 'timer', {
+		const id1 = await createWakeup(db, agentId, teamId, 'timer', {
 			reason: 'tick-a',
 		});
-		const id2 = await createWakeup(db, agentId, companyId, 'timer', {
+		const id2 = await createWakeup(db, agentId, teamId, 'timer', {
 			reason: 'tick-b',
 		});
 
@@ -108,13 +108,13 @@ describe('wakeup service', () => {
 	});
 
 	it('respects idempotency keys', async () => {
-		const id1 = await createWakeup(db, agentId, companyId, 'timer', {}, 'unique-key-1');
-		const id2 = await createWakeup(db, agentId, companyId, 'timer', {}, 'unique-key-1');
+		const id1 = await createWakeup(db, agentId, teamId, 'timer', {}, 'unique-key-1');
+		const id2 = await createWakeup(db, agentId, teamId, 'timer', {}, 'unique-key-1');
 		expect(id2).toBe(id1);
 	});
 
 	it('creates wakeup on issue reassignment via PATCH', async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Wakeup Project', description: 'Test project.' }),
@@ -122,14 +122,14 @@ describe('wakeup service', () => {
 		const projectId = (await projectRes.json()).data.id;
 
 		// Create a second agent to reassign to
-		const agent2Res = await app.request(`/api/companies/${companyId}/agents`, {
+		const agent2Res = await app.request(`/api/teams/${teamId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Reassign Target' }),
 		});
 		const agent2Id = (await agent2Res.json()).data.id;
 
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: projectId, title: 'Wakeup Issue', assignee_id: agentId }),
@@ -138,7 +138,7 @@ describe('wakeup service', () => {
 
 		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agent2Id]);
 
-		await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		await app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: agent2Id }),
@@ -154,7 +154,7 @@ describe('wakeup service', () => {
 	});
 
 	it('creates wakeup on issue creation with agent assignee', async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Create Wakeup Project', description: 'Test project.' }),
@@ -163,7 +163,7 @@ describe('wakeup service', () => {
 
 		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -184,14 +184,14 @@ describe('wakeup service', () => {
 	});
 
 	it('rejects issue creation without assignee', async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'No Wakeup Project', description: 'Test project.' }),
 		});
 		const projectId = (await projectRes.json()).data.id;
 
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -203,14 +203,14 @@ describe('wakeup service', () => {
 	});
 
 	it('creates wakeup on sub-issue creation with agent assignee', async () => {
-		const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Sub-issue Wakeup Project', description: 'Test project.' }),
 		});
 		const projectId = (await projectRes.json()).data.id;
 
-		const parentRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const parentRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: projectId, title: 'Parent issue', assignee_id: agentId }),
@@ -219,7 +219,7 @@ describe('wakeup service', () => {
 
 		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
-		const subRes = await app.request(`/api/companies/${companyId}/issues/${parentId}/sub-issues`, {
+		const subRes = await app.request(`/api/teams/${teamId}/issues/${parentId}/sub-issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

@@ -9,7 +9,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let db: PGlite;
 let app: Hono<Env>;
 let token: string;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 
 beforeAll(async () => {
@@ -18,7 +18,7 @@ beforeAll(async () => {
 	app = ctx.app;
 	token = ctx.token;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -27,9 +27,9 @@ beforeAll(async () => {
 			description: 'Build amazing things',
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Template Project', description: 'Test project.' }),
@@ -44,50 +44,50 @@ afterAll(async () => {
 describe('template resolver', () => {
 	it('resolves {{current_date}}', async () => {
 		const result = await resolveSystemPrompt(db, 'Today is {{current_date}}.', {
-			companyId,
+			teamId,
 		});
 		expect(result).toMatch(/Today is \d{4}-\d{2}-\d{2}\./);
 	});
 
-	it('resolves {{company_name}}', async () => {
-		const result = await resolveSystemPrompt(db, 'Working for {{company_name}}.', {
-			companyId,
+	it('resolves {{team_name}}', async () => {
+		const result = await resolveSystemPrompt(db, 'Working for {{team_name}}.', {
+			teamId,
 		});
 		expect(result).toContain('Working for Template Co.');
 	});
 
-	it('resolves {{company_mission}} to company description', async () => {
-		const result = await resolveSystemPrompt(db, 'Mission: {{company_mission}}', {
-			companyId,
+	it('resolves {{team_mission}} to team description', async () => {
+		const result = await resolveSystemPrompt(db, 'Mission: {{team_mission}}', {
+			teamId,
 		});
 		expect(result).toContain('Mission: Build amazing things');
 	});
 
-	it('resolves {{company_description}} to company description', async () => {
-		const result = await resolveSystemPrompt(db, 'Desc: {{company_description}}', {
-			companyId,
+	it('resolves {{team_description}} to team description', async () => {
+		const result = await resolveSystemPrompt(db, 'Desc: {{team_description}}', {
+			teamId,
 		});
 		expect(result).toContain('Desc: Build amazing things');
 	});
 
-	it('resolves company_name, company_mission, and company_description in a single query', async () => {
+	it('resolves team_name, team_mission, and team_description in a single query', async () => {
 		const result = await resolveSystemPrompt(
 			db,
-			'{{company_name}} - {{company_mission}} ({{company_description}})',
-			{ companyId },
+			'{{team_name}} - {{team_mission}} ({{team_description}})',
+			{ teamId },
 		);
 		expect(result).toContain('Template Co - Build amazing things (Build amazing things)');
 	});
 
 	it('resolves {{kb_context}} with no docs', async () => {
 		const result = await resolveSystemPrompt(db, 'KB: {{kb_context}}', {
-			companyId,
+			teamId,
 		});
 		expect(result).toContain('No knowledge base documents available');
 	});
 
 	it('renders {{kb_context}} with bare-filename link tokens when docs exist', async () => {
-		const kbRes = await app.request(`/api/companies/${companyId}/kb-docs`, {
+		const kbRes = await app.request(`/api/teams/${teamId}/kb-docs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -98,39 +98,36 @@ describe('template resolver', () => {
 		});
 		expect(kbRes.status).toBe(201);
 
-		const result = await resolveSystemPrompt(db, '{{kb_context}}', { companyId });
+		const result = await resolveSystemPrompt(db, '{{kb_context}}', { teamId });
 		expect(result).toContain('## Coding Standards (link: coding-standards.md)');
 		expect(result).toContain('Prefer early returns.');
 	});
 
-	it('resolves {{company_preferences_context}} with no prefs', async () => {
-		const result = await resolveSystemPrompt(db, 'Prefs: {{company_preferences_context}}', {
-			companyId,
+	it('resolves {{team_preferences_context}} with no prefs', async () => {
+		const result = await resolveSystemPrompt(db, 'Prefs: {{team_preferences_context}}', {
+			teamId,
 		});
 		expect(result).toContain('No preferences set');
 	});
 
 	it('resolves {{project_docs_context}} without designated repo', async () => {
 		const result = await resolveSystemPrompt(db, 'Docs: {{project_docs_context}}', {
-			companyId,
+			teamId,
 			projectId,
 		});
 		expect(result).toContain('No project documentation available');
 	});
 
 	it('renders {{project_docs_context}} with a not-a-file warning and bare-filename headings when docs exist', async () => {
-		const docRes = await app.request(
-			`/api/companies/${companyId}/projects/${projectId}/docs/spec.md`,
-			{
-				method: 'PUT',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ content: 'Detailed spec.' }),
-			},
-		);
+		const docRes = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/spec.md`, {
+			method: 'PUT',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: 'Detailed spec.' }),
+		});
 		expect(docRes.status).toBe(200);
 
 		const result = await resolveSystemPrompt(db, '{{project_docs_context}}', {
-			companyId,
+			teamId,
 			projectId,
 		});
 		expect(result).toContain(
@@ -151,74 +148,72 @@ describe('template resolver', () => {
 	});
 
 	it('passes through text without template variables', async () => {
-		const result = await resolveSystemPrompt(db, 'Hello world', { companyId });
+		const result = await resolveSystemPrompt(db, 'Hello world', { teamId });
 		expect(result).toContain('Hello world');
 	});
 
 	it('resolves multiple variables in one template', async () => {
-		const result = await resolveSystemPrompt(
-			db,
-			'Company: {{company_name}}, Date: {{current_date}}',
-			{ companyId },
-		);
-		expect(result).toContain('Company: Template Co');
+		const result = await resolveSystemPrompt(db, 'Team: {{team_name}}, Date: {{current_date}}', {
+			teamId,
+		});
+		expect(result).toContain('Team: Template Co');
 		expect(result).toMatch(/Date: \d{4}-\d{2}-\d{2}/);
 	});
 
 	it('resolves {{reports_to}} without agentId to empty string', async () => {
 		const result = await resolveSystemPrompt(db, 'Reports to: {{reports_to}}', {
-			companyId,
+			teamId,
 		});
 		expect(result).toContain('Reports to: ');
 	});
 
 	it('resolves {{requester_context}} to empty string', async () => {
 		const result = await resolveSystemPrompt(db, 'Context: {{requester_context}}', {
-			companyId,
+			teamId,
 		});
 		expect(result).toContain('Context: ');
 	});
 
-	it('resolves {{company_goals}} with no goals', async () => {
-		const result = await resolveSystemPrompt(db, 'Goals: {{company_goals}}', { companyId });
+	it('resolves {{team_goals}} with no goals', async () => {
+		const result = await resolveSystemPrompt(db, 'Goals: {{team_goals}}', { teamId });
 		expect(result).toContain('No active goals');
 	});
 
-	it('resolves {{company_goals}} with active and archived goals', async () => {
-		await app.request(`/api/companies/${companyId}/goals`, {
+	it('resolves {{team_goals}} with active and archived goals', async () => {
+		await app.request(`/api/teams/${teamId}/goals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Ship v1', description: 'Public launch by Q3.' }),
 		});
-		const scopedRes = await app.request(`/api/companies/${companyId}/goals`, {
+		const scopedRes = await app.request(`/api/teams/${teamId}/goals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Cut hosting costs', project_id: projectId }),
 		});
-		const archivedRes = await app.request(`/api/companies/${companyId}/goals`, {
+		const archivedRes = await app.request(`/api/teams/${teamId}/goals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Old goal' }),
 		});
 		const archivedId = (await archivedRes.json()).data.id;
-		await app.request(`/api/companies/${companyId}/goals/${archivedId}`, {
+		await app.request(`/api/teams/${teamId}/goals/${archivedId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'archived' }),
 		});
 		expect(scopedRes.status).toBe(201);
 
-		const result = await resolveSystemPrompt(db, '{{company_goals}}', { companyId });
+		const result = await resolveSystemPrompt(db, '{{team_goals}}', { teamId });
 		expect(result).toContain('Ship v1');
 		expect(result).toContain('Public launch by Q3');
 		expect(result).toContain('Cut hosting costs');
 		expect(result).toContain('Project: Template Project');
-		expect(result).toContain('Company-wide');
+		expect(result).toContain('Team-wide');
 		expect(result).not.toContain('Old goal');
 	});
 
 	it('appends shared working guidelines to every prompt', async () => {
-		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId });
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('## Working Guidelines');
 		expect(result).toContain('### Ticket Maintenance');
 		expect(result).toContain('### Completion Handoff');
@@ -233,27 +228,27 @@ describe('template resolver', () => {
 	});
 
 	it('completion handoff guidance covers mark-done, auto-wake, and no-mention rules', async () => {
-		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId });
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('### Completion Handoff');
 		expect(result).toContain('update_issue(status: "done")');
 		expect(result).toContain('dependents');
 		expect(result).toContain('do not `@`-mention any agent in that comment');
 	});
 
-	it('injects Run Context with only company id when no project/issue', async () => {
-		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId });
+	it('injects Run Context with only team id when no project/issue', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('## Run Context');
-		expect(result).toContain(`Company ID: ${companyId}`);
+		expect(result).toContain(`Team ID: ${teamId}`);
 		expect(result).not.toContain('Project ID:');
 		expect(result).not.toContain('Issue ID:');
 	});
 
-	it('injects Run Context with company + project ids when issue missing', async () => {
+	it('injects Run Context with team + project ids when issue missing', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
-			companyId,
+			teamId,
 			projectId,
 		});
-		expect(result).toContain(`Company ID: ${companyId}`);
+		expect(result).toContain(`Team ID: ${teamId}`);
 		expect(result).toContain(`Project ID: ${projectId}`);
 		expect(result).not.toContain('Issue ID:');
 	});
@@ -261,11 +256,11 @@ describe('template resolver', () => {
 	it('injects Run Context with all three ids when issueId supplied', async () => {
 		const fakeIssueId = '11111111-2222-3333-4444-555555555555';
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
-			companyId,
+			teamId,
 			projectId,
 			issueId: fakeIssueId,
 		});
-		expect(result).toContain(`Company ID: ${companyId}`);
+		expect(result).toContain(`Team ID: ${teamId}`);
 		expect(result).toContain(`Project ID: ${projectId}`);
 		expect(result).toContain(`Issue ID: ${fakeIssueId}`);
 	});
@@ -273,48 +268,48 @@ describe('template resolver', () => {
 	it('preview mode substitutes placeholders, omits Run Context, keeps Teammates and Working Guidelines', async () => {
 		const result = await resolveSystemPrompt(
 			db,
-			'Working for {{company_name}}, mission: {{company_mission}}.',
-			{ companyId, mode: 'preview' },
+			'Working for {{team_name}}, mission: {{team_mission}}.',
+			{ teamId, mode: 'preview' },
 		);
 		expect(result).toContain('Working for Template Co');
 		expect(result).toContain('Build amazing things');
 		expect(result).not.toContain('{{');
 		expect(result).not.toContain('## Run Context');
-		expect(result).not.toContain(`Company ID: ${companyId}`);
+		expect(result).not.toContain(`Team ID: ${teamId}`);
 		expect(result).toContain('## Teammates');
 		expect(result).toContain('## Working Guidelines');
 	});
 });
 
 describe('template resolver with agents', () => {
-	let agentCompanyId: string;
+	let agentTeamId: string;
 	let engineerAgentId: string;
 	let ceoAgentId: string;
 
 	beforeAll(async () => {
-		// Get the builtin company type
-		const typesRes = await app.request('/api/company-types', {
+		// Get the builtin team type
+		const typesRes = await app.request('/api/team-templates', {
 			method: 'GET',
 			headers: authHeader(token),
 		});
 		const types = (await typesRes.json()) as any;
 		const softDevType = types.data.find((t: any) => t.name === 'Startup');
 
-		// Create a company with the software dev team type to auto-create agents
-		const companyRes = await app.request('/api/companies', {
+		// Create a team with the software dev team type to auto-create agents
+		const teamRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Agent Test Co',
 
-				description: 'Test company for agent templates',
+				description: 'Test team for agent templates',
 				template_id: softDevType.id,
 			}),
 		});
-		agentCompanyId = ((await companyRes.json()) as any).data.id;
+		agentTeamId = ((await teamRes.json()) as any).data.id;
 
 		// Get agents
-		const agentsRes = await app.request(`/api/companies/${agentCompanyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${agentTeamId}/agents`, {
 			method: 'GET',
 			headers: authHeader(token),
 		});
@@ -327,7 +322,7 @@ describe('template resolver with agents', () => {
 
 	it('resolves {{reports_to}} with agentId to manager display name', async () => {
 		const result = await resolveSystemPrompt(db, 'Reports to: {{reports_to}}', {
-			companyId: agentCompanyId,
+			teamId: agentTeamId,
 			agentId: engineerAgentId,
 		});
 		expect(result).toContain('Reports to: Architect');
@@ -335,52 +330,51 @@ describe('template resolver with agents', () => {
 
 	it('resolves {{reports_to}} for CEO (no manager) to empty string', async () => {
 		const result = await resolveSystemPrompt(db, 'Reports to: {{reports_to}}', {
-			companyId: agentCompanyId,
+			teamId: agentTeamId,
 			agentId: ceoAgentId,
 		});
 		expect(result).toContain('Reports to: ');
 	});
 
 	it('resolves a full system prompt template with all variables', async () => {
-		const template = `You are an Engineer at {{company_name}}.
+		const template = `You are an Engineer at {{team_name}}.
 
-Company mission: {{company_mission}}
+Team mission: {{team_mission}}
 You report to: Architect ({{reports_to}})
 
 Current date: {{current_date}}
 
 {{kb_context}}
 
-{{company_preferences_context}}
+{{team_preferences_context}}
 
 {{project_docs_context}}
 
 {{requester_context}}`;
 
 		const result = await resolveSystemPrompt(db, template, {
-			companyId: agentCompanyId,
+			teamId: agentTeamId,
 			agentId: engineerAgentId,
 		});
 
 		expect(result).toContain('You are an Engineer at Agent Test Co.');
-		expect(result).toContain('Company mission: Test company for agent templates');
+		expect(result).toContain('Team mission: Test team for agent templates');
 		expect(result).toContain('You report to: Architect (Architect)');
 		expect(result).toMatch(/Current date: \d{4}-\d{2}-\d{2}/);
-		expect(result).toContain('Company Overview');
+		expect(result).toContain('Team Overview');
 		expect(result).toContain('No preferences set');
 		expect(result).toContain('No project documentation available');
 	});
 
 	async function getAgentPrompt(agentId: string): Promise<string> {
-		const res = await app.request(
-			`/api/companies/${agentCompanyId}/agents/${agentId}/system-prompt`,
-			{ headers: authHeader(token) },
-		);
+		const res = await app.request(`/api/teams/${agentTeamId}/agents/${agentId}/system-prompt`, {
+			headers: authHeader(token),
+		});
 		return (((await res.json()) as any).data?.content ?? '') as string;
 	}
 
-	it('agents created from company type have system prompts', async () => {
-		const agentsRes = await app.request(`/api/companies/${agentCompanyId}/agents`, {
+	it('agents created from team type have system prompts', async () => {
+		const agentsRes = await app.request(`/api/teams/${agentTeamId}/agents`, {
 			method: 'GET',
 			headers: authHeader(token),
 		});
@@ -390,8 +384,8 @@ Current date: {{current_date}}
 			const prompt = await getAgentPrompt(agent.id);
 			expect(prompt).toBeTruthy();
 			expect(prompt.length).toBeGreaterThan(100);
-			expect(prompt).toContain('{{company_name}}');
-			expect(prompt).toContain('{{company_mission}}');
+			expect(prompt).toContain('{{team_name}}');
+			expect(prompt).toContain('{{team_mission}}');
 			expect(prompt).toContain('{{current_date}}');
 			expect(prompt).toContain('{{kb_context}}');
 			expect(prompt).toMatch(/##\s*Rules/);
@@ -399,7 +393,7 @@ Current date: {{current_date}}
 	});
 
 	it('each agent has role-specific system prompt content', async () => {
-		const agentsRes = await app.request(`/api/companies/${agentCompanyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${agentTeamId}/agents`, {
 			method: 'GET',
 			headers: authHeader(token),
 		});
@@ -430,7 +424,7 @@ Current date: {{current_date}}
 	});
 
 	it('CEO system prompt does not use {{reports_to}}', async () => {
-		const agentsRes = await app.request(`/api/companies/${agentCompanyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${agentTeamId}/agents`, {
 			method: 'GET',
 			headers: authHeader(token),
 		});
@@ -440,7 +434,7 @@ Current date: {{current_date}}
 	});
 
 	it('non-CEO agents use {{reports_to}} in their system prompts', async () => {
-		const agentsRes = await app.request(`/api/companies/${agentCompanyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${agentTeamId}/agents`, {
 			method: 'GET',
 			headers: authHeader(token),
 		});
@@ -455,26 +449,26 @@ Current date: {{current_date}}
 });
 
 describe('teammates block', () => {
-	let tbCompanyId: string;
+	let tbTeamId: string;
 	let tbCeoMemberId: string;
 	let tbEngineerMemberId: string;
 
 	beforeAll(async () => {
-		const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
 
-		const companyRes = await app.request('/api/companies', {
+		const teamRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Teammates Co',
-				description: 'Teammates block test company',
+				description: 'Teammates block test team',
 				template_id: startup.id,
 			}),
 		});
-		tbCompanyId = ((await companyRes.json()) as any).data.id;
+		tbTeamId = ((await teamRes.json()) as any).data.id;
 
-		const agentsRes = await app.request(`/api/companies/${tbCompanyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${tbTeamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = ((await agentsRes.json()) as any).data;
@@ -483,14 +477,14 @@ describe('teammates block', () => {
 	});
 
 	it('appends a Teammates header and the slug-not-title directive to every prompt', async () => {
-		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId: tbCompanyId });
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId: tbTeamId });
 		expect(result).toContain('## Teammates');
 		expect(result).toContain('write `@<slug>` from this list');
 		expect(result).toContain('Bare titles do not linkify and do not wake the teammate');
 	});
 
 	it('lists every enabled peer in @<slug> — Title form, sorted by title', async () => {
-		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId: tbCompanyId });
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId: tbTeamId });
 		expect(result).toContain('- @architect — Architect');
 		expect(result).toContain('- @ceo — CEO');
 		expect(result).toContain('- @engineer — Engineer');
@@ -509,7 +503,7 @@ describe('teammates block', () => {
 
 	it('excludes the running agent from the teammates list', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
-			companyId: tbCompanyId,
+			teamId: tbTeamId,
 			agentId: tbCeoMemberId,
 		});
 		expect(result).toContain('## Teammates');
@@ -524,7 +518,7 @@ describe('teammates block', () => {
 			[tbEngineerMemberId],
 		);
 
-		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId: tbCompanyId });
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId: tbTeamId });
 		expect(result).toContain('## Teammates');
 		expect(result).not.toContain('- @engineer — Engineer');
 		expect(result).toContain('- @architect — Architect');
@@ -535,18 +529,18 @@ describe('teammates block', () => {
 		);
 	});
 
-	it('does not include agents from other companies', async () => {
-		const otherRes = await app.request('/api/companies', {
+	it('does not include agents from other teams', async () => {
+		const otherRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Isolated Co', description: 'builtin agents only' }),
 		});
 		const otherId = ((await otherRes.json()) as any).data.id;
 
-		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId: otherId });
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId: otherId });
 		expect(result).toContain('## Teammates');
-		// Builtin CEO + Coach are seeded for every company, but the startup-template-only
-		// roles from the other test company must not bleed in.
+		// Builtin CEO + Coach are seeded for every team, but the startup-template-only
+		// roles from the other test team must not bleed in.
 		expect(result).toContain('- @ceo — CEO');
 		expect(result).toContain('- @coach — Coach');
 		expect(result).not.toContain('- @architect — Architect');
@@ -555,7 +549,7 @@ describe('teammates block', () => {
 	});
 
 	it('renders before SHARED_INSTRUCTIONS and after the Project State block', async () => {
-		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId: tbCompanyId });
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId: tbTeamId });
 		const teammatesIdx = result.indexOf('## Teammates');
 		const guidelinesIdx = result.indexOf('## Working Guidelines');
 		expect(teammatesIdx).toBeGreaterThan(-1);
@@ -565,26 +559,26 @@ describe('teammates block', () => {
 });
 
 describe('team context block', () => {
-	let tcCompanyId: string;
+	let tcTeamId: string;
 	let tcCeoMemberId: string;
 	let tcEngineerMemberId: string;
 
 	beforeAll(async () => {
-		const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
 
-		const companyRes = await app.request('/api/companies', {
+		const teamRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Team Context Co',
-				description: 'Team context block test company',
+				description: 'Team context block test team',
 				template_id: startup.id,
 			}),
 		});
-		tcCompanyId = ((await companyRes.json()) as any).data.id;
+		tcTeamId = ((await teamRes.json()) as any).data.id;
 
-		const agentsRes = await app.request(`/api/companies/${tcCompanyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${tcTeamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = ((await agentsRes.json()) as any).data;
@@ -594,7 +588,7 @@ describe('team context block', () => {
 
 	it('emits a ## Your Team block when the agent has a stored team_context', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
-			companyId: tcCompanyId,
+			teamId: tcTeamId,
 			agentId: tcEngineerMemberId,
 		});
 		expect(result).toContain('## Your Team');
@@ -603,7 +597,7 @@ describe('team context block', () => {
 
 	it("renders the engineer's stored team_context content (Startup template default)", async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
-			companyId: tcCompanyId,
+			teamId: tcTeamId,
 			agentId: tcEngineerMemberId,
 		});
 		expect(result).toContain('You report to the @architect');
@@ -617,7 +611,7 @@ describe('team context block', () => {
 		]);
 
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
-			companyId: tcCompanyId,
+			teamId: tcTeamId,
 			agentId: tcEngineerMemberId,
 		});
 		expect(result).not.toContain('## Your Team');
@@ -625,8 +619,8 @@ describe('team context block', () => {
 		expect(result).toContain('## Teammates');
 	});
 
-	it('omits the block when no agentId is supplied (preview/company-level resolve)', async () => {
-		const result = await resolveSystemPrompt(db, 'Simple prompt', { companyId: tcCompanyId });
+	it('omits the block when no agentId is supplied (preview/team-level resolve)', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId: tcTeamId });
 		expect(result).not.toContain('## Your Team');
 	});
 
@@ -636,7 +630,7 @@ describe('team context block', () => {
 			tcCeoMemberId,
 		]);
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
-			companyId: tcCompanyId,
+			teamId: tcTeamId,
 			agentId: tcCeoMemberId,
 		});
 		const yourTeamIdx = result.indexOf('## Your Team');
@@ -651,7 +645,7 @@ describe('team context block', () => {
 			tcCeoMemberId,
 		]);
 		const result = await resolveSystemPrompt(db, 'Body: {{team_context}}', {
-			companyId: tcCompanyId,
+			teamId: tcTeamId,
 			agentId: tcCeoMemberId,
 		});
 		expect(result).toContain('Body: INLINE TEAM CONTEXT MARKER');
@@ -659,34 +653,34 @@ describe('team context block', () => {
 });
 
 describe('project state block', () => {
-	let psCompanyId: string;
+	let psTeamId: string;
 	let psProjectId: string;
 	let psCeoMemberId: string;
 	let psArchitectMemberId: string;
 
 	beforeAll(async () => {
-		const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
 
-		const companyRes = await app.request('/api/companies', {
+		const teamRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Project State Co',
-				description: 'PS test company',
+				description: 'PS test team',
 				template_id: startup.id,
 			}),
 		});
-		psCompanyId = ((await companyRes.json()) as any).data.id;
+		psTeamId = ((await teamRes.json()) as any).data.id;
 
-		const agentsRes = await app.request(`/api/companies/${psCompanyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${psTeamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = ((await agentsRes.json()) as any).data;
 		psCeoMemberId = agents.find((a: any) => a.slug === 'ceo').id;
 		psArchitectMemberId = agents.find((a: any) => a.slug === 'architect').id;
 
-		const projectRes = await app.request(`/api/companies/${psCompanyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${psTeamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'PS Project', description: 'Test' }),
@@ -696,14 +690,14 @@ describe('project state block', () => {
 
 	it('omits Project State block when projectId is absent', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
-			companyId: psCompanyId,
+			teamId: psTeamId,
 		});
 		expect(result).not.toContain('## Project State');
 	});
 
 	it('renders Project State header with active tickets when projectId is set', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
-			companyId: psCompanyId,
+			teamId: psTeamId,
 			projectId: psProjectId,
 		});
 		expect(result).toContain('## Project State');
@@ -715,7 +709,7 @@ describe('project state block', () => {
 
 	it('renders empty-state when the project has no active tickets', async () => {
 		// Cancel the auto-created planning ticket on a fresh project so it has no active tickets.
-		const projectRes = await app.request(`/api/companies/${psCompanyId}/projects`, {
+		const projectRes = await app.request(`/api/teams/${psTeamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Empty PS Project', description: 'Test' }),
@@ -727,7 +721,7 @@ describe('project state block', () => {
 		]);
 
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
-			companyId: psCompanyId,
+			teamId: psTeamId,
 			projectId: emptyProjectId,
 		});
 		expect(result).toContain('## Project State');
@@ -735,7 +729,7 @@ describe('project state block', () => {
 	});
 
 	it('lists active tickets and excludes terminal-status ones', async () => {
-		const activeRes = await app.request(`/api/companies/${psCompanyId}/issues`, {
+		const activeRes = await app.request(`/api/teams/${psTeamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -746,7 +740,7 @@ describe('project state block', () => {
 		});
 		const active = ((await activeRes.json()) as any).data;
 
-		const doneRes = await app.request(`/api/companies/${psCompanyId}/issues`, {
+		const doneRes = await app.request(`/api/teams/${psTeamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -756,14 +750,14 @@ describe('project state block', () => {
 			}),
 		});
 		const done = ((await doneRes.json()) as any).data;
-		await app.request(`/api/companies/${psCompanyId}/issues/${done.id}`, {
+		await app.request(`/api/teams/${psTeamId}/issues/${done.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
 		});
 
 		const result = await resolveSystemPrompt(db, 'X', {
-			companyId: psCompanyId,
+			teamId: psTeamId,
 			projectId: psProjectId,
 		});
 		expect(result).toContain('## Project State');
@@ -774,7 +768,7 @@ describe('project state block', () => {
 	});
 
 	it('shows "Tickets you created" subsection scoped to the agent\'s prior runs', async () => {
-		const planningIssueRes = await app.request(`/api/companies/${psCompanyId}/issues`, {
+		const planningIssueRes = await app.request(`/api/teams/${psTeamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -786,21 +780,21 @@ describe('project state block', () => {
 		const planningIssue = ((await planningIssueRes.json()) as any).data;
 
 		const run = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
 			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now())
 			 RETURNING id`,
-			[psCeoMemberId, psCompanyId, planningIssue.id],
+			[psCeoMemberId, psTeamId, planningIssue.id],
 		);
 
 		const subRes = await db.query<{ identifier: string }>(
-			`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
+			`INSERT INTO issues (team_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
 			 VALUES ($1, $2, $3, NULL, $4, next_project_issue_number($2), 'PS-CR-1', 'Delegated to architect by CEO', '', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
 			 RETURNING identifier`,
-			[psCompanyId, psProjectId, psArchitectMemberId, run.rows[0].id],
+			[psTeamId, psProjectId, psArchitectMemberId, run.rows[0].id],
 		);
 
 		const result = await resolveSystemPrompt(db, 'X', {
-			companyId: psCompanyId,
+			teamId: psTeamId,
 			projectId: psProjectId,
 			agentId: psCeoMemberId,
 		});
@@ -811,7 +805,7 @@ describe('project state block', () => {
 
 	it('"Tickets you created" is empty for an agent that hasn\'t created any', async () => {
 		const result = await resolveSystemPrompt(db, 'X', {
-			companyId: psCompanyId,
+			teamId: psTeamId,
 			projectId: psProjectId,
 			agentId: psArchitectMemberId,
 		});
@@ -821,7 +815,7 @@ describe('project state block', () => {
 
 	it('omits "Tickets you created" subsection when agentId is absent', async () => {
 		const result = await resolveSystemPrompt(db, 'X', {
-			companyId: psCompanyId,
+			teamId: psTeamId,
 			projectId: psProjectId,
 		});
 		expect(result).not.toContain('Tickets you created on prior runs');

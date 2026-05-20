@@ -60,7 +60,7 @@ export interface AgentInfo {
 	id: string;
 	title: string;
 	slug?: string | null;
-	company_id: string;
+	team_id: string;
 	default_effort?: string | null;
 	model_override_provider?: AiProvider | null;
 	model_override_model?: string | null;
@@ -84,8 +84,8 @@ export interface IssueInfo {
 interface ProjectInfo {
 	id: string;
 	slug: string;
-	company_id: string;
-	company_slug: string;
+	team_id: string;
+	team_slug: string;
 	container_id: string;
 	container_status: string;
 	designated_repo_id: string | null;
@@ -200,12 +200,12 @@ export function getContainerPromptPath(heartbeatRunId: string): string {
 
 export function getHostPromptPath(
 	dataDir: string,
-	companySlug: string,
+	teamSlug: string,
 	projectSlug: string,
 	heartbeatRunId: string,
 ): string {
 	return join(
-		getWorkspacePath(dataDir, companySlug, projectSlug),
+		getWorkspacePath(dataDir, teamSlug, projectSlug),
 		'.hezo',
 		'prompts',
 		`${heartbeatRunId}.txt`,
@@ -240,9 +240,9 @@ async function buildRunContext(
 	bridge: BridgeRunnerArgs | null,
 	egress: EgressEnvDescriptor | null,
 ): Promise<RunContext> {
-	const storedPrompt = await getAgentSystemPrompt(deps.db, agent.company_id, agent.id);
+	const storedPrompt = await getAgentSystemPrompt(deps.db, agent.team_id, agent.id);
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, storedPrompt, {
-		companyId: agent.company_id,
+		teamId: agent.team_id,
 		projectId: project.id,
 		issueId: issue.id,
 		agentId: agent.id,
@@ -266,7 +266,7 @@ async function buildRunContext(
 	const agentJwt = await signAgentJwt(
 		deps.masterKeyManager,
 		agent.id,
-		agent.company_id,
+		agent.team_id,
 		heartbeatRunId,
 	);
 	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort, agent.slug);
@@ -275,7 +275,7 @@ async function buildRunContext(
 	const isCoachReview = wakeupPayload?.trigger === 'issue_done';
 	const mentionContext =
 		wakeupPayload?.source === WakeupSource.Mention
-			? await loadMentionContext(deps.db, agent.id, agent.company_id, wakeupPayload)
+			? await loadMentionContext(deps.db, agent.id, agent.team_id, wakeupPayload)
 			: null;
 	const replyContext =
 		wakeupPayload?.source === WakeupSource.Reply
@@ -283,7 +283,7 @@ async function buildRunContext(
 			: null;
 	const spawnedFrom = await loadSpawnedFromIssue(deps.db, issue);
 	const basePrompt = isCoachReview
-		? await buildCoachReviewPrompt(deps.db, resolvedPrompt, issue, agent.company_id)
+		? await buildCoachReviewPrompt(deps.db, resolvedPrompt, issue, agent.team_id)
 		: buildTaskPrompt(resolvedPrompt, issue, wakeupPayload, {
 				mentionContext,
 				replyContext,
@@ -297,7 +297,7 @@ async function buildRunContext(
 
 	const subscriptionMount = buildSubscriptionMount(
 		deps.dataDir,
-		project.company_slug,
+		project.team_slug,
 		project.slug,
 		heartbeatRunId,
 		provider,
@@ -309,7 +309,7 @@ async function buildRunContext(
 		? ensureRuntimeHomeDir(
 				provider,
 				deps.dataDir,
-				project.company_slug,
+				project.team_slug,
 				project.slug,
 				heartbeatRunId,
 				subscriptionMount,
@@ -323,7 +323,7 @@ async function buildRunContext(
 			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
 			bearerToken: agentJwt,
 		},
-		...(await loadMcpConnectionDescriptors(deps.db, agent.company_id, project.id)),
+		...(await loadMcpConnectionDescriptors(deps.db, agent.team_id, project.id)),
 	];
 
 	const mcpInjection = adapter.build(mcpDescriptors, {
@@ -341,7 +341,7 @@ async function buildRunContext(
 		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
 		`HEZO_AGENT_ID=${agent.id}`,
-		`HEZO_COMPANY_ID=${agent.company_id}`,
+		`HEZO_TEAM_ID=${agent.team_id}`,
 		`HEZO_ISSUE_ID=${issue.id}`,
 		`HEZO_ISSUE_IDENTIFIER=${issue.identifier}`,
 		`HEZO_AGENT_EFFORT=${effort}`,
@@ -420,13 +420,13 @@ function exitReasonFromSignal(signal?: AbortSignal): ContainerExitAbortReason | 
 async function createSyntheticOnDemandWakeup(
 	db: PGlite,
 	memberId: string,
-	companyId: string,
+	teamId: string,
 ): Promise<string> {
 	const r = await db.query<{ id: string }>(
-		`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, payload, claimed_at)
+		`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload, claimed_at)
 		 VALUES ($1, $2, $3::wakeup_source, 'claimed'::wakeup_status, '{}'::jsonb, now())
 		 RETURNING id`,
-		[memberId, companyId, WakeupSource.OnDemand],
+		[memberId, teamId, WakeupSource.OnDemand],
 	);
 	return r.rows[0].id;
 }
@@ -447,12 +447,12 @@ export async function runAgent(
 
 	const runBroadcast: HeartbeatRunBroadcast = {
 		wsManager: deps.wsManager,
-		companyId: agent.company_id,
+		teamId: agent.team_id,
 		issueId: issue.id,
 		memberId: agent.id,
 	};
 	const effectiveWakeupId =
-		wakeupId ?? (await createSyntheticOnDemandWakeup(deps.db, agent.id, agent.company_id));
+		wakeupId ?? (await createSyntheticOnDemandWakeup(deps.db, agent.id, agent.team_id));
 	const heartbeatRunId = await createHeartbeatRun(
 		deps.db,
 		agent,
@@ -593,7 +593,7 @@ export async function runAgent(
 		sshSocketHostPath = getRunSocketPath(deps.dataDir, heartbeatRunId);
 		const allocated = await deps.sshAgentServer.allocateRunSocket(
 			heartbeatRunId,
-			{ companyId: agent.company_id, agentId: agent.id },
+			{ teamId: agent.team_id, agentId: agent.id },
 			sshSocketHostPath,
 		);
 		sshSocketContainerPath = `/run/hezo/${heartbeatRunId}.sock`;
@@ -613,7 +613,7 @@ export async function runAgent(
 		// their env. Failing fast prevents real secrets from leaking through
 		// a fall-through path. If allocation fails, the run aborts.
 		const allocated = await deps.egressProxy.allocateRunProxy(heartbeatRunId, {
-			companyId: agent.company_id,
+			teamId: agent.team_id,
 			agentId: agent.id,
 			projectId: project.id,
 		});
@@ -660,7 +660,7 @@ export async function runAgent(
 
 	const hostPromptPath = getHostPromptPath(
 		deps.dataDir,
-		project.company_slug,
+		project.team_slug,
 		project.slug,
 		heartbeatRunId,
 	);
@@ -834,8 +834,8 @@ async function prepareWorktrees(
 		deps.masterKeyManager,
 		{
 			id: project.id,
-			company_id: project.company_id,
-			companySlug: project.company_slug,
+			team_id: project.team_id,
+			teamSlug: project.team_slug,
 			projectSlug: project.slug,
 		},
 		deps.dataDir,
@@ -848,8 +848,8 @@ async function prepareWorktrees(
 
 	if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
 
-	const workspaceRoot = getWorkspacePath(deps.dataDir, project.company_slug, project.slug);
-	const worktreesRoot = getWorktreesPath(deps.dataDir, project.company_slug, project.slug);
+	const workspaceRoot = getWorkspacePath(deps.dataDir, project.team_slug, project.slug);
+	const worktreesRoot = getWorktreesPath(deps.dataDir, project.team_slug, project.slug);
 	const issueWorktreeRoot = join(worktreesRoot, issue.identifier);
 	mkdirSync(issueWorktreeRoot, { recursive: true });
 
@@ -862,7 +862,7 @@ async function prepareWorktrees(
 	if (reposNeedingWorktree.length > 0 && deps.sshAgentServer) {
 		await withHostAgentSocket(
 			deps.sshAgentServer,
-			project.company_id,
+			project.team_id,
 			deps.dataDir,
 			async ({ sshAuthSock }) => {
 				for (const repo of reposNeedingWorktree) {
@@ -928,7 +928,7 @@ const FENCED_CODE_STRIP_RE = /(?:^|\n)(?:```|~~~)[^\n]*\n[\s\S]*?(?:```|~~~)(?=\
 export async function loadMentionContext(
 	db: PGlite,
 	agentMemberId: string,
-	companyId: string,
+	teamId: string,
 	wakeupPayload: Record<string, unknown>,
 ): Promise<MentionContext | null> {
 	const commentId = typeof wakeupPayload.comment_id === 'string' ? wakeupPayload.comment_id : null;
@@ -955,13 +955,13 @@ export async function loadMentionContext(
 		`SELECT identifier, title, status::text AS status, priority::text AS priority
 		 FROM issues
 		 WHERE assignee_id = $1
-		   AND company_id = $2
+		   AND team_id = $2
 		   AND status NOT IN (${TERMINAL_ISSUE_STATUSES.map((_, i) => `$${i + 3}::issue_status`).join(', ')})
 		 ORDER BY
 		   CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
 		   updated_at DESC
 		 LIMIT 10`,
-		[agentMemberId, companyId, ...TERMINAL_ISSUE_STATUSES],
+		[agentMemberId, teamId, ...TERMINAL_ISSUE_STATUSES],
 	);
 
 	return {
@@ -1250,7 +1250,7 @@ export async function buildCoachReviewPrompt(
 	db: PGlite,
 	systemPrompt: string,
 	issue: IssueInfo,
-	companyId: string,
+	teamId: string,
 ): Promise<string> {
 	const comments = await db.query<{
 		id: string;
@@ -1280,10 +1280,10 @@ export async function buildCoachReviewPrompt(
 		`SELECT DISTINCT ma.id, ma.title, ma.slug
 		 FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1
+		 WHERE m.team_id = $1
 		   AND (ma.id = (SELECT assignee_id FROM issues WHERE id = $2)
 		        OR ma.id IN (SELECT DISTINCT author_member_id FROM issue_comments WHERE issue_id = $2 AND author_member_id IS NOT NULL))`,
-		[companyId, issue.id],
+		[teamId, issue.id],
 	);
 
 	const commentLog = comments.rows
@@ -1339,7 +1339,7 @@ export async function buildCoachReviewPrompt(
 
 export interface HeartbeatRunBroadcast {
 	wsManager?: WebSocketManager;
-	companyId: string;
+	teamId: string;
 	issueId: string;
 	memberId: string;
 }
@@ -1351,10 +1351,10 @@ function broadcastHeartbeatRunChange(
 	action: 'INSERT' | 'UPDATE',
 ): void {
 	if (!ctx.wsManager) return;
-	broadcastRowChange(ctx.wsManager, wsRoom.company(ctx.companyId), 'heartbeat_runs', action, {
+	broadcastRowChange(ctx.wsManager, wsRoom.team(ctx.teamId), 'heartbeat_runs', action, {
 		id: runId,
 		issue_id: ctx.issueId,
-		company_id: ctx.companyId,
+		team_id: ctx.teamId,
 		member_id: ctx.memberId,
 		status,
 	});
@@ -1372,10 +1372,10 @@ export async function createHeartbeatRun(
 	let statusFlippedToInProgress = false;
 	try {
 		const runResult = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, wakeup_id, status)
+			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, wakeup_id, status)
 			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status)
 			 RETURNING id`,
-			[agent.id, agent.company_id, issue.id, wakeupId, HeartbeatRunStatus.Queued],
+			[agent.id, agent.team_id, issue.id, wakeupId, HeartbeatRunStatus.Queued],
 		);
 		runId = runResult.rows[0].id;
 
@@ -1414,7 +1414,7 @@ export async function createHeartbeatRun(
 	if (broadcast.wsManager) {
 		broadcastRowChange(
 			broadcast.wsManager,
-			wsRoom.company(broadcast.companyId),
+			wsRoom.team(broadcast.teamId),
 			'issue_comments',
 			'INSERT',
 			{
@@ -1422,23 +1422,17 @@ export async function createHeartbeatRun(
 			},
 		);
 		if (statusFlippedToInProgress) {
-			broadcastRowChange(
-				broadcast.wsManager,
-				wsRoom.company(broadcast.companyId),
-				'issues',
-				'UPDATE',
-				{
-					id: issue.id,
-					company_id: broadcast.companyId,
-					status: IssueStatus.InProgress,
-				},
-			);
+			broadcastRowChange(broadcast.wsManager, wsRoom.team(broadcast.teamId), 'issues', 'UPDATE', {
+				id: issue.id,
+				team_id: broadcast.teamId,
+				status: IssueStatus.InProgress,
+			});
 		}
 	}
 	if (statusFlippedToInProgress) {
 		await recordStatusChange(
 			db,
-			broadcast.companyId,
+			broadcast.teamId,
 			issue.id,
 			IssueStatus.Backlog,
 			IssueStatus.InProgress,

@@ -4,23 +4,23 @@ import { enqueueRepoSetupResumeWakeups, finalizePendingRepoSetup } from '../../s
 import { safeClose } from '../helpers';
 import { createTestDbWithMigrations } from '../helpers/db';
 
-async function seedCompanyProject(db: PGlite): Promise<{ companyId: string; projectId: string }> {
-	const company = await db.query<{ id: string }>(
-		`INSERT INTO companies (name, slug) VALUES ('Multi Co', 'multi-co') RETURNING id`,
+async function seedTeamProject(db: PGlite): Promise<{ teamId: string; projectId: string }> {
+	const team = await db.query<{ id: string }>(
+		`INSERT INTO teams (name, slug) VALUES ('Multi Co', 'multi-co') RETURNING id`,
 	);
 	const project = await db.query<{ id: string }>(
-		`INSERT INTO projects (company_id, name, slug, issue_prefix)
+		`INSERT INTO projects (team_id, name, slug, issue_prefix)
 		 VALUES ($1, 'Multi Project', 'multi-project', 'M') RETURNING id`,
-		[company.rows[0].id],
+		[team.rows[0].id],
 	);
-	return { companyId: company.rows[0].id, projectId: project.rows[0].id };
+	return { teamId: team.rows[0].id, projectId: project.rows[0].id };
 }
 
-async function seedAgent(db: PGlite, companyId: string, title: string): Promise<string> {
+async function seedAgent(db: PGlite, teamId: string, title: string): Promise<string> {
 	const member = await db.query<{ id: string }>(
-		`INSERT INTO members (company_id, member_type, display_name)
+		`INSERT INTO members (team_id, member_type, display_name)
 		 VALUES ($1, 'agent', $2) RETURNING id`,
-		[companyId, title],
+		[teamId, title],
 	);
 	await db.query(
 		`INSERT INTO member_agents (id, title, slug, role_description, default_effort,
@@ -33,32 +33,32 @@ async function seedAgent(db: PGlite, companyId: string, title: string): Promise<
 
 async function seedIssue(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	projectId: string,
 	number: number,
 	title: string,
 	assigneeId: string,
 ): Promise<string> {
 	const issue = await db.query<{ id: string }>(
-		`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier, title)
+		`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier, title)
 		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-		[companyId, projectId, assigneeId, number, `M-${number}`, title],
+		[teamId, projectId, assigneeId, number, `M-${number}`, title],
 	);
 	return issue.rows[0].id;
 }
 
 async function seedApprovalAndComments(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	projectId: string,
 	issueIds: string[],
 ): Promise<{ approvalId: string; commentIds: string[] }> {
 	const approval = await db.query<{ id: string }>(
-		`INSERT INTO approvals (company_id, type, status, payload)
+		`INSERT INTO approvals (team_id, type, status, payload)
 		 VALUES ($1, 'designated_repo_request'::approval_type, 'pending'::approval_status, $2::jsonb)
 		 RETURNING id`,
 		[
-			companyId,
+			teamId,
 			JSON.stringify({
 				platform: 'github',
 				reason: 'designated_repo',
@@ -81,18 +81,18 @@ async function seedApprovalAndComments(
 
 async function seedDeferredWakeup(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	memberId: string,
 	projectId: string,
 	issueId: string,
 ): Promise<string> {
 	const r = await db.query<{ id: string }>(
-		`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, payload)
+		`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload)
 		 VALUES ($1, $2, 'automation'::wakeup_source, 'deferred'::wakeup_status, $3::jsonb)
 		 RETURNING id`,
 		[
 			memberId,
-			companyId,
+			teamId,
 			JSON.stringify({ reason: 'awaiting_repo_setup', project_id: projectId, issue_id: issueId }),
 		],
 	);
@@ -103,25 +103,25 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 	it('resolves all blocked comments, queues a resume wakeup per agent, exposes rows for broadcast', async () => {
 		const db = await createTestDbWithMigrations();
 		try {
-			const { companyId, projectId } = await seedCompanyProject(db);
+			const { teamId, projectId } = await seedTeamProject(db);
 
-			const aliceId = await seedAgent(db, companyId, 'Alice');
-			const bobId = await seedAgent(db, companyId, 'Bob');
-			const carolId = await seedAgent(db, companyId, 'Carol');
+			const aliceId = await seedAgent(db, teamId, 'Alice');
+			const bobId = await seedAgent(db, teamId, 'Bob');
+			const carolId = await seedAgent(db, teamId, 'Carol');
 
-			const issueA = await seedIssue(db, companyId, projectId, 1, 'Alice work', aliceId);
-			const issueB = await seedIssue(db, companyId, projectId, 2, 'Bob work', bobId);
-			const issueC = await seedIssue(db, companyId, projectId, 3, 'Carol work', carolId);
+			const issueA = await seedIssue(db, teamId, projectId, 1, 'Alice work', aliceId);
+			const issueB = await seedIssue(db, teamId, projectId, 2, 'Bob work', bobId);
+			const issueC = await seedIssue(db, teamId, projectId, 3, 'Carol work', carolId);
 
-			const { approvalId, commentIds } = await seedApprovalAndComments(db, companyId, projectId, [
+			const { approvalId, commentIds } = await seedApprovalAndComments(db, teamId, projectId, [
 				issueA,
 				issueB,
 				issueC,
 			]);
 
-			await seedDeferredWakeup(db, companyId, aliceId, projectId, issueA);
-			await seedDeferredWakeup(db, companyId, bobId, projectId, issueB);
-			await seedDeferredWakeup(db, companyId, carolId, projectId, issueC);
+			await seedDeferredWakeup(db, teamId, aliceId, projectId, issueA);
+			await seedDeferredWakeup(db, teamId, bobId, projectId, issueB);
+			await seedDeferredWakeup(db, teamId, carolId, projectId, issueC);
 
 			const repoInsert = await db.query<{ id: string }>(
 				`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
@@ -130,7 +130,7 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 			);
 
 			const result = await finalizePendingRepoSetup(db, {
-				companyId,
+				teamId,
 				projectId,
 				repoId: repoInsert.rows[0].id,
 				repoIdentifier: 'octo/multi',
@@ -163,7 +163,7 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 
 			await enqueueRepoSetupResumeWakeups(
 				db,
-				companyId,
+				teamId,
 				repoInsert.rows[0].id,
 				approvalId,
 				result.deferredWakeups,
@@ -171,10 +171,10 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 
 			const resumed = await db.query<{ member_id: string; payload: Record<string, unknown> }>(
 				`SELECT member_id, payload FROM agent_wakeup_requests
-				 WHERE company_id = $1 AND status = 'queued'::wakeup_status
+				 WHERE team_id = $1 AND status = 'queued'::wakeup_status
 				   AND source = 'automation'::wakeup_source
 				   AND payload->>'reason' = 'repo_setup_complete'`,
-				[companyId],
+				[teamId],
 			);
 			expect(resumed.rows).toHaveLength(3);
 			const memberIds = resumed.rows.map((r) => r.member_id).sort();
@@ -182,8 +182,8 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 
 			const oldDeferred = await db.query<{ count: number }>(
 				`SELECT COUNT(*)::int AS count FROM agent_wakeup_requests
-				 WHERE company_id = $1 AND status = 'deferred'::wakeup_status`,
-				[companyId],
+				 WHERE team_id = $1 AND status = 'deferred'::wakeup_status`,
+				[teamId],
 			);
 			expect(oldDeferred.rows[0].count).toBe(3);
 		} finally {
@@ -194,10 +194,10 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 	it('is a no-op when no pending approval exists for the project', async () => {
 		const db = await createTestDbWithMigrations();
 		try {
-			const { companyId, projectId } = await seedCompanyProject(db);
+			const { teamId, projectId } = await seedTeamProject(db);
 
 			const result = await finalizePendingRepoSetup(db, {
-				companyId,
+				teamId,
 				projectId,
 				repoId: '00000000-0000-0000-0000-000000000000',
 				repoIdentifier: 'octo/none',

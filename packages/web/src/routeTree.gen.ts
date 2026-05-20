@@ -10,41 +10,46 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as TeamsIndexRouteImport } from './routes/teams/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as InboxIndexRouteImport } from './routes/inbox/index'
-import { Route as CompaniesIndexRouteImport } from './routes/companies/index'
+import { Route as TeamsNewRouteImport } from './routes/teams/new'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
-import { Route as CompaniesNewRouteImport } from './routes/companies/new'
-import { Route as CompaniesCompanyIdRouteRouteImport } from './routes/companies/$companyId/route'
-import { Route as CompaniesCompanyIdIndexRouteImport } from './routes/companies/$companyId/index'
-import { Route as CompaniesCompanyIdProjectsIndexRouteImport } from './routes/companies/$companyId/projects/index'
-import { Route as CompaniesCompanyIdKbIndexRouteImport } from './routes/companies/$companyId/kb/index'
-import { Route as CompaniesCompanyIdIssuesIndexRouteImport } from './routes/companies/$companyId/issues/index'
-import { Route as CompaniesCompanyIdInboxIndexRouteImport } from './routes/companies/$companyId/inbox/index'
-import { Route as CompaniesCompanyIdGoalsIndexRouteImport } from './routes/companies/$companyId/goals/index'
-import { Route as CompaniesCompanyIdAgentsIndexRouteImport } from './routes/companies/$companyId/agents/index'
-import { Route as CompaniesCompanyIdSettingsGeneralRouteImport } from './routes/companies/$companyId/settings/general'
-import { Route as CompaniesCompanyIdSettingsCredentialsRouteImport } from './routes/companies/$companyId/settings/credentials'
-import { Route as CompaniesCompanyIdSettingsConnectionsRouteImport } from './routes/companies/$companyId/settings/connections'
-import { Route as CompaniesCompanyIdSettingsAuditLogRouteImport } from './routes/companies/$companyId/settings/audit-log'
-import { Route as CompaniesCompanyIdIssuesIssueIdRouteImport } from './routes/companies/$companyId/issues/$issueId'
-import { Route as CompaniesCompanyIdAgentsHireRouteImport } from './routes/companies/$companyId/agents/hire'
-import { Route as CompaniesCompanyIdProjectsProjectIdRouteRouteImport } from './routes/companies/$companyId/projects/$projectId/route'
-import { Route as CompaniesCompanyIdAgentsAgentIdRouteRouteImport } from './routes/companies/$companyId/agents/$agentId/route'
-import { Route as CompaniesCompanyIdProjectsProjectIdIndexRouteImport } from './routes/companies/$companyId/projects/$projectId/index'
-import { Route as CompaniesCompanyIdAgentsAgentIdIndexRouteImport } from './routes/companies/$companyId/agents/$agentId/index'
-import { Route as CompaniesCompanyIdProjectsProjectIdDocumentsRouteImport } from './routes/companies/$companyId/projects/$projectId/documents'
-import { Route as CompaniesCompanyIdProjectsProjectIdContainerRouteImport } from './routes/companies/$companyId/projects/$projectId/container'
-import { Route as CompaniesCompanyIdAgentsAgentIdSettingsRouteImport } from './routes/companies/$companyId/agents/$agentId/settings'
-import { Route as CompaniesCompanyIdProjectsProjectIdSettingsIndexRouteImport } from './routes/companies/$companyId/projects/$projectId/settings/index'
-import { Route as CompaniesCompanyIdProjectsProjectIdIssuesIndexRouteImport } from './routes/companies/$companyId/projects/$projectId/issues/index'
-import { Route as CompaniesCompanyIdAgentsAgentIdExecutionsIndexRouteImport } from './routes/companies/$companyId/agents/$agentId/executions/index'
-import { Route as CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRouteImport } from './routes/companies/$companyId/projects/$projectId/issues/$issueId'
-import { Route as CompaniesCompanyIdAgentsAgentIdExecutionsRunIdRouteImport } from './routes/companies/$companyId/agents/$agentId/executions/$runId'
+import { Route as TeamsTeamIdRouteRouteImport } from './routes/teams/$teamId/route'
+import { Route as TeamsTeamIdIndexRouteImport } from './routes/teams/$teamId/index'
+import { Route as TeamsTeamIdProjectsIndexRouteImport } from './routes/teams/$teamId/projects/index'
+import { Route as TeamsTeamIdKbIndexRouteImport } from './routes/teams/$teamId/kb/index'
+import { Route as TeamsTeamIdIssuesIndexRouteImport } from './routes/teams/$teamId/issues/index'
+import { Route as TeamsTeamIdInboxIndexRouteImport } from './routes/teams/$teamId/inbox/index'
+import { Route as TeamsTeamIdGoalsIndexRouteImport } from './routes/teams/$teamId/goals/index'
+import { Route as TeamsTeamIdAgentsIndexRouteImport } from './routes/teams/$teamId/agents/index'
+import { Route as TeamsTeamIdSettingsGeneralRouteImport } from './routes/teams/$teamId/settings/general'
+import { Route as TeamsTeamIdSettingsCredentialsRouteImport } from './routes/teams/$teamId/settings/credentials'
+import { Route as TeamsTeamIdSettingsConnectionsRouteImport } from './routes/teams/$teamId/settings/connections'
+import { Route as TeamsTeamIdSettingsAuditLogRouteImport } from './routes/teams/$teamId/settings/audit-log'
+import { Route as TeamsTeamIdIssuesIssueIdRouteImport } from './routes/teams/$teamId/issues/$issueId'
+import { Route as TeamsTeamIdAgentsHireRouteImport } from './routes/teams/$teamId/agents/hire'
+import { Route as TeamsTeamIdProjectsProjectIdRouteRouteImport } from './routes/teams/$teamId/projects/$projectId/route'
+import { Route as TeamsTeamIdAgentsAgentIdRouteRouteImport } from './routes/teams/$teamId/agents/$agentId/route'
+import { Route as TeamsTeamIdProjectsProjectIdIndexRouteImport } from './routes/teams/$teamId/projects/$projectId/index'
+import { Route as TeamsTeamIdAgentsAgentIdIndexRouteImport } from './routes/teams/$teamId/agents/$agentId/index'
+import { Route as TeamsTeamIdProjectsProjectIdDocumentsRouteImport } from './routes/teams/$teamId/projects/$projectId/documents'
+import { Route as TeamsTeamIdProjectsProjectIdContainerRouteImport } from './routes/teams/$teamId/projects/$projectId/container'
+import { Route as TeamsTeamIdAgentsAgentIdSettingsRouteImport } from './routes/teams/$teamId/agents/$agentId/settings'
+import { Route as TeamsTeamIdProjectsProjectIdSettingsIndexRouteImport } from './routes/teams/$teamId/projects/$projectId/settings/index'
+import { Route as TeamsTeamIdProjectsProjectIdIssuesIndexRouteImport } from './routes/teams/$teamId/projects/$projectId/issues/index'
+import { Route as TeamsTeamIdAgentsAgentIdExecutionsIndexRouteImport } from './routes/teams/$teamId/agents/$agentId/executions/index'
+import { Route as TeamsTeamIdProjectsProjectIdIssuesIssueIdRouteImport } from './routes/teams/$teamId/projects/$projectId/issues/$issueId'
+import { Route as TeamsTeamIdAgentsAgentIdExecutionsRunIdRouteImport } from './routes/teams/$teamId/agents/$agentId/executions/$runId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TeamsIndexRoute = TeamsIndexRouteImport.update({
+  id: '/teams/',
+  path: '/teams/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
@@ -57,9 +62,9 @@ const InboxIndexRoute = InboxIndexRouteImport.update({
   path: '/inbox/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const CompaniesIndexRoute = CompaniesIndexRouteImport.update({
-  id: '/companies/',
-  path: '/companies/',
+const TeamsNewRoute = TeamsNewRouteImport.update({
+  id: '/teams/new',
+  path: '/teams/new',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsAiProvidersRoute = SettingsAiProvidersRouteImport.update({
@@ -67,376 +72,365 @@ const SettingsAiProvidersRoute = SettingsAiProvidersRouteImport.update({
   path: '/settings/ai-providers',
   getParentRoute: () => rootRouteImport,
 } as any)
-const CompaniesNewRoute = CompaniesNewRouteImport.update({
-  id: '/companies/new',
-  path: '/companies/new',
+const TeamsTeamIdRouteRoute = TeamsTeamIdRouteRouteImport.update({
+  id: '/teams/$teamId',
+  path: '/teams/$teamId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const CompaniesCompanyIdRouteRoute = CompaniesCompanyIdRouteRouteImport.update({
-  id: '/companies/$companyId',
-  path: '/companies/$companyId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CompaniesCompanyIdIndexRoute = CompaniesCompanyIdIndexRouteImport.update({
+const TeamsTeamIdIndexRoute = TeamsTeamIdIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => CompaniesCompanyIdRouteRoute,
+  getParentRoute: () => TeamsTeamIdRouteRoute,
 } as any)
-const CompaniesCompanyIdProjectsIndexRoute =
-  CompaniesCompanyIdProjectsIndexRouteImport.update({
+const TeamsTeamIdProjectsIndexRoute =
+  TeamsTeamIdProjectsIndexRouteImport.update({
     id: '/projects/',
     path: '/projects/',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdRouteRoute,
   } as any)
-const CompaniesCompanyIdKbIndexRoute =
-  CompaniesCompanyIdKbIndexRouteImport.update({
-    id: '/kb/',
-    path: '/kb/',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
-  } as any)
-const CompaniesCompanyIdIssuesIndexRoute =
-  CompaniesCompanyIdIssuesIndexRouteImport.update({
-    id: '/issues/',
-    path: '/issues/',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
-  } as any)
-const CompaniesCompanyIdInboxIndexRoute =
-  CompaniesCompanyIdInboxIndexRouteImport.update({
-    id: '/inbox/',
-    path: '/inbox/',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
-  } as any)
-const CompaniesCompanyIdGoalsIndexRoute =
-  CompaniesCompanyIdGoalsIndexRouteImport.update({
-    id: '/goals/',
-    path: '/goals/',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
-  } as any)
-const CompaniesCompanyIdAgentsIndexRoute =
-  CompaniesCompanyIdAgentsIndexRouteImport.update({
-    id: '/agents/',
-    path: '/agents/',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
-  } as any)
-const CompaniesCompanyIdSettingsGeneralRoute =
-  CompaniesCompanyIdSettingsGeneralRouteImport.update({
+const TeamsTeamIdKbIndexRoute = TeamsTeamIdKbIndexRouteImport.update({
+  id: '/kb/',
+  path: '/kb/',
+  getParentRoute: () => TeamsTeamIdRouteRoute,
+} as any)
+const TeamsTeamIdIssuesIndexRoute = TeamsTeamIdIssuesIndexRouteImport.update({
+  id: '/issues/',
+  path: '/issues/',
+  getParentRoute: () => TeamsTeamIdRouteRoute,
+} as any)
+const TeamsTeamIdInboxIndexRoute = TeamsTeamIdInboxIndexRouteImport.update({
+  id: '/inbox/',
+  path: '/inbox/',
+  getParentRoute: () => TeamsTeamIdRouteRoute,
+} as any)
+const TeamsTeamIdGoalsIndexRoute = TeamsTeamIdGoalsIndexRouteImport.update({
+  id: '/goals/',
+  path: '/goals/',
+  getParentRoute: () => TeamsTeamIdRouteRoute,
+} as any)
+const TeamsTeamIdAgentsIndexRoute = TeamsTeamIdAgentsIndexRouteImport.update({
+  id: '/agents/',
+  path: '/agents/',
+  getParentRoute: () => TeamsTeamIdRouteRoute,
+} as any)
+const TeamsTeamIdSettingsGeneralRoute =
+  TeamsTeamIdSettingsGeneralRouteImport.update({
     id: '/settings/general',
     path: '/settings/general',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdRouteRoute,
   } as any)
-const CompaniesCompanyIdSettingsCredentialsRoute =
-  CompaniesCompanyIdSettingsCredentialsRouteImport.update({
+const TeamsTeamIdSettingsCredentialsRoute =
+  TeamsTeamIdSettingsCredentialsRouteImport.update({
     id: '/settings/credentials',
     path: '/settings/credentials',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdRouteRoute,
   } as any)
-const CompaniesCompanyIdSettingsConnectionsRoute =
-  CompaniesCompanyIdSettingsConnectionsRouteImport.update({
+const TeamsTeamIdSettingsConnectionsRoute =
+  TeamsTeamIdSettingsConnectionsRouteImport.update({
     id: '/settings/connections',
     path: '/settings/connections',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdRouteRoute,
   } as any)
-const CompaniesCompanyIdSettingsAuditLogRoute =
-  CompaniesCompanyIdSettingsAuditLogRouteImport.update({
+const TeamsTeamIdSettingsAuditLogRoute =
+  TeamsTeamIdSettingsAuditLogRouteImport.update({
     id: '/settings/audit-log',
     path: '/settings/audit-log',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdRouteRoute,
   } as any)
-const CompaniesCompanyIdIssuesIssueIdRoute =
-  CompaniesCompanyIdIssuesIssueIdRouteImport.update({
+const TeamsTeamIdIssuesIssueIdRoute =
+  TeamsTeamIdIssuesIssueIdRouteImport.update({
     id: '/issues/$issueId',
     path: '/issues/$issueId',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdRouteRoute,
   } as any)
-const CompaniesCompanyIdAgentsHireRoute =
-  CompaniesCompanyIdAgentsHireRouteImport.update({
-    id: '/agents/hire',
-    path: '/agents/hire',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
-  } as any)
-const CompaniesCompanyIdProjectsProjectIdRouteRoute =
-  CompaniesCompanyIdProjectsProjectIdRouteRouteImport.update({
+const TeamsTeamIdAgentsHireRoute = TeamsTeamIdAgentsHireRouteImport.update({
+  id: '/agents/hire',
+  path: '/agents/hire',
+  getParentRoute: () => TeamsTeamIdRouteRoute,
+} as any)
+const TeamsTeamIdProjectsProjectIdRouteRoute =
+  TeamsTeamIdProjectsProjectIdRouteRouteImport.update({
     id: '/projects/$projectId',
     path: '/projects/$projectId',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdRouteRoute,
   } as any)
-const CompaniesCompanyIdAgentsAgentIdRouteRoute =
-  CompaniesCompanyIdAgentsAgentIdRouteRouteImport.update({
+const TeamsTeamIdAgentsAgentIdRouteRoute =
+  TeamsTeamIdAgentsAgentIdRouteRouteImport.update({
     id: '/agents/$agentId',
     path: '/agents/$agentId',
-    getParentRoute: () => CompaniesCompanyIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdRouteRoute,
   } as any)
-const CompaniesCompanyIdProjectsProjectIdIndexRoute =
-  CompaniesCompanyIdProjectsProjectIdIndexRouteImport.update({
+const TeamsTeamIdProjectsProjectIdIndexRoute =
+  TeamsTeamIdProjectsProjectIdIndexRouteImport.update({
     id: '/',
     path: '/',
-    getParentRoute: () => CompaniesCompanyIdProjectsProjectIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
   } as any)
-const CompaniesCompanyIdAgentsAgentIdIndexRoute =
-  CompaniesCompanyIdAgentsAgentIdIndexRouteImport.update({
+const TeamsTeamIdAgentsAgentIdIndexRoute =
+  TeamsTeamIdAgentsAgentIdIndexRouteImport.update({
     id: '/',
     path: '/',
-    getParentRoute: () => CompaniesCompanyIdAgentsAgentIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdAgentsAgentIdRouteRoute,
   } as any)
-const CompaniesCompanyIdProjectsProjectIdDocumentsRoute =
-  CompaniesCompanyIdProjectsProjectIdDocumentsRouteImport.update({
+const TeamsTeamIdProjectsProjectIdDocumentsRoute =
+  TeamsTeamIdProjectsProjectIdDocumentsRouteImport.update({
     id: '/documents',
     path: '/documents',
-    getParentRoute: () => CompaniesCompanyIdProjectsProjectIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
   } as any)
-const CompaniesCompanyIdProjectsProjectIdContainerRoute =
-  CompaniesCompanyIdProjectsProjectIdContainerRouteImport.update({
+const TeamsTeamIdProjectsProjectIdContainerRoute =
+  TeamsTeamIdProjectsProjectIdContainerRouteImport.update({
     id: '/container',
     path: '/container',
-    getParentRoute: () => CompaniesCompanyIdProjectsProjectIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
   } as any)
-const CompaniesCompanyIdAgentsAgentIdSettingsRoute =
-  CompaniesCompanyIdAgentsAgentIdSettingsRouteImport.update({
+const TeamsTeamIdAgentsAgentIdSettingsRoute =
+  TeamsTeamIdAgentsAgentIdSettingsRouteImport.update({
     id: '/settings',
     path: '/settings',
-    getParentRoute: () => CompaniesCompanyIdAgentsAgentIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdAgentsAgentIdRouteRoute,
   } as any)
-const CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute =
-  CompaniesCompanyIdProjectsProjectIdSettingsIndexRouteImport.update({
+const TeamsTeamIdProjectsProjectIdSettingsIndexRoute =
+  TeamsTeamIdProjectsProjectIdSettingsIndexRouteImport.update({
     id: '/settings/',
     path: '/settings/',
-    getParentRoute: () => CompaniesCompanyIdProjectsProjectIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
   } as any)
-const CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute =
-  CompaniesCompanyIdProjectsProjectIdIssuesIndexRouteImport.update({
+const TeamsTeamIdProjectsProjectIdIssuesIndexRoute =
+  TeamsTeamIdProjectsProjectIdIssuesIndexRouteImport.update({
     id: '/issues/',
     path: '/issues/',
-    getParentRoute: () => CompaniesCompanyIdProjectsProjectIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
   } as any)
-const CompaniesCompanyIdAgentsAgentIdExecutionsIndexRoute =
-  CompaniesCompanyIdAgentsAgentIdExecutionsIndexRouteImport.update({
+const TeamsTeamIdAgentsAgentIdExecutionsIndexRoute =
+  TeamsTeamIdAgentsAgentIdExecutionsIndexRouteImport.update({
     id: '/executions/',
     path: '/executions/',
-    getParentRoute: () => CompaniesCompanyIdAgentsAgentIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdAgentsAgentIdRouteRoute,
   } as any)
-const CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute =
-  CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRouteImport.update({
+const TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute =
+  TeamsTeamIdProjectsProjectIdIssuesIssueIdRouteImport.update({
     id: '/issues/$issueId',
     path: '/issues/$issueId',
-    getParentRoute: () => CompaniesCompanyIdProjectsProjectIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
   } as any)
-const CompaniesCompanyIdAgentsAgentIdExecutionsRunIdRoute =
-  CompaniesCompanyIdAgentsAgentIdExecutionsRunIdRouteImport.update({
+const TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute =
+  TeamsTeamIdAgentsAgentIdExecutionsRunIdRouteImport.update({
     id: '/executions/$runId',
     path: '/executions/$runId',
-    getParentRoute: () => CompaniesCompanyIdAgentsAgentIdRouteRoute,
+    getParentRoute: () => TeamsTeamIdAgentsAgentIdRouteRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/companies/$companyId': typeof CompaniesCompanyIdRouteRouteWithChildren
-  '/companies/new': typeof CompaniesNewRoute
+  '/teams/$teamId': typeof TeamsTeamIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
-  '/companies/': typeof CompaniesIndexRoute
+  '/teams/new': typeof TeamsNewRoute
   '/inbox/': typeof InboxIndexRoute
   '/settings/': typeof SettingsIndexRoute
-  '/companies/$companyId/': typeof CompaniesCompanyIdIndexRoute
-  '/companies/$companyId/agents/$agentId': typeof CompaniesCompanyIdAgentsAgentIdRouteRouteWithChildren
-  '/companies/$companyId/projects/$projectId': typeof CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren
-  '/companies/$companyId/agents/hire': typeof CompaniesCompanyIdAgentsHireRoute
-  '/companies/$companyId/issues/$issueId': typeof CompaniesCompanyIdIssuesIssueIdRoute
-  '/companies/$companyId/settings/audit-log': typeof CompaniesCompanyIdSettingsAuditLogRoute
-  '/companies/$companyId/settings/connections': typeof CompaniesCompanyIdSettingsConnectionsRoute
-  '/companies/$companyId/settings/credentials': typeof CompaniesCompanyIdSettingsCredentialsRoute
-  '/companies/$companyId/settings/general': typeof CompaniesCompanyIdSettingsGeneralRoute
-  '/companies/$companyId/agents/': typeof CompaniesCompanyIdAgentsIndexRoute
-  '/companies/$companyId/goals/': typeof CompaniesCompanyIdGoalsIndexRoute
-  '/companies/$companyId/inbox/': typeof CompaniesCompanyIdInboxIndexRoute
-  '/companies/$companyId/issues/': typeof CompaniesCompanyIdIssuesIndexRoute
-  '/companies/$companyId/kb/': typeof CompaniesCompanyIdKbIndexRoute
-  '/companies/$companyId/projects/': typeof CompaniesCompanyIdProjectsIndexRoute
-  '/companies/$companyId/agents/$agentId/settings': typeof CompaniesCompanyIdAgentsAgentIdSettingsRoute
-  '/companies/$companyId/projects/$projectId/container': typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
-  '/companies/$companyId/projects/$projectId/documents': typeof CompaniesCompanyIdProjectsProjectIdDocumentsRoute
-  '/companies/$companyId/agents/$agentId/': typeof CompaniesCompanyIdAgentsAgentIdIndexRoute
-  '/companies/$companyId/projects/$projectId/': typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
-  '/companies/$companyId/agents/$agentId/executions/$runId': typeof CompaniesCompanyIdAgentsAgentIdExecutionsRunIdRoute
-  '/companies/$companyId/projects/$projectId/issues/$issueId': typeof CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute
-  '/companies/$companyId/agents/$agentId/executions/': typeof CompaniesCompanyIdAgentsAgentIdExecutionsIndexRoute
-  '/companies/$companyId/projects/$projectId/issues/': typeof CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute
-  '/companies/$companyId/projects/$projectId/settings/': typeof CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute
+  '/teams/': typeof TeamsIndexRoute
+  '/teams/$teamId/': typeof TeamsTeamIdIndexRoute
+  '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
+  '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
+  '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
+  '/teams/$teamId/issues/$issueId': typeof TeamsTeamIdIssuesIssueIdRoute
+  '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
+  '/teams/$teamId/settings/connections': typeof TeamsTeamIdSettingsConnectionsRoute
+  '/teams/$teamId/settings/credentials': typeof TeamsTeamIdSettingsCredentialsRoute
+  '/teams/$teamId/settings/general': typeof TeamsTeamIdSettingsGeneralRoute
+  '/teams/$teamId/agents/': typeof TeamsTeamIdAgentsIndexRoute
+  '/teams/$teamId/goals/': typeof TeamsTeamIdGoalsIndexRoute
+  '/teams/$teamId/inbox/': typeof TeamsTeamIdInboxIndexRoute
+  '/teams/$teamId/issues/': typeof TeamsTeamIdIssuesIndexRoute
+  '/teams/$teamId/kb/': typeof TeamsTeamIdKbIndexRoute
+  '/teams/$teamId/projects/': typeof TeamsTeamIdProjectsIndexRoute
+  '/teams/$teamId/agents/$agentId/settings': typeof TeamsTeamIdAgentsAgentIdSettingsRoute
+  '/teams/$teamId/projects/$projectId/container': typeof TeamsTeamIdProjectsProjectIdContainerRoute
+  '/teams/$teamId/projects/$projectId/documents': typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
+  '/teams/$teamId/agents/$agentId/': typeof TeamsTeamIdAgentsAgentIdIndexRoute
+  '/teams/$teamId/projects/$projectId/': typeof TeamsTeamIdProjectsProjectIdIndexRoute
+  '/teams/$teamId/agents/$agentId/executions/$runId': typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute
+  '/teams/$teamId/projects/$projectId/issues/$issueId': typeof TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute
+  '/teams/$teamId/agents/$agentId/executions/': typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRoute
+  '/teams/$teamId/projects/$projectId/issues/': typeof TeamsTeamIdProjectsProjectIdIssuesIndexRoute
+  '/teams/$teamId/projects/$projectId/settings/': typeof TeamsTeamIdProjectsProjectIdSettingsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/companies/new': typeof CompaniesNewRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
-  '/companies': typeof CompaniesIndexRoute
+  '/teams/new': typeof TeamsNewRoute
   '/inbox': typeof InboxIndexRoute
   '/settings': typeof SettingsIndexRoute
-  '/companies/$companyId': typeof CompaniesCompanyIdIndexRoute
-  '/companies/$companyId/agents/hire': typeof CompaniesCompanyIdAgentsHireRoute
-  '/companies/$companyId/issues/$issueId': typeof CompaniesCompanyIdIssuesIssueIdRoute
-  '/companies/$companyId/settings/audit-log': typeof CompaniesCompanyIdSettingsAuditLogRoute
-  '/companies/$companyId/settings/connections': typeof CompaniesCompanyIdSettingsConnectionsRoute
-  '/companies/$companyId/settings/credentials': typeof CompaniesCompanyIdSettingsCredentialsRoute
-  '/companies/$companyId/settings/general': typeof CompaniesCompanyIdSettingsGeneralRoute
-  '/companies/$companyId/agents': typeof CompaniesCompanyIdAgentsIndexRoute
-  '/companies/$companyId/goals': typeof CompaniesCompanyIdGoalsIndexRoute
-  '/companies/$companyId/inbox': typeof CompaniesCompanyIdInboxIndexRoute
-  '/companies/$companyId/issues': typeof CompaniesCompanyIdIssuesIndexRoute
-  '/companies/$companyId/kb': typeof CompaniesCompanyIdKbIndexRoute
-  '/companies/$companyId/projects': typeof CompaniesCompanyIdProjectsIndexRoute
-  '/companies/$companyId/agents/$agentId/settings': typeof CompaniesCompanyIdAgentsAgentIdSettingsRoute
-  '/companies/$companyId/projects/$projectId/container': typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
-  '/companies/$companyId/projects/$projectId/documents': typeof CompaniesCompanyIdProjectsProjectIdDocumentsRoute
-  '/companies/$companyId/agents/$agentId': typeof CompaniesCompanyIdAgentsAgentIdIndexRoute
-  '/companies/$companyId/projects/$projectId': typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
-  '/companies/$companyId/agents/$agentId/executions/$runId': typeof CompaniesCompanyIdAgentsAgentIdExecutionsRunIdRoute
-  '/companies/$companyId/projects/$projectId/issues/$issueId': typeof CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute
-  '/companies/$companyId/agents/$agentId/executions': typeof CompaniesCompanyIdAgentsAgentIdExecutionsIndexRoute
-  '/companies/$companyId/projects/$projectId/issues': typeof CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute
-  '/companies/$companyId/projects/$projectId/settings': typeof CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute
+  '/teams': typeof TeamsIndexRoute
+  '/teams/$teamId': typeof TeamsTeamIdIndexRoute
+  '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
+  '/teams/$teamId/issues/$issueId': typeof TeamsTeamIdIssuesIssueIdRoute
+  '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
+  '/teams/$teamId/settings/connections': typeof TeamsTeamIdSettingsConnectionsRoute
+  '/teams/$teamId/settings/credentials': typeof TeamsTeamIdSettingsCredentialsRoute
+  '/teams/$teamId/settings/general': typeof TeamsTeamIdSettingsGeneralRoute
+  '/teams/$teamId/agents': typeof TeamsTeamIdAgentsIndexRoute
+  '/teams/$teamId/goals': typeof TeamsTeamIdGoalsIndexRoute
+  '/teams/$teamId/inbox': typeof TeamsTeamIdInboxIndexRoute
+  '/teams/$teamId/issues': typeof TeamsTeamIdIssuesIndexRoute
+  '/teams/$teamId/kb': typeof TeamsTeamIdKbIndexRoute
+  '/teams/$teamId/projects': typeof TeamsTeamIdProjectsIndexRoute
+  '/teams/$teamId/agents/$agentId/settings': typeof TeamsTeamIdAgentsAgentIdSettingsRoute
+  '/teams/$teamId/projects/$projectId/container': typeof TeamsTeamIdProjectsProjectIdContainerRoute
+  '/teams/$teamId/projects/$projectId/documents': typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
+  '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdIndexRoute
+  '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdIndexRoute
+  '/teams/$teamId/agents/$agentId/executions/$runId': typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute
+  '/teams/$teamId/projects/$projectId/issues/$issueId': typeof TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute
+  '/teams/$teamId/agents/$agentId/executions': typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRoute
+  '/teams/$teamId/projects/$projectId/issues': typeof TeamsTeamIdProjectsProjectIdIssuesIndexRoute
+  '/teams/$teamId/projects/$projectId/settings': typeof TeamsTeamIdProjectsProjectIdSettingsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/companies/$companyId': typeof CompaniesCompanyIdRouteRouteWithChildren
-  '/companies/new': typeof CompaniesNewRoute
+  '/teams/$teamId': typeof TeamsTeamIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
-  '/companies/': typeof CompaniesIndexRoute
+  '/teams/new': typeof TeamsNewRoute
   '/inbox/': typeof InboxIndexRoute
   '/settings/': typeof SettingsIndexRoute
-  '/companies/$companyId/': typeof CompaniesCompanyIdIndexRoute
-  '/companies/$companyId/agents/$agentId': typeof CompaniesCompanyIdAgentsAgentIdRouteRouteWithChildren
-  '/companies/$companyId/projects/$projectId': typeof CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren
-  '/companies/$companyId/agents/hire': typeof CompaniesCompanyIdAgentsHireRoute
-  '/companies/$companyId/issues/$issueId': typeof CompaniesCompanyIdIssuesIssueIdRoute
-  '/companies/$companyId/settings/audit-log': typeof CompaniesCompanyIdSettingsAuditLogRoute
-  '/companies/$companyId/settings/connections': typeof CompaniesCompanyIdSettingsConnectionsRoute
-  '/companies/$companyId/settings/credentials': typeof CompaniesCompanyIdSettingsCredentialsRoute
-  '/companies/$companyId/settings/general': typeof CompaniesCompanyIdSettingsGeneralRoute
-  '/companies/$companyId/agents/': typeof CompaniesCompanyIdAgentsIndexRoute
-  '/companies/$companyId/goals/': typeof CompaniesCompanyIdGoalsIndexRoute
-  '/companies/$companyId/inbox/': typeof CompaniesCompanyIdInboxIndexRoute
-  '/companies/$companyId/issues/': typeof CompaniesCompanyIdIssuesIndexRoute
-  '/companies/$companyId/kb/': typeof CompaniesCompanyIdKbIndexRoute
-  '/companies/$companyId/projects/': typeof CompaniesCompanyIdProjectsIndexRoute
-  '/companies/$companyId/agents/$agentId/settings': typeof CompaniesCompanyIdAgentsAgentIdSettingsRoute
-  '/companies/$companyId/projects/$projectId/container': typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
-  '/companies/$companyId/projects/$projectId/documents': typeof CompaniesCompanyIdProjectsProjectIdDocumentsRoute
-  '/companies/$companyId/agents/$agentId/': typeof CompaniesCompanyIdAgentsAgentIdIndexRoute
-  '/companies/$companyId/projects/$projectId/': typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
-  '/companies/$companyId/agents/$agentId/executions/$runId': typeof CompaniesCompanyIdAgentsAgentIdExecutionsRunIdRoute
-  '/companies/$companyId/projects/$projectId/issues/$issueId': typeof CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute
-  '/companies/$companyId/agents/$agentId/executions/': typeof CompaniesCompanyIdAgentsAgentIdExecutionsIndexRoute
-  '/companies/$companyId/projects/$projectId/issues/': typeof CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute
-  '/companies/$companyId/projects/$projectId/settings/': typeof CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute
+  '/teams/': typeof TeamsIndexRoute
+  '/teams/$teamId/': typeof TeamsTeamIdIndexRoute
+  '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
+  '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
+  '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
+  '/teams/$teamId/issues/$issueId': typeof TeamsTeamIdIssuesIssueIdRoute
+  '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
+  '/teams/$teamId/settings/connections': typeof TeamsTeamIdSettingsConnectionsRoute
+  '/teams/$teamId/settings/credentials': typeof TeamsTeamIdSettingsCredentialsRoute
+  '/teams/$teamId/settings/general': typeof TeamsTeamIdSettingsGeneralRoute
+  '/teams/$teamId/agents/': typeof TeamsTeamIdAgentsIndexRoute
+  '/teams/$teamId/goals/': typeof TeamsTeamIdGoalsIndexRoute
+  '/teams/$teamId/inbox/': typeof TeamsTeamIdInboxIndexRoute
+  '/teams/$teamId/issues/': typeof TeamsTeamIdIssuesIndexRoute
+  '/teams/$teamId/kb/': typeof TeamsTeamIdKbIndexRoute
+  '/teams/$teamId/projects/': typeof TeamsTeamIdProjectsIndexRoute
+  '/teams/$teamId/agents/$agentId/settings': typeof TeamsTeamIdAgentsAgentIdSettingsRoute
+  '/teams/$teamId/projects/$projectId/container': typeof TeamsTeamIdProjectsProjectIdContainerRoute
+  '/teams/$teamId/projects/$projectId/documents': typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
+  '/teams/$teamId/agents/$agentId/': typeof TeamsTeamIdAgentsAgentIdIndexRoute
+  '/teams/$teamId/projects/$projectId/': typeof TeamsTeamIdProjectsProjectIdIndexRoute
+  '/teams/$teamId/agents/$agentId/executions/$runId': typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute
+  '/teams/$teamId/projects/$projectId/issues/$issueId': typeof TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute
+  '/teams/$teamId/agents/$agentId/executions/': typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRoute
+  '/teams/$teamId/projects/$projectId/issues/': typeof TeamsTeamIdProjectsProjectIdIssuesIndexRoute
+  '/teams/$teamId/projects/$projectId/settings/': typeof TeamsTeamIdProjectsProjectIdSettingsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/companies/$companyId'
-    | '/companies/new'
+    | '/teams/$teamId'
     | '/settings/ai-providers'
-    | '/companies/'
+    | '/teams/new'
     | '/inbox/'
     | '/settings/'
-    | '/companies/$companyId/'
-    | '/companies/$companyId/agents/$agentId'
-    | '/companies/$companyId/projects/$projectId'
-    | '/companies/$companyId/agents/hire'
-    | '/companies/$companyId/issues/$issueId'
-    | '/companies/$companyId/settings/audit-log'
-    | '/companies/$companyId/settings/connections'
-    | '/companies/$companyId/settings/credentials'
-    | '/companies/$companyId/settings/general'
-    | '/companies/$companyId/agents/'
-    | '/companies/$companyId/goals/'
-    | '/companies/$companyId/inbox/'
-    | '/companies/$companyId/issues/'
-    | '/companies/$companyId/kb/'
-    | '/companies/$companyId/projects/'
-    | '/companies/$companyId/agents/$agentId/settings'
-    | '/companies/$companyId/projects/$projectId/container'
-    | '/companies/$companyId/projects/$projectId/documents'
-    | '/companies/$companyId/agents/$agentId/'
-    | '/companies/$companyId/projects/$projectId/'
-    | '/companies/$companyId/agents/$agentId/executions/$runId'
-    | '/companies/$companyId/projects/$projectId/issues/$issueId'
-    | '/companies/$companyId/agents/$agentId/executions/'
-    | '/companies/$companyId/projects/$projectId/issues/'
-    | '/companies/$companyId/projects/$projectId/settings/'
+    | '/teams/'
+    | '/teams/$teamId/'
+    | '/teams/$teamId/agents/$agentId'
+    | '/teams/$teamId/projects/$projectId'
+    | '/teams/$teamId/agents/hire'
+    | '/teams/$teamId/issues/$issueId'
+    | '/teams/$teamId/settings/audit-log'
+    | '/teams/$teamId/settings/connections'
+    | '/teams/$teamId/settings/credentials'
+    | '/teams/$teamId/settings/general'
+    | '/teams/$teamId/agents/'
+    | '/teams/$teamId/goals/'
+    | '/teams/$teamId/inbox/'
+    | '/teams/$teamId/issues/'
+    | '/teams/$teamId/kb/'
+    | '/teams/$teamId/projects/'
+    | '/teams/$teamId/agents/$agentId/settings'
+    | '/teams/$teamId/projects/$projectId/container'
+    | '/teams/$teamId/projects/$projectId/documents'
+    | '/teams/$teamId/agents/$agentId/'
+    | '/teams/$teamId/projects/$projectId/'
+    | '/teams/$teamId/agents/$agentId/executions/$runId'
+    | '/teams/$teamId/projects/$projectId/issues/$issueId'
+    | '/teams/$teamId/agents/$agentId/executions/'
+    | '/teams/$teamId/projects/$projectId/issues/'
+    | '/teams/$teamId/projects/$projectId/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/companies/new'
     | '/settings/ai-providers'
-    | '/companies'
+    | '/teams/new'
     | '/inbox'
     | '/settings'
-    | '/companies/$companyId'
-    | '/companies/$companyId/agents/hire'
-    | '/companies/$companyId/issues/$issueId'
-    | '/companies/$companyId/settings/audit-log'
-    | '/companies/$companyId/settings/connections'
-    | '/companies/$companyId/settings/credentials'
-    | '/companies/$companyId/settings/general'
-    | '/companies/$companyId/agents'
-    | '/companies/$companyId/goals'
-    | '/companies/$companyId/inbox'
-    | '/companies/$companyId/issues'
-    | '/companies/$companyId/kb'
-    | '/companies/$companyId/projects'
-    | '/companies/$companyId/agents/$agentId/settings'
-    | '/companies/$companyId/projects/$projectId/container'
-    | '/companies/$companyId/projects/$projectId/documents'
-    | '/companies/$companyId/agents/$agentId'
-    | '/companies/$companyId/projects/$projectId'
-    | '/companies/$companyId/agents/$agentId/executions/$runId'
-    | '/companies/$companyId/projects/$projectId/issues/$issueId'
-    | '/companies/$companyId/agents/$agentId/executions'
-    | '/companies/$companyId/projects/$projectId/issues'
-    | '/companies/$companyId/projects/$projectId/settings'
+    | '/teams'
+    | '/teams/$teamId'
+    | '/teams/$teamId/agents/hire'
+    | '/teams/$teamId/issues/$issueId'
+    | '/teams/$teamId/settings/audit-log'
+    | '/teams/$teamId/settings/connections'
+    | '/teams/$teamId/settings/credentials'
+    | '/teams/$teamId/settings/general'
+    | '/teams/$teamId/agents'
+    | '/teams/$teamId/goals'
+    | '/teams/$teamId/inbox'
+    | '/teams/$teamId/issues'
+    | '/teams/$teamId/kb'
+    | '/teams/$teamId/projects'
+    | '/teams/$teamId/agents/$agentId/settings'
+    | '/teams/$teamId/projects/$projectId/container'
+    | '/teams/$teamId/projects/$projectId/documents'
+    | '/teams/$teamId/agents/$agentId'
+    | '/teams/$teamId/projects/$projectId'
+    | '/teams/$teamId/agents/$agentId/executions/$runId'
+    | '/teams/$teamId/projects/$projectId/issues/$issueId'
+    | '/teams/$teamId/agents/$agentId/executions'
+    | '/teams/$teamId/projects/$projectId/issues'
+    | '/teams/$teamId/projects/$projectId/settings'
   id:
     | '__root__'
     | '/'
-    | '/companies/$companyId'
-    | '/companies/new'
+    | '/teams/$teamId'
     | '/settings/ai-providers'
-    | '/companies/'
+    | '/teams/new'
     | '/inbox/'
     | '/settings/'
-    | '/companies/$companyId/'
-    | '/companies/$companyId/agents/$agentId'
-    | '/companies/$companyId/projects/$projectId'
-    | '/companies/$companyId/agents/hire'
-    | '/companies/$companyId/issues/$issueId'
-    | '/companies/$companyId/settings/audit-log'
-    | '/companies/$companyId/settings/connections'
-    | '/companies/$companyId/settings/credentials'
-    | '/companies/$companyId/settings/general'
-    | '/companies/$companyId/agents/'
-    | '/companies/$companyId/goals/'
-    | '/companies/$companyId/inbox/'
-    | '/companies/$companyId/issues/'
-    | '/companies/$companyId/kb/'
-    | '/companies/$companyId/projects/'
-    | '/companies/$companyId/agents/$agentId/settings'
-    | '/companies/$companyId/projects/$projectId/container'
-    | '/companies/$companyId/projects/$projectId/documents'
-    | '/companies/$companyId/agents/$agentId/'
-    | '/companies/$companyId/projects/$projectId/'
-    | '/companies/$companyId/agents/$agentId/executions/$runId'
-    | '/companies/$companyId/projects/$projectId/issues/$issueId'
-    | '/companies/$companyId/agents/$agentId/executions/'
-    | '/companies/$companyId/projects/$projectId/issues/'
-    | '/companies/$companyId/projects/$projectId/settings/'
+    | '/teams/'
+    | '/teams/$teamId/'
+    | '/teams/$teamId/agents/$agentId'
+    | '/teams/$teamId/projects/$projectId'
+    | '/teams/$teamId/agents/hire'
+    | '/teams/$teamId/issues/$issueId'
+    | '/teams/$teamId/settings/audit-log'
+    | '/teams/$teamId/settings/connections'
+    | '/teams/$teamId/settings/credentials'
+    | '/teams/$teamId/settings/general'
+    | '/teams/$teamId/agents/'
+    | '/teams/$teamId/goals/'
+    | '/teams/$teamId/inbox/'
+    | '/teams/$teamId/issues/'
+    | '/teams/$teamId/kb/'
+    | '/teams/$teamId/projects/'
+    | '/teams/$teamId/agents/$agentId/settings'
+    | '/teams/$teamId/projects/$projectId/container'
+    | '/teams/$teamId/projects/$projectId/documents'
+    | '/teams/$teamId/agents/$agentId/'
+    | '/teams/$teamId/projects/$projectId/'
+    | '/teams/$teamId/agents/$agentId/executions/$runId'
+    | '/teams/$teamId/projects/$projectId/issues/$issueId'
+    | '/teams/$teamId/agents/$agentId/executions/'
+    | '/teams/$teamId/projects/$projectId/issues/'
+    | '/teams/$teamId/projects/$projectId/settings/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  CompaniesCompanyIdRouteRoute: typeof CompaniesCompanyIdRouteRouteWithChildren
-  CompaniesNewRoute: typeof CompaniesNewRoute
+  TeamsTeamIdRouteRoute: typeof TeamsTeamIdRouteRouteWithChildren
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
-  CompaniesIndexRoute: typeof CompaniesIndexRoute
+  TeamsNewRoute: typeof TeamsNewRoute
   InboxIndexRoute: typeof InboxIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
+  TeamsIndexRoute: typeof TeamsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -446,6 +440,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/teams/': {
+      id: '/teams/'
+      path: '/teams'
+      fullPath: '/teams/'
+      preLoaderRoute: typeof TeamsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/': {
@@ -462,11 +463,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InboxIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/companies/': {
-      id: '/companies/'
-      path: '/companies'
-      fullPath: '/companies/'
-      preLoaderRoute: typeof CompaniesIndexRouteImport
+    '/teams/new': {
+      id: '/teams/new'
+      path: '/teams/new'
+      fullPath: '/teams/new'
+      preLoaderRoute: typeof TeamsNewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/ai-providers': {
@@ -476,308 +477,293 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAiProvidersRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/companies/new': {
-      id: '/companies/new'
-      path: '/companies/new'
-      fullPath: '/companies/new'
-      preLoaderRoute: typeof CompaniesNewRouteImport
+    '/teams/$teamId': {
+      id: '/teams/$teamId'
+      path: '/teams/$teamId'
+      fullPath: '/teams/$teamId'
+      preLoaderRoute: typeof TeamsTeamIdRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/companies/$companyId': {
-      id: '/companies/$companyId'
-      path: '/companies/$companyId'
-      fullPath: '/companies/$companyId'
-      preLoaderRoute: typeof CompaniesCompanyIdRouteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/companies/$companyId/': {
-      id: '/companies/$companyId/'
+    '/teams/$teamId/': {
+      id: '/teams/$teamId/'
       path: '/'
-      fullPath: '/companies/$companyId/'
-      preLoaderRoute: typeof CompaniesCompanyIdIndexRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/'
+      preLoaderRoute: typeof TeamsTeamIdIndexRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/projects/': {
-      id: '/companies/$companyId/projects/'
+    '/teams/$teamId/projects/': {
+      id: '/teams/$teamId/projects/'
       path: '/projects'
-      fullPath: '/companies/$companyId/projects/'
-      preLoaderRoute: typeof CompaniesCompanyIdProjectsIndexRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/projects/'
+      preLoaderRoute: typeof TeamsTeamIdProjectsIndexRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/kb/': {
-      id: '/companies/$companyId/kb/'
+    '/teams/$teamId/kb/': {
+      id: '/teams/$teamId/kb/'
       path: '/kb'
-      fullPath: '/companies/$companyId/kb/'
-      preLoaderRoute: typeof CompaniesCompanyIdKbIndexRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/kb/'
+      preLoaderRoute: typeof TeamsTeamIdKbIndexRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/issues/': {
-      id: '/companies/$companyId/issues/'
+    '/teams/$teamId/issues/': {
+      id: '/teams/$teamId/issues/'
       path: '/issues'
-      fullPath: '/companies/$companyId/issues/'
-      preLoaderRoute: typeof CompaniesCompanyIdIssuesIndexRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/issues/'
+      preLoaderRoute: typeof TeamsTeamIdIssuesIndexRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/inbox/': {
-      id: '/companies/$companyId/inbox/'
+    '/teams/$teamId/inbox/': {
+      id: '/teams/$teamId/inbox/'
       path: '/inbox'
-      fullPath: '/companies/$companyId/inbox/'
-      preLoaderRoute: typeof CompaniesCompanyIdInboxIndexRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/inbox/'
+      preLoaderRoute: typeof TeamsTeamIdInboxIndexRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/goals/': {
-      id: '/companies/$companyId/goals/'
+    '/teams/$teamId/goals/': {
+      id: '/teams/$teamId/goals/'
       path: '/goals'
-      fullPath: '/companies/$companyId/goals/'
-      preLoaderRoute: typeof CompaniesCompanyIdGoalsIndexRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/goals/'
+      preLoaderRoute: typeof TeamsTeamIdGoalsIndexRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/agents/': {
-      id: '/companies/$companyId/agents/'
+    '/teams/$teamId/agents/': {
+      id: '/teams/$teamId/agents/'
       path: '/agents'
-      fullPath: '/companies/$companyId/agents/'
-      preLoaderRoute: typeof CompaniesCompanyIdAgentsIndexRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/agents/'
+      preLoaderRoute: typeof TeamsTeamIdAgentsIndexRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/settings/general': {
-      id: '/companies/$companyId/settings/general'
+    '/teams/$teamId/settings/general': {
+      id: '/teams/$teamId/settings/general'
       path: '/settings/general'
-      fullPath: '/companies/$companyId/settings/general'
-      preLoaderRoute: typeof CompaniesCompanyIdSettingsGeneralRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/settings/general'
+      preLoaderRoute: typeof TeamsTeamIdSettingsGeneralRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/settings/credentials': {
-      id: '/companies/$companyId/settings/credentials'
+    '/teams/$teamId/settings/credentials': {
+      id: '/teams/$teamId/settings/credentials'
       path: '/settings/credentials'
-      fullPath: '/companies/$companyId/settings/credentials'
-      preLoaderRoute: typeof CompaniesCompanyIdSettingsCredentialsRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/settings/credentials'
+      preLoaderRoute: typeof TeamsTeamIdSettingsCredentialsRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/settings/connections': {
-      id: '/companies/$companyId/settings/connections'
+    '/teams/$teamId/settings/connections': {
+      id: '/teams/$teamId/settings/connections'
       path: '/settings/connections'
-      fullPath: '/companies/$companyId/settings/connections'
-      preLoaderRoute: typeof CompaniesCompanyIdSettingsConnectionsRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/settings/connections'
+      preLoaderRoute: typeof TeamsTeamIdSettingsConnectionsRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/settings/audit-log': {
-      id: '/companies/$companyId/settings/audit-log'
+    '/teams/$teamId/settings/audit-log': {
+      id: '/teams/$teamId/settings/audit-log'
       path: '/settings/audit-log'
-      fullPath: '/companies/$companyId/settings/audit-log'
-      preLoaderRoute: typeof CompaniesCompanyIdSettingsAuditLogRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/settings/audit-log'
+      preLoaderRoute: typeof TeamsTeamIdSettingsAuditLogRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/issues/$issueId': {
-      id: '/companies/$companyId/issues/$issueId'
+    '/teams/$teamId/issues/$issueId': {
+      id: '/teams/$teamId/issues/$issueId'
       path: '/issues/$issueId'
-      fullPath: '/companies/$companyId/issues/$issueId'
-      preLoaderRoute: typeof CompaniesCompanyIdIssuesIssueIdRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/issues/$issueId'
+      preLoaderRoute: typeof TeamsTeamIdIssuesIssueIdRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/agents/hire': {
-      id: '/companies/$companyId/agents/hire'
+    '/teams/$teamId/agents/hire': {
+      id: '/teams/$teamId/agents/hire'
       path: '/agents/hire'
-      fullPath: '/companies/$companyId/agents/hire'
-      preLoaderRoute: typeof CompaniesCompanyIdAgentsHireRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/agents/hire'
+      preLoaderRoute: typeof TeamsTeamIdAgentsHireRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/projects/$projectId': {
-      id: '/companies/$companyId/projects/$projectId'
+    '/teams/$teamId/projects/$projectId': {
+      id: '/teams/$teamId/projects/$projectId'
       path: '/projects/$projectId'
-      fullPath: '/companies/$companyId/projects/$projectId'
-      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/projects/$projectId'
+      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdRouteRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/agents/$agentId': {
-      id: '/companies/$companyId/agents/$agentId'
+    '/teams/$teamId/agents/$agentId': {
+      id: '/teams/$teamId/agents/$agentId'
       path: '/agents/$agentId'
-      fullPath: '/companies/$companyId/agents/$agentId'
-      preLoaderRoute: typeof CompaniesCompanyIdAgentsAgentIdRouteRouteImport
-      parentRoute: typeof CompaniesCompanyIdRouteRoute
+      fullPath: '/teams/$teamId/agents/$agentId'
+      preLoaderRoute: typeof TeamsTeamIdAgentsAgentIdRouteRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
     }
-    '/companies/$companyId/projects/$projectId/': {
-      id: '/companies/$companyId/projects/$projectId/'
+    '/teams/$teamId/projects/$projectId/': {
+      id: '/teams/$teamId/projects/$projectId/'
       path: '/'
-      fullPath: '/companies/$companyId/projects/$projectId/'
-      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdIndexRouteImport
-      parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
+      fullPath: '/teams/$teamId/projects/$projectId/'
+      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdIndexRouteImport
+      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
     }
-    '/companies/$companyId/agents/$agentId/': {
-      id: '/companies/$companyId/agents/$agentId/'
+    '/teams/$teamId/agents/$agentId/': {
+      id: '/teams/$teamId/agents/$agentId/'
       path: '/'
-      fullPath: '/companies/$companyId/agents/$agentId/'
-      preLoaderRoute: typeof CompaniesCompanyIdAgentsAgentIdIndexRouteImport
-      parentRoute: typeof CompaniesCompanyIdAgentsAgentIdRouteRoute
+      fullPath: '/teams/$teamId/agents/$agentId/'
+      preLoaderRoute: typeof TeamsTeamIdAgentsAgentIdIndexRouteImport
+      parentRoute: typeof TeamsTeamIdAgentsAgentIdRouteRoute
     }
-    '/companies/$companyId/projects/$projectId/documents': {
-      id: '/companies/$companyId/projects/$projectId/documents'
+    '/teams/$teamId/projects/$projectId/documents': {
+      id: '/teams/$teamId/projects/$projectId/documents'
       path: '/documents'
-      fullPath: '/companies/$companyId/projects/$projectId/documents'
-      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdDocumentsRouteImport
-      parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
+      fullPath: '/teams/$teamId/projects/$projectId/documents'
+      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdDocumentsRouteImport
+      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
     }
-    '/companies/$companyId/projects/$projectId/container': {
-      id: '/companies/$companyId/projects/$projectId/container'
+    '/teams/$teamId/projects/$projectId/container': {
+      id: '/teams/$teamId/projects/$projectId/container'
       path: '/container'
-      fullPath: '/companies/$companyId/projects/$projectId/container'
-      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdContainerRouteImport
-      parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
+      fullPath: '/teams/$teamId/projects/$projectId/container'
+      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdContainerRouteImport
+      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
     }
-    '/companies/$companyId/agents/$agentId/settings': {
-      id: '/companies/$companyId/agents/$agentId/settings'
+    '/teams/$teamId/agents/$agentId/settings': {
+      id: '/teams/$teamId/agents/$agentId/settings'
       path: '/settings'
-      fullPath: '/companies/$companyId/agents/$agentId/settings'
-      preLoaderRoute: typeof CompaniesCompanyIdAgentsAgentIdSettingsRouteImport
-      parentRoute: typeof CompaniesCompanyIdAgentsAgentIdRouteRoute
+      fullPath: '/teams/$teamId/agents/$agentId/settings'
+      preLoaderRoute: typeof TeamsTeamIdAgentsAgentIdSettingsRouteImport
+      parentRoute: typeof TeamsTeamIdAgentsAgentIdRouteRoute
     }
-    '/companies/$companyId/projects/$projectId/settings/': {
-      id: '/companies/$companyId/projects/$projectId/settings/'
+    '/teams/$teamId/projects/$projectId/settings/': {
+      id: '/teams/$teamId/projects/$projectId/settings/'
       path: '/settings'
-      fullPath: '/companies/$companyId/projects/$projectId/settings/'
-      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdSettingsIndexRouteImport
-      parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
+      fullPath: '/teams/$teamId/projects/$projectId/settings/'
+      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdSettingsIndexRouteImport
+      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
     }
-    '/companies/$companyId/projects/$projectId/issues/': {
-      id: '/companies/$companyId/projects/$projectId/issues/'
+    '/teams/$teamId/projects/$projectId/issues/': {
+      id: '/teams/$teamId/projects/$projectId/issues/'
       path: '/issues'
-      fullPath: '/companies/$companyId/projects/$projectId/issues/'
-      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdIssuesIndexRouteImport
-      parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
+      fullPath: '/teams/$teamId/projects/$projectId/issues/'
+      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdIssuesIndexRouteImport
+      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
     }
-    '/companies/$companyId/agents/$agentId/executions/': {
-      id: '/companies/$companyId/agents/$agentId/executions/'
+    '/teams/$teamId/agents/$agentId/executions/': {
+      id: '/teams/$teamId/agents/$agentId/executions/'
       path: '/executions'
-      fullPath: '/companies/$companyId/agents/$agentId/executions/'
-      preLoaderRoute: typeof CompaniesCompanyIdAgentsAgentIdExecutionsIndexRouteImport
-      parentRoute: typeof CompaniesCompanyIdAgentsAgentIdRouteRoute
+      fullPath: '/teams/$teamId/agents/$agentId/executions/'
+      preLoaderRoute: typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRouteImport
+      parentRoute: typeof TeamsTeamIdAgentsAgentIdRouteRoute
     }
-    '/companies/$companyId/projects/$projectId/issues/$issueId': {
-      id: '/companies/$companyId/projects/$projectId/issues/$issueId'
+    '/teams/$teamId/projects/$projectId/issues/$issueId': {
+      id: '/teams/$teamId/projects/$projectId/issues/$issueId'
       path: '/issues/$issueId'
-      fullPath: '/companies/$companyId/projects/$projectId/issues/$issueId'
-      preLoaderRoute: typeof CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRouteImport
-      parentRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRoute
+      fullPath: '/teams/$teamId/projects/$projectId/issues/$issueId'
+      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdIssuesIssueIdRouteImport
+      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
     }
-    '/companies/$companyId/agents/$agentId/executions/$runId': {
-      id: '/companies/$companyId/agents/$agentId/executions/$runId'
+    '/teams/$teamId/agents/$agentId/executions/$runId': {
+      id: '/teams/$teamId/agents/$agentId/executions/$runId'
       path: '/executions/$runId'
-      fullPath: '/companies/$companyId/agents/$agentId/executions/$runId'
-      preLoaderRoute: typeof CompaniesCompanyIdAgentsAgentIdExecutionsRunIdRouteImport
-      parentRoute: typeof CompaniesCompanyIdAgentsAgentIdRouteRoute
+      fullPath: '/teams/$teamId/agents/$agentId/executions/$runId'
+      preLoaderRoute: typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRouteImport
+      parentRoute: typeof TeamsTeamIdAgentsAgentIdRouteRoute
     }
   }
 }
 
-interface CompaniesCompanyIdAgentsAgentIdRouteRouteChildren {
-  CompaniesCompanyIdAgentsAgentIdSettingsRoute: typeof CompaniesCompanyIdAgentsAgentIdSettingsRoute
-  CompaniesCompanyIdAgentsAgentIdIndexRoute: typeof CompaniesCompanyIdAgentsAgentIdIndexRoute
-  CompaniesCompanyIdAgentsAgentIdExecutionsRunIdRoute: typeof CompaniesCompanyIdAgentsAgentIdExecutionsRunIdRoute
-  CompaniesCompanyIdAgentsAgentIdExecutionsIndexRoute: typeof CompaniesCompanyIdAgentsAgentIdExecutionsIndexRoute
+interface TeamsTeamIdAgentsAgentIdRouteRouteChildren {
+  TeamsTeamIdAgentsAgentIdSettingsRoute: typeof TeamsTeamIdAgentsAgentIdSettingsRoute
+  TeamsTeamIdAgentsAgentIdIndexRoute: typeof TeamsTeamIdAgentsAgentIdIndexRoute
+  TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute: typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute
+  TeamsTeamIdAgentsAgentIdExecutionsIndexRoute: typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRoute
 }
 
-const CompaniesCompanyIdAgentsAgentIdRouteRouteChildren: CompaniesCompanyIdAgentsAgentIdRouteRouteChildren =
+const TeamsTeamIdAgentsAgentIdRouteRouteChildren: TeamsTeamIdAgentsAgentIdRouteRouteChildren =
   {
-    CompaniesCompanyIdAgentsAgentIdSettingsRoute:
-      CompaniesCompanyIdAgentsAgentIdSettingsRoute,
-    CompaniesCompanyIdAgentsAgentIdIndexRoute:
-      CompaniesCompanyIdAgentsAgentIdIndexRoute,
-    CompaniesCompanyIdAgentsAgentIdExecutionsRunIdRoute:
-      CompaniesCompanyIdAgentsAgentIdExecutionsRunIdRoute,
-    CompaniesCompanyIdAgentsAgentIdExecutionsIndexRoute:
-      CompaniesCompanyIdAgentsAgentIdExecutionsIndexRoute,
+    TeamsTeamIdAgentsAgentIdSettingsRoute:
+      TeamsTeamIdAgentsAgentIdSettingsRoute,
+    TeamsTeamIdAgentsAgentIdIndexRoute: TeamsTeamIdAgentsAgentIdIndexRoute,
+    TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute:
+      TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute,
+    TeamsTeamIdAgentsAgentIdExecutionsIndexRoute:
+      TeamsTeamIdAgentsAgentIdExecutionsIndexRoute,
   }
 
-const CompaniesCompanyIdAgentsAgentIdRouteRouteWithChildren =
-  CompaniesCompanyIdAgentsAgentIdRouteRoute._addFileChildren(
-    CompaniesCompanyIdAgentsAgentIdRouteRouteChildren,
+const TeamsTeamIdAgentsAgentIdRouteRouteWithChildren =
+  TeamsTeamIdAgentsAgentIdRouteRoute._addFileChildren(
+    TeamsTeamIdAgentsAgentIdRouteRouteChildren,
   )
 
-interface CompaniesCompanyIdProjectsProjectIdRouteRouteChildren {
-  CompaniesCompanyIdProjectsProjectIdContainerRoute: typeof CompaniesCompanyIdProjectsProjectIdContainerRoute
-  CompaniesCompanyIdProjectsProjectIdDocumentsRoute: typeof CompaniesCompanyIdProjectsProjectIdDocumentsRoute
-  CompaniesCompanyIdProjectsProjectIdIndexRoute: typeof CompaniesCompanyIdProjectsProjectIdIndexRoute
-  CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute: typeof CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute
-  CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute: typeof CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute
-  CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute: typeof CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute
+interface TeamsTeamIdProjectsProjectIdRouteRouteChildren {
+  TeamsTeamIdProjectsProjectIdContainerRoute: typeof TeamsTeamIdProjectsProjectIdContainerRoute
+  TeamsTeamIdProjectsProjectIdDocumentsRoute: typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
+  TeamsTeamIdProjectsProjectIdIndexRoute: typeof TeamsTeamIdProjectsProjectIdIndexRoute
+  TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute: typeof TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute
+  TeamsTeamIdProjectsProjectIdIssuesIndexRoute: typeof TeamsTeamIdProjectsProjectIdIssuesIndexRoute
+  TeamsTeamIdProjectsProjectIdSettingsIndexRoute: typeof TeamsTeamIdProjectsProjectIdSettingsIndexRoute
 }
 
-const CompaniesCompanyIdProjectsProjectIdRouteRouteChildren: CompaniesCompanyIdProjectsProjectIdRouteRouteChildren =
+const TeamsTeamIdProjectsProjectIdRouteRouteChildren: TeamsTeamIdProjectsProjectIdRouteRouteChildren =
   {
-    CompaniesCompanyIdProjectsProjectIdContainerRoute:
-      CompaniesCompanyIdProjectsProjectIdContainerRoute,
-    CompaniesCompanyIdProjectsProjectIdDocumentsRoute:
-      CompaniesCompanyIdProjectsProjectIdDocumentsRoute,
-    CompaniesCompanyIdProjectsProjectIdIndexRoute:
-      CompaniesCompanyIdProjectsProjectIdIndexRoute,
-    CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute:
-      CompaniesCompanyIdProjectsProjectIdIssuesIssueIdRoute,
-    CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute:
-      CompaniesCompanyIdProjectsProjectIdIssuesIndexRoute,
-    CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute:
-      CompaniesCompanyIdProjectsProjectIdSettingsIndexRoute,
+    TeamsTeamIdProjectsProjectIdContainerRoute:
+      TeamsTeamIdProjectsProjectIdContainerRoute,
+    TeamsTeamIdProjectsProjectIdDocumentsRoute:
+      TeamsTeamIdProjectsProjectIdDocumentsRoute,
+    TeamsTeamIdProjectsProjectIdIndexRoute:
+      TeamsTeamIdProjectsProjectIdIndexRoute,
+    TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute:
+      TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute,
+    TeamsTeamIdProjectsProjectIdIssuesIndexRoute:
+      TeamsTeamIdProjectsProjectIdIssuesIndexRoute,
+    TeamsTeamIdProjectsProjectIdSettingsIndexRoute:
+      TeamsTeamIdProjectsProjectIdSettingsIndexRoute,
   }
 
-const CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren =
-  CompaniesCompanyIdProjectsProjectIdRouteRoute._addFileChildren(
-    CompaniesCompanyIdProjectsProjectIdRouteRouteChildren,
+const TeamsTeamIdProjectsProjectIdRouteRouteWithChildren =
+  TeamsTeamIdProjectsProjectIdRouteRoute._addFileChildren(
+    TeamsTeamIdProjectsProjectIdRouteRouteChildren,
   )
 
-interface CompaniesCompanyIdRouteRouteChildren {
-  CompaniesCompanyIdIndexRoute: typeof CompaniesCompanyIdIndexRoute
-  CompaniesCompanyIdAgentsAgentIdRouteRoute: typeof CompaniesCompanyIdAgentsAgentIdRouteRouteWithChildren
-  CompaniesCompanyIdProjectsProjectIdRouteRoute: typeof CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren
-  CompaniesCompanyIdAgentsHireRoute: typeof CompaniesCompanyIdAgentsHireRoute
-  CompaniesCompanyIdIssuesIssueIdRoute: typeof CompaniesCompanyIdIssuesIssueIdRoute
-  CompaniesCompanyIdSettingsAuditLogRoute: typeof CompaniesCompanyIdSettingsAuditLogRoute
-  CompaniesCompanyIdSettingsConnectionsRoute: typeof CompaniesCompanyIdSettingsConnectionsRoute
-  CompaniesCompanyIdSettingsCredentialsRoute: typeof CompaniesCompanyIdSettingsCredentialsRoute
-  CompaniesCompanyIdSettingsGeneralRoute: typeof CompaniesCompanyIdSettingsGeneralRoute
-  CompaniesCompanyIdAgentsIndexRoute: typeof CompaniesCompanyIdAgentsIndexRoute
-  CompaniesCompanyIdGoalsIndexRoute: typeof CompaniesCompanyIdGoalsIndexRoute
-  CompaniesCompanyIdInboxIndexRoute: typeof CompaniesCompanyIdInboxIndexRoute
-  CompaniesCompanyIdIssuesIndexRoute: typeof CompaniesCompanyIdIssuesIndexRoute
-  CompaniesCompanyIdKbIndexRoute: typeof CompaniesCompanyIdKbIndexRoute
-  CompaniesCompanyIdProjectsIndexRoute: typeof CompaniesCompanyIdProjectsIndexRoute
+interface TeamsTeamIdRouteRouteChildren {
+  TeamsTeamIdIndexRoute: typeof TeamsTeamIdIndexRoute
+  TeamsTeamIdAgentsAgentIdRouteRoute: typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
+  TeamsTeamIdProjectsProjectIdRouteRoute: typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
+  TeamsTeamIdAgentsHireRoute: typeof TeamsTeamIdAgentsHireRoute
+  TeamsTeamIdIssuesIssueIdRoute: typeof TeamsTeamIdIssuesIssueIdRoute
+  TeamsTeamIdSettingsAuditLogRoute: typeof TeamsTeamIdSettingsAuditLogRoute
+  TeamsTeamIdSettingsConnectionsRoute: typeof TeamsTeamIdSettingsConnectionsRoute
+  TeamsTeamIdSettingsCredentialsRoute: typeof TeamsTeamIdSettingsCredentialsRoute
+  TeamsTeamIdSettingsGeneralRoute: typeof TeamsTeamIdSettingsGeneralRoute
+  TeamsTeamIdAgentsIndexRoute: typeof TeamsTeamIdAgentsIndexRoute
+  TeamsTeamIdGoalsIndexRoute: typeof TeamsTeamIdGoalsIndexRoute
+  TeamsTeamIdInboxIndexRoute: typeof TeamsTeamIdInboxIndexRoute
+  TeamsTeamIdIssuesIndexRoute: typeof TeamsTeamIdIssuesIndexRoute
+  TeamsTeamIdKbIndexRoute: typeof TeamsTeamIdKbIndexRoute
+  TeamsTeamIdProjectsIndexRoute: typeof TeamsTeamIdProjectsIndexRoute
 }
 
-const CompaniesCompanyIdRouteRouteChildren: CompaniesCompanyIdRouteRouteChildren =
-  {
-    CompaniesCompanyIdIndexRoute: CompaniesCompanyIdIndexRoute,
-    CompaniesCompanyIdAgentsAgentIdRouteRoute:
-      CompaniesCompanyIdAgentsAgentIdRouteRouteWithChildren,
-    CompaniesCompanyIdProjectsProjectIdRouteRoute:
-      CompaniesCompanyIdProjectsProjectIdRouteRouteWithChildren,
-    CompaniesCompanyIdAgentsHireRoute: CompaniesCompanyIdAgentsHireRoute,
-    CompaniesCompanyIdIssuesIssueIdRoute: CompaniesCompanyIdIssuesIssueIdRoute,
-    CompaniesCompanyIdSettingsAuditLogRoute:
-      CompaniesCompanyIdSettingsAuditLogRoute,
-    CompaniesCompanyIdSettingsConnectionsRoute:
-      CompaniesCompanyIdSettingsConnectionsRoute,
-    CompaniesCompanyIdSettingsCredentialsRoute:
-      CompaniesCompanyIdSettingsCredentialsRoute,
-    CompaniesCompanyIdSettingsGeneralRoute:
-      CompaniesCompanyIdSettingsGeneralRoute,
-    CompaniesCompanyIdAgentsIndexRoute: CompaniesCompanyIdAgentsIndexRoute,
-    CompaniesCompanyIdGoalsIndexRoute: CompaniesCompanyIdGoalsIndexRoute,
-    CompaniesCompanyIdInboxIndexRoute: CompaniesCompanyIdInboxIndexRoute,
-    CompaniesCompanyIdIssuesIndexRoute: CompaniesCompanyIdIssuesIndexRoute,
-    CompaniesCompanyIdKbIndexRoute: CompaniesCompanyIdKbIndexRoute,
-    CompaniesCompanyIdProjectsIndexRoute: CompaniesCompanyIdProjectsIndexRoute,
-  }
+const TeamsTeamIdRouteRouteChildren: TeamsTeamIdRouteRouteChildren = {
+  TeamsTeamIdIndexRoute: TeamsTeamIdIndexRoute,
+  TeamsTeamIdAgentsAgentIdRouteRoute:
+    TeamsTeamIdAgentsAgentIdRouteRouteWithChildren,
+  TeamsTeamIdProjectsProjectIdRouteRoute:
+    TeamsTeamIdProjectsProjectIdRouteRouteWithChildren,
+  TeamsTeamIdAgentsHireRoute: TeamsTeamIdAgentsHireRoute,
+  TeamsTeamIdIssuesIssueIdRoute: TeamsTeamIdIssuesIssueIdRoute,
+  TeamsTeamIdSettingsAuditLogRoute: TeamsTeamIdSettingsAuditLogRoute,
+  TeamsTeamIdSettingsConnectionsRoute: TeamsTeamIdSettingsConnectionsRoute,
+  TeamsTeamIdSettingsCredentialsRoute: TeamsTeamIdSettingsCredentialsRoute,
+  TeamsTeamIdSettingsGeneralRoute: TeamsTeamIdSettingsGeneralRoute,
+  TeamsTeamIdAgentsIndexRoute: TeamsTeamIdAgentsIndexRoute,
+  TeamsTeamIdGoalsIndexRoute: TeamsTeamIdGoalsIndexRoute,
+  TeamsTeamIdInboxIndexRoute: TeamsTeamIdInboxIndexRoute,
+  TeamsTeamIdIssuesIndexRoute: TeamsTeamIdIssuesIndexRoute,
+  TeamsTeamIdKbIndexRoute: TeamsTeamIdKbIndexRoute,
+  TeamsTeamIdProjectsIndexRoute: TeamsTeamIdProjectsIndexRoute,
+}
 
-const CompaniesCompanyIdRouteRouteWithChildren =
-  CompaniesCompanyIdRouteRoute._addFileChildren(
-    CompaniesCompanyIdRouteRouteChildren,
-  )
+const TeamsTeamIdRouteRouteWithChildren =
+  TeamsTeamIdRouteRoute._addFileChildren(TeamsTeamIdRouteRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  CompaniesCompanyIdRouteRoute: CompaniesCompanyIdRouteRouteWithChildren,
-  CompaniesNewRoute: CompaniesNewRoute,
+  TeamsTeamIdRouteRoute: TeamsTeamIdRouteRouteWithChildren,
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
-  CompaniesIndexRoute: CompaniesIndexRoute,
+  TeamsNewRoute: TeamsNewRoute,
   InboxIndexRoute: InboxIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,
+  TeamsIndexRoute: TeamsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

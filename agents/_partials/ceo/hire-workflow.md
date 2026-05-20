@@ -21,4 +21,4 @@ You are the only role that can refine a pending hire. When you pick up an onboar
 8. When the board approves the hire approval, the agent is created and enabled automatically, the onboarding ticket is closed, and agent and team summaries are regenerated. You don't need to create the agent yourself; the system handles materialisation.
 9. If the board denies the hire, close the onboarding ticket as cancelled with a brief note explaining the outcome.
 
-Never attempt to create agents via any other path. The direct create endpoint is reserved for seeding new companies from templates.
+Never attempt to create agents via any other path. The direct create endpoint is reserved for seeding new teams from templates.

@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 
 export const secretsRoutes = new Hono<Env>();
 
@@ -13,15 +13,15 @@ export const secretsRoutes = new Hono<Env>();
  * never been substituted on an outbound request — useful for spotting
  * stale credentials safe to revoke.
  */
-secretsRoutes.get('/companies/:companyId/credentials', async (c) => {
-	const access = await requireCompanyAccess(c);
+secretsRoutes.get('/teams/:teamId/credentials', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const result = await db.query(
-		`SELECT s.id, s.company_id, s.project_id, s.name, s.category,
+		`SELECT s.id, s.team_id, s.project_id, s.name, s.category,
 		        s.allowed_hosts, s.allow_all_hosts, s.created_at, s.updated_at,
 		        p.name AS project_name,
 		        usage.last_used_at,
@@ -34,39 +34,39 @@ secretsRoutes.get('/companies/:companyId/credentials', async (c) => {
 		            count(*)::int AS use_count,
 		            (SELECT al2.details->>'host'
 		             FROM audit_log al2
-		             WHERE al2.company_id = $1
+		             WHERE al2.team_id = $1
 		               AND al2.entity_type = 'egress_request'
 		               AND al2.details->'secret_names_used' ? s.name
 		             ORDER BY al2.created_at DESC LIMIT 1) AS last_host
 		     FROM audit_log al
-		     WHERE al.company_id = $1
+		     WHERE al.team_id = $1
 		       AND al.entity_type = 'egress_request'
 		       AND al.details->'secret_names_used' ? s.name
 		 ) usage ON TRUE
-		 WHERE s.company_id = $1
+		 WHERE s.team_id = $1
 		 ORDER BY usage.last_used_at DESC NULLS LAST, s.name ASC`,
-		[companyId],
+		[teamId],
 	);
 	return ok(c, result.rows);
 });
 
-secretsRoutes.get('/companies/:companyId/secrets', async (c) => {
-	const access = await requireCompanyAccess(c);
+secretsRoutes.get('/teams/:teamId/secrets', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const projectId = c.req.query('project_id');
 
 	let query = `
-    SELECT s.id, s.company_id, s.project_id, s.name, s.category,
+    SELECT s.id, s.team_id, s.project_id, s.name, s.category,
            s.allowed_hosts, s.allow_all_hosts, s.created_at, s.updated_at,
            p.name AS project_name,
            (SELECT count(*) FROM secret_grants sg WHERE sg.secret_id = s.id AND sg.revoked_at IS NULL)::int AS grant_count
     FROM secrets s
     LEFT JOIN projects p ON p.id = s.project_id
-    WHERE s.company_id = $1`;
-	const params: unknown[] = [companyId];
+    WHERE s.team_id = $1`;
+	const params: unknown[] = [teamId];
 
 	if (projectId) {
 		query += ` AND s.project_id = $2`;
@@ -78,12 +78,12 @@ secretsRoutes.get('/companies/:companyId/secrets', async (c) => {
 	return ok(c, result.rows);
 });
 
-secretsRoutes.post('/companies/:companyId/secrets', async (c) => {
-	const access = await requireCompanyAccess(c);
+secretsRoutes.post('/teams/:teamId/secrets', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const masterKeyManager = c.get('masterKeyManager');
 
 	const body = await c.req.json<{
@@ -111,11 +111,11 @@ secretsRoutes.post('/companies/:companyId/secrets', async (c) => {
 	const allowAllHosts = !!body.allow_all_hosts;
 
 	const result = await db.query(
-		`INSERT INTO secrets (company_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
+		`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
      VALUES ($1, $2, $3, $4, $5::secret_category, $6, $7)
-     RETURNING id, company_id, project_id, name, category, allowed_hosts, allow_all_hosts, created_at, updated_at`,
+     RETURNING id, team_id, project_id, name, category, allowed_hosts, allow_all_hosts, created_at, updated_at`,
 		[
-			companyId,
+			teamId,
 			body.project_id ?? null,
 			body.name.trim(),
 			encryptedValue,
@@ -127,7 +127,7 @@ secretsRoutes.post('/companies/:companyId/secrets', async (c) => {
 
 	broadcastChange(
 		c,
-		wsRoom.company(companyId),
+		wsRoom.team(teamId),
 		'secrets',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
@@ -135,18 +135,18 @@ secretsRoutes.post('/companies/:companyId/secrets', async (c) => {
 	return ok(c, result.rows[0], 201);
 });
 
-secretsRoutes.patch('/companies/:companyId/secrets/:secretId', async (c) => {
-	const access = await requireCompanyAccess(c);
+secretsRoutes.patch('/teams/:teamId/secrets/:secretId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const secretId = c.req.param('secretId');
 	const masterKeyManager = c.get('masterKeyManager');
 
-	const existing = await db.query('SELECT id FROM secrets WHERE id = $1 AND company_id = $2', [
+	const existing = await db.query('SELECT id FROM secrets WHERE id = $1 AND team_id = $2', [
 		secretId,
-		companyId,
+		teamId,
 	]);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Secret not found', 404);
@@ -202,40 +202,40 @@ secretsRoutes.patch('/companies/:companyId/secrets/:secretId', async (c) => {
 	params.push(secretId);
 	const result = await db.query(
 		`UPDATE secrets SET ${sets.join(', ')} WHERE id = $${idx}
-     RETURNING id, company_id, project_id, name, category, allowed_hosts, allow_all_hosts, created_at, updated_at`,
+     RETURNING id, team_id, project_id, name, category, allowed_hosts, allow_all_hosts, created_at, updated_at`,
 		params,
 	);
 
 	return ok(c, result.rows[0]);
 });
 
-secretsRoutes.delete('/companies/:companyId/secrets/:secretId', async (c) => {
-	const access = await requireCompanyAccess(c);
+secretsRoutes.delete('/teams/:teamId/secrets/:secretId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const secretId = c.req.param('secretId');
 
-	const existing = await db.query('SELECT id FROM secrets WHERE id = $1 AND company_id = $2', [
+	const existing = await db.query('SELECT id FROM secrets WHERE id = $1 AND team_id = $2', [
 		secretId,
-		companyId,
+		teamId,
 	]);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Secret not found', 404);
 	}
 
 	await db.query('DELETE FROM secrets WHERE id = $1', [secretId]);
-	broadcastChange(c, wsRoom.company(companyId), 'secrets', 'DELETE', { id: secretId });
+	broadcastChange(c, wsRoom.team(teamId), 'secrets', 'DELETE', { id: secretId });
 	return c.json({ data: null }, 200);
 });
 
-secretsRoutes.get('/companies/:companyId/secrets/:secretId/grants', async (c) => {
-	const access = await requireCompanyAccess(c);
+secretsRoutes.get('/teams/:teamId/secrets/:secretId/grants', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const secretId = c.req.param('secretId');
 
 	const result = await db.query(
@@ -244,24 +244,24 @@ secretsRoutes.get('/companies/:companyId/secrets/:secretId/grants', async (c) =>
      FROM secret_grants sg
      JOIN secrets s ON s.id = sg.secret_id
      LEFT JOIN member_agents ma ON ma.id = sg.member_id
-     WHERE sg.secret_id = $1 AND s.company_id = $2
+     WHERE sg.secret_id = $1 AND s.team_id = $2
      ORDER BY sg.granted_at DESC`,
-		[secretId, companyId],
+		[secretId, teamId],
 	);
 	return ok(c, result.rows);
 });
 
-secretsRoutes.post('/companies/:companyId/secrets/:secretId/grants', async (c) => {
-	const access = await requireCompanyAccess(c);
+secretsRoutes.post('/teams/:teamId/secrets/:secretId/grants', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const secretId = c.req.param('secretId');
 
-	const secretCheck = await db.query('SELECT id FROM secrets WHERE id = $1 AND company_id = $2', [
+	const secretCheck = await db.query('SELECT id FROM secrets WHERE id = $1 AND team_id = $2', [
 		secretId,
-		companyId,
+		teamId,
 	]);
 	if (secretCheck.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Secret not found', 404);
@@ -287,20 +287,20 @@ secretsRoutes.post('/companies/:companyId/secrets/:secretId/grants', async (c) =
 	return ok(c, result.rows[0], 201);
 });
 
-secretsRoutes.delete('/companies/:companyId/secret-grants/:grantId', async (c) => {
-	const access = await requireCompanyAccess(c);
+secretsRoutes.delete('/teams/:teamId/secret-grants/:grantId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const grantId = c.req.param('grantId');
 
 	const result = await db.query(
 		`UPDATE secret_grants sg SET revoked_at = now()
      FROM secrets s
-     WHERE sg.id = $1 AND sg.secret_id = s.id AND s.company_id = $2
+     WHERE sg.id = $1 AND sg.secret_id = s.id AND s.team_id = $2
      RETURNING sg.*`,
-		[grantId, companyId],
+		[grantId, teamId],
 	);
 
 	if (result.rows.length === 0) {

@@ -40,7 +40,7 @@ function platformDisplayName(platform: string): string {
 
 async function notifyParentOfOAuthVerification(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	issueId: string,
 	wsManager?: WebSocketManager,
 ): Promise<void> {
@@ -50,8 +50,8 @@ async function notifyParentOfOAuthVerification(
 		description: string;
 	}>(
 		`SELECT parent_issue_id, labels, description FROM issues
-		 WHERE id = $1 AND company_id = $2`,
-		[issueId, companyId],
+		 WHERE id = $1 AND team_id = $2`,
+		[issueId, teamId],
 	);
 	const row = result.rows[0];
 	if (!row?.parent_issue_id) return;
@@ -65,9 +65,9 @@ async function notifyParentOfOAuthVerification(
 	const ceo = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
+		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[companyId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
 	);
 	const ceoId = ceo.rows[0]?.id ?? null;
 
@@ -82,7 +82,7 @@ async function notifyParentOfOAuthVerification(
 	if (wsManager && commentResult.rows[0]) {
 		broadcastRowChange(
 			wsManager,
-			wsRoom.company(companyId),
+			wsRoom.team(teamId),
 			'issue_comments',
 			'INSERT',
 			commentResult.rows[0],
@@ -91,7 +91,7 @@ async function notifyParentOfOAuthVerification(
 
 	if (ceoId) {
 		try {
-			await createWakeup(db, ceoId, companyId, WakeupSource.Automation, {
+			await createWakeup(db, ceoId, teamId, WakeupSource.Automation, {
 				issue_id: row.parent_issue_id,
 				trigger: 'oauth_verified',
 			});
@@ -107,17 +107,17 @@ async function notifyParentOfOAuthVerification(
  */
 export async function triggerStatusAutomations(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	issueId: string,
 	oldStatus: string,
 	newStatus: string,
 	actorMemberId: string | null,
 	wsManager?: WebSocketManager,
 ): Promise<void> {
-	await recordStatusChange(db, companyId, issueId, oldStatus, newStatus, actorMemberId, wsManager);
+	await recordStatusChange(db, teamId, issueId, oldStatus, newStatus, actorMemberId, wsManager);
 
 	try {
-		await recomputeDownstreamReadiness(db, companyId, issueId, actorMemberId, wsManager);
+		await recomputeDownstreamReadiness(db, teamId, issueId, actorMemberId, wsManager);
 	} catch (e) {
 		log.error('Failed to recompute downstream readiness:', e);
 	}
@@ -126,20 +126,20 @@ export async function triggerStatusAutomations(
 		const coach = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE m.company_id = $1 AND ma.slug = $3
+			 WHERE m.team_id = $1 AND ma.slug = $3
 			   AND ma.admin_status = $2::agent_admin_status
 			 LIMIT 1`,
-			[companyId, AgentAdminStatus.Enabled, COACH_AGENT_SLUG],
+			[teamId, AgentAdminStatus.Enabled, COACH_AGENT_SLUG],
 		);
 		if (coach.rows.length > 0) {
-			createWakeup(db, coach.rows[0].id, companyId, WakeupSource.Automation, {
+			createWakeup(db, coach.rows[0].id, teamId, WakeupSource.Automation, {
 				issue_id: issueId,
 				trigger: 'issue_done',
 			}).catch((e) => log.error('Failed to wake Coach:', e));
 		}
 
 		try {
-			await notifyParentOfOAuthVerification(db, companyId, issueId, wsManager);
+			await notifyParentOfOAuthVerification(db, teamId, issueId, wsManager);
 		} catch (e) {
 			log.error('Failed to notify parent of OAuth verification:', e);
 		}

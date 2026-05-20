@@ -1,6 +1,6 @@
 # Hezo
 
-Self-hosted company orchestration platform for AI agents. Orchestrate teams of AI agents (CEO, Architect, Engineer, QA, etc.) to run autonomous companies under human board oversight.
+Self-hosted orchestration platform for teams of AI agents. Spin up independent teams (CEO, Architect, Engineer, QA, …) and run them autonomously under human board oversight.
 
 ## Prerequisites
 

@@ -8,21 +8,21 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 
 interface RepoSetupSectionProps {
-	companyId: string;
+	teamId: string;
 	projectId: string;
 }
 
-export function RepoSetupSection({ companyId, projectId }: RepoSetupSectionProps) {
-	const { data: connections = [], isLoading: connectionsLoading } = useOAuthConnections(companyId);
-	const { data: repos } = useRepos(companyId, projectId);
-	const deleteRepo = useDeleteRepo(companyId, projectId);
+export function RepoSetupSection({ teamId, projectId }: RepoSetupSectionProps) {
+	const { data: connections = [], isLoading: connectionsLoading } = useOAuthConnections(teamId);
+	const { data: repos } = useRepos(teamId, projectId);
+	const deleteRepo = useDeleteRepo(teamId, projectId);
 
 	const githubConnections = connections.filter((c) => c.provider === 'github');
 	const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
 	const activeConnection =
 		githubConnections.find((c) => c.id === selectedConnectionId) ?? githubConnections[0] ?? null;
 
-	const scopeStatusQuery = useConnectionScopeStatus(companyId, activeConnection?.id);
+	const scopeStatusQuery = useConnectionScopeStatus(teamId, activeConnection?.id);
 
 	const [oauthDialogOpen, setOauthDialogOpen] = useState(false);
 	const [reauthScopes, setReauthScopes] = useState<string[] | undefined>(undefined);
@@ -142,7 +142,7 @@ export function RepoSetupSection({ companyId, projectId }: RepoSetupSectionProps
 			<GitHubDeviceFlowDialog
 				open={oauthDialogOpen}
 				onOpenChange={setOauthDialogOpen}
-				companyId={companyId}
+				teamId={teamId}
 				scopes={reauthScopes}
 			/>
 
@@ -150,7 +150,7 @@ export function RepoSetupSection({ companyId, projectId }: RepoSetupSectionProps
 				<RepoPickerModal
 					open={pickerOpen}
 					onOpenChange={setPickerOpen}
-					companyId={companyId}
+					teamId={teamId}
 					projectId={projectId}
 					oauthConnectionId={activeConnection.id}
 				/>

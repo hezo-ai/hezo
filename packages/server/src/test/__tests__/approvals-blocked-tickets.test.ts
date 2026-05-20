@@ -8,8 +8,8 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
-let otherCompanyId: string;
+let teamId: string;
+let otherTeamId: string;
 let projectId: string;
 let approvalId: string;
 let issueAId: string;
@@ -20,7 +20,7 @@ let commentAId: string;
 let commentBId: string;
 
 async function createAgent(name: string, slug: string): Promise<string> {
-	const r = await app.request(`/api/companies/${companyId}/agents`, {
+	const r = await app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: name, slug }),
@@ -29,7 +29,7 @@ async function createAgent(name: string, slug: string): Promise<string> {
 }
 
 async function createIssue(title: string, assigneeId: string): Promise<string> {
-	const r = await app.request(`/api/companies/${companyId}/issues`, {
+	const r = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title, assignee_id: assigneeId }),
@@ -61,26 +61,26 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
 		(t: { name: string }) => t.name === 'Startup',
 	).id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Blocked Co', template_id: typeId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const otherRes = await app.request('/api/companies', {
+	const otherRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Other Co', template_id: typeId }),
 	});
-	otherCompanyId = (await otherRes.json()).data.id;
+	otherTeamId = (await otherRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Repo Ops', description: 'ops' }),
@@ -94,11 +94,11 @@ beforeAll(async () => {
 	issueBId = await createIssue('Add CI workflow', agentBId);
 
 	const approval = await db.query<{ id: string }>(
-		`INSERT INTO approvals (company_id, type, status, payload)
+		`INSERT INTO approvals (team_id, type, status, payload)
 		 VALUES ($1, 'designated_repo_request'::approval_type, 'pending'::approval_status, $2::jsonb)
 		 RETURNING id`,
 		[
-			companyId,
+			teamId,
 			JSON.stringify({
 				platform: 'github',
 				reason: 'designated_repo',
@@ -118,12 +118,11 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('GET /api/companies/:companyId/approvals/:approvalId/blocked-tickets', () => {
+describe('GET /api/teams/:teamId/approvals/:approvalId/blocked-tickets', () => {
 	it('returns one row per pending setup_repo action comment, with agent and project info', async () => {
-		const res = await app.request(
-			`/api/companies/${companyId}/approvals/${approvalId}/blocked-tickets`,
-			{ headers: authHeader(token) },
-		);
+		const res = await app.request(`/api/teams/${teamId}/approvals/${approvalId}/blocked-tickets`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			data: Array<{
@@ -162,10 +161,9 @@ describe('GET /api/companies/:companyId/approvals/:approvalId/blocked-tickets', 
 			commentBId,
 		]);
 
-		const res = await app.request(
-			`/api/companies/${companyId}/approvals/${approvalId}/blocked-tickets`,
-			{ headers: authHeader(token) },
-		);
+		const res = await app.request(`/api/teams/${teamId}/approvals/${approvalId}/blocked-tickets`, {
+			headers: authHeader(token),
+		});
 		const body = (await res.json()) as { data: Array<{ issue_id: string }> };
 		expect(body.data).toHaveLength(1);
 		expect(body.data[0].issue_id).toBe(issueAId);
@@ -173,9 +171,9 @@ describe('GET /api/companies/:companyId/approvals/:approvalId/blocked-tickets', 
 		await db.query(`UPDATE issue_comments SET chosen_option = NULL WHERE id = $1`, [commentBId]);
 	});
 
-	it('returns 404 if the approval does not belong to the company', async () => {
+	it('returns 404 if the approval does not belong to the team', async () => {
 		const res = await app.request(
-			`/api/companies/${otherCompanyId}/approvals/${approvalId}/blocked-tickets`,
+			`/api/teams/${otherTeamId}/approvals/${approvalId}/blocked-tickets`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
@@ -183,13 +181,13 @@ describe('GET /api/companies/:companyId/approvals/:approvalId/blocked-tickets', 
 
 	it('returns 400 for non-designated_repo_request approvals', async () => {
 		const other = await db.query<{ id: string }>(
-			`INSERT INTO approvals (company_id, type, status, payload)
+			`INSERT INTO approvals (team_id, type, status, payload)
 			 VALUES ($1, 'hire'::approval_type, 'pending'::approval_status, $2::jsonb)
 			 RETURNING id`,
-			[companyId, JSON.stringify({ title: 'New Agent', slug: 'new-agent' })],
+			[teamId, JSON.stringify({ title: 'New Agent', slug: 'new-agent' })],
 		);
 		const res = await app.request(
-			`/api/companies/${companyId}/approvals/${other.rows[0].id}/blocked-tickets`,
+			`/api/teams/${teamId}/approvals/${other.rows[0].id}/blocked-tickets`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(400);

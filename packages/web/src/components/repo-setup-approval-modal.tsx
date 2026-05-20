@@ -17,22 +17,18 @@ export function RepoSetupApprovalModal({
 	onOpenChange,
 }: RepoSetupApprovalModalProps) {
 	const navigate = useNavigate();
-	const { data: tickets = [], isLoading } = useBlockedTickets(
-		approval.company_id,
-		approval.id,
-		open,
-	);
+	const { data: tickets = [], isLoading } = useBlockedTickets(approval.team_id, approval.id, open);
 
 	const projectName = approval.payload_project_name ?? 'this project';
 	const projectSlug = approval.payload_project_slug;
-	const companySlug = approval.company_slug;
+	const teamSlug = approval.team_slug;
 
 	function openTicket(ticket: { project_slug: string; identifier: string; comment_id: string }) {
 		onOpenChange(false);
 		navigate({
-			to: '/companies/$companyId/projects/$projectId/issues/$issueId',
+			to: '/teams/$teamId/projects/$projectId/issues/$issueId',
 			params: {
-				companyId: companySlug,
+				teamId: teamSlug,
 				projectId: ticket.project_slug,
 				issueId: ticket.identifier.toLowerCase(),
 			},
@@ -44,8 +40,8 @@ export function RepoSetupApprovalModal({
 		if (!projectSlug) return;
 		onOpenChange(false);
 		navigate({
-			to: '/companies/$companyId/projects/$projectId/settings',
-			params: { companyId: companySlug, projectId: projectSlug },
+			to: '/teams/$teamId/projects/$projectId/settings',
+			params: { teamId: teamSlug, projectId: projectSlug },
 		});
 	}
 

@@ -64,7 +64,7 @@ export function AiProvidersSection() {
 			<div className="mb-4">
 				<h2 className="text-base font-medium">AI providers</h2>
 				<p className="text-[13px] text-text-muted mt-1">
-					API keys for AI coding agents. Shared across every company in this Hezo instance.
+					API keys for AI coding agents. Shared across every team in this Hezo instance.
 				</p>
 			</div>
 			<div className="flex flex-col gap-2">

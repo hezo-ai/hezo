@@ -9,7 +9,7 @@ import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 let db: PGlite;
 let app: Hono<Env>;
 let token: string;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let agentId: string;
 let masterKeyManager: MasterKeyManager;
@@ -21,21 +21,21 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
-	const companyTypeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Agent Trigger Co',
 
-			template_id: companyTypeId,
+			template_id: teamTemplateId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Trigger Project', description: 'Test project.' }),
@@ -43,7 +43,7 @@ beforeAll(async () => {
 	projectId = (await projectRes.json()).data.id;
 
 	// Get the CEO agent
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data;
@@ -55,14 +55,14 @@ afterAll(async () => {
 });
 
 async function clearWakeups() {
-	await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+	await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 }
 
 async function getWakeups(memberId?: string) {
 	const query = memberId
-		? 'SELECT * FROM agent_wakeup_requests WHERE company_id = $1 AND member_id = $2 ORDER BY created_at DESC'
-		: 'SELECT * FROM agent_wakeup_requests WHERE company_id = $1 ORDER BY created_at DESC';
-	const params = memberId ? [companyId, memberId] : [companyId];
+		? 'SELECT * FROM agent_wakeup_requests WHERE team_id = $1 AND member_id = $2 ORDER BY created_at DESC'
+		: 'SELECT * FROM agent_wakeup_requests WHERE team_id = $1 ORDER BY created_at DESC';
+	const params = memberId ? [teamId, memberId] : [teamId];
 	return (await db.query(query, params)).rows as any[];
 }
 
@@ -70,7 +70,7 @@ describe('agent triggering', () => {
 	it('creates wakeup when issue is created with agent assignee', async () => {
 		await clearWakeups();
 
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -91,7 +91,7 @@ describe('agent triggering', () => {
 	});
 
 	it('creates wakeup when issue is assigned to agent via PATCH', async () => {
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -104,7 +104,7 @@ describe('agent triggering', () => {
 
 		await clearWakeups();
 
-		const patchRes = await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		const patchRes = await app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: agentId }),
@@ -119,7 +119,7 @@ describe('agent triggering', () => {
 	});
 
 	it('creates wakeup when sub-issue is created with agent assignee', async () => {
-		const parentRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const parentRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: projectId, title: 'Parent task', assignee_id: agentId }),
@@ -129,7 +129,7 @@ describe('agent triggering', () => {
 		await new Promise((r) => setTimeout(r, 50));
 		await clearWakeups();
 
-		const subRes = await app.request(`/api/companies/${companyId}/issues/${parentId}/sub-issues`, {
+		const subRes = await app.request(`/api/teams/${teamId}/issues/${parentId}/sub-issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Sub-task for CEO', assignee_id: agentId }),
@@ -146,7 +146,7 @@ describe('agent triggering', () => {
 	});
 
 	it('rejects clearing assignee via PATCH', async () => {
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -157,7 +157,7 @@ describe('agent triggering', () => {
 		});
 		const issueId = (await issueRes.json()).data.id;
 
-		const patchRes = await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		const patchRes = await app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: null }),
@@ -166,7 +166,7 @@ describe('agent triggering', () => {
 	});
 
 	it('creates coach wakeup when issue is marked done', async () => {
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -179,7 +179,7 @@ describe('agent triggering', () => {
 
 		await clearWakeups();
 
-		const patchRes = await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		const patchRes = await app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
@@ -197,7 +197,7 @@ describe('agent triggering', () => {
 
 	it('creates wakeup for container start with pending agent work', async () => {
 		// Create an issue assigned to the agent
-		await app.request(`/api/companies/${companyId}/issues`, {
+		await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -215,7 +215,7 @@ describe('agent triggering', () => {
 			[projectId],
 		);
 
-		await app.request(`/api/companies/${companyId}/projects/${projectId}/container/start`, {
+		await app.request(`/api/teams/${teamId}/projects/${projectId}/container/start`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		});
@@ -228,17 +228,17 @@ describe('agent triggering', () => {
 			`SELECT DISTINCT i.assignee_id AS agent_id
 			 FROM issues i
 			 JOIN member_agents ma ON ma.id = i.assignee_id
-			 WHERE i.project_id = $1 AND i.company_id = $2
+			 WHERE i.project_id = $1 AND i.team_id = $2
 			   AND i.status NOT IN ('done'::issue_status, 'closed'::issue_status, 'cancelled'::issue_status)
 			   AND ma.admin_status = 'enabled'`,
-			[projectId, companyId],
+			[projectId, teamId],
 		);
 		expect(pending.rows.length).toBeGreaterThanOrEqual(1);
 		expect(pending.rows.some((r) => r.agent_id === agentId)).toBe(true);
 	});
 
 	it('mention wakeup carries source=mention in payload and references the comment', async () => {
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -250,7 +250,7 @@ describe('agent triggering', () => {
 		const triggeringIssueId = (await issueRes.json()).data.id;
 
 		// Look up architect agent
-		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const architect = (await agentsRes.json()).data.find((a: any) => a.slug === 'architect');
@@ -258,7 +258,7 @@ describe('agent triggering', () => {
 		await clearWakeups();
 
 		const commentRes = await app.request(
-			`/api/companies/${companyId}/issues/${triggeringIssueId}/comments`,
+			`/api/teams/${teamId}/issues/${triggeringIssueId}/comments`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -281,7 +281,7 @@ describe('agent triggering', () => {
 	});
 
 	it('creates one mention wakeup per distinct agent when a comment mentions several', async () => {
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -292,7 +292,7 @@ describe('agent triggering', () => {
 		});
 		const issueId = (await issueRes.json()).data.id;
 
-		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const allAgents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -303,7 +303,7 @@ describe('agent triggering', () => {
 		await new Promise((r) => setTimeout(r, 50));
 		await clearWakeups();
 
-		await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -321,7 +321,7 @@ describe('agent triggering', () => {
 	});
 
 	it('ignores @mentions inside fenced code blocks', async () => {
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -332,14 +332,14 @@ describe('agent triggering', () => {
 		});
 		const issueId = (await issueRes.json()).data.id;
 
-		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const architect = (await agentsRes.json()).data.find((a: any) => a.slug === 'architect');
 
 		await clearWakeups();
 
-		await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -359,7 +359,7 @@ describe('agent triggering', () => {
 	it('does not create a mention wakeup when an agent mentions itself', async () => {
 		// Assign to architect (not CEO) so there's no CEO-assignment wakeup to coalesce
 		// with the subsequent mention wakeup, which would mask the test.
-		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const architect = ((await agentsRes.json()).data as Array<{ id: string; slug: string }>).find(
@@ -367,7 +367,7 @@ describe('agent triggering', () => {
 		);
 		if (!architect) throw new Error('Expected architect agent');
 
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -383,7 +383,7 @@ describe('agent triggering', () => {
 		await clearWakeups();
 
 		// Baseline: board-posted @ceo DOES create a mention wakeup for CEO.
-		await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: { text: '@ceo baseline mention' } }),
@@ -395,8 +395,8 @@ describe('agent triggering', () => {
 		await clearWakeups();
 
 		// Now have the CEO agent itself post a comment mentioning @ceo on the same issue.
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
-		const selfRes = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const selfRes = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(ceoToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: { text: '@ceo self-mention should be skipped' } }),
@@ -410,7 +410,7 @@ describe('agent triggering', () => {
 
 	it('releases execution locks when container stops', async () => {
 		// Create an issue and fake an execution lock
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

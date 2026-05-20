@@ -58,13 +58,13 @@ interface IssueRow {
 }
 
 interface IssueListProps {
-	companyId: string;
+	teamId: string;
 	projectId?: string;
 }
 
-export function IssueList({ companyId, projectId }: IssueListProps) {
+export function IssueList({ teamId, projectId }: IssueListProps) {
 	const navigate = useNavigate();
-	const { data: agents } = useAgents(companyId);
+	const { data: agents } = useAgents(teamId);
 	const [expanded, setExpanded] = useState(false);
 	const [search, setSearch] = useState('');
 	const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -99,7 +99,7 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 		sort: `${sortField}:${sortDir}`,
 		page: String(page),
 	};
-	const { data: result, isLoading } = useIssues(companyId, activeFilters);
+	const { data: result, isLoading } = useIssues(teamId, activeFilters);
 	const issues = result?.data ?? [];
 
 	const ownerLabelById = useMemo(() => {
@@ -360,17 +360,17 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 						const rowProjectSlug = row.project_slug ?? projectId;
 						if (rowProjectSlug) {
 							navigate({
-								to: '/companies/$companyId/projects/$projectId/issues/$issueId',
+								to: '/teams/$teamId/projects/$projectId/issues/$issueId',
 								params: {
-									companyId,
+									teamId,
 									projectId: rowProjectSlug,
 									issueId: row.identifier.toLowerCase(),
 								},
 							});
 						} else {
 							navigate({
-								to: '/companies/$companyId/issues/$issueId',
-								params: { companyId, issueId: row.identifier.toLowerCase() },
+								to: '/teams/$teamId/issues/$issueId',
+								params: { teamId, issueId: row.identifier.toLowerCase() },
 							});
 						}
 					}}
@@ -404,7 +404,7 @@ export function IssueList({ companyId, projectId }: IssueListProps) {
 			)}
 
 			<CreateIssueDialog
-				companyId={companyId}
+				teamId={teamId}
 				open={createOpen}
 				onOpenChange={setCreateOpen}
 				defaultProjectId={projectId}

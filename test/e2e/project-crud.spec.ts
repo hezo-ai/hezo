@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
+import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Project CRUD', () => {
 	test('creates a project via dialog and opens a CEO planning ticket', async ({ page }) => {
 		await authenticate(page);
-		const { company } = await createCompanyWithAgents(page);
+		const { team } = await createTeamWithAgents(page);
 
-		await page.goto(`/companies/${company.slug}/projects`);
+		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
 		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
@@ -21,10 +21,9 @@ test.describe('Project CRUD', () => {
 		await expect(
 			page,
 			'expected canonical project-scoped issue URL after creating a project',
-		).toHaveURL(
-			new RegExp(`/companies/${company.slug}/projects/[a-z0-9-]+/issues/[a-z0-9-]+(?:#.*)?$`),
-			{ timeout: 15000 },
-		);
+		).toHaveURL(new RegExp(`/teams/${team.slug}/projects/[a-z0-9-]+/issues/[a-z0-9-]+(?:#.*)?$`), {
+			timeout: 15000,
+		});
 		await expect(
 			page.getByRole('main').getByText('Draft execution plan for "Marketing Campaign"'),
 		).toBeVisible({ timeout: 15000 });
@@ -50,9 +49,9 @@ test.describe('Project CRUD', () => {
 
 	test('project list shows default Operations project', async ({ page }) => {
 		await authenticate(page);
-		const { company } = await createCompanyWithAgents(page);
+		const { team } = await createTeamWithAgents(page);
 
-		await page.goto(`/companies/${company.slug}/projects`);
+		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
 		await expect(page.getByRole('heading', { name: 'Operations' })).toBeVisible({ timeout: 15000 });
@@ -60,16 +59,16 @@ test.describe('Project CRUD', () => {
 
 	test('project list shows issue and repo counts', async ({ page }) => {
 		await authenticate(page);
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}` };
 
 		// Create a project via API
-		await page.request.post(`/api/companies/${company.id}/projects`, {
+		await page.request.post(`/api/teams/${team.id}/projects`, {
 			headers,
 			data: { name: 'Count Test', description: 'Count test project.' },
 		});
 
-		await page.goto(`/companies/${company.slug}/projects`);
+		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
 		const card = page.getByRole('main').locator('a', { hasText: 'Count Test' });
@@ -80,35 +79,34 @@ test.describe('Project CRUD', () => {
 
 	test('project card links to project detail', async ({ page }) => {
 		await authenticate(page);
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}` };
 
-		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 			headers,
 			data: { name: 'Linkable Project', description: 'Linkable project description.' },
 		});
 		const project = ((await projRes.json()) as any).data;
 
-		await page.goto(`/companies/${company.slug}/projects`);
+		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
 		await page.getByRole('main').getByRole('heading', { name: 'Linkable Project' }).click();
 
 		// Should navigate to project detail page
-		await expect(page).toHaveURL(
-			new RegExp(`/companies/${company.slug}/projects/${project.slug}`),
-			{ timeout: 15000 },
-		);
+		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/${project.slug}`), {
+			timeout: 15000,
+		});
 	});
 
 	test('creates a project with initial PRD and saves it as project doc', async ({ page }) => {
 		await authenticate(page);
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}` };
 
 		const prdContent = '# Widget App\n\nA tool for managing widgets efficiently.';
 
-		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 			headers,
 			data: {
 				name: 'PRD Test Project',
@@ -120,7 +118,7 @@ test.describe('Project CRUD', () => {
 		const project = ((await projRes.json()) as any).data;
 
 		const docRes = await page.request.get(
-			`/api/companies/${company.id}/projects/${project.id}/docs/initial-prd.md`,
+			`/api/teams/${team.id}/projects/${project.id}/docs/initial-prd.md`,
 			{ headers },
 		);
 		expect(docRes.ok()).toBe(true);
@@ -131,9 +129,9 @@ test.describe('Project CRUD', () => {
 
 	test('create button is disabled without name', async ({ page }) => {
 		await authenticate(page);
-		const { company } = await createCompanyWithAgents(page);
+		const { team } = await createTeamWithAgents(page);
 
-		await page.goto(`/companies/${company.slug}/projects`);
+		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
 		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();

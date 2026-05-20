@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 
 export const apiKeysRoutes = new Hono<Env>();
 
@@ -12,29 +12,29 @@ function hashKey(key: string): string {
 	return createHash('sha256').update(key).digest('hex');
 }
 
-apiKeysRoutes.get('/companies/:companyId/api-keys', async (c) => {
-	const access = await requireCompanyAccess(c);
+apiKeysRoutes.get('/teams/:teamId/api-keys', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const result = await db.query(
-		`SELECT id, company_id, name, prefix, last_used_at, created_at
+		`SELECT id, team_id, name, prefix, last_used_at, created_at
      FROM api_keys
-     WHERE company_id = $1
+     WHERE team_id = $1
      ORDER BY created_at DESC`,
-		[companyId],
+		[teamId],
 	);
 	return ok(c, result.rows);
 });
 
-apiKeysRoutes.post('/companies/:companyId/api-keys', async (c) => {
-	const access = await requireCompanyAccess(c);
+apiKeysRoutes.post('/teams/:teamId/api-keys', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const body = await c.req.json<{ name: string }>();
 	if (!body.name?.trim()) {
@@ -47,45 +47,39 @@ apiKeysRoutes.post('/companies/:companyId/api-keys', async (c) => {
 
 	const result = await db.query<{
 		id: string;
-		company_id: string;
+		team_id: string;
 		name: string;
 		prefix: string;
 		created_at: string;
 	}>(
-		`INSERT INTO api_keys (company_id, name, prefix, key_hash)
+		`INSERT INTO api_keys (team_id, name, prefix, key_hash)
      VALUES ($1, $2, $3, $4)
-     RETURNING id, company_id, name, prefix, created_at`,
-		[companyId, body.name.trim(), prefix, keyHash],
+     RETURNING id, team_id, name, prefix, created_at`,
+		[teamId, body.name.trim(), prefix, keyHash],
 	);
 
 	const row = result.rows[0];
-	broadcastChange(
-		c,
-		wsRoom.company(companyId),
-		'api_keys',
-		'INSERT',
-		row as Record<string, unknown>,
-	);
+	broadcastChange(c, wsRoom.team(teamId), 'api_keys', 'INSERT', row as Record<string, unknown>);
 	return ok(c, { ...row, key: rawKey }, 201);
 });
 
-apiKeysRoutes.delete('/companies/:companyId/api-keys/:apiKeyId', async (c) => {
-	const access = await requireCompanyAccess(c);
+apiKeysRoutes.delete('/teams/:teamId/api-keys/:apiKeyId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const apiKeyId = c.req.param('apiKeyId');
 
-	const existing = await db.query('SELECT id FROM api_keys WHERE id = $1 AND company_id = $2', [
+	const existing = await db.query('SELECT id FROM api_keys WHERE id = $1 AND team_id = $2', [
 		apiKeyId,
-		companyId,
+		teamId,
 	]);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'API key not found', 404);
 	}
 
 	await db.query('DELETE FROM api_keys WHERE id = $1', [apiKeyId]);
-	broadcastChange(c, wsRoom.company(companyId), 'api_keys', 'DELETE', { id: apiKeyId });
+	broadcastChange(c, wsRoom.team(teamId), 'api_keys', 'DELETE', { id: apiKeyId });
 	return c.json({ data: null }, 200);
 });

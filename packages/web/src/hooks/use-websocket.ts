@@ -5,21 +5,21 @@ import { useSocket } from '../contexts/socket-context';
 
 const TABLE_TO_QUERY_KEY: Record<
 	string,
-	(companyId: string, row: Record<string, unknown>) => string[][]
+	(teamId: string, row: Record<string, unknown>) => string[][]
 > = {
 	issues: (cid) => [
-		['companies', cid, 'issues'],
-		['companies', cid],
-		['companies'],
-		['companies', cid, 'projects'],
+		['teams', cid, 'issues'],
+		['teams', cid],
+		['teams'],
+		['teams', cid, 'projects'],
 	],
 	heartbeat_runs: (cid, row) => {
-		const keys: string[][] = [['companies', cid, 'issues']];
+		const keys: string[][] = [['teams', cid, 'issues']];
 		if (row.member_id) {
-			keys.push(['companies', cid, 'agents', row.member_id as string, 'heartbeat-runs']);
+			keys.push(['teams', cid, 'agents', row.member_id as string, 'heartbeat-runs']);
 			if (row.id) {
 				keys.push([
-					'companies',
+					'teams',
 					cid,
 					'agents',
 					row.member_id as string,
@@ -30,45 +30,45 @@ const TABLE_TO_QUERY_KEY: Record<
 		}
 		return keys;
 	},
-	issue_comments: (cid) => [['companies', cid, 'issues']],
-	comment_reactions: (cid) => [['companies', cid, 'issues']],
-	member_agents: (cid) => [['companies', cid, 'agents']],
-	projects: (cid) => [['companies', cid, 'projects']],
-	approvals: (cid) => [['companies', cid, 'approvals']],
+	issue_comments: (cid) => [['teams', cid, 'issues']],
+	comment_reactions: (cid) => [['teams', cid, 'issues']],
+	member_agents: (cid) => [['teams', cid, 'agents']],
+	projects: (cid) => [['teams', cid, 'projects']],
+	approvals: (cid) => [['teams', cid, 'approvals']],
 	documents: (cid, row) => {
 		switch (row.type) {
 			case 'project_doc':
-				return [['companies', cid, 'projects']];
+				return [['teams', cid, 'projects']];
 			case 'kb_doc':
-				return [['companies', cid, 'kb-docs']];
-			case 'company_preferences':
-				return [['companies', cid, 'preferences']];
+				return [['teams', cid, 'kb-docs']];
+			case 'team_preferences':
+				return [['teams', cid, 'preferences']];
 			default:
 				return [];
 		}
 	},
-	secrets: (cid) => [['companies', cid, 'secrets']],
-	api_keys: (cid) => [['companies', cid, 'api-keys']],
-	cost_entries: (cid) => [['companies', cid, 'costs']],
-	execution_locks: (cid) => [['companies', cid, 'execution-locks']],
-	repos: (cid) => [['companies', cid, 'projects']],
-	goals: (cid) => [['companies', cid, 'goals']],
+	secrets: (cid) => [['teams', cid, 'secrets']],
+	api_keys: (cid) => [['teams', cid, 'api-keys']],
+	cost_entries: (cid) => [['teams', cid, 'costs']],
+	execution_locks: (cid) => [['teams', cid, 'execution-locks']],
+	repos: (cid) => [['teams', cid, 'projects']],
+	goals: (cid) => [['teams', cid, 'goals']],
 };
 
-export function useWebSocket(wsCompanyId: string | undefined, routeCompanyId: string): void {
+export function useWebSocket(wsTeamId: string | undefined, routeTeamId: string): void {
 	const queryClient = useQueryClient();
 	const { joinRoom, leaveRoom, subscribe } = useSocket();
 
 	useEffect(() => {
-		if (!wsCompanyId) return;
-		const room = wsRoom.company(wsCompanyId);
+		if (!wsTeamId) return;
+		const room = wsRoom.team(wsTeamId);
 		joinRoom(room);
 
 		const unsubscribe = subscribe(WsMessageType.RowChange, (msg) => {
 			const { table, row } = msg as WsRowChangeMessage;
 			const keyMapper = TABLE_TO_QUERY_KEY[table];
 			if (keyMapper) {
-				const keys = keyMapper(routeCompanyId, row);
+				const keys = keyMapper(routeTeamId, row);
 				for (const key of keys) {
 					queryClient.invalidateQueries({ queryKey: key });
 				}
@@ -79,5 +79,5 @@ export function useWebSocket(wsCompanyId: string | undefined, routeCompanyId: st
 			unsubscribe();
 			leaveRoom(room);
 		};
-	}, [wsCompanyId, routeCompanyId, queryClient, joinRoom, leaveRoom, subscribe]);
+	}, [wsTeamId, routeTeamId, queryClient, joinRoom, leaveRoom, subscribe]);
 }

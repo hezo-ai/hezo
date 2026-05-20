@@ -20,7 +20,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let issueId: string;
 let agentId: string;
@@ -66,29 +66,29 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Workflow Test Co', template_id: typeId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Workflow Test Project', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -125,9 +125,9 @@ describe('JobManager workflow methods', () => {
 
 			// Insert a wakeup with created_at = now() (within the 10s coalescing window)
 			await db.query(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
 				 VALUES ($1, $2, 'on_demand', 'queued', now())`,
-				[agentId, companyId],
+				[agentId, teamId],
 			);
 
 			await (manager as any).processWakeups();
@@ -135,17 +135,17 @@ describe('JobManager workflow methods', () => {
 			// Should still be queued since it's too recent
 			const result = await db.query<{ status: string }>(
 				`SELECT status FROM agent_wakeup_requests
-				 WHERE member_id = $1 AND company_id = $2
+				 WHERE member_id = $1 AND team_id = $2
 				   AND source = 'on_demand'
 				 ORDER BY created_at DESC LIMIT 1`,
-				[agentId, companyId],
+				[agentId, teamId],
 			);
 			expect(result.rows[0].status).toBe(WakeupStatus.Queued);
 
 			manager.shutdown();
-			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1 AND company_id = $2', [
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1 AND team_id = $2', [
 				agentId,
-				companyId,
+				teamId,
 			]);
 		});
 
@@ -154,10 +154,10 @@ describe('JobManager workflow methods', () => {
 
 			// Insert a wakeup created 30 seconds ago (past the coalescing window)
 			const wakeupRes = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
 				 VALUES ($1, $2, 'on_demand', 'queued', now() - interval '30 seconds')
 				 RETURNING id`,
-				[agentId, companyId],
+				[agentId, teamId],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
@@ -190,10 +190,10 @@ describe('JobManager workflow methods', () => {
 			);
 
 			const wakeupRes = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
 				 VALUES ($1, $2, 'on_demand', 'queued', now() - interval '30 seconds')
 				 RETURNING id`,
-				[agentId, companyId],
+				[agentId, teamId],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
@@ -216,16 +216,16 @@ describe('JobManager workflow methods', () => {
 			const manager = createJobManager();
 
 			const wakeupRes = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
 				 VALUES ($1, $2, 'on_demand', 'claimed', now() - interval '30 seconds')
 				 RETURNING id`,
-				[agentId, companyId],
+				[agentId, teamId],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
 			// Use a non-existent member ID
 			const fakeId = '00000000-0000-0000-0000-000000000001';
-			await (manager as any).activateAgent(fakeId, companyId, wakeupId);
+			await (manager as any).activateAgent(fakeId, teamId, wakeupId);
 
 			const result = await db.query<{ status: string }>(
 				'SELECT status FROM agent_wakeup_requests WHERE id = $1',
@@ -244,14 +244,14 @@ describe('JobManager workflow methods', () => {
 			await db.query("UPDATE member_agents SET admin_status = 'disabled' WHERE id = $1", [agentId]);
 
 			const wakeupRes = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
 				 VALUES ($1, $2, 'on_demand', 'claimed', now() - interval '30 seconds')
 				 RETURNING id`,
-				[agentId, companyId],
+				[agentId, teamId],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).activateAgent(agentId, companyId, wakeupId);
+			await (manager as any).activateAgent(agentId, teamId, wakeupId);
 
 			const result = await db.query<{ status: string }>(
 				'SELECT status FROM agent_wakeup_requests WHERE id = $1',
@@ -276,14 +276,14 @@ describe('JobManager workflow methods', () => {
 			);
 
 			const wakeupRes = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
 				 VALUES ($1, $2, 'on_demand', 'claimed', now() - interval '30 seconds')
 				 RETURNING id`,
-				[agentId, companyId],
+				[agentId, teamId],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).activateAgent(agentId, companyId, wakeupId);
+			await (manager as any).activateAgent(agentId, teamId, wakeupId);
 
 			const result = await db.query<{ status: string; completed_at: string | null }>(
 				'SELECT status, completed_at FROM agent_wakeup_requests WHERE id = $1',
@@ -306,14 +306,14 @@ describe('JobManager workflow methods', () => {
 			await db.query('UPDATE projects SET container_id = NULL WHERE id = $1', [projectId]);
 
 			const wakeupRes = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
 				 VALUES ($1, $2, 'on_demand', 'claimed', now() - interval '30 seconds')
 				 RETURNING id`,
-				[agentId, companyId],
+				[agentId, teamId],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).activateAgent(agentId, companyId, wakeupId);
+			await (manager as any).activateAgent(agentId, teamId, wakeupId);
 
 			const result = await db.query<{ status: string }>(
 				'SELECT status FROM agent_wakeup_requests WHERE id = $1',
@@ -344,14 +344,14 @@ describe('JobManager workflow methods', () => {
 			);
 
 			const wakeupRes = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
 				 VALUES ($1, $2, 'on_demand', 'claimed', now() - interval '30 seconds')
 				 RETURNING id`,
-				[agentId, companyId],
+				[agentId, teamId],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).activateAgent(agentId, companyId, wakeupId);
+			await (manager as any).activateAgent(agentId, teamId, wakeupId);
 
 			// An execution lock should have been created
 			const lockResult = await db.query<{ issue_id: string; member_id: string }>(
@@ -386,29 +386,29 @@ describe('JobManager workflow methods', () => {
 				[issueId],
 			);
 
-			const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+			const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 				headers: authHeader(token),
 			});
 			const agents = (await agentsRes.json()).data;
 			const secondAgentId = agents.find((a: { id: string }) => a.id !== agentId).id;
 
 			const firstWakeup = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
 				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
 				 RETURNING id`,
-				[agentId, companyId, JSON.stringify({ issue_id: issueId })],
+				[agentId, teamId, JSON.stringify({ issue_id: issueId })],
 			);
-			await (manager as any).activateAgent(agentId, companyId, firstWakeup.rows[0].id, {
+			await (manager as any).activateAgent(agentId, teamId, firstWakeup.rows[0].id, {
 				issue_id: issueId,
 			});
 
 			const secondWakeup = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
 				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
 				 RETURNING id`,
-				[secondAgentId, companyId, JSON.stringify({ issue_id: issueId })],
+				[secondAgentId, teamId, JSON.stringify({ issue_id: issueId })],
 			);
-			await (manager as any).activateAgent(secondAgentId, companyId, secondWakeup.rows[0].id, {
+			await (manager as any).activateAgent(secondAgentId, teamId, secondWakeup.rows[0].id, {
 				issue_id: issueId,
 			});
 
@@ -458,12 +458,12 @@ describe('JobManager workflow methods', () => {
 			);
 
 			const wakeupRes = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
 				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
 				 RETURNING id`,
-				[agentId, companyId, JSON.stringify({ issue_id: issueId })],
+				[agentId, teamId, JSON.stringify({ issue_id: issueId })],
 			);
-			await (manager as any).activateAgent(agentId, companyId, wakeupRes.rows[0].id, {
+			await (manager as any).activateAgent(agentId, teamId, wakeupRes.rows[0].id, {
 				issue_id: issueId,
 			});
 
@@ -494,15 +494,15 @@ describe('JobManager workflow methods', () => {
 			await db.query('UPDATE issues SET assignee_id = NULL WHERE id = $1', [issueId]);
 
 			const wakeupRes = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
 				 VALUES ($1, $2, 'automation', 'claimed', now() - interval '30 seconds',
 				         '{"trigger": "issue_done", "issue_id": "00000000-0000-0000-0000-000000000099"}'::jsonb)
 				 RETURNING id`,
-				[agentId, companyId],
+				[agentId, teamId],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
-			await (manager as any).activateAgent(agentId, companyId, wakeupId, {
+			await (manager as any).activateAgent(agentId, teamId, wakeupId, {
 				trigger: 'issue_done',
 				issue_id: '00000000-0000-0000-0000-000000000099',
 			});
@@ -532,10 +532,10 @@ describe('JobManager workflow methods', () => {
 			);
 
 			const wakeupRes = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
 				 VALUES ($1, $2, 'on_demand', 'claimed', now() - interval '30 seconds')
 				 RETURNING id`,
-				[agentId, companyId],
+				[agentId, teamId],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
@@ -543,7 +543,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'test-agent',
 				issueId,
-				companyId,
+				teamId,
 				wakeupId,
 				undefined,
 				{
@@ -585,10 +585,10 @@ describe('JobManager workflow methods', () => {
 			);
 
 			const wakeupRes = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
 				 VALUES ($1, $2, 'on_demand', 'claimed', now() - interval '30 seconds')
 				 RETURNING id`,
-				[agentId, companyId],
+				[agentId, teamId],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
@@ -596,7 +596,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'test-agent',
 				issueId,
-				companyId,
+				teamId,
 				wakeupId,
 				undefined,
 				{
@@ -635,7 +635,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'test-agent',
 				issueId,
-				companyId,
+				teamId,
 				undefined,
 				undefined,
 				{
@@ -672,11 +672,11 @@ describe('JobManager workflow methods', () => {
 			);
 			const nextNumber = meta.rows[0].number;
 			const nextInsert = await db.query<{ id: string }>(
-				`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
+				`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
 				 VALUES ($1, $2, $3, $4, $5, $6, '', $7::issue_status, 'medium'::issue_priority, '[]'::jsonb)
 				 RETURNING id`,
 				[
-					companyId,
+					teamId,
 					projectId,
 					agentId,
 					nextNumber,
@@ -693,7 +693,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'test-agent',
 				issueId,
-				companyId,
+				teamId,
 				undefined,
 				undefined,
 				{
@@ -736,7 +736,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'test-agent',
 				issueId,
-				companyId,
+				teamId,
 				undefined,
 				undefined,
 				{
@@ -783,7 +783,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'coach',
 				issueId,
-				companyId,
+				teamId,
 				undefined,
 				{ trigger: 'issue_done', issue_id: issueId },
 				{ success: true, exitCode: 0, stdout: '', stderr: '' },
@@ -801,7 +801,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'coach',
 				issueId,
-				companyId,
+				teamId,
 				undefined,
 				{ trigger: 'issue_done', issue_id: issueId },
 				{ success: false, exitCode: 1, stdout: '', stderr: 'failed' },
@@ -819,7 +819,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'engineer',
 				issueId,
-				companyId,
+				teamId,
 				undefined,
 				{ trigger: 'issue_done', issue_id: issueId },
 				{ success: true, exitCode: 0, stdout: '', stderr: '' },
@@ -840,7 +840,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'coach',
 				issueId,
-				companyId,
+				teamId,
 				undefined,
 				{ trigger: 'issue_done', issue_id: issueId },
 				{ success: true, exitCode: 0, stdout: '', stderr: '' },
@@ -858,7 +858,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'coach',
 				issueId,
-				companyId,
+				teamId,
 				undefined,
 				{ trigger: 'mention', issue_id: issueId },
 				{ success: true, exitCode: 0, stdout: '', stderr: '' },
@@ -873,11 +873,11 @@ describe('JobManager workflow methods', () => {
 			await setIssueDone();
 
 			const childResult = await db.query<{ id: string }>(
-				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, number, identifier,
+				`INSERT INTO issues (team_id, project_id, assignee_id, parent_issue_id, number, identifier,
 				                     title, description, status, priority)
 				 VALUES ($1, $2, $3, $4, 9999, 'TST-9999', 'Open child', '', 'in_progress'::issue_status, 'medium'::issue_priority)
 				 RETURNING id`,
-				[companyId, projectId, agentId, issueId],
+				[teamId, projectId, agentId, issueId],
 			);
 			const childId = childResult.rows[0].id;
 
@@ -885,7 +885,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'coach',
 				issueId,
-				companyId,
+				teamId,
 				undefined,
 				{ trigger: 'issue_done', issue_id: issueId },
 				{ success: true, exitCode: 0, stdout: '', stderr: '' },
@@ -927,8 +927,8 @@ describe('JobManager workflow methods', () => {
 			);
 
 			// The processScheduledHeartbeats query should find this agent
-			const dueAgents = await db.query<{ id: string; company_id: string }>(
-				`SELECT ma.id, m.company_id, ma.heartbeat_interval_min
+			const dueAgents = await db.query<{ id: string; team_id: string }>(
+				`SELECT ma.id, m.team_id, ma.heartbeat_interval_min
 				 FROM member_agents ma
 				 JOIN members m ON m.id = ma.id
 				 WHERE ma.admin_status = 'enabled'
@@ -1018,13 +1018,13 @@ describe('JobManager workflow methods', () => {
 
 	describe('reconcileOnStartup', () => {
 		it('fails stranded running heartbeat_runs and resets agent to idle', async () => {
-			await db.query('DELETE FROM heartbeat_runs WHERE company_id = $1', [companyId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
 			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
 			await db.query(
-				`INSERT INTO heartbeat_runs (company_id, member_id, issue_id, status, started_at)
+				`INSERT INTO heartbeat_runs (team_id, member_id, issue_id, status, started_at)
 				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[companyId, agentId, issueId, HeartbeatRunStatus.Running],
+				[teamId, agentId, issueId, HeartbeatRunStatus.Running],
 			);
 			await db.query(
 				'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
@@ -1043,8 +1043,8 @@ describe('JobManager workflow methods', () => {
 			await manager.reconcileOnStartup();
 
 			const run = await db.query<{ status: string; error: string }>(
-				`SELECT status, error FROM heartbeat_runs WHERE company_id = $1 ORDER BY started_at DESC LIMIT 1`,
-				[companyId],
+				`SELECT status, error FROM heartbeat_runs WHERE team_id = $1 ORDER BY started_at DESC LIMIT 1`,
+				[teamId],
 			);
 			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
 			expect(run.rows[0].error).toContain('Server restarted');
@@ -1098,7 +1098,7 @@ describe('JobManager workflow methods', () => {
 				memberId: 'm-1',
 				issueId: 'i-1',
 				projectId: 'p-1',
-				companyId: 'c-1',
+				teamId: 'c-1',
 				taskKey: 'agent:m-1',
 			});
 			manager.registerLiveRun({
@@ -1106,7 +1106,7 @@ describe('JobManager workflow methods', () => {
 				memberId: 'm-2',
 				issueId: 'i-2',
 				projectId: 'p-1',
-				companyId: 'c-1',
+				teamId: 'c-1',
 				taskKey: 'agent:m-2',
 			});
 			manager.registerLiveRun({
@@ -1114,7 +1114,7 @@ describe('JobManager workflow methods', () => {
 				memberId: 'm-3',
 				issueId: 'i-3',
 				projectId: 'p-2',
-				companyId: 'c-1',
+				teamId: 'c-1',
 				taskKey: 'agent:m-3',
 			});
 
@@ -1138,7 +1138,7 @@ describe('JobManager workflow methods', () => {
 			const manager = createJobManager();
 
 			// Simulate an active run on the issue (from a different agent).
-			const otherAgentRes = await app.request(`/api/companies/${companyId}/agents`, {
+			const otherAgentRes = await app.request(`/api/teams/${teamId}/agents`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ title: 'Other Agent For Serialisation' }),
@@ -1146,16 +1146,16 @@ describe('JobManager workflow methods', () => {
 			const otherAgentId = (await otherAgentRes.json()).data.id;
 
 			await db.query(
-				`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+				`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
 				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[otherAgentId, companyId, issueId, HeartbeatRunStatus.Running],
+				[otherAgentId, teamId, issueId, HeartbeatRunStatus.Running],
 			);
 
 			const wakeupRes = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, created_at, payload)
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
 				 VALUES ($1, $2, 'mention', 'queued', now() - interval '30 seconds', $3::jsonb)
 				 RETURNING id`,
-				[agentId, companyId, JSON.stringify({ issue_id: issueId })],
+				[agentId, teamId, JSON.stringify({ issue_id: issueId })],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
@@ -1185,9 +1185,9 @@ describe('JobManager workflow methods', () => {
 		it('isIssueBusy returns true while an active run exists', async () => {
 			const manager = createJobManager();
 			await db.query(
-				`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+				`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
 				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[agentId, companyId, issueId, HeartbeatRunStatus.Running],
+				[agentId, teamId, issueId, HeartbeatRunStatus.Running],
 			);
 
 			const busy = await (manager as any).isIssueBusy({ issue_id: issueId });

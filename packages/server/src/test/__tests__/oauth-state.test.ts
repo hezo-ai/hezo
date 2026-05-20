@@ -17,10 +17,10 @@ afterAll(() => {});
 describe('oauth state signing', () => {
 	it('round-trips a state through sign and verify', async () => {
 		const { state, codeVerifier, codeChallenge } = await signState(masterKeyManager, {
-			companyId: 'aaaa',
+			teamId: 'aaaa',
 			provider: 'datocms',
 			redirectUri: 'http://127.0.0.1:3100/api/oauth/callback',
-			returnTo: '/companies/x/connections',
+			returnTo: '/teams/x/connections',
 			mcpConnectionId: 'mcp-1',
 		});
 		expect(codeVerifier).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -28,7 +28,7 @@ describe('oauth state signing', () => {
 
 		const payload = await verifyState(masterKeyManager, state);
 		expect(payload).not.toBeNull();
-		expect(payload?.companyId).toBe('aaaa');
+		expect(payload?.teamId).toBe('aaaa');
 		expect(payload?.provider).toBe('datocms');
 		expect(payload?.codeVerifier).toBe(codeVerifier);
 		expect(payload?.mcpConnectionId).toBe('mcp-1');
@@ -36,7 +36,7 @@ describe('oauth state signing', () => {
 
 	it('rejects a tampered state', async () => {
 		const { state } = await signState(masterKeyManager, {
-			companyId: 'aaaa',
+			teamId: 'aaaa',
 			provider: 'p',
 			redirectUri: 'http://x/cb',
 			returnTo: '/',
@@ -49,7 +49,7 @@ describe('oauth state signing', () => {
 
 	it('rejects a state with a different signature', async () => {
 		const { state } = await signState(masterKeyManager, {
-			companyId: 'aaaa',
+			teamId: 'aaaa',
 			provider: 'p',
 			redirectUri: 'http://x/cb',
 			returnTo: '/',

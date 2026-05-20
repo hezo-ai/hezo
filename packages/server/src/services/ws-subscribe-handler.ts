@@ -10,7 +10,7 @@ export interface WsSubscribeDeps {
 	docker: DockerClient | null;
 	containerLogStreamer: ContainerLogStreamer;
 	logs: LogStreamBroker | null;
-	canAccessCompany: (auth: WsData['auth'], companyId: string) => Promise<boolean>;
+	canAccessTeam: (auth: WsData['auth'], teamId: string) => Promise<boolean>;
 	sendToSocket: (ws: WsSocket, payload: unknown) => void;
 }
 
@@ -19,9 +19,9 @@ export async function handleWsSubscribe(
 	room: string,
 	deps: WsSubscribeDeps,
 ): Promise<void> {
-	const companyMatch = room.match(/^company:(.+)$/);
-	if (companyMatch) {
-		const allowed = await deps.canAccessCompany(ws.data.auth, companyMatch[1]);
+	const teamMatch = room.match(/^team:(.+)$/);
+	if (teamMatch) {
+		const allowed = await deps.canAccessTeam(ws.data.auth, teamMatch[1]);
 		if (!allowed) return;
 		deps.wsManager.subscribe(ws, room);
 		return;
@@ -32,14 +32,12 @@ export async function handleWsSubscribe(
 		const projectId = logsMatch[1];
 		const project = await deps.db.query<{
 			container_id: string | null;
-			company_id: string;
+			team_id: string;
 			container_status: string | null;
-		}>('SELECT container_id, company_id, container_status FROM projects WHERE id = $1', [
-			projectId,
-		]);
+		}>('SELECT container_id, team_id, container_status FROM projects WHERE id = $1', [projectId]);
 		if (project.rows.length === 0) return;
 		const row = project.rows[0];
-		const allowed = await deps.canAccessCompany(ws.data.auth, row.company_id);
+		const allowed = await deps.canAccessTeam(ws.data.auth, row.team_id);
 		if (!allowed) return;
 
 		deps.wsManager.subscribe(ws, room);
@@ -55,12 +53,12 @@ export async function handleWsSubscribe(
 	const runsMatch = room.match(/^project-runs:(.+)$/);
 	if (runsMatch && deps.db) {
 		const projectId = runsMatch[1];
-		const project = await deps.db.query<{ company_id: string }>(
-			'SELECT company_id FROM projects WHERE id = $1',
+		const project = await deps.db.query<{ team_id: string }>(
+			'SELECT team_id FROM projects WHERE id = $1',
 			[projectId],
 		);
 		if (project.rows.length === 0) return;
-		const allowed = await deps.canAccessCompany(ws.data.auth, project.rows[0].company_id);
+		const allowed = await deps.canAccessTeam(ws.data.auth, project.rows[0].team_id);
 		if (!allowed) return;
 		deps.wsManager.subscribe(ws, room);
 		deps.logs?.replay(room, (payload) => {

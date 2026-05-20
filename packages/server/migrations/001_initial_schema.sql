@@ -1,4 +1,4 @@
--- Initial schema for the company orchestration platform
+-- Initial schema for the team orchestration platform
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -51,7 +51,7 @@ CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');
 CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run', 'action', 'credential_request');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
-CREATE TYPE grant_scope AS ENUM ('single', 'project', 'company');
+CREATE TYPE grant_scope AS ENUM ('single', 'project', 'team');
 CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'strategy', 'kb_update', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
 CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
@@ -65,7 +65,7 @@ CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
 CREATE TYPE membership_role AS ENUM ('board', 'member');
 CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
-CREATE TYPE company_type_source AS ENUM ('builtin', 'custom', 'marketplace');
+CREATE TYPE team_template_source AS ENUM ('builtin', 'custom', 'marketplace');
 CREATE TYPE goal_status AS ENUM ('active', 'achieved', 'archived');
 CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'deepseek', 'z_ai');
 CREATE TYPE ai_auth_method AS ENUM ('api_key', 'subscription');
@@ -96,16 +96,16 @@ CREATE TABLE agent_types (
 );
 
 -------------------------------------------------------------------------------
--- COMPANY TYPES
+-- TEAM TEMPLATES
 -------------------------------------------------------------------------------
 
-CREATE TABLE company_types (
+CREATE TABLE team_templates (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name                  TEXT NOT NULL UNIQUE,
     description           TEXT NOT NULL DEFAULT '',
-    default_team_summary  TEXT NOT NULL DEFAULT '',
+    default_summary       TEXT NOT NULL DEFAULT '',
     is_builtin            BOOLEAN NOT NULL DEFAULT false,
-    source              company_type_source NOT NULL DEFAULT 'custom',
+    source              team_template_source NOT NULL DEFAULT 'custom',
     source_url          TEXT,
     source_version      TEXT,
     metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -121,34 +121,34 @@ CREATE TABLE company_types (
 );
 
 -------------------------------------------------------------------------------
--- COMPANY TYPE ↔ AGENT TYPE (join table)
+-- TEAM TEMPLATE ↔ AGENT TYPE (join table)
 -------------------------------------------------------------------------------
 
-CREATE TABLE company_type_agent_types (
+CREATE TABLE team_template_agent_types (
     id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_type_id             UUID NOT NULL REFERENCES company_types(id) ON DELETE CASCADE,
+    team_template_id            UUID NOT NULL REFERENCES team_templates(id) ON DELETE CASCADE,
     agent_type_id               UUID NOT NULL REFERENCES agent_types(id) ON DELETE CASCADE,
     reports_to_slug             TEXT,
     heartbeat_interval_override INTEGER,
     monthly_budget_override     INTEGER,
     sort_order                  INTEGER NOT NULL DEFAULT 0,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (company_type_id, agent_type_id)
+    UNIQUE (team_template_id, agent_type_id)
 );
 
-CREATE INDEX idx_ctat_company_type ON company_type_agent_types(company_type_id);
-CREATE INDEX idx_ctat_agent_type ON company_type_agent_types(agent_type_id);
+CREATE INDEX idx_ttat_team_template ON team_template_agent_types(team_template_id);
+CREATE INDEX idx_ttat_agent_type ON team_template_agent_types(agent_type_id);
 
 -------------------------------------------------------------------------------
--- COMPANIES
+-- TEAMS
 -------------------------------------------------------------------------------
 
-CREATE TABLE companies (
+CREATE TABLE teams (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name                 TEXT NOT NULL,
     slug                 TEXT NOT NULL UNIQUE,
     description          TEXT NOT NULL DEFAULT '',
-    team_summary         TEXT NOT NULL DEFAULT '',
+    summary              TEXT NOT NULL DEFAULT '',
     budget_monthly_cents INTEGER NOT NULL DEFAULT 50000,
     budget_used_cents    INTEGER NOT NULL DEFAULT 0,
     budget_reset_at      TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
@@ -160,29 +160,29 @@ CREATE TABLE companies (
 );
 
 -------------------------------------------------------------------------------
--- COMPANY ↔ TEAM TYPES (many-to-many)
+-- TEAM ↔ TEMPLATE ASSIGNMENTS (many-to-many)
 -------------------------------------------------------------------------------
 
-CREATE TABLE company_team_types (
-    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    company_type_id UUID NOT NULL REFERENCES company_types(id) ON DELETE CASCADE,
-    PRIMARY KEY (company_id, company_type_id)
+CREATE TABLE team_template_assignments (
+    team_id          UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    team_template_id UUID NOT NULL REFERENCES team_templates(id) ON DELETE CASCADE,
+    PRIMARY KEY (team_id, team_template_id)
 );
 
 -------------------------------------------------------------------------------
--- MEMBERS (unified base for agents and users within a company)
+-- MEMBERS (unified base for agents and users within a team)
 -------------------------------------------------------------------------------
 
 CREATE TABLE members (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id   UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id      UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     member_type  member_type NOT NULL,
     display_name TEXT NOT NULL DEFAULT '',
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_members_company ON members(company_id);
-CREATE INDEX idx_members_type ON members(company_id, member_type);
+CREATE INDEX idx_members_team ON members(team_id);
+CREATE INDEX idx_members_type ON members(team_id, member_type);
 
 -------------------------------------------------------------------------------
 -- MEMBER AGENTS
@@ -215,8 +215,8 @@ CREATE TABLE member_agents (
         CHECK (model_override_model IS NULL OR model_override_provider IS NOT NULL)
 );
 
--- Slug uniqueness within a company enforced at the app layer
--- (requires joining members to get company_id)
+-- Slug uniqueness within a team enforced at the app layer
+-- (requires joining members to get team_id)
 
 -------------------------------------------------------------------------------
 -- MEMBER USERS
@@ -242,7 +242,7 @@ CREATE INDEX idx_member_users_user ON member_users(user_id);
 
 CREATE TABLE invites (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id       UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id          UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     email            TEXT NOT NULL,
     code             TEXT NOT NULL UNIQUE,
     status           invite_status NOT NULL DEFAULT 'pending',
@@ -256,7 +256,7 @@ CREATE TABLE invites (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_invites_company ON invites(company_id);
+CREATE INDEX idx_invites_team ON invites(team_id);
 CREATE INDEX idx_invites_code ON invites(code);
 
 -------------------------------------------------------------------------------
@@ -265,7 +265,7 @@ CREATE INDEX idx_invites_code ON invites(code);
 
 CREATE TABLE api_keys (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id   UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id      UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
     prefix       TEXT NOT NULL,
     key_hash     TEXT NOT NULL,
@@ -273,7 +273,7 @@ CREATE TABLE api_keys (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_api_keys_company ON api_keys(company_id);
+CREATE INDEX idx_api_keys_team ON api_keys(team_id);
 
 -------------------------------------------------------------------------------
 -- PROJECTS
@@ -281,7 +281,7 @@ CREATE INDEX idx_api_keys_company ON api_keys(company_id);
 
 CREATE TABLE projects (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id             UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     name                TEXT NOT NULL,
     slug                TEXT NOT NULL,
     issue_prefix        TEXT NOT NULL,
@@ -298,9 +298,9 @@ CREATE TABLE projects (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_projects_company ON projects(company_id);
-CREATE UNIQUE INDEX idx_projects_company_slug ON projects(company_id, slug);
-CREATE UNIQUE INDEX idx_projects_company_issue_prefix ON projects(company_id, issue_prefix);
+CREATE INDEX idx_projects_team ON projects(team_id);
+CREATE UNIQUE INDEX idx_projects_team_slug ON projects(team_id, slug);
+CREATE UNIQUE INDEX idx_projects_team_issue_prefix ON projects(team_id, issue_prefix);
 
 -------------------------------------------------------------------------------
 -- REPOS
@@ -333,7 +333,7 @@ ALTER TABLE projects ADD CONSTRAINT fk_projects_designated_repo
 
 CREATE TABLE secrets (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id       UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id          UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     project_id       UUID REFERENCES projects(id) ON DELETE CASCADE,
     name             TEXT NOT NULL,
     encrypted_value  TEXT NOT NULL,
@@ -343,17 +343,17 @@ CREATE TABLE secrets (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE (company_id, project_id, name)
+    UNIQUE (team_id, project_id, name)
 );
 
-CREATE INDEX idx_secrets_company ON secrets(company_id);
+CREATE INDEX idx_secrets_team ON secrets(team_id);
 CREATE INDEX idx_secrets_project ON secrets(project_id);
 
 -------------------------------------------------------------------------------
 -- OAUTH CONNECTIONS
 -------------------------------------------------------------------------------
 
--- One row per (company, provider, provider_account_id). Tokens are encrypted
+-- One row per (team, provider, provider_account_id). Tokens are encrypted
 -- and stored in `secrets`; the FKs here point at those rows. The egress proxy
 -- substitutes the access token at request time via the standard placeholder
 -- mechanism (`__HEZO_SECRET_<NAME>__`), so no token value ever reaches the
@@ -361,13 +361,13 @@ CREATE INDEX idx_secrets_project ON secrets(project_id);
 --
 -- `provider`     — short identifier: 'github', 'datocms', 'linear', 'generic'.
 -- `provider_account_id` — stable upstream id (GitHub user id, DatoCMS workspace
---                  id, …). Together with provider+company this is the natural
+--                  id, …). Together with provider+team this is the natural
 --                  key.
 -- `metadata`     — provider-specific bag (avatar_url, account_email,
 --                  discovered_authorize_url, discovered_token_endpoint, …).
 CREATE TABLE oauth_connections (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id               UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id                  UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     provider                 TEXT NOT NULL,
     provider_account_id      TEXT NOT NULL,
     provider_account_label   TEXT NOT NULL,
@@ -379,11 +379,11 @@ CREATE TABLE oauth_connections (
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE (company_id, provider, provider_account_id)
+    UNIQUE (team_id, provider, provider_account_id)
 );
 
-CREATE INDEX idx_oauth_connections_company ON oauth_connections(company_id);
-CREATE INDEX idx_oauth_connections_provider ON oauth_connections(company_id, provider);
+CREATE INDEX idx_oauth_connections_team ON oauth_connections(team_id);
+CREATE INDEX idx_oauth_connections_provider ON oauth_connections(team_id, provider);
 
 -- Deferred FK: repos.oauth_connection_id → oauth_connections(id)
 ALTER TABLE repos ADD CONSTRAINT fk_repos_oauth_connection
@@ -410,7 +410,7 @@ CREATE TYPE mcp_install_status AS ENUM ('pending', 'installed', 'failed');
 --                   provision the server under /workspace/.hezo/mcp/<name>/.
 CREATE TABLE mcp_connections (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id           UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id              UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
     name                 TEXT NOT NULL,
     kind                 mcp_connection_kind NOT NULL,
@@ -421,10 +421,10 @@ CREATE TABLE mcp_connections (
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE (company_id, project_id, name)
+    UNIQUE (team_id, project_id, name)
 );
 
-CREATE INDEX idx_mcp_connections_company ON mcp_connections(company_id);
+CREATE INDEX idx_mcp_connections_team ON mcp_connections(team_id);
 CREATE INDEX idx_mcp_connections_project ON mcp_connections(project_id);
 CREATE INDEX idx_mcp_connections_oauth ON mcp_connections(oauth_connection_id) WHERE oauth_connection_id IS NOT NULL;
 
@@ -434,7 +434,7 @@ CREATE INDEX idx_mcp_connections_oauth ON mcp_connections(oauth_connection_id) W
 
 CREATE TABLE goals (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id           UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id              UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
     title                TEXT NOT NULL,
     description          TEXT NOT NULL DEFAULT '',
@@ -444,22 +444,22 @@ CREATE TABLE goals (
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_goals_company ON goals(company_id);
+CREATE INDEX idx_goals_team ON goals(team_id);
 CREATE INDEX idx_goals_project ON goals(project_id);
 CREATE INDEX idx_goals_status  ON goals(status);
 
 -------------------------------------------------------------------------------
--- COMPANY SSH KEYS
+-- TEAM SSH KEYS
 -------------------------------------------------------------------------------
 
-CREATE TABLE company_ssh_keys (
+CREATE TABLE team_ssh_keys (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id            UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id               UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     public_key            TEXT NOT NULL,
     fingerprint           TEXT,
     private_key_secret_id UUID REFERENCES secrets(id) ON DELETE SET NULL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (company_id)
+    UNIQUE (team_id)
 );
 
 -------------------------------------------------------------------------------
@@ -473,7 +473,7 @@ CREATE TABLE project_issue_counters (
 
 CREATE TABLE issues (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id           UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id              UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     project_id           UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     assignee_id          UUID REFERENCES members(id) ON DELETE SET NULL,
     parent_issue_id      UUID REFERENCES issues(id) ON DELETE SET NULL,
@@ -497,15 +497,15 @@ CREATE TABLE issues (
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     UNIQUE (project_id, number),
-    UNIQUE (company_id, identifier)
+    UNIQUE (team_id, identifier)
 );
 
-CREATE INDEX idx_issues_company ON issues(company_id);
+CREATE INDEX idx_issues_team ON issues(team_id);
 CREATE INDEX idx_issues_project ON issues(project_id);
 CREATE INDEX idx_issues_assignee ON issues(assignee_id);
-CREATE INDEX idx_issues_status ON issues(company_id, status);
+CREATE INDEX idx_issues_status ON issues(team_id, status);
 CREATE INDEX idx_issues_parent ON issues(parent_issue_id);
-CREATE INDEX idx_issues_identifier ON issues(company_id, identifier);
+CREATE INDEX idx_issues_identifier ON issues(team_id, identifier);
 CREATE INDEX idx_issues_embedding ON issues USING hnsw (embedding vector_cosine_ops);
 
 -------------------------------------------------------------------------------
@@ -618,7 +618,7 @@ CREATE INDEX idx_grants_secret ON secret_grants(secret_id);
 
 CREATE TABLE approvals (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id             UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id                UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     type                   approval_type NOT NULL,
     status                 approval_status NOT NULL DEFAULT 'pending',
     requested_by_member_id UUID REFERENCES members(id) ON DELETE CASCADE,
@@ -628,14 +628,14 @@ CREATE TABLE approvals (
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_approvals_company ON approvals(company_id);
-CREATE INDEX idx_approvals_status ON approvals(company_id, status);
+CREATE INDEX idx_approvals_team ON approvals(team_id);
+CREATE INDEX idx_approvals_status ON approvals(team_id, status);
 
 -- One pending designated-repo setup approval per project: allows concurrent
 -- agent runs on the same project to share a single approval while still posting
 -- their own action comments on their respective issues.
 CREATE UNIQUE INDEX idx_one_pending_repo_setup
-    ON approvals (company_id, (payload->>'project_id'))
+    ON approvals (team_id, (payload->>'project_id'))
     WHERE type = 'designated_repo_request'
       AND status = 'pending'
       AND payload->>'reason' = 'designated_repo';
@@ -646,7 +646,7 @@ CREATE UNIQUE INDEX idx_one_pending_repo_setup
 
 CREATE TABLE cost_entries (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id   UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id      UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     member_id    UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     issue_id     UUID REFERENCES issues(id) ON DELETE SET NULL,
     project_id   UUID REFERENCES projects(id) ON DELETE SET NULL,
@@ -655,7 +655,7 @@ CREATE TABLE cost_entries (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_costs_company ON cost_entries(company_id);
+CREATE INDEX idx_costs_team ON cost_entries(team_id);
 CREATE INDEX idx_costs_member ON cost_entries(member_id);
 CREATE INDEX idx_costs_issue ON cost_entries(issue_id);
 CREATE INDEX idx_costs_project ON cost_entries(project_id);
@@ -667,7 +667,7 @@ CREATE INDEX idx_costs_created ON cost_entries(created_at);
 
 CREATE TABLE audit_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id         UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     actor_type      audit_actor_type NOT NULL,
     actor_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
     action          TEXT NOT NULL,
@@ -677,19 +677,19 @@ CREATE TABLE audit_log (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_audit_company ON audit_log(company_id);
-CREATE INDEX idx_audit_created ON audit_log(company_id, created_at);
+CREATE INDEX idx_audit_team ON audit_log(team_id);
+CREATE INDEX idx_audit_created ON audit_log(team_id, created_at);
 CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 
 -------------------------------------------------------------------------------
--- DOCUMENTS (unified: project docs, knowledge base, company preferences)
+-- DOCUMENTS (unified: project docs, knowledge base, team preferences)
 -------------------------------------------------------------------------------
 
-CREATE TYPE document_type AS ENUM ('project_doc', 'kb_doc', 'company_preferences', 'agent_system_prompt');
+CREATE TYPE document_type AS ENUM ('project_doc', 'kb_doc', 'team_preferences', 'agent_system_prompt');
 
 CREATE TABLE documents (
     id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id                UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id                   UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     project_id                UUID REFERENCES projects(id) ON DELETE CASCADE,
     member_agent_id           UUID REFERENCES member_agents(id) ON DELETE CASCADE,
     type                      document_type NOT NULL,
@@ -708,17 +708,17 @@ CREATE UNIQUE INDEX idx_documents_project_doc
     ON documents (project_id, slug)
     WHERE type = 'project_doc';
 CREATE UNIQUE INDEX idx_documents_kb_doc
-    ON documents (company_id, slug)
+    ON documents (team_id, slug)
     WHERE type = 'kb_doc';
-CREATE UNIQUE INDEX idx_documents_company_preferences
-    ON documents (company_id)
-    WHERE type = 'company_preferences';
+CREATE UNIQUE INDEX idx_documents_team_preferences
+    ON documents (team_id)
+    WHERE type = 'team_preferences';
 CREATE UNIQUE INDEX idx_documents_agent_system_prompt
     ON documents (member_agent_id)
     WHERE type = 'agent_system_prompt';
 
-CREATE INDEX idx_documents_company ON documents (company_id);
-CREATE INDEX idx_documents_type_company ON documents (type, company_id);
+CREATE INDEX idx_documents_team ON documents (team_id);
+CREATE INDEX idx_documents_type_team ON documents (type, team_id);
 CREATE INDEX idx_documents_project ON documents (project_id) WHERE project_id IS NOT NULL;
 CREATE INDEX idx_documents_member_agent ON documents (member_agent_id) WHERE member_agent_id IS NOT NULL;
 CREATE INDEX idx_documents_embedding ON documents USING hnsw (embedding vector_cosine_ops);
@@ -766,7 +766,7 @@ CREATE UNIQUE INDEX ai_provider_configs_default_per_provider
 
 CREATE TABLE assets (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id            UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id               UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     provider              TEXT NOT NULL DEFAULT 'local_disk',
     object_key            TEXT NOT NULL,
     content_type          TEXT NOT NULL,
@@ -777,7 +777,7 @@ CREATE TABLE assets (
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_assets_company ON assets(company_id);
+CREATE INDEX idx_assets_team ON assets(team_id);
 
 CREATE TABLE issue_attachments (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -796,7 +796,7 @@ CREATE INDEX idx_issue_attachments_issue ON issue_attachments(issue_id);
 
 CREATE TABLE skills (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id            UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id               UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     name                  TEXT NOT NULL,
     slug                  TEXT NOT NULL,
     description           TEXT NOT NULL DEFAULT '',
@@ -810,10 +810,10 @@ CREATE TABLE skills (
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE(company_id, slug)
+    UNIQUE(team_id, slug)
 );
 
-CREATE INDEX idx_skills_company ON skills(company_id);
+CREATE INDEX idx_skills_team ON skills(team_id);
 CREATE INDEX idx_skills_embedding ON skills USING hnsw (embedding vector_cosine_ops);
 
 -------------------------------------------------------------------------------
@@ -842,7 +842,7 @@ CREATE INDEX idx_skill_revisions_skill ON skill_revisions(skill_id);
 CREATE TABLE agent_wakeup_requests (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     member_id       UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
-    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id         UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     source          wakeup_source NOT NULL,
     status          wakeup_status NOT NULL DEFAULT 'queued',
     idempotency_key TEXT,
@@ -863,7 +863,7 @@ CREATE INDEX idx_wakeups_idempotency ON agent_wakeup_requests(idempotency_key);
 
 CREATE TABLE heartbeat_runs (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id               UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id                  UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     member_id                UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     wakeup_id                UUID REFERENCES agent_wakeup_requests(id) ON DELETE SET NULL,
     issue_id                 UUID REFERENCES issues(id) ON DELETE SET NULL,
@@ -886,7 +886,7 @@ CREATE TABLE heartbeat_runs (
 
 CREATE INDEX idx_runs_member ON heartbeat_runs(member_id);
 CREATE INDEX idx_runs_status ON heartbeat_runs(status);
-CREATE INDEX idx_runs_company ON heartbeat_runs(company_id);
+CREATE INDEX idx_runs_team ON heartbeat_runs(team_id);
 CREATE INDEX idx_runs_issue ON heartbeat_runs(issue_id);
 
 ALTER TABLE issues
@@ -901,7 +901,7 @@ CREATE INDEX idx_issues_created_by_run ON issues(created_by_run_id) WHERE create
 
 CREATE TABLE agent_task_sessions (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id         UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id            UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     member_id          UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     task_key           TEXT NOT NULL,
     session_params     JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -924,7 +924,7 @@ CREATE INDEX idx_task_sessions_member ON agent_task_sessions(member_id);
 
 CREATE TABLE plugins (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id   UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id      UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     plugin_key   TEXT NOT NULL,
     name         TEXT NOT NULL,
     version      TEXT NOT NULL,
@@ -934,21 +934,21 @@ CREATE TABLE plugins (
     installed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE (company_id, plugin_key)
+    UNIQUE (team_id, plugin_key)
 );
 
-CREATE INDEX idx_plugins_company ON plugins(company_id);
+CREATE INDEX idx_plugins_team ON plugins(team_id);
 
 CREATE TABLE plugin_state (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     plugin_id   UUID NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
-    company_id  UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    team_id     UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     namespace   TEXT NOT NULL DEFAULT '',
     state_key   TEXT NOT NULL,
     state_value JSONB NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE (plugin_id, company_id, namespace, state_key)
+    UNIQUE (plugin_id, team_id, namespace, state_key)
 );
 
 CREATE INDEX idx_plugin_state_plugin ON plugin_state(plugin_id);
@@ -1012,10 +1012,10 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_agent_types_updated BEFORE UPDATE ON agent_types
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER trg_company_types_updated BEFORE UPDATE ON company_types
+CREATE TRIGGER trg_team_templates_updated BEFORE UPDATE ON team_templates
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER trg_companies_updated BEFORE UPDATE ON companies
+CREATE TRIGGER trg_teams_updated BEFORE UPDATE ON teams
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_member_agents_updated BEFORE UPDATE ON member_agents
@@ -1083,12 +1083,12 @@ CREATE OR REPLACE FUNCTION debit_agent_budget(
 DECLARE
     v_agent_budget INTEGER;
     v_agent_used INTEGER;
-    v_company_id UUID;
-    v_company_budget INTEGER;
-    v_company_used INTEGER;
+    v_team_id UUID;
+    v_team_budget INTEGER;
+    v_team_used INTEGER;
 BEGIN
-    SELECT ma.monthly_budget_cents, ma.budget_used_cents, m.company_id
-    INTO v_agent_budget, v_agent_used, v_company_id
+    SELECT ma.monthly_budget_cents, ma.budget_used_cents, m.team_id
+    INTO v_agent_budget, v_agent_used, v_team_id
     FROM member_agents ma
     JOIN members m ON m.id = ma.id
     WHERE ma.id = p_member_id
@@ -1099,12 +1099,12 @@ BEGIN
     END IF;
 
     SELECT budget_monthly_cents, budget_used_cents
-    INTO v_company_budget, v_company_used
-    FROM companies
-    WHERE id = v_company_id
+    INTO v_team_budget, v_team_used
+    FROM teams
+    WHERE id = v_team_id
     FOR UPDATE;
 
-    IF (v_company_used + p_amount_cents) > v_company_budget THEN
+    IF (v_team_used + p_amount_cents) > v_team_budget THEN
         RETURN FALSE;
     END IF;
 
@@ -1112,9 +1112,9 @@ BEGIN
     SET budget_used_cents = budget_used_cents + p_amount_cents
     WHERE id = p_member_id;
 
-    UPDATE companies
+    UPDATE teams
     SET budget_used_cents = budget_used_cents + p_amount_cents
-    WHERE id = v_company_id;
+    WHERE id = v_team_id;
 
     RETURN TRUE;
 END;
