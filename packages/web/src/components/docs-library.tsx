@@ -36,7 +36,7 @@ interface DocsLibraryProps {
 	emptyTitle?: string;
 	emptyDescription?: string;
 
-	companyId?: string;
+	teamId?: string;
 	projectSlug?: string;
 }
 
@@ -56,7 +56,7 @@ export function DocsLibrary({
 	viewerExtras,
 	emptyTitle = 'No documents yet',
 	emptyDescription,
-	companyId,
+	teamId,
 	projectSlug,
 }: DocsLibraryProps) {
 	const [mode, setMode] = useState<'view' | 'edit'>('view');
@@ -201,12 +201,12 @@ export function DocsLibrary({
 						</div>
 
 						{mode === 'view' ? (
-							<MarkdownProse companyId={companyId} projectSlug={projectSlug}>
+							<MarkdownProse teamId={teamId} projectSlug={projectSlug}>
 								{docContent || '_(empty)_'}
 							</MarkdownProse>
 						) : (
 							<MentionTextarea
-								companyId={companyId}
+								teamId={teamId}
 								projectSlug={projectSlug}
 								value={draft}
 								onChange={(e) => setDraft(e.target.value)}

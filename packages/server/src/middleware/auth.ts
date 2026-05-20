@@ -5,7 +5,7 @@ import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { sign, verify } from 'hono/jwt';
 import type { MasterKeyManager } from '../crypto/master-key';
-import { resolveCompanyId } from '../lib/resolve';
+import { resolveTeamId } from '../lib/resolve';
 import type { AuthInfo, Env } from '../lib/types';
 
 const AGENT_JWT_TTL_SECONDS = 60 * 60 * 4;
@@ -26,8 +26,8 @@ export async function verifyToken(
 	// API key auth
 	if (token.startsWith('hezo_')) {
 		const prefix = token.slice(5, 13);
-		const result = await db.query<{ id: string; company_id: string; key_hash: string }>(
-			'SELECT id, company_id, key_hash FROM api_keys WHERE prefix = $1',
+		const result = await db.query<{ id: string; team_id: string; key_hash: string }>(
+			'SELECT id, team_id, key_hash FROM api_keys WHERE prefix = $1',
 			[prefix],
 		);
 
@@ -39,7 +39,7 @@ export async function verifyToken(
 		// Update last_used_at
 		await db.query('UPDATE api_keys SET last_used_at = now() WHERE id = $1', [result.rows[0].id]);
 
-		return { type: AuthType.ApiKey, companyId: result.rows[0].company_id };
+		return { type: AuthType.ApiKey, teamId: result.rows[0].team_id };
 	}
 
 	// JWT auth
@@ -48,21 +48,21 @@ export async function verifyToken(
 		const secret = jwtKey.toString('base64');
 		const payload = await verify(token, secret, 'HS256');
 
-		if (payload.member_id && payload.company_id) {
+		if (payload.member_id && payload.team_id) {
 			if (!payload.run_id) return null;
 			const memberId = payload.member_id as string;
-			const companyId = payload.company_id as string;
+			const teamId = payload.team_id as string;
 			const runId = payload.run_id as string;
 			const runResult = await db.query<{ status: string }>(
-				'SELECT status FROM heartbeat_runs WHERE id = $1 AND member_id = $2 AND company_id = $3',
-				[runId, memberId, companyId],
+				'SELECT status FROM heartbeat_runs WHERE id = $1 AND member_id = $2 AND team_id = $3',
+				[runId, memberId, teamId],
 			);
 			const status = runResult.rows[0]?.status;
 			if (status !== HeartbeatRunStatus.Running) return null;
 			return {
 				type: AuthType.Agent,
 				memberId,
-				companyId,
+				teamId,
 				runId,
 			};
 		}
@@ -126,7 +126,7 @@ export async function signBoardJwt(
 export async function signAgentJwt(
 	masterKeyManager: { getJwtKey: () => Promise<Buffer> },
 	memberId: string,
-	companyId: string,
+	teamId: string,
 	runId: string,
 ): Promise<string> {
 	const jwtKey = await masterKeyManager.getJwtKey();
@@ -135,7 +135,7 @@ export async function signAgentJwt(
 	return sign(
 		{
 			member_id: memberId,
-			company_id: companyId,
+			team_id: teamId,
 			run_id: runId,
 			iat: now,
 			exp: now + AGENT_JWT_TTL_SECONDS,
@@ -152,71 +152,69 @@ export function safeCompareHex(a: string, b: string): boolean {
 	return timingSafeEqual(bufA, bufB);
 }
 
-export async function requireCompanyAccess(
-	c: Context<Env>,
-): Promise<{ companyId: string } | Response> {
+export async function requireTeamAccess(c: Context<Env>): Promise<{ teamId: string } | Response> {
 	const auth = c.get('auth');
-	const raw = c.req.param('companyId');
+	const raw = c.req.param('teamId');
 
 	if (!raw) {
-		return c.json({ error: { code: 'BAD_REQUEST', message: 'Missing companyId' } }, 400);
+		return c.json({ error: { code: 'BAD_REQUEST', message: 'Missing teamId' } }, 400);
 	}
 
 	const db = c.get('db');
-	const companyId = await resolveCompanyId(db, raw);
-	if (!companyId) {
-		return c.json({ error: { code: 'NOT_FOUND', message: 'Company not found' } }, 404);
+	const teamId = await resolveTeamId(db, raw);
+	if (!teamId) {
+		return c.json({ error: { code: 'NOT_FOUND', message: 'Team not found' } }, 404);
 	}
 
 	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
-		if (auth.companyId !== companyId) {
+		if (auth.teamId !== teamId) {
 			return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
 		}
-		return { companyId };
+		return { teamId };
 	}
 
 	if (auth.isSuperuser) {
-		return { companyId };
+		return { teamId };
 	}
 
 	const result = await db.query(
-		'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.company_id = $2',
-		[auth.userId, companyId],
+		'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
+		[auth.userId, teamId],
 	);
 	if (result.rows.length === 0) {
 		return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
 	}
-	return { companyId };
+	return { teamId };
 }
 
-export async function requireCompanyAccessForResource(
+export async function requireTeamAccessForResource(
 	db: PGlite,
 	c: Context<Env>,
-	resourceCompanyId: string,
-): Promise<{ companyId: string } | Response> {
+	resourceTeamId: string,
+): Promise<{ teamId: string } | Response> {
 	const auth = c.get('auth');
 
 	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
-		if (auth.companyId !== resourceCompanyId) {
+		if (auth.teamId !== resourceTeamId) {
 			return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
 		}
-		return { companyId: resourceCompanyId };
+		return { teamId: resourceTeamId };
 	}
 
-	// Superusers can access any company
+	// Superusers can access any team
 	if (auth.isSuperuser) {
-		return { companyId: resourceCompanyId };
+		return { teamId: resourceTeamId };
 	}
 
 	// Board auth
 	const result = await db.query(
-		'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.company_id = $2',
-		[auth.userId, resourceCompanyId],
+		'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
+		[auth.userId, resourceTeamId],
 	);
 	if (result.rows.length === 0) {
 		return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
 	}
-	return { companyId: resourceCompanyId };
+	return { teamId: resourceTeamId };
 }
 
 export function requireSuperuser(c: Context<Env>): Response | null {

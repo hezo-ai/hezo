@@ -10,7 +10,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let projectSlug: string;
 let agentId: string;
@@ -22,14 +22,14 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Issue Test Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Main Project', description: 'Test project.' }),
@@ -38,7 +38,7 @@ beforeAll(async () => {
 	projectId = projectBody.id;
 	projectSlug = projectBody.slug;
 
-	const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Test Agent' }),
@@ -52,7 +52,7 @@ afterAll(async () => {
 
 describe('issues CRUD', () => {
 	it('creates an issue with auto-generated identifier', async () => {
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -72,7 +72,7 @@ describe('issues CRUD', () => {
 	});
 
 	it('accepts a runtime_type override on create and honors it on update', async () => {
-		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -86,7 +86,7 @@ describe('issues CRUD', () => {
 		const created = (await createRes.json()).data;
 		expect(created.runtime_type).toBe('codex');
 
-		const patchRes = await app.request(`/api/companies/${companyId}/issues/${created.id}`, {
+		const patchRes = await app.request(`/api/teams/${teamId}/issues/${created.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ runtime_type: 'gemini' }),
@@ -96,7 +96,7 @@ describe('issues CRUD', () => {
 	});
 
 	it('creates sequential issue numbers', async () => {
-		const firstRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const firstRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -108,7 +108,7 @@ describe('issues CRUD', () => {
 		expect(firstRes.status).toBe(201);
 		const firstNum = (await firstRes.json()).data.number;
 
-		const secondRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const secondRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -123,7 +123,7 @@ describe('issues CRUD', () => {
 	});
 
 	it('lists issues with pagination', async () => {
-		const res = await app.request(`/api/companies/${companyId}/issues?per_page=1`, {
+		const res = await app.request(`/api/teams/${teamId}/issues?per_page=1`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -134,7 +134,7 @@ describe('issues CRUD', () => {
 	});
 
 	it('filters issues by status', async () => {
-		const res = await app.request(`/api/companies/${companyId}/issues?status=backlog`, {
+		const res = await app.request(`/api/teams/${teamId}/issues?status=backlog`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -143,12 +143,12 @@ describe('issues CRUD', () => {
 	});
 
 	it('gets an issue by id with computed fields', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		const issue = (await listRes.json()).data[0];
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -159,19 +159,19 @@ describe('issues CRUD', () => {
 	});
 
 	it('resolves an issue by identifier (case-insensitive)', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		const issue = (await listRes.json()).data[0];
 
-		const upperRes = await app.request(`/api/companies/${companyId}/issues/${issue.identifier}`, {
+		const upperRes = await app.request(`/api/teams/${teamId}/issues/${issue.identifier}`, {
 			headers: authHeader(token),
 		});
 		expect(upperRes.status).toBe(200);
 		expect((await upperRes.json()).data.id).toBe(issue.id);
 
 		const lowerRes = await app.request(
-			`/api/companies/${companyId}/issues/${issue.identifier.toLowerCase()}`,
+			`/api/teams/${teamId}/issues/${issue.identifier.toLowerCase()}`,
 			{ headers: authHeader(token) },
 		);
 		expect(lowerRes.status).toBe(200);
@@ -179,12 +179,12 @@ describe('issues CRUD', () => {
 	});
 
 	it('updates an issue status', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		const issue = (await listRes.json()).data[0];
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'in_progress' }),
@@ -194,19 +194,16 @@ describe('issues CRUD', () => {
 	});
 
 	it('creates a sub-issue', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		const parentIssue = (await listRes.json()).data[0];
 
-		const res = await app.request(
-			`/api/companies/${companyId}/issues/${parentIssue.id}/sub-issues`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ title: 'Sub-task', assignee_id: agentId }),
-			},
-		);
+		const res = await app.request(`/api/teams/${teamId}/issues/${parentIssue.id}/sub-issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Sub-task', assignee_id: agentId }),
+		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.parent_issue_id).toBe(parentIssue.id);
@@ -214,25 +211,22 @@ describe('issues CRUD', () => {
 	});
 
 	it('manages issue dependencies', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		const issues = (await listRes.json()).data;
 
 		// Add dependency
-		const addRes = await app.request(
-			`/api/companies/${companyId}/issues/${issues[0].id}/dependencies`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ blocked_by_issue_id: issues[1].id }),
-			},
-		);
+		const addRes = await app.request(`/api/teams/${teamId}/issues/${issues[0].id}/dependencies`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ blocked_by_issue_id: issues[1].id }),
+		});
 		expect(addRes.status).toBe(201);
 
 		// List dependencies
 		const listDepsRes = await app.request(
-			`/api/companies/${companyId}/issues/${issues[0].id}/dependencies`,
+			`/api/teams/${teamId}/issues/${issues[0].id}/dependencies`,
 			{ headers: authHeader(token) },
 		);
 		expect(listDepsRes.status).toBe(200);
@@ -243,21 +237,21 @@ describe('issues CRUD', () => {
 
 		// Remove dependency
 		const removeRes = await app.request(
-			`/api/companies/${companyId}/issues/${issues[0].id}/dependencies/${deps[0].id}`,
+			`/api/teams/${teamId}/issues/${issues[0].id}/dependencies/${deps[0].id}`,
 			{ method: 'DELETE', headers: authHeader(token) },
 		);
 		expect(removeRes.status).toBe(200);
 	});
 
 	it('updates and retrieves progress_summary', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		const issue = (await listRes.json()).data[0];
 
 		const summary =
 			'## Requirements\n- Build auth module\n\n## Done\n- Set up project\n\n## Next\n- Implement login';
-		const patchRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const patchRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: summary }),
@@ -268,7 +262,7 @@ describe('issues CRUD', () => {
 		expect(patched.progress_summary_updated_at).toBeTruthy();
 
 		// GET detail includes progress_summary and updater name
-		const detailRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const detailRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			headers: authHeader(token),
 		});
 		expect(detailRes.status).toBe(200);
@@ -278,20 +272,20 @@ describe('issues CRUD', () => {
 	});
 
 	it('clears progress_summary with null', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		const issue = (await listRes.json()).data[0];
 
 		// Set it first
-		await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: 'Some summary' }),
 		});
 
 		// Clear it
-		const clearRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const clearRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: null }),
@@ -301,7 +295,7 @@ describe('issues CRUD', () => {
 	});
 
 	it('does not include progress_summary in list view', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		expect(listRes.status).toBe(200);
@@ -311,13 +305,13 @@ describe('issues CRUD', () => {
 	});
 
 	it('updates and retrieves rules', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		const issue = (await listRes.json()).data[0];
 
 		const rules = 'Consult the architect before making changes.\nPrioritize performance.';
-		const patchRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const patchRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ rules }),
@@ -326,7 +320,7 @@ describe('issues CRUD', () => {
 		const patched = (await patchRes.json()).data;
 		expect(patched.rules).toBe(rules);
 
-		const detailRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const detailRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			headers: authHeader(token),
 		});
 		expect(detailRes.status).toBe(200);
@@ -334,18 +328,18 @@ describe('issues CRUD', () => {
 	});
 
 	it('clears rules with null', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		const issue = (await listRes.json()).data[0];
 
-		await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ rules: 'Some rules' }),
 		});
 
-		const clearRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const clearRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ rules: null }),
@@ -355,7 +349,7 @@ describe('issues CRUD', () => {
 	});
 
 	it('does not include rules in list view', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		expect(listRes.status).toBe(200);
@@ -364,7 +358,7 @@ describe('issues CRUD', () => {
 	});
 
 	it('rejects issue creation without assignee_id', async () => {
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -378,31 +372,28 @@ describe('issues CRUD', () => {
 	});
 
 	it('rejects sub-issue creation without assignee_id', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		const parentIssue = (await listRes.json()).data[0];
 
-		const res = await app.request(
-			`/api/companies/${companyId}/issues/${parentIssue.id}/sub-issues`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ title: 'Sub without assignee' }),
-			},
-		);
+		const res = await app.request(`/api/teams/${teamId}/issues/${parentIssue.id}/sub-issues`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Sub without assignee' }),
+		});
 		expect(res.status).toBe(400);
 		const body = await res.json();
 		expect(body.error.message).toMatch(/assignee_(id|slug)/);
 	});
 
 	it('rejects setting assignee_id to null on update', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const listRes = await app.request(`/api/teams/${teamId}/issues`, {
 			headers: authHeader(token),
 		});
 		const issue = (await listRes.json()).data[0];
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: null }),
@@ -413,14 +404,14 @@ describe('issues CRUD', () => {
 	});
 
 	it('filters by multiple assignee_ids when comma-separated', async () => {
-		const secondAgentRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const secondAgentRes = await app.request(`/api/teams/${teamId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Second Agent' }),
 		});
 		const secondAgentId = (await secondAgentRes.json()).data.id;
 
-		await app.request(`/api/companies/${companyId}/issues`, {
+		await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -431,7 +422,7 @@ describe('issues CRUD', () => {
 		});
 
 		const listRes = await app.request(
-			`/api/companies/${companyId}/issues?assignee_id=${agentId},${secondAgentId}`,
+			`/api/teams/${teamId}/issues?assignee_id=${agentId},${secondAgentId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(listRes.status).toBe(200);
@@ -442,7 +433,7 @@ describe('issues CRUD', () => {
 	});
 
 	it('pins issues with active runs to the top regardless of sort order', async () => {
-		const oldRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const oldRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -455,7 +446,7 @@ describe('issues CRUD', () => {
 
 		await new Promise((r) => setTimeout(r, 10));
 
-		const newRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const newRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -467,13 +458,13 @@ describe('issues CRUD', () => {
 		const newIssue = (await newRes.json()).data;
 
 		await db.query(
-			`INSERT INTO heartbeat_runs (company_id, member_id, issue_id, status)
+			`INSERT INTO heartbeat_runs (team_id, member_id, issue_id, status)
 			 VALUES ($1, $2, $3, 'running')`,
-			[companyId, agentId, oldIssue.id],
+			[teamId, agentId, oldIssue.id],
 		);
 
 		const listRes = await app.request(
-			`/api/companies/${companyId}/issues?project_id=${projectId}&sort=created_at:desc`,
+			`/api/teams/${teamId}/issues?project_id=${projectId}&sort=created_at:desc`,
 			{ headers: authHeader(token) },
 		);
 		const data = (await listRes.json()).data;
@@ -488,7 +479,7 @@ describe('issues CRUD', () => {
 	});
 
 	it('allows an agent to close an issue via PATCH', async () => {
-		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -499,9 +490,9 @@ describe('issues CRUD', () => {
 		});
 		const issue = (await createRes.json()).data;
 
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'closed' }),
@@ -511,7 +502,7 @@ describe('issues CRUD', () => {
 	});
 
 	it('rejects an agent trying to re-open a closed issue via PATCH', async () => {
-		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -522,15 +513,15 @@ describe('issues CRUD', () => {
 		});
 		const issue = (await createRes.json()).data;
 
-		await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'closed' }),
 		});
 
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 
-		const reopenRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const reopenRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'backlog' }),
@@ -539,7 +530,7 @@ describe('issues CRUD', () => {
 		const body = await reopenRes.json();
 		expect(body.error.message).toMatch(/board/i);
 
-		const bypassRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const bypassRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'in_progress' }),
@@ -548,7 +539,7 @@ describe('issues CRUD', () => {
 	});
 
 	it('allows a board member to close and re-open an issue', async () => {
-		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -559,7 +550,7 @@ describe('issues CRUD', () => {
 		});
 		const issue = (await createRes.json()).data;
 
-		const closeRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const closeRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'closed' }),
@@ -567,7 +558,7 @@ describe('issues CRUD', () => {
 		expect(closeRes.status).toBe(200);
 		expect((await closeRes.json()).data.status).toBe('closed');
 
-		const reopenRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const reopenRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'backlog' }),
@@ -577,7 +568,7 @@ describe('issues CRUD', () => {
 	});
 
 	it('allows agents to set non-terminal statuses via PATCH', async () => {
-		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -588,9 +579,9 @@ describe('issues CRUD', () => {
 		});
 		const issue = (await createRes.json()).data;
 
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'in_progress' }),
@@ -602,7 +593,7 @@ describe('issues CRUD', () => {
 
 describe('sub-issue depth + ancestors', () => {
 	async function createIssue(parent_issue_id?: string) {
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -616,7 +607,7 @@ describe('sub-issue depth + ancestors', () => {
 	}
 
 	async function createSub(parentId: string) {
-		const res = await app.request(`/api/companies/${companyId}/issues/${parentId}/sub-issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${parentId}/sub-issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Sub', assignee_id: agentId }),
@@ -662,13 +653,13 @@ describe('sub-issue depth + ancestors', () => {
 		const sub = (await createSub(root.id)).body.data;
 		const subSub = (await createSub(sub.id)).body.data;
 
-		const rootRes = await app.request(`/api/companies/${companyId}/issues/${root.id}/ancestors`, {
+		const rootRes = await app.request(`/api/teams/${teamId}/issues/${root.id}/ancestors`, {
 			headers: authHeader(token),
 		});
 		expect(rootRes.status).toBe(200);
 		expect((await rootRes.json()).data).toEqual([]);
 
-		const subRes = await app.request(`/api/companies/${companyId}/issues/${sub.id}/ancestors`, {
+		const subRes = await app.request(`/api/teams/${teamId}/issues/${sub.id}/ancestors`, {
 			headers: authHeader(token),
 		});
 		expect(subRes.status).toBe(200);
@@ -676,10 +667,9 @@ describe('sub-issue depth + ancestors', () => {
 		expect(subAncestors).toHaveLength(1);
 		expect(subAncestors[0].id).toBe(root.id);
 
-		const subSubRes = await app.request(
-			`/api/companies/${companyId}/issues/${subSub.id}/ancestors`,
-			{ headers: authHeader(token) },
-		);
+		const subSubRes = await app.request(`/api/teams/${teamId}/issues/${subSub.id}/ancestors`, {
+			headers: authHeader(token),
+		});
 		expect(subSubRes.status).toBe(200);
 		const subSubAncestors = (await subSubRes.json()).data;
 		expect(subSubAncestors).toHaveLength(2);
@@ -692,7 +682,7 @@ describe('sub-issue depth + ancestors', () => {
 		const sub = (await createSub(root.id)).body.data;
 
 		const res = await app.request(
-			`/api/companies/${companyId}/issues/${sub.identifier.toLowerCase()}/ancestors`,
+			`/api/teams/${teamId}/issues/${sub.identifier.toLowerCase()}/ancestors`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
@@ -703,7 +693,7 @@ describe('sub-issue depth + ancestors', () => {
 
 	it('returns 404 on ancestors for an unknown issue', async () => {
 		const res = await app.request(
-			`/api/companies/${companyId}/issues/00000000-0000-0000-0000-000000000000/ancestors`,
+			`/api/teams/${teamId}/issues/00000000-0000-0000-0000-000000000000/ancestors`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
@@ -716,22 +706,22 @@ describe('operations project assignee restriction', () => {
 
 	beforeAll(async () => {
 		const opsResult = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE company_id = $1 AND slug = 'operations'`,
-			[companyId],
+			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
+			[teamId],
 		);
 		operationsProjectId = opsResult.rows[0].id;
 
 		const ceoResult = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE m.company_id = $1 AND ma.slug = 'ceo'`,
-			[companyId],
+			 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+			[teamId],
 		);
 		ceoAgentId = ceoResult.rows[0].id;
 	});
 
 	it('rejects creating an Operations issue assigned to a non-CEO agent', async () => {
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -745,7 +735,7 @@ describe('operations project assignee restriction', () => {
 	});
 
 	it('accepts creating an Operations issue assigned to the CEO', async () => {
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -759,7 +749,7 @@ describe('operations project assignee restriction', () => {
 	});
 
 	it('allows non-CEO assignees on non-Operations projects', async () => {
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -772,7 +762,7 @@ describe('operations project assignee restriction', () => {
 	});
 
 	it('rejects reassigning an Operations issue to a non-CEO agent', async () => {
-		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -783,7 +773,7 @@ describe('operations project assignee restriction', () => {
 		});
 		const issue = (await createRes.json()).data;
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: agentId }),
@@ -793,7 +783,7 @@ describe('operations project assignee restriction', () => {
 	});
 
 	it('allows reassigning an Operations issue back to the CEO', async () => {
-		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -804,7 +794,7 @@ describe('operations project assignee restriction', () => {
 		});
 		const issue = (await createRes.json()).data;
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: ceoAgentId }),
@@ -813,7 +803,7 @@ describe('operations project assignee restriction', () => {
 	});
 
 	it('rejects sub-issue of an Operations parent assigned to a non-CEO agent', async () => {
-		const parentRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const parentRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -824,7 +814,7 @@ describe('operations project assignee restriction', () => {
 		});
 		const parent = (await parentRes.json()).data;
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${parent.id}/sub-issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${parent.id}/sub-issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Sub with non-CEO', assignee_id: agentId }),
@@ -834,7 +824,7 @@ describe('operations project assignee restriction', () => {
 	});
 
 	it('exposes project_slug on the issue detail response', async () => {
-		const createRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -845,7 +835,7 @@ describe('operations project assignee restriction', () => {
 		});
 		const issue = (await createRes.json()).data;
 
-		const detailRes = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const detailRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			headers: authHeader(token),
 		});
 		const detail = (await detailRes.json()).data;
@@ -855,7 +845,7 @@ describe('operations project assignee restriction', () => {
 
 describe('closure rules — sub-issues must be closed before parent', () => {
 	async function createParent(): Promise<{ id: string; identifier: string }> {
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -869,7 +859,7 @@ describe('closure rules — sub-issues must be closed before parent', () => {
 	}
 
 	async function createChild(parentId: string): Promise<{ id: string; identifier: string }> {
-		const res = await app.request(`/api/companies/${companyId}/issues/${parentId}/sub-issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${parentId}/sub-issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Child ticket', assignee_id: agentId }),
@@ -879,7 +869,7 @@ describe('closure rules — sub-issues must be closed before parent', () => {
 	}
 
 	async function setStatus(issueId: string, status: string): Promise<Response> {
-		return app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		return app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status }),
@@ -940,7 +930,7 @@ describe('closure rules — sub-issues must be closed before parent', () => {
 
 describe('closure rules — outstanding pinged-agent activity blocks done', () => {
 	async function createIssue(): Promise<{ id: string; identifier: string }> {
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -955,12 +945,12 @@ describe('closure rules — outstanding pinged-agent activity blocks done', () =
 	it('rejects done while a heartbeat_run for the issue is running', async () => {
 		const issue = await createIssue();
 		await db.query(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
 			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())`,
-			[agentId, companyId, issue.id],
+			[agentId, teamId, issue.id],
 		);
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
@@ -972,12 +962,12 @@ describe('closure rules — outstanding pinged-agent activity blocks done', () =
 	it('rejects done while a queued wakeup payload references the issue', async () => {
 		const issue = await createIssue();
 		await db.query(
-			`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, payload)
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload)
 			 VALUES ($1, $2, 'mention'::wakeup_source, 'queued'::wakeup_status, $3::jsonb)`,
-			[agentId, companyId, JSON.stringify({ issue_id: issue.id })],
+			[agentId, teamId, JSON.stringify({ issue_id: issue.id })],
 		);
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
@@ -989,17 +979,17 @@ describe('closure rules — outstanding pinged-agent activity blocks done', () =
 	it('allows done once outstanding runs and wakeups have terminal statuses', async () => {
 		const issue = await createIssue();
 		await db.query(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at, finished_at)
+			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at, finished_at)
 			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now(), now())`,
-			[agentId, companyId, issue.id],
+			[agentId, teamId, issue.id],
 		);
 		await db.query(
-			`INSERT INTO agent_wakeup_requests (member_id, company_id, source, status, payload, completed_at)
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload, completed_at)
 			 VALUES ($1, $2, 'mention'::wakeup_source, 'completed'::wakeup_status, $3::jsonb, now())`,
-			[agentId, companyId, JSON.stringify({ issue_id: issue.id })],
+			[agentId, teamId, JSON.stringify({ issue_id: issue.id })],
 		);
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),

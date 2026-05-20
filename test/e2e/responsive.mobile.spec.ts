@@ -12,24 +12,24 @@ async function expectNoHorizontalOverflow(page: Page) {
 
 test.describe('Responsive — mobile (390px)', () => {
 	test('page padding scales down (no fixed 32px on mobile)', async ({ page, lightWorkspace }) => {
-		const { company } = lightWorkspace;
-		await page.goto(`/companies/${company.slug}/projects`);
+		const { team } = lightWorkspace;
+		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 		await expectNoHorizontalOverflow(page);
 	});
 
 	test('issue detail metadata stacks above content', async ({ page, freshWorkspace }) => {
-		const { company, token, agents } = freshWorkspace;
+		const { team, token, agents } = freshWorkspace;
 		const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 			headers,
 			data: { name: 'Mobile P', description: 'mobile' },
 		});
 		const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
-		const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 			headers,
 			data: {
 				project_id: project.id,
@@ -41,7 +41,7 @@ test.describe('Responsive — mobile (390px)', () => {
 		const issue = ((await issueRes.json()) as { data: { identifier: string } }).data;
 
 		await page.goto(
-			`/companies/${company.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
+			`/teams/${team.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
 		);
 		await waitForPageLoad(page);
 		await expect(page.getByRole('heading', { name: 'Mobile issue' })).toBeVisible({
@@ -58,8 +58,8 @@ test.describe('Responsive — mobile (390px)', () => {
 	});
 
 	test('create-issue dialog goes near full-screen', async ({ page, freshWorkspace }) => {
-		const { company } = freshWorkspace;
-		await page.goto(`/companies/${company.slug}/issues`);
+		const { team } = freshWorkspace;
+		await page.goto(`/teams/${team.slug}/issues`);
 		await waitForPageLoad(page);
 
 		await page.getByTestId('issue-list-new-issue').click();
@@ -77,8 +77,8 @@ test.describe('Responsive — mobile (390px)', () => {
 		page,
 		lightWorkspace,
 	}) => {
-		const { company } = lightWorkspace;
-		await page.goto(`/companies/${company.slug}/settings/audit-log`);
+		const { team } = lightWorkspace;
+		await page.goto(`/teams/${team.slug}/settings/audit-log`);
 		await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible({
 			timeout: 20000,
 		});
@@ -94,9 +94,9 @@ test.describe('Responsive — mobile (390px)', () => {
 	});
 
 	test('hamburger does not collide with rail at tablet width', async ({ page, lightWorkspace }) => {
-		const { company } = lightWorkspace;
+		const { team } = lightWorkspace;
 		await page.setViewportSize({ width: 800, height: 900 });
-		await page.goto(`/companies/${company.slug}`);
+		await page.goto(`/teams/${team.slug}`);
 		await waitForPageLoad(page);
 
 		const toggle = page.getByTestId('mobile-nav-toggle');

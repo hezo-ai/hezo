@@ -61,7 +61,7 @@ export interface LiveRun {
 	memberId: string;
 	issueId: string;
 	projectId: string;
-	companyId: string;
+	teamId: string;
 	taskKey: string;
 }
 
@@ -239,7 +239,7 @@ export class JobManager {
 		const stranded = await db.query<{
 			id: string;
 			member_id: string;
-			company_id: string;
+			team_id: string;
 			issue_id: string | null;
 		}>(
 			`UPDATE heartbeat_runs
@@ -248,7 +248,7 @@ export class JobManager {
 			     error = COALESCE(error, $2),
 			     exit_code = COALESCE(exit_code, -1)
 			 WHERE status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
-			 RETURNING id, member_id, company_id, issue_id`,
+			 RETURNING id, member_id, team_id, issue_id`,
 			[
 				HeartbeatRunStatus.Failed,
 				'Server restarted while run in flight',
@@ -257,20 +257,20 @@ export class JobManager {
 			],
 		);
 
-		const resetAgents = await db.query<{ id: string; company_id: string }>(
+		const resetAgents = await db.query<{ id: string; team_id: string }>(
 			`UPDATE member_agents ma
 			 SET runtime_status = $1::agent_runtime_status
 			 FROM members m
 			 WHERE ma.id = m.id
 			   AND ma.runtime_status = $2::agent_runtime_status
-			 RETURNING ma.id, m.company_id`,
+			 RETURNING ma.id, m.team_id`,
 			[AgentRuntimeStatus.Idle, AgentRuntimeStatus.Active],
 		);
 
 		await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
 
 		for (const run of stranded.rows) {
-			broadcastRowChange(wsManager, wsRoom.company(run.company_id), 'heartbeat_runs', 'UPDATE', {
+			broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
 				id: run.id,
 				member_id: run.member_id,
 				issue_id: run.issue_id,
@@ -280,7 +280,7 @@ export class JobManager {
 		}
 
 		for (const agent of resetAgents.rows) {
-			broadcastRowChange(wsManager, wsRoom.company(agent.company_id), 'member_agents', 'UPDATE', {
+			broadcastRowChange(wsManager, wsRoom.team(agent.team_id), 'member_agents', 'UPDATE', {
 				id: agent.id,
 				runtime_status: AgentRuntimeStatus.Idle,
 			});
@@ -288,7 +288,7 @@ export class JobManager {
 
 		for (const run of stranded.rows) {
 			if (!run.issue_id) continue;
-			await createWakeup(db, run.member_id, run.company_id, WakeupSource.Timer, {
+			await createWakeup(db, run.member_id, run.team_id, WakeupSource.Timer, {
 				reason: 'startup_recovery',
 				issue_id: run.issue_id,
 				previous_run_id: run.id,
@@ -317,18 +317,18 @@ export class JobManager {
 
 		const running = await db.query<{
 			id: string;
-			company_id: string;
+			team_id: string;
 			slug: string;
-			company_slug: string;
+			team_slug: string;
 			container_id: string;
 			container_status: string | null;
 			docker_base_image: string;
 			dev_ports: Array<{ container: number; host: number }>;
 		}>(
-			`SELECT p.id, p.company_id, p.slug, c.slug AS company_slug,
+			`SELECT p.id, p.team_id, p.slug, c.slug AS team_slug,
 			        p.container_id, p.container_status, p.docker_base_image, p.dev_ports
 			 FROM projects p
-			 JOIN companies c ON c.id = p.company_id
+			 JOIN teams c ON c.id = p.team_id
 			 WHERE p.container_status = $1::container_status AND p.container_id IS NOT NULL`,
 			[ContainerStatus.Running],
 		);
@@ -346,14 +346,14 @@ export class JobManager {
 					this.buildContainerDeps(),
 					{
 						id: row.id,
-						company_id: row.company_id,
+						team_id: row.team_id,
 						slug: row.slug,
 						docker_base_image: row.docker_base_image,
 						container_id: row.container_id,
 						container_status: row.container_status,
 						dev_ports: row.dev_ports ?? [],
 					},
-					row.company_slug,
+					row.team_slug,
 				);
 				log.info(`Rebuilt container for project ${row.id} after stale-mount detection`);
 			} catch (err) {
@@ -373,20 +373,20 @@ export class JobManager {
 
 		const candidates = await db.query<{
 			id: string;
-			company_id: string;
+			team_id: string;
 			slug: string;
-			company_slug: string;
+			team_slug: string;
 		}>(
-			`SELECT p.id, p.company_id, p.slug, c.slug AS company_slug
+			`SELECT p.id, p.team_id, p.slug, c.slug AS team_slug
 			 FROM projects p
-			 JOIN companies c ON c.id = p.company_id
+			 JOIN teams c ON c.id = p.team_id
 			 WHERE p.container_status = $1::container_status
 			    OR (p.container_status IS NULL AND p.container_id IS NULL)`,
 			[ContainerStatus.Error],
 		);
 
 		for (const project of candidates.rows) {
-			const name = `hezo-${project.company_slug}-${project.slug}`;
+			const name = `hezo-${project.team_slug}-${project.slug}`;
 			let info: Awaited<ReturnType<DockerClient['inspectContainerByName']>>;
 			try {
 				info = await docker.inspectContainerByName(name);
@@ -400,7 +400,7 @@ export class JobManager {
 				`UPDATE projects SET container_id = $1, container_status = $2::container_status WHERE id = $3`,
 				[info.Id, ContainerStatus.Running, project.id],
 			);
-			broadcastRowChange(wsManager, wsRoom.company(project.company_id), 'projects', 'UPDATE', {
+			broadcastRowChange(wsManager, wsRoom.team(project.team_id), 'projects', 'UPDATE', {
 				id: project.id,
 				container_id: info.Id,
 				container_status: ContainerStatus.Running,
@@ -443,11 +443,11 @@ export class JobManager {
 		const wakeups = await db.query<{
 			id: string;
 			member_id: string;
-			company_id: string;
+			team_id: string;
 			source: string;
 			payload: Record<string, unknown>;
 		}>(
-			`SELECT id, member_id, company_id, source, payload
+			`SELECT id, member_id, team_id, source, payload
 			 FROM agent_wakeup_requests
 			 WHERE status = $2::wakeup_status
 			   AND created_at < $1
@@ -492,7 +492,7 @@ export class JobManager {
 			try {
 				await this.activateAgent(
 					wakeup.member_id,
-					wakeup.company_id,
+					wakeup.team_id,
 					wakeup.id,
 					wakeup.payload,
 					wakeup.source,
@@ -514,10 +514,10 @@ export class JobManager {
 
 		const dueAgents = await db.query<{
 			id: string;
-			company_id: string;
+			team_id: string;
 			heartbeat_interval_min: number;
 		}>(
-			`SELECT ma.id, m.company_id, ma.heartbeat_interval_min
+			`SELECT ma.id, m.team_id, ma.heartbeat_interval_min
 			 FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
 			 WHERE ma.admin_status = $1
@@ -540,7 +540,7 @@ export class JobManager {
 			const wakeupId = await createWakeup(
 				this.deps.db,
 				agent.id,
-				agent.company_id,
+				agent.team_id,
 				WakeupSource.Heartbeat,
 				payload,
 			);
@@ -548,19 +548,13 @@ export class JobManager {
 				'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = now() WHERE id = $2',
 				[WakeupStatus.Claimed, wakeupId],
 			);
-			await this.activateAgent(
-				agent.id,
-				agent.company_id,
-				wakeupId,
-				payload,
-				WakeupSource.Heartbeat,
-			);
+			await this.activateAgent(agent.id, agent.team_id, wakeupId, payload, WakeupSource.Heartbeat);
 		}
 	}
 
 	private async activateAgent(
 		memberId: string,
-		companyId: string,
+		teamId: string,
 		wakeupId: string,
 		wakeupPayload: Record<string, unknown>,
 		wakeupSource: string,
@@ -619,8 +613,8 @@ export class JobManager {
 			typeof wakeupPayload?.issue_id === 'string' ? wakeupPayload.issue_id : undefined;
 		if (payloadIssueId) {
 			const payloadIssue = await db.query<IssueRow>(
-				'SELECT id, identifier, title, description, status, priority, project_id, rules, assignee_id, runtime_type, parent_issue_id, created_by_run_id FROM issues WHERE id = $1 AND company_id = $2',
-				[payloadIssueId, companyId],
+				'SELECT id, identifier, title, description, status, priority, project_id, rules, assignee_id, runtime_type, parent_issue_id, created_by_run_id FROM issues WHERE id = $1 AND team_id = $2',
+				[payloadIssueId, teamId],
 			);
 			if (payloadIssue.rows.length === 0) {
 				log.debug(`Payload issue ${payloadIssueId} not found for agent ${memberId}`);
@@ -637,7 +631,7 @@ export class JobManager {
 			const issues = await db.query<IssueRow>(
 				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.assignee_id, i.runtime_type, i.parent_issue_id, i.created_by_run_id
 				 FROM issues i
-				 WHERE i.assignee_id = $1 AND i.company_id = $2
+				 WHERE i.assignee_id = $1 AND i.team_id = $2
 				   AND i.status NOT IN ($3, $4, $5)
 				   AND NOT EXISTS (
 				     SELECT 1 FROM issue_dependencies d
@@ -651,7 +645,7 @@ export class JobManager {
 				 LIMIT 1`,
 				[
 					memberId,
-					companyId,
+					teamId,
 					...TERMINAL_ISSUE_STATUSES,
 					IssuePriority.Urgent,
 					IssuePriority.High,
@@ -693,16 +687,16 @@ export class JobManager {
 		const project = await db.query<{
 			id: string;
 			slug: string;
-			company_id: string;
-			company_slug: string;
+			team_id: string;
+			team_slug: string;
 			container_id: string;
 			container_status: string;
 			designated_repo_id: string | null;
 		}>(
-			`SELECT p.id, p.slug, p.company_id, c.slug AS company_slug,
+			`SELECT p.id, p.slug, p.team_id, c.slug AS team_slug,
 			        p.container_id, p.container_status, p.designated_repo_id
 			 FROM projects p
-			 JOIN companies c ON c.id = p.company_id
+			 JOIN teams c ON c.id = p.team_id
 			 WHERE p.id = $1`,
 			[issue.project_id],
 		);
@@ -727,14 +721,14 @@ export class JobManager {
 		if (!isConversationalWakeup && !projectRow.designated_repo_id && agent.rows[0].touches_code) {
 			try {
 				const ensured = await ensureRepoSetupAction(db, {
-					companyId,
+					teamId,
 					projectId: projectRow.id,
 					issueId: issue.id,
 				});
 				if (ensured.commentRow) {
 					broadcastRowChange(
 						this.deps.wsManager,
-						wsRoom.company(companyId),
+						wsRoom.team(teamId),
 						'issue_comments',
 						'INSERT',
 						ensured.commentRow,
@@ -743,7 +737,7 @@ export class JobManager {
 				if (ensured.approvalRow) {
 					broadcastRowChange(
 						this.deps.wsManager,
-						wsRoom.company(companyId),
+						wsRoom.team(teamId),
 						'approvals',
 						'INSERT',
 						ensured.approvalRow,
@@ -818,7 +812,7 @@ export class JobManager {
 			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
 			[AgentRuntimeStatus.Active, memberId],
 		);
-		broadcastRowChange(this.deps.wsManager, wsRoom.company(companyId), 'member_agents', 'UPDATE', {
+		broadcastRowChange(this.deps.wsManager, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
 			id: memberId,
 			runtime_status: AgentRuntimeStatus.Active,
 		});
@@ -855,7 +849,7 @@ export class JobManager {
 							id: memberId,
 							title: agent.rows[0].title,
 							slug: agent.rows[0].slug,
-							company_id: companyId,
+							team_id: teamId,
 							default_effort: agent.rows[0].default_effort,
 							model_override_provider: agent.rows[0].model_override_provider,
 							model_override_model: agent.rows[0].model_override_model,
@@ -871,7 +865,7 @@ export class JobManager {
 								memberId,
 								issueId: issue.id,
 								projectId,
-								companyId,
+								teamId,
 								taskKey,
 							});
 						},
@@ -883,7 +877,7 @@ export class JobManager {
 						memberId,
 						agent.rows[0].slug,
 						issue.id,
-						companyId,
+						teamId,
 						wakeupId,
 						wakeupPayload,
 						result,
@@ -908,7 +902,7 @@ export class JobManager {
 		memberId: string,
 		agentSlug: string,
 		issueId: string,
-		companyId: string,
+		teamId: string,
 		wakeupId: string | undefined,
 		wakeupPayload: Record<string, unknown> | undefined,
 		result: RunResult,
@@ -928,7 +922,7 @@ export class JobManager {
 			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status, last_heartbeat_at = now() WHERE id = $2',
 			[AgentRuntimeStatus.Idle, memberId],
 		);
-		broadcastRowChange(this.deps.wsManager, wsRoom.company(companyId), 'member_agents', 'UPDATE', {
+		broadcastRowChange(this.deps.wsManager, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
 			id: memberId,
 			runtime_status: AgentRuntimeStatus.Idle,
 		});
@@ -945,27 +939,27 @@ export class JobManager {
 			result.success &&
 			wakeupPayload?.trigger === 'issue_done'
 		) {
-			const childrenCheck = await assertChildrenAllClosed(db, companyId, issueId);
+			const childrenCheck = await assertChildrenAllClosed(db, teamId, issueId);
 			if (!childrenCheck.ok) {
 				log.warn(`Skipping coach auto-close for issue ${issueId}: ${childrenCheck.message}`);
 			} else {
 				const closed = await db.query<Record<string, unknown>>(
 					`UPDATE issues SET status = $1::issue_status, updated_at = now()
-					 WHERE id = $2 AND company_id = $3 AND status = $4::issue_status
+					 WHERE id = $2 AND team_id = $3 AND status = $4::issue_status
 					 RETURNING *`,
-					[IssueStatus.Closed, issueId, companyId, IssueStatus.Done],
+					[IssueStatus.Closed, issueId, teamId, IssueStatus.Done],
 				);
 				if (closed.rows[0]) {
 					broadcastRowChange(
 						this.deps.wsManager,
-						wsRoom.company(companyId),
+						wsRoom.team(teamId),
 						'issues',
 						'UPDATE',
 						closed.rows[0],
 					);
 					await recordStatusChange(
 						db,
-						companyId,
+						teamId,
 						issueId,
 						IssueStatus.Done,
 						IssueStatus.Closed,
@@ -976,18 +970,18 @@ export class JobManager {
 			}
 		}
 
-		await this.chainNextIssueWakeup(memberId, issueId, companyId);
+		await this.chainNextIssueWakeup(memberId, issueId, teamId);
 	}
 
 	private async chainNextIssueWakeup(
 		memberId: string,
 		justCompletedIssueId: string,
-		companyId: string,
+		teamId: string,
 	): Promise<void> {
 		const { db } = this.deps;
 		const next = await db.query<{ id: string }>(
 			`SELECT i.id FROM issues i
-			 WHERE i.assignee_id = $1 AND i.company_id = $2 AND i.id != $3
+			 WHERE i.assignee_id = $1 AND i.team_id = $2 AND i.id != $3
 			   AND i.status NOT IN ($4::issue_status, $5::issue_status, $6::issue_status)
 			   AND NOT EXISTS (
 			     SELECT 1 FROM issue_dependencies d
@@ -1001,7 +995,7 @@ export class JobManager {
 			 LIMIT 1`,
 			[
 				memberId,
-				companyId,
+				teamId,
 				justCompletedIssueId,
 				...TERMINAL_ISSUE_STATUSES,
 				IssuePriority.Urgent,
@@ -1013,7 +1007,7 @@ export class JobManager {
 		if (next.rows.length === 0) return;
 
 		try {
-			await createWakeup(db, memberId, companyId, WakeupSource.Timer, {
+			await createWakeup(db, memberId, teamId, WakeupSource.Timer, {
 				issue_id: next.rows[0].id,
 				reason: 'chain_after_completion',
 			});
@@ -1044,7 +1038,7 @@ export class JobManager {
 	}
 
 	private async handleContainerTransition(transition: ContainerTransition): Promise<void> {
-		const { projectId, companyId, oldStatus, newStatus } = transition;
+		const { projectId, teamId, oldStatus, newStatus } = transition;
 
 		if (
 			oldStatus === ContainerStatus.Running &&
@@ -1053,7 +1047,7 @@ export class JobManager {
 			const reason: ContainerExitReason =
 				newStatus === ContainerStatus.Error ? 'container_error' : 'container_stopped';
 			this.cancelLiveRunsForProject(projectId, reason);
-			await failProjectRuns(this.buildContainerDeps(), projectId, companyId, reason);
+			await failProjectRuns(this.buildContainerDeps(), projectId, teamId, reason);
 		}
 	}
 

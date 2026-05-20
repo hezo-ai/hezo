@@ -26,7 +26,7 @@ interface DocMentionsResponse {
 	project_docs: ResolvedProjectDoc[];
 }
 
-export function useDocMentions(companyId: string, candidates: DocMentionsRequest) {
+export function useDocMentions(teamId: string, candidates: DocMentionsRequest) {
 	const key = useMemo(() => {
 		const kbSlugs = [...new Set(candidates.kbSlugs.map((s) => s.toLowerCase()))].sort();
 		const projectDocs = [
@@ -40,16 +40,16 @@ export function useDocMentions(companyId: string, candidates: DocMentionsRequest
 	}, [candidates]);
 
 	return useQuery({
-		queryKey: ['companies', companyId, 'docs', 'resolve', key],
+		queryKey: ['teams', teamId, 'docs', 'resolve', key],
 		queryFn: () =>
-			api.post<DocMentionsResponse>(`/api/companies/${companyId}/docs/resolve`, {
+			api.post<DocMentionsResponse>(`/api/teams/${teamId}/docs/resolve`, {
 				kb_slugs: key.kbSlugs,
 				project_docs: candidates.projectDocs.map((d) => ({
 					project_slug: d.project_slug.toLowerCase(),
 					filename: d.filename,
 				})),
 			}),
-		enabled: !!companyId && (key.kbSlugs.length > 0 || key.projectDocs.length > 0),
+		enabled: !!teamId && (key.kbSlugs.length > 0 || key.projectDocs.length > 0),
 		staleTime: 60_000,
 	});
 }
@@ -64,20 +64,20 @@ export interface MentionSearchResult {
 }
 
 export function useMentionSearch(
-	companyId: string,
+	teamId: string,
 	q: string,
 	options?: { projectSlug?: string; enabled?: boolean },
 ) {
 	const projectSlug = options?.projectSlug;
 	const enabled = options?.enabled ?? true;
 	return useQuery({
-		queryKey: ['companies', companyId, 'mentions', 'search', q, projectSlug ?? null],
+		queryKey: ['teams', teamId, 'mentions', 'search', q, projectSlug ?? null],
 		queryFn: () => {
 			const params: Record<string, string> = { q };
 			if (projectSlug) params.project_slug = projectSlug;
-			return api.get<MentionSearchResult[]>(`/api/companies/${companyId}/mentions/search`, params);
+			return api.get<MentionSearchResult[]>(`/api/teams/${teamId}/mentions/search`, params);
 		},
-		enabled: enabled && !!companyId,
+		enabled: enabled && !!teamId,
 		staleTime: 30_000,
 	});
 }

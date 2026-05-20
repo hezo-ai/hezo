@@ -9,7 +9,7 @@ import { createGitHubSim, type GitHubSim } from '../helpers/github-sim';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 let sim: GitHubSim;
 
 let prevApi: string | undefined;
@@ -30,16 +30,16 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
 		(t: { name: string }) => t.name === 'Startup',
 	).id;
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'GitHub Co', template_id: typeId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 });
 
 afterAll(async () => {
@@ -59,7 +59,7 @@ describe('GitHub device-flow routes', () => {
 			authKeys: [],
 		});
 
-		const startRes = await app.request(`/api/companies/${companyId}/oauth/github/device-start`, {
+		const startRes = await app.request(`/api/teams/${teamId}/oauth/github/device-start`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({}),
@@ -68,7 +68,7 @@ describe('GitHub device-flow routes', () => {
 		const startBody = (await startRes.json()) as { data: { flow_id: string; user_code: string } };
 		const { flow_id: flowId, user_code: userCode } = startBody.data;
 
-		const pendingRes = await app.request(`/api/companies/${companyId}/oauth/github/device-poll`, {
+		const pendingRes = await app.request(`/api/teams/${teamId}/oauth/github/device-poll`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ flow_id: flowId }),
@@ -78,7 +78,7 @@ describe('GitHub device-flow routes', () => {
 
 		sim.approveDeviceFlow(userCode);
 
-		const successRes = await app.request(`/api/companies/${companyId}/oauth/github/device-poll`, {
+		const successRes = await app.request(`/api/teams/${teamId}/oauth/github/device-poll`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ flow_id: flowId }),
@@ -109,21 +109,21 @@ describe('GitHub device-flow routes', () => {
 		expect(sim.state.authKeys[0].key).toBe(sim.state.signingKeys[0].key);
 
 		const conn = await db.query<{ id: string }>(
-			`SELECT id FROM oauth_connections WHERE company_id = $1`,
-			[companyId],
+			`SELECT id FROM oauth_connections WHERE team_id = $1`,
+			[teamId],
 		);
 		expect(conn.rows.length).toBe(1);
 
 		const secret = await db.query<{ name: string; allowed_hosts: string[] }>(
-			`SELECT name, allowed_hosts FROM secrets WHERE company_id = $1 AND name LIKE 'OAUTH_GITHUB_%'`,
-			[companyId],
+			`SELECT name, allowed_hosts FROM secrets WHERE team_id = $1 AND name LIKE 'OAUTH_GITHUB_%'`,
+			[teamId],
 		);
 		expect(secret.rows.length).toBe(1);
 		expect(secret.rows[0].allowed_hosts).toEqual(['github.com', 'api.github.com']);
 	});
 
 	it('rejects a poll with an unknown flow_id', async () => {
-		const res = await app.request(`/api/companies/${companyId}/oauth/github/device-poll`, {
+		const res = await app.request(`/api/teams/${teamId}/oauth/github/device-poll`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ flow_id: 'bad' }),
@@ -132,7 +132,7 @@ describe('GitHub device-flow routes', () => {
 	});
 
 	it('lists connections — does not leak token values', async () => {
-		const res = await app.request(`/api/companies/${companyId}/oauth-connections`, {
+		const res = await app.request(`/api/teams/${teamId}/oauth-connections`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -147,12 +147,12 @@ describe('GitHub device-flow routes', () => {
 	});
 
 	it('deletes a connection — also removes its secret rows and 404s on the next list/get', async () => {
-		const list = await app.request(`/api/companies/${companyId}/oauth-connections`, {
+		const list = await app.request(`/api/teams/${teamId}/oauth-connections`, {
 			headers: authHeader(token),
 		});
 		const conn = ((await list.json()) as { data: Array<{ id: string }> }).data[0];
 
-		const del = await app.request(`/api/companies/${companyId}/oauth-connections/${conn.id}`, {
+		const del = await app.request(`/api/teams/${teamId}/oauth-connections/${conn.id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -162,53 +162,50 @@ describe('GitHub device-flow routes', () => {
 		expect(after.rows.length).toBe(0);
 
 		const secrets = await db.query(
-			`SELECT id FROM secrets WHERE company_id = $1 AND name LIKE 'OAUTH_GITHUB_%'`,
-			[companyId],
+			`SELECT id FROM secrets WHERE team_id = $1 AND name LIKE 'OAUTH_GITHUB_%'`,
+			[teamId],
 		);
 		expect(secrets.rows.length).toBe(0);
 
-		const delAgain = await app.request(`/api/companies/${companyId}/oauth-connections/${conn.id}`, {
+		const delAgain = await app.request(`/api/teams/${teamId}/oauth-connections/${conn.id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
 		expect(delAgain.status).toBe(404);
 	});
 
-	it("cross-company isolation: cannot delete another company's connection", async () => {
-		const otherCompanyRes = await app.request('/api/companies', {
+	it("cross-team isolation: cannot delete another team's connection", async () => {
+		const otherTeamRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Outsider',
 				template_id: (
-					await (await app.request('/api/company-types', { headers: authHeader(token) })).json()
+					await (await app.request('/api/team-templates', { headers: authHeader(token) })).json()
 				).data[0].id,
 			}),
 		});
-		const otherCompanyId = (await otherCompanyRes.json()).data.id;
+		const otherTeamId = (await otherTeamRes.json()).data.id;
 
 		const directInsert = await db.query<{ id: string }>(
-			`INSERT INTO secrets (company_id, name, encrypted_value, category, allowed_hosts)
+			`INSERT INTO secrets (team_id, name, encrypted_value, category, allowed_hosts)
 			 VALUES ($1, 'OAUTH_GITHUB_DUMMY1', 'placeholder', 'api_token', ARRAY['github.com'])
 			 RETURNING id`,
-			[otherCompanyId],
+			[otherTeamId],
 		);
 		const secretId = directInsert.rows[0].id;
 		const conn = await db.query<{ id: string }>(
-			`INSERT INTO oauth_connections (company_id, provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
+			`INSERT INTO oauth_connections (team_id, provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
 			 VALUES ($1, 'github', '999', 'outsider', $2, ARRAY['repo'])
 			 RETURNING id`,
-			[otherCompanyId, secretId],
+			[otherTeamId, secretId],
 		);
 		const otherConnectionId = conn.rows[0].id;
 
-		const res = await app.request(
-			`/api/companies/${companyId}/oauth-connections/${otherConnectionId}`,
-			{
-				method: 'DELETE',
-				headers: authHeader(token),
-			},
-		);
+		const res = await app.request(`/api/teams/${teamId}/oauth-connections/${otherConnectionId}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(404);
 	});
 });

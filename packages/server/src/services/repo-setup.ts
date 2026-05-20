@@ -15,7 +15,7 @@ import { createWakeup } from './wakeup';
 const log = logger.child('repo-setup');
 
 export interface RepoSetupGateCtx {
-	companyId: string;
+	teamId: string;
 	projectId: string;
 	issueId: string;
 }
@@ -35,17 +35,17 @@ export async function ensureRepoSetupAction(
 ): Promise<EnsureResult> {
 	await db.query('BEGIN');
 	try {
-		const existingApproval = await findPendingApproval(db, ctx.companyId, ctx.projectId);
+		const existingApproval = await findPendingApproval(db, ctx.teamId, ctx.projectId);
 		let approvalId = existingApproval;
 		let approvalCreated = false;
 		if (!approvalId) {
 			try {
 				const ins = await db.query<{ id: string }>(
-					`INSERT INTO approvals (company_id, type, status, payload)
+					`INSERT INTO approvals (team_id, type, status, payload)
 					 VALUES ($1, $2::approval_type, $3::approval_status, $4::jsonb)
 					 RETURNING id`,
 					[
-						ctx.companyId,
+						ctx.teamId,
 						ApprovalType.DesignatedRepoRequest,
 						ApprovalStatus.Pending,
 						JSON.stringify({
@@ -59,7 +59,7 @@ export async function ensureRepoSetupAction(
 				approvalId = ins.rows[0].id;
 				approvalCreated = true;
 			} catch (e) {
-				const retry = await findPendingApproval(db, ctx.companyId, ctx.projectId);
+				const retry = await findPendingApproval(db, ctx.teamId, ctx.projectId);
 				if (!retry) throw e;
 				approvalId = retry;
 			}
@@ -120,16 +120,16 @@ export async function ensureRepoSetupAction(
 
 async function findPendingApproval(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	projectId: string,
 ): Promise<string | null> {
 	const res = await db.query<{ id: string }>(
 		`SELECT id FROM approvals
-		 WHERE company_id = $1 AND type = $2::approval_type AND status = $3::approval_status
+		 WHERE team_id = $1 AND type = $2::approval_type AND status = $3::approval_status
 		   AND payload->>'project_id' = $4 AND payload->>'reason' = $5
 		 LIMIT 1`,
 		[
-			companyId,
+			teamId,
 			ApprovalType.DesignatedRepoRequest,
 			ApprovalStatus.Pending,
 			projectId,
@@ -140,7 +140,7 @@ async function findPendingApproval(
 }
 
 export interface FinalizeInput {
-	companyId: string;
+	teamId: string;
 	projectId: string;
 	repoId: string;
 	repoIdentifier: string;
@@ -166,7 +166,7 @@ export async function finalizePendingRepoSetup(
 	db: PGlite,
 	input: FinalizeInput,
 ): Promise<FinalizeResult> {
-	const approvalId = await findPendingApproval(db, input.companyId, input.projectId);
+	const approvalId = await findPendingApproval(db, input.teamId, input.projectId);
 	if (!approvalId) {
 		return {
 			resolvedApprovalId: null,
@@ -243,10 +243,10 @@ export async function finalizePendingRepoSetup(
 	}>(
 		`SELECT id, member_id, payload FROM agent_wakeup_requests
 		 WHERE status = $1::wakeup_status
-		   AND company_id = $2
+		   AND team_id = $2
 		   AND payload->>'reason' = 'awaiting_repo_setup'
 		   AND payload->>'project_id' = $3`,
-		[WakeupStatus.Deferred, input.companyId, input.projectId],
+		[WakeupStatus.Deferred, input.teamId, input.projectId],
 	);
 
 	const deferredWakeups = deferred.rows.map((w) => ({
@@ -272,7 +272,7 @@ export async function finalizePendingRepoSetup(
  */
 export async function enqueueRepoSetupResumeWakeups(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	repoId: string,
 	approvalId: string,
 	deferredWakeups: FinalizeResult['deferredWakeups'],
@@ -280,7 +280,7 @@ export async function enqueueRepoSetupResumeWakeups(
 	for (const w of deferredWakeups) {
 		if (!w.issueId) continue;
 		try {
-			await createWakeup(db, w.memberId, companyId, WakeupSource.Automation, {
+			await createWakeup(db, w.memberId, teamId, WakeupSource.Automation, {
 				reason: 'repo_setup_complete',
 				issue_id: w.issueId,
 				approval_id: approvalId,

@@ -35,29 +35,29 @@ export type AgentTeamContextReason =
 
 const TEAM_CONTEXT_TARGET_PREFIX = 'team_context:';
 
-interface CompanyContext {
+interface TeamContext {
 	ceoMemberId: string | null;
 	operationsProjectId: string | null;
 }
 
-async function loadCompanyContext(db: PGlite, companyId: string): Promise<CompanyContext | null> {
+async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
 	const ceo = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
+		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[companyId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
 	);
 
 	const ops = await db.query<{ id: string }>(
 		`SELECT id FROM projects
-		 WHERE company_id = $1 AND is_internal = true AND slug = $2
+		 WHERE team_id = $1 AND is_internal = true AND slug = $2
 		 LIMIT 1`,
-		[companyId, OPERATIONS_PROJECT_SLUG],
+		[teamId, OPERATIONS_PROJECT_SLUG],
 	);
 
-	const companyExists = await db.query('SELECT 1 FROM companies WHERE id = $1', [companyId]);
-	if (companyExists.rows.length === 0) return null;
+	const teamExists = await db.query('SELECT 1 FROM teams WHERE id = $1', [teamId]);
+	if (teamExists.rows.length === 0) return null;
 
 	return {
 		ceoMemberId: ceo.rows[0]?.id ?? null,
@@ -67,26 +67,26 @@ async function loadCompanyContext(db: PGlite, companyId: string): Promise<Compan
 
 async function findOpenDescriptionIssue(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	target: string,
 ): Promise<string | null> {
 	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${i + 3}::issue_status`).join(', ');
 	const result = await db.query<{ id: string }>(
 		`SELECT id FROM issues
-		 WHERE company_id = $1
+		 WHERE team_id = $1
 		   AND labels @> $2::jsonb
 		   AND status NOT IN (${placeholders})
 		   AND description LIKE '%target=' || $${TERMINAL_ISSUE_STATUSES.length + 3} || '%'
 		 LIMIT 1`,
-		[companyId, JSON.stringify([DESCRIPTION_LABEL]), ...TERMINAL_ISSUE_STATUSES, target],
+		[teamId, JSON.stringify([DESCRIPTION_LABEL]), ...TERMINAL_ISSUE_STATUSES, target],
 	);
 	return result.rows[0]?.id ?? null;
 }
 
 async function createDescriptionIssue(
 	db: PGlite,
-	companyId: string,
-	ctx: CompanyContext,
+	teamId: string,
+	ctx: TeamContext,
 	target: string,
 	title: string,
 	body: string,
@@ -103,12 +103,12 @@ async function createDescriptionIssue(
 	const description = `<!-- target=${target} -->\n\n${body}`;
 
 	const insertResult = await db.query<{ id: string }>(
-		`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier,
+		`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier,
 		                     title, description, status, priority, labels)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
 		 RETURNING id`,
 		[
-			companyId,
+			teamId,
 			ctx.operationsProjectId,
 			ctx.ceoMemberId,
 			issueNumber,
@@ -124,7 +124,7 @@ async function createDescriptionIssue(
 	const issueId = insertResult.rows[0].id;
 
 	try {
-		await createWakeup(db, ctx.ceoMemberId, companyId, WakeupSource.Assignment, {
+		await createWakeup(db, ctx.ceoMemberId, teamId, WakeupSource.Assignment, {
 			issue_id: issueId,
 		});
 	} catch (e) {
@@ -145,39 +145,39 @@ Regenerate the human-readable summary for the agent "${agentTitle}" (reason: ${r
 
 **Steps**
 
-1. Use \`get_agent_system_prompt(company_id, agent_id="${agentId}")\` to read the current prompt.
+1. Use \`get_agent_system_prompt(team_id, agent_id="${agentId}")\` to read the current prompt.
 2. Distill it into a single plain-prose paragraph, no longer than five lines, describing what the agent does and how it works. Third person. No bullet lists. No greetings.
-3. Call \`set_agent_summary(company_id, agent_id="${agentId}", summary="...")\` to save.
-4. Then read the prompts of every enabled agent in the company via \`get_agent_system_prompt\` and synthesise an updated team summary describing reporting structure, handoffs, and escalation paths. Up to twenty lines, plain prose.
-5. Call \`set_team_summary(company_id, summary="...")\` to save.
+3. Call \`set_agent_summary(team_id, agent_id="${agentId}", summary="...")\` to save.
+4. Then read the prompts of every enabled agent in the team via \`get_agent_system_prompt\` and synthesise an updated team summary describing reporting structure, handoffs, and escalation paths. Up to twenty lines, plain prose.
+5. Call \`set_team_summary(team_id, summary="...")\` to save.
 6. Move this issue to "done".`;
 }
 
 function buildTeamSummaryBody(reason: TeamSummaryReason): string {
 	return `## Description maintenance task
 
-Regenerate the team-collaboration summary for this company (reason: ${reason}).
+Regenerate the team-collaboration summary for this team (reason: ${reason}).
 
 **Steps**
 
-1. Read the prompts of every enabled agent in the company via \`get_agent_system_prompt\`.
+1. Read the prompts of every enabled agent in the team via \`get_agent_system_prompt\`.
 2. Synthesise a team summary describing reporting structure, handoffs, and escalation paths. Up to twenty lines, plain prose. May span multiple paragraphs.
-3. Call \`set_team_summary(company_id, summary="...")\` to save.
+3. Call \`set_team_summary(team_id, summary="...")\` to save.
 4. Move this issue to "done".`;
 }
 
 export async function enqueueAgentSummaryTask(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	agentId: string,
 	reason: AgentSummaryReason,
 ): Promise<string | null> {
-	const ctx = await loadCompanyContext(db, companyId);
+	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
 	if (!ctx.ceoMemberId || !ctx.operationsProjectId) return null;
 
 	const target = wsRoom.agent(agentId);
-	const existing = await findOpenDescriptionIssue(db, companyId, target);
+	const existing = await findOpenDescriptionIssue(db, teamId, target);
 	if (existing) {
 		log.debug(`Skipping duplicate agent summary task for ${agentId}; open issue ${existing}`);
 		return existing;
@@ -192,7 +192,7 @@ export async function enqueueAgentSummaryTask(
 	const body = buildAgentSummaryBody(agentId, agentTitle, reason);
 	return createDescriptionIssue(
 		db,
-		companyId,
+		teamId,
 		ctx,
 		target,
 		`Update description for "${agentTitle}"`,
@@ -202,22 +202,22 @@ export async function enqueueAgentSummaryTask(
 
 export async function enqueueTeamSummaryTask(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	reason: TeamSummaryReason,
 ): Promise<string | null> {
-	const ctx = await loadCompanyContext(db, companyId);
+	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
 	if (!ctx.ceoMemberId || !ctx.operationsProjectId) return null;
 
 	const target = TEAM_TARGET;
-	const existing = await findOpenDescriptionIssue(db, companyId, target);
+	const existing = await findOpenDescriptionIssue(db, teamId, target);
 	if (existing) {
 		log.debug(`Skipping duplicate team summary task; open issue ${existing}`);
 		return existing;
 	}
 
 	const body = buildTeamSummaryBody(reason);
-	return createDescriptionIssue(db, companyId, ctx, target, 'Update team description', body);
+	return createDescriptionIssue(db, teamId, ctx, target, 'Update team description', body);
 }
 
 function buildAgentTeamContextBody(
@@ -229,35 +229,35 @@ function buildAgentTeamContextBody(
 
 Regenerate the team-relationships context for "${agentTitle}" (reason: ${reason}).
 
-This blob is injected into the agent's own system prompt at the start of every run so it doesn't need to derive its place in the org chart from scratch. It should describe how *this specific agent* relates to every other employee in the company.
+This blob is injected into the agent's own system prompt at the start of every run so it doesn't need to derive its place in the org chart from scratch. It should describe how *this specific agent* relates to every other employee in the team.
 
 **Steps**
 
-1. Use \`list_agents(company_id)\` to enumerate all enabled agents and their reporting structure.
+1. Use \`list_agents(team_id)\` to enumerate all enabled agents and their reporting structure.
 2. For each agent that relates to "${agentTitle}" (manager, direct reports, peers, indirect reports), read their \`summary\` (or \`get_agent_system_prompt\` if the summary is empty) to understand what they do.
-3. Identify any humans on the company board.
+3. Identify any humans on the team board.
 4. Write a relationships narrative for "${agentTitle}" in plain prose, second-person ("you"), up to ~30 lines. Cover:
    - Manager and how to escalate to them
    - Direct reports (if any) and how to delegate to each
    - Peers and typical handoff patterns
    - Indirect reports / agents two+ levels away and the correct routing path
    - Humans on the board and when to involve them
-5. Call \`set_agent_team_context(company_id, agent_id="${agentId}", content="...")\` to save.
+5. Call \`set_agent_team_context(team_id, agent_id="${agentId}", content="...")\` to save.
 6. Move this issue to "done".`;
 }
 
 export async function enqueueAgentTeamContextTask(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	agentId: string,
 	reason: AgentTeamContextReason,
 ): Promise<string | null> {
-	const ctx = await loadCompanyContext(db, companyId);
+	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
 	if (!ctx.ceoMemberId || !ctx.operationsProjectId) return null;
 
 	const target = `${TEAM_CONTEXT_TARGET_PREFIX}${agentId}`;
-	const existing = await findOpenDescriptionIssue(db, companyId, target);
+	const existing = await findOpenDescriptionIssue(db, teamId, target);
 	if (existing) {
 		log.debug(`Skipping duplicate agent team_context task for ${agentId}; open issue ${existing}`);
 		return existing;
@@ -272,7 +272,7 @@ export async function enqueueAgentTeamContextTask(
 	const body = buildAgentTeamContextBody(agentId, agentTitle, reason);
 	return createDescriptionIssue(
 		db,
-		companyId,
+		teamId,
 		ctx,
 		target,
 		`Update team relationships for "${agentTitle}"`,
@@ -282,7 +282,7 @@ export async function enqueueAgentTeamContextTask(
 
 export async function enqueueTeamContextTaskForAllAgents(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	reason: AgentTeamContextReason,
 	exceptAgentId?: string,
 ): Promise<void> {
@@ -295,16 +295,16 @@ export async function enqueueTeamContextTaskForAllAgents(
 	const agents = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1
+		 WHERE m.team_id = $1
 		   AND ma.admin_status = $2::agent_admin_status
 		   AND ($3::uuid IS NULL OR ma.id <> $3::uuid)
 		   AND ($4::bool = false OR ma.team_context = '')`,
-		[companyId, AgentAdminStatus.Enabled, exceptAgentId ?? null, skipNonEmpty],
+		[teamId, AgentAdminStatus.Enabled, exceptAgentId ?? null, skipNonEmpty],
 	);
 
 	for (const { id } of agents.rows) {
 		try {
-			await enqueueAgentTeamContextTask(db, companyId, id, reason);
+			await enqueueAgentTeamContextTask(db, teamId, id, reason);
 		} catch (e) {
 			log.error(`Failed to enqueue team_context task for agent ${id}:`, e);
 		}

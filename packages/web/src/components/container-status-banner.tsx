@@ -21,8 +21,8 @@ function formatUnhealthyMessage(names: string[]): string {
 	return `${shown} + ${extra} ${extraNoun} ${noun} failed`;
 }
 
-export function ContainerStatusBanner({ companyId }: { companyId: string }) {
-	const { data: projects } = useProjects(companyId);
+export function ContainerStatusBanner({ teamId }: { teamId: string }) {
+	const { data: projects } = useProjects(teamId);
 	const [isRebuilding, setIsRebuilding] = useState(false);
 
 	const unhealthy: Project[] =
@@ -43,10 +43,10 @@ export function ContainerStatusBanner({ companyId }: { companyId: string }) {
 		try {
 			await Promise.allSettled(
 				unhealthy.map((p) =>
-					api.post(`/api/companies/${companyId}/projects/${p.id}/container/rebuild`, {}),
+					api.post(`/api/teams/${teamId}/projects/${p.id}/container/rebuild`, {}),
 				),
 			);
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] });
 		} finally {
 			setIsRebuilding(false);
 		}

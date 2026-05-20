@@ -9,15 +9,15 @@ export type Check = { ok: true } | { ok: false; message: string };
 
 export async function assertChildDepthAllowed(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	parentIssueId: string,
 ): Promise<Check> {
 	const r = await db.query<{ id: string; grand_parent_id: string | null }>(
 		`SELECT p.id, gp.parent_issue_id AS grand_parent_id
 		 FROM issues p
 		 LEFT JOIN issues gp ON gp.id = p.parent_issue_id
-		 WHERE p.id = $1 AND p.company_id = $2`,
-		[parentIssueId, companyId],
+		 WHERE p.id = $1 AND p.team_id = $2`,
+		[parentIssueId, teamId],
 	);
 	if (r.rows.length === 0) {
 		return { ok: false, message: 'Parent issue not found' };
@@ -39,17 +39,17 @@ const OPEN_CHILD_STATUSES = [
 
 export async function assertChildrenAllClosed(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	issueId: string,
 ): Promise<Check> {
 	const placeholders = OPEN_CHILD_STATUSES.map((_, i) => `$${i + 3}::issue_status`).join(', ');
 	const r = await db.query<{ identifier: string; status: string }>(
 		`SELECT identifier, status::text AS status
 		 FROM issues
-		 WHERE parent_issue_id = $1 AND company_id = $2 AND status IN (${placeholders})
+		 WHERE parent_issue_id = $1 AND team_id = $2 AND status IN (${placeholders})
 		 ORDER BY created_at ASC
 		 LIMIT 3`,
-		[issueId, companyId, ...OPEN_CHILD_STATUSES],
+		[issueId, teamId, ...OPEN_CHILD_STATUSES],
 	);
 	if (r.rows.length === 0) return { ok: true };
 	const blockers = r.rows.map((c) => `${c.identifier} (${c.status})`).join(', ');

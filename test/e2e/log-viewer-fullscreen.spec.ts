@@ -1,14 +1,14 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents } from './helpers';
+import { authenticate, createTeamWithAgents } from './helpers';
 
 test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', async ({
 	page,
 }) => {
 	await authenticate(page);
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
 
@@ -24,7 +24,7 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 	const runResponse = {
 		id: runId,
 		member_id: ceo.id,
-		company_id: company.id,
+		team_id: team.id,
 		issue_id: issueId,
 		issue_identifier: 'SCROLL-1',
 		issue_title: 'Scroll Preservation Task',
@@ -43,7 +43,7 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 		created_issues: [],
 	};
 
-	await page.route(`**/api/companies/*/agents/${ceo.id}/heartbeat-runs/${runId}`, async (route) => {
+	await page.route(`**/api/teams/*/agents/${ceo.id}/heartbeat-runs/${runId}`, async (route) => {
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
@@ -51,7 +51,7 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 		});
 	});
 
-	await page.goto(`/companies/${company.slug}/agents/${ceo.id}/executions/${runId}`);
+	await page.goto(`/teams/${team.slug}/agents/${ceo.id}/executions/${runId}`);
 
 	const inlineLog = page.getByTestId('run-log');
 	await expect(inlineLog).toBeVisible({ timeout: 15_000 });

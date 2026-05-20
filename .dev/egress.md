@@ -59,7 +59,7 @@ Bodies are forwarded byte-for-byte. **Body substitution is intentionally not imp
 
 For each placeholder match the proxy:
 
-1. Loads the secret named `<NAME>` from `secrets` scoped to `(company_id, optional project_id)`. Project-scoped rows win on name dedup.
+1. Loads the secret named `<NAME>` from `secrets` scoped to `(team_id, optional project_id)`. Project-scoped rows win on name dedup.
 2. Verifies the request's host is on the secret's `allowed_hosts` (or `allow_all_hosts=true`). Wildcard form `*.googleapis.com` matches any subdomain.
 3. Replaces the placeholder with the decrypted value.
 

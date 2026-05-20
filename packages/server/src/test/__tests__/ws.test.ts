@@ -21,10 +21,10 @@ describe('WebSocketManager', () => {
 		const mgr = new WebSocketManager();
 		const ws = createMockWs();
 
-		mgr.subscribe(ws, 'company:abc');
-		expect(mgr.getRoomSize('company:abc')).toBe(1);
+		mgr.subscribe(ws, 'team:abc');
+		expect(mgr.getRoomSize('team:abc')).toBe(1);
 
-		mgr.broadcast('company:abc', { type: 'test', value: 42 });
+		mgr.broadcast('team:abc', { type: 'test', value: 42 });
 		expect(ws._sent).toHaveLength(1);
 		expect(JSON.parse(ws._sent[0])).toEqual({ type: 'test', value: 42 });
 	});
@@ -33,11 +33,11 @@ describe('WebSocketManager', () => {
 		const mgr = new WebSocketManager();
 		const ws = createMockWs();
 
-		mgr.subscribe(ws, 'company:abc');
-		mgr.unsubscribe(ws, 'company:abc');
-		expect(mgr.getRoomSize('company:abc')).toBe(0);
+		mgr.subscribe(ws, 'team:abc');
+		mgr.unsubscribe(ws, 'team:abc');
+		expect(mgr.getRoomSize('team:abc')).toBe(0);
 
-		mgr.broadcast('company:abc', { type: 'test' });
+		mgr.broadcast('team:abc', { type: 'test' });
 		expect(ws._sent).toHaveLength(0);
 	});
 
@@ -45,12 +45,12 @@ describe('WebSocketManager', () => {
 		const mgr = new WebSocketManager();
 		const ws = createMockWs();
 
-		mgr.subscribe(ws, 'company:abc');
+		mgr.subscribe(ws, 'team:abc');
 		mgr.subscribe(ws, 'issue:xyz');
 		expect(ws.data.rooms.size).toBe(2);
 
 		mgr.unsubscribeAll(ws);
-		expect(mgr.getRoomSize('company:abc')).toBe(0);
+		expect(mgr.getRoomSize('team:abc')).toBe(0);
 		expect(mgr.getRoomSize('issue:xyz')).toBe(0);
 		expect(ws.data.rooms.size).toBe(0);
 	});
@@ -60,10 +60,10 @@ describe('WebSocketManager', () => {
 		const ws1 = createMockWs();
 		const ws2 = createMockWs();
 
-		mgr.subscribe(ws1, 'company:abc');
-		mgr.subscribe(ws2, 'company:abc');
+		mgr.subscribe(ws1, 'team:abc');
+		mgr.subscribe(ws2, 'team:abc');
 
-		mgr.broadcast('company:abc', { type: 'update' });
+		mgr.broadcast('team:abc', { type: 'update' });
 		expect(ws1._sent).toHaveLength(1);
 		expect(ws2._sent).toHaveLength(1);
 	});
@@ -73,10 +73,10 @@ describe('WebSocketManager', () => {
 		const ws1 = createMockWs();
 		const ws2 = createMockWs();
 
-		mgr.subscribe(ws1, 'company:abc');
-		mgr.subscribe(ws2, 'company:def');
+		mgr.subscribe(ws1, 'team:abc');
+		mgr.subscribe(ws2, 'team:def');
 
-		mgr.broadcast('company:abc', { type: 'update' });
+		mgr.broadcast('team:abc', { type: 'update' });
 		expect(ws1._sent).toHaveLength(1);
 		expect(ws2._sent).toHaveLength(0);
 	});
@@ -85,9 +85,9 @@ describe('WebSocketManager', () => {
 		const mgr = new WebSocketManager();
 		const ws = createMockWs();
 
-		mgr.subscribe(ws, 'company:abc');
-		mgr.unsubscribe(ws, 'company:abc');
-		expect(mgr.getRoomSize('company:abc')).toBe(0);
+		mgr.subscribe(ws, 'team:abc');
+		mgr.unsubscribe(ws, 'team:abc');
+		expect(mgr.getRoomSize('team:abc')).toBe(0);
 	});
 
 	it('tracks total connections across rooms', () => {
@@ -95,9 +95,9 @@ describe('WebSocketManager', () => {
 		const ws1 = createMockWs();
 		const ws2 = createMockWs();
 
-		mgr.subscribe(ws1, 'company:abc');
+		mgr.subscribe(ws1, 'team:abc');
 		mgr.subscribe(ws1, 'issue:xyz');
-		mgr.subscribe(ws2, 'company:abc');
+		mgr.subscribe(ws2, 'team:abc');
 
 		expect(mgr.getTotalConnections()).toBe(2);
 	});
@@ -112,9 +112,9 @@ describe('broadcastEvent helper', () => {
 	it('sends event with type and data merged', () => {
 		const mgr = new WebSocketManager();
 		const ws = createMockWs();
-		mgr.subscribe(ws, 'company:abc');
+		mgr.subscribe(ws, 'team:abc');
 
-		broadcastEvent(mgr, 'company:abc', 'agent_lifecycle', { memberId: '123', status: 'idle' });
+		broadcastEvent(mgr, 'team:abc', 'agent_lifecycle', { memberId: '123', status: 'idle' });
 
 		expect(ws._sent).toHaveLength(1);
 		const parsed = JSON.parse(ws._sent[0]);

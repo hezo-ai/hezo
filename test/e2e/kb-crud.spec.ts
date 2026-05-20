@@ -1,26 +1,26 @@
 import { expect, test } from '@playwright/test';
 import { authenticate, getToken } from './helpers';
 
-async function createCompany(page: import('@playwright/test').Page) {
+async function createTeam(page: import('@playwright/test').Page) {
 	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const companyRes = await page.request.post('/api/companies', {
+	const teamRes = await page.request.post('/api/teams', {
 		headers,
 		data: {
 			name: `KB Test ${Date.now()}`,
 		},
 	});
-	const company = (await companyRes.json()).data;
-	return { company, token, headers };
+	const team = (await teamRes.json()).data;
+	return { team, token, headers };
 }
 
 test('kb empty state shows new document button', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company } = await createCompany(page);
-	await page.goto(`/companies/${company.slug}/kb`);
+	const { team } = await createTeam(page);
+	await page.goto(`/teams/${team.slug}/kb`);
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 15000 });
 
 	await expect(page.getByRole('button', { name: 'New document' })).toBeVisible({ timeout: 15000 });
@@ -30,8 +30,8 @@ test('can create and view a kb document', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company } = await createCompany(page);
-	await page.goto(`/companies/${company.slug}/kb`);
+	const { team } = await createTeam(page);
+	await page.goto(`/teams/${team.slug}/kb`);
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 15000 });
 
 	await page.getByRole('button', { name: 'New document' }).click();
@@ -53,15 +53,15 @@ test('can edit a kb document', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, headers } = await createCompany(page);
+	const { team, headers } = await createTeam(page);
 
-	const docRes = await page.request.post(`/api/companies/${company.id}/kb-docs`, {
+	const docRes = await page.request.post(`/api/teams/${team.id}/kb-docs`, {
 		headers,
 		data: { title: 'Edit Me', content: 'Original content' },
 	});
 	const doc = (await docRes.json()).data;
 
-	await page.goto(`/companies/${company.slug}/kb?slug=${doc.slug}`);
+	await page.goto(`/teams/${team.slug}/kb?slug=${doc.slug}`);
 	await expect(page.getByRole('heading', { name: 'Edit Me' })).toBeVisible({ timeout: 15000 });
 
 	await page.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -75,20 +75,20 @@ test('shows revision history and restores a previous version', async ({ page }) 
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, headers } = await createCompany(page);
+	const { team, headers } = await createTeam(page);
 
-	const docRes = await page.request.post(`/api/companies/${company.id}/kb-docs`, {
+	const docRes = await page.request.post(`/api/teams/${team.id}/kb-docs`, {
 		headers,
 		data: { title: 'Restore Me', content: 'Original kb body' },
 	});
 	const doc = (await docRes.json()).data;
 
-	await page.request.patch(`/api/companies/${company.id}/kb-docs/${doc.slug}`, {
+	await page.request.patch(`/api/teams/${team.id}/kb-docs/${doc.slug}`, {
 		headers,
 		data: { content: 'Updated kb body', change_summary: 'second pass' },
 	});
 
-	await page.goto(`/companies/${company.slug}/kb?slug=${doc.slug}`);
+	await page.goto(`/teams/${team.slug}/kb?slug=${doc.slug}`);
 	await expect(page.getByText('Updated kb body')).toBeVisible({ timeout: 15000 });
 
 	await page.getByRole('button', { name: /show revision history/i }).click();
@@ -103,14 +103,14 @@ test('can delete a kb document', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, headers } = await createCompany(page);
+	const { team, headers } = await createTeam(page);
 
-	await page.request.post(`/api/companies/${company.id}/kb-docs`, {
+	await page.request.post(`/api/teams/${team.id}/kb-docs`, {
 		headers,
 		data: { title: 'Delete Me', content: 'Will be deleted' },
 	});
 
-	await page.goto(`/companies/${company.slug}/kb`);
+	await page.goto(`/teams/${team.slug}/kb`);
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 20000 });
 
 	await page.getByRole('button', { name: 'Delete Me' }).click();

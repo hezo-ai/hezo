@@ -10,20 +10,20 @@ import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 import { Input } from './ui/input';
 
 interface GoalDialogProps {
-	companyId: string;
+	teamId: string;
 	open: boolean;
 	onOpenChange: (v: boolean) => void;
 	goal?: GoalWithProject;
 }
 
-export function GoalDialog({ companyId, open, onOpenChange, goal }: GoalDialogProps) {
+export function GoalDialog({ teamId, open, onOpenChange, goal }: GoalDialogProps) {
 	const [title, setTitle] = useState('');
 	const [description, setDescription] = useState('');
 	const [projectId, setProjectId] = useState<string>('');
 	const [status, setStatus] = useState<string>(GoalStatus.Active);
-	const { data: projects } = useProjects(companyId);
-	const createGoal = useCreateGoal(companyId);
-	const updateGoal = useUpdateGoal(companyId, goal?.id ?? '');
+	const { data: projects } = useProjects(teamId);
+	const createGoal = useCreateGoal(teamId);
+	const updateGoal = useUpdateGoal(teamId, goal?.id ?? '');
 
 	useEffect(() => {
 		if (open) {
@@ -82,7 +82,7 @@ export function GoalDialog({ companyId, open, onOpenChange, goal }: GoalDialogPr
 							placeholder="Ship a public v1 by end of Q3"
 						/>
 						<MentionTextarea
-							companyId={companyId}
+							teamId={teamId}
 							projectSlug={projects?.find((p) => p.id === projectId)?.slug}
 							label="Description"
 							value={description}
@@ -97,7 +97,7 @@ export function GoalDialog({ companyId, open, onOpenChange, goal }: GoalDialogPr
 								onChange={(e) => setProjectId(e.target.value)}
 								className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
 							>
-								<option value="">Company-wide</option>
+								<option value="">Team-wide</option>
 								{nonInternalProjects.map((p) => (
 									<option key={p.id} value={p.id}>
 										{p.name}

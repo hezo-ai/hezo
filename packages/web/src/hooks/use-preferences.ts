@@ -4,15 +4,15 @@ import { queryClient } from '../lib/query-client';
 
 export interface Preferences {
 	id: string;
-	company_id: string;
+	team_id: string;
 	content: string;
 	updated_at: string;
 }
 
-export function usePreferences(companyId: string) {
+export function usePreferences(teamId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'preferences'],
-		queryFn: () => api.get<Preferences | null>(`/api/companies/${companyId}/preferences`),
+		queryKey: ['teams', teamId, 'preferences'],
+		queryFn: () => api.get<Preferences | null>(`/api/teams/${teamId}/preferences`),
 	});
 }
 
@@ -26,33 +26,31 @@ export interface PreferenceRevision {
 	created_at: string;
 }
 
-export function usePreferenceRevisions(companyId: string) {
+export function usePreferenceRevisions(teamId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'preferences', 'revisions'],
-		queryFn: () =>
-			api.get<PreferenceRevision[]>(`/api/companies/${companyId}/preferences/revisions`),
+		queryKey: ['teams', teamId, 'preferences', 'revisions'],
+		queryFn: () => api.get<PreferenceRevision[]>(`/api/teams/${teamId}/preferences/revisions`),
 	});
 }
 
-export function useUpdatePreferences(companyId: string) {
+export function useUpdatePreferences(teamId: string) {
 	return useMutation({
 		mutationFn: (data: { content: string; change_summary?: string }) =>
-			api.patch<Preferences>(`/api/companies/${companyId}/preferences`, data),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'preferences'] }),
+			api.patch<Preferences>(`/api/teams/${teamId}/preferences`, data),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'preferences'] }),
 	});
 }
 
-export function useRestorePreferenceRevision(companyId: string) {
+export function useRestorePreferenceRevision(teamId: string) {
 	return useMutation({
 		mutationFn: (revisionNumber: number) =>
-			api.post<Preferences>(`/api/companies/${companyId}/preferences/restore`, {
+			api.post<Preferences>(`/api/teams/${teamId}/preferences/restore`, {
 				revision_number: revisionNumber,
 			}),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'preferences'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'preferences'] });
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'preferences', 'revisions'],
+				queryKey: ['teams', teamId, 'preferences', 'revisions'],
 			});
 		},
 	});

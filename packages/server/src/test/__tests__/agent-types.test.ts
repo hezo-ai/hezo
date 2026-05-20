@@ -97,8 +97,8 @@ describe('agent types CRUD', () => {
 			headers: authHeader(token),
 		});
 		const _body = await res.json();
-		// Get the Startup company type to check sort_orders
-		const ctRes = await app.request('/api/company-types', {
+		// Get the Startup team type to check sort_orders
+		const ctRes = await app.request('/api/team-templates', {
 			headers: authHeader(token),
 		});
 		const ctBody = await ctRes.json();
@@ -119,7 +119,7 @@ describe('agent types CRUD', () => {
 				name: 'Data Scientist',
 				description: 'ML and data analysis',
 				role_description: 'Builds models and analyzes data',
-				system_prompt_template: 'You are a data scientist for {{company_name}}.',
+				system_prompt_template: 'You are a data scientist for {{team_name}}.',
 				monthly_budget_cents: 5000,
 			}),
 		});
@@ -216,9 +216,9 @@ describe('agent types CRUD', () => {
 	});
 });
 
-describe('company types with agent types', () => {
-	it('built-in company type includes all agent types', async () => {
-		const res = await app.request('/api/company-types', {
+describe('team types with agent types', () => {
+	it('built-in team type includes all agent types', async () => {
+		const res = await app.request('/api/team-templates', {
 			headers: authHeader(token),
 		});
 		const body = await res.json();
@@ -229,7 +229,7 @@ describe('company types with agent types', () => {
 		expect(builtin.agent_types[0]).toHaveProperty('slug');
 	});
 
-	it('creates company type with agent type associations', async () => {
+	it('creates team type with agent type associations', async () => {
 		const agentTypesRes = await app.request('/api/agent-types', {
 			headers: authHeader(token),
 		});
@@ -237,7 +237,7 @@ describe('company types with agent types', () => {
 		const ceoType = allTypes.find((t: any) => t.slug === 'ceo');
 		const engType = allTypes.find((t: any) => t.slug === 'engineer');
 
-		const res = await app.request('/api/company-types', {
+		const res = await app.request('/api/team-templates', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -255,14 +255,14 @@ describe('company types with agent types', () => {
 	});
 });
 
-describe('company creation with agent types', () => {
+describe('team creation with agent types', () => {
 	it('creates agents with agent_type_id set', async () => {
-		const typesRes = await app.request('/api/company-types', {
+		const typesRes = await app.request('/api/team-templates', {
 			headers: authHeader(token),
 		});
 		const builtinType = (await typesRes.json()).data.find((t: any) => t.name === 'Startup');
 
-		const companyRes = await app.request('/api/companies', {
+		const teamRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -270,9 +270,9 @@ describe('company creation with agent types', () => {
 				template_id: builtinType.id,
 			}),
 		});
-		const companyId = (await companyRes.json()).data.id;
+		const teamId = (await teamRes.json()).data.id;
 
-		const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;

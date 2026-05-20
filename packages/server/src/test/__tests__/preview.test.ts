@@ -17,7 +17,7 @@ import { createTestDbWithMigrations } from '../helpers/db';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let dataDir: string;
 
@@ -36,16 +36,16 @@ beforeAll(async () => {
 	);
 	token = await signBoardJwt(masterKeyManager, userResult.rows[0].id);
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Preview Co' }),
 	});
-	const company = (await companyRes.json()).data;
-	companyId = company.id;
-	const companySlug = company.slug;
+	const team = (await teamRes.json()).data;
+	teamId = team.id;
+	const teamSlug = team.slug;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Preview Project', description: 'Test project.' }),
@@ -55,14 +55,7 @@ beforeAll(async () => {
 	const projectSlug = project.slug;
 
 	// Create workspace directory with test files matching getWorkspacePath layout
-	const workspacePath = join(
-		dataDir,
-		'companies',
-		companySlug,
-		'projects',
-		projectSlug,
-		'workspace',
-	);
+	const workspacePath = join(dataDir, 'teams', teamSlug, 'projects', projectSlug, 'workspace');
 	mkdirSync(workspacePath, { recursive: true });
 	writeFileSync(join(workspacePath, 'index.html'), '<html><body>Hello</body></html>');
 	writeFileSync(join(workspacePath, 'style.css'), 'body { color: red; }');
@@ -79,10 +72,9 @@ function authHeader() {
 
 describe('preview route', () => {
 	it('serves an HTML file from workspace', async () => {
-		const res = await app.request(
-			`/api/companies/${companyId}/projects/${projectId}/preview/index.html`,
-			{ headers: authHeader() },
-		);
+		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/preview/index.html`, {
+			headers: authHeader(),
+		});
 		expect(res.status).toBe(200);
 		expect(res.headers.get('Content-Type')).toBe('text/html');
 		const text = await res.text();
@@ -90,26 +82,24 @@ describe('preview route', () => {
 	});
 
 	it('serves CSS with correct MIME type', async () => {
-		const res = await app.request(
-			`/api/companies/${companyId}/projects/${projectId}/preview/style.css`,
-			{ headers: authHeader() },
-		);
+		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/preview/style.css`, {
+			headers: authHeader(),
+		});
 		expect(res.status).toBe(200);
 		expect(res.headers.get('Content-Type')).toBe('text/css');
 	});
 
 	it('serves JS with correct MIME type', async () => {
-		const res = await app.request(
-			`/api/companies/${companyId}/projects/${projectId}/preview/app.js`,
-			{ headers: authHeader() },
-		);
+		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/preview/app.js`, {
+			headers: authHeader(),
+		});
 		expect(res.status).toBe(200);
 		expect(res.headers.get('Content-Type')).toBe('application/javascript');
 	});
 
 	it('returns 404 for non-existent file', async () => {
 		const res = await app.request(
-			`/api/companies/${companyId}/projects/${projectId}/preview/missing.html`,
+			`/api/teams/${teamId}/projects/${projectId}/preview/missing.html`,
 			{ headers: authHeader() },
 		);
 		expect(res.status).toBe(404);
@@ -117,16 +107,15 @@ describe('preview route', () => {
 
 	it('returns 404 for non-existent project', async () => {
 		const fakeId = '00000000-0000-0000-0000-000000000000';
-		const res = await app.request(
-			`/api/companies/${companyId}/projects/${fakeId}/preview/index.html`,
-			{ headers: authHeader() },
-		);
+		const res = await app.request(`/api/teams/${teamId}/projects/${fakeId}/preview/index.html`, {
+			headers: authHeader(),
+		});
 		expect(res.status).toBe(404);
 	});
 
 	it('blocks directory traversal attempts', async () => {
 		const res = await app.request(
-			`/api/companies/${companyId}/projects/${projectId}/preview/../../../etc/passwd`,
+			`/api/teams/${teamId}/projects/${projectId}/preview/../../../etc/passwd`,
 			{ headers: authHeader() },
 		);
 		// Should be 403 or 404 — never serve files outside workspace

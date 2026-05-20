@@ -8,8 +8,8 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
-let otherCompanyId: string;
+let teamId: string;
+let otherTeamId: string;
 let agentAId: string;
 let agentBId: string;
 let agentASlug: string;
@@ -21,8 +21,8 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const makeCompany = async (name: string) => {
-		const r = await app.request('/api/companies', {
+	const makeTeam = async (name: string) => {
+		const r = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name }),
@@ -30,11 +30,11 @@ beforeAll(async () => {
 		return (await r.json()).data.id as string;
 	};
 
-	companyId = await makeCompany('Batch Prompt Co');
-	otherCompanyId = await makeCompany('Other Co');
+	teamId = await makeTeam('Batch Prompt Co');
+	otherTeamId = await makeTeam('Other Co');
 
 	const TEMPLATE = [
-		'You are an employee of {{company_name}}.',
+		'You are an employee of {{team_name}}.',
 		'Your manager is {{reports_to}}.',
 		'',
 		'Team context:',
@@ -42,7 +42,7 @@ beforeAll(async () => {
 	].join('\n');
 
 	const makeAgent = async (cId: string, title: string) => {
-		const r = await app.request(`/api/companies/${cId}/agents`, {
+		const r = await app.request(`/api/teams/${cId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title, system_prompt: TEMPLATE }),
@@ -50,14 +50,14 @@ beforeAll(async () => {
 		return (await r.json()).data as { id: string; slug: string };
 	};
 
-	const a = await makeAgent(companyId, 'Worker A');
+	const a = await makeAgent(teamId, 'Worker A');
 	agentAId = a.id;
 	agentASlug = a.slug;
 
-	const b = await makeAgent(companyId, 'Worker B');
+	const b = await makeAgent(teamId, 'Worker B');
 	agentBId = b.id;
 
-	foreignAgentId = (await makeAgent(otherCompanyId, 'Outsider')).id;
+	foreignAgentId = (await makeAgent(otherTeamId, 'Outsider')).id;
 });
 
 afterAll(async () => {
@@ -81,9 +81,9 @@ async function callMcpTool(toolName: string, args: Record<string, unknown>): Pro
 	return JSON.parse(body.result.content[0].text);
 }
 
-describe('POST /companies/:companyId/agents/system-prompts/batch', () => {
+describe('POST /teams/:teamId/agents/system-prompts/batch', () => {
 	it('returns per-item results with placeholders substituted by default', async () => {
-		const r = await app.request(`/api/companies/${companyId}/agents/system-prompts/batch`, {
+		const r = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -97,14 +97,14 @@ describe('POST /companies/:companyId/agents/system-prompts/batch', () => {
 			expect(row.ok).toBe(true);
 			expect(row.mode).toBe('placeholders');
 			expect(typeof row.system_prompt).toBe('string');
-			expect(row.system_prompt).not.toContain('{{company_name}}');
+			expect(row.system_prompt).not.toContain('{{team_name}}');
 			expect(row.system_prompt).toContain('Batch Prompt Co');
 			expect(row.system_prompt).not.toContain('## Working Guidelines');
 		}
 	});
 
 	it('supports per-item mode (raw, placeholders, preview)', async () => {
-		const r = await app.request(`/api/companies/${companyId}/agents/system-prompts/batch`, {
+		const r = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -127,17 +127,17 @@ describe('POST /companies/:companyId/agents/system-prompts/batch', () => {
 		expect(placeholders.mode).toBe('placeholders');
 		expect(preview.mode).toBe('preview');
 
-		expect(raw.system_prompt).toContain('{{company_name}}');
-		expect(placeholders.system_prompt).not.toContain('{{company_name}}');
+		expect(raw.system_prompt).toContain('{{team_name}}');
+		expect(placeholders.system_prompt).not.toContain('{{team_name}}');
 		expect(placeholders.system_prompt).not.toContain('## Working Guidelines');
-		expect(preview.system_prompt).not.toContain('{{company_name}}');
+		expect(preview.system_prompt).not.toContain('{{team_name}}');
 		expect(preview.system_prompt).toContain('## Working Guidelines');
 		expect(preview.system_prompt).toContain('## Teammates');
 		expect(preview.system_prompt).not.toContain('## Run Context');
 	});
 
 	it('accepts agent slug as well as UUID', async () => {
-		const r = await app.request(`/api/companies/${companyId}/agents/system-prompts/batch`, {
+		const r = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ items: [{ agent_id: agentASlug }] }),
@@ -149,7 +149,7 @@ describe('POST /companies/:companyId/agents/system-prompts/batch', () => {
 	});
 
 	it('returns per-item NOT_FOUND for unknown agent without failing the batch', async () => {
-		const r = await app.request(`/api/companies/${companyId}/agents/system-prompts/batch`, {
+		const r = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -171,38 +171,32 @@ describe('POST /companies/:companyId/agents/system-prompts/batch', () => {
 	});
 
 	it('rejects empty, non-array, and oversized item lists', async () => {
-		const emptyRes = await app.request(`/api/companies/${companyId}/agents/system-prompts/batch`, {
+		const emptyRes = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ items: [] }),
 		});
 		expect(emptyRes.status).toBe(400);
 
-		const nonArrayRes = await app.request(
-			`/api/companies/${companyId}/agents/system-prompts/batch`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ items: 'nope' }),
-			},
-		);
+		const nonArrayRes = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ items: 'nope' }),
+		});
 		expect(nonArrayRes.status).toBe(400);
 
-		const oversizedRes = await app.request(
-			`/api/companies/${companyId}/agents/system-prompts/batch`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					items: Array.from({ length: 51 }, () => ({ agent_id: agentAId })),
-				}),
-			},
-		);
+		const oversizedRes = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				items: Array.from({ length: 51 }, () => ({ agent_id: agentAId })),
+			}),
+		});
 		expect(oversizedRes.status).toBe(400);
 	});
 
-	it('enforces company scoping (cannot batch fetch another company)', async () => {
-		const r = await app.request(`/api/companies/${otherCompanyId}/agents/system-prompts/batch`, {
+	it('enforces team scoping (cannot batch fetch another team)', async () => {
+		const r = await app.request(`/api/teams/${otherTeamId}/agents/system-prompts/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ items: [{ agent_id: agentAId }] }),
@@ -217,7 +211,7 @@ describe('POST /companies/:companyId/agents/system-prompts/batch', () => {
 describe('MCP tool: get_agent_system_prompts', () => {
 	it('returns per-item resolved prompts via MCP transport', async () => {
 		const result = (await callMcpTool('get_agent_system_prompts', {
-			company_id: companyId,
+			team_id: teamId,
 			items: [{ agent_id: agentAId, mode: 'preview' }, { agent_id: agentBId }],
 		})) as Array<{
 			ok: boolean;
@@ -235,9 +229,9 @@ describe('MCP tool: get_agent_system_prompts', () => {
 		expect(result[1].mode).toBe('placeholders');
 	});
 
-	it("returns per-item NOT_FOUND when an agent doesn't belong to the queried company", async () => {
+	it("returns per-item NOT_FOUND when an agent doesn't belong to the queried team", async () => {
 		const result = (await callMcpTool('get_agent_system_prompts', {
-			company_id: companyId,
+			team_id: teamId,
 			items: [{ agent_id: foreignAgentId }],
 		})) as Array<{ ok: boolean; error?: string }>;
 		expect(result).toHaveLength(1);

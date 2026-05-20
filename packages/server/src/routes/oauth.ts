@@ -5,13 +5,13 @@ import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 import {
 	createConnection,
 	deleteConnection,
 	findConnectionByAccount,
-	getConnectionForCompany,
-	listConnectionsForCompany,
+	getConnectionForTeam,
+	listConnectionsForTeam,
 } from '../services/oauth/connection-store';
 import {
 	buildAuthorizationUrl,
@@ -28,7 +28,7 @@ import {
 	startDeviceFlow,
 } from '../services/oauth/provider-github';
 import { type ManualOAuthConfig, signState, verifyState } from '../services/oauth/state';
-import { generateCompanySSHKey, getCompanySSHKey } from '../services/ssh-keys';
+import { generateTeamSSHKey, getTeamSSHKey } from '../services/ssh-keys';
 
 const log = logger.child('oauth-route');
 
@@ -36,7 +36,7 @@ export const oauthRoutes = new Hono<Env>();
 
 interface DeviceFlowEntry {
 	deviceCode: string;
-	companyId: string;
+	teamId: string;
 	scopes: string[];
 	expiresAt: number;
 }
@@ -51,8 +51,8 @@ function pruneDeviceFlows(): void {
 	}
 }
 
-oauthRoutes.post('/companies/:companyId/oauth/github/device-start', async (c) => {
-	const access = await requireCompanyAccess(c);
+oauthRoutes.post('/teams/:teamId/oauth/github/device-start', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	pruneDeviceFlows();
@@ -71,7 +71,7 @@ oauthRoutes.post('/companies/:companyId/oauth/github/device-start', async (c) =>
 	const flowId = randomBytes(16).toString('hex');
 	deviceFlows.set(flowId, {
 		deviceCode: started.deviceCode,
-		companyId: access.companyId,
+		teamId: access.teamId,
 		scopes,
 		expiresAt: Date.now() + DEVICE_FLOW_TTL_MS,
 	});
@@ -85,8 +85,8 @@ oauthRoutes.post('/companies/:companyId/oauth/github/device-start', async (c) =>
 	});
 });
 
-oauthRoutes.post('/companies/:companyId/oauth/github/device-poll', async (c) => {
-	const access = await requireCompanyAccess(c);
+oauthRoutes.post('/teams/:teamId/oauth/github/device-poll', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const body = (await c.req.json().catch(() => ({}))) as { flow_id?: string };
@@ -95,8 +95,8 @@ oauthRoutes.post('/companies/:companyId/oauth/github/device-poll', async (c) => 
 
 	const entry = deviceFlows.get(flowId);
 	if (!entry) return err(c, 'NOT_FOUND', 'unknown or expired flow_id', 404);
-	if (entry.companyId !== access.companyId)
-		return err(c, 'FORBIDDEN', 'flow does not belong to this company', 403);
+	if (entry.teamId !== access.teamId)
+		return err(c, 'FORBIDDEN', 'flow does not belong to this team', 403);
 
 	const result = await pollDeviceFlow(entry.deviceCode);
 	if (result.status === 'pending') {
@@ -121,7 +121,7 @@ oauthRoutes.post('/companies/:companyId/oauth/github/device-poll', async (c) => 
 
 	const existing = await findConnectionByAccount(
 		{ db, masterKeyManager },
-		access.companyId,
+		access.teamId,
 		'github',
 		String(account.id),
 	);
@@ -129,7 +129,7 @@ oauthRoutes.post('/companies/:companyId/oauth/github/device-poll', async (c) => 
 	const conn = await createConnection(
 		{ db, masterKeyManager },
 		{
-			companyId: access.companyId,
+			teamId: access.teamId,
 			provider: 'github',
 			providerAccountId: String(account.id),
 			providerAccountLabel: account.login,
@@ -150,18 +150,18 @@ oauthRoutes.post('/companies/:companyId/oauth/github/device-poll', async (c) => 
 	// a no-op, so this is idempotent. Critical for the re-auth path where a
 	// pre-existing connection is upgraded to broader scopes (write:public_key);
 	// without this, the newly-required auth key would never get registered.
-	await ensureCompanyKeyRegisteredOnGitHub(
+	await ensureTeamKeyRegisteredOnGitHub(
 		db,
 		masterKeyManager,
-		access.companyId,
+		access.teamId,
 		result.accessToken,
 	).catch((e) =>
-		log.warn('company-key registration failed (non-fatal)', { error: (e as Error).message }),
+		log.warn('team-key registration failed (non-fatal)', { error: (e as Error).message }),
 	);
 
 	broadcastChange(
 		c,
-		wsRoom.company(access.companyId),
+		wsRoom.team(access.teamId),
 		'oauth_connections',
 		existing ? 'UPDATE' : 'INSERT',
 		{
@@ -226,7 +226,7 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 	const conn = await createConnection(
 		{ db, masterKeyManager },
 		{
-			companyId: payload.companyId,
+			teamId: payload.teamId,
 			provider: payload.provider,
 			providerAccountId: accountId,
 			providerAccountLabel: payload.mcpConnectionName ?? payload.provider,
@@ -247,16 +247,16 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 
 	if (payload.mcpConnectionId) {
 		await db.query(
-			`UPDATE mcp_connections SET oauth_connection_id = $1 WHERE id = $2 AND company_id = $3`,
-			[conn.id, payload.mcpConnectionId, payload.companyId],
+			`UPDATE mcp_connections SET oauth_connection_id = $1 WHERE id = $2 AND team_id = $3`,
+			[conn.id, payload.mcpConnectionId, payload.teamId],
 		);
-		broadcastChange(c, wsRoom.company(payload.companyId), 'mcp_connections', 'UPDATE', {
+		broadcastChange(c, wsRoom.team(payload.teamId), 'mcp_connections', 'UPDATE', {
 			id: payload.mcpConnectionId,
 			oauth_connection_id: conn.id,
 		});
 	}
 
-	broadcastChange(c, wsRoom.company(payload.companyId), 'oauth_connections', 'INSERT', {
+	broadcastChange(c, wsRoom.team(payload.teamId), 'oauth_connections', 'INSERT', {
 		id: conn.id,
 		provider: conn.provider,
 		provider_account_label: conn.providerAccountLabel,
@@ -265,8 +265,8 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 	return c.html(buildCallbackPage('success', undefined, payload.returnTo), 200);
 });
 
-oauthRoutes.post('/companies/:companyId/oauth/auth-code/start', async (c) => {
-	const access = await requireCompanyAccess(c);
+oauthRoutes.post('/teams/:teamId/oauth/auth-code/start', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const masterKeyManager = c.get('masterKeyManager');
@@ -331,7 +331,7 @@ oauthRoutes.post('/companies/:companyId/oauth/auth-code/start', async (c) => {
 	const redirectUri = `${protocol}://${host}/api/oauth/callback`;
 
 	const { state, codeChallenge } = await signState(masterKeyManager, {
-		companyId: access.companyId,
+		teamId: access.teamId,
 		provider: body.provider,
 		redirectUri,
 		returnTo: body.return_to ?? '/',
@@ -360,13 +360,13 @@ oauthRoutes.post('/companies/:companyId/oauth/auth-code/start', async (c) => {
 	return ok(c, { auth_url: authUrl });
 });
 
-oauthRoutes.get('/companies/:companyId/oauth-connections', async (c) => {
-	const access = await requireCompanyAccess(c);
+oauthRoutes.get('/teams/:teamId/oauth-connections', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const list = await listConnectionsForCompany({ db, masterKeyManager }, access.companyId);
+	const list = await listConnectionsForTeam({ db, masterKeyManager }, access.teamId);
 
 	return ok(
 		c,
@@ -384,15 +384,15 @@ oauthRoutes.get('/companies/:companyId/oauth-connections', async (c) => {
 	);
 });
 
-oauthRoutes.get('/companies/:companyId/oauth-connections/:id/scope-status', async (c) => {
-	const access = await requireCompanyAccess(c);
+oauthRoutes.get('/teams/:teamId/oauth-connections/:id/scope-status', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const id = c.req.param('id');
 
-	const conn = await getConnectionForCompany({ db, masterKeyManager }, access.companyId, id);
+	const conn = await getConnectionForTeam({ db, masterKeyManager }, access.teamId, id);
 	if (!conn) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
 	if (conn.provider !== 'github') {
 		return err(c, 'INVALID_REQUEST', 'scope-status is only supported for github connections', 400);
@@ -401,21 +401,21 @@ oauthRoutes.get('/companies/:companyId/oauth-connections/:id/scope-status', asyn
 	return ok(c, computeScopeStatus(conn.scopes));
 });
 
-oauthRoutes.delete('/companies/:companyId/oauth-connections/:id', async (c) => {
-	const access = await requireCompanyAccess(c);
+oauthRoutes.delete('/teams/:teamId/oauth-connections/:id', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const id = c.req.param('id');
 
-	const conn = await getConnectionForCompany({ db, masterKeyManager }, access.companyId, id);
+	const conn = await getConnectionForTeam({ db, masterKeyManager }, access.teamId, id);
 	if (!conn) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
 
 	const ok2 = await deleteConnection({ db, masterKeyManager }, id);
 	if (!ok2) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
 
-	broadcastChange(c, wsRoom.company(access.companyId), 'oauth_connections', 'DELETE', { id });
+	broadcastChange(c, wsRoom.team(access.teamId), 'oauth_connections', 'DELETE', { id });
 
 	return ok(c, { deleted: true });
 });
@@ -457,37 +457,37 @@ function buildCallbackPage(
 }
 
 /**
- * On first connect, ensure the company's Ed25519 public key is registered on
+ * On first connect, ensure the team's Ed25519 public key is registered on
  * the connecting user's GitHub account as both a signing key (so commits agents
  * push appear Verified) and an authentication key (so the ssh-agent-backed git
  * clone/fetch/push over `git@github.com:` works without exchanging tokens).
  */
-async function ensureCompanyKeyRegisteredOnGitHub(
+async function ensureTeamKeyRegisteredOnGitHub(
 	db: import('@electric-sql/pglite').PGlite,
 	masterKeyManager: import('../crypto/master-key').MasterKeyManager,
-	companyId: string,
+	teamId: string,
 	accessToken: string,
 ): Promise<void> {
-	let companyKey = await getCompanySSHKey(db, companyId, masterKeyManager);
-	if (!companyKey) {
-		await generateCompanySSHKey(db, companyId, masterKeyManager);
-		companyKey = await getCompanySSHKey(db, companyId, masterKeyManager);
-		if (!companyKey) throw new Error('failed to generate company ssh key');
+	let teamKey = await getTeamSSHKey(db, teamId, masterKeyManager);
+	if (!teamKey) {
+		await generateTeamSSHKey(db, teamId, masterKeyManager);
+		teamKey = await getTeamSSHKey(db, teamId, masterKeyManager);
+		if (!teamKey) throw new Error('failed to generate team ssh key');
 	}
 
-	const signing = await registerSigningKey(accessToken, companyKey.publicKey, 'Hezo signing key');
+	const signing = await registerSigningKey(accessToken, teamKey.publicKey, 'Hezo signing key');
 	log.info(
 		signing.status === 'already_exists'
-			? 'company ssh signing key already registered on GitHub'
-			: 'registered company ssh key on GitHub for signing',
-		{ companyId },
+			? 'team ssh signing key already registered on GitHub'
+			: 'registered team ssh key on GitHub for signing',
+		{ teamId },
 	);
 
-	const auth = await registerAuthKey(accessToken, companyKey.publicKey, 'Hezo authentication key');
+	const auth = await registerAuthKey(accessToken, teamKey.publicKey, 'Hezo authentication key');
 	log.info(
 		auth.status === 'already_exists'
-			? 'company ssh auth key already registered on GitHub'
-			: 'registered company ssh key on GitHub for authentication',
-		{ companyId },
+			? 'team ssh auth key already registered on GitHub'
+			: 'registered team ssh key on GitHub for authentication',
+		{ teamId },
 	);
 }

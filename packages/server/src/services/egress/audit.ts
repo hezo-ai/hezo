@@ -5,7 +5,7 @@ import { logger } from '../../logger';
 const log = logger.child('egress-audit');
 
 export interface EgressAuditEvent {
-	companyId: string;
+	teamId: string;
 	agentId: string;
 	runId: string;
 	host: string;
@@ -20,10 +20,10 @@ export interface EgressAuditEvent {
 export async function recordEgressEvent(db: PGlite, event: EgressAuditEvent): Promise<void> {
 	try {
 		await db.query(
-			`INSERT INTO audit_log (company_id, actor_type, actor_member_id, action, entity_type, entity_id, details)
+			`INSERT INTO audit_log (team_id, actor_type, actor_member_id, action, entity_type, entity_id, details)
 			 VALUES ($1, $2::audit_actor_type, $3, 'egress_request', $4, NULL, $5::jsonb)`,
 			[
-				event.companyId,
+				event.teamId,
 				AuditActorType.Agent,
 				event.agentId,
 				AuditEntityType.EgressRequest,

@@ -4,7 +4,7 @@ import { resolveActorMemberId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 import {
 	deleteDocument,
 	getDocument,
@@ -16,24 +16,24 @@ import {
 
 export const kbDocsRoutes = new Hono<Env>();
 
-kbDocsRoutes.get('/companies/:companyId/kb-docs', async (c) => {
-	const access = await requireCompanyAccess(c);
+kbDocsRoutes.get('/teams/:teamId/kb-docs', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const docs = await listDocuments(c.get('db'), {
 		type: DocumentType.KbDoc,
-		companyId: access.companyId,
+		teamId: access.teamId,
 	});
 	return ok(c, docs);
 });
 
-kbDocsRoutes.get('/companies/:companyId/kb-docs/:slug', async (c) => {
-	const access = await requireCompanyAccess(c);
+kbDocsRoutes.get('/teams/:teamId/kb-docs/:slug', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const doc = await getDocument(c.get('db'), {
 		type: DocumentType.KbDoc,
-		companyId: access.companyId,
+		teamId: access.teamId,
 		slug: c.req.param('slug'),
 	});
 	if (!doc) return err(c, 'NOT_FOUND', 'KB document not found', 404);
@@ -41,8 +41,8 @@ kbDocsRoutes.get('/companies/:companyId/kb-docs/:slug', async (c) => {
 	return ok(c, doc);
 });
 
-kbDocsRoutes.post('/companies/:companyId/kb-docs', async (c) => {
-	const access = await requireCompanyAccess(c);
+kbDocsRoutes.post('/teams/:teamId/kb-docs', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
@@ -57,16 +57,16 @@ kbDocsRoutes.post('/companies/:companyId/kb-docs', async (c) => {
 
 	const conflict = await getDocument(db, {
 		type: DocumentType.KbDoc,
-		companyId: access.companyId,
+		teamId: access.teamId,
 		slug,
 	});
 	if (conflict) {
 		return err(c, 'CONFLICT', `KB document with slug '${slug}' already exists`, 409);
 	}
 
-	const authorMemberId = await resolveActorMemberId(db, auth, access.companyId);
+	const authorMemberId = await resolveActorMemberId(db, auth, access.teamId);
 	const doc = await upsertDocument(db, c.get('wsManager'), {
-		scope: { type: DocumentType.KbDoc, companyId: access.companyId, slug },
+		scope: { type: DocumentType.KbDoc, teamId: access.teamId, slug },
 		title: body.title.trim(),
 		content: body.content ?? '',
 		authorMemberId,
@@ -75,8 +75,8 @@ kbDocsRoutes.post('/companies/:companyId/kb-docs', async (c) => {
 	return ok(c, doc, 201);
 });
 
-kbDocsRoutes.patch('/companies/:companyId/kb-docs/:slug', async (c) => {
-	const access = await requireCompanyAccess(c);
+kbDocsRoutes.patch('/teams/:teamId/kb-docs/:slug', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
@@ -85,7 +85,7 @@ kbDocsRoutes.patch('/companies/:companyId/kb-docs/:slug', async (c) => {
 
 	const existing = await getDocument(db, {
 		type: DocumentType.KbDoc,
-		companyId: access.companyId,
+		teamId: access.teamId,
 		slug,
 	});
 	if (!existing) return err(c, 'NOT_FOUND', 'KB document not found', 404);
@@ -98,10 +98,10 @@ kbDocsRoutes.patch('/companies/:companyId/kb-docs/:slug', async (c) => {
 
 	if (auth.type === AuthType.Agent) {
 		await db.query(
-			`INSERT INTO approvals (company_id, type, requested_by_member_id, payload)
+			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
 			 VALUES ($1, $2::approval_type, $3, $4::jsonb)`,
 			[
-				access.companyId,
+				access.teamId,
 				ApprovalType.KbUpdate,
 				auth.memberId,
 				JSON.stringify({
@@ -120,9 +120,9 @@ kbDocsRoutes.patch('/companies/:companyId/kb-docs/:slug', async (c) => {
 		return ok(c, existing);
 	}
 
-	const authorMemberId = await resolveActorMemberId(db, auth, access.companyId);
+	const authorMemberId = await resolveActorMemberId(db, auth, access.teamId);
 	const doc = await upsertDocument(db, c.get('wsManager'), {
-		scope: { type: DocumentType.KbDoc, companyId: access.companyId, slug },
+		scope: { type: DocumentType.KbDoc, teamId: access.teamId, slug },
 		title: body.title?.trim(),
 		content: body.content ?? existing.content,
 		changeSummary: body.change_summary,
@@ -132,13 +132,13 @@ kbDocsRoutes.patch('/companies/:companyId/kb-docs/:slug', async (c) => {
 	return ok(c, doc);
 });
 
-kbDocsRoutes.delete('/companies/:companyId/kb-docs/:slug', async (c) => {
-	const access = await requireCompanyAccess(c);
+kbDocsRoutes.delete('/teams/:teamId/kb-docs/:slug', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const removed = await deleteDocument(c.get('db'), c.get('wsManager'), {
 		type: DocumentType.KbDoc,
-		companyId: access.companyId,
+		teamId: access.teamId,
 		slug: c.req.param('slug'),
 	});
 	if (!removed) return err(c, 'NOT_FOUND', 'KB document not found', 404);
@@ -146,8 +146,8 @@ kbDocsRoutes.delete('/companies/:companyId/kb-docs/:slug', async (c) => {
 	return c.json({ data: null }, 200);
 });
 
-kbDocsRoutes.post('/companies/:companyId/kb-docs/:slug/restore', async (c) => {
-	const access = await requireCompanyAccess(c);
+kbDocsRoutes.post('/teams/:teamId/kb-docs/:slug/restore', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const auth = c.get('auth');
@@ -164,12 +164,12 @@ kbDocsRoutes.post('/companies/:companyId/kb-docs/:slug/restore', async (c) => {
 
 	const doc = await getDocument(db, {
 		type: DocumentType.KbDoc,
-		companyId: access.companyId,
+		teamId: access.teamId,
 		slug,
 	});
 	if (!doc) return err(c, 'NOT_FOUND', 'KB document not found', 404);
 
-	const restoredByMemberId = await resolveActorMemberId(db, auth, access.companyId);
+	const restoredByMemberId = await resolveActorMemberId(db, auth, access.teamId);
 	const restored = await restoreRevision(db, c.get('wsManager'), {
 		documentId: doc.id,
 		revisionNumber: body.revision_number,
@@ -180,13 +180,13 @@ kbDocsRoutes.post('/companies/:companyId/kb-docs/:slug/restore', async (c) => {
 	return ok(c, restored);
 });
 
-kbDocsRoutes.get('/companies/:companyId/kb-docs/:slug/revisions', async (c) => {
-	const access = await requireCompanyAccess(c);
+kbDocsRoutes.get('/teams/:teamId/kb-docs/:slug/revisions', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const doc = await getDocument(c.get('db'), {
 		type: DocumentType.KbDoc,
-		companyId: access.companyId,
+		teamId: access.teamId,
 		slug: c.req.param('slug'),
 	});
 	if (!doc) return err(c, 'NOT_FOUND', 'KB document not found', 404);

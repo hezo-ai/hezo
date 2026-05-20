@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe('clearAllProjectWorkspaces', () => {
-	it('returns no entries when companies dir is missing', () => {
+	it('returns no entries when teams dir is missing', () => {
 		expect(clearAllProjectWorkspaces(dataDir)).toEqual([]);
 	});
 
@@ -25,9 +25,9 @@ describe('clearAllProjectWorkspaces', () => {
 		ensureProjectWorkspace(dataDir, 'beta', 'platform');
 
 		const stalePaths = [
-			join(dataDir, 'companies/acme/projects/web/workspace/be-1-progress.md'),
-			join(dataDir, 'companies/acme/projects/mobile/workspace/prd.md'),
-			join(dataDir, 'companies/beta/projects/platform/workspace/spec.md'),
+			join(dataDir, 'teams/acme/projects/web/workspace/be-1-progress.md'),
+			join(dataDir, 'teams/acme/projects/mobile/workspace/prd.md'),
+			join(dataDir, 'teams/beta/projects/platform/workspace/spec.md'),
 		];
 		for (const p of stalePaths) writeFileSync(p, 'stale\n');
 
@@ -37,9 +37,9 @@ describe('clearAllProjectWorkspaces', () => {
 		for (const p of stalePaths) expect(existsSync(p)).toBe(false);
 
 		const dirs = [
-			join(dataDir, 'companies/acme/projects/web/workspace'),
-			join(dataDir, 'companies/acme/projects/mobile/workspace'),
-			join(dataDir, 'companies/beta/projects/platform/workspace'),
+			join(dataDir, 'teams/acme/projects/web/workspace'),
+			join(dataDir, 'teams/acme/projects/mobile/workspace'),
+			join(dataDir, 'teams/beta/projects/platform/workspace'),
 		];
 		for (const dir of dirs) {
 			expect(existsSync(dir)).toBe(true);
@@ -49,7 +49,7 @@ describe('clearAllProjectWorkspaces', () => {
 
 	it('leaves sibling worktrees and previews directories untouched', () => {
 		ensureProjectWorkspace(dataDir, 'acme', 'web');
-		const projectDir = join(dataDir, 'companies/acme/projects/web');
+		const projectDir = join(dataDir, 'teams/acme/projects/web');
 		writeFileSync(join(projectDir, 'workspace/dirty.md'), 'x');
 		mkdirSync(join(projectDir, 'worktrees/feat-branch'), { recursive: true });
 		writeFileSync(join(projectDir, 'worktrees/feat-branch/keep.md'), 'keep');

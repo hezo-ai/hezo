@@ -11,11 +11,11 @@ test.describe('agent team relationships section', () => {
 			freshWorkspace,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height });
-			const { company, agents } = freshWorkspace;
+			const { team, agents } = freshWorkspace;
 			const engineer = agents.find((a) => a.slug === 'engineer');
 			if (!engineer) throw new Error('engineer agent missing from fresh workspace');
 
-			await page.goto(`/companies/${company.slug}/agents/${engineer.id}/settings`);
+			await page.goto(`/teams/${team.slug}/agents/${engineer.id}/settings`);
 
 			const section = page.getByTestId('agent-team-context');
 			await expect(section).toBeVisible({ timeout: 20000 });
@@ -24,10 +24,10 @@ test.describe('agent team relationships section', () => {
 	}
 
 	test('attribution caption renders beneath the section', async ({ page, freshWorkspace }) => {
-		const { company, agents } = freshWorkspace;
+		const { team, agents } = freshWorkspace;
 		const agent = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
-		await page.goto(`/companies/${company.slug}/agents/${agent.id}/settings`);
+		await page.goto(`/teams/${team.slug}/agents/${agent.id}/settings`);
 
 		const caption = page.getByTestId('agent-team-context-attribution');
 		await expect(caption).toBeVisible({ timeout: 20000 });
@@ -38,10 +38,10 @@ test.describe('agent team relationships section', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { company, agents } = freshWorkspace;
+		const { team, agents } = freshWorkspace;
 		const agent = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
-		await page.goto(`/companies/${company.slug}/agents/${agent.id}/settings`);
+		await page.goto(`/teams/${team.slug}/agents/${agent.id}/settings`);
 
 		const section = page.getByTestId('agent-team-context');
 		await expect(section).toBeVisible({ timeout: 20000 });

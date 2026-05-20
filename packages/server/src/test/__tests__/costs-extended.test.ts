@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 let agent2Id: string;
 let projectId: string;
@@ -21,13 +21,13 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	// Create company with Startup template
-	const typesRes = await app.request('/api/company-types', {
+	// Create team with Startup template
+	const typesRes = await app.request('/api/team-templates', {
 		headers: authHeader(token),
 	});
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -35,10 +35,10 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
 	// Get two agents to work with
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data;
@@ -46,14 +46,14 @@ beforeAll(async () => {
 	agent2Id = agents.find((a: Record<string, unknown>) => a.slug === 'ui-designer').id;
 
 	// Create two projects
-	const proj1Res = await app.request(`/api/companies/${companyId}/projects`, {
+	const proj1Res = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Project Alpha', description: 'Test project.' }),
 	});
 	projectId = (await proj1Res.json()).data.id;
 
-	const proj2Res = await app.request(`/api/companies/${companyId}/projects`, {
+	const proj2Res = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Project Beta', description: 'Test project.' }),
@@ -61,7 +61,7 @@ beforeAll(async () => {
 	project2Id = (await proj2Res.json()).data.id;
 
 	// Create an issue under project 1
-	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -76,13 +76,13 @@ beforeAll(async () => {
 	// so we can control timestamps precisely for date-range tests.
 	// All amounts are small to stay within budget limits.
 	await db.query(
-		`INSERT INTO cost_entries (company_id, member_id, project_id, issue_id, amount_cents, description, created_at)
+		`INSERT INTO cost_entries (team_id, member_id, project_id, issue_id, amount_cents, description, created_at)
      VALUES
        ($1, $2, $3, $4, 50,  'past entry',          '2024-01-15 10:00:00+00'),
        ($1, $2, $3, NULL, 75,  'past no-issue',      '2024-01-20 12:00:00+00'),
        ($1, $5, $6, NULL, 120, 'agent2 project2',    '2024-02-10 08:00:00+00'),
        ($1, $2, NULL, NULL, 30, 'agent1 no project',  '2024-03-01 09:00:00+00')`,
-		[companyId, agentId, projectId, issueId, agent2Id, project2Id],
+		[teamId, agentId, projectId, issueId, agent2Id, project2Id],
 	);
 });
 
@@ -92,7 +92,7 @@ afterAll(async () => {
 
 describe('costs – date range filtering', () => {
 	it('filters by from date (inclusive)', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs?from=2024-02-01`, {
+		const res = await app.request(`/api/teams/${teamId}/costs?from=2024-02-01`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -103,7 +103,7 @@ describe('costs – date range filtering', () => {
 	});
 
 	it('filters by to date (inclusive)', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs?to=2024-01-31`, {
+		const res = await app.request(`/api/teams/${teamId}/costs?to=2024-01-31`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -114,10 +114,9 @@ describe('costs – date range filtering', () => {
 	});
 
 	it('filters by from and to range together', async () => {
-		const res = await app.request(
-			`/api/companies/${companyId}/costs?from=2024-01-18&to=2024-02-28`,
-			{ headers: authHeader(token) },
-		);
+		const res = await app.request(`/api/teams/${teamId}/costs?from=2024-01-18&to=2024-02-28`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		// Entries in range: past no-issue (75, Jan 20) + agent2 project2 (120, Feb 10)
@@ -128,7 +127,7 @@ describe('costs – date range filtering', () => {
 
 describe('costs – project_id filter', () => {
 	it('returns only entries for the specified project', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs?project_id=${projectId}`, {
+		const res = await app.request(`/api/teams/${teamId}/costs?project_id=${projectId}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -141,7 +140,7 @@ describe('costs – project_id filter', () => {
 	});
 
 	it('returns only entries for project2', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs?project_id=${project2Id}`, {
+		const res = await app.request(`/api/teams/${teamId}/costs?project_id=${project2Id}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -153,7 +152,7 @@ describe('costs – project_id filter', () => {
 
 describe('costs – issue_id filter', () => {
 	it('returns only entries linked to the specified issue', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs?issue_id=${issueId}`, {
+		const res = await app.request(`/api/teams/${teamId}/costs?issue_id=${issueId}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -167,7 +166,7 @@ describe('costs – issue_id filter', () => {
 
 describe('costs – group_by=day', () => {
 	it('groups cost entries by day with correct totals', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs?group_by=day`, {
+		const res = await app.request(`/api/teams/${teamId}/costs?group_by=day`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -184,7 +183,7 @@ describe('costs – group_by=day', () => {
 
 	it('group_by=day with date range returns subset', async () => {
 		const res = await app.request(
-			`/api/companies/${companyId}/costs?group_by=day&from=2024-02-01&to=2024-03-31`,
+			`/api/teams/${teamId}/costs?group_by=day&from=2024-02-01&to=2024-03-31`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
@@ -196,7 +195,7 @@ describe('costs – group_by=day', () => {
 
 describe('costs – group_by=project', () => {
 	it('groups cost entries by project', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs?group_by=project`, {
+		const res = await app.request(`/api/teams/${teamId}/costs?group_by=project`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -221,7 +220,7 @@ describe('costs – group_by=project', () => {
 
 describe('costs – POST validation', () => {
 	it('returns 400 when member_id is missing', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs`, {
+		const res = await app.request(`/api/teams/${teamId}/costs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ amount_cents: 100 }),
@@ -232,7 +231,7 @@ describe('costs – POST validation', () => {
 	});
 
 	it('returns 400 when amount_cents is zero', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs`, {
+		const res = await app.request(`/api/teams/${teamId}/costs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ member_id: agentId, amount_cents: 0 }),
@@ -243,7 +242,7 @@ describe('costs – POST validation', () => {
 	});
 
 	it('returns 400 when amount_cents is negative', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs`, {
+		const res = await app.request(`/api/teams/${teamId}/costs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ member_id: agentId, amount_cents: -50 }),
@@ -254,7 +253,7 @@ describe('costs – POST validation', () => {
 	});
 
 	it('returns 400 when amount_cents is missing', async () => {
-		const res = await app.request(`/api/companies/${companyId}/costs`, {
+		const res = await app.request(`/api/teams/${teamId}/costs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ member_id: agentId }),

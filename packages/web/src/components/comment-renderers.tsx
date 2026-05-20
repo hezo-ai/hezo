@@ -70,7 +70,7 @@ interface ToolCall {
 interface RenderProps {
 	comment: CommentData;
 	onChooseOption?: (commentId: string, chosenId: string) => void;
-	companyId?: string;
+	teamId?: string;
 	projectId?: string;
 	projectSlug?: string;
 	issueId?: string;
@@ -84,7 +84,7 @@ export function isInlineEventType(contentType: string): boolean {
 export function CommentRenderer({
 	comment,
 	onChooseOption,
-	companyId,
+	teamId,
 	projectId,
 	projectSlug,
 	issueId,
@@ -92,28 +92,23 @@ export function CommentRenderer({
 }: RenderProps) {
 	switch (comment.content_type) {
 		case 'run':
-			return <RunComment comment={comment} companyId={companyId} inline={inline} />;
+			return <RunComment comment={comment} teamId={teamId} inline={inline} />;
 		case 'trace':
 			return <TraceComment comment={comment} />;
 		case 'options':
 			return <OptionsComment comment={comment} onChoose={onChooseOption} />;
 		case 'credential_request':
-			return <CredentialRequestComment comment={comment} companyId={companyId} issueId={issueId} />;
+			return <CredentialRequestComment comment={comment} teamId={teamId} issueId={issueId} />;
 		case 'preview':
 			return <PreviewComment comment={comment} />;
 		case 'system':
-			return <SystemComment comment={comment} companyId={companyId} />;
+			return <SystemComment comment={comment} teamId={teamId} />;
 		case 'action':
 			return (
-				<ActionComment
-					comment={comment}
-					companyId={companyId}
-					projectId={projectId}
-					issueId={issueId}
-				/>
+				<ActionComment comment={comment} teamId={teamId} projectId={projectId} issueId={issueId} />
 			);
 		default:
-			return <TextComment comment={comment} companyId={companyId} projectSlug={projectSlug} />;
+			return <TextComment comment={comment} teamId={teamId} projectSlug={projectSlug} />;
 	}
 }
 
@@ -145,11 +140,11 @@ export function inlineEventIcon(comment: CommentData): LucideIcon {
 
 function ActionComment({
 	comment,
-	companyId,
+	teamId,
 	projectId,
 }: {
 	comment: CommentData;
-	companyId?: string;
+	teamId?: string;
 	projectId?: string;
 	issueId?: string;
 }) {
@@ -177,7 +172,7 @@ function ActionComment({
 		);
 	}
 
-	if (!companyId || !projectId) {
+	if (!teamId || !projectId) {
 		return <p className="text-xs text-text-subtle italic">Repo setup unavailable in this view.</p>;
 	}
 
@@ -191,10 +186,7 @@ function ActionComment({
 				</span>
 			</div>
 			<div>
-				<Link
-					to="/companies/$companyId/projects/$projectId/settings"
-					params={{ companyId, projectId }}
-				>
+				<Link to="/teams/$teamId/projects/$projectId/settings" params={{ teamId, projectId }}>
 					<Button size="sm">Open project settings</Button>
 				</Link>
 			</div>
@@ -216,11 +208,11 @@ function runStatusDotClass(status: string): string {
 
 function RunComment({
 	comment,
-	companyId,
+	teamId,
 	inline,
 }: {
 	comment: CommentData;
-	companyId?: string;
+	teamId?: string;
 	inline?: boolean;
 }) {
 	const content = typeof comment.content === 'object' ? comment.content : {};
@@ -228,7 +220,7 @@ function RunComment({
 	const agentId: string = content.agent_id ?? '';
 	const agentTitle: string = content.agent_title ?? 'Agent';
 
-	if (!companyId || !runId || !agentId) {
+	if (!teamId || !runId || !agentId) {
 		return <p className="text-xs text-text-subtle italic">Run reference missing.</p>;
 	}
 
@@ -236,7 +228,7 @@ function RunComment({
 		<div className="flex flex-col gap-1.5" data-testid="run-comment">
 			<LazyMount minHeight={210} testId="run-comment-lazy">
 				<RunCommentBody
-					companyId={companyId}
+					teamId={teamId}
 					runId={runId}
 					agentId={agentId}
 					agentTitle={agentTitle}
@@ -249,21 +241,21 @@ function RunComment({
 }
 
 function RunCommentBody({
-	companyId,
+	teamId,
 	runId,
 	agentId,
 	agentTitle,
 	createdAt,
 	inline,
 }: {
-	companyId: string;
+	teamId: string;
 	runId: string;
 	agentId: string;
 	agentTitle: string;
 	createdAt: string;
 	inline?: boolean;
 }) {
-	const runQuery = useHeartbeatRun(companyId, agentId, runId);
+	const runQuery = useHeartbeatRun(teamId, agentId, runId);
 	const run = runQuery.data;
 	const status = run?.status ?? 'queued';
 	const isActive = isActiveRunStatus(status);
@@ -356,8 +348,8 @@ function RunCommentBody({
 						emptyState={getRunWaitingMessage(status)}
 						headerAction={
 							<Link
-								to="/companies/$companyId/agents/$agentId/executions/$runId"
-								params={{ companyId, agentId, runId }}
+								to="/teams/$teamId/agents/$agentId/executions/$runId"
+								params={{ teamId, agentId, runId }}
 								title="View full run"
 								aria-label="View full run"
 								className="inline-flex items-center justify-center h-6 px-2 text-xs text-text-muted hover:text-text hover:bg-bg-muted rounded-radius-md transition-colors"
@@ -374,9 +366,9 @@ function RunCommentBody({
 					{createdIssues.map((issue) => (
 						<Link
 							key={issue.id}
-							to="/companies/$companyId/projects/$projectId/issues/$issueId"
+							to="/teams/$teamId/projects/$projectId/issues/$issueId"
 							params={{
-								companyId,
+								teamId,
 								projectId: issue.project_slug,
 								issueId: issue.identifier.toLowerCase(),
 							}}
@@ -393,11 +385,11 @@ function RunCommentBody({
 
 function TextComment({
 	comment,
-	companyId,
+	teamId,
 	projectSlug,
 }: {
 	comment: CommentData;
-	companyId?: string;
+	teamId?: string;
 	projectSlug?: string;
 }) {
 	const content =
@@ -405,13 +397,13 @@ function TextComment({
 			? comment.content.text || JSON.stringify(comment.content)
 			: String(comment.content);
 	return (
-		<MarkdownProse testId="text-comment-body" companyId={companyId} projectSlug={projectSlug}>
+		<MarkdownProse testId="text-comment-body" teamId={teamId} projectSlug={projectSlug}>
 			{content}
 		</MarkdownProse>
 	);
 }
 
-function SystemComment({ comment, companyId }: { comment: CommentData; companyId?: string }) {
+function SystemComment({ comment, teamId }: { comment: CommentData; teamId?: string }) {
 	const content = typeof comment.content === 'object' ? comment.content : null;
 	const timestamp = (
 		<span className="text-[11px] text-text-subtle">
@@ -419,10 +411,10 @@ function SystemComment({ comment, companyId }: { comment: CommentData; companyId
 		</span>
 	);
 
-	if (content?.kind === 'issue_link' && companyId) {
+	if (content?.kind === 'issue_link' && teamId) {
 		return (
 			<div className="flex items-baseline gap-2 leading-[26px]">
-				<IssueLinkSystemBody comment={comment} companyId={companyId} />
+				<IssueLinkSystemBody comment={comment} teamId={teamId} />
 				{timestamp}
 			</div>
 		);
@@ -452,7 +444,7 @@ function SystemComment({ comment, companyId }: { comment: CommentData; companyId
 	);
 }
 
-function IssueLinkSystemBody({ comment, companyId }: { comment: CommentData; companyId: string }) {
+function IssueLinkSystemBody({ comment, teamId }: { comment: CommentData; teamId: string }) {
 	const content = comment.content as {
 		source_identifier?: string;
 		source_project_slug?: string;
@@ -473,9 +465,9 @@ function IssueLinkSystemBody({ comment, companyId }: { comment: CommentData; com
 	const sourceNode =
 		sourceIdentifier && sourceProjectSlug ? (
 			<Link
-				to="/companies/$companyId/projects/$projectId/issues/$issueId"
+				to="/teams/$teamId/projects/$projectId/issues/$issueId"
 				params={{
-					companyId,
+					teamId,
 					projectId: sourceProjectSlug,
 					issueId: sourceIdentifier.toLowerCase(),
 				}}
@@ -491,8 +483,8 @@ function IssueLinkSystemBody({ comment, companyId }: { comment: CommentData; com
 	const actorNode =
 		actorKind === 'agent' && actorSlug ? (
 			<Link
-				to="/companies/$companyId/agents/$agentId"
-				params={{ companyId, agentId: actorSlug }}
+				to="/teams/$teamId/agents/$agentId"
+				params={{ teamId, agentId: actorSlug }}
 				className={linkClass}
 				data-testid="issue-link-actor"
 			>
@@ -635,11 +627,11 @@ function OptionsComment({
 
 function CredentialRequestComment({
 	comment,
-	companyId,
+	teamId,
 	issueId,
 }: {
 	comment: CommentData;
-	companyId?: string;
+	teamId?: string;
 	issueId?: string;
 }) {
 	const content = typeof comment.content === 'object' ? comment.content : {};
@@ -657,9 +649,9 @@ function CredentialRequestComment({
 
 	const [value, setValue] = useState('');
 	const [error, setError] = useState<string | null>(null);
-	const fulfill = useFulfillCredential(companyId ?? '', issueId ?? '');
+	const fulfill = useFulfillCredential(teamId ?? '', issueId ?? '');
 
-	if (!companyId || !issueId) {
+	if (!teamId || !issueId) {
 		return (
 			<p className="text-xs text-text-subtle italic">
 				Credential request unavailable in this view.
@@ -802,19 +794,19 @@ function reactorsTooltip(group: ReactionGroup): string {
 
 export function CommentReactions({
 	comment,
-	companyId,
+	teamId,
 	issueId,
 }: {
 	comment: CommentData;
-	companyId?: string;
+	teamId?: string;
 	issueId?: string;
 }) {
 	const groups = comment.reactions ?? [];
 	const [pickerOpen, setPickerOpen] = useState(false);
-	const addReaction = useAddReaction(companyId ?? '', issueId ?? '');
-	const removeReaction = useRemoveReaction(companyId ?? '', issueId ?? '');
+	const addReaction = useAddReaction(teamId ?? '', issueId ?? '');
+	const removeReaction = useRemoveReaction(teamId ?? '', issueId ?? '');
 
-	if (!companyId || !issueId) return null;
+	if (!teamId || !issueId) return null;
 	const busy = addReaction.isPending || removeReaction.isPending;
 
 	const toggle = (kind: string, youReacted: boolean) => {

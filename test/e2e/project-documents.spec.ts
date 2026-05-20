@@ -1,17 +1,17 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, createProjectAndClearPlanning } from './helpers';
+import { authenticate, createProjectAndClearPlanning, createTeamWithAgents } from './helpers';
 
 test('can create, view, edit, and delete a project document', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
-	const project = await createProjectAndClearPlanning(page, company.id, token, {
+	const { team, token } = await createTeamWithAgents(page);
+	const project = await createProjectAndClearPlanning(page, team.id, token, {
 		name: 'Docs Test Project',
 		description: 'Project for testing the documents tab.',
 	});
 
-	await page.goto(`/companies/${company.slug}/projects/${project.slug}/documents`);
+	await page.goto(`/teams/${team.slug}/projects/${project.slug}/documents`);
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 15000 });
 
 	await page.getByRole('button', { name: 'New document' }).click();
@@ -40,13 +40,13 @@ test('shows revision history and restores a previous version', async ({ page }) 
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
-	const project = await createProjectAndClearPlanning(page, company.id, token, {
+	const { team, token } = await createTeamWithAgents(page);
+	const project = await createProjectAndClearPlanning(page, team.id, token, {
 		name: 'Revision Project',
 		description: 'Project for testing project doc revisions.',
 	});
 
-	await page.goto(`/companies/${company.slug}/projects/${project.slug}/documents`);
+	await page.goto(`/teams/${team.slug}/projects/${project.slug}/documents`);
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 15000 });
 
 	await page.getByRole('button', { name: 'New document' }).click();
@@ -75,13 +75,13 @@ test('rejects invalid filename when creating a document', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
-	const project = await createProjectAndClearPlanning(page, company.id, token, {
+	const { team, token } = await createTeamWithAgents(page);
+	const project = await createProjectAndClearPlanning(page, team.id, token, {
 		name: 'Filename Test',
 		description: 'Tests filename validation.',
 	});
 
-	await page.goto(`/companies/${company.slug}/projects/${project.slug}/documents`);
+	await page.goto(`/teams/${team.slug}/projects/${project.slug}/documents`);
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 15000 });
 
 	await page.getByRole('button', { name: 'New document' }).click();

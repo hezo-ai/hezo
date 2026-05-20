@@ -8,27 +8,20 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 
 async function insertConnection(provider: string, scopes: string[]): Promise<string> {
 	const secret = await db.query<{ id: string }>(
-		`INSERT INTO secrets (company_id, name, encrypted_value, category, allowed_hosts)
+		`INSERT INTO secrets (team_id, name, encrypted_value, category, allowed_hosts)
 		 VALUES ($1, $2, 'placeholder', 'api_token', ARRAY['github.com'])
 		 RETURNING id`,
-		[companyId, `OAUTH_${provider.toUpperCase()}_${Math.random().toString(16).slice(2, 10)}`],
+		[teamId, `OAUTH_${provider.toUpperCase()}_${Math.random().toString(16).slice(2, 10)}`],
 	);
 	const conn = await db.query<{ id: string }>(
-		`INSERT INTO oauth_connections (company_id, provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
+		`INSERT INTO oauth_connections (team_id, provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
 		 VALUES ($1, $2, $3, $4, $5, $6)
 		 RETURNING id`,
-		[
-			companyId,
-			provider,
-			Math.random().toString(16).slice(2, 10),
-			'octo',
-			secret.rows[0].id,
-			scopes,
-		],
+		[teamId, provider, Math.random().toString(16).slice(2, 10), 'octo', secret.rows[0].id, scopes],
 	);
 	return conn.rows[0].id;
 }
@@ -39,29 +32,28 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
 		(t: { name: string }) => t.name === 'Startup',
 	).id;
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Scope Co', template_id: typeId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 });
 
 afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('GET /api/companies/:companyId/oauth-connections/:id/scope-status', () => {
+describe('GET /api/teams/:teamId/oauth-connections/:id/scope-status', () => {
 	it('reports sufficient=false with the missing scopes when only repo is granted', async () => {
 		const connId = await insertConnection('github', ['repo']);
-		const res = await app.request(
-			`/api/companies/${companyId}/oauth-connections/${connId}/scope-status`,
-			{ headers: authHeader(token) },
-		);
+		const res = await app.request(`/api/teams/${teamId}/oauth-connections/${connId}/scope-status`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			data: { sufficient: boolean; missing: string[]; required: string[] };
@@ -73,10 +65,9 @@ describe('GET /api/companies/:companyId/oauth-connections/:id/scope-status', () 
 
 	it('reports sufficient=true when the minimum set is granted', async () => {
 		const connId = await insertConnection('github', ['repo', 'read:org', 'write:public_key']);
-		const res = await app.request(
-			`/api/companies/${companyId}/oauth-connections/${connId}/scope-status`,
-			{ headers: authHeader(token) },
-		);
+		const res = await app.request(`/api/teams/${teamId}/oauth-connections/${connId}/scope-status`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { data: { sufficient: boolean; missing: string[] } };
 		expect(body.data.sufficient).toBe(true);
@@ -91,10 +82,9 @@ describe('GET /api/companies/:companyId/oauth-connections/:id/scope-status', () 
 			'write:ssh_signing_key',
 			'write:public_key',
 		]);
-		const res = await app.request(
-			`/api/companies/${companyId}/oauth-connections/${connId}/scope-status`,
-			{ headers: authHeader(token) },
-		);
+		const res = await app.request(`/api/teams/${teamId}/oauth-connections/${connId}/scope-status`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { data: { sufficient: boolean } };
 		expect(body.data.sufficient).toBe(true);
@@ -102,46 +92,45 @@ describe('GET /api/companies/:companyId/oauth-connections/:id/scope-status', () 
 
 	it('rejects scope-status for a non-github connection', async () => {
 		const connId = await insertConnection('linear', ['read', 'write']);
-		const res = await app.request(
-			`/api/companies/${companyId}/oauth-connections/${connId}/scope-status`,
-			{ headers: authHeader(token) },
-		);
+		const res = await app.request(`/api/teams/${teamId}/oauth-connections/${connId}/scope-status`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(400);
 	});
 
-	it('404s when the connection does not exist for this company', async () => {
+	it('404s when the connection does not exist for this team', async () => {
 		const res = await app.request(
-			`/api/companies/${companyId}/oauth-connections/00000000-0000-0000-0000-000000000000/scope-status`,
+			`/api/teams/${teamId}/oauth-connections/00000000-0000-0000-0000-000000000000/scope-status`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
 	});
 
-	it("isolates cross-company: another company's connection 404s on this company's route", async () => {
-		const otherTypesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	it("isolates cross-team: another team's connection 404s on this team's route", async () => {
+		const otherTypesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const otherTypeId = (await otherTypesRes.json()).data[0].id;
-		const otherCompanyRes = await app.request('/api/companies', {
+		const otherTeamRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Other Scope Co', template_id: otherTypeId }),
 		});
-		const otherCompanyId = (await otherCompanyRes.json()).data.id;
+		const otherTeamId = (await otherTeamRes.json()).data.id;
 
 		const secret = await db.query<{ id: string }>(
-			`INSERT INTO secrets (company_id, name, encrypted_value, category, allowed_hosts)
+			`INSERT INTO secrets (team_id, name, encrypted_value, category, allowed_hosts)
 			 VALUES ($1, 'OAUTH_GITHUB_OTHER', 'placeholder', 'api_token', ARRAY['github.com'])
 			 RETURNING id`,
-			[otherCompanyId],
+			[otherTeamId],
 		);
 		const conn = await db.query<{ id: string }>(
-			`INSERT INTO oauth_connections (company_id, provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
+			`INSERT INTO oauth_connections (team_id, provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
 			 VALUES ($1, 'github', '111', 'outsider', $2, ARRAY['repo','read:org'])
 			 RETURNING id`,
-			[otherCompanyId, secret.rows[0].id],
+			[otherTeamId, secret.rows[0].id],
 		);
 
 		const res = await app.request(
-			`/api/companies/${companyId}/oauth-connections/${conn.rows[0].id}/scope-status`,
+			`/api/teams/${teamId}/oauth-connections/${conn.rows[0].id}/scope-status`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);

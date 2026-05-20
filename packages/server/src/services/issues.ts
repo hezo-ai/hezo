@@ -26,7 +26,7 @@ const log = logger.child('issues-service');
 // Bare projection of the issues table — excludes the 384-dim embedding vector
 // that would otherwise inflate every response by ~4 KB of JSON noise the
 // caller can't use. Shared by REST handlers, MCP tools, and this service.
-export const ISSUE_COLUMNS_BARE = `id, company_id, project_id, assignee_id, parent_issue_id,
+export const ISSUE_COLUMNS_BARE = `id, team_id, project_id, assignee_id, parent_issue_id,
 	created_by_member_id, created_by_run_id,
 	number, identifier, title, description, rules,
 	status, priority, labels,
@@ -71,7 +71,7 @@ export type IssueRow = Record<string, unknown> & { id: string; identifier: strin
 
 export async function createIssue(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	input: CreateIssueInput,
 	caller: CreateIssueCaller,
 	wsManager: WebSocketManager | undefined,
@@ -82,7 +82,7 @@ export async function createIssue(
 	}
 
 	if (input.parent_issue_id) {
-		const depthCheck = await assertChildDepthAllowed(db, companyId, input.parent_issue_id);
+		const depthCheck = await assertChildDepthAllowed(db, teamId, input.parent_issue_id);
 		if (!depthCheck.ok) {
 			throw new CreateIssueError('INVALID_REQUEST', depthCheck.message);
 		}
@@ -93,8 +93,8 @@ export async function createIssue(
 		const r = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE ma.slug = $1 AND m.company_id = $2`,
-			[input.assignee_slug, companyId],
+			 WHERE ma.slug = $1 AND m.team_id = $2`,
+			[input.assignee_slug, teamId],
 		);
 		if (r.rows.length === 0) {
 			throw new CreateIssueError('NOT_FOUND', `Agent with slug '${input.assignee_slug}' not found`);
@@ -108,7 +108,7 @@ export async function createIssue(
 		);
 	}
 
-	const opsCheck = await assertOperationsAssignee(db, companyId, input.project_id, assigneeId);
+	const opsCheck = await assertOperationsAssignee(db, teamId, input.project_id, assigneeId);
 	if (!opsCheck.ok) {
 		throw new CreateIssueError('INVALID_REQUEST', opsCheck.message);
 	}
@@ -123,7 +123,7 @@ export async function createIssue(
 	const { number: issueNumber, identifier } = await allocateIssueIdentifier(db, input.project_id);
 
 	const r = await db.query<IssueRow>(
-		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,
+		`INSERT INTO issues (team_id, project_id, assignee_id, parent_issue_id,
 		                     created_by_member_id, created_by_run_id,
 		                     number, identifier, title, description,
 		                     status, priority, labels, runtime_type)
@@ -131,7 +131,7 @@ export async function createIssue(
 		         $11::issue_status, $12::issue_priority, $13::jsonb, $14::agent_runtime)
 		 RETURNING ${ISSUE_COLUMNS_BARE}`,
 		[
-			companyId,
+			teamId,
 			input.project_id,
 			assigneeId,
 			input.parent_issue_id ?? null,
@@ -150,7 +150,7 @@ export async function createIssue(
 	let issue = r.rows[0];
 
 	if (input.blocked_by_issue_ids?.length) {
-		await attachBlockers(db, companyId, issue.id, input.blocked_by_issue_ids);
+		await attachBlockers(db, teamId, issue.id, input.blocked_by_issue_ids);
 		if (await hasOpenBlockers(db, issue.id)) {
 			const updated = await db.query<typeof issue>(
 				'UPDATE issues SET status = $1::issue_status WHERE id = $2 RETURNING *',
@@ -162,16 +162,16 @@ export async function createIssue(
 
 	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
 	if (isAgent.rows.length > 0) {
-		createWakeup(db, assigneeId, companyId, WakeupSource.Assignment, {
+		createWakeup(db, assigneeId, teamId, WakeupSource.Assignment, {
 			issue_id: issue.id,
 		}).catch((e) => log.error('Failed to create wakeup for assignment:', e));
 	}
 
-	broadcastRowChange(wsManager, wsRoom.company(companyId), 'issues', 'INSERT', issue);
+	broadcastRowChange(wsManager, wsRoom.team(teamId), 'issues', 'INSERT', issue);
 
 	auditLog(
 		db,
-		companyId,
+		teamId,
 		caller.actorType,
 		caller.actorMemberId,
 		AuditAction.Created,
@@ -183,7 +183,7 @@ export async function createIssue(
 	if (input.description) {
 		recordIssueLinks(
 			db,
-			companyId,
+			teamId,
 			issue.id,
 			input.description,
 			caller.actorMemberId,
@@ -196,7 +196,7 @@ export async function createIssue(
 
 async function attachBlockers(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	issueId: string,
 	rawIds: readonly string[],
 ): Promise<void> {
@@ -204,7 +204,7 @@ async function attachBlockers(
 	for (const raw of rawIds) {
 		const trimmed = typeof raw === 'string' ? raw.trim() : '';
 		if (!trimmed) continue;
-		const blockerId = await resolveIssueId(db, companyId, trimmed);
+		const blockerId = await resolveIssueId(db, teamId, trimmed);
 		if (!blockerId) {
 			throw new CreateIssueError('NOT_FOUND', `Blocking issue '${trimmed}' not found`);
 		}

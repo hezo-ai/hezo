@@ -111,7 +111,7 @@ export async function wouldCreateCycle(
  */
 export async function recomputeDownstreamReadiness(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	blockerIssueId: string,
 	actorMemberId: string | null,
 	wsManager: WebSocketManager | undefined,
@@ -123,7 +123,7 @@ export async function recomputeDownstreamReadiness(
 	for (const row of downstream.rows) {
 		const newStatus = await reconcileBlockedStatus(
 			db,
-			companyId,
+			teamId,
 			row.issue_id,
 			actorMemberId,
 			wsManager,
@@ -160,7 +160,7 @@ export async function coerceTargetStatusForBlockers(
  */
 export async function reconcileBlockedStatus(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	issueId: string,
 	actorMemberId: string | null,
 	wsManager: WebSocketManager | undefined,
@@ -185,8 +185,8 @@ export async function reconcileBlockedStatus(
 	const row = updated.rows[0];
 	if (!row) return null;
 
-	await recordStatusChange(db, companyId, issueId, current, target, actorMemberId, wsManager);
-	broadcastRowChange(wsManager, wsRoom.company(companyId), 'issues', 'UPDATE', row);
+	await recordStatusChange(db, teamId, issueId, current, target, actorMemberId, wsManager);
+	broadcastRowChange(wsManager, wsRoom.team(teamId), 'issues', 'UPDATE', row);
 	return target;
 }
 
@@ -198,8 +198,8 @@ export async function reconcileBlockedStatus(
 export async function wakeIfReady(db: PGlite, issueId: string): Promise<void> {
 	if (await hasOpenBlockers(db, issueId)) return;
 
-	const issue = await db.query<{ assignee_id: string | null; company_id: string }>(
-		'SELECT assignee_id, company_id FROM issues WHERE id = $1',
+	const issue = await db.query<{ assignee_id: string | null; team_id: string }>(
+		'SELECT assignee_id, team_id FROM issues WHERE id = $1',
 		[issueId],
 	);
 	const row = issue.rows[0];
@@ -225,7 +225,7 @@ export async function wakeIfReady(db: PGlite, issueId: string): Promise<void> {
 		await createWakeup(
 			db,
 			row.assignee_id,
-			row.company_id,
+			row.team_id,
 			WakeupSource.Assignment,
 			{ issue_id: issueId, reason: 'unblocked' },
 			`unblock:${issueId}`,

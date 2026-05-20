@@ -39,7 +39,7 @@ export function broadcastEvent(
 export async function broadcastProjectUpdate(
 	db: PGlite,
 	wsManager: WebSocketManager | undefined,
-	companyId: string,
+	teamId: string,
 	projectId: string,
 ): Promise<void> {
 	if (!wsManager) return;
@@ -48,5 +48,5 @@ export async function broadcastProjectUpdate(
 	]);
 	const row = updated.rows[0];
 	if (!row) return;
-	broadcastRowChange(wsManager, wsRoom.company(companyId), 'projects', 'UPDATE', row);
+	broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'UPDATE', row);
 }

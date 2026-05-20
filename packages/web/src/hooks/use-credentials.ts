@@ -3,7 +3,7 @@ import { api } from '../lib/api';
 
 export interface CredentialUsage {
 	id: string;
-	company_id: string;
+	team_id: string;
 	project_id: string | null;
 	name: string;
 	category: string;
@@ -17,9 +17,9 @@ export interface CredentialUsage {
 	last_host: string | null;
 }
 
-export function useCredentials(companyId: string) {
+export function useCredentials(teamId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'credentials'],
-		queryFn: () => api.get<CredentialUsage[]>(`/api/companies/${companyId}/credentials`),
+		queryKey: ['teams', teamId, 'credentials'],
+		queryFn: () => api.get<CredentialUsage[]>(`/api/teams/${teamId}/credentials`),
 	});
 }

@@ -24,7 +24,7 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
-	const { memberId, companyId } = auth;
+	const { memberId, teamId } = auth;
 
 	await db.query('UPDATE member_agents SET last_heartbeat_at = now() WHERE id = $1', [memberId]);
 
@@ -73,7 +73,7 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 	const issues = await db.query(
 		`SELECT i.id, i.number, i.identifier, i.title, i.description, i.status, i.priority,
 		        p.name AS project_name, p.description AS project_description, p.id AS project_id,
-		        co.description AS company_description,
+		        co.description AS team_description,
 		        (SELECT count(*)::int FROM issue_comments ic
 		         WHERE ic.issue_id = i.id AND ic.created_at > COALESCE(
 		           (SELECT MAX(ic2.created_at) FROM issue_comments ic2
@@ -81,8 +81,8 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 		         ) AND ic.author_member_id != $1) AS unread_comments
 		 FROM issues i
 		 JOIN projects p ON p.id = i.project_id
-		 JOIN companies co ON co.id = i.company_id
-		 WHERE i.assignee_id = $1 AND i.company_id = $2
+		 JOIN teams co ON co.id = i.team_id
+		 WHERE i.assignee_id = $1 AND i.team_id = $2
 		   AND i.status NOT IN (${terminalPlaceholders})
 		 ORDER BY
 		   CASE i.priority
@@ -94,7 +94,7 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 		   i.created_at ASC`,
 		[
 			memberId,
-			companyId,
+			teamId,
 			...TERMINAL_ISSUE_STATUSES,
 			IssuePriority.Urgent,
 			IssuePriority.High,
@@ -114,7 +114,7 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 		 FROM issue_comments ic
 		 JOIN issues i ON i.id = ic.issue_id
 		 WHERE ic.content::text LIKE $1
-		   AND i.company_id = $2
+		   AND i.team_id = $2
 		   AND ic.created_at > COALESCE(
 		     (SELECT last_heartbeat_at FROM member_agents WHERE id = $3),
 		     now() - interval '1 hour'
@@ -122,7 +122,7 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 		   AND ic.author_member_id != $3
 		 ORDER BY ic.created_at DESC
 		 LIMIT 20`,
-		[`%@${agentRow.title.toLowerCase().replace(/\s+/g, '-')}%`, companyId, memberId],
+		[`%@${agentRow.title.toLowerCase().replace(/\s+/g, '-')}%`, teamId, memberId],
 	);
 
 	return ok(c, {
@@ -153,7 +153,7 @@ agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
-	const issueId = await resolveIssueId(db, auth.companyId, c.req.param('issueId'));
+	const issueId = await resolveIssueId(db, auth.teamId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const body = await c.req.json<{
@@ -188,7 +188,7 @@ agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
 	await fireCommentWakeups({
 		db,
 		issueId,
-		companyId: auth.companyId,
+		teamId: auth.teamId,
 		commentId: result.rows[0].id,
 		content: body.content,
 		contentType: body.content_type,
@@ -208,7 +208,7 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
-	const issueId = await resolveIssueId(db, auth.companyId, c.req.param('issueId'));
+	const issueId = await resolveIssueId(db, auth.teamId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const commentId = c.req.param('commentId');
 
@@ -266,10 +266,10 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 			);
 
 			await db.query(
-				`INSERT INTO cost_entries (company_id, member_id, issue_id, project_id, amount_cents, description)
+				`INSERT INTO cost_entries (team_id, member_id, issue_id, project_id, amount_cents, description)
 				 VALUES ($1, $2, $3, $4, $5, $6)`,
 				[
-					auth.companyId,
+					auth.teamId,
 					auth.memberId,
 					issueId,
 					issue.rows[0]?.project_id,
@@ -284,7 +284,7 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 					[AgentRuntimeStatus.Paused, auth.memberId],
 				);
 				const wsManager = c.get('wsManager');
-				wsManager.broadcast(wsRoom.company(auth.companyId), {
+				wsManager.broadcast(wsRoom.team(auth.teamId), {
 					type: 'row_change',
 					table: 'member_agents',
 					action: 'UPDATE',
@@ -325,11 +325,11 @@ agentApiRoutes.post('/secrets/request', async (c) => {
 	}
 
 	const result = await db.query<{ id: string; status: string }>(
-		`INSERT INTO approvals (company_id, type, payload)
+		`INSERT INTO approvals (team_id, type, payload)
 		 VALUES ($1, $2::approval_type, $3::jsonb)
 		 RETURNING id, status`,
 		[
-			auth.companyId,
+			auth.teamId,
 			ApprovalType.SecretAccess,
 			JSON.stringify({
 				member_id: auth.memberId,

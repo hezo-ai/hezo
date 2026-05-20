@@ -10,7 +10,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -20,17 +20,17 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'MCP Test Co', template_id: typeId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -46,7 +46,7 @@ describe('skill file', () => {
 		expect(res.status).toBe(200);
 		const text = await res.text();
 		expect(text).toContain('# Hezo Skill File');
-		expect(text).toContain('list_companies');
+		expect(text).toContain('list_teams');
 		expect(text).toContain('create_issue');
 	});
 });
@@ -82,7 +82,7 @@ describe('MCP endpoint', () => {
 		const body = await res.json();
 		expect(body.result.tools.length).toBeGreaterThan(0);
 		const toolNames = body.result.tools.map((t: any) => t.name);
-		expect(toolNames).toContain('list_companies');
+		expect(toolNames).toContain('list_teams');
 		expect(toolNames).toContain('create_issue');
 	});
 
@@ -93,7 +93,7 @@ describe('MCP endpoint', () => {
 			body: JSON.stringify({
 				jsonrpc: '2.0',
 				method: 'tools/call',
-				params: { name: 'list_companies', arguments: {} },
+				params: { name: 'list_teams', arguments: {} },
 				id: 3,
 			}),
 		});
@@ -113,7 +113,7 @@ describe('MCP endpoint', () => {
 			body: JSON.stringify({
 				jsonrpc: '2.0',
 				method: 'tools/call',
-				params: { name: 'list_agents', arguments: { company_id: companyId } },
+				params: { name: 'list_agents', arguments: { team_id: teamId } },
 				id: 4,
 			}),
 		});
@@ -125,14 +125,14 @@ describe('MCP endpoint', () => {
 	});
 
 	it('accepts an agent token whose run is active', async () => {
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 		const res = await app.request('/mcp', {
 			method: 'POST',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				jsonrpc: '2.0',
 				method: 'tools/call',
-				params: { name: 'list_companies', arguments: {} },
+				params: { name: 'list_teams', arguments: {} },
 				id: 5,
 			}),
 		});
@@ -194,7 +194,7 @@ describe('MCP endpoint', () => {
 			db,
 			masterKeyManager,
 			agentId,
-			companyId,
+			teamId,
 		);
 		await finalizeAgentRun(db, runId, 'succeeded');
 
@@ -204,7 +204,7 @@ describe('MCP endpoint', () => {
 			body: JSON.stringify({
 				jsonrpc: '2.0',
 				method: 'tools/call',
-				params: { name: 'list_companies', arguments: {} },
+				params: { name: 'list_teams', arguments: {} },
 				id: 6,
 			}),
 		});

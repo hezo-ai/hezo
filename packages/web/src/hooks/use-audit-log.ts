@@ -3,7 +3,7 @@ import { api } from '../lib/api';
 
 export interface AuditEntry {
 	id: string;
-	company_id: string;
+	team_id: string;
 	actor_type: string;
 	actor_member_id: string | null;
 	actor_name: string | null;
@@ -14,14 +14,11 @@ export interface AuditEntry {
 	created_at: string;
 }
 
-export function useAuditLog(
-	companyId: string,
-	filters?: { entity_type?: string; action?: string },
-) {
+export function useAuditLog(teamId: string, filters?: { entity_type?: string; action?: string }) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'audit-log', filters],
+		queryKey: ['teams', teamId, 'audit-log', filters],
 		queryFn: () =>
-			api.get<AuditEntry[]>(`/api/companies/${companyId}/audit-log`, {
+			api.get<AuditEntry[]>(`/api/teams/${teamId}/audit-log`, {
 				entity_type: filters?.entity_type,
 				action: filters?.action,
 				per_page: '50',

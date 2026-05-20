@@ -6,7 +6,7 @@ export interface WsEvent {
 export interface WsData {
 	auth: {
 		type: string;
-		companyId?: string;
+		teamId?: string;
 		userId?: string;
 		memberId?: string;
 		isSuperuser?: boolean;

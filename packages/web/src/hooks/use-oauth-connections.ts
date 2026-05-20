@@ -34,28 +34,28 @@ export interface DeviceFlowPending {
 
 export type DeviceFlowPollResult = DeviceFlowSuccess | DeviceFlowPending;
 
-export function useOAuthConnections(companyId: string) {
+export function useOAuthConnections(teamId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'oauth-connections'],
-		queryFn: () => api.get<OAuthConnection[]>(`/api/companies/${companyId}/oauth-connections`),
+		queryKey: ['teams', teamId, 'oauth-connections'],
+		queryFn: () => api.get<OAuthConnection[]>(`/api/teams/${teamId}/oauth-connections`),
 	});
 }
 
-export function useDeleteOAuthConnection(companyId: string) {
+export function useDeleteOAuthConnection(teamId: string) {
 	return useMutation({
-		mutationFn: (id: string) => api.delete(`/api/companies/${companyId}/oauth-connections/${id}`),
+		mutationFn: (id: string) => api.delete(`/api/teams/${teamId}/oauth-connections/${id}`),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'oauth-connections'],
+				queryKey: ['teams', teamId, 'oauth-connections'],
 			});
 		},
 	});
 }
 
-export function useStartGitHubDeviceFlow(companyId: string) {
+export function useStartGitHubDeviceFlow(teamId: string) {
 	return useMutation({
 		mutationFn: (scopes?: string[]) =>
-			api.post<DeviceFlowStart>(`/api/companies/${companyId}/oauth/github/device-start`, {
+			api.post<DeviceFlowStart>(`/api/teams/${teamId}/oauth/github/device-start`, {
 				scopes: scopes ?? [],
 			}),
 	});
@@ -67,26 +67,21 @@ export interface ScopeStatus {
 	required: string[];
 }
 
-export function useConnectionScopeStatus(
-	companyId: string,
-	connectionId: string | null | undefined,
-) {
+export function useConnectionScopeStatus(teamId: string, connectionId: string | null | undefined) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'oauth-connections', connectionId, 'scope-status'],
+		queryKey: ['teams', teamId, 'oauth-connections', connectionId, 'scope-status'],
 		queryFn: () =>
-			api.get<ScopeStatus>(
-				`/api/companies/${companyId}/oauth-connections/${connectionId}/scope-status`,
-			),
+			api.get<ScopeStatus>(`/api/teams/${teamId}/oauth-connections/${connectionId}/scope-status`),
 		enabled: !!connectionId,
 	});
 }
 
 export async function pollGitHubDeviceFlow(
-	companyId: string,
+	teamId: string,
 	flowId: string,
 ): Promise<DeviceFlowPollResult> {
 	const token = api.getToken();
-	const res = await fetch(`/api/companies/${companyId}/oauth/github/device-poll`, {
+	const res = await fetch(`/api/teams/${teamId}/oauth/github/device-poll`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',
@@ -99,7 +94,7 @@ export async function pollGitHubDeviceFlow(
 		throw new Error(json.error?.message ?? `device poll failed (${res.status})`);
 	}
 	if (json.data?.status === 'success') {
-		queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'oauth-connections'] });
+		queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'oauth-connections'] });
 	}
 	return json.data as DeviceFlowPollResult;
 }

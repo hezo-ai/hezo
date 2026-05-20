@@ -1,10 +1,10 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, createProjectAndClearPlanning } from './helpers';
+import { authenticate, createProjectAndClearPlanning, createTeamWithAgents } from './helpers';
 
-async function waitForContainer(page: Page, companyId: string, projectId: string, token: string) {
+async function waitForContainer(page: Page, teamId: string, projectId: string, token: string) {
 	const headers = { Authorization: `Bearer ${token}` };
 	for (let i = 0; i < 150; i++) {
-		const res = await page.request.get(`/api/companies/${companyId}/projects/${projectId}`, {
+		const res = await page.request.get(`/api/teams/${teamId}/projects/${projectId}`, {
 			headers,
 		});
 		const body = (await res.json()) as { data: { container_status?: string } };
@@ -25,7 +25,7 @@ interface RunListItem {
 
 async function waitForRunWithTrigger(
 	page: Page,
-	companyId: string,
+	teamId: string,
 	agentId: string,
 	token: string,
 	predicate: (run: RunListItem) => boolean,
@@ -34,10 +34,9 @@ async function waitForRunWithTrigger(
 	const headers = { Authorization: `Bearer ${token}` };
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
-		const res = await page.request.get(
-			`/api/companies/${companyId}/agents/${agentId}/heartbeat-runs`,
-			{ headers },
-		);
+		const res = await page.request.get(`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs`, {
+			headers,
+		});
 		const body = (await res.json()) as { data: RunListItem[] };
 		const match = body.data.find(
 			(r) => predicate(r) && (r.status === 'succeeded' || r.status === 'failed'),
@@ -50,25 +49,25 @@ async function waitForRunWithTrigger(
 
 test('run page shows trigger reason linking back to the source mention', async ({ page }) => {
 	await authenticate(page);
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
 	const architect = agents.find((a) => a.slug === 'architect') ?? agents[1];
 
-	const project = await createProjectAndClearPlanning(page, company.id, token, {
+	const project = await createProjectAndClearPlanning(page, team.id, token, {
 		name: 'Trigger Reason Project',
 		description: 'Test project.',
 	});
 
-	await waitForContainer(page, company.id, project.id, token);
+	await waitForContainer(page, team.id, project.id, token);
 
 	// Assign to the architect so the issue's auto-assignment wakeup goes to a
 	// different agent than the one we plan to wake via mention. That way the
 	// architect's mention-driven run is unambiguous to find.
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: {
 			project_id: project.id,
@@ -79,21 +78,21 @@ test('run page shows trigger reason linking back to the source mention', async (
 	});
 	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
 
-	await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+	await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 		headers,
 		data: { content_type: 'text', content: { text: `@${ceo.slug} please weigh in here` } },
 	});
 
 	const mentionRun = await waitForRunWithTrigger(
 		page,
-		company.id,
+		team.id,
 		ceo.id,
 		token,
 		(r) =>
 			r.trigger_source === 'mention' && r.trigger_comment_issue_identifier === issue.identifier,
 	);
 
-	await page.goto(`/companies/${company.slug}/agents/${ceo.id}/executions/${mentionRun.id}`);
+	await page.goto(`/teams/${team.slug}/agents/${ceo.id}/executions/${mentionRun.id}`);
 
 	const triggerRow = page.getByTestId('run-trigger-reason');
 	await expect(triggerRow).toBeVisible({ timeout: 15000 });
@@ -112,21 +111,21 @@ test('run page shows trigger reason linking back to the source mention', async (
 
 test('run list row shows the trigger reason summary', async ({ page }) => {
 	await authenticate(page);
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
 
-	const project = await createProjectAndClearPlanning(page, company.id, token, {
+	const project = await createProjectAndClearPlanning(page, team.id, token, {
 		name: 'Trigger List Project',
 		description: 'Test project.',
 	});
 
-	await waitForContainer(page, company.id, project.id, token);
+	await waitForContainer(page, team.id, project.id, token);
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: {
 			project_id: project.id,
@@ -139,9 +138,9 @@ test('run list row shows the trigger reason summary', async ({ page }) => {
 
 	// Wait for at least one terminal run on the assigned agent so the list page
 	// has a row to render.
-	await waitForRunWithTrigger(page, company.id, ceo.id, token, (r) => r.trigger_source !== null);
+	await waitForRunWithTrigger(page, team.id, ceo.id, token, (r) => r.trigger_source !== null);
 
-	await page.goto(`/companies/${company.slug}/agents/${ceo.id}/executions`);
+	await page.goto(`/teams/${team.slug}/agents/${ceo.id}/executions`);
 
 	const firstRow = page.locator('a[href*="/executions/"]').first();
 	await expect(firstRow).toBeVisible({ timeout: 15000 });

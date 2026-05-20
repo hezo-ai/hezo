@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
+import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Inbox / Approvals', () => {
 	test('inbox shows empty state when no approvals', async ({ page }) => {
 		await authenticate(page);
-		const { company } = await createCompanyWithAgents(page);
+		const { team } = await createTeamWithAgents(page);
 
-		await page.goto(`/companies/${company.slug}/inbox`);
+		await page.goto(`/teams/${team.slug}/inbox`);
 		await waitForPageLoad(page);
 
 		await expect(page.getByText('All clear')).toBeVisible({ timeout: 15000 });
@@ -15,11 +15,11 @@ test.describe('Inbox / Approvals', () => {
 
 	test('inbox shows pending approval with type badge', async ({ page }) => {
 		await authenticate(page);
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
 		// Create a pending approval via API
-		await page.request.post(`/api/companies/${company.id}/approvals`, {
+		await page.request.post(`/api/teams/${team.id}/approvals`, {
 			headers,
 			data: {
 				type: 'strategy',
@@ -27,7 +27,7 @@ test.describe('Inbox / Approvals', () => {
 			},
 		});
 
-		await page.goto(`/companies/${company.slug}/inbox`);
+		await page.goto(`/teams/${team.slug}/inbox`);
 		await waitForPageLoad(page);
 
 		// Verify approval card is visible with friendly message
@@ -42,10 +42,10 @@ test.describe('Inbox / Approvals', () => {
 
 	test('can approve a pending approval', async ({ page }) => {
 		await authenticate(page);
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		await page.request.post(`/api/companies/${company.id}/approvals`, {
+		await page.request.post(`/api/teams/${team.id}/approvals`, {
 			headers,
 			data: {
 				type: 'hire',
@@ -57,7 +57,7 @@ test.describe('Inbox / Approvals', () => {
 			},
 		});
 
-		await page.goto(`/companies/${company.slug}/inbox`);
+		await page.goto(`/teams/${team.slug}/inbox`);
 		await waitForPageLoad(page);
 
 		await expect(page.getByText('Proposing to hire')).toBeVisible({ timeout: 15000 });
@@ -71,10 +71,10 @@ test.describe('Inbox / Approvals', () => {
 
 	test('can deny a pending approval', async ({ page }) => {
 		await authenticate(page);
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		await page.request.post(`/api/companies/${company.id}/approvals`, {
+		await page.request.post(`/api/teams/${team.id}/approvals`, {
 			headers,
 			data: {
 				type: 'secret_access',
@@ -82,7 +82,7 @@ test.describe('Inbox / Approvals', () => {
 			},
 		});
 
-		await page.goto(`/companies/${company.slug}/inbox`);
+		await page.goto(`/teams/${team.slug}/inbox`);
 		await waitForPageLoad(page);
 
 		await expect(page.getByText('Requesting access to secret')).toBeVisible({ timeout: 15000 });
@@ -96,55 +96,55 @@ test.describe('Inbox / Approvals', () => {
 
 	test('sidebar has Inbox link', async ({ page }) => {
 		await authenticate(page);
-		const { company } = await createCompanyWithAgents(page);
+		const { team } = await createTeamWithAgents(page);
 
-		await page.goto(`/companies/${company.slug}/projects`);
+		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
 		// Sidebar should contain Inbox link
 		await expect(page.getByText('Inbox', { exact: true })).toBeVisible({ timeout: 15000 });
 	});
 
-	test('global inbox aggregates approvals from every company', async ({ page }) => {
+	test('global inbox aggregates approvals from every team', async ({ page }) => {
 		await authenticate(page);
-		const first = await createCompanyWithAgents(page);
-		const second = await createCompanyWithAgents(page);
+		const first = await createTeamWithAgents(page);
+		const second = await createTeamWithAgents(page);
 		const headers = {
 			Authorization: `Bearer ${first.token}`,
 			'Content-Type': 'application/json',
 		};
 
-		await page.request.post(`/api/companies/${first.company.id}/approvals`, {
+		await page.request.post(`/api/teams/${first.team.id}/approvals`, {
 			headers,
-			data: { type: 'strategy', payload: { plan: 'First company strategy' } },
+			data: { type: 'strategy', payload: { plan: 'First team strategy' } },
 		});
-		await page.request.post(`/api/companies/${second.company.id}/approvals`, {
+		await page.request.post(`/api/teams/${second.team.id}/approvals`, {
 			headers,
-			data: { type: 'plan_review', payload: { plan: 'Second company plan' } },
+			data: { type: 'plan_review', payload: { plan: 'Second team plan' } },
 		});
 
 		await page.goto('/inbox');
 		await waitForPageLoad(page);
 
 		await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible({ timeout: 15000 });
-		// Both approval types render friendly messages scoped to their company card.
-		// Other tests can leave pending approvals in unrelated companies, so scope
-		// the assertions to the specific approval cards for the companies we created.
+		// Both approval types render friendly messages scoped to their team card.
+		// Other tests can leave pending approvals in unrelated teams, so scope
+		// the assertions to the specific approval cards for the teams we created.
 		const firstCard = page
 			.locator('[data-testid="approval-card"]')
-			.filter({ hasText: first.company.name });
+			.filter({ hasText: first.team.name });
 		const secondCard = page
 			.locator('[data-testid="approval-card"]')
-			.filter({ hasText: second.company.name });
+			.filter({ hasText: second.team.name });
 		await expect(firstCard.getByText('Proposing strategy')).toBeVisible();
 		await expect(secondCard.getByText('Requesting plan review')).toBeVisible();
 	});
 
 	test('rail inbox icon navigates to global inbox', async ({ page }) => {
 		await authenticate(page);
-		await createCompanyWithAgents(page);
+		await createTeamWithAgents(page);
 
-		await page.goto('/companies');
+		await page.goto('/teams');
 		await waitForPageLoad(page);
 
 		await page.getByTitle('Inbox').click();

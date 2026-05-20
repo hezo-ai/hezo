@@ -4,29 +4,29 @@ import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 import { installLocalMcpById } from '../services/mcp-installer';
 
 const log = logger.child('mcp-connections-route');
 
 export const mcpConnectionsRoutes = new Hono<Env>();
 
-mcpConnectionsRoutes.get('/companies/:companyId/mcp-connections', async (c) => {
-	const access = await requireCompanyAccess(c);
+mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const projectId = c.req.query('project_id') ?? null;
 
-	const params: unknown[] = [companyId];
-	let where = 'company_id = $1';
+	const params: unknown[] = [teamId];
+	let where = 'team_id = $1';
 	if (projectId) {
 		where += ' AND (project_id IS NULL OR project_id = $2)';
 		params.push(projectId);
 	}
 	const result = await db.query(
-		`SELECT id, company_id, project_id, name, kind::text AS kind,
+		`SELECT id, team_id, project_id, name, kind::text AS kind,
 		        config, oauth_connection_id, install_status::text AS install_status, install_error,
 		        created_at, updated_at
 		 FROM mcp_connections
@@ -37,12 +37,12 @@ mcpConnectionsRoutes.get('/companies/:companyId/mcp-connections', async (c) => {
 	return ok(c, result.rows);
 });
 
-mcpConnectionsRoutes.post('/companies/:companyId/mcp-connections', async (c) => {
-	const access = await requireCompanyAccess(c);
+mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const body = await c.req.json<{
 		name: string;
@@ -69,30 +69,30 @@ mcpConnectionsRoutes.post('/companies/:companyId/mcp-connections', async (c) => 
 
 	if (body.oauth_connection_id) {
 		const ownership = await db.query<{ id: string }>(
-			`SELECT id FROM oauth_connections WHERE id = $1 AND company_id = $2`,
-			[body.oauth_connection_id, companyId],
+			`SELECT id FROM oauth_connections WHERE id = $1 AND team_id = $2`,
+			[body.oauth_connection_id, teamId],
 		);
 		if (ownership.rows.length === 0) {
-			return err(c, 'NOT_FOUND', 'oauth_connection_id does not belong to this company', 404);
+			return err(c, 'NOT_FOUND', 'oauth_connection_id does not belong to this team', 404);
 		}
 	}
 
 	const initialStatus = body.kind === McpConnectionKind.Saas ? 'installed' : 'pending';
 	const result = await db.query(
-		`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, oauth_connection_id, install_status)
+		`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, oauth_connection_id, install_status)
 		 VALUES ($1, $2, $3, $4::mcp_connection_kind, $5::jsonb, $6, $7::mcp_install_status)
-		 ON CONFLICT (company_id, project_id, name) DO UPDATE
+		 ON CONFLICT (team_id, project_id, name) DO UPDATE
 		 SET kind = EXCLUDED.kind,
 		     config = EXCLUDED.config,
 		     oauth_connection_id = EXCLUDED.oauth_connection_id,
 		     install_status = EXCLUDED.install_status,
 		     install_error = NULL,
 		     updated_at = now()
-		 RETURNING id, company_id, project_id, name, kind::text AS kind,
+		 RETURNING id, team_id, project_id, name, kind::text AS kind,
 		           config, oauth_connection_id, install_status::text AS install_status, install_error,
 		           created_at, updated_at`,
 		[
-			companyId,
+			teamId,
 			body.project_id ?? null,
 			body.name.trim(),
 			body.kind,
@@ -103,14 +103,14 @@ mcpConnectionsRoutes.post('/companies/:companyId/mcp-connections', async (c) => 
 	);
 
 	const inserted = result.rows[0] as Record<string, unknown>;
-	broadcastChange(c, wsRoom.company(companyId), 'mcp_connections', 'INSERT', inserted);
+	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'INSERT', inserted);
 
 	// Kick off install for local MCPs against any running project containers.
 	// We don't block the response — the route returns immediately and the
 	// install_status flips via broadcast on completion.
 	if (body.kind === McpConnectionKind.Local) {
-		void kickoffLocalInstall(c, companyId, body.project_id ?? null, inserted.id as string).catch(
-			(e) => log.warn('local mcp install kickoff failed', { error: (e as Error).message }),
+		void kickoffLocalInstall(c, teamId, body.project_id ?? null, inserted.id as string).catch((e) =>
+			log.warn('local mcp install kickoff failed', { error: (e as Error).message }),
 		);
 	}
 
@@ -119,7 +119,7 @@ mcpConnectionsRoutes.post('/companies/:companyId/mcp-connections', async (c) => 
 
 async function kickoffLocalInstall(
 	c: import('hono').Context<Env>,
-	companyId: string,
+	teamId: string,
 	projectId: string | null,
 	rowId: string,
 ): Promise<void> {
@@ -128,20 +128,20 @@ async function kickoffLocalInstall(
 
 	const candidates = await db.query<{ id: string; container_id: string | null }>(
 		`SELECT id, container_id FROM projects
-		 WHERE company_id = $1 AND container_id IS NOT NULL AND container_status = 'running'
+		 WHERE team_id = $1 AND container_id IS NOT NULL AND container_status = 'running'
 		   ${projectId ? 'AND id = $2' : ''}`,
-		projectId ? [companyId, projectId] : [companyId],
+		projectId ? [teamId, projectId] : [teamId],
 	);
 
 	for (const project of candidates.rows) {
 		if (!project.container_id) continue;
 		try {
 			const result = await installLocalMcpById(
-				{ db, docker, containerId: project.container_id, companyId, projectId: project.id },
+				{ db, docker, containerId: project.container_id, teamId, projectId: project.id },
 				rowId,
 			);
 			if (result) {
-				broadcastChange(c, wsRoom.company(companyId), 'mcp_connections', 'UPDATE', {
+				broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
 					id: rowId,
 					install_status: result.status,
 					install_error: result.error ?? null,
@@ -156,21 +156,21 @@ async function kickoffLocalInstall(
 	}
 }
 
-mcpConnectionsRoutes.delete('/companies/:companyId/mcp-connections/:id', async (c) => {
-	const access = await requireCompanyAccess(c);
+mcpConnectionsRoutes.delete('/teams/:teamId/mcp-connections/:id', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const id = c.req.param('id');
 
 	const result = await db.query<{ id: string }>(
-		'DELETE FROM mcp_connections WHERE id = $1 AND company_id = $2 RETURNING id',
-		[id, companyId],
+		'DELETE FROM mcp_connections WHERE id = $1 AND team_id = $2 RETURNING id',
+		[id, teamId],
 	);
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'MCP connection not found', 404);
 	}
-	broadcastChange(c, wsRoom.company(companyId), 'mcp_connections', 'DELETE', { id });
+	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'DELETE', { id });
 	return c.json({ data: null }, 200);
 });

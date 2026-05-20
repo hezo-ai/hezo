@@ -23,7 +23,7 @@ function createMockWs(auth: WsData['auth']): WsSocket & { _sent: string[] } {
 	};
 }
 
-async function seedCompanyWithProject(
+async function seedTeamWithProject(
 	db: PGlite,
 	opts: { container_status?: 'running' | 'stopped' | null; container_id?: string | null } = {},
 ) {
@@ -31,14 +31,14 @@ async function seedCompanyWithProject(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('U', false) RETURNING id",
 	);
 	const userId = user.rows[0].id;
-	const company = await db.query<{ id: string }>(
-		"INSERT INTO companies (name, slug) VALUES ('C', 'c') RETURNING id",
+	const team = await db.query<{ id: string }>(
+		"INSERT INTO teams (name, slug) VALUES ('C', 'c') RETURNING id",
 	);
-	const companyId = company.rows[0].id;
+	const teamId = team.rows[0].id;
 	const member = await db.query<{ id: string }>(
-		`INSERT INTO members (company_id, member_type, display_name)
+		`INSERT INTO members (team_id, member_type, display_name)
 		 VALUES ($1, 'user', 'M') RETURNING id`,
-		[companyId],
+		[teamId],
 	);
 	await db.query(`INSERT INTO member_users (id, user_id, role) VALUES ($1, $2, 'member')`, [
 		member.rows[0].id,
@@ -46,23 +46,23 @@ async function seedCompanyWithProject(
 	]);
 
 	const project = await db.query<{ id: string }>(
-		`INSERT INTO projects (company_id, name, slug, issue_prefix, container_id, container_status)
+		`INSERT INTO projects (team_id, name, slug, issue_prefix, container_id, container_status)
 		 VALUES ($1, 'P', 'p', 'P', $2, $3::container_status) RETURNING id`,
-		[companyId, opts.container_id ?? null, opts.container_status ?? null],
+		[teamId, opts.container_id ?? null, opts.container_status ?? null],
 	);
-	return { userId, companyId, projectId: project.rows[0].id };
+	return { userId, teamId, projectId: project.rows[0].id };
 }
 
-function canAccessCompanyFactory(db: PGlite) {
-	return async (auth: WsData['auth'], companyId: string): Promise<boolean> => {
+function canAccessTeamFactory(db: PGlite) {
+	return async (auth: WsData['auth'], teamId: string): Promise<boolean> => {
 		if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
-			return auth.companyId === companyId;
+			return auth.teamId === teamId;
 		}
 		if (auth.type === AuthType.Board) {
 			if (auth.isSuperuser) return true;
 			const result = await db.query(
-				'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.company_id = $2',
-				[auth.userId, companyId],
+				'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
+				[auth.userId, teamId],
 			);
 			return result.rows.length > 0;
 		}
@@ -97,14 +97,14 @@ describe('handleWsSubscribe', () => {
 			docker: mockDocker,
 			containerLogStreamer,
 			logs,
-			canAccessCompany: canAccessCompanyFactory(db),
+			canAccessTeam: canAccessTeamFactory(db),
 			sendToSocket: (_ws: WsSocket, _payload: unknown) => {},
 			...overrides,
 		};
 	}
 
 	it('subscribes a board member to project-runs and delivers broadcasts', async () => {
-		const { userId, projectId } = await seedCompanyWithProject(db);
+		const { userId, projectId } = await seedTeamWithProject(db);
 		const ws = createMockWs({ type: AuthType.Board, userId });
 
 		await handleWsSubscribe(ws, `project-runs:${projectId}`, deps());
@@ -121,8 +121,8 @@ describe('handleWsSubscribe', () => {
 		expect(JSON.parse(ws._sent[0]).text).toBe('hi');
 	});
 
-	it('rejects project-runs subscribe for a user without company access', async () => {
-		const { projectId } = await seedCompanyWithProject(db);
+	it('rejects project-runs subscribe for a user without team access', async () => {
+		const { projectId } = await seedTeamWithProject(db);
 		const other = await db.query<{ id: string }>(
 			"INSERT INTO users (display_name) VALUES ('Other') RETURNING id",
 		);
@@ -146,20 +146,20 @@ describe('handleWsSubscribe', () => {
 		expect(wsManager.getRoomSize(`project-runs:${fakeId}`)).toBe(0);
 	});
 
-	it('subscribes an agent whose companyId matches', async () => {
-		const { companyId, projectId } = await seedCompanyWithProject(db);
-		const ws = createMockWs({ type: AuthType.Agent, companyId, memberId: 'm1' });
+	it('subscribes an agent whose teamId matches', async () => {
+		const { teamId, projectId } = await seedTeamWithProject(db);
+		const ws = createMockWs({ type: AuthType.Agent, teamId, memberId: 'm1' });
 
 		await handleWsSubscribe(ws, `project-runs:${projectId}`, deps());
 
 		expect(wsManager.getRoomSize(`project-runs:${projectId}`)).toBe(1);
 	});
 
-	it('rejects an agent whose companyId does not match', async () => {
-		const { projectId } = await seedCompanyWithProject(db);
+	it('rejects an agent whose teamId does not match', async () => {
+		const { projectId } = await seedTeamWithProject(db);
 		const ws = createMockWs({
 			type: AuthType.Agent,
-			companyId: '00000000-0000-0000-0000-000000000000',
+			teamId: '00000000-0000-0000-0000-000000000000',
 			memberId: 'm1',
 		});
 
@@ -168,17 +168,17 @@ describe('handleWsSubscribe', () => {
 		expect(wsManager.getRoomSize(`project-runs:${projectId}`)).toBe(0);
 	});
 
-	it('subscribes a board member to company room when canAccessCompany passes', async () => {
-		const { userId, companyId } = await seedCompanyWithProject(db);
+	it('subscribes a board member to team room when canAccessTeam passes', async () => {
+		const { userId, teamId } = await seedTeamWithProject(db);
 		const ws = createMockWs({ type: AuthType.Board, userId });
 
-		await handleWsSubscribe(ws, wsRoom.company(companyId), deps());
+		await handleWsSubscribe(ws, wsRoom.team(teamId), deps());
 
-		expect(wsManager.getRoomSize(wsRoom.company(companyId))).toBe(1);
+		expect(wsManager.getRoomSize(wsRoom.team(teamId))).toBe(1);
 	});
 
 	it('subscribes to container-logs and replays buffered logs for that room', async () => {
-		const { userId, projectId } = await seedCompanyWithProject(db);
+		const { userId, projectId } = await seedTeamWithProject(db);
 		const ws = createMockWs({ type: AuthType.Board, userId });
 
 		logs.begin({
@@ -216,7 +216,7 @@ describe('handleWsSubscribe', () => {
 	});
 
 	it('replays buffered run logs as a single snapshot when subscribing to project-runs', async () => {
-		const { userId, projectId } = await seedCompanyWithProject(db);
+		const { userId, projectId } = await seedTeamWithProject(db);
 		const ws = createMockWs({ type: AuthType.Board, userId });
 
 		const runId = 'run-abc';
@@ -268,10 +268,10 @@ describe('handleWsUnsubscribe', () => {
 		const logs = new LogStreamBroker();
 		const ws = createMockWs({ type: AuthType.Board, userId: 'u1' });
 
-		wsManager.subscribe(ws, 'company:abc');
-		handleWsUnsubscribe(ws, 'company:abc', { wsManager, containerLogStreamer, logs });
+		wsManager.subscribe(ws, 'team:abc');
+		handleWsUnsubscribe(ws, 'team:abc', { wsManager, containerLogStreamer, logs });
 
-		expect(wsManager.getRoomSize('company:abc')).toBe(0);
+		expect(wsManager.getRoomSize('team:abc')).toBe(0);
 	});
 
 	it('stops container log streamer when last subscriber leaves container-logs room', () => {

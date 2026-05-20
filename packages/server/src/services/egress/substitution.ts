@@ -1,13 +1,13 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { decrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
-import { refreshExpiringTokensForCompany } from '../oauth/token-resolver';
+import { refreshExpiringTokensForTeam } from '../oauth/token-resolver';
 
 /**
  * Token agents emit in headers and URLs in place of real secret values.
  * The egress proxy intercepts every outbound request and substitutes
  * these tokens with the matching `secrets.name` from the caller's
- * company before the request leaves the host. Bodies are forwarded
+ * team before the request leaves the host. Bodies are forwarded
  * unchanged — agents that need a secret in a JSON payload should use
  * the local-MCP-with-proxy pattern instead.
  */
@@ -17,7 +17,7 @@ export const PLACEHOLDER_PROBE_REGEX = /__HEZO_SECRET_/;
 export interface SubstitutionScope {
 	db: PGlite;
 	masterKeyManager: MasterKeyManager;
-	companyId: string;
+	teamId: string;
 	projectId?: string | null;
 }
 
@@ -59,13 +59,13 @@ export async function loadSecretsForScope(
 		throw err;
 	}
 
-	await refreshExpiringTokensForCompany(
+	await refreshExpiringTokensForTeam(
 		{ db: scope.db, masterKeyManager: scope.masterKeyManager },
-		scope.companyId,
+		scope.teamId,
 	);
 
-	const params: unknown[] = [scope.companyId];
-	let where = 'company_id = $1';
+	const params: unknown[] = [scope.teamId];
+	let where = 'team_id = $1';
 	if (scope.projectId) {
 		where += ' AND (project_id IS NULL OR project_id = $2)';
 		params.push(scope.projectId);
@@ -89,7 +89,7 @@ export async function loadSecretsForScope(
 
 	const out = new Map<string, ResolvedSecret>();
 	for (const row of result.rows) {
-		// Project-scoped rows arrive after company-scoped rows in the ordering
+		// Project-scoped rows arrive after team-scoped rows in the ordering
 		// so the project row wins on identical names.
 		out.set(row.name, {
 			name: row.name,

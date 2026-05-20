@@ -15,7 +15,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let db: PGlite;
 let app: Hono<Env>;
 let token: string;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let researcherId: string;
 let productLeadId: string;
@@ -27,26 +27,26 @@ beforeAll(async () => {
 	app = ctx.app;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
-	const companyTypeId = (await typesRes.json()).data.find(
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+	const teamTemplateId = (await typesRes.json()).data.find(
 		(t: { name: string }) => t.name === 'Startup',
 	).id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Dep Gate Co', template_id: companyTypeId }),
+		body: JSON.stringify({ name: 'Dep Gate Co', template_id: teamTemplateId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Gate Project', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -64,7 +64,7 @@ async function createIssue(
 	assigneeId: string,
 	blockedBy?: string[],
 ): Promise<{ id: string; identifier: string }> {
-	const res = await app.request(`/api/companies/${companyId}/issues`, {
+	const res = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -79,7 +79,7 @@ async function createIssue(
 }
 
 async function setStatus(issueId: string, status: string): Promise<void> {
-	const res = await app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+	const res = await app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 		method: 'PATCH',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ status }),
@@ -135,7 +135,7 @@ describe('dependency gate — hasOpenBlockers / cycles', () => {
 		const a = await createIssue('cycle-create A', researcherId);
 		const b = await createIssue('cycle-create B', productLeadId, [a.identifier]);
 
-		const res = await app.request(`/api/companies/${companyId}/issues`, {
+		const res = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -148,14 +148,11 @@ describe('dependency gate — hasOpenBlockers / cycles', () => {
 		expect(res.status).toBe(201);
 		const c = (await res.json()).data as { id: string };
 
-		const aBlockedByC = await app.request(
-			`/api/companies/${companyId}/issues/${a.id}/dependencies`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ blocked_by_issue_id: c.id }),
-			},
-		);
+		const aBlockedByC = await app.request(`/api/teams/${teamId}/issues/${a.id}/dependencies`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ blocked_by_issue_id: c.id }),
+		});
 		expect(aBlockedByC.status).toBe(400);
 	});
 });
@@ -258,14 +255,14 @@ describe('dependency gate — wakeup deferral and reverse trigger', () => {
 			[WakeupStatus.Deferred, productLeadId, p.id],
 		);
 
-		const depsRes = await app.request(`/api/companies/${companyId}/issues/${p.id}/dependencies`, {
+		const depsRes = await app.request(`/api/teams/${teamId}/issues/${p.id}/dependencies`, {
 			headers: authHeader(token),
 		});
 		const deps = (await depsRes.json()).data as Array<{ id: string }>;
 		expect(deps.length).toBe(1);
 
 		const delRes = await app.request(
-			`/api/companies/${companyId}/issues/${p.id}/dependencies/${deps[0].id}`,
+			`/api/teams/${teamId}/issues/${p.id}/dependencies/${deps[0].id}`,
 			{ method: 'DELETE', headers: authHeader(token) },
 		);
 		expect(delRes.status).toBe(200);
@@ -314,7 +311,7 @@ async function getIssueStatus(issueId: string): Promise<string> {
 }
 
 async function addDependency(issueId: string, blockerIdentifier: string): Promise<{ id: string }> {
-	const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/dependencies`, {
+	const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/dependencies`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ blocked_by_issue_id: blockerIdentifier }),
@@ -324,10 +321,10 @@ async function addDependency(issueId: string, blockerIdentifier: string): Promis
 }
 
 async function deleteDependency(issueId: string, depId: string): Promise<void> {
-	const res = await app.request(
-		`/api/companies/${companyId}/issues/${issueId}/dependencies/${depId}`,
-		{ method: 'DELETE', headers: authHeader(token) },
-	);
+	const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/dependencies/${depId}`, {
+		method: 'DELETE',
+		headers: authHeader(token),
+	});
 	expect(res.status).toBe(200);
 }
 
@@ -435,10 +432,9 @@ describe('blocked-status invariant', () => {
 		const downstream = await createIssue('inv-event-down', productLeadId);
 		await addDependency(downstream.id, upstream.identifier);
 
-		const commentsRes = await app.request(
-			`/api/companies/${companyId}/issues/${downstream.id}/comments`,
-			{ headers: authHeader(token) },
-		);
+		const commentsRes = await app.request(`/api/teams/${teamId}/issues/${downstream.id}/comments`, {
+			headers: authHeader(token),
+		});
 		const comments = (await commentsRes.json()).data as Array<{
 			content_type: string;
 			content: { kind?: string; from?: string; to?: string };

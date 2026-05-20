@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -17,13 +17,13 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	// Create a company with agents
-	const typesRes = await app.request('/api/company-types', {
+	// Create a team with agents
+	const typesRes = await app.request('/api/team-templates', {
 		headers: authHeader(token),
 	});
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -31,10 +31,10 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
 	// Get an agent ID
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -48,7 +48,7 @@ describe('secrets CRUD', () => {
 	let secretId: string;
 
 	it('creates a secret (value encrypted)', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -68,7 +68,7 @@ describe('secrets CRUD', () => {
 	});
 
 	it('lists secrets (no values)', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -80,7 +80,7 @@ describe('secrets CRUD', () => {
 
 	it('creates and revokes a secret grant', async () => {
 		// Create grant
-		const grantRes = await app.request(`/api/companies/${companyId}/secrets/${secretId}/grants`, {
+		const grantRes = await app.request(`/api/teams/${teamId}/secrets/${secretId}/grants`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ agent_id: agentId, scope: 'single' }),
@@ -90,13 +90,13 @@ describe('secrets CRUD', () => {
 		expect(grant.scope).toBe('single');
 
 		// List grants
-		const listRes = await app.request(`/api/companies/${companyId}/secrets/${secretId}/grants`, {
+		const listRes = await app.request(`/api/teams/${teamId}/secrets/${secretId}/grants`, {
 			headers: authHeader(token),
 		});
 		expect((await listRes.json()).data).toHaveLength(1);
 
 		// Revoke
-		const revokeRes = await app.request(`/api/companies/${companyId}/secret-grants/${grant.id}`, {
+		const revokeRes = await app.request(`/api/teams/${teamId}/secret-grants/${grant.id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -106,7 +106,7 @@ describe('secrets CRUD', () => {
 	});
 
 	it('deletes a secret', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets/${secretId}`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets/${secretId}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});

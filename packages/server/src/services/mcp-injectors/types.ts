@@ -4,7 +4,7 @@
  * env entries, on-disk config files) that the runtime CLI will pick up.
  *
  * The runner always emits the built-in Hezo server (HTTP) plus zero or
- * more per-company / per-project descriptors loaded from `mcp_connections`.
+ * more per-team / per-project descriptors loaded from `mcp_connections`.
  */
 export type McpDescriptor = McpHttpDescriptor | McpStdioDescriptor;
 

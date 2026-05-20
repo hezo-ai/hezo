@@ -48,7 +48,7 @@ export class SshAgentServer {
 
 	async allocateRunSocket(
 		runId: string,
-		identity: { companyId: string; agentId: string },
+		identity: { teamId: string; agentId: string },
 		socketHostPath: string,
 	): Promise<AllocatedSocket> {
 		await mkdir(dirname(socketHostPath), { recursive: true, mode: 0o700 });
@@ -60,7 +60,7 @@ export class SshAgentServer {
 		this.registry.set(runId, {
 			identity: fullIdentity,
 			socketHostPath,
-			resolveKeys: () => this.loadKeysForCompany(identity.companyId),
+			resolveKeys: () => this.loadKeysForTeam(identity.teamId),
 		});
 
 		const unixServer = createServer((socket) => {
@@ -244,7 +244,7 @@ export class SshAgentServer {
 		}
 	}
 
-	private async loadKeysForCompany(companyId: string): Promise<KeyEntry[]> {
+	private async loadKeysForTeam(teamId: string): Promise<KeyEntry[]> {
 		const encryptionKey = this.deps.masterKeyManager.getKey();
 		if (!encryptionKey) {
 			throw new Error('Master key not available');
@@ -254,10 +254,10 @@ export class SshAgentServer {
 			encrypted_value: string;
 		}>(
 			`SELECT k.public_key, s.encrypted_value
-			 FROM company_ssh_keys k
+			 FROM team_ssh_keys k
 			 JOIN secrets s ON s.id = k.private_key_secret_id
-			 WHERE k.company_id = $1`,
-			[companyId],
+			 WHERE k.team_id = $1`,
+			[teamId],
 		);
 		return result.rows.map((row) => {
 			const blob = sshPublicKeyToBlob(row.public_key);
@@ -265,7 +265,7 @@ export class SshAgentServer {
 			const privateKey = createPrivateKey({ key: privateKeyPem, format: 'pem' });
 			return {
 				keyBlob: blob,
-				comment: `hezo:${companyId}`,
+				comment: `hezo:${teamId}`,
 				privateKey,
 			};
 		});

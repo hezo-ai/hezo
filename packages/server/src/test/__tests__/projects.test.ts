@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 
 const VALID_DESCRIPTION = 'A backend API that serves authenticated requests for the main app.';
 
@@ -18,12 +18,12 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Project Test Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 });
 
 afterAll(async () => {
@@ -32,7 +32,7 @@ afterAll(async () => {
 
 describe('projects CRUD', () => {
 	it('creates a project with description and auto-opens a planning issue for the CEO', async () => {
-		const res = await app.request(`/api/companies/${companyId}/projects`, {
+		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -44,14 +44,14 @@ describe('projects CRUD', () => {
 		const body = await res.json();
 		expect(body.data.name).toBe('Backend API');
 		expect(body.data.slug).toBe('backend-api');
-		expect(body.data.company_id).toBe(companyId);
+		expect(body.data.team_id).toBe(teamId);
 		expect(body.data.description).toBe(VALID_DESCRIPTION);
 
 		const ceoResult = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE m.company_id = $1 AND ma.slug = 'ceo' LIMIT 1`,
-			[companyId],
+			 WHERE m.team_id = $1 AND ma.slug = 'ceo' LIMIT 1`,
+			[teamId],
 		);
 		const ceoId = ceoResult.rows[0]?.id;
 		expect(ceoId).toBeDefined();
@@ -89,8 +89,8 @@ describe('projects CRUD', () => {
 			payload: Record<string, unknown> | string;
 		}>(
 			`SELECT source, payload FROM agent_wakeup_requests
-			 WHERE member_id = $1 AND company_id = $2 AND source = 'assignment'`,
-			[ceoId, companyId],
+			 WHERE member_id = $1 AND team_id = $2 AND source = 'assignment'`,
+			[ceoId, teamId],
 		);
 		expect(wakeupResult.rows.length).toBeGreaterThanOrEqual(1);
 		const payload =
@@ -101,7 +101,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('defaults docker_base_image to the bundled agent-base image when not supplied', async () => {
-		const res = await app.request(`/api/companies/${companyId}/projects`, {
+		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -115,7 +115,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('honors an explicit docker_base_image from the request body', async () => {
-		const res = await app.request(`/api/companies/${companyId}/projects`, {
+		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -130,7 +130,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('rejects a missing description', async () => {
-		const res = await app.request(`/api/companies/${companyId}/projects`, {
+		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Missing description' }),
@@ -139,7 +139,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('rejects a blank description', async () => {
-		const res = await app.request(`/api/companies/${companyId}/projects`, {
+		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Blank description', description: '   ' }),
@@ -148,7 +148,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('lists projects with counts', async () => {
-		const res = await app.request(`/api/companies/${companyId}/projects`, {
+		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -159,12 +159,12 @@ describe('projects CRUD', () => {
 	});
 
 	it('gets a project by id with repos', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const listRes = await app.request(`/api/teams/${teamId}/projects`, {
 			headers: authHeader(token),
 		});
 		const project = (await listRes.json()).data[0];
 
-		const res = await app.request(`/api/companies/${companyId}/projects/${project.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/projects/${project.id}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -173,14 +173,14 @@ describe('projects CRUD', () => {
 	});
 
 	it('updates a project', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const listRes = await app.request(`/api/teams/${teamId}/projects`, {
 			headers: authHeader(token),
 		});
 		const project = (await listRes.json()).data.find(
 			(p: { slug: string }) => p.slug === 'backend-api',
 		);
 
-		const res = await app.request(`/api/companies/${companyId}/projects/${project.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/projects/${project.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ description: 'Updated description body.' }),
@@ -191,12 +191,12 @@ describe('projects CRUD', () => {
 	});
 
 	it('generates unique slugs for same-named projects', async () => {
-		const res1 = await app.request(`/api/companies/${companyId}/projects`, {
+		const res1 = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Same Name', description: VALID_DESCRIPTION }),
 		});
-		const res2 = await app.request(`/api/companies/${companyId}/projects`, {
+		const res2 = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Same Name', description: VALID_DESCRIPTION }),
@@ -210,7 +210,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('deletes a project with no open issues', async () => {
-		const createRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const createRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Temp Project', description: VALID_DESCRIPTION }),
@@ -222,7 +222,7 @@ describe('projects CRUD', () => {
 			project.id,
 		]);
 
-		const res = await app.request(`/api/companies/${companyId}/projects/${project.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/projects/${project.id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -233,7 +233,7 @@ describe('projects CRUD', () => {
 describe('initial PRD upload', () => {
 	it('saves initial_prd as a project doc and references it in the planning issue', async () => {
 		const prdContent = '# My Product\n\n## Overview\nA tool for managing widgets.';
-		const res = await app.request(`/api/companies/${companyId}/projects`, {
+		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -262,7 +262,7 @@ describe('initial PRD upload', () => {
 	});
 
 	it('does not create initial-prd.md when initial_prd is not provided', async () => {
-		const res = await app.request(`/api/companies/${companyId}/projects`, {
+		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -287,7 +287,7 @@ describe('initial PRD upload', () => {
 	});
 
 	it('ignores empty/whitespace-only initial_prd', async () => {
-		const res = await app.request(`/api/companies/${companyId}/projects`, {
+		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -309,14 +309,14 @@ describe('initial PRD upload', () => {
 
 describe('slug-based project access', () => {
 	it('gets a project by slug', async () => {
-		const listRes = await app.request(`/api/companies/${companyId}/projects`, {
+		const listRes = await app.request(`/api/teams/${teamId}/projects`, {
 			headers: authHeader(token),
 		});
 		const project = (await listRes.json()).data.find(
 			(p: { slug: string }) => p.slug === 'backend-api',
 		);
 
-		const res = await app.request(`/api/companies/${companyId}/projects/${project.slug}`, {
+		const res = await app.request(`/api/teams/${teamId}/projects/${project.slug}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -326,21 +326,21 @@ describe('slug-based project access', () => {
 	});
 
 	it('returns 404 for non-existent project slug', async () => {
-		const res = await app.request(`/api/companies/${companyId}/projects/nonexistent-slug`, {
+		const res = await app.request(`/api/teams/${teamId}/projects/nonexistent-slug`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(404);
 	});
 
-	it('accesses company by slug and project by slug together', async () => {
-		const companiesRes = await app.request('/api/companies', {
+	it('accesses team by slug and project by slug together', async () => {
+		const teamsRes = await app.request('/api/teams', {
 			headers: authHeader(token),
 		});
-		const company = (await companiesRes.json()).data.find(
+		const team = (await teamsRes.json()).data.find(
 			(c: { slug: string }) => c.slug === 'project-test-co',
 		);
 
-		const res = await app.request(`/api/companies/${company.slug}/projects/backend-api`, {
+		const res = await app.request(`/api/teams/${team.slug}/projects/backend-api`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -349,7 +349,7 @@ describe('slug-based project access', () => {
 	});
 
 	it('updates a project by slug', async () => {
-		const res = await app.request(`/api/companies/${companyId}/projects/backend-api`, {
+		const res = await app.request(`/api/teams/${teamId}/projects/backend-api`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ description: 'Slug-based update' }),

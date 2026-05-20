@@ -7,7 +7,7 @@ import {
 	deleteConnection,
 	findConnectionByAccount,
 	getConnection,
-	listConnectionsForCompany,
+	listConnectionsForTeam,
 	oauthSecretName,
 	updateTokens,
 } from '../../services/oauth/connection-store';
@@ -16,17 +16,17 @@ import { createTestApp } from '../helpers/app';
 
 let db: PGlite;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
 	db = ctx.db;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const company = await db.query<{ id: string }>(
-		`INSERT INTO companies (name, slug) VALUES ('OAuth Co', 'oauth-co') RETURNING id`,
+	const team = await db.query<{ id: string }>(
+		`INSERT INTO teams (name, slug) VALUES ('OAuth Co', 'oauth-co') RETURNING id`,
 	);
-	companyId = company.rows[0].id;
+	teamId = team.rows[0].id;
 });
 
 afterAll(async () => {
@@ -40,7 +40,7 @@ describe('oauth connection store', () => {
 		const result = await createConnection(
 			{ db, masterKeyManager },
 			{
-				companyId,
+				teamId,
 				provider: 'github',
 				providerAccountId: '12345',
 				providerAccountLabel: 'octocat',
@@ -70,11 +70,11 @@ describe('oauth connection store', () => {
 		connectionId = result.id;
 	});
 
-	it('upserts on (company, provider, provider_account_id) — replacing the previous tokens', async () => {
+	it('upserts on (team, provider, provider_account_id) — replacing the previous tokens', async () => {
 		const result = await createConnection(
 			{ db, masterKeyManager },
 			{
-				companyId,
+				teamId,
 				provider: 'github',
 				providerAccountId: '12345',
 				providerAccountLabel: 'octocat-renamed',
@@ -92,8 +92,8 @@ describe('oauth connection store', () => {
 		expect(conn?.providerAccountLabel).toBe('octocat-renamed');
 	});
 
-	it('lists connections for a company', async () => {
-		const list = await listConnectionsForCompany({ db, masterKeyManager }, companyId);
+	it('lists connections for a team', async () => {
+		const list = await listConnectionsForTeam({ db, masterKeyManager }, teamId);
 		expect(list.length).toBe(1);
 		expect(list[0].provider).toBe('github');
 	});
@@ -101,7 +101,7 @@ describe('oauth connection store', () => {
 	it('finds a connection by provider account', async () => {
 		const found = await findConnectionByAccount(
 			{ db, masterKeyManager },
-			companyId,
+			teamId,
 			'github',
 			'12345',
 		);
@@ -109,7 +109,7 @@ describe('oauth connection store', () => {
 
 		const missing = await findConnectionByAccount(
 			{ db, masterKeyManager },
-			companyId,
+			teamId,
 			'github',
 			'nope',
 		);
@@ -149,8 +149,8 @@ describe('oauth connection store', () => {
 
 	it('deletes a connection — also deletes its secret rows and nulls FKs from repos/mcp_connections', async () => {
 		await db.query(
-			`INSERT INTO projects (company_id, name, slug, issue_prefix) VALUES ($1, 'P', 'p', 'P')`,
-			[companyId],
+			`INSERT INTO projects (team_id, name, slug, issue_prefix) VALUES ($1, 'P', 'p', 'P')`,
+			[teamId],
 		);
 		const proj = await db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = 'p'`);
 		const projectId = proj.rows[0].id;
@@ -163,9 +163,9 @@ describe('oauth connection store', () => {
 		const repoId = repo.rows[0].id;
 
 		await db.query(
-			`INSERT INTO mcp_connections (company_id, name, kind, config, oauth_connection_id)
+			`INSERT INTO mcp_connections (team_id, name, kind, config, oauth_connection_id)
 			 VALUES ($1, 'datocms', 'saas', '{}'::jsonb, $2)`,
-			[companyId, connectionId],
+			[teamId, connectionId],
 		);
 
 		const conn = await getConnection({ db, masterKeyManager }, connectionId);

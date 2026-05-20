@@ -14,7 +14,7 @@ import { Input } from './ui/input';
 interface RepoPickerModalProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	companyId: string;
+	teamId: string;
 	projectId: string;
 	oauthConnectionId: string;
 }
@@ -33,7 +33,7 @@ function slugify(value: string): string {
 export function RepoPickerModal({
 	open,
 	onOpenChange,
-	companyId,
+	teamId,
 	projectId,
 	oauthConnectionId,
 }: RepoPickerModalProps) {
@@ -48,9 +48,9 @@ export function RepoPickerModal({
 	const [newRepoPrivate, setNewRepoPrivate] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 
-	const createRepo = useCreateRepo(companyId, projectId);
-	const orgsQuery = useGitHubOrgs(companyId, open ? oauthConnectionId : null);
-	const reposQuery = useGitHubReposForOwner(companyId, oauthConnectionId, owner, debouncedSearch);
+	const createRepo = useCreateRepo(teamId, projectId);
+	const orgsQuery = useGitHubOrgs(teamId, open ? oauthConnectionId : null);
+	const reposQuery = useGitHubReposForOwner(teamId, oauthConnectionId, owner, debouncedSearch);
 
 	useEffect(() => {
 		if (!open) {

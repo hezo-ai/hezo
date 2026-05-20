@@ -8,7 +8,7 @@ const log = logger.child('oauth-connections');
 
 export interface OAuthConnectionRow {
 	id: string;
-	companyId: string;
+	teamId: string;
 	provider: string;
 	providerAccountId: string;
 	providerAccountLabel: string;
@@ -28,7 +28,7 @@ export interface ConnectionStoreDeps {
 }
 
 export interface CreateConnectionInput {
-	companyId: string;
+	teamId: string;
 	provider: string;
 	providerAccountId: string;
 	providerAccountLabel: string;
@@ -51,7 +51,7 @@ export interface UpdateTokensInput {
 /**
  * Token name format: `OAUTH_<PROVIDER>_<8-char hex prefix of connection id>`.
  * The full UUID is in the FK; the prefix in the name keeps the placeholder
- * short while remaining unique per (company, project=NULL).
+ * short while remaining unique per (team, project=NULL).
  */
 export function oauthSecretName(
 	provider: string,
@@ -80,27 +80,27 @@ export async function createConnection(
 	await deps.db.query('BEGIN');
 	try {
 		const accessSecret = await deps.db.query<{ id: string }>(
-			`INSERT INTO secrets (company_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
+			`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
 			 VALUES ($1, NULL, $2, $3, 'api_token', $4, false)
 			 RETURNING id`,
-			[input.companyId, accessName, encrypt(input.accessToken, key), allowedHosts],
+			[input.teamId, accessName, encrypt(input.accessToken, key), allowedHosts],
 		);
 		const accessSecretId = accessSecret.rows[0].id;
 
 		let refreshSecretId: string | null = null;
 		if (input.refreshToken && refreshName) {
 			const refreshSecret = await deps.db.query<{ id: string }>(
-				`INSERT INTO secrets (company_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
+				`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
 				 VALUES ($1, NULL, $2, $3, 'api_token', $4, false)
 				 RETURNING id`,
-				[input.companyId, refreshName, encrypt(input.refreshToken, key), allowedHosts],
+				[input.teamId, refreshName, encrypt(input.refreshToken, key), allowedHosts],
 			);
 			refreshSecretId = refreshSecret.rows[0].id;
 		}
 
 		const conn = await deps.db.query<{
 			id: string;
-			company_id: string;
+			team_id: string;
 			provider: string;
 			provider_account_id: string;
 			provider_account_label: string;
@@ -113,10 +113,10 @@ export async function createConnection(
 			updated_at: Date;
 		}>(
 			`INSERT INTO oauth_connections
-				(id, company_id, provider, provider_account_id, provider_account_label,
+				(id, team_id, provider, provider_account_id, provider_account_label,
 				 access_token_secret_id, refresh_token_secret_id, scopes, expires_at, metadata)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-			 ON CONFLICT (company_id, provider, provider_account_id)
+			 ON CONFLICT (team_id, provider, provider_account_id)
 			 DO UPDATE SET
 				provider_account_label = EXCLUDED.provider_account_label,
 				access_token_secret_id = EXCLUDED.access_token_secret_id,
@@ -127,7 +127,7 @@ export async function createConnection(
 			 RETURNING *`,
 			[
 				connectionId,
-				input.companyId,
+				input.teamId,
 				input.provider,
 				input.providerAccountId,
 				input.providerAccountLabel,
@@ -168,40 +168,40 @@ export async function getConnection(
 	return mapRow(result.rows[0], result.rows[0].access_token_secret_name);
 }
 
-export async function getConnectionForCompany(
+export async function getConnectionForTeam(
 	deps: ConnectionStoreDeps,
-	companyId: string,
+	teamId: string,
 	connectionId: string,
 ): Promise<OAuthConnectionRow | null> {
 	const result = await deps.db.query<RawConnRow>(
 		`SELECT oc.*, s.name AS access_token_secret_name
 		 FROM oauth_connections oc
 		 JOIN secrets s ON s.id = oc.access_token_secret_id
-		 WHERE oc.id = $1 AND oc.company_id = $2`,
-		[connectionId, companyId],
+		 WHERE oc.id = $1 AND oc.team_id = $2`,
+		[connectionId, teamId],
 	);
 	if (result.rows.length === 0) return null;
 	return mapRow(result.rows[0], result.rows[0].access_token_secret_name);
 }
 
-export async function listConnectionsForCompany(
+export async function listConnectionsForTeam(
 	deps: ConnectionStoreDeps,
-	companyId: string,
+	teamId: string,
 ): Promise<OAuthConnectionRow[]> {
 	const result = await deps.db.query<RawConnRow>(
 		`SELECT oc.*, s.name AS access_token_secret_name
 		 FROM oauth_connections oc
 		 JOIN secrets s ON s.id = oc.access_token_secret_id
-		 WHERE oc.company_id = $1
+		 WHERE oc.team_id = $1
 		 ORDER BY oc.created_at DESC`,
-		[companyId],
+		[teamId],
 	);
 	return result.rows.map((r) => mapRow(r, r.access_token_secret_name));
 }
 
 export async function findConnectionByAccount(
 	deps: ConnectionStoreDeps,
-	companyId: string,
+	teamId: string,
 	provider: string,
 	providerAccountId: string,
 ): Promise<OAuthConnectionRow | null> {
@@ -209,8 +209,8 @@ export async function findConnectionByAccount(
 		`SELECT oc.*, s.name AS access_token_secret_name
 		 FROM oauth_connections oc
 		 JOIN secrets s ON s.id = oc.access_token_secret_id
-		 WHERE oc.company_id = $1 AND oc.provider = $2 AND oc.provider_account_id = $3`,
-		[companyId, provider, providerAccountId],
+		 WHERE oc.team_id = $1 AND oc.provider = $2 AND oc.provider_account_id = $3`,
+		[teamId, provider, providerAccountId],
 	);
 	if (result.rows.length === 0) return null;
 	return mapRow(result.rows[0], result.rows[0].access_token_secret_name);
@@ -285,8 +285,8 @@ export async function updateTokens(
 		} else if (input.refreshToken && !conn.refreshTokenSecretId) {
 			const refreshName = oauthSecretName(conn.provider, conn.id, 'refresh');
 			const inserted = await deps.db.query<{ id: string }>(
-				`INSERT INTO secrets (company_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
-				 SELECT company_id, NULL, $1, $2, 'api_token', allowed_hosts, allow_all_hosts
+				`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
+				 SELECT team_id, NULL, $1, $2, 'api_token', allowed_hosts, allow_all_hosts
 				 FROM secrets WHERE id = $3
 				 RETURNING id`,
 				[refreshName, encrypt(input.refreshToken, key), conn.accessTokenSecretId],
@@ -311,7 +311,7 @@ export async function updateTokens(
 
 interface RawConnRow {
 	id: string;
-	company_id: string;
+	team_id: string;
 	provider: string;
 	provider_account_id: string;
 	provider_account_label: string;
@@ -328,7 +328,7 @@ interface RawConnRow {
 function mapRow(row: RawConnRow, accessName: string): OAuthConnectionRow {
 	return {
 		id: row.id,
-		companyId: row.company_id,
+		teamId: row.team_id,
 		provider: row.provider,
 		providerAccountId: row.provider_account_id,
 		providerAccountLabel: row.provider_account_label,

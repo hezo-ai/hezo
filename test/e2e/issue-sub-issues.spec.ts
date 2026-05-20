@@ -1,25 +1,25 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
+import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test('sub-issues panel is expanded by default and collapses on click', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string; slug: string }[];
 	const ceo = agents.find((a) => a.slug === 'ceo')!;
 	const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Sub-Issues Project', description: 'Seeded for sub-issues test.' },
 	});
 	const project = (await projectRes.json()).data;
 
-	const parentRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const parentRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: { project_id: project.id, title: 'Parent Issue', assignee_id: engineer.id },
 	});
@@ -34,17 +34,17 @@ test('sub-issues panel is expanded by default and collapses on click', async ({ 
 		assignee_id: engineer.id,
 	};
 	const childARes = await page.request.post(
-		`/api/companies/${company.id}/issues/${parent.id}/sub-issues`,
+		`/api/teams/${team.id}/issues/${parent.id}/sub-issues`,
 		{ headers, data: childAPayload },
 	);
 	expect(childARes.ok()).toBeTruthy();
 	const childBRes = await page.request.post(
-		`/api/companies/${company.id}/issues/${parent.id}/sub-issues`,
+		`/api/teams/${team.id}/issues/${parent.id}/sub-issues`,
 		{ headers, data: childBPayload },
 	);
 	expect(childBRes.ok()).toBeTruthy();
 
-	await page.goto(`/companies/${company.id}/issues/${parent.id}`);
+	await page.goto(`/teams/${team.id}/issues/${parent.id}`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Parent Issue' })).toBeVisible({ timeout: 20000 });
 
@@ -65,35 +65,35 @@ test('sub-issues panel is expanded by default and collapses on click', async ({ 
 	await expect(toggle).toHaveAttribute('aria-expanded', 'false');
 	await expect(list).toBeHidden();
 
-	// CEO agent variable retained to validate presence in the seeded company.
+	// CEO agent variable retained to validate presence in the seeded team.
 	expect(ceo).toBeDefined();
 });
 
-test('sub-issues paginate to company page size with a Show more link', async ({ page }) => {
+test('sub-issues paginate to team page size with a Show more link', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	// Set the page size to 3 for this company so we don't have to seed dozens of sub-issues.
-	const patchRes = await page.request.patch(`/api/companies/${company.id}`, {
+	// Set the page size to 3 for this team so we don't have to seed dozens of sub-issues.
+	const patchRes = await page.request.patch(`/api/teams/${team.id}`, {
 		headers,
 		data: { settings: { subtask_page_size: 3 } },
 	});
 	expect(patchRes.ok()).toBeTruthy();
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string; slug: string }[];
 	const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Pagination Project', description: 'Seeded for pagination test.' },
 	});
 	const project = (await projectRes.json()).data;
 
-	const parentRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const parentRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: { project_id: project.id, title: 'Pagination Parent', assignee_id: engineer.id },
 	});
@@ -101,14 +101,14 @@ test('sub-issues paginate to company page size with a Show more link', async ({ 
 
 	const titles = ['Sub A', 'Sub B', 'Sub C', 'Sub D', 'Sub E', 'Sub F', 'Sub G'];
 	for (const title of titles) {
-		const res = await page.request.post(
-			`/api/companies/${company.id}/issues/${parent.id}/sub-issues`,
-			{ headers, data: { title, assignee_id: engineer.id } },
-		);
+		const res = await page.request.post(`/api/teams/${team.id}/issues/${parent.id}/sub-issues`, {
+			headers,
+			data: { title, assignee_id: engineer.id },
+		});
 		expect(res.ok()).toBeTruthy();
 	}
 
-	await page.goto(`/companies/${company.id}/issues/${parent.id}`);
+	await page.goto(`/teams/${team.id}/issues/${parent.id}`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Pagination Parent' })).toBeVisible({
 		timeout: 20000,
@@ -138,20 +138,20 @@ test('sub-issues panel sits between description card and comments', async ({ pag
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string; slug: string }[];
 	const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Layout Project', description: 'Seeded for layout check.' },
 	});
 	const project = (await projectRes.json()).data;
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: {
 			project_id: project.id,
@@ -162,7 +162,7 @@ test('sub-issues panel sits between description card and comments', async ({ pag
 	});
 	const issue = (await issueRes.json()).data;
 
-	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Layout Parent' })).toBeVisible({
 		timeout: 20000,

@@ -12,13 +12,13 @@ import {
 	MSG_REQUEST_IDENTITIES,
 } from '../../services/ssh-agent/protocol';
 import { SshAgentServer, sshPublicKeyToBlob } from '../../services/ssh-agent/server';
-import { generateCompanySSHKey } from '../../services/ssh-keys';
+import { generateTeamSSHKey } from '../../services/ssh-keys';
 import { safeClose } from '../helpers';
 import { createTestApp } from '../helpers/app';
 
 let db: PGlite;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let publicKey: string;
 let server: SshAgentServer;
 let dataDir: string;
@@ -51,14 +51,14 @@ beforeAll(async () => {
 	db = ctx.db;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const companyRes = await ctx.app.request('/api/companies', {
+	const teamRes = await ctx.app.request('/api/teams', {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Host Agent Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const ssh = await generateCompanySSHKey(db, companyId, masterKeyManager);
+	const ssh = await generateTeamSSHKey(db, teamId, masterKeyManager);
 	publicKey = ssh.publicKey;
 
 	dataDir = mkdtempSync(join(tmpdir(), 'hezo-host-agent-'));
@@ -71,9 +71,9 @@ afterAll(async () => {
 });
 
 describe('withHostAgentSocket', () => {
-	it('allocates a socket that advertises the company key, then releases on exit', async () => {
+	it('allocates a socket that advertises the team key, then releases on exit', async () => {
 		let observedPath = '';
-		await withHostAgentSocket(server, companyId, dataDir, async ({ sshAuthSock }) => {
+		await withHostAgentSocket(server, teamId, dataDir, async ({ sshAuthSock }) => {
 			observedPath = sshAuthSock;
 			expect(existsSync(sshAuthSock)).toBe(true);
 
@@ -92,7 +92,7 @@ describe('withHostAgentSocket', () => {
 	it('releases the socket even if fn throws', async () => {
 		let observedPath = '';
 		await expect(
-			withHostAgentSocket(server, companyId, dataDir, async ({ sshAuthSock }) => {
+			withHostAgentSocket(server, teamId, dataDir, async ({ sshAuthSock }) => {
 				observedPath = sshAuthSock;
 				throw new Error('boom');
 			}),

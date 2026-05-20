@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 let projectId: string;
 
@@ -18,13 +18,13 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	// Create a company with Startup template
-	const typesRes = await app.request('/api/company-types', {
+	// Create a team with Startup template
+	const typesRes = await app.request('/api/team-templates', {
 		headers: authHeader(token),
 	});
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -32,16 +32,16 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
 	// Get an agent ID
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
 	// Create a project
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Test Project', description: 'Test project.' }),
@@ -57,7 +57,7 @@ describe('secrets PATCH (update)', () => {
 	let secretId: string;
 
 	beforeAll(async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -70,7 +70,7 @@ describe('secrets PATCH (update)', () => {
 	});
 
 	it('updates value only', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets/${secretId}`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets/${secretId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ value: 'new-value' }),
@@ -84,7 +84,7 @@ describe('secrets PATCH (update)', () => {
 	});
 
 	it('updates category only', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets/${secretId}`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets/${secretId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ category: 'credential' }),
@@ -95,7 +95,7 @@ describe('secrets PATCH (update)', () => {
 	});
 
 	it('updates both value and category', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets/${secretId}`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets/${secretId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ value: 'updated-value', category: 'api_token' }),
@@ -107,7 +107,7 @@ describe('secrets PATCH (update)', () => {
 
 	it('returns 404 when secret does not exist', async () => {
 		const fakeId = '00000000-0000-0000-0000-000000000000';
-		const res = await app.request(`/api/companies/${companyId}/secrets/${fakeId}`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets/${fakeId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ value: 'irrelevant' }),
@@ -122,7 +122,7 @@ describe('secrets GET with project_id filter', () => {
 
 	beforeAll(async () => {
 		// Create a secret scoped to the project
-		const res1 = await app.request(`/api/companies/${companyId}/secrets`, {
+		const res1 = await app.request(`/api/teams/${teamId}/secrets`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -134,7 +134,7 @@ describe('secrets GET with project_id filter', () => {
 		secretWithProjectId = (await res1.json()).data.id;
 
 		// Create a secret with no project
-		const res2 = await app.request(`/api/companies/${companyId}/secrets`, {
+		const res2 = await app.request(`/api/teams/${teamId}/secrets`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -146,7 +146,7 @@ describe('secrets GET with project_id filter', () => {
 	});
 
 	it('returns all secrets when no project_id filter', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -157,7 +157,7 @@ describe('secrets GET with project_id filter', () => {
 	});
 
 	it('returns only project-scoped secrets when project_id filter is given', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets?project_id=${projectId}`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets?project_id=${projectId}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -172,11 +172,11 @@ describe('secrets GET with project_id filter', () => {
 	});
 });
 
-describe('GET /companies/:companyId/secrets/:secretId/grants', () => {
+describe('GET /teams/:teamId/secrets/:secretId/grants', () => {
 	let secretId: string;
 
 	beforeAll(async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'GRANTS_LIST_SECRET', value: 'val' }),
@@ -185,7 +185,7 @@ describe('GET /companies/:companyId/secrets/:secretId/grants', () => {
 	});
 
 	it('returns empty grants list when no grants exist', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets/${secretId}/grants`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets/${secretId}/grants`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -193,19 +193,19 @@ describe('GET /companies/:companyId/secrets/:secretId/grants', () => {
 	});
 
 	it('returns grants after one is created', async () => {
-		await app.request(`/api/companies/${companyId}/secrets/${secretId}/grants`, {
+		await app.request(`/api/teams/${teamId}/secrets/${secretId}/grants`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ agent_id: agentId, scope: 'company' }),
+			body: JSON.stringify({ agent_id: agentId, scope: 'team' }),
 		});
 
-		const res = await app.request(`/api/companies/${companyId}/secrets/${secretId}/grants`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets/${secretId}/grants`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data).toHaveLength(1);
-		expect(body.data[0].scope).toBe('company');
+		expect(body.data[0].scope).toBe('team');
 		expect(body.data[0].agent_id).toBe(agentId);
 		expect(body.data[0]).toHaveProperty('granted_at');
 	});
@@ -213,7 +213,7 @@ describe('GET /companies/:companyId/secrets/:secretId/grants', () => {
 
 describe('secrets validation', () => {
 	it('returns 400 when name is missing on create', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ value: 'some-value' }),
@@ -222,7 +222,7 @@ describe('secrets validation', () => {
 	});
 
 	it('returns 400 when value is missing on create', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'NO_VALUE_SECRET' }),
@@ -231,7 +231,7 @@ describe('secrets validation', () => {
 	});
 
 	it('returns 400 when both name and value are missing on create', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ category: 'api_token' }),
@@ -240,7 +240,7 @@ describe('secrets validation', () => {
 	});
 
 	it('returns 400 when name is blank (whitespace only) on create', async () => {
-		const res = await app.request(`/api/companies/${companyId}/secrets`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: '   ', value: 'some-value' }),
@@ -252,7 +252,7 @@ describe('secrets validation', () => {
 describe('secrets DELETE 404', () => {
 	it('returns 404 when deleting a non-existent secret', async () => {
 		const fakeId = '00000000-0000-0000-0000-000000000001';
-		const res = await app.request(`/api/companies/${companyId}/secrets/${fakeId}`, {
+		const res = await app.request(`/api/teams/${teamId}/secrets/${fakeId}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -263,7 +263,7 @@ describe('secrets DELETE 404', () => {
 describe('secret grant revoke 404', () => {
 	it('returns 404 when revoking a non-existent grant', async () => {
 		const fakeGrantId = '00000000-0000-0000-0000-000000000002';
-		const res = await app.request(`/api/companies/${companyId}/secret-grants/${fakeGrantId}`, {
+		const res = await app.request(`/api/teams/${teamId}/secret-grants/${fakeGrantId}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});

@@ -11,7 +11,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 
 let architectId: string;
@@ -26,19 +26,19 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Batch Issues Co', template_id: typeId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -48,7 +48,7 @@ beforeAll(async () => {
 	engineerId = bySlug('engineer')!.id;
 	ceoId = bySlug(CEO_AGENT_SLUG)!.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Batch Project', description: 'For batch tests.' }),
@@ -81,9 +81,9 @@ async function callMcpTool(
 	return JSON.parse(body.result.content[0].text);
 }
 
-describe('POST /companies/:companyId/issues/batch (board caller)', () => {
+describe('POST /teams/:teamId/issues/batch (board caller)', () => {
 	it('creates all valid items with sequential identifiers in one project', async () => {
-		const r = await app.request(`/api/companies/${companyId}/issues/batch`, {
+		const r = await app.request(`/api/teams/${teamId}/issues/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -108,7 +108,7 @@ describe('POST /companies/:companyId/issues/batch (board caller)', () => {
 	});
 
 	it('returns per-item errors with index for mixed batches', async () => {
-		const r = await app.request(`/api/companies/${companyId}/issues/batch`, {
+		const r = await app.request(`/api/teams/${teamId}/issues/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -130,7 +130,7 @@ describe('POST /companies/:companyId/issues/batch (board caller)', () => {
 	});
 
 	it('records created_by_member_id consistently for board callers', async () => {
-		const r = await app.request(`/api/companies/${companyId}/issues/batch`, {
+		const r = await app.request(`/api/teams/${teamId}/issues/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -147,21 +147,21 @@ describe('POST /companies/:companyId/issues/batch (board caller)', () => {
 	});
 
 	it('rejects empty, non-array, and oversized item lists', async () => {
-		const emptyRes = await app.request(`/api/companies/${companyId}/issues/batch`, {
+		const emptyRes = await app.request(`/api/teams/${teamId}/issues/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ items: [] }),
 		});
 		expect(emptyRes.status).toBe(400);
 
-		const nonArrayRes = await app.request(`/api/companies/${companyId}/issues/batch`, {
+		const nonArrayRes = await app.request(`/api/teams/${teamId}/issues/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ items: 'nope' }),
 		});
 		expect(nonArrayRes.status).toBe(400);
 
-		const oversizedRes = await app.request(`/api/companies/${companyId}/issues/batch`, {
+		const oversizedRes = await app.request(`/api/teams/${teamId}/issues/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -182,11 +182,11 @@ describe('MCP tool: create_issues (agent caller)', () => {
 			db,
 			masterKeyManager,
 			architectId,
-			companyId,
+			teamId,
 		);
 
 		const result = (await callMcpTool(architectToken, 'create_issues', {
-			company_id: companyId,
+			team_id: teamId,
 			items: [
 				{
 					project_id: projectId,
@@ -238,7 +238,7 @@ describe('MCP tool: create_issues (agent caller)', () => {
 				params: {
 					name: 'create_issues',
 					arguments: {
-						company_id: companyId,
+						team_id: teamId,
 						items: Array.from({ length: 51 }, (_, i) => ({
 							project_id: projectId,
 							title: `Too many ${i}`,

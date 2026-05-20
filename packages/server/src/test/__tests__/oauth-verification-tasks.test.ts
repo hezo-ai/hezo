@@ -10,7 +10,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 let ceoMemberId: string;
 let parentProjectId: string;
 
@@ -20,29 +20,29 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'OAuth Verif Co', template_id: typeId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
 	const ceo = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = 'ceo'`,
-		[companyId],
+		 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+		[teamId],
 	);
 	ceoMemberId = ceo.rows[0].id;
 
 	const ops = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE company_id = $1 AND slug = 'operations'`,
-		[companyId],
+		`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
+		[teamId],
 	);
 	parentProjectId = ops.rows[0].id;
 });
@@ -57,7 +57,7 @@ beforeEach(async () => {
 
 describe('enqueueOAuthVerificationTask', () => {
 	it('creates an Operations issue assigned to the CEO with high priority and the label', async () => {
-		const result = await enqueueOAuthVerificationTask(db, companyId, PlatformType.GitHub, null, {
+		const result = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, null, {
 			username: 'octocat',
 		});
 		expect(result).toBeTruthy();
@@ -82,8 +82,8 @@ describe('enqueueOAuthVerificationTask', () => {
 		expect(issue.parent_issue_id).toBeNull();
 
 		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE company_id = $1 AND slug = 'operations'`,
-			[companyId],
+			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
+			[teamId],
 		);
 		expect(issue.project_id).toBe(ops.rows[0].id);
 
@@ -102,11 +102,11 @@ describe('enqueueOAuthVerificationTask', () => {
 			[parentProjectId],
 		);
 		const parent = await db.query<{ id: string; identifier: string }>(
-			`INSERT INTO issues (company_id, project_id, number, identifier, title)
+			`INSERT INTO issues (team_id, project_id, number, identifier, title)
 			 VALUES ($1, $2, $3, $4, 'Originating ticket')
 			 RETURNING id, identifier`,
 			[
-				companyId,
+				teamId,
 				parentProjectId,
 				meta.rows[0].number,
 				`${meta.rows[0].issue_prefix}-${meta.rows[0].number}`,
@@ -116,7 +116,7 @@ describe('enqueueOAuthVerificationTask', () => {
 
 		const result = await enqueueOAuthVerificationTask(
 			db,
-			companyId,
+			teamId,
 			PlatformType.GitHub,
 			parentId,
 			{},
@@ -132,8 +132,8 @@ describe('enqueueOAuthVerificationTask', () => {
 	});
 
 	it('dedups by returning the existing open issue and posting a system comment', async () => {
-		const first = await enqueueOAuthVerificationTask(db, companyId, PlatformType.GitHub, null, {});
-		const second = await enqueueOAuthVerificationTask(db, companyId, PlatformType.GitHub, null, {});
+		const first = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, null, {});
+		const second = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, null, {});
 		expect(second?.issueId).toBe(first?.issueId);
 		expect(second?.created).toBe(false);
 
@@ -145,7 +145,7 @@ describe('enqueueOAuthVerificationTask', () => {
 	});
 
 	it('creates a wakeup for the CEO when enqueueing', async () => {
-		const result = await enqueueOAuthVerificationTask(db, companyId, PlatformType.GitHub, null, {});
+		const result = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, null, {});
 		const wakeups = await db.query<{ source: string; payload: Record<string, unknown> }>(
 			`SELECT source, payload FROM agent_wakeup_requests WHERE member_id = $1`,
 			[ceoMemberId],
@@ -156,20 +156,20 @@ describe('enqueueOAuthVerificationTask', () => {
 	});
 
 	it('creates a separate issue per platform', async () => {
-		const github = await enqueueOAuthVerificationTask(db, companyId, PlatformType.GitHub, null, {});
-		const stripe = await enqueueOAuthVerificationTask(db, companyId, PlatformType.Stripe, null, {});
+		const github = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, null, {});
+		const stripe = await enqueueOAuthVerificationTask(db, teamId, PlatformType.Stripe, null, {});
 		expect(github?.issueId).not.toBe(stripe?.issueId);
 		expect(github?.created).toBe(true);
 		expect(stripe?.created).toBe(true);
 	});
 
 	it('closes the dedup window when the prior issue reaches a terminal status', async () => {
-		const first = await enqueueOAuthVerificationTask(db, companyId, PlatformType.GitHub, null, {});
+		const first = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, null, {});
 		await db.query('UPDATE issues SET status = $1::issue_status WHERE id = $2', [
 			IssueStatus.Done,
 			first!.issueId,
 		]);
-		const second = await enqueueOAuthVerificationTask(db, companyId, PlatformType.GitHub, null, {});
+		const second = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, null, {});
 		expect(second?.issueId).not.toBe(first?.issueId);
 		expect(second?.created).toBe(true);
 	});

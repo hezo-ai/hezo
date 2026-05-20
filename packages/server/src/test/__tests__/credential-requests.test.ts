@@ -11,7 +11,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let issueId: string;
 let agentId: string;
@@ -24,35 +24,35 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Cred Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Main', description: 'Main project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Cred Agent' }),
 	});
 	agentId = (await agentRes.json()).data.id;
 
-	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title: 'Need creds', assignee_id: agentId }),
 	});
 	issueId = (await issueRes.json()).data.id;
 
-	const minted = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+	const minted = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 	agentToken = minted.token;
 });
 
@@ -78,7 +78,7 @@ async function callRequestCredential(args: Record<string, unknown>): Promise<unk
 describe('request_credential MCP tool', () => {
 	it('rejects invalid name', async () => {
 		const result = (await callRequestCredential({
-			company_id: companyId,
+			team_id: teamId,
 			issue_id: issueId,
 			name: 'lowercase_name',
 			kind: 'api_key',
@@ -89,7 +89,7 @@ describe('request_credential MCP tool', () => {
 
 	it('rejects name with hyphens or special chars', async () => {
 		const result = (await callRequestCredential({
-			company_id: companyId,
+			team_id: teamId,
 			issue_id: issueId,
 			name: 'GITHUB-PAT',
 			kind: 'api_key',
@@ -100,7 +100,7 @@ describe('request_credential MCP tool', () => {
 
 	it('creates a credential_request comment and returns placeholder', async () => {
 		const result = (await callRequestCredential({
-			company_id: companyId,
+			team_id: teamId,
 			issue_id: issueId,
 			name: 'STRIPE_API_KEY',
 			kind: 'api_key',
@@ -126,7 +126,7 @@ describe('request_credential MCP tool', () => {
 
 	it('returns the existing comment on duplicate request (idempotent)', async () => {
 		const first = (await callRequestCredential({
-			company_id: companyId,
+			team_id: teamId,
 			issue_id: issueId,
 			name: 'DUPLICATE_KEY',
 			kind: 'api_key',
@@ -135,7 +135,7 @@ describe('request_credential MCP tool', () => {
 		expect(first.reused).toBe(false);
 
 		const second = (await callRequestCredential({
-			company_id: companyId,
+			team_id: teamId,
 			issue_id: issueId,
 			name: 'DUPLICATE_KEY',
 			kind: 'api_key',
@@ -145,18 +145,18 @@ describe('request_credential MCP tool', () => {
 		expect(second.comment_id).toBe(first.comment_id);
 	});
 
-	it('rejects access from a different company', async () => {
-		const otherCompanyRes = await app.request('/api/companies', {
+	it('rejects access from a different team', async () => {
+		const otherTeamRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Other Co' }),
 		});
-		const otherCompanyId = (await otherCompanyRes.json()).data.id;
+		const otherTeamId = (await otherTeamRes.json()).data.id;
 
 		const result = (await callRequestCredential({
-			company_id: otherCompanyId,
+			team_id: otherTeamId,
 			issue_id: issueId,
-			name: 'CROSS_COMPANY',
+			name: 'CROSS_TEAM',
 			kind: 'api_key',
 			instructions: 'test',
 		})) as { error?: string };
@@ -169,7 +169,7 @@ describe('fulfill-credential endpoint', () => {
 
 	it('creates a credential request to fulfill', async () => {
 		const result = (await callRequestCredential({
-			company_id: companyId,
+			team_id: teamId,
 			issue_id: issueId,
 			name: 'FULFILL_TEST_KEY',
 			kind: 'api_key',
@@ -180,9 +180,9 @@ describe('fulfill-credential endpoint', () => {
 	});
 
 	it('stores the value encrypted and grants access to the requesting agent', async () => {
-		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 		const res = await app.request(
-			`/api/companies/${companyId}/issues/${issueId}/comments/${credentialCommentId}/fulfill-credential`,
+			`/api/teams/${teamId}/issues/${issueId}/comments/${credentialCommentId}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -232,7 +232,7 @@ describe('fulfill-credential endpoint', () => {
 
 	it('rejects fulfilling the same comment twice', async () => {
 		const res = await app.request(
-			`/api/companies/${companyId}/issues/${issueId}/comments/${credentialCommentId}/fulfill-credential`,
+			`/api/teams/${teamId}/issues/${issueId}/comments/${credentialCommentId}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -245,7 +245,7 @@ describe('fulfill-credential endpoint', () => {
 	});
 
 	it('rejects fulfill on a non-credential-request comment', async () => {
-		const textRes = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		const textRes = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content_type: 'text', content: { text: 'not a creq' } }),
@@ -253,7 +253,7 @@ describe('fulfill-credential endpoint', () => {
 		const textComment = (await textRes.json()).data;
 
 		const res = await app.request(
-			`/api/companies/${companyId}/issues/${issueId}/comments/${textComment.id}/fulfill-credential`,
+			`/api/teams/${teamId}/issues/${issueId}/comments/${textComment.id}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -267,7 +267,7 @@ describe('fulfill-credential endpoint', () => {
 
 	it('rejects bad GitHub PAT format', async () => {
 		const reqResult = (await callRequestCredential({
-			company_id: companyId,
+			team_id: teamId,
 			issue_id: issueId,
 			name: 'BAD_PAT_TEST',
 			kind: 'github_pat',
@@ -275,7 +275,7 @@ describe('fulfill-credential endpoint', () => {
 		})) as { comment_id: string };
 
 		const res = await app.request(
-			`/api/companies/${companyId}/issues/${issueId}/comments/${reqResult.comment_id}/fulfill-credential`,
+			`/api/teams/${teamId}/issues/${issueId}/comments/${reqResult.comment_id}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -289,7 +289,7 @@ describe('fulfill-credential endpoint', () => {
 
 	it('accepts a well-formed classic GitHub PAT', async () => {
 		const reqResult = (await callRequestCredential({
-			company_id: companyId,
+			team_id: teamId,
 			issue_id: issueId,
 			name: 'GOOD_PAT_TEST',
 			kind: 'github_pat',
@@ -297,7 +297,7 @@ describe('fulfill-credential endpoint', () => {
 		})) as { comment_id: string };
 
 		const res = await app.request(
-			`/api/companies/${companyId}/issues/${issueId}/comments/${reqResult.comment_id}/fulfill-credential`,
+			`/api/teams/${teamId}/issues/${issueId}/comments/${reqResult.comment_id}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -309,7 +309,7 @@ describe('fulfill-credential endpoint', () => {
 
 	it('fulfills a confirmation-style request with confirmed=true', async () => {
 		const reqResult = (await callRequestCredential({
-			company_id: companyId,
+			team_id: teamId,
 			issue_id: issueId,
 			name: 'CONFIRM_TEST',
 			kind: 'other',
@@ -318,7 +318,7 @@ describe('fulfill-credential endpoint', () => {
 		})) as { comment_id: string };
 
 		const res = await app.request(
-			`/api/companies/${companyId}/issues/${issueId}/comments/${reqResult.comment_id}/fulfill-credential`,
+			`/api/teams/${teamId}/issues/${issueId}/comments/${reqResult.comment_id}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },

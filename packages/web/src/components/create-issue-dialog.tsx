@@ -12,14 +12,14 @@ import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 import { Input } from './ui/input';
 
 interface CreateIssueDialogProps {
-	companyId: string;
+	teamId: string;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	defaultProjectId?: string;
 }
 
 export function CreateIssueDialog({
-	companyId,
+	teamId,
 	open,
 	onOpenChange,
 	defaultProjectId,
@@ -29,9 +29,9 @@ export function CreateIssueDialog({
 	const [projectId, setProjectId] = useState(defaultProjectId ?? '');
 	const [assigneeId, setAssigneeId] = useState('');
 	const [priority, setPriority] = useState('medium');
-	const { data: projects } = useProjects(companyId);
-	const { data: agents } = useAgents(companyId);
-	const createIssue = useCreateIssue(companyId);
+	const { data: projects } = useProjects(teamId);
+	const { data: agents } = useAgents(teamId);
+	const createIssue = useCreateIssue(teamId);
 	const navigate = useNavigate();
 
 	const selectedProject = projects?.find((p) => p.id === projectId);
@@ -69,17 +69,17 @@ export function CreateIssueDialog({
 		const targetProjectSlug = selectedProject?.slug ?? result.project_slug;
 		if (targetProjectSlug) {
 			navigate({
-				to: '/companies/$companyId/projects/$projectId/issues/$issueId',
+				to: '/teams/$teamId/projects/$projectId/issues/$issueId',
 				params: {
-					companyId,
+					teamId,
 					projectId: targetProjectSlug,
 					issueId: result.identifier.toLowerCase(),
 				},
 			});
 		} else {
 			navigate({
-				to: '/companies/$companyId/issues/$issueId',
-				params: { companyId, issueId: result.identifier.toLowerCase() },
+				to: '/teams/$teamId/issues/$issueId',
+				params: { teamId, issueId: result.identifier.toLowerCase() },
 			});
 		}
 	}
@@ -110,7 +110,7 @@ export function CreateIssueDialog({
 							required
 						/>
 						<MentionTextarea
-							companyId={companyId}
+							teamId={teamId}
 							projectSlug={selectedProject?.slug}
 							label="Description"
 							value={description}

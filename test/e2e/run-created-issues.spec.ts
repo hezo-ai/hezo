@@ -1,22 +1,22 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents } from './helpers';
+import { authenticate, createTeamWithAgents } from './helpers';
 
 test('run comment shows created tickets as links to their pages', async ({ page }) => {
 	await authenticate(page);
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Spawned Tickets Project', description: 'Test project.' },
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: {
 			project_id: project.id,
@@ -52,7 +52,7 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 		author_member_id: ceo.id,
 	};
 
-	await page.route(`**/api/companies/*/issues/*/comments**`, async (route) => {
+	await page.route(`**/api/teams/*/issues/*/comments**`, async (route) => {
 		if (route.request().method() !== 'GET') return route.continue();
 		await route.fulfill({
 			status: 200,
@@ -64,7 +64,7 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 	const runResponse = {
 		id: runId,
 		member_id: ceo.id,
-		company_id: company.id,
+		team_id: team.id,
 		issue_id: issue.id,
 		issue_identifier: 'PARENT-1',
 		issue_title: 'Parent With Spawns',
@@ -83,7 +83,7 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 		created_issues: [spawnedA, spawnedB],
 	};
 
-	await page.route(`**/api/companies/*/agents/${ceo.id}/heartbeat-runs/${runId}`, async (route) => {
+	await page.route(`**/api/teams/*/agents/${ceo.id}/heartbeat-runs/${runId}`, async (route) => {
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
@@ -91,7 +91,7 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 		});
 	});
 
-	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
@@ -105,33 +105,33 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 	});
 	await expect(linkA).toHaveAttribute(
 		'href',
-		`/companies/${company.slug}/projects/${project.slug}/issues/${spawnedA.identifier.toLowerCase()}`,
+		`/teams/${team.slug}/projects/${project.slug}/issues/${spawnedA.identifier.toLowerCase()}`,
 	);
 	const linkB = createdSection.getByRole('link', {
 		name: `${spawnedB.identifier} — ${spawnedB.title}`,
 	});
 	await expect(linkB).toHaveAttribute(
 		'href',
-		`/companies/${company.slug}/projects/${project.slug}/issues/${spawnedB.identifier.toLowerCase()}`,
+		`/teams/${team.slug}/projects/${project.slug}/issues/${spawnedB.identifier.toLowerCase()}`,
 	);
 });
 
 test('run comment omits created tickets section when list is empty', async ({ page }) => {
 	await authenticate(page);
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Empty Project', description: 'Test project.' },
 	});
 	const project = ((await projectRes.json()) as { data: { id: string } }).data;
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: {
 			project_id: project.id,
@@ -154,7 +154,7 @@ test('run comment omits created tickets section when list is empty', async ({ pa
 		author_member_id: ceo.id,
 	};
 
-	await page.route(`**/api/companies/*/issues/*/comments**`, async (route) => {
+	await page.route(`**/api/teams/*/issues/*/comments**`, async (route) => {
 		if (route.request().method() !== 'GET') return route.continue();
 		await route.fulfill({
 			status: 200,
@@ -166,7 +166,7 @@ test('run comment omits created tickets section when list is empty', async ({ pa
 	const runResponse = {
 		id: runId,
 		member_id: ceo.id,
-		company_id: company.id,
+		team_id: team.id,
 		issue_id: issue.id,
 		issue_identifier: 'PARENT-2',
 		issue_title: 'Parent No Spawns',
@@ -185,7 +185,7 @@ test('run comment omits created tickets section when list is empty', async ({ pa
 		created_issues: [],
 	};
 
-	await page.route(`**/api/companies/*/agents/${ceo.id}/heartbeat-runs/${runId}`, async (route) => {
+	await page.route(`**/api/teams/*/agents/${ceo.id}/heartbeat-runs/${runId}`, async (route) => {
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
@@ -193,7 +193,7 @@ test('run comment omits created tickets section when list is empty', async ({ pa
 		});
 	});
 
-	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });

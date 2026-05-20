@@ -10,7 +10,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let issueId: string;
 let agentId: string;
@@ -23,21 +23,21 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Comment Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Main', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Comment Bot' }),
@@ -46,7 +46,7 @@ beforeAll(async () => {
 	agentId = agent.id;
 	agentSlug = agent.slug;
 
-	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title: 'Test Issue', assignee_id: agentId }),
@@ -60,7 +60,7 @@ afterAll(async () => {
 
 describe('comments CRUD', () => {
 	it('creates a text comment', async () => {
-		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -76,7 +76,7 @@ describe('comments CRUD', () => {
 
 	it('lists comments in order', async () => {
 		// Add another comment
-		await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -85,7 +85,7 @@ describe('comments CRUD', () => {
 			}),
 		});
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -96,8 +96,8 @@ describe('comments CRUD', () => {
 	});
 
 	it('labels board-authored comments as "Board" and agent-authored as the agent title', async () => {
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
-		await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -106,7 +106,7 @@ describe('comments CRUD', () => {
 			}),
 		});
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			headers: authHeader(token),
 		});
 		const body = await res.json();
@@ -121,7 +121,7 @@ describe('comments CRUD', () => {
 	});
 
 	it('creates an options comment and chooses an option', async () => {
-		const createRes = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		const createRes = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -139,7 +139,7 @@ describe('comments CRUD', () => {
 		const comment = (await createRes.json()).data;
 
 		const chooseRes = await app.request(
-			`/api/companies/${companyId}/issues/${issueId}/comments/${comment.id}/choose`,
+			`/api/teams/${teamId}/issues/${issueId}/comments/${comment.id}/choose`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -154,9 +154,9 @@ describe('comments CRUD', () => {
 
 describe('comment @mention wakeups', () => {
 	it('creates a mention wakeup when comment contains @agent-slug', async () => {
-		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -177,7 +177,7 @@ describe('comment @mention wakeups', () => {
 
 	it('creates option_chosen wakeup when choosing option on issue assigned to agent', async () => {
 		// Create a new issue assigned to the agent
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -190,7 +190,7 @@ describe('comment @mention wakeups', () => {
 
 		// Create an options comment
 		const commentRes = await app.request(
-			`/api/companies/${companyId}/issues/${assignedIssueId}/comments`,
+			`/api/teams/${teamId}/issues/${assignedIssueId}/comments`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -208,11 +208,11 @@ describe('comment @mention wakeups', () => {
 		);
 		const optionsCommentId = (await commentRes.json()).data.id;
 
-		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 
 		// Choose an option
 		await app.request(
-			`/api/companies/${companyId}/issues/${assignedIssueId}/comments/${optionsCommentId}/choose`,
+			`/api/teams/${teamId}/issues/${assignedIssueId}/comments/${optionsCommentId}/choose`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -234,7 +234,7 @@ describe('comment wakeups on assigned issues', () => {
 	let assignedIssueId: string;
 
 	beforeAll(async () => {
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -249,44 +249,38 @@ describe('comment wakeups on assigned issues', () => {
 	});
 
 	it('does not wake the assignee when a plain board comment is posted', async () => {
-		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 
-		const res = await app.request(
-			`/api/companies/${companyId}/issues/${assignedIssueId}/comments`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					content_type: 'text',
-					content: { text: 'Please prioritize this' },
-				}),
-			},
-		);
+		const res = await app.request(`/api/teams/${teamId}/issues/${assignedIssueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: 'Please prioritize this' },
+			}),
+		});
 		expect(res.status).toBe(201);
 
 		await new Promise((r) => setTimeout(r, 100));
 
 		const wakeups = await db.query(
-			'SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND company_id = $2',
-			[agentId, companyId],
+			'SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND team_id = $2',
+			[agentId, teamId],
 		);
 		expect(wakeups.rows.length).toBe(0);
 	});
 
 	it('wakes the assigned agent only on a mention-bearing comment (mention source, no comment source)', async () => {
-		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 
-		const res = await app.request(
-			`/api/companies/${companyId}/issues/${assignedIssueId}/comments`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					content_type: 'text',
-					content: { text: `@${agentSlug} please check this` },
-				}),
-			},
-		);
+		const res = await app.request(`/api/teams/${teamId}/issues/${assignedIssueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: `@${agentSlug} please check this` },
+			}),
+		});
 		expect(res.status).toBe(201);
 
 		await new Promise((r) => setTimeout(r, 100));
@@ -305,20 +299,17 @@ describe('comment wakeups on assigned issues', () => {
 	});
 
 	it('propagates a per-comment effort override onto the mention wakeup payload', async () => {
-		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 
-		const res = await app.request(
-			`/api/companies/${companyId}/issues/${assignedIssueId}/comments`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					content_type: 'text',
-					content: { text: `@${agentSlug} please think harder about this.` },
-					effort: 'max',
-				}),
-			},
-		);
+		const res = await app.request(`/api/teams/${teamId}/issues/${assignedIssueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: `@${agentSlug} please think harder about this.` },
+				effort: 'max',
+			}),
+		});
 		expect(res.status).toBe(201);
 
 		await new Promise((r) => setTimeout(r, 100));
@@ -332,20 +323,17 @@ describe('comment wakeups on assigned issues', () => {
 	});
 
 	it('silently ignores an invalid effort value (does not block commenting)', async () => {
-		await db.query('DELETE FROM agent_wakeup_requests WHERE company_id = $1', [companyId]);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 
-		const res = await app.request(
-			`/api/companies/${companyId}/issues/${assignedIssueId}/comments`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					content_type: 'text',
-					content: { text: `@${agentSlug} typical effort` },
-					effort: 'not-a-real-level',
-				}),
-			},
-		);
+		const res = await app.request(`/api/teams/${teamId}/issues/${assignedIssueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: `@${agentSlug} typical effort` },
+				effort: 'not-a-real-level',
+			}),
+		});
 		expect(res.status).toBe(201);
 
 		await new Promise((r) => setTimeout(r, 100));

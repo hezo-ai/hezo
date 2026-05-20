@@ -52,7 +52,7 @@ const STDIO_FIXTURE = resolve(
 
 let db: PGlite;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 let projectId: string;
 let proxy: EgressProxy;
@@ -66,13 +66,13 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 	dataDir = mkdtempSync(join(tmpdir(), 'hezo-mcp-docker-'));
 
-	const co = await ctx.app.request('/api/companies', {
+	const co = await ctx.app.request('/api/teams', {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'MCP Docker Co' }),
 	});
-	companyId = (await co.json()).data.id;
-	const ag = await ctx.app.request(`/api/companies/${companyId}/agents`, {
+	teamId = (await co.json()).data.id;
+	const ag = await ctx.app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'MCP Docker Agent' }),
@@ -80,9 +80,9 @@ beforeAll(async () => {
 	agentId = (await ag.json()).data.id;
 
 	const proj = await db.query<{ id: string }>(
-		`INSERT INTO projects (company_id, name, slug, issue_prefix, docker_base_image)
+		`INSERT INTO projects (team_id, name, slug, issue_prefix, docker_base_image)
 		 VALUES ($1, 'MCP', 'mcp', 'MD', 'hezo/agent-base:latest') RETURNING id`,
-		[companyId],
+		[teamId],
 	);
 	projectId = proj.rows[0].id;
 
@@ -112,11 +112,11 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 		await insertSecret('TEST_MCP_KEY', 'real-mcp-key-value', ['localhost']);
 
 		const insert = await db.query<{ id: string; install_status: string }>(
-			`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 			 VALUES ($1, NULL, 'echo', 'saas', $2::jsonb, 'installed')
 			 RETURNING id, install_status::text AS install_status`,
 			[
-				companyId,
+				teamId,
 				JSON.stringify({
 					url: `https://localhost:${mcp.port}/mcp`,
 					headers: { 'x-api-key': '__HEZO_SECRET_TEST_MCP_KEY__' },
@@ -125,14 +125,14 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 		);
 		expect(insert.rows[0].install_status).toBe('installed');
 
-		const descriptors = await loadMcpConnectionDescriptors(db, companyId, projectId);
+		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId);
 		const echo = descriptors.find((d) => d.name === 'echo');
 		expect(echo?.kind).toBe('http');
 		if (echo?.kind !== 'http') throw new Error('expected http descriptor');
 		expect(echo.headers?.['x-api-key']).toBe('__HEZO_SECRET_TEST_MCP_KEY__');
 
 		const runId = `mcp-docker-saas-${Date.now()}`;
-		const allocated = await proxy.allocateRunProxy(runId, { companyId, agentId });
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 		try {
 			const initBody = JSON.stringify({
 				jsonrpc: '2.0',
@@ -184,11 +184,11 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 		mcp.reset();
 
 		const insert = await db.query<{ id: string }>(
-			`INSERT INTO mcp_connections (company_id, project_id, name, kind, config, install_status)
+			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 			 VALUES ($1, NULL, 'echo-plain', 'saas', $2::jsonb, 'installed')
 			 RETURNING id`,
 			[
-				companyId,
+				teamId,
 				JSON.stringify({
 					url: `https://localhost:${mcp.port}/mcp`,
 					headers: { 'x-environment': 'test' },
@@ -198,7 +198,7 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 		expect(insert.rows[0].id).toBeTruthy();
 
 		const runId = `mcp-docker-noop-${Date.now()}`;
-		const allocated = await proxy.allocateRunProxy(runId, { companyId, agentId });
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 		try {
 			const callBody = JSON.stringify({
 				jsonrpc: '2.0',
@@ -330,12 +330,12 @@ async function insertSecret(name: string, value: string, allowedHosts: string[])
 	if (!key) throw new Error('master key unavailable');
 	const enc = encrypt(value, key);
 	await db.query(
-		`INSERT INTO secrets (company_id, project_id, name, encrypted_value, category, allowed_hosts)
+		`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts)
 		 VALUES ($1, NULL, $2, $3, 'api_token'::secret_category, $4)
-		 ON CONFLICT (company_id, project_id, name) DO UPDATE
+		 ON CONFLICT (team_id, project_id, name) DO UPDATE
 		 SET encrypted_value = EXCLUDED.encrypted_value,
 		     allowed_hosts = EXCLUDED.allowed_hosts`,
-		[companyId, name, enc, allowedHosts],
+		[teamId, name, enc, allowedHosts],
 	);
 }
 

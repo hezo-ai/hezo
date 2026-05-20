@@ -8,8 +8,8 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
-let otherCompanyId: string;
+let teamId: string;
+let otherTeamId: string;
 let projectAId: string;
 let projectBId: string;
 let projectASlug: string;
@@ -24,8 +24,8 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const makeCompany = async (name: string) => {
-		const r = await app.request('/api/companies', {
+	const makeTeam = async (name: string) => {
+		const r = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name }),
@@ -33,10 +33,10 @@ beforeAll(async () => {
 		return (await r.json()).data.id as string;
 	};
 
-	companyId = await makeCompany('Resolve Co');
-	otherCompanyId = await makeCompany('Other Resolve Co');
+	teamId = await makeTeam('Resolve Co');
+	otherTeamId = await makeTeam('Other Resolve Co');
 
-	const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Worker Bot' }),
@@ -44,7 +44,7 @@ beforeAll(async () => {
 	agentId = (await agentRes.json()).data.id;
 
 	const makeProject = async (name: string, description: string) => {
-		const r = await app.request(`/api/companies/${companyId}/projects`, {
+		const r = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name, description }),
@@ -61,7 +61,7 @@ beforeAll(async () => {
 	projectBSlug = projB.slug;
 
 	const makeIssue = async (projectId: string, title: string) => {
-		const r = await app.request(`/api/companies/${companyId}/issues`, {
+		const r = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: projectId, title, assignee_id: agentId }),
@@ -76,9 +76,9 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('POST /companies/:companyId/issues/resolve', () => {
+describe('POST /teams/:teamId/issues/resolve', () => {
 	it('resolves known identifiers with title and project_slug', async () => {
-		const r = await app.request(`/api/companies/${companyId}/issues/resolve`, {
+		const r = await app.request(`/api/teams/${teamId}/issues/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: [aIdentifier, bIdentifier] }),
@@ -100,7 +100,7 @@ describe('POST /companies/:companyId/issues/resolve', () => {
 	});
 
 	it('is case-insensitive', async () => {
-		const r = await app.request(`/api/companies/${companyId}/issues/resolve`, {
+		const r = await app.request(`/api/teams/${teamId}/issues/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: [aIdentifier.toLowerCase()] }),
@@ -112,7 +112,7 @@ describe('POST /companies/:companyId/issues/resolve', () => {
 	});
 
 	it('silently drops unknown identifiers', async () => {
-		const r = await app.request(`/api/companies/${companyId}/issues/resolve`, {
+		const r = await app.request(`/api/teams/${teamId}/issues/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: [aIdentifier, 'DOES-NOT-EXIST-999'] }),
@@ -122,8 +122,8 @@ describe('POST /companies/:companyId/issues/resolve', () => {
 		expect(body.data).toHaveLength(1);
 	});
 
-	it("enforces company scoping (cannot resolve another company's issue)", async () => {
-		const r = await app.request(`/api/companies/${otherCompanyId}/issues/resolve`, {
+	it("enforces team scoping (cannot resolve another team's issue)", async () => {
+		const r = await app.request(`/api/teams/${otherTeamId}/issues/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: [aIdentifier] }),
@@ -134,7 +134,7 @@ describe('POST /companies/:companyId/issues/resolve', () => {
 	});
 
 	it('rejects non-array body', async () => {
-		const r = await app.request(`/api/companies/${companyId}/issues/resolve`, {
+		const r = await app.request(`/api/teams/${teamId}/issues/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: 'nope' }),
@@ -144,7 +144,7 @@ describe('POST /companies/:companyId/issues/resolve', () => {
 
 	it('rejects arrays longer than 100', async () => {
 		const big = Array.from({ length: 101 }, (_, i) => `DOES-NOT-EXIST-${i}`);
-		const r = await app.request(`/api/companies/${companyId}/issues/resolve`, {
+		const r = await app.request(`/api/teams/${teamId}/issues/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: big }),
@@ -153,7 +153,7 @@ describe('POST /companies/:companyId/issues/resolve', () => {
 	});
 
 	it('returns empty array for empty input', async () => {
-		const r = await app.request(`/api/companies/${companyId}/issues/resolve`, {
+		const r = await app.request(`/api/teams/${teamId}/issues/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: [] }),

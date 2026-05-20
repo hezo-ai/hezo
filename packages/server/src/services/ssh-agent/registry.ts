@@ -8,7 +8,7 @@ export interface KeyEntry {
 
 export interface RunIdentity {
 	runId: string;
-	companyId: string;
+	teamId: string;
 	agentId: string;
 }
 

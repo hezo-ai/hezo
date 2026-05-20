@@ -23,13 +23,13 @@ export function forceRmRecursive(path: string): void {
 
 export function ensureProjectWorkspace(
 	dataDir: string,
-	companySlug: string,
+	teamSlug: string,
 	projectSlug: string,
 ): string {
-	if (!dataDir || !companySlug || !projectSlug) {
-		throw new Error('dataDir, companySlug, and projectSlug are required');
+	if (!dataDir || !teamSlug || !projectSlug) {
+		throw new Error('dataDir, teamSlug, and projectSlug are required');
 	}
-	const projectDir = getProjectDir(dataDir, companySlug, projectSlug);
+	const projectDir = getProjectDir(dataDir, teamSlug, projectSlug);
 	for (const sub of ['workspace', 'worktrees', '.previews']) {
 		mkdirSync(join(projectDir, sub), { recursive: true });
 	}
@@ -48,65 +48,57 @@ export function getRunSocketPath(dataDir: string, runId: string): string {
 
 export function removeProjectWorkspace(
 	dataDir: string,
-	companySlug: string,
+	teamSlug: string,
 	projectSlug: string,
 ): void {
-	if (!dataDir || !companySlug || !projectSlug) return;
-	const projectDir = getProjectDir(dataDir, companySlug, projectSlug);
+	if (!dataDir || !teamSlug || !projectSlug) return;
+	const projectDir = getProjectDir(dataDir, teamSlug, projectSlug);
 	forceRmRecursive(projectDir);
 }
 
-export function getProjectDir(dataDir: string, companySlug: string, projectSlug: string): string {
-	return join(dataDir, 'companies', companySlug, 'projects', projectSlug);
+export function getProjectDir(dataDir: string, teamSlug: string, projectSlug: string): string {
+	return join(dataDir, 'teams', teamSlug, 'projects', projectSlug);
 }
 
-export function getWorkspacePath(
-	dataDir: string,
-	companySlug: string,
-	projectSlug: string,
-): string {
-	return join(getProjectDir(dataDir, companySlug, projectSlug), 'workspace');
+export function getWorkspacePath(dataDir: string, teamSlug: string, projectSlug: string): string {
+	return join(getProjectDir(dataDir, teamSlug, projectSlug), 'workspace');
 }
 
-export function getWorktreesPath(
-	dataDir: string,
-	companySlug: string,
-	projectSlug: string,
-): string {
-	return join(getProjectDir(dataDir, companySlug, projectSlug), 'worktrees');
+export function getWorktreesPath(dataDir: string, teamSlug: string, projectSlug: string): string {
+	return join(getProjectDir(dataDir, teamSlug, projectSlug), 'worktrees');
 }
 
 export function getWorktreePath(
 	dataDir: string,
-	companySlug: string,
+	teamSlug: string,
 	projectSlug: string,
 	repoShortName: string,
 	branchSlug: string,
 	agentIdShort: string,
 ): string {
 	return join(
-		getWorktreesPath(dataDir, companySlug, projectSlug),
+		getWorktreesPath(dataDir, teamSlug, projectSlug),
 		`${repoShortName}-${branchSlug}-agent-${agentIdShort}`,
 	);
 }
 
 export function getPreviewsPath(
 	dataDir: string,
-	companySlug: string,
+	teamSlug: string,
 	projectSlug: string,
 	agentId: string,
 ): string {
-	return join(getProjectDir(dataDir, companySlug, projectSlug), '.previews', agentId);
+	return join(getProjectDir(dataDir, teamSlug, projectSlug), '.previews', agentId);
 }
 
 export function clearAllProjectWorkspaces(dataDir: string): string[] {
 	if (!dataDir) return [];
-	const companiesRoot = join(dataDir, 'companies');
-	if (!existsSync(companiesRoot)) return [];
+	const teamsRoot = join(dataDir, 'teams');
+	if (!existsSync(teamsRoot)) return [];
 
 	const cleared: string[] = [];
-	for (const companySlug of safeReaddir(companiesRoot)) {
-		const projectsRoot = join(companiesRoot, companySlug, 'projects');
+	for (const teamSlug of safeReaddir(teamsRoot)) {
+		const projectsRoot = join(teamsRoot, teamSlug, 'projects');
 		if (!isDirectory(projectsRoot)) continue;
 
 		for (const projectSlug of safeReaddir(projectsRoot)) {

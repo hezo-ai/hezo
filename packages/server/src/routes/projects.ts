@@ -17,7 +17,7 @@ import { toProjectIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 import {
 	type ContainerDeps,
 	type ProjectRow,
@@ -48,14 +48,14 @@ async function cancelRunningAgentTasks(
 	db: PGlite,
 	jobManager: JobManager,
 	projectId: string,
-	companyId: string,
+	teamId: string,
 ): Promise<void> {
 	const running = await db.query<{ assignee_id: string }>(
 		`SELECT DISTINCT i.assignee_id
 		 FROM issues i
 		 JOIN execution_locks el ON el.issue_id = i.id AND el.released_at IS NULL
-		 WHERE i.project_id = $1 AND i.company_id = $2 AND i.assignee_id IS NOT NULL`,
-		[projectId, companyId],
+		 WHERE i.project_id = $1 AND i.team_id = $2 AND i.assignee_id IS NOT NULL`,
+		[projectId, teamId],
 	);
 	for (const row of running.rows) {
 		jobManager.cancelTask(wsRoom.agent(row.assignee_id));
@@ -65,20 +65,20 @@ async function cancelRunningAgentTasks(
 async function wakeAgentsWithPendingWork(
 	db: PGlite,
 	projectId: string,
-	companyId: string,
+	teamId: string,
 ): Promise<void> {
 	const { placeholders, values } = terminalStatusParams(3);
 	const pending = await db.query<{ agent_id: string }>(
 		`SELECT DISTINCT i.assignee_id AS agent_id
 		 FROM issues i
 		 JOIN member_agents ma ON ma.id = i.assignee_id
-		 WHERE i.project_id = $1 AND i.company_id = $2
+		 WHERE i.project_id = $1 AND i.team_id = $2
 		   AND i.status NOT IN (${placeholders})
 		   AND ma.admin_status = 'enabled'`,
-		[projectId, companyId, ...values],
+		[projectId, teamId, ...values],
 	);
 	for (const row of pending.rows) {
-		createWakeup(db, row.agent_id, companyId, WakeupSource.Automation, {
+		createWakeup(db, row.agent_id, teamId, WakeupSource.Automation, {
 			trigger: 'container_start',
 			project_id: projectId,
 		}).catch((e) => log.error('Failed to create wakeup on container start:', e));
@@ -93,7 +93,7 @@ export type IssuePrefixResult =
 
 export async function resolveProjectIssuePrefix(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	provided: string | undefined,
 	projectName: string,
 ): Promise<IssuePrefixResult> {
@@ -109,14 +109,14 @@ export async function resolveProjectIssuePrefix(
 			};
 		}
 		const collision = await db.query(
-			'SELECT 1 FROM projects WHERE company_id = $1 AND issue_prefix = $2',
-			[companyId, candidate],
+			'SELECT 1 FROM projects WHERE team_id = $1 AND issue_prefix = $2',
+			[teamId, candidate],
 		);
 		if (collision.rows.length > 0) {
 			return {
 				ok: false,
 				code: 'CONFLICT',
-				message: `Issue prefix '${candidate}' is already in use for this company`,
+				message: `Issue prefix '${candidate}' is already in use for this team`,
 				status: 409,
 			};
 		}
@@ -125,8 +125,8 @@ export async function resolveProjectIssuePrefix(
 
 	const base = toProjectIssuePrefix(projectName);
 	const existing = await db.query<{ issue_prefix: string }>(
-		'SELECT issue_prefix FROM projects WHERE company_id = $1 AND issue_prefix LIKE $2',
-		[companyId, `${base}%`],
+		'SELECT issue_prefix FROM projects WHERE team_id = $1 AND issue_prefix LIKE $2',
+		[teamId, `${base}%`],
 	);
 	const taken = new Set(existing.rows.map((r) => r.issue_prefix));
 	if (!taken.has(base)) return { ok: true, prefix: base };
@@ -145,12 +145,12 @@ export async function resolveProjectIssuePrefix(
 
 export const projectsRoutes = new Hono<Env>();
 
-projectsRoutes.get('/companies/:companyId/projects', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectsRoutes.get('/teams/:teamId/projects', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const ts = terminalStatusParams(2);
 	const result = await db.query(
@@ -158,19 +158,19 @@ projectsRoutes.get('/companies/:companyId/projects', async (c) => {
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
        (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN (${ts.placeholders}))::int AS open_issue_count
      FROM projects p
-     WHERE p.company_id = $1
+     WHERE p.team_id = $1
      ORDER BY p.created_at DESC`,
-		[companyId, ...ts.values],
+		[teamId, ...ts.values],
 	);
 	return ok(c, result.rows);
 });
 
-projectsRoutes.post('/companies/:companyId/projects', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectsRoutes.post('/teams/:teamId/projects', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const body = await c.req.json<{
 		name: string;
@@ -187,39 +187,38 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'description is required', 400);
 	}
 
-	const companyMetaResult = await db.query<{ slug: string }>(
-		'SELECT slug FROM companies WHERE id = $1',
-		[companyId],
-	);
-	const companyMeta = companyMetaResult.rows[0];
-	if (!companyMeta) {
-		return err(c, 'NOT_FOUND', 'Company not found', 404);
+	const teamMetaResult = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
+		teamId,
+	]);
+	const teamMeta = teamMetaResult.rows[0];
+	if (!teamMeta) {
+		return err(c, 'NOT_FOUND', 'Team not found', 404);
 	}
 
-	const prefixResult = await resolveProjectIssuePrefix(db, companyId, body.issue_prefix, body.name);
+	const prefixResult = await resolveProjectIssuePrefix(db, teamId, body.issue_prefix, body.name);
 	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
 	const issuePrefix = prefixResult.prefix;
 
 	const ceoResult = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
+		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[companyId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
 	);
 	const ceoMemberId = ceoResult.rows[0]?.id;
 	if (!ceoMemberId) {
 		return err(
 			c,
 			'INTERNAL',
-			'No enabled CEO found for this company. Re-enable the CEO agent before creating projects.',
+			'No enabled CEO found for this team. Re-enable the CEO agent before creating projects.',
 			500,
 		);
 	}
 
 	const slug = await uniqueSlug(toSlug(body.name), async (s) => {
-		const r = await db.query('SELECT 1 FROM projects WHERE company_id = $1 AND slug = $2', [
-			companyId,
+		const r = await db.query('SELECT 1 FROM projects WHERE team_id = $1 AND slug = $2', [
+			teamId,
 			s,
 		]);
 		return r.rows.length > 0;
@@ -234,11 +233,11 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 	let planningIssue: Record<string, unknown>;
 	try {
 		const projectResult = await db.query(
-			`INSERT INTO projects (company_id, name, slug, issue_prefix, description, docker_base_image)
+			`INSERT INTO projects (team_id, name, slug, issue_prefix, description, docker_base_image)
 			 VALUES ($1, $2, $3, $4, $5, $6)
 			 RETURNING *`,
 			[
-				companyId,
+				teamId,
 				projectName,
 				slug,
 				issuePrefix,
@@ -254,9 +253,9 @@ projectsRoutes.post('/companies/:companyId/projects', async (c) => {
 
 		if (initialPrd) {
 			await db.query(
-				`INSERT INTO documents (project_id, company_id, type, slug, content)
+				`INSERT INTO documents (project_id, team_id, type, slug, content)
 				 VALUES ($1, $2, 'project_doc', 'initial-prd.md', $3)`,
-				[project.id, companyId, initialPrd],
+				[project.id, teamId, initialPrd],
 			);
 		}
 
@@ -293,12 +292,12 @@ ${projectDescription}${initialPrdNote}
 Container provisioning for this project is in progress. Focus on planning while the environment comes up — implementation agents can start work as soon as their tickets are ready.`;
 
 		const issueResult = await db.query(
-			`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier,
+			`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier,
 			                     title, description, status, priority, labels)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
 			 RETURNING *`,
 			[
-				companyId,
+				teamId,
 				project.id,
 				ceoMemberId,
 				issueNumber,
@@ -318,20 +317,18 @@ Container provisioning for this project is in progress. Focus on planning while 
 		throw e;
 	}
 
-	broadcastChange(c, wsRoom.company(companyId), 'projects', 'INSERT', project);
-	broadcastChange(c, wsRoom.company(companyId), 'issues', 'INSERT', planningIssue);
+	broadcastChange(c, wsRoom.team(teamId), 'projects', 'INSERT', project);
+	broadcastChange(c, wsRoom.team(teamId), 'issues', 'INSERT', planningIssue);
 
-	createWakeup(db, ceoMemberId, companyId, WakeupSource.Assignment, {
+	createWakeup(db, ceoMemberId, teamId, WakeupSource.Assignment, {
 		issue_id: planningIssue.id,
 	}).catch((e) => log.error('Failed to wake CEO for project planning:', e));
 
-	provisionContainer(
-		buildContainerDeps(c),
-		project as unknown as ProjectRow,
-		companyMeta.slug,
-	).catch((error) => {
-		log.error(`Failed to provision container for project ${project.slug}:`, error);
-	});
+	provisionContainer(buildContainerDeps(c), project as unknown as ProjectRow, teamMeta.slug).catch(
+		(error) => {
+			log.error(`Failed to provision container for project ${project.slug}:`, error);
+		},
+	);
 
 	return ok(
 		c,
@@ -344,13 +341,13 @@ Container provisioning for this project is in progress. Focus on planning while 
 	);
 });
 
-projectsRoutes.get('/companies/:companyId/projects/:projectId', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectsRoutes.get('/teams/:teamId/projects/:projectId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	const { teamId } = access;
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const ts2 = terminalStatusParams(3);
@@ -359,8 +356,8 @@ projectsRoutes.get('/companies/:companyId/projects/:projectId', async (c) => {
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
        (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_issue_count
      FROM projects p
-     WHERE p.id = $1 AND p.company_id = $2`,
-		[projectId, companyId, ...ts2.values],
+     WHERE p.id = $1 AND p.team_id = $2`,
+		[projectId, teamId, ...ts2.values],
 	);
 
 	if (result.rows.length === 0) {
@@ -374,18 +371,18 @@ projectsRoutes.get('/companies/:companyId/projects/:projectId', async (c) => {
 	return ok(c, { ...(result.rows[0] as Record<string, unknown>), repos: repos.rows });
 });
 
-projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectsRoutes.patch('/teams/:teamId/projects/:projectId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	const { teamId } = access;
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const existing = await db.query('SELECT id FROM projects WHERE id = $1 AND company_id = $2', [
+	const existing = await db.query('SELECT id FROM projects WHERE id = $1 AND team_id = $2', [
 		projectId,
-		companyId,
+		teamId,
 	]);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Project not found', 404);
@@ -403,8 +400,8 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 	if (body.name?.trim()) {
 		const newSlug = await uniqueSlug(toSlug(body.name), async (s) => {
 			const r = await db.query(
-				'SELECT 1 FROM projects WHERE company_id = $1 AND slug = $2 AND id != $3',
-				[companyId, s, projectId],
+				'SELECT 1 FROM projects WHERE team_id = $1 AND slug = $2 AND id != $3',
+				[teamId, s, projectId],
 			);
 			return r.rows.length > 0;
 		});
@@ -434,7 +431,7 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 
 	broadcastChange(
 		c,
-		wsRoom.company(companyId),
+		wsRoom.team(teamId),
 		'projects',
 		'UPDATE',
 		result.rows[0] as Record<string, unknown>,
@@ -442,18 +439,18 @@ projectsRoutes.patch('/companies/:companyId/projects/:projectId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	const { teamId } = access;
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const existing = await db.query<{ id: string; slug: string; is_internal: boolean }>(
-		'SELECT id, slug, is_internal FROM projects WHERE id = $1 AND company_id = $2',
-		[projectId, companyId],
+		'SELECT id, slug, is_internal FROM projects WHERE id = $1 AND team_id = $2',
+		[projectId, teamId],
 	);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Project not found', 404);
@@ -471,17 +468,16 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 		return err(c, 'CONFLICT', 'Cannot delete project with open issues', 409);
 	}
 
-	const companySlugResult = await db.query<{ slug: string }>(
-		'SELECT slug FROM companies WHERE id = $1',
-		[companyId],
-	);
-	const companySlug = companySlugResult.rows[0]?.slug;
+	const teamSlugResult = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
+		teamId,
+	]);
+	const teamSlug = teamSlugResult.rows[0]?.slug;
 
-	if (companySlug) {
+	if (teamSlug) {
 		await teardownContainer(
 			buildContainerDeps(c),
 			projectId,
-			companySlug,
+			teamSlug,
 			existing.rows[0].slug,
 		).catch((error) => {
 			log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
@@ -489,22 +485,22 @@ projectsRoutes.delete('/companies/:companyId/projects/:projectId', async (c) => 
 	}
 
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
-	broadcastChange(c, wsRoom.company(companyId), 'projects', 'DELETE', { id: projectId });
+	broadcastChange(c, wsRoom.team(teamId), 'projects', 'DELETE', { id: projectId });
 	return c.json({ data: null }, 200);
 });
 
-projectsRoutes.post('/companies/:companyId/projects/:projectId/container/start', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectsRoutes.post('/teams/:teamId/projects/:projectId/container/start', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	const { teamId } = access;
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const result = await db.query<{ container_id: string | null }>(
-		'SELECT container_id FROM projects WHERE id = $1 AND company_id = $2',
-		[projectId, companyId],
+		'SELECT container_id FROM projects WHERE id = $1 AND team_id = $2',
+		[projectId, teamId],
 	);
 	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
 	if (!result.rows[0].container_id) return err(c, 'NO_CONTAINER', 'No container provisioned', 400);
@@ -516,29 +512,29 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/start',
 			ContainerStatus.Running,
 			projectId,
 		]);
-		broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
+		broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', {
 			id: projectId,
 			container_status: ContainerStatus.Running,
 		});
-		wakeAgentsWithPendingWork(db, projectId, companyId);
+		wakeAgentsWithPendingWork(db, projectId, teamId);
 		return ok(c, { container_status: ContainerStatus.Running });
 	} catch (error) {
 		return err(c, 'DOCKER_ERROR', `Failed to start container: ${(error as Error).message}`, 500);
 	}
 });
 
-projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectsRoutes.post('/teams/:teamId/projects/:projectId/container/stop', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	const { teamId } = access;
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const result = await db.query<{ container_id: string | null; container_status: string | null }>(
-		'SELECT container_id, container_status FROM projects WHERE id = $1 AND company_id = $2',
-		[projectId, companyId],
+		'SELECT container_id, container_status FROM projects WHERE id = $1 AND team_id = $2',
+		[projectId, teamId],
 	);
 	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
@@ -550,7 +546,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 			ContainerStatus.Stopped,
 			projectId,
 		]);
-		broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
+		broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', {
 			id: projectId,
 			container_status: ContainerStatus.Stopped,
 		});
@@ -561,7 +557,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 		ContainerStatus.Stopping,
 		projectId,
 	]);
-	broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
+	broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', {
 		id: projectId,
 		container_status: ContainerStatus.Stopping,
 	});
@@ -569,7 +565,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 	const jobManager = c.get('jobManager');
 	const containerDeps = buildContainerDeps(c);
 
-	await cancelRunningAgentTasks(db, jobManager, projectId, companyId);
+	await cancelRunningAgentTasks(db, jobManager, projectId, teamId);
 
 	const containerId = row.container_id;
 	if (!containerId) return ok(c, { container_status: ContainerStatus.Stopping });
@@ -578,7 +574,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 	jobManager.launchTask(
 		taskKey,
 		async () => {
-			await stopContainerGracefully(containerDeps, projectId, companyId, containerId);
+			await stopContainerGracefully(containerDeps, projectId, teamId, containerId);
 		},
 		60_000,
 	);
@@ -588,30 +584,29 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/stop', 
 
 const REBUILD_TIMEOUT_MS = 5 * 60 * 1000;
 
-projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild', async (c) => {
-	const access = await requireCompanyAccess(c);
+projectsRoutes.post('/teams/:teamId/projects/:projectId/container/rebuild', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const projectId = await resolveProjectId(db, companyId, c.req.param('projectId'));
+	const { teamId } = access;
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const projectResult = await db.query('SELECT * FROM projects WHERE id = $1 AND company_id = $2', [
+	const projectResult = await db.query('SELECT * FROM projects WHERE id = $1 AND team_id = $2', [
 		projectId,
-		companyId,
+		teamId,
 	]);
 	if (projectResult.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Project not found', 404);
 	}
 
-	const companySlugResult = await db.query<{ slug: string }>(
-		'SELECT slug FROM companies WHERE id = $1',
-		[companyId],
-	);
-	const companySlug = companySlugResult.rows[0]?.slug;
-	if (!companySlug) {
-		return err(c, 'NOT_FOUND', 'Company not found', 404);
+	const teamSlugResult = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
+		teamId,
+	]);
+	const teamSlug = teamSlugResult.rows[0]?.slug;
+	if (!teamSlug) {
+		return err(c, 'NOT_FOUND', 'Team not found', 404);
 	}
 
 	const jobManager = c.get('jobManager');
@@ -620,7 +615,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 	// Cancel any conflicting tasks before launching rebuild
 	jobManager.cancelTask(`stop:${projectId}`);
 	jobManager.cancelTask(taskKey);
-	await cancelRunningAgentTasks(db, jobManager, projectId, companyId);
+	await cancelRunningAgentTasks(db, jobManager, projectId, teamId);
 
 	const containerDeps = buildContainerDeps(c);
 
@@ -629,7 +624,7 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 		projectId,
 	]);
 
-	broadcastChange(c, wsRoom.company(companyId), 'projects', 'UPDATE', {
+	broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', {
 		id: projectId,
 		container_status: ContainerStatus.Creating,
 	});
@@ -638,8 +633,8 @@ projectsRoutes.post('/companies/:companyId/projects/:projectId/container/rebuild
 		taskKey,
 		async () => {
 			try {
-				await rebuildContainer(containerDeps, projectResult.rows[0] as ProjectRow, companySlug);
-				wakeAgentsWithPendingWork(db, projectId, companyId);
+				await rebuildContainer(containerDeps, projectResult.rows[0] as ProjectRow, teamSlug);
+				wakeAgentsWithPendingWork(db, projectId, teamId);
 			} catch (error) {
 				log.error(`Container rebuild failed for project ${projectId}:`, error);
 			}

@@ -6,7 +6,7 @@ type Page = import('@playwright/test').Page;
 async function setAgentSummary(
 	page: Page,
 	token: string,
-	companyId: string,
+	teamId: string,
 	agentId: string,
 	summary: string,
 ) {
@@ -18,7 +18,7 @@ async function setAgentSummary(
 			method: 'tools/call',
 			params: {
 				name: 'set_agent_summary',
-				arguments: { company_id: companyId, agent_id: agentId, summary },
+				arguments: { team_id: teamId, agent_id: agentId, summary },
 			},
 		},
 	});
@@ -28,8 +28,8 @@ async function setAgentSummary(
 }
 
 test('team org chart renders with status legend', async ({ page, freshWorkspace }) => {
-	const { company } = freshWorkspace;
-	await page.goto(`/companies/${company.slug}/agents`);
+	const { team } = freshWorkspace;
+	await page.goto(`/teams/${team.slug}/agents`);
 
 	await expect(page.getByText('You (Board)')).toBeVisible({ timeout: 20000 });
 	await expect(page.getByText('Active').first()).toBeVisible({ timeout: 15000 });
@@ -39,10 +39,10 @@ test('agent detail page defaults to Executions tab and exposes Settings tab', as
 	page,
 	freshWorkspace,
 }) => {
-	const { company, agents } = freshWorkspace;
+	const { team, agents } = freshWorkspace;
 	const agent = agents[0];
 
-	await page.goto(`/companies/${company.slug}/agents/${agent.id}`);
+	await page.goto(`/teams/${team.slug}/agents/${agent.id}`);
 
 	const executionsLink = page.getByRole('link', { name: 'Executions' });
 	await expect(executionsLink).toBeVisible({ timeout: 15000 });
@@ -56,10 +56,10 @@ test('agent settings tab shows budget, heartbeat, title, and save controls', asy
 	page,
 	freshWorkspace,
 }) => {
-	const { company, agents } = freshWorkspace;
+	const { team, agents } = freshWorkspace;
 	const agent = agents[0];
 
-	await page.goto(`/companies/${company.slug}/agents/${agent.id}/settings`);
+	await page.goto(`/teams/${team.slug}/agents/${agent.id}/settings`);
 
 	await expect(page.getByText('Budget Usage')).toBeVisible({ timeout: 15000 });
 	await expect(page.getByText('Heartbeat').first()).toBeVisible({ timeout: 15000 });
@@ -71,8 +71,8 @@ test('agent settings tab edits the title and persists across reload', async ({
 	page,
 	freshWorkspace,
 }) => {
-	const { company, agents, token } = freshWorkspace;
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, {
+	const { team, agents, token } = freshWorkspace;
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
 		headers: { Authorization: `Bearer ${token}` },
 	});
 	const fresh = (
@@ -80,7 +80,7 @@ test('agent settings tab edits the title and persists across reload', async ({
 	).data;
 	const agent = fresh.find((a) => a.admin_status === 'enabled') ?? fresh[0];
 
-	await page.goto(`/companies/${company.slug}/agents/${agent.id}`);
+	await page.goto(`/teams/${team.slug}/agents/${agent.id}`);
 	await dismissAiProviderModal(page);
 
 	await page.getByRole('main').getByRole('link', { name: 'Settings' }).click();
@@ -97,11 +97,11 @@ test('agent disable and enable lifecycle reflects in detail and team views', asy
 	page,
 	freshWorkspace,
 }) => {
-	const { company, agents, token } = freshWorkspace;
+	const { team, agents, token } = freshWorkspace;
 	const enabledAgent =
 		agents.find((a) => (a as { admin_status?: string }).admin_status === 'enabled') ?? agents[0];
 
-	await page.goto(`/companies/${company.slug}/agents/${enabledAgent.id}`);
+	await page.goto(`/teams/${team.slug}/agents/${enabledAgent.id}`);
 	await waitForPageLoad(page);
 
 	await page.getByRole('main').getByRole('link', { name: 'Settings' }).click();
@@ -114,14 +114,14 @@ test('agent disable and enable lifecycle reflects in detail and team views', asy
 	await expect(page.getByRole('main').getByText('Idle')).toBeVisible({ timeout: 15000 });
 
 	// Disable via API and verify it shows up on the team chart and detail page.
-	await page.request.post(`/api/companies/${company.id}/agents/${enabledAgent.id}/disable`, {
+	await page.request.post(`/api/teams/${team.id}/agents/${enabledAgent.id}/disable`, {
 		headers: { Authorization: `Bearer ${token}` },
 	});
 
-	await page.goto(`/companies/${company.slug}/agents`);
+	await page.goto(`/teams/${team.slug}/agents`);
 	await expect(page.getByText('You (Board)')).toBeVisible({ timeout: 15000 });
 
-	await page.goto(`/companies/${company.slug}/agents/${enabledAgent.id}`);
+	await page.goto(`/teams/${team.slug}/agents/${enabledAgent.id}`);
 	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 15000 });
 });
 
@@ -129,16 +129,16 @@ test('long agent summary collapses to first line and toggles on click; short sum
 	page,
 	freshWorkspace,
 }) => {
-	const { company, agents, token } = freshWorkspace;
+	const { team, agents, token } = freshWorkspace;
 	const longAgent = agents[0];
 	const shortAgent = agents[1] ?? agents[0];
 
 	const longSummary = Array.from({ length: 8 }, (_, i) => `Line ${i + 1} of the description.`).join(
 		' ',
 	);
-	await setAgentSummary(page, token, company.id, longAgent.id, longSummary);
+	await setAgentSummary(page, token, team.id, longAgent.id, longSummary);
 
-	await page.goto(`/companies/${company.slug}/agents/${longAgent.id}`);
+	await page.goto(`/teams/${team.slug}/agents/${longAgent.id}`);
 
 	const summary = page.getByTestId('agent-summary');
 	await expect(summary).toBeVisible({ timeout: 15000 });
@@ -162,8 +162,8 @@ test('long agent summary collapses to first line and toggles on click; short sum
 	expect(await paragraph.evaluate((el) => el.clientHeight)).toBe(collapsedHeight);
 
 	if (shortAgent !== longAgent) {
-		await setAgentSummary(page, token, company.id, shortAgent.id, 'Short.');
-		await page.goto(`/companies/${company.slug}/agents/${shortAgent.id}`);
+		await setAgentSummary(page, token, team.id, shortAgent.id, 'Short.');
+		await page.goto(`/teams/${team.slug}/agents/${shortAgent.id}`);
 		const shortSummary = page.getByTestId('agent-summary');
 		await expect(shortSummary).toBeVisible({ timeout: 15000 });
 		await expect(shortSummary.locator('p')).toContainText('Short.');

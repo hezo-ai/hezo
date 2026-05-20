@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { resolveAgentId, resolveCompanyId, resolveProjectId } from '../../lib/resolve';
+import { resolveAgentId, resolveProjectId, resolveTeamId } from '../../lib/resolve';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
@@ -9,8 +9,8 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
-let companySlug: string;
+let teamId: string;
+let teamSlug: string;
 let projectId: string;
 let projectSlug: string;
 
@@ -20,19 +20,19 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Resolve Test Co', template_id: typeId }),
 	});
-	const companyData = (await companyRes.json()).data;
-	companyId = companyData.id;
-	companySlug = companyData.slug;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	teamSlug = teamData.slug;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Resolve Project', description: 'Test project.' }),
@@ -46,54 +46,54 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('resolveCompanyId', () => {
+describe('resolveTeamId', () => {
 	it('returns UUID directly when given a valid UUID', async () => {
-		const result = await resolveCompanyId(db, companyId);
-		expect(result).toBe(companyId);
+		const result = await resolveTeamId(db, teamId);
+		expect(result).toBe(teamId);
 	});
 
 	it('resolves slug to UUID', async () => {
-		const result = await resolveCompanyId(db, companySlug);
-		expect(result).toBe(companyId);
+		const result = await resolveTeamId(db, teamSlug);
+		expect(result).toBe(teamId);
 	});
 
 	it('returns null for non-existent slug', async () => {
-		const result = await resolveCompanyId(db, 'nonexistent-company');
+		const result = await resolveTeamId(db, 'nonexistent-team');
 		expect(result).toBeNull();
 	});
 
-	it('returns raw UUID even if company does not exist', async () => {
+	it('returns raw UUID even if team does not exist', async () => {
 		const fakeUuid = '00000000-0000-0000-0000-000000000099';
-		const result = await resolveCompanyId(db, fakeUuid);
+		const result = await resolveTeamId(db, fakeUuid);
 		expect(result).toBe(fakeUuid);
 	});
 });
 
 describe('resolveProjectId', () => {
 	it('returns UUID directly when given a valid UUID', async () => {
-		const result = await resolveProjectId(db, companyId, projectId);
+		const result = await resolveProjectId(db, teamId, projectId);
 		expect(result).toBe(projectId);
 	});
 
 	it('resolves slug to UUID', async () => {
-		const result = await resolveProjectId(db, companyId, projectSlug);
+		const result = await resolveProjectId(db, teamId, projectSlug);
 		expect(result).toBe(projectId);
 	});
 
 	it('returns null for non-existent slug', async () => {
-		const result = await resolveProjectId(db, companyId, 'nonexistent-project');
+		const result = await resolveProjectId(db, teamId, 'nonexistent-project');
 		expect(result).toBeNull();
 	});
 
-	it('returns null when project slug belongs to different company', async () => {
-		const fakeCompany = '00000000-0000-0000-0000-000000000099';
-		const result = await resolveProjectId(db, fakeCompany, projectSlug);
+	it('returns null when project slug belongs to different team', async () => {
+		const fakeTeam = '00000000-0000-0000-0000-000000000099';
+		const result = await resolveProjectId(db, fakeTeam, projectSlug);
 		expect(result).toBeNull();
 	});
 
 	it('returns raw UUID even if project does not exist', async () => {
 		const fakeUuid = '00000000-0000-0000-0000-000000000088';
-		const result = await resolveProjectId(db, companyId, fakeUuid);
+		const result = await resolveProjectId(db, teamId, fakeUuid);
 		expect(result).toBe(fakeUuid);
 	});
 });
@@ -103,37 +103,37 @@ describe('resolveAgentId', () => {
 
 	beforeAll(async () => {
 		const row = await db.query<{ id: string }>(
-			'SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.company_id = $1 AND ma.slug = $2',
-			[companyId, 'architect'],
+			'SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.team_id = $1 AND ma.slug = $2',
+			[teamId, 'architect'],
 		);
 		architectId = row.rows[0]?.id;
 		expect(architectId).toBeTruthy();
 	});
 
 	it('resolves a slug to the agent UUID', async () => {
-		const result = await resolveAgentId(db, companyId, 'architect');
+		const result = await resolveAgentId(db, teamId, 'architect');
 		expect(result).toBe(architectId);
 	});
 
-	it('returns the UUID directly when given a valid agent UUID for the company', async () => {
-		const result = await resolveAgentId(db, companyId, architectId);
+	it('returns the UUID directly when given a valid agent UUID for the team', async () => {
+		const result = await resolveAgentId(db, teamId, architectId);
 		expect(result).toBe(architectId);
 	});
 
 	it('returns null for an unknown slug', async () => {
-		const result = await resolveAgentId(db, companyId, 'definitely-not-a-real-slug');
+		const result = await resolveAgentId(db, teamId, 'definitely-not-a-real-slug');
 		expect(result).toBeNull();
 	});
 
-	it('returns null for a UUID that belongs to another company', async () => {
-		const otherCompany = '00000000-0000-0000-0000-000000000099';
-		const result = await resolveAgentId(db, otherCompany, architectId);
+	it('returns null for a UUID that belongs to another team', async () => {
+		const otherTeam = '00000000-0000-0000-0000-000000000099';
+		const result = await resolveAgentId(db, otherTeam, architectId);
 		expect(result).toBeNull();
 	});
 
-	it('returns null for a slug that belongs to a different company', async () => {
-		const otherCompany = '00000000-0000-0000-0000-000000000099';
-		const result = await resolveAgentId(db, otherCompany, 'architect');
+	it('returns null for a slug that belongs to a different team', async () => {
+		const otherTeam = '00000000-0000-0000-0000-000000000099';
+		const result = await resolveAgentId(db, otherTeam, 'architect');
 		expect(result).toBeNull();
 	});
 });

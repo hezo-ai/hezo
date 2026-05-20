@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents } from './helpers';
+import { authenticate, createTeamWithAgents } from './helpers';
 
 test('agent settings page shows system prompt textarea, edits persist, revisions panel lists history', async ({
 	page,
@@ -7,15 +7,15 @@ test('agent settings page shows system prompt textarea, edits persist, revisions
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, {
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
 		headers: { Authorization: `Bearer ${token}` },
 	});
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const engineer = agents.find((a) => a.slug === 'engineer')!;
 
-	await page.goto(`/companies/${company.id}/agents/${engineer.id}/settings`);
+	await page.goto(`/teams/${team.id}/agents/${engineer.id}/settings`);
 
 	const promptTextarea = page.getByLabel('System Prompt');
 	await expect(promptTextarea).toBeVisible({ timeout: 15000 });
@@ -38,15 +38,15 @@ test('agent settings preview tab resolves placeholders and edit tab keeps the ra
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, {
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
 		headers: { Authorization: `Bearer ${token}` },
 	});
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const engineer = agents.find((a) => a.slug === 'engineer')!;
 
-	await page.goto(`/companies/${company.id}/agents/${engineer.id}/settings`);
+	await page.goto(`/teams/${team.id}/agents/${engineer.id}/settings`);
 
 	const editTextarea = page.getByLabel('System Prompt');
 	await expect(editTextarea).toBeVisible({ timeout: 15000 });
@@ -57,7 +57,7 @@ test('agent settings preview tab resolves placeholders and edit tab keeps the ra
 	const preview = page.getByTestId('system-prompt-preview');
 	await expect(preview).toBeVisible();
 	await expect(preview).not.toContainText('{{');
-	await expect(preview).toContainText(company.name);
+	await expect(preview).toContainText(team.name);
 	await expect(preview).toContainText('Working Guidelines');
 	await expect(preview).not.toContainText('Run Context');
 

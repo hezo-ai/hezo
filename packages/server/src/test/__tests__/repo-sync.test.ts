@@ -17,8 +17,8 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
-let companySlug: string;
+let teamId: string;
+let teamSlug: string;
 let projectId: string;
 let projectSlug: string;
 let dataDir: string;
@@ -31,16 +31,16 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 	dataDir = ctx.dataDir;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Repo Sync Co' }),
 	});
-	const company = (await companyRes.json()).data;
-	companyId = company.id;
-	companySlug = company.slug;
+	const team = (await teamRes.json()).data;
+	teamId = team.id;
+	teamSlug = team.slug;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Main', description: 'Test project.' }),
@@ -59,7 +59,7 @@ describe('ensureProjectRepos', () => {
 		const result = await ensureProjectRepos(
 			db,
 			masterKeyManager,
-			{ id: projectId, company_id: companyId, companySlug, projectSlug },
+			{ id: projectId, team_id: teamId, teamSlug, projectSlug },
 			dataDir,
 			null,
 		);
@@ -76,14 +76,7 @@ describe('ensureProjectRepos', () => {
 			[projectId],
 		);
 
-		const workspacePath = join(
-			dataDir,
-			'companies',
-			companySlug,
-			'projects',
-			projectSlug,
-			'workspace',
-		);
+		const workspacePath = join(dataDir, 'teams', teamSlug, 'projects', projectSlug, 'workspace');
 		const targetDir = join(workspacePath, 'preexisting');
 		mkdirSync(join(targetDir, '.git'), { recursive: true });
 		writeFileSync(join(targetDir, '.git', 'HEAD'), 'ref: refs/heads/main\n');
@@ -92,7 +85,7 @@ describe('ensureProjectRepos', () => {
 		const result = await ensureProjectRepos(
 			db,
 			masterKeyManager,
-			{ id: projectId, company_id: companyId, companySlug, projectSlug },
+			{ id: projectId, team_id: teamId, teamSlug, projectSlug },
 			dataDir,
 			null,
 			(stream, text) => logs.push({ stream, text }),
@@ -104,22 +97,8 @@ describe('ensureProjectRepos', () => {
 
 describe('removeRepoFromWorkspace', () => {
 	it('removes the repo subdirectory and its per-issue worktrees', async () => {
-		const workspacePath = join(
-			dataDir,
-			'companies',
-			companySlug,
-			'projects',
-			projectSlug,
-			'workspace',
-		);
-		const worktreesPath = join(
-			dataDir,
-			'companies',
-			companySlug,
-			'projects',
-			projectSlug,
-			'worktrees',
-		);
+		const workspacePath = join(dataDir, 'teams', teamSlug, 'projects', projectSlug, 'workspace');
+		const worktreesPath = join(dataDir, 'teams', teamSlug, 'projects', projectSlug, 'worktrees');
 
 		const repoDir = join(workspacePath, 'to-remove');
 		mkdirSync(join(repoDir, '.git'), { recursive: true });
@@ -129,7 +108,7 @@ describe('removeRepoFromWorkspace', () => {
 		mkdirSync(wtDir1, { recursive: true });
 		mkdirSync(wtDir2, { recursive: true });
 
-		removeRepoFromWorkspace(dataDir, companySlug, projectSlug, 'to-remove');
+		removeRepoFromWorkspace(dataDir, teamSlug, projectSlug, 'to-remove');
 
 		expect(existsSync(repoDir)).toBe(false);
 		expect(existsSync(wtDir1)).toBe(false);
@@ -137,20 +116,13 @@ describe('removeRepoFromWorkspace', () => {
 	});
 
 	it('is a no-op for dangerous short_name values', () => {
-		const workspacePath = join(
-			dataDir,
-			'companies',
-			companySlug,
-			'projects',
-			projectSlug,
-			'workspace',
-		);
+		const workspacePath = join(dataDir, 'teams', teamSlug, 'projects', projectSlug, 'workspace');
 		const stayDir = join(workspacePath, 'stay');
 		mkdirSync(stayDir, { recursive: true });
 
-		removeRepoFromWorkspace(dataDir, companySlug, projectSlug, '..');
-		removeRepoFromWorkspace(dataDir, companySlug, projectSlug, 'has/slash');
-		removeRepoFromWorkspace(dataDir, companySlug, projectSlug, '');
+		removeRepoFromWorkspace(dataDir, teamSlug, projectSlug, '..');
+		removeRepoFromWorkspace(dataDir, teamSlug, projectSlug, 'has/slash');
+		removeRepoFromWorkspace(dataDir, teamSlug, projectSlug, '');
 
 		expect(existsSync(stayDir)).toBe(true);
 	});
@@ -158,37 +130,23 @@ describe('removeRepoFromWorkspace', () => {
 
 describe('removeIssueWorktrees', () => {
 	it('removes the issue directory under worktrees', () => {
-		const worktreesPath = join(
-			dataDir,
-			'companies',
-			companySlug,
-			'projects',
-			projectSlug,
-			'worktrees',
-		);
+		const worktreesPath = join(dataDir, 'teams', teamSlug, 'projects', projectSlug, 'worktrees');
 		const issueDir = join(worktreesPath, 'RS-9');
 		mkdirSync(join(issueDir, 'main'), { recursive: true });
 		mkdirSync(join(issueDir, 'secondary'), { recursive: true });
 
-		removeIssueWorktrees(dataDir, companySlug, projectSlug, 'RS-9');
+		removeIssueWorktrees(dataDir, teamSlug, projectSlug, 'RS-9');
 
 		expect(existsSync(issueDir)).toBe(false);
 	});
 
 	it('is a no-op for dangerous identifier values', () => {
-		const worktreesPath = join(
-			dataDir,
-			'companies',
-			companySlug,
-			'projects',
-			projectSlug,
-			'worktrees',
-		);
+		const worktreesPath = join(dataDir, 'teams', teamSlug, 'projects', projectSlug, 'worktrees');
 		const stayDir = join(worktreesPath, 'RS-10');
 		mkdirSync(stayDir, { recursive: true });
 
-		removeIssueWorktrees(dataDir, companySlug, projectSlug, '..');
-		removeIssueWorktrees(dataDir, companySlug, projectSlug, '');
+		removeIssueWorktrees(dataDir, teamSlug, projectSlug, '..');
+		removeIssueWorktrees(dataDir, teamSlug, projectSlug, '');
 
 		expect(existsSync(stayDir)).toBe(true);
 	});

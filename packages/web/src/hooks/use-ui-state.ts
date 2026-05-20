@@ -12,30 +12,30 @@ export interface UiState {
 	sidebar?: SidebarState;
 }
 
-export function useUiState(companyId: string) {
+export function useUiState(teamId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'ui-state'],
-		queryFn: () => api.get<UiState>(`/api/companies/${companyId}/ui-state`),
+		queryKey: ['teams', teamId, 'ui-state'],
+		queryFn: () => api.get<UiState>(`/api/teams/${teamId}/ui-state`),
 		staleTime: Number.POSITIVE_INFINITY,
-		enabled: !!companyId,
+		enabled: !!teamId,
 	});
 }
 
-export function useUpdateUiState(companyId: string) {
+export function useUpdateUiState(teamId: string) {
 	return useMutation({
 		mutationFn: (data: UiState) => {
-			const current = queryClient.getQueryData<UiState>(['companies', companyId, 'ui-state']);
+			const current = queryClient.getQueryData<UiState>(['teams', teamId, 'ui-state']);
 			const merged: UiState = {
 				...current,
 				...data,
 				sidebar: { ...current?.sidebar, ...data.sidebar },
 			};
-			return api.patch<UiState>(`/api/companies/${companyId}/ui-state`, merged);
+			return api.patch<UiState>(`/api/teams/${teamId}/ui-state`, merged);
 		},
 		onMutate: async (data) => {
-			await queryClient.cancelQueries({ queryKey: ['companies', companyId, 'ui-state'] });
-			const previous = queryClient.getQueryData<UiState>(['companies', companyId, 'ui-state']);
-			queryClient.setQueryData<UiState>(['companies', companyId, 'ui-state'], (old) => ({
+			await queryClient.cancelQueries({ queryKey: ['teams', teamId, 'ui-state'] });
+			const previous = queryClient.getQueryData<UiState>(['teams', teamId, 'ui-state']);
+			queryClient.setQueryData<UiState>(['teams', teamId, 'ui-state'], (old) => ({
 				...old,
 				...data,
 				sidebar: { ...old?.sidebar, ...data.sidebar },
@@ -44,7 +44,7 @@ export function useUpdateUiState(companyId: string) {
 		},
 		onError: (_err, _data, context) => {
 			if (context?.previous !== undefined) {
-				queryClient.setQueryData(['companies', companyId, 'ui-state'], context.previous);
+				queryClient.setQueryData(['teams', teamId, 'ui-state'], context.previous);
 			}
 		},
 	});

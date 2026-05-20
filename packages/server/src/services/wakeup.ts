@@ -6,7 +6,7 @@ const COALESCING_WINDOW_MS = 2_000;
 export async function createWakeup(
 	db: PGlite,
 	memberId: string,
-	companyId: string,
+	teamId: string,
 	source: WakeupSource,
 	payload: Record<string, unknown> = {},
 	idempotencyKey?: string,
@@ -50,10 +50,10 @@ export async function createWakeup(
 	}
 
 	const result = await db.query<{ id: string }>(
-		`INSERT INTO agent_wakeup_requests (member_id, company_id, source, payload, idempotency_key)
+		`INSERT INTO agent_wakeup_requests (member_id, team_id, source, payload, idempotency_key)
 		 VALUES ($1, $2, $3::wakeup_source, $4::jsonb, $5)
 		 RETURNING id`,
-		[memberId, companyId, source, JSON.stringify(payload), idempotencyKey ?? null],
+		[memberId, teamId, source, JSON.stringify(payload), idempotencyKey ?? null],
 	);
 
 	return result.rows[0].id;

@@ -4,7 +4,7 @@ import { authHeader } from '../helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from '../helpers/context';
 
 let ctx: ServerTestContext;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let engineerAgentId: string;
 let architectAgentId: string;
@@ -14,16 +14,16 @@ let coachAgentId: string;
 beforeAll(async () => {
 	ctx = await createTestContext();
 
-	// Get the builtin company type
-	const typesRes = await ctx.app.request('/api/company-types', {
+	// Get the builtin team type
+	const typesRes = await ctx.app.request('/api/team-templates', {
 		method: 'GET',
 		headers: authHeader(ctx.token),
 	});
 	const types = (await typesRes.json()) as any;
 	const softDevType = types.data.find((t: any) => t.name === 'Startup');
 
-	// Create a company with auto-created agents
-	const companyRes = await ctx.app.request('/api/companies', {
+	// Create a team with auto-created agents
+	const teamRes = await ctx.app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -33,10 +33,10 @@ beforeAll(async () => {
 			template_id: softDevType.id,
 		}),
 	});
-	companyId = ((await companyRes.json()) as any).data.id;
+	teamId = ((await teamRes.json()) as any).data.id;
 
 	// Get agents
-	const agentsRes = await ctx.app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await ctx.app.request(`/api/teams/${teamId}/agents`, {
 		method: 'GET',
 		headers: authHeader(ctx.token),
 	});
@@ -47,7 +47,7 @@ beforeAll(async () => {
 	coachAgentId = agents.find((a: any) => a.slug === 'coach').id;
 
 	// Create a project
-	const projRes = await ctx.app.request(`/api/companies/${companyId}/projects`, {
+	const projRes = await ctx.app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Autonomy Project', description: 'Test project.' }),
@@ -61,7 +61,7 @@ afterAll(async () => {
 
 describe('issue schema', () => {
 	it('creates an issue with backlog status by default', async () => {
-		const res = await ctx.app.request(`/api/companies/${companyId}/issues`, {
+		const res = await ctx.app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -77,7 +77,7 @@ describe('issue schema', () => {
 
 describe('issue schema: branch_name', () => {
 	it('can set and retrieve branch_name', async () => {
-		const createRes = await ctx.app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await ctx.app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -88,7 +88,7 @@ describe('issue schema: branch_name', () => {
 		});
 		const issueId = ((await createRes.json()) as any).data.id;
 
-		const patchRes = await ctx.app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		const patchRes = await ctx.app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ branch_name: 'feat/AUT-1-test-feature' }),
@@ -101,7 +101,7 @@ describe('issue schema: branch_name', () => {
 
 describe('issue automation: Coach wakeup on Done', () => {
 	it('creates a wakeup for Coach when status changes to done', async () => {
-		const createRes = await ctx.app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await ctx.app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -116,7 +116,7 @@ describe('issue automation: Coach wakeup on Done', () => {
 		await ctx.db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [coachAgentId]);
 
 		// Set status to done
-		await ctx.app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		await ctx.app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: IssueStatus.Done }),
@@ -137,7 +137,7 @@ describe('issue automation: Coach wakeup on Done', () => {
 	});
 
 	it('does not create wakeup for non-done status changes', async () => {
-		const createRes = await ctx.app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await ctx.app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -151,7 +151,7 @@ describe('issue automation: Coach wakeup on Done', () => {
 		await ctx.db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [coachAgentId]);
 
 		// Set status to review — should NOT trigger Coach
-		await ctx.app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		await ctx.app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: IssueStatus.Review }),
@@ -169,7 +169,7 @@ describe('issue automation: Coach wakeup on Done', () => {
 
 describe('issue: progress_summary and rules', () => {
 	it('can update progress_summary with tracking fields', async () => {
-		const createRes = await ctx.app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await ctx.app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -180,7 +180,7 @@ describe('issue: progress_summary and rules', () => {
 		});
 		const issueId = ((await createRes.json()) as any).data.id;
 
-		const patchRes = await ctx.app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		const patchRes = await ctx.app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: 'Completed API endpoints, working on tests' }),
@@ -192,7 +192,7 @@ describe('issue: progress_summary and rules', () => {
 	});
 
 	it('can update rules', async () => {
-		const createRes = await ctx.app.request(`/api/companies/${companyId}/issues`, {
+		const createRes = await ctx.app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -203,7 +203,7 @@ describe('issue: progress_summary and rules', () => {
 		});
 		const issueId = ((await createRes.json()) as any).data.id;
 
-		const patchRes = await ctx.app.request(`/api/companies/${companyId}/issues/${issueId}`, {
+		const patchRes = await ctx.app.request(`/api/teams/${teamId}/issues/${issueId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ rules: 'Must use PostgreSQL transactions for all writes' }),
@@ -217,7 +217,7 @@ describe('issue: progress_summary and rules', () => {
 
 describe('issue: sub-issues with parent_issue_id', () => {
 	it('can create a sub-issue', async () => {
-		const parentRes = await ctx.app.request(`/api/companies/${companyId}/issues`, {
+		const parentRes = await ctx.app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -229,18 +229,15 @@ describe('issue: sub-issues with parent_issue_id', () => {
 		const parentId = ((await parentRes.json()) as any).data.id;
 
 		// Create sub-issue via the existing sub-issues endpoint
-		const subRes = await ctx.app.request(
-			`/api/companies/${companyId}/issues/${parentId}/sub-issues`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					project_id: projectId,
-					title: 'Plan this work',
-					assignee_id: architectAgentId,
-				}),
-			},
-		);
+		const subRes = await ctx.app.request(`/api/teams/${teamId}/issues/${parentId}/sub-issues`, {
+			method: 'POST',
+			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Plan this work',
+				assignee_id: architectAgentId,
+			}),
+		});
 		expect(subRes.status).toBe(201);
 		const subIssue = ((await subRes.json()) as any).data;
 		expect(subIssue.parent_issue_id).toBe(parentId);
@@ -249,7 +246,7 @@ describe('issue: sub-issues with parent_issue_id', () => {
 
 describe('approval: skill_proposal type', () => {
 	it('can create a skill_proposal approval', async () => {
-		const res = await ctx.app.request(`/api/companies/${companyId}/approvals`, {
+		const res = await ctx.app.request(`/api/teams/${teamId}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

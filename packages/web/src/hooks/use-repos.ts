@@ -13,34 +13,34 @@ export interface CreateRepoPayload {
 	oauth_connection_id: string;
 }
 
-export function useRepos(companyId: string, projectId: string) {
+export function useRepos(teamId: string, projectId: string) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'projects', projectId, 'repos'],
-		queryFn: () => api.get<Repo[]>(`/api/companies/${companyId}/projects/${projectId}/repos`),
+		queryKey: ['teams', teamId, 'projects', projectId, 'repos'],
+		queryFn: () => api.get<Repo[]>(`/api/teams/${teamId}/projects/${projectId}/repos`),
 	});
 }
 
-export function useCreateRepo(companyId: string, projectId: string) {
+export function useCreateRepo(teamId: string, projectId: string) {
 	return useMutation({
 		mutationFn: (data: CreateRepoPayload) =>
-			api.post<Repo>(`/api/companies/${companyId}/projects/${projectId}/repos`, data),
+			api.post<Repo>(`/api/teams/${teamId}/projects/${projectId}/repos`, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects', projectId] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects', projectId] });
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'projects', projectId, 'repos'],
+				queryKey: ['teams', teamId, 'projects', projectId, 'repos'],
 			});
 		},
 	});
 }
 
-export function useDeleteRepo(companyId: string, projectId: string) {
+export function useDeleteRepo(teamId: string, projectId: string) {
 	return useMutation({
 		mutationFn: (repoId: string) =>
-			api.delete(`/api/companies/${companyId}/projects/${projectId}/repos/${repoId}`),
+			api.delete(`/api/teams/${teamId}/projects/${projectId}/repos/${repoId}`),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['companies', companyId, 'projects', projectId] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects', projectId] });
 			queryClient.invalidateQueries({
-				queryKey: ['companies', companyId, 'projects', projectId, 'repos'],
+				queryKey: ['teams', teamId, 'projects', projectId, 'repos'],
 			});
 		},
 	});
@@ -63,38 +63,30 @@ export interface GitHubRepoSummary {
 	ssh_url: string;
 }
 
-export function useGitHubOrgs(companyId: string, oauthConnectionId: string | null | undefined) {
+export function useGitHubOrgs(teamId: string, oauthConnectionId: string | null | undefined) {
 	return useQuery({
-		queryKey: ['companies', companyId, 'oauth-connections', oauthConnectionId, 'orgs'],
+		queryKey: ['teams', teamId, 'oauth-connections', oauthConnectionId, 'orgs'],
 		queryFn: () =>
 			api.get<GitHubOrgSummary[]>(
-				`/api/companies/${companyId}/oauth-connections/${oauthConnectionId}/orgs`,
+				`/api/teams/${teamId}/oauth-connections/${oauthConnectionId}/orgs`,
 			),
 		enabled: !!oauthConnectionId,
 	});
 }
 
 export function useGitHubReposForOwner(
-	companyId: string,
+	teamId: string,
 	oauthConnectionId: string | null | undefined,
 	owner: string | null,
 	query: string,
 ) {
 	return useQuery({
-		queryKey: [
-			'companies',
-			companyId,
-			'oauth-connections',
-			oauthConnectionId,
-			'repos',
-			owner,
-			query,
-		],
+		queryKey: ['teams', teamId, 'oauth-connections', oauthConnectionId, 'repos', owner, query],
 		queryFn: () => {
 			const params = new URLSearchParams({ owner: owner ?? '' });
 			if (query) params.set('q', query);
 			return api.get<GitHubRepoSummary[]>(
-				`/api/companies/${companyId}/oauth-connections/${oauthConnectionId}/repos?${params}`,
+				`/api/teams/${teamId}/oauth-connections/${oauthConnectionId}/repos?${params}`,
 			);
 		},
 		enabled: !!oauthConnectionId && !!owner,

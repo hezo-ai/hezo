@@ -16,7 +16,7 @@ test.describe('AI Providers instance settings', () => {
 
 	test('rail Settings icon opens global settings with AI providers section', async ({ page }) => {
 		await authenticate(page);
-		await page.goto('/companies');
+		await page.goto('/teams');
 		await waitForPageLoad(page);
 
 		await page.getByTitle('Settings').click();
@@ -197,7 +197,7 @@ test.describe('AI Providers instance settings', () => {
 	});
 });
 
-test.describe('AI provider gate (post-master-key, pre-company)', () => {
+test.describe('AI provider gate (post-master-key, pre-team)', () => {
 	test('blocks the app when no provider is configured and drops once one is added', async ({
 		page,
 	}) => {
@@ -230,7 +230,7 @@ test.describe('AI provider gate (post-master-key, pre-company)', () => {
 		await expect(page.getByRole('heading', { name: 'Set up an AI provider' })).toBeHidden({
 			timeout: 20000,
 		});
-		await expect(page).toHaveURL(/\/companies(\/|$)/);
+		await expect(page).toHaveURL(/\/teams(\/|$)/);
 	});
 
 	test('re-raises the gate after deleting the last provider', async ({ page }) => {

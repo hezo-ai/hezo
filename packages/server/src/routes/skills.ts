@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
 
 export const skillsRoutes = new Hono<Env>();
@@ -24,36 +24,36 @@ function downloadErrorStatus(reason: SkillDownloadError['reason']): 400 | 404 | 
 	}
 }
 
-skillsRoutes.get('/companies/:companyId/skills', async (c) => {
-	const access = await requireCompanyAccess(c);
+skillsRoutes.get('/teams/:teamId/skills', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const result = await db.query<Omit<SkillRecord, 'content'>>(
-		`SELECT id, company_id, name, slug, description, source_url, content_hash,
+		`SELECT id, team_id, name, slug, description, source_url, content_hash,
 		        created_by_member_id, tags, is_active, created_at, updated_at
 		 FROM skills
-		 WHERE company_id = $1 AND is_active = true
+		 WHERE team_id = $1 AND is_active = true
 		 ORDER BY name`,
-		[companyId],
+		[teamId],
 	);
 
 	return ok(c, result.rows);
 });
 
-skillsRoutes.get('/companies/:companyId/skills/:slug', async (c) => {
-	const access = await requireCompanyAccess(c);
+skillsRoutes.get('/teams/:teamId/skills/:slug', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const slug = c.req.param('slug');
 
 	const result = await db.query<SkillRecord>(
-		'SELECT * FROM skills WHERE company_id = $1 AND slug = $2',
-		[companyId, slug],
+		'SELECT * FROM skills WHERE team_id = $1 AND slug = $2',
+		[teamId, slug],
 	);
 
 	if (result.rows.length === 0) {
@@ -63,12 +63,12 @@ skillsRoutes.get('/companies/:companyId/skills/:slug', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-skillsRoutes.post('/companies/:companyId/skills', async (c) => {
-	const access = await requireCompanyAccess(c);
+skillsRoutes.post('/teams/:teamId/skills', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const body = await c.req.json<{
 		name: string;
@@ -94,9 +94,9 @@ skillsRoutes.post('/companies/:companyId/skills', async (c) => {
 		const { content, hash } = await downloadSkillContent(body.source_url.trim());
 
 		const result = await db.query<SkillRecord>(
-			`INSERT INTO skills (company_id, name, slug, description, content, source_url, content_hash, tags)
+			`INSERT INTO skills (team_id, name, slug, description, content, source_url, content_hash, tags)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-			 ON CONFLICT (company_id, slug) DO UPDATE SET
+			 ON CONFLICT (team_id, slug) DO UPDATE SET
 			   name = EXCLUDED.name,
 			   description = EXCLUDED.description,
 			   content = EXCLUDED.content,
@@ -106,7 +106,7 @@ skillsRoutes.post('/companies/:companyId/skills', async (c) => {
 			   updated_at = now()
 			 RETURNING *`,
 			[
-				companyId,
+				teamId,
 				body.name.trim(),
 				slug,
 				body.description?.trim() ?? '',
@@ -136,12 +136,12 @@ skillsRoutes.post('/companies/:companyId/skills', async (c) => {
 	}
 });
 
-skillsRoutes.patch('/companies/:companyId/skills/:slug', async (c) => {
-	const access = await requireCompanyAccess(c);
+skillsRoutes.patch('/teams/:teamId/skills/:slug', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const slug = c.req.param('slug');
 
 	const body = await c.req.json<{
@@ -153,7 +153,7 @@ skillsRoutes.patch('/companies/:companyId/skills/:slug', async (c) => {
 
 	const sets: string[] = [];
 	const params: unknown[] = [];
-	let paramIdx = 3; // $1 = companyId, $2 = slug
+	let paramIdx = 3; // $1 = teamId, $2 = slug
 
 	if (body.name !== undefined) {
 		sets.push(`name = $${paramIdx++}`);
@@ -183,9 +183,9 @@ skillsRoutes.patch('/companies/:companyId/skills/:slug', async (c) => {
 
 	const result = await db.query<SkillRecord>(
 		`UPDATE skills SET ${sets.join(', ')}
-		 WHERE company_id = $1 AND slug = $2
+		 WHERE team_id = $1 AND slug = $2
 		 RETURNING *`,
-		[companyId, slug, ...params],
+		[teamId, slug, ...params],
 	);
 
 	if (result.rows.length === 0) {
@@ -211,17 +211,17 @@ skillsRoutes.patch('/companies/:companyId/skills/:slug', async (c) => {
 	return ok(c, skill);
 });
 
-skillsRoutes.post('/companies/:companyId/skills/:slug/sync', async (c) => {
-	const access = await requireCompanyAccess(c);
+skillsRoutes.post('/teams/:teamId/skills/:slug/sync', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const slug = c.req.param('slug');
 
 	const existing = await db.query<{ id: string; source_url: string | null }>(
-		'SELECT id, source_url FROM skills WHERE company_id = $1 AND slug = $2',
-		[companyId, slug],
+		'SELECT id, source_url FROM skills WHERE team_id = $1 AND slug = $2',
+		[teamId, slug],
 	);
 
 	if (existing.rows.length === 0) {
@@ -265,17 +265,17 @@ skillsRoutes.post('/companies/:companyId/skills/:slug/sync', async (c) => {
 	}
 });
 
-skillsRoutes.delete('/companies/:companyId/skills/:slug', async (c) => {
-	const access = await requireCompanyAccess(c);
+skillsRoutes.delete('/teams/:teamId/skills/:slug', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const slug = c.req.param('slug');
 
 	const result = await db.query(
-		'DELETE FROM skills WHERE company_id = $1 AND slug = $2 RETURNING id',
-		[companyId, slug],
+		'DELETE FROM skills WHERE team_id = $1 AND slug = $2 RETURNING id',
+		[teamId, slug],
 	);
 
 	if (result.rows.length === 0) {

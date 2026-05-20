@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -16,12 +16,12 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'API Key Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 });
 
 afterAll(async () => {
@@ -30,7 +30,7 @@ afterAll(async () => {
 
 describe('API keys CRUD', () => {
 	it('creates an API key and returns raw key once', async () => {
-		const res = await app.request(`/api/companies/${companyId}/api-keys`, {
+		const res = await app.request(`/api/teams/${teamId}/api-keys`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Test Key' }),
@@ -43,7 +43,7 @@ describe('API keys CRUD', () => {
 	});
 
 	it('lists API keys (without raw key)', async () => {
-		const res = await app.request(`/api/companies/${companyId}/api-keys`, {
+		const res = await app.request(`/api/teams/${teamId}/api-keys`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -56,7 +56,7 @@ describe('API keys CRUD', () => {
 
 	it('authenticates with an API key', async () => {
 		// Create a key
-		const createRes = await app.request(`/api/companies/${companyId}/api-keys`, {
+		const createRes = await app.request(`/api/teams/${teamId}/api-keys`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Auth Test Key' }),
@@ -64,14 +64,14 @@ describe('API keys CRUD', () => {
 		const rawKey = (await createRes.json()).data.key;
 
 		// Use the key to access an API
-		const res = await app.request(`/api/companies/${companyId}/api-keys`, {
+		const res = await app.request(`/api/teams/${teamId}/api-keys`, {
 			headers: { Authorization: `Bearer ${rawKey}` },
 		});
 		expect(res.status).toBe(200);
 	});
 
 	it('revokes an API key', async () => {
-		const createRes = await app.request(`/api/companies/${companyId}/api-keys`, {
+		const createRes = await app.request(`/api/teams/${teamId}/api-keys`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'To Revoke' }),
@@ -79,14 +79,14 @@ describe('API keys CRUD', () => {
 		const apiKey = (await createRes.json()).data;
 		const rawKey = apiKey.key;
 
-		const res = await app.request(`/api/companies/${companyId}/api-keys/${apiKey.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/api-keys/${apiKey.id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 
 		// Verify key no longer works
-		const authRes = await app.request(`/api/companies/${companyId}/api-keys`, {
+		const authRes = await app.request(`/api/teams/${teamId}/api-keys`, {
 			headers: { Authorization: `Bearer ${rawKey}` },
 		});
 		expect(authRes.status).toBe(401);

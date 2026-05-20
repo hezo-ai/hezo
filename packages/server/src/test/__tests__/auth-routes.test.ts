@@ -97,9 +97,9 @@ describe('POST /api/auth/token', () => {
 		});
 		const { token } = (await res.json()).data;
 
-		const companiesRes = await app.request('/api/companies', {
+		const teamsRes = await app.request('/api/teams', {
 			headers: authHeader(token),
 		});
-		expect(companiesRes.status).toBe(200);
+		expect(teamsRes.status).toBe(200);
 	});
 });

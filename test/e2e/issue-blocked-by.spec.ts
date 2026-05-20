@@ -5,17 +5,17 @@ test.describe('Issue blocked-by links', () => {
 	test.use({ viewport: { width: 390, height: 844 } });
 
 	test('Blocked By row links to the blocking issue', async ({ page, freshWorkspace }) => {
-		const { company, token, agents } = freshWorkspace;
+		const { team, token, agents } = freshWorkspace;
 		const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 			headers,
 			data: { name: 'Blocking Project', description: 'Seeded for blocked-by test.' },
 		});
 		const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
-		const blockerRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		const blockerRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 			headers,
 			data: { project_id: project.id, title: 'Upstream blocker', assignee_id: engineer.id },
 		});
@@ -25,7 +25,7 @@ test.describe('Issue blocked-by links', () => {
 			}
 		).data;
 
-		const blockedRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		const blockedRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 			headers,
 			data: { project_id: project.id, title: 'Downstream blocked', assignee_id: engineer.id },
 		});
@@ -36,13 +36,13 @@ test.describe('Issue blocked-by links', () => {
 		).data;
 
 		const depRes = await page.request.post(
-			`/api/companies/${company.id}/issues/${blocked.id}/dependencies`,
+			`/api/teams/${team.id}/issues/${blocked.id}/dependencies`,
 			{ headers, data: { blocked_by_issue_id: blocker.id } },
 		);
 		expect(depRes.ok()).toBeTruthy();
 
 		await page.goto(
-			`/companies/${company.slug}/projects/${project.slug}/issues/${blocked.identifier.toLowerCase()}`,
+			`/teams/${team.slug}/projects/${project.slug}/issues/${blocked.identifier.toLowerCase()}`,
 		);
 		await waitForPageLoad(page);
 		await expect(page.getByRole('heading', { name: 'Downstream blocked' })).toBeVisible({
@@ -59,7 +59,7 @@ test.describe('Issue blocked-by links', () => {
 			timeout: 20000,
 		});
 		expect(page.url()).toContain(
-			`/companies/${company.slug}/projects/${project.slug}/issues/${blocker.identifier.toLowerCase()}`,
+			`/teams/${team.slug}/projects/${project.slug}/issues/${blocker.identifier.toLowerCase()}`,
 		);
 	});
 });

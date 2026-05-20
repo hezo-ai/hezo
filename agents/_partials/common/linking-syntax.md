@@ -6,7 +6,7 @@ When your markdown (ticket descriptions, `progress_summary`, comments, project d
 
 - `@<agent-slug>` — teammate. The `@` prefix is **reserved for teammates only**. Example: `@architect`, `@engineer`, `@qa-engineer`.
 - `<ISSUE-ID>` — ticket, using the project-scoped uppercase identifier. Example: `OP-42`, `BE-7`. Shape: `<project-prefix>-<number>`. No prefix — write the bare identifier.
-- `<kb-doc-filename>` — company knowledge-base doc, stored as a markdown file. Example: `coding-standards.md`. Available filenames are listed in the KB block injected into your context. No prefix — write the bare filename.
+- `<kb-doc-filename>` — team knowledge-base doc, stored as a markdown file. Example: `coding-standards.md`. Available filenames are listed in the KB block injected into your context. No prefix — write the bare filename.
 - `<project-doc-filename>` — project doc in the current project. Example: `prd.md`, `spec.md`. Available filenames are listed in the project-docs block injected into your context. No prefix — write the bare filename.
 
 **Rules:**

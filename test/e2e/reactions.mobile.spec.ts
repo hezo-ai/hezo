@@ -1,24 +1,24 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
+import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Comment reactions (mobile)', () => {
 	test('reaction chip is tappable on a 390px viewport', async ({ page }) => {
 		await authenticate(page);
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 			headers,
 			data: { name: 'Reactions Mobile', description: 'x' },
 		});
 		const project = ((await projRes.json()) as { data: { id: string } }).data;
 
-		const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, {
+		const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
 			headers: { Authorization: `Bearer ${token}` },
 		});
 		const agents = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data;
 
-		const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+		const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 			headers,
 			data: {
 				project_id: project.id,
@@ -28,12 +28,12 @@ test.describe('Comment reactions (mobile)', () => {
 		});
 		const issue = ((await issueRes.json()) as { data: { id: string } }).data;
 
-		await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 			headers,
 			data: { content_type: 'text', content: { text: 'react to me on mobile' } },
 		});
 
-		await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 		await waitForPageLoad(page);
 
 		const addButton = page.getByTestId('add-reaction-button').first();

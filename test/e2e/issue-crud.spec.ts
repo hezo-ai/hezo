@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, getToken, waitForPageLoad } from './helpers';
+import { authenticate, createTeamWithAgents, getToken, waitForPageLoad } from './helpers';
 
 async function suppressAiModal(page: Page) {
 	await page.route('**/ai-providers/status', (route) =>
@@ -15,24 +15,24 @@ test('can create an issue with required assignee', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
 	// Get agents for assignee selection
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
 	expect(agents.length).toBeGreaterThan(0);
 	const agent = agents[0];
 
 	// Create a project via API
-	await page.request.post(`/api/companies/${company.id}/projects`, {
+	await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Test Project', description: 'Test project.' },
 	});
 
 	// Navigate to issues
 	await suppressAiModal(page);
-	await page.goto(`/companies/${company.slug}/issues`);
+	await page.goto(`/teams/${team.slug}/issues`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('button', { name: 'New Issue' }).first()).toBeVisible({
 		timeout: 20000,
@@ -67,47 +67,47 @@ test('issue detail shows execution lock banner when locked', async ({ page }) =>
 	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	// Create company with agents (need agent for lock)
-	const typesRes = await page.request.get('/api/company-types', { headers });
+	// Create team with agents (need agent for lock)
+	const typesRes = await page.request.get('/api/team-templates', { headers });
 	const types = (await typesRes.json()).data as { id: string; name: string }[];
 	const typeId = types.find((t) => t.name === 'Startup')?.id;
 
-	const companyRes = await page.request.post('/api/companies', {
+	const teamRes = await page.request.post('/api/teams', {
 		headers,
 		data: {
 			name: `Lock Test ${Date.now()}`,
 			template_id: typeId,
 		},
 	});
-	const company = (await companyRes.json()).data;
+	const team = (await teamRes.json()).data;
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Lock Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 
 	// Get an agent for assignee and lock
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	expect(agentsRes.ok()).toBeTruthy();
 	const agents = (await agentsRes.json()).data;
 	expect(agents.length).toBeGreaterThan(0);
 	const agent = agents[0];
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: { project_id: project.id, title: 'Locked Issue', assignee_id: agent.id },
 	});
 	const issue = (await issueRes.json()).data;
 
 	// Acquire the execution lock
-	const lockRes = await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/lock`, {
+	const lockRes = await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/lock`, {
 		headers,
 		data: { member_id: agent.id },
 	});
 	expect(lockRes.ok()).toBeTruthy();
 
-	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 
 	const sidebar = page.getByTestId('issue-sidebar');
@@ -122,31 +122,31 @@ test('issue detail lists every agent running concurrently on a ticket', async ({
 	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const typesRes = await page.request.get('/api/company-types', { headers });
+	const typesRes = await page.request.get('/api/team-templates', { headers });
 	const types = (await typesRes.json()).data as { id: string; name: string }[];
 	const typeId = types.find((t) => t.name === 'Startup')?.id;
 
-	const companyRes = await page.request.post('/api/companies', {
+	const teamRes = await page.request.post('/api/teams', {
 		headers,
 		data: {
 			name: `Concurrent Lock ${Date.now()}`,
 			template_id: typeId,
 		},
 	});
-	const company = (await companyRes.json()).data;
+	const team = (await teamRes.json()).data;
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Concurrent Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
 	expect(agents.length).toBeGreaterThanOrEqual(2);
 	const [firstAgent, secondAgent] = agents;
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: {
 			project_id: project.id,
@@ -156,19 +156,19 @@ test('issue detail lists every agent running concurrently on a ticket', async ({
 	});
 	const issue = (await issueRes.json()).data;
 
-	const firstLockRes = await page.request.post(
-		`/api/companies/${company.id}/issues/${issue.id}/lock`,
-		{ headers, data: { member_id: firstAgent.id } },
-	);
+	const firstLockRes = await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/lock`, {
+		headers,
+		data: { member_id: firstAgent.id },
+	});
 	expect(firstLockRes.ok()).toBeTruthy();
 
-	const secondLockRes = await page.request.post(
-		`/api/companies/${company.id}/issues/${issue.id}/lock`,
-		{ headers, data: { member_id: secondAgent.id } },
-	);
+	const secondLockRes = await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/lock`, {
+		headers,
+		data: { member_id: secondAgent.id },
+	});
 	expect(secondLockRes.ok()).toBeTruthy();
 
-	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 
 	const sidebar = page.getByTestId('issue-sidebar');
@@ -189,33 +189,33 @@ test('running-agents line links each name to its run comment and scrolls into vi
 	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const typesRes = await page.request.get('/api/company-types', { headers });
+	const typesRes = await page.request.get('/api/team-templates', { headers });
 	const types = (await typesRes.json()).data as { id: string; name: string }[];
 	const typeId = types.find((t) => t.name === 'Startup')?.id;
 
-	const companyRes = await page.request.post('/api/companies', {
+	const teamRes = await page.request.post('/api/teams', {
 		headers,
 		data: { name: `Running Link ${Date.now()}`, template_id: typeId },
 	});
-	const company = (await companyRes.json()).data;
+	const team = (await teamRes.json()).data;
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Running Link Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
 	const agent = agents[0];
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: { project_id: project.id, title: 'Linked Running Issue', assignee_id: agent.id },
 	});
 	const issue = (await issueRes.json()).data;
 
-	const lockRes = await page.request.post(`/api/companies/${company.id}/issues/${issue.id}/lock`, {
+	const lockRes = await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/lock`, {
 		headers,
 		data: { member_id: agent.id },
 	});
@@ -248,7 +248,7 @@ test('running-agents line links each name to its run comment and scrolls into vi
 		author_member_id: null,
 	}));
 
-	await page.route(`**/api/companies/*/issues/*/comments**`, async (route) => {
+	await page.route(`**/api/teams/*/issues/*/comments**`, async (route) => {
 		if (route.request().method() !== 'GET') return route.continue();
 		await route.fulfill({
 			status: 200,
@@ -257,7 +257,7 @@ test('running-agents line links each name to its run comment and scrolls into vi
 		});
 	});
 
-	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 
 	const runningLine = page.getByTestId('running-agents-line');
@@ -277,26 +277,26 @@ test('can edit issue rules and progress summary', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string }[];
 	const agent = agents[0];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Rules Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: { project_id: project.id, title: 'Rules Test Issue', assignee_id: agent.id },
 	});
 	const issue = (await issueRes.json()).data;
 
-	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Rules Test Issue' })).toBeVisible({
 		timeout: 20000,
@@ -332,26 +332,26 @@ test('issue rules and progress summary render markdown formatting', async ({ pag
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string }[];
 	const agent = agents[0];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Markdown Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: { project_id: project.id, title: 'Markdown Test Issue', assignee_id: agent.id },
 	});
 	const issue = (await issueRes.json()).data;
 
-	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Markdown Test Issue' })).toBeVisible({
 		timeout: 20000,
@@ -395,29 +395,29 @@ test('issue detail shows assignee with status badge', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
 	// Get agents
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
 	expect(agents.length).toBeGreaterThan(0);
 	const agent = agents[0];
 
 	// Create project and issue assigned to agent
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Assignee Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: { project_id: project.id, title: 'Assignee Badge Issue', assignee_id: agent.id },
 	});
 	const issue = (await issueRes.json()).data;
 
-	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 
 	// Verify agent name is displayed in the sidebar
@@ -437,28 +437,28 @@ test('can change assignee via popover dropdown', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
 	expect(agents.length).toBeGreaterThanOrEqual(2);
 	const agent1 = agents[0];
 	const agent2 = agents[1];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Change Assignee Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: { project_id: project.id, title: 'Change Assignee Issue', assignee_id: agent1.id },
 	});
 	const issue = (await issueRes.json()).data;
 
-	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 
 	const sidebar = page.locator('.grid > div:last-child');
@@ -484,26 +484,26 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
 	const agent = agents[0];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Outside Click Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data;
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: { project_id: project.id, title: 'Outside Click Issue', assignee_id: agent.id },
 	});
 	const issue = (await issueRes.json()).data;
 
-	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 
 	const sidebar = page.locator('.grid > div:last-child');
@@ -527,10 +527,10 @@ test('operations project restricts assignee dropdown to the CEO', async ({ page 
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string; title: string; slug: string }[];
 	const ceo = agents.find((a) => a.slug === 'ceo');
 	expect(ceo).toBeDefined();
@@ -538,7 +538,7 @@ test('operations project restricts assignee dropdown to the CEO', async ({ page 
 	expect(engineer).toBeDefined();
 
 	await suppressAiModal(page);
-	await page.goto(`/companies/${company.slug}/issues`);
+	await page.goto(`/teams/${team.slug}/issues`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('button', { name: 'New Issue' }).first()).toBeVisible({
 		timeout: 20000,
@@ -564,14 +564,14 @@ test('issue description renders markdown', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string }[];
 	const agent = agents[0];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Markdown Project', description: 'Test project.' },
 	});
@@ -589,7 +589,7 @@ test('issue description renders markdown', async ({ page }) => {
 		'```',
 	].join('\n');
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: {
 			project_id: project.id,
@@ -600,7 +600,7 @@ test('issue description renders markdown', async ({ page }) => {
 	});
 	const issue = (await issueRes.json()).data;
 
-	await page.goto(`/companies/${company.id}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.id}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 
 	const desc = page.getByTestId('issue-description');
@@ -618,32 +618,32 @@ test('project badge and metadata label both link to the project page', async ({ 
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company, token } = await createCompanyWithAgents(page);
+	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/companies/${company.id}/agents`, { headers });
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = (await agentsRes.json()).data as { id: string }[];
 	const agent = agents[0];
 
-	const projectRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
 		data: { name: 'Linkable Project', description: 'Test project.' },
 	});
 	const project = (await projectRes.json()).data as { id: string; slug: string };
 
-	const issueRes = await page.request.post(`/api/companies/${company.id}/issues`, {
+	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,
 		data: { project_id: project.id, title: 'Project Link Issue', assignee_id: agent.id },
 	});
 	const issue = (await issueRes.json()).data;
 
-	await page.goto(`/companies/${company.slug}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
 	await waitForPageLoad(page);
 	await expect(page.getByRole('heading', { name: 'Project Link Issue' })).toBeVisible({
 		timeout: 20000,
 	});
 
-	const expectedHref = `/companies/${company.slug}/projects/${project.slug}`;
+	const expectedHref = `/teams/${team.slug}/projects/${project.slug}`;
 
 	const mainContent = page.locator('.grid > div').first();
 	const badgeLink = mainContent.getByRole('link', { name: 'Linkable Project' });
@@ -664,9 +664,9 @@ test('sidebar shows agent status badges', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
-	const { company } = await createCompanyWithAgents(page);
+	const { team } = await createTeamWithAgents(page);
 
-	await page.goto(`/companies/${company.id}`);
+	await page.goto(`/teams/${team.id}`);
 	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 20000 });
 
 	// Expand the Team section if collapsed

@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
+import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Project Settings', () => {
 	async function createProject(page: import('@playwright/test').Page) {
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 			headers,
 			data: {
 				name: 'Settings Project',
@@ -15,14 +15,14 @@ test.describe('Project Settings', () => {
 		});
 		const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
 
-		return { company, project, token, headers };
+		return { team, project, token, headers };
 	}
 
 	test('displays project name and description', async ({ page }) => {
 		await authenticate(page);
-		const { company, project } = await createProject(page);
+		const { team, project } = await createProject(page);
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/settings`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/settings`);
 		await waitForPageLoad(page);
 
 		await expect(page.getByTestId('breadcrumb').getByText('Settings Project')).toBeVisible({
@@ -33,9 +33,9 @@ test.describe('Project Settings', () => {
 
 	test('can edit project description', async ({ page }) => {
 		await authenticate(page);
-		const { company, project } = await createProject(page);
+		const { team, project } = await createProject(page);
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/settings`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/settings`);
 		await waitForPageLoad(page);
 
 		await page.getByRole('button', { name: 'Edit' }).click();
@@ -51,9 +51,9 @@ test.describe('Project Settings', () => {
 
 	test('cancel button discards edits', async ({ page }) => {
 		await authenticate(page);
-		const { company, project } = await createProject(page);
+		const { team, project } = await createProject(page);
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/settings`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/settings`);
 		await waitForPageLoad(page);
 
 		await page.getByRole('button', { name: 'Edit' }).click();
@@ -72,9 +72,9 @@ test.describe('Project Settings', () => {
 
 	test('State A — no GitHub connection: shows Connect GitHub CTA', async ({ page }) => {
 		await authenticate(page);
-		const { company, project } = await createProject(page);
+		const { team, project } = await createProject(page);
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/settings`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/settings`);
 		await waitForPageLoad(page);
 
 		await expect(page.getByRole('heading', { name: 'Repositories' })).toBeVisible({

@@ -8,6 +8,6 @@ export const BUILTIN_AGENT_SLUGS = [CEO_AGENT_SLUG, COACH_AGENT_SLUG] as const;
 export const OPERATIONS_PROJECT_SLUG = 'operations';
 
 export const wsRoom = {
-	company: (id: string) => `company:${id}`,
+	team: (id: string) => `team:${id}`,
 	agent: (id: string) => `agent:${id}`,
 } as const;

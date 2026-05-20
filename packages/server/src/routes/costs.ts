@@ -3,16 +3,16 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 
 export const costsRoutes = new Hono<Env>();
 
-costsRoutes.get('/companies/:companyId/costs', async (c) => {
-	const access = await requireCompanyAccess(c);
+costsRoutes.get('/teams/:teamId/costs', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const agentId = c.req.query('agent_id');
 	const projectId = c.req.query('project_id');
 	const issueId = c.req.query('issue_id');
@@ -20,8 +20,8 @@ costsRoutes.get('/companies/:companyId/costs', async (c) => {
 	const to = c.req.query('to');
 	const groupBy = c.req.query('group_by');
 
-	const conditions: string[] = ['ce.company_id = $1'];
-	const params: unknown[] = [companyId];
+	const conditions: string[] = ['ce.team_id = $1'];
+	const params: unknown[] = [teamId];
 	let idx = 2;
 
 	if (agentId) {
@@ -103,12 +103,12 @@ costsRoutes.get('/companies/:companyId/costs', async (c) => {
 	return ok(c, { entries: result.rows, total_cents: totalCents });
 });
 
-costsRoutes.post('/companies/:companyId/costs', async (c) => {
-	const access = await requireCompanyAccess(c);
+costsRoutes.post('/teams/:teamId/costs', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 
 	const body = await c.req.json<{
 		member_id: string;
@@ -128,15 +128,15 @@ costsRoutes.post('/companies/:companyId/costs', async (c) => {
 	);
 
 	if (!debitResult.rows[0].debit_agent_budget) {
-		return err(c, 'BUDGET_EXCEEDED', 'Agent or company budget exceeded', 402);
+		return err(c, 'BUDGET_EXCEEDED', 'Agent or team budget exceeded', 402);
 	}
 
 	const result = await db.query(
-		`INSERT INTO cost_entries (company_id, member_id, issue_id, project_id, amount_cents, description)
+		`INSERT INTO cost_entries (team_id, member_id, issue_id, project_id, amount_cents, description)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
 		[
-			companyId,
+			teamId,
 			body.member_id,
 			body.issue_id ?? null,
 			body.project_id ?? null,
@@ -147,7 +147,7 @@ costsRoutes.post('/companies/:companyId/costs', async (c) => {
 
 	broadcastChange(
 		c,
-		wsRoom.company(companyId),
+		wsRoom.team(teamId),
 		'cost_entries',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,

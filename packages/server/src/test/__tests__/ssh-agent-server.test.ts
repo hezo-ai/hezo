@@ -15,13 +15,13 @@ import {
 	MSG_SIGN_RESPONSE,
 } from '../../services/ssh-agent/protocol';
 import { SshAgentServer, sshPublicKeyToBlob } from '../../services/ssh-agent/server';
-import { generateCompanySSHKey } from '../../services/ssh-keys';
+import { generateTeamSSHKey } from '../../services/ssh-keys';
 import { safeClose } from '../helpers';
 import { createTestApp } from '../helpers/app';
 
 let db: PGlite;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 let publicKey: string;
 let server: SshAgentServer;
@@ -32,21 +32,21 @@ beforeAll(async () => {
 	db = ctx.db;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const companyRes = await ctx.app.request('/api/companies', {
+	const teamRes = await ctx.app.request('/api/teams', {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'SSH Test Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentRes = await ctx.app.request(`/api/companies/${companyId}/agents`, {
+	const agentRes = await ctx.app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'SSH Agent' }),
 	});
 	agentId = (await agentRes.json()).data.id;
 
-	const ssh = await generateCompanySSHKey(db, companyId, masterKeyManager);
+	const ssh = await generateTeamSSHKey(db, teamId, masterKeyManager);
 	publicKey = ssh.publicKey;
 
 	server = new SshAgentServer({ db, masterKeyManager });
@@ -59,10 +59,10 @@ afterAll(async () => {
 });
 
 describe('SshAgentServer integration', () => {
-	it('advertises the company key via REQUEST_IDENTITIES', async () => {
+	it('advertises the team key via REQUEST_IDENTITIES', async () => {
 		const runId = 'run-identities';
 		const socketPath = join(socketDir, `${runId}.sock`);
-		await server.allocateRunSocket(runId, { companyId, agentId }, socketPath);
+		await server.allocateRunSocket(runId, { teamId, agentId }, socketPath);
 
 		const reply = await sendAndReceive(socketPath, frame(Buffer.from([MSG_REQUEST_IDENTITIES])));
 		expect(reply[0]).toBe(MSG_IDENTITIES_ANSWER);
@@ -76,10 +76,10 @@ describe('SshAgentServer integration', () => {
 		await server.releaseRunSocket(runId);
 	});
 
-	it('signs data with the company key and returns ssh-ed25519 signature', async () => {
+	it('signs data with the team key and returns ssh-ed25519 signature', async () => {
 		const runId = 'run-sign-protocol';
 		const socketPath = join(socketDir, `${runId}.sock`);
-		await server.allocateRunSocket(runId, { companyId, agentId }, socketPath);
+		await server.allocateRunSocket(runId, { teamId, agentId }, socketPath);
 
 		const keyBlob = sshPublicKeyToBlob(publicKey);
 		const data = Buffer.from('verify-me');
@@ -104,7 +104,7 @@ describe('SshAgentServer integration', () => {
 	it('serves the same protocol on the per-run TCP listener after token auth', async () => {
 		const runId = 'run-tcp-ok';
 		const socketPath = join(socketDir, `${runId}.sock`);
-		const allocated = await server.allocateRunSocket(runId, { companyId, agentId }, socketPath);
+		const allocated = await server.allocateRunSocket(runId, { teamId, agentId }, socketPath);
 
 		const tokenBytes = Buffer.from(allocated.tokenHex, 'hex');
 		const reply = await sendOverTcp(
@@ -124,7 +124,7 @@ describe('SshAgentServer integration', () => {
 	it('rejects TCP connections that present the wrong token with SSH_AGENT_FAILURE', async () => {
 		const runId = 'run-tcp-bad';
 		const socketPath = join(socketDir, `${runId}.sock`);
-		const allocated = await server.allocateRunSocket(runId, { companyId, agentId }, socketPath);
+		const allocated = await server.allocateRunSocket(runId, { teamId, agentId }, socketPath);
 
 		const wrongToken = Buffer.alloc(16, 0xff);
 		const reply = await sendOverTcp(
@@ -140,7 +140,7 @@ describe('SshAgentServer integration', () => {
 		if (!(await hasCommand('ssh-keygen'))) return;
 		const runId = 'run-keygen-sign';
 		const socketPath = join(socketDir, `${runId}.sock`);
-		await server.allocateRunSocket(runId, { companyId, agentId }, socketPath);
+		await server.allocateRunSocket(runId, { teamId, agentId }, socketPath);
 
 		const pubFile = join(socketDir, `${runId}.pub`);
 		writeFileSync(pubFile, `${publicKey}\n`);
@@ -155,7 +155,7 @@ describe('SshAgentServer integration', () => {
 		);
 		expect(signOut.code).toBe(0);
 
-		const allowedSigners = `agent-${companyId}@hezo.local ${publicKey.split(/\s+/).slice(0, 2).join(' ')}`;
+		const allowedSigners = `agent-${teamId}@hezo.local ${publicKey.split(/\s+/).slice(0, 2).join(' ')}`;
 		const signersFile = join(socketDir, `${runId}.signers`);
 		writeFileSync(signersFile, `${allowedSigners}\n`);
 
@@ -167,7 +167,7 @@ describe('SshAgentServer integration', () => {
 				'-f',
 				signersFile,
 				'-I',
-				`agent-${companyId}@hezo.local`,
+				`agent-${teamId}@hezo.local`,
 				'-n',
 				'git',
 				'-s',

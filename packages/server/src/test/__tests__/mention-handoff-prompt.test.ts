@@ -17,7 +17,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let ceoMemberId: string;
 let architectMemberId: string;
@@ -39,12 +39,12 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -52,16 +52,16 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
 	ceoMemberId = agents.find((a) => a.slug === 'ceo')!.id;
 	architectMemberId = agents.find((a) => a.slug === 'architect')!.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Handoff project', description: 'Test' }),
@@ -78,7 +78,7 @@ async function createTriggeringIssueWithComment(commentText: string): Promise<{
 	triggeringIdentifier: string;
 	commentId: string;
 }> {
-	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -107,7 +107,7 @@ async function createArchitectTicket(
 	title: string,
 	status: IssueStatus = IssueStatus.Backlog,
 ): Promise<{ id: string; identifier: string }> {
-	const res = await app.request(`/api/companies/${companyId}/issues`, {
+	const res = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -119,7 +119,7 @@ async function createArchitectTicket(
 	const data = (await res.json()).data as { id: string; identifier: string };
 
 	if (status !== IssueStatus.Backlog) {
-		await app.request(`/api/companies/${companyId}/issues/${data.id}`, {
+		await app.request(`/api/teams/${teamId}/issues/${data.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status }),
@@ -142,7 +142,7 @@ describe('mention handoff prompt (integration)', () => {
 			comment_id: commentId,
 		};
 
-		const ctx = await loadMentionContext(db, architectMemberId, companyId, wakeupPayload);
+		const ctx = await loadMentionContext(db, architectMemberId, teamId, wakeupPayload);
 		expect(ctx).not.toBeNull();
 		expect(ctx?.authorName).toBeTruthy();
 		expect(ctx?.excerpt).toContain('bring the spec up to date');
@@ -172,12 +172,12 @@ describe('mention handoff prompt (integration)', () => {
 	});
 
 	it('renders "none" when the mentioned agent has no open tickets', async () => {
-		// Fresh company to isolate state — the architect in this company has no tickets.
-		const typesRes = await app.request('/api/company-types', { headers: authHeader(token) });
+		// Fresh team to isolate state — the architect in this team has no tickets.
+		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find(
 			(t: Record<string, unknown>) => t.name === 'Startup',
 		).id;
-		const companyRes = await app.request('/api/companies', {
+		const teamRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -185,20 +185,20 @@ describe('mention handoff prompt (integration)', () => {
 				template_id: typeId,
 			}),
 		});
-		const soloCompanyId = (await companyRes.json()).data.id;
-		const agentsRes = await app.request(`/api/companies/${soloCompanyId}/agents`, {
+		const soloTeamId = (await teamRes.json()).data.id;
+		const agentsRes = await app.request(`/api/teams/${soloTeamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
 		const ceo = agents.find((a) => a.slug === 'ceo')!;
 		const architect = agents.find((a) => a.slug === 'architect')!;
-		const projRes = await app.request(`/api/companies/${soloCompanyId}/projects`, {
+		const projRes = await app.request(`/api/teams/${soloTeamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'No tickets', description: 'x' }),
 		});
 		const soloProjectId = (await projRes.json()).data.id;
-		const issueRes = await app.request(`/api/companies/${soloCompanyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${soloTeamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -226,7 +226,7 @@ describe('mention handoff prompt (integration)', () => {
 			issue_id: triggering.id,
 			comment_id: commentInsert.rows[0].id,
 		};
-		const ctx = await loadMentionContext(db, architect.id, soloCompanyId, payload);
+		const ctx = await loadMentionContext(db, architect.id, soloTeamId, payload);
 		expect(ctx?.openTickets.length).toBe(0);
 
 		const prompt = buildTaskPrompt(
@@ -255,9 +255,9 @@ describe('mention handoff prompt (integration)', () => {
 			issue_id: triggeringIssueId,
 			comment_id: commentId,
 		};
-		const ctx = await loadMentionContext(db, architectMemberId, companyId, wakeupPayload);
+		const ctx = await loadMentionContext(db, architectMemberId, teamId, wakeupPayload);
 
-		const architectSystemPrompt = await getAgentSystemPrompt(db, companyId, architectMemberId);
+		const architectSystemPrompt = await getAgentSystemPrompt(db, teamId, architectMemberId);
 
 		const prompt = buildTaskPrompt(
 			architectSystemPrompt,
@@ -282,7 +282,7 @@ describe('mention handoff prompt (integration)', () => {
 		const longBody = `Here is a proposal:\n\`\`\`\n${'payload'.repeat(100)}\n\`\`\`\nand ${'x'.repeat(700)} tail`;
 		const { triggeringIssueId, commentId } = await createTriggeringIssueWithComment(longBody);
 
-		const ctx = await loadMentionContext(db, architectMemberId, companyId, {
+		const ctx = await loadMentionContext(db, architectMemberId, teamId, {
 			source: WakeupSource.Mention,
 			issue_id: triggeringIssueId,
 			comment_id: commentId,
@@ -307,7 +307,7 @@ describe('reply handoff prompt (integration)', () => {
 		const { triggeringIssueId, triggeringIdentifier, commentId } =
 			await createTriggeringIssueWithComment('@architect please take point on this');
 
-		const newTicketRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const newTicketRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -398,7 +398,7 @@ describe('reply handoff prompt (integration)', () => {
 
 describe('spawned-from prompt line', () => {
 	it('renders "Parent ticket" when parent_issue_id matches the spawning run', async () => {
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -410,17 +410,17 @@ describe('spawned-from prompt line', () => {
 		const parent = (await issueRes.json()).data as { id: string; identifier: string };
 
 		const run = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
 			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())
 			 RETURNING id`,
-			[ceoMemberId, companyId, parent.id],
+			[ceoMemberId, teamId, parent.id],
 		);
 
 		const subRes = await db.query<{ id: string; identifier: string }>(
-			`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
+			`INSERT INTO issues (team_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
 			 VALUES ($1, $2, $3, $4, $5, next_project_issue_number($2), 'MHP-sub', 'Sub work', '', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
 			 RETURNING id, identifier`,
-			[companyId, projectId, architectMemberId, parent.id, run.rows[0].id],
+			[teamId, projectId, architectMemberId, parent.id, run.rows[0].id],
 		);
 		const sub = subRes.rows[0];
 
@@ -461,7 +461,7 @@ describe('spawned-from prompt line', () => {
 	});
 
 	it('renders "Spawned from" when a sibling/top-level ticket has no structural parent', async () => {
-		const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -473,17 +473,17 @@ describe('spawned-from prompt line', () => {
 		const spawning = (await issueRes.json()).data as { id: string; identifier: string };
 
 		const run = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, status, started_at)
+			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
 			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())
 			 RETURNING id`,
-			[ceoMemberId, companyId, spawning.id],
+			[ceoMemberId, teamId, spawning.id],
 		);
 
 		const topRes = await db.query<{ id: string; identifier: string }>(
-			`INSERT INTO issues (company_id, project_id, assignee_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
+			`INSERT INTO issues (team_id, project_id, assignee_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
 			 VALUES ($1, $2, $3, $4, next_project_issue_number($2), 'MHP-top', 'Top-level follow-up', '', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
 			 RETURNING id, identifier`,
-			[companyId, projectId, architectMemberId, run.rows[0].id],
+			[teamId, projectId, architectMemberId, run.rows[0].id],
 		);
 		const top = topRes.rows[0];
 

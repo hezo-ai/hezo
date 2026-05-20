@@ -40,7 +40,7 @@ function EntityLink({
 
 function ApprovalMessage({ approval }: { approval: Approval }) {
 	const p = approval.payload;
-	const companySlug = approval.company_slug;
+	const teamSlug = approval.team_slug;
 
 	switch (approval.type) {
 		case ApprovalType.DesignatedRepoRequest: {
@@ -78,8 +78,8 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 								{' '}
 								in project{' '}
 								<EntityLink
-									to="/companies/$companyId/projects/$projectId"
-									params={{ companyId: companySlug, projectId: projectSlug }}
+									to="/teams/$teamId/projects/$projectId"
+									params={{ teamId: teamSlug, projectId: projectSlug }}
 								>
 									{projectName}
 								</EntityLink>
@@ -105,9 +105,9 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 							(
 							{issueProjectSlug ? (
 								<EntityLink
-									to="/companies/$companyId/projects/$projectId/issues/$issueId"
+									to="/teams/$teamId/projects/$projectId/issues/$issueId"
 									params={{
-										companyId: companySlug,
+										teamId: teamSlug,
 										projectId: issueProjectSlug,
 										issueId: issueId.toLowerCase(),
 									}}
@@ -116,8 +116,8 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 								</EntityLink>
 							) : (
 								<EntityLink
-									to="/companies/$companyId/issues/$issueId"
-									params={{ companyId: companySlug, issueId: issueId.toLowerCase() }}
+									to="/teams/$teamId/issues/$issueId"
+									params={{ teamId: teamSlug, issueId: issueId.toLowerCase() }}
 								>
 									{issueId}
 								</EntityLink>
@@ -194,19 +194,19 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 
 interface ApprovalCardProps {
 	approval: Approval;
-	showCompany?: boolean;
+	showTeam?: boolean;
 }
 
 const baseCardClass = 'block p-4 border border-border rounded-radius-md';
 const linkCardClass = `${baseCardClass} hover:bg-bg-subtle transition-colors`;
 
-function CardBody({ approval, showCompany }: { approval: Approval; showCompany: boolean }) {
+function CardBody({ approval, showTeam }: { approval: Approval; showTeam: boolean }) {
 	return (
 		<>
 			<div className="flex items-center gap-2 mb-1.5 flex-wrap">
 				<Badge color={typeColors[approval.type] as 'gray'}>{approval.type.replace('_', ' ')}</Badge>
-				{showCompany && approval.company_name && (
-					<span className="text-xs text-text-muted">{approval.company_name}</span>
+				{showTeam && approval.team_name && (
+					<span className="text-xs text-text-muted">{approval.team_name}</span>
 				)}
 			</div>
 			{approval.requested_by_name && (
@@ -221,21 +221,21 @@ function CardBody({ approval, showCompany }: { approval: Approval; showCompany: 
 
 function resolveOauthDestination(approval: Approval) {
 	const reason = approval.payload.reason as string | undefined;
-	const companySlug = approval.company_slug;
+	const teamSlug = approval.team_slug;
 
 	if (reason === OAuthRequestReason.RepoAdd && approval.payload_project_slug) {
 		return {
-			to: '/companies/$companyId/projects/$projectId/settings' as const,
-			params: { companyId: companySlug, projectId: approval.payload_project_slug },
+			to: '/teams/$teamId/projects/$projectId/settings' as const,
+			params: { teamId: teamSlug, projectId: approval.payload_project_slug },
 		};
 	}
 	return {
-		to: '/companies/$companyId/settings/general' as const,
-		params: { companyId: companySlug },
+		to: '/teams/$teamId/settings/general' as const,
+		params: { teamId: teamSlug },
 	};
 }
 
-export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProps) {
+export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) {
 	const resolveApproval = useResolveApproval();
 	const [modalOpen, setModalOpen] = useState(false);
 
@@ -251,7 +251,7 @@ export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProp
 						data-testid="approval-card"
 						onClick={() => setModalOpen(true)}
 					>
-						<CardBody approval={approval} showCompany={showCompany} />
+						<CardBody approval={approval} showTeam={showTeam} />
 					</button>
 					<RepoSetupApprovalModal
 						approval={approval}
@@ -270,14 +270,14 @@ export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProp
 				className={linkCardClass}
 				data-testid="approval-card"
 			>
-				<CardBody approval={approval} showCompany={showCompany} />
+				<CardBody approval={approval} showTeam={showTeam} />
 			</Link>
 		);
 	}
 
 	return (
 		<div className={baseCardClass} data-testid="approval-card">
-			<CardBody approval={approval} showCompany={showCompany} />
+			<CardBody approval={approval} showTeam={showTeam} />
 			<div className="flex gap-2 mt-3">
 				<Button
 					size="sm"

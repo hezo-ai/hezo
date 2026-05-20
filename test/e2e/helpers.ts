@@ -79,12 +79,12 @@ export async function clearAiProviders(page: Page, token: string) {
  */
 export async function createProjectAndClearPlanning(
 	page: Page,
-	companyId: string,
+	teamId: string,
 	token: string,
 	data: { name: string; description?: string },
 ) {
 	const headers = { Authorization: `Bearer ${token}` };
-	const res = await page.request.post(`/api/companies/${companyId}/projects`, {
+	const res = await page.request.post(`/api/teams/${teamId}/projects`, {
 		headers,
 		data,
 	});
@@ -93,54 +93,54 @@ export async function createProjectAndClearPlanning(
 			data: { id: string; slug: string; planning_issue_id: string };
 		}
 	).data;
-	await page.request.patch(`/api/companies/${companyId}/issues/${project.planning_issue_id}`, {
+	await page.request.patch(`/api/teams/${teamId}/issues/${project.planning_issue_id}`, {
 		headers,
 		data: { status: 'done' },
 	});
 	return project;
 }
 
-export async function createCompanyWithAgents(page: Page) {
+export async function createTeamWithAgents(page: Page) {
 	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
 	await ensureAiProviderConfigured(page, token);
 
-	const typesRes = await page.request.get('/api/company-types', { headers });
+	const typesRes = await page.request.get('/api/team-templates', { headers });
 	const types = await typesRes.json();
 	const typeId = (types as any).data.find((t: any) => t.name === 'Startup')?.id;
 
 	const uid = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
-	const companyRes = await page.request.post('/api/companies', {
+	const teamRes = await page.request.post('/api/teams', {
 		headers,
 		data: {
 			name: `Test Co ${uid}`,
 			template_id: typeId,
 		},
 	});
-	const company = ((await companyRes.json()) as any).data;
+	const team = ((await teamRes.json()) as any).data;
 
-	return { company, token };
+	return { team, token };
 }
 
 /**
- * Bare company without seeded agents or AI provider. Use for UI-only tests
+ * Bare team without seeded agents or AI provider. Use for UI-only tests
  * that don't exercise agent or AI-provider behaviour — skips ~11-agent seeding.
  */
-export async function createCompanyLight(page: Page) {
+export async function createTeamLight(page: Page) {
 	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
 	await ensureAiProviderConfigured(page, token);
 
 	const uid = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
-	const companyRes = await page.request.post('/api/companies', {
+	const teamRes = await page.request.post('/api/teams', {
 		headers,
 		data: { name: `Test Co Light ${uid}` },
 	});
-	const company = ((await companyRes.json()) as any).data;
+	const team = ((await teamRes.json()) as any).data;
 
-	return { company, token };
+	return { team, token };
 }
 
 /** Dismiss the AI provider setup gate by entering a test API key via the UI. */

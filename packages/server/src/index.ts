@@ -42,16 +42,16 @@ async function validateToken(token: string): Promise<WsData['auth'] | null> {
 	return verifyToken(token, dbRef, mkmRef);
 }
 
-async function canAccessCompany(auth: WsData['auth'], companyId: string): Promise<boolean> {
+async function canAccessTeam(auth: WsData['auth'], teamId: string): Promise<boolean> {
 	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
-		return auth.companyId === companyId;
+		return auth.teamId === teamId;
 	}
 	if (auth.type === AuthType.Board) {
 		if (auth.isSuperuser) return true;
 		if (!dbRef) return false;
 		const result = await dbRef.query(
-			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.company_id = $2',
-			[auth.userId, companyId],
+			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
+			[auth.userId, teamId],
 		);
 		return result.rows.length > 0;
 	}
@@ -139,7 +139,7 @@ export default {
 						docker: dockerRef,
 						containerLogStreamer,
 						logs: logsRef,
-						canAccessCompany,
+						canAccessTeam,
 						sendToSocket: (_s, payload) => ws.send(JSON.stringify(payload)),
 					});
 				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {

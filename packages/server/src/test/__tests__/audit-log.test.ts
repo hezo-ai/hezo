@@ -9,7 +9,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let companyId: string;
+let teamId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -17,12 +17,12 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Audit Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 });
 
 afterAll(async () => {
@@ -31,11 +31,11 @@ afterAll(async () => {
 
 describe('audit log', () => {
 	it('inserts an audit entry via helper', async () => {
-		await auditLog(db, companyId, 'board', null, 'created', 'issue', null, {
+		await auditLog(db, teamId, 'board', null, 'created', 'issue', null, {
 			title: 'Test',
 		});
 
-		const res = await app.request(`/api/companies/${companyId}/audit-log`, {
+		const res = await app.request(`/api/teams/${teamId}/audit-log`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -49,9 +49,9 @@ describe('audit log', () => {
 	});
 
 	it('filters by entity_type', async () => {
-		await auditLog(db, companyId, 'system', null, 'updated', 'agent', null);
+		await auditLog(db, teamId, 'system', null, 'updated', 'agent', null);
 
-		const res = await app.request(`/api/companies/${companyId}/audit-log?entity_type=agent`, {
+		const res = await app.request(`/api/teams/${teamId}/audit-log?entity_type=agent`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -60,9 +60,9 @@ describe('audit log', () => {
 	});
 
 	it('filters by action', async () => {
-		await auditLog(db, companyId, 'board', null, 'deleted', 'project', null);
+		await auditLog(db, teamId, 'board', null, 'deleted', 'project', null);
 
-		const res = await app.request(`/api/companies/${companyId}/audit-log?action=deleted`, {
+		const res = await app.request(`/api/teams/${teamId}/audit-log?action=deleted`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -73,7 +73,7 @@ describe('audit log', () => {
 
 	it('filters by date range', async () => {
 		const future = new Date(Date.now() + 86400000).toISOString();
-		const res = await app.request(`/api/companies/${companyId}/audit-log?from=${future}`, {
+		const res = await app.request(`/api/teams/${teamId}/audit-log?from=${future}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -84,10 +84,10 @@ describe('audit log', () => {
 	it('supports pagination', async () => {
 		// Insert several entries
 		for (let i = 0; i < 5; i++) {
-			await auditLog(db, companyId, 'system', null, 'created', 'issue', null, { i });
+			await auditLog(db, teamId, 'system', null, 'created', 'issue', null, { i });
 		}
 
-		const res = await app.request(`/api/companies/${companyId}/audit-log?page=1&per_page=2`, {
+		const res = await app.request(`/api/teams/${teamId}/audit-log?page=1&per_page=2`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);

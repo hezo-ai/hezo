@@ -1,23 +1,23 @@
 import { type APIRequestContext, type Browser, test as base, expect } from '@playwright/test';
 import {
 	authenticate,
-	createCompanyLight,
-	createCompanyWithAgents,
+	createTeamLight,
+	createTeamWithAgents,
 	ensureAiProviderConfigured,
 	getToken,
 } from './helpers';
 
-type Company = { id: string; slug: string; name: string };
+type Team = { id: string; slug: string; name: string };
 type Agent = { id: string; slug: string };
 
 type Workspace = {
-	company: Company;
+	team: Team;
 	token: string;
 	agents: Agent[];
 };
 
 type LightWorkspace = {
-	company: Company;
+	team: Team;
 	token: string;
 };
 
@@ -43,10 +43,10 @@ async function getTokenFromBrowser(browser: Browser): Promise<string> {
 
 async function listAgents(
 	request: APIRequestContext,
-	companyId: string,
+	teamId: string,
 	token: string,
 ): Promise<Agent[]> {
-	const res = await request.get(`/api/companies/${companyId}/agents`, {
+	const res = await request.get(`/api/teams/${teamId}/agents`, {
 		headers: { Authorization: `Bearer ${token}` },
 	});
 	return ((await res.json()) as { data: Agent[] }).data;
@@ -65,10 +65,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 		async ({ browser }, use) => {
 			const ctx = await browser.newContext();
 			const page = await ctx.newPage();
-			const { company, token } = await createCompanyWithAgents(page);
-			const agents = await listAgents(ctx.request, company.id, token);
+			const { team, token } = await createTeamWithAgents(page);
+			const agents = await listAgents(ctx.request, team.id, token);
 			await ctx.close();
-			await use({ company, token, agents });
+			await use({ team, token, agents });
 		},
 		{ scope: 'worker' },
 	],
@@ -82,15 +82,15 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
 	freshWorkspace: async ({ page }, use) => {
 		await authenticate(page);
-		const { company, token } = await createCompanyWithAgents(page);
-		const agents = await listAgents(page.request, company.id, token);
-		await use({ company, token, agents });
+		const { team, token } = await createTeamWithAgents(page);
+		const agents = await listAgents(page.request, team.id, token);
+		await use({ team, token, agents });
 	},
 
 	lightWorkspace: async ({ page }, use) => {
 		await authenticate(page);
-		const { company, token } = await createCompanyLight(page);
-		await use({ company, token });
+		const { team, token } = await createTeamLight(page);
+		await use({ team, token });
 	},
 });
 

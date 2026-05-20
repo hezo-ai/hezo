@@ -82,7 +82,7 @@ export type SearchScope = 'all' | 'kb_docs' | 'issues' | 'skills' | 'project_doc
 
 export async function semanticSearch(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	query: string,
 	options: {
 		scope?: SearchScope;
@@ -114,10 +114,10 @@ export async function semanticSearch(
 			`SELECT id, type, title, slug, LEFT(content, 200) AS content,
 			        1 - (embedding <=> $1::vector) AS score
 			 FROM documents
-			 WHERE company_id = $2 AND embedding IS NOT NULL AND type = ANY($3::document_type[])
+			 WHERE team_id = $2 AND embedding IS NOT NULL AND type = ANY($3::document_type[])
 			 ORDER BY embedding <=> $1::vector
 			 LIMIT $4`,
-			[vectorStr, companyId, types, limit],
+			[vectorStr, teamId, types, limit],
 		);
 		for (const r of docResults.rows) {
 			results.push({
@@ -140,10 +140,10 @@ export async function semanticSearch(
 		}>(
 			`SELECT id, title, LEFT(description, 200) AS description, identifier, 1 - (embedding <=> $1::vector) AS score
 			 FROM issues
-			 WHERE company_id = $2 AND embedding IS NOT NULL
+			 WHERE team_id = $2 AND embedding IS NOT NULL
 			 ORDER BY embedding <=> $1::vector
 			 LIMIT $3`,
-			[vectorStr, companyId, limit],
+			[vectorStr, teamId, limit],
 		);
 		for (const r of issueResults.rows) {
 			results.push({
@@ -165,10 +165,10 @@ export async function semanticSearch(
 		}>(
 			`SELECT id, name, LEFT(content, 200) AS content, 1 - (embedding <=> $1::vector) AS score
 			 FROM skills
-			 WHERE company_id = $2 AND embedding IS NOT NULL AND is_active = true
+			 WHERE team_id = $2 AND embedding IS NOT NULL AND is_active = true
 			 ORDER BY embedding <=> $1::vector
 			 LIMIT $3`,
-			[vectorStr, companyId, limit],
+			[vectorStr, teamId, limit],
 		);
 		for (const r of skillResults.rows) {
 			results.push({ type: 'skill', id: r.id, title: r.name, snippet: r.content, score: r.score });

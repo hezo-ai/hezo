@@ -12,7 +12,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let agentId: string;
 
@@ -41,7 +41,7 @@ async function createIssue(
 	title: string,
 	description = '',
 ): Promise<{ id: string; identifier: string }> {
-	const res = await app.request(`/api/companies/${companyId}/issues`, {
+	const res = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title, description, assignee_id: agentId }),
@@ -51,7 +51,7 @@ async function createIssue(
 }
 
 async function listComments(issueId: string): Promise<CommentRow[]> {
-	const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+	const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
 		headers: authHeader(token),
 	});
 	return (await res.json()).data;
@@ -71,21 +71,21 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Events Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Widget', description: 'Widget project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Status Bot' }),
@@ -133,7 +133,7 @@ describe('status change system events', () => {
 		const issue = await createIssue('PATCH by board');
 		const before = (await systemComments(issue.id, 'status_change')).length;
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: IssueStatus.InProgress }),
@@ -150,9 +150,9 @@ describe('status change system events', () => {
 
 	it('records an agent-authored PATCH status change attributed to the agent', async () => {
 		const issue = await createIssue('PATCH by agent');
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: IssueStatus.InProgress }),
@@ -169,7 +169,7 @@ describe('status change system events', () => {
 		const issue = await createIssue('Unchanged status');
 		const before = (await systemComments(issue.id, 'status_change')).length;
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: IssueStatus.Backlog }),
@@ -186,7 +186,7 @@ describe('title change system events', () => {
 		const issue = await createIssue('Original title');
 		const before = (await systemComments(issue.id, 'title_change')).length;
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Renamed title' }),
@@ -206,9 +206,9 @@ describe('title change system events', () => {
 
 	it('records an agent-authored title rename attributed to the agent', async () => {
 		const issue = await createIssue('Pre-rename');
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, companyId);
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Bot rename' }),
@@ -226,7 +226,7 @@ describe('title change system events', () => {
 		const issue = await createIssue('Same title');
 		const before = (await systemComments(issue.id, 'title_change')).length;
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Same title' }),
@@ -241,7 +241,7 @@ describe('title change system events', () => {
 		const issue = await createIssue('Trim me');
 		const before = (await systemComments(issue.id, 'title_change')).length;
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: '  Trim me  ' }),
@@ -255,7 +255,7 @@ describe('title change system events', () => {
 
 describe('assignee change system events', () => {
 	it('records a board-authored reassignment with from/to ids and names', async () => {
-		const secondAgentRes = await app.request(`/api/companies/${companyId}/agents`, {
+		const secondAgentRes = await app.request(`/api/teams/${teamId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Second Bot' }),
@@ -265,7 +265,7 @@ describe('assignee change system events', () => {
 		const issue = await createIssue('Reassign me');
 		const before = (await systemComments(issue.id, 'assignee_change')).length;
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: secondAgentId }),
@@ -288,7 +288,7 @@ describe('assignee change system events', () => {
 		const issue = await createIssue('Same assignee');
 		const before = (await systemComments(issue.id, 'assignee_change')).length;
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${issue.id}`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: agentId }),
@@ -305,7 +305,7 @@ describe('issue link system events', () => {
 		const target = await createIssue('Target ticket');
 		const source = await createIssue('Source ticket');
 
-		const res = await app.request(`/api/companies/${companyId}/issues/${source.id}/comments`, {
+		const res = await app.request(`/api/teams/${teamId}/issues/${source.id}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -327,7 +327,7 @@ describe('issue link system events', () => {
 		const source = await createIssue('Source repeat');
 
 		for (const text of [`first mention ${target.identifier}`, `another ${target.identifier}`]) {
-			await app.request(`/api/companies/${companyId}/issues/${source.id}/comments`, {
+			await app.request(`/api/teams/${teamId}/issues/${source.id}/comments`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ content_type: 'text', content: { text } }),
@@ -352,7 +352,7 @@ describe('issue link system events', () => {
 
 	it('ignores self-references', async () => {
 		const issue = await createIssue('Self ref');
-		await app.request(`/api/companies/${companyId}/issues/${issue.id}/comments`, {
+		await app.request(`/api/teams/${teamId}/issues/${issue.id}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -367,7 +367,7 @@ describe('issue link system events', () => {
 	it('ignores identifiers inside fenced code blocks', async () => {
 		const target = await createIssue('Target codeblock');
 		const source = await createIssue('Source codeblock');
-		await app.request(`/api/companies/${companyId}/issues/${source.id}/comments`, {
+		await app.request(`/api/teams/${teamId}/issues/${source.id}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -384,7 +384,7 @@ describe('issue link system events', () => {
 		const before = await db.query<{ count: string }>(
 			"SELECT count(*)::text AS count FROM issue_comments WHERE content_type = 'system' AND content->>'kind' = 'issue_link'",
 		);
-		await app.request(`/api/companies/${companyId}/issues/${source.id}/comments`, {
+		await app.request(`/api/teams/${teamId}/issues/${source.id}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content_type: 'text', content: { text: 'see XX-99 for nothing' } }),
@@ -395,29 +395,29 @@ describe('issue link system events', () => {
 		expect(after.rows[0].count).toBe(before.rows[0].count);
 	});
 
-	it('does not cross company boundaries', async () => {
-		const targetA = await createIssue('Cross-company target');
+	it('does not cross team boundaries', async () => {
+		const targetA = await createIssue('Cross-team target');
 
-		const otherCompanyRes = await app.request('/api/companies', {
+		const otherTeamRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Other Co' }),
 		});
-		const otherCompanyId = (await otherCompanyRes.json()).data.id;
-		const otherProjectRes = await app.request(`/api/companies/${otherCompanyId}/projects`, {
+		const otherTeamId = (await otherTeamRes.json()).data.id;
+		const otherProjectRes = await app.request(`/api/teams/${otherTeamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Foreign', description: 'Other.' }),
 		});
 		const otherProjectId = (await otherProjectRes.json()).data.id;
-		const otherAgentRes = await app.request(`/api/companies/${otherCompanyId}/agents`, {
+		const otherAgentRes = await app.request(`/api/teams/${otherTeamId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Other Bot' }),
 		});
 		const otherAgentId = (await otherAgentRes.json()).data.id;
 
-		const otherIssueRes = await app.request(`/api/companies/${otherCompanyId}/issues`, {
+		const otherIssueRes = await app.request(`/api/teams/${otherTeamId}/issues`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -428,12 +428,12 @@ describe('issue link system events', () => {
 		});
 		const otherIssue = (await otherIssueRes.json()).data;
 
-		await app.request(`/api/companies/${otherCompanyId}/issues/${otherIssue.id}/comments`, {
+		await app.request(`/api/teams/${otherTeamId}/issues/${otherIssue.id}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				content_type: 'text',
-				content: { text: `mentions ${targetA.identifier} from another company` },
+				content: { text: `mentions ${targetA.identifier} from another team` },
 			}),
 		});
 
@@ -446,7 +446,7 @@ describe('issue link system events', () => {
 		const target2 = await createIssue('Multi target 2');
 		const source = await createIssue('Multi source');
 
-		await app.request(`/api/companies/${companyId}/issues/${source.id}/comments`, {
+		await app.request(`/api/teams/${teamId}/issues/${source.id}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

@@ -22,24 +22,24 @@ const GOAL_LABEL = 'goal-update';
 
 export type GoalChangeReason = 'created' | 'updated';
 
-interface CompanyContext {
+interface TeamContext {
 	ceoMemberId: string;
 	operationsProjectId: string;
 }
 
-async function loadCompanyContext(db: PGlite, companyId: string): Promise<CompanyContext | null> {
+async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
 	const ceo = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.company_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
+		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[companyId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
 	);
 	const ops = await db.query<{ id: string }>(
 		`SELECT id FROM projects
-		 WHERE company_id = $1 AND is_internal = true AND slug = $2
+		 WHERE team_id = $1 AND is_internal = true AND slug = $2
 		 LIMIT 1`,
-		[companyId, OPERATIONS_PROJECT_SLUG],
+		[teamId, OPERATIONS_PROJECT_SLUG],
 	);
 	if (!ceo.rows[0] || !ops.rows[0]) return null;
 	return {
@@ -77,12 +77,12 @@ ${description || '_(no description provided)_'}
 
 export async function enqueueGoalReviewTask(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	goalId: string,
 	reason: GoalChangeReason,
 	wsManager?: WebSocketManager,
 ): Promise<string | null> {
-	const ctx = await loadCompanyContext(db, companyId);
+	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) {
 		log.warn(`Cannot enqueue goal review for ${goalId}; missing CEO or Operations project`);
 		return null;
@@ -97,29 +97,29 @@ export async function enqueueGoalReviewTask(
 		`SELECT g.title, g.description, g.project_id,
 		        (SELECT name FROM projects p WHERE p.id = g.project_id) AS project_name
 		 FROM goals g
-		 WHERE g.id = $1 AND g.company_id = $2`,
-		[goalId, companyId],
+		 WHERE g.id = $1 AND g.team_id = $2`,
+		[goalId, teamId],
 	);
 	const goal = goalResult.rows[0];
 	if (!goal) {
-		log.warn(`Cannot enqueue goal review; goal ${goalId} not found for company ${companyId}`);
+		log.warn(`Cannot enqueue goal review; goal ${goalId} not found for team ${teamId}`);
 		return null;
 	}
 
 	const targetProjectId = goal.project_id ?? ctx.operationsProjectId;
-	const scopeLabel = goal.project_name ? `Project: ${goal.project_name}` : 'Company-wide';
+	const scopeLabel = goal.project_name ? `Project: ${goal.project_name}` : 'Team-wide';
 
 	const terminalPlaceholders = TERMINAL_ISSUE_STATUSES.map(
 		(_, i) => `$${i + 2}::issue_status`,
 	).join(', ');
 	const existingResult = await db.query<{ id: string }>(
 		`SELECT id FROM issues
-		 WHERE company_id = $1
+		 WHERE team_id = $1
 		   AND labels @> '["${GOAL_LABEL}"]'::jsonb
 		   AND status NOT IN (${terminalPlaceholders})
 		   AND description LIKE '%goal=${goalId}%'
 		 LIMIT 1`,
-		[companyId, ...TERMINAL_ISSUE_STATUSES],
+		[teamId, ...TERMINAL_ISSUE_STATUSES],
 	);
 
 	if (existingResult.rows[0]) {
@@ -136,7 +136,7 @@ export async function enqueueGoalReviewTask(
 			],
 		);
 		try {
-			await createWakeup(db, ctx.ceoMemberId, companyId, WakeupSource.Comment, {
+			await createWakeup(db, ctx.ceoMemberId, teamId, WakeupSource.Comment, {
 				issue_id: existingIssueId,
 				goal_id: goalId,
 			});
@@ -149,12 +149,12 @@ export async function enqueueGoalReviewTask(
 	const { number: issueNumber, identifier } = await allocateIssueIdentifier(db, targetProjectId);
 
 	const issueResult = await db.query<Record<string, unknown>>(
-		`INSERT INTO issues (company_id, project_id, assignee_id, number, identifier,
+		`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier,
 		                     title, description, status, priority, labels)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
 		 RETURNING *`,
 		[
-			companyId,
+			teamId,
 			targetProjectId,
 			ctx.ceoMemberId,
 			issueNumber,
@@ -169,11 +169,11 @@ export async function enqueueGoalReviewTask(
 	const issue = issueResult.rows[0];
 
 	if (wsManager) {
-		broadcastRowChange(wsManager, wsRoom.company(companyId), 'issues', 'INSERT', issue);
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'issues', 'INSERT', issue);
 	}
 
 	try {
-		await createWakeup(db, ctx.ceoMemberId, companyId, WakeupSource.Assignment, {
+		await createWakeup(db, ctx.ceoMemberId, teamId, WakeupSource.Assignment, {
 			issue_id: issue.id,
 			goal_id: goalId,
 		});

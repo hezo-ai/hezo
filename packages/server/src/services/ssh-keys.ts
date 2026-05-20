@@ -9,9 +9,9 @@ export interface SSHKeyResult {
 	secretId: string;
 }
 
-export async function generateCompanySSHKey(
+export async function generateTeamSSHKey(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	masterKeyManager: MasterKeyManager,
 ): Promise<SSHKeyResult> {
 	const encryptionKey = masterKeyManager.getKey();
@@ -29,30 +29,30 @@ export async function generateCompanySSHKey(
 
 	// Store private key in secrets
 	const secretResult = await db.query<{ id: string }>(
-		`INSERT INTO secrets (company_id, name, encrypted_value, category)
+		`INSERT INTO secrets (team_id, name, encrypted_value, category)
 		 VALUES ($1, 'ssh_private_key', $2, 'ssh_key')
-		 ON CONFLICT (company_id, project_id, name) WHERE project_id IS NULL
+		 ON CONFLICT (team_id, project_id, name) WHERE project_id IS NULL
 		 DO UPDATE SET encrypted_value = $2, updated_at = now()
 		 RETURNING id`,
-		[companyId, encryptedPrivateKey],
+		[teamId, encryptedPrivateKey],
 	);
 	const secretId = secretResult.rows[0].id;
 
-	// Store public key in company_ssh_keys
+	// Store public key in team_ssh_keys
 	await db.query(
-		`INSERT INTO company_ssh_keys (company_id, public_key, fingerprint, private_key_secret_id)
+		`INSERT INTO team_ssh_keys (team_id, public_key, fingerprint, private_key_secret_id)
 		 VALUES ($1, $2, $3, $4)
-		 ON CONFLICT (company_id) DO UPDATE SET
+		 ON CONFLICT (team_id) DO UPDATE SET
 		   public_key = $2, fingerprint = $3, private_key_secret_id = $4`,
-		[companyId, sshPublicKey, fingerprint, secretId],
+		[teamId, sshPublicKey, fingerprint, secretId],
 	);
 
 	return { publicKey: sshPublicKey, fingerprint, secretId };
 }
 
-export async function getCompanySSHKey(
+export async function getTeamSSHKey(
 	db: PGlite,
-	companyId: string,
+	teamId: string,
 	masterKeyManager: MasterKeyManager,
 ): Promise<{ publicKey: string; privateKey: string } | null> {
 	const encryptionKey = masterKeyManager.getKey();
@@ -63,10 +63,10 @@ export async function getCompanySSHKey(
 		encrypted_value: string;
 	}>(
 		`SELECT k.public_key, s.encrypted_value
-		 FROM company_ssh_keys k
+		 FROM team_ssh_keys k
 		 JOIN secrets s ON s.id = k.private_key_secret_id
-		 WHERE k.company_id = $1`,
-		[companyId],
+		 WHERE k.team_id = $1`,
+		[teamId],
 	);
 
 	if (result.rows.length === 0) return null;

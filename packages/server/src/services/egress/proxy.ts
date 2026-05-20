@@ -45,7 +45,7 @@ export interface EgressProxyDeps {
 }
 
 export interface RunProxyScope {
-	companyId: string;
+	teamId: string;
 	agentId: string;
 	projectId?: string | null;
 }
@@ -177,7 +177,7 @@ export class EgressProxy {
 			secrets = await loadSecretsForScope({
 				db: this.deps.db,
 				masterKeyManager: this.deps.masterKeyManager,
-				companyId: scope.companyId,
+				teamId: scope.teamId,
 				projectId: scope.projectId ?? null,
 			});
 		} catch (e) {
@@ -236,7 +236,7 @@ export class EgressProxy {
 		error: string | null,
 	): Promise<void> {
 		const event: EgressAuditEvent = {
-			companyId: scope.companyId,
+			teamId: scope.teamId,
 			agentId: scope.agentId,
 			runId,
 			host,

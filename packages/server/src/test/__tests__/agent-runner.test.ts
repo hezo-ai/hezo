@@ -29,7 +29,7 @@ import { authHeader, createTestApp } from '../helpers/app';
 function readPromptFromExec(
 	opts: { Env: string[] },
 	dataDir: string,
-	project: { company_slug: string; slug: string },
+	project: { team_slug: string; slug: string },
 ): string {
 	const entry = opts.Env.find((e) => e.startsWith('HEZO_PROMPT_FILE='));
 	if (!entry) throw new Error('HEZO_PROMPT_FILE env var missing from exec');
@@ -38,17 +38,14 @@ function readPromptFromExec(
 		.split('/')
 		.pop()!
 		.replace(/\.txt$/, '');
-	return readFileSync(
-		getHostPromptPath(dataDir, project.company_slug, project.slug, runId),
-		'utf8',
-	);
+	return readFileSync(getHostPromptPath(dataDir, project.team_slug, project.slug, runId), 'utf8');
 }
 
 let app: Hono<Env>;
 let db: PGlite;
 let boardToken: string;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let projectId: string;
 let issueId: string;
 let agentId: string;
@@ -62,15 +59,15 @@ beforeAll(async () => {
 	boardToken = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const typesRes = await app.request('/api/company-types', { headers: authHeader(boardToken) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(boardToken) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const companyRes = await app.request('/api/companies', {
+	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Runner Co', template_id: typeId }),
 	});
-	companyId = (await companyRes.json()).data.id;
+	teamId = (await teamRes.json()).data.id;
 
 	// Mock fetch for provider key validation during setup
 	globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
@@ -89,19 +86,19 @@ beforeAll(async () => {
 	// Restore real fetch for the rest of the tests
 	globalThis.fetch = originalFetch;
 
-	const projectRes = await app.request(`/api/companies/${companyId}/projects`, {
+	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Runner Project', description: 'Test project.' }),
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const agentsRes = await app.request(`/api/companies/${companyId}/agents`, {
+	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
 		headers: authHeader(boardToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const issueRes = await app.request(`/api/companies/${companyId}/issues`, {
+	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -142,11 +139,11 @@ function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 
 async function setAgentPrompt(content: string) {
 	await db.query(
-		`INSERT INTO documents (company_id, member_agent_id, type, slug, content)
+		`INSERT INTO documents (team_id, member_agent_id, type, slug, content)
 		 VALUES ($1, $2, 'agent_system_prompt', 'system-prompt', $3)
 		 ON CONFLICT (member_agent_id) WHERE type = 'agent_system_prompt'
 		 DO UPDATE SET content = EXCLUDED.content`,
-		[companyId, agentId, content],
+		[teamId, agentId, content],
 	);
 }
 
@@ -154,7 +151,7 @@ function makeAgent() {
 	return {
 		id: agentId,
 		title: 'Test Agent',
-		company_id: companyId,
+		team_id: teamId,
 	};
 }
 
@@ -175,8 +172,8 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 	return {
 		id: projectId,
 		slug: 'runner-project',
-		company_id: companyId,
-		company_slug: 'runner-co',
+		team_id: teamId,
+		team_slug: 'runner-co',
 		container_id: 'container-123',
 		container_status: ContainerStatus.Running,
 		designated_repo_id: null,
@@ -409,7 +406,7 @@ describe('runAgent', () => {
 		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_API_URL='))).toBe(true);
 		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_AGENT_TOKEN='))).toBe(true);
 		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_AGENT_ID='))).toBe(true);
-		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_COMPANY_ID='))).toBe(true);
+		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_TEAM_ID='))).toBe(true);
 		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_ISSUE_ID='))).toBe(true);
 
 		const apiUrl = capturedEnv.find((e: string) => e.startsWith('HEZO_API_URL='));
@@ -419,7 +416,7 @@ describe('runAgent', () => {
 		expect(capturedUser).toBe('node');
 	});
 
-	it('injects Run Context with company, project, and issue IDs into the system prompt', async () => {
+	it('injects Run Context with team, project, and issue IDs into the system prompt', async () => {
 		const project = makeProject();
 		let capturedPrompt = '';
 		const docker = createMockDocker({
@@ -443,7 +440,7 @@ describe('runAgent', () => {
 		await runAgent(deps, makeAgent(), makeIssue(), project);
 
 		expect(capturedPrompt).toContain('## Run Context');
-		expect(capturedPrompt).toContain(`Company ID: ${companyId}`);
+		expect(capturedPrompt).toContain(`Team ID: ${teamId}`);
 		expect(capturedPrompt).toContain(`Project ID: ${projectId}`);
 		expect(capturedPrompt).toContain(`Issue ID: ${issueId}`);
 	});
@@ -817,13 +814,13 @@ describe('runAgent', () => {
 			const payloadBase64 = token.split('.')[1];
 			const payload = JSON.parse(Buffer.from(payloadBase64, 'base64url').toString('utf8')) as {
 				member_id: string;
-				company_id: string;
+				team_id: string;
 				run_id: string;
 				exp: number;
 			};
 			expect(payload.run_id).toBe(result.heartbeatRunId);
 			expect(payload.member_id).toBe(makeAgent().id);
-			expect(payload.company_id).toBe(makeAgent().company_id);
+			expect(payload.team_id).toBe(makeAgent().team_id);
 			expect(payload.exp - Math.floor(Date.now() / 1000)).toBeLessThanOrEqual(60 * 60 * 4);
 		});
 

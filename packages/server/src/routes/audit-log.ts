@@ -1,20 +1,20 @@
 import { Hono } from 'hono';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 
 export const auditLogRoutes = new Hono<Env>();
 
-auditLogRoutes.get('/companies/:companyId/audit-log', async (c) => {
-	const access = await requireCompanyAccess(c);
+auditLogRoutes.get('/teams/:teamId/audit-log', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
+	const { teamId } = access;
 	const { page, perPage, offset } = parsePagination(c);
 
-	const conditions: string[] = ['al.company_id = $1'];
-	const params: unknown[] = [companyId];
+	const conditions: string[] = ['al.team_id = $1'];
+	const params: unknown[] = [teamId];
 	let idx = 2;
 
 	const entityType = c.req.query('entity_type');
@@ -55,7 +55,7 @@ auditLogRoutes.get('/companies/:companyId/audit-log', async (c) => {
 
 	const dataParams = [...params, perPage, offset];
 	const result = await db.query(
-		`SELECT al.id, al.company_id, al.actor_type, al.actor_member_id,
+		`SELECT al.id, al.team_id, al.actor_type, al.actor_member_id,
 		        al.action, al.entity_type, al.entity_id, al.details, al.created_at,
 		        COALESCE(ma.title, m.display_name) AS actor_name
 		 FROM audit_log al

@@ -4,17 +4,17 @@ import { broadcastChange } from '../lib/broadcast';
 import { resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireCompanyAccess } from '../middleware/auth';
+import { requireTeamAccess } from '../middleware/auth';
 
 export const executionLocksRoutes = new Hono<Env>();
 
-executionLocksRoutes.get('/companies/:companyId/issues/:issueId/lock', async (c) => {
-	const access = await requireCompanyAccess(c);
+executionLocksRoutes.get('/teams/:teamId/issues/:issueId/lock', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	const { teamId } = access;
+	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const result = await db.query(
@@ -30,13 +30,13 @@ executionLocksRoutes.get('/companies/:companyId/issues/:issueId/lock', async (c)
 	return ok(c, { locks: result.rows });
 });
 
-executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c) => {
-	const access = await requireCompanyAccess(c);
+executionLocksRoutes.post('/teams/:teamId/issues/:issueId/lock', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	const { teamId } = access;
+	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	const body = await c.req.json<{ member_id: string }>();
@@ -61,7 +61,7 @@ executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c
 
 	broadcastChange(
 		c,
-		wsRoom.company(companyId),
+		wsRoom.team(teamId),
 		'execution_locks',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
@@ -69,13 +69,13 @@ executionLocksRoutes.post('/companies/:companyId/issues/:issueId/lock', async (c
 	return ok(c, result.rows[0], 201);
 });
 
-executionLocksRoutes.delete('/companies/:companyId/issues/:issueId/lock', async (c) => {
-	const access = await requireCompanyAccess(c);
+executionLocksRoutes.delete('/teams/:teamId/issues/:issueId/lock', async (c) => {
+	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
-	const { companyId } = access;
-	const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+	const { teamId } = access;
+	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 
 	await db.query(
@@ -83,6 +83,6 @@ executionLocksRoutes.delete('/companies/:companyId/issues/:issueId/lock', async 
 		[issueId],
 	);
 
-	broadcastChange(c, wsRoom.company(companyId), 'execution_locks', 'DELETE', { issue_id: issueId });
+	broadcastChange(c, wsRoom.team(teamId), 'execution_locks', 'DELETE', { issue_id: issueId });
 	return ok(c, { released: true });
 });

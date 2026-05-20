@@ -13,7 +13,7 @@ import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 interface GitHubDeviceFlowDialogProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	companyId: string;
+	teamId: string;
 	scopes?: string[];
 	onSuccess?: (connection: OAuthConnection) => void;
 }
@@ -21,11 +21,11 @@ interface GitHubDeviceFlowDialogProps {
 export function GitHubDeviceFlowDialog({
 	open,
 	onOpenChange,
-	companyId,
+	teamId,
 	scopes,
 	onSuccess,
 }: GitHubDeviceFlowDialogProps) {
-	const startDeviceFlow = useStartGitHubDeviceFlow(companyId);
+	const startDeviceFlow = useStartGitHubDeviceFlow(teamId);
 	const [deviceFlow, setDeviceFlow] = useState<DeviceFlowStart | null>(null);
 	const [statusMessage, setStatusMessage] = useState('');
 	const [errorMessage, setErrorMessage] = useState('');
@@ -80,7 +80,7 @@ export function GitHubDeviceFlowDialog({
 		(async () => {
 			while (!stopRef.current) {
 				try {
-					const result = await pollGitHubDeviceFlow(companyId, deviceFlow.flow_id);
+					const result = await pollGitHubDeviceFlow(teamId, deviceFlow.flow_id);
 					if (result.status === 'success') {
 						setStatusMessage(`Connected ${result.connection.provider_account_label}.`);
 						onSuccessRef.current?.(result.connection);
@@ -103,7 +103,7 @@ export function GitHubDeviceFlowDialog({
 		return () => {
 			stopRef.current = true;
 		};
-	}, [deviceFlow, companyId]);
+	}, [deviceFlow, teamId]);
 
 	const handleCopyCode = async () => {
 		if (!deviceFlow) return;

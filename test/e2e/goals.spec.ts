@@ -1,14 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createCompanyWithAgents, waitForPageLoad } from './helpers';
+import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Goals', () => {
-	test('creates a company-wide goal from the Goals page and opens a CEO ticket', async ({
-		page,
-	}) => {
+	test('creates a team-wide goal from the Goals page and opens a CEO ticket', async ({ page }) => {
 		await authenticate(page);
-		const { company } = await createCompanyWithAgents(page);
+		const { team } = await createTeamWithAgents(page);
 
-		await page.goto(`/companies/${company.slug}/goals`);
+		await page.goto(`/teams/${team.slug}/goals`);
 		await waitForPageLoad(page);
 
 		await page.getByRole('button', { name: 'New goal' }).click();
@@ -20,10 +18,10 @@ test.describe('Goals', () => {
 
 		const main = page.getByRole('main');
 		await expect(main.getByText('Raise seed round')).toBeVisible({ timeout: 15000 });
-		await expect(main.getByText('Company-wide').first()).toBeVisible();
+		await expect(main.getByText('Team-wide').first()).toBeVisible();
 
 		// The CEO ticket lives in the Operations project.
-		await page.goto(`/companies/${company.slug}/projects/operations/issues`);
+		await page.goto(`/teams/${team.slug}/projects/operations/issues`);
 		await waitForPageLoad(page);
 		await expect(
 			page.getByRole('main').getByText('Review plans for goal: "Raise seed round"'),
@@ -32,16 +30,16 @@ test.describe('Goals', () => {
 
 	test('project-scoped goal routes the CEO ticket into that project', async ({ page }) => {
 		await authenticate(page);
-		const { company, token } = await createCompanyWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}` };
 
-		const projRes = await page.request.post(`/api/companies/${company.id}/projects`, {
+		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 			headers,
 			data: { name: 'Growth', description: 'Growth engineering workstream.' },
 		});
 		const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
 
-		await page.goto(`/companies/${company.slug}/goals`);
+		await page.goto(`/teams/${team.slug}/goals`);
 		await waitForPageLoad(page);
 
 		await page.getByRole('button', { name: 'New goal' }).click();
@@ -54,7 +52,7 @@ test.describe('Goals', () => {
 			timeout: 15000,
 		});
 
-		await page.goto(`/companies/${company.slug}/projects/${project.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/issues`);
 		await waitForPageLoad(page);
 		await expect(
 			page.getByRole('main').getByText('Review plans for goal: "Launch public v1"'),

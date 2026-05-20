@@ -33,7 +33,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			monthly_budget_cents: 2000,
 			touches_code: false,
 			role_description:
-				'Translates company mission into actionable strategy, delegates work across leadership, and resolves disputes between agents.',
+				'Translates team mission into actionable strategy, delegates work across leadership, and resolves disputes between agents.',
 		},
 		{
 			name: 'Architect',
@@ -59,7 +59,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			monthly_budget_cents: 3000,
 			touches_code: false,
 			role_description:
-				'Owns product requirements, writes PRDs, manages scope, and ensures development aligns with company mission.',
+				'Owns product requirements, writes PRDs, manages scope, and ensures development aligns with team mission.',
 		},
 		{
 			name: 'Engineer',
@@ -208,15 +208,15 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 
 	const kbDocsConfig = [
 		{
-			title: 'Company Overview',
-			slug: 'company-overview.md',
-			content: `# Company Overview
+			title: 'Team Overview',
+			slug: 'team-overview.md',
+			content: `# Team Overview
 
-<!-- TODO: customize this document for your company -->
+<!-- TODO: customize this document for your team -->
 
 ## Mission
 
-Describe your company's mission and what problem you're solving.
+Describe your team's mission and what problem you're solving.
 
 ## Product
 
@@ -323,12 +323,12 @@ Significant technical decisions should be documented with:
 	const skillsConfig: Array<{ name: string; source_url: string; description?: string }> = [];
 
 	const startupResult = await db.query<{ id: string }>(
-		`INSERT INTO company_types (name, description, default_team_summary, is_builtin, source,
-		                            kb_docs_config, skills_config)
-		 VALUES ($1, $2, $3, true, 'builtin'::company_type_source, $4::jsonb, $5::jsonb)
+		`INSERT INTO team_templates (name, description, default_summary, is_builtin, source,
+		                             kb_docs_config, skills_config)
+		 VALUES ($1, $2, $3, true, 'builtin'::team_template_source, $4::jsonb, $5::jsonb)
 		 ON CONFLICT (name) DO UPDATE SET
 		     description = EXCLUDED.description,
-		     default_team_summary = EXCLUDED.default_team_summary,
+		     default_summary = EXCLUDED.default_summary,
 		     kb_docs_config = EXCLUDED.kb_docs_config,
 		     skills_config = EXCLUDED.skills_config,
 		     source = EXCLUDED.source
@@ -341,16 +341,16 @@ Significant technical decisions should be documented with:
 			JSON.stringify(skillsConfig),
 		],
 	);
-	const startupTypeId = startupResult.rows[0].id;
+	const startupTemplateId = startupResult.rows[0].id;
 
 	for (const def of defs) {
 		await db.query(
-			`INSERT INTO company_type_agent_types (company_type_id, agent_type_id, reports_to_slug, sort_order)
+			`INSERT INTO team_template_agent_types (team_template_id, agent_type_id, reports_to_slug, sort_order)
 			 VALUES ($1, (SELECT id FROM agent_types WHERE slug = $2), $3, $4)
-			 ON CONFLICT (company_type_id, agent_type_id) DO UPDATE SET
+			 ON CONFLICT (team_template_id, agent_type_id) DO UPDATE SET
 			     reports_to_slug = EXCLUDED.reports_to_slug,
 			     sort_order = EXCLUDED.sort_order`,
-			[startupTypeId, def.slug, def.reports_to_slug, def.sort_order],
+			[startupTemplateId, def.slug, def.reports_to_slug, def.sort_order],
 		);
 	}
 
@@ -365,12 +365,12 @@ Significant technical decisions should be documented with:
 	};
 
 	await db.query(
-		`INSERT INTO company_types (name, description, default_team_summary, is_builtin, source,
-		                            builtin_agent_prompts, builtin_agent_team_contexts)
-		 VALUES ($1, $2, $3, true, 'builtin'::company_type_source, $4::jsonb, $5::jsonb)
+		`INSERT INTO team_templates (name, description, default_summary, is_builtin, source,
+		                             builtin_agent_prompts, builtin_agent_team_contexts)
+		 VALUES ($1, $2, $3, true, 'builtin'::team_template_source, $4::jsonb, $5::jsonb)
 		 ON CONFLICT (name) DO UPDATE SET
 		     description = EXCLUDED.description,
-		     default_team_summary = EXCLUDED.default_team_summary,
+		     default_summary = EXCLUDED.default_summary,
 		     source = EXCLUDED.source,
 		     builtin_agent_prompts = EXCLUDED.builtin_agent_prompts,
 		     builtin_agent_team_contexts = EXCLUDED.builtin_agent_team_contexts`,

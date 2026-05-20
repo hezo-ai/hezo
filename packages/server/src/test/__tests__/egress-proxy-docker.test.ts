@@ -38,7 +38,7 @@ const finalSkipReason = skipReason ?? imageSkipReason;
 
 let db: PGlite;
 let masterKeyManager: MasterKeyManager;
-let companyId: string;
+let teamId: string;
 let agentId: string;
 let proxy: EgressProxy;
 let upstream: HttpsServer;
@@ -61,13 +61,13 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 	dataDir = mkdtempSync(join(tmpdir(), 'hezo-egress-docker-'));
 
-	const companyRes = await ctx.app.request('/api/companies', {
+	const teamRes = await ctx.app.request('/api/teams', {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Egress Docker Co' }),
 	});
-	companyId = (await companyRes.json()).data.id;
-	const agentRes = await ctx.app.request(`/api/companies/${companyId}/agents`, {
+	teamId = (await teamRes.json()).data.id;
+	const agentRes = await ctx.app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Egress Docker Agent' }),
@@ -98,7 +98,7 @@ describe.skipIf(finalSkipReason !== null)('EgressProxy — Docker integration', 
 	it('substitutes a placeholder in an Authorization header before it reaches the upstream', async () => {
 		const runId = `egress-docker-header-${Date.now()}`;
 		await insertSecret('DOCKER_TEST_HEADER_KEY', 'real-docker-header', ['localhost']);
-		const allocated = await proxy.allocateRunProxy(runId, { companyId, agentId });
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 		try {
 			const beforeHits = upstreamHits.length;
 			const result = await runInContainer({
@@ -125,7 +125,7 @@ describe.skipIf(finalSkipReason !== null)('EgressProxy — Docker integration', 
 	it('substitutes a placeholder in a URL query string', async () => {
 		const runId = `egress-docker-url-${Date.now()}`;
 		await insertSecret('DOCKER_TEST_URL_KEY', 'real-docker-url', ['localhost']);
-		const allocated = await proxy.allocateRunProxy(runId, { companyId, agentId });
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 		try {
 			const result = await runInContainer({
 				caHostPath: `${dataDir}/ca/certs/ca.pem`,
@@ -149,7 +149,7 @@ describe.skipIf(finalSkipReason !== null)('EgressProxy — Docker integration', 
 
 	it('forwards JSON bodies untouched — body placeholders are not substituted by design', async () => {
 		const runId = `egress-docker-body-${Date.now()}`;
-		const allocated = await proxy.allocateRunProxy(runId, { companyId, agentId });
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 		try {
 			const body = '{"plain":"json","x":1}';
 			const result = await runInContainer({
@@ -177,7 +177,7 @@ describe.skipIf(finalSkipReason !== null)('EgressProxy — Docker integration', 
 	it('rejects placeholders for hosts not on the secret allowlist', async () => {
 		const runId = `egress-docker-deny-${Date.now()}`;
 		await insertSecret('DOCKER_TEST_RESTRICTED', 'never-leaked-docker', ['only.example']);
-		const allocated = await proxy.allocateRunProxy(runId, { companyId, agentId });
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 		try {
 			const beforeHits = upstreamHits.length;
 			const result = await runInContainer({
@@ -203,7 +203,7 @@ describe.skipIf(finalSkipReason !== null)('EgressProxy — Docker integration', 
 	it('writes an audit row identifying the run, host, and substituted secret name (never the value)', async () => {
 		const runId = `egress-docker-audit-${Date.now()}`;
 		await insertSecret('DOCKER_TEST_AUDIT', 'audit-secret-value', ['localhost']);
-		const allocated = await proxy.allocateRunProxy(runId, { companyId, agentId });
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 		try {
 			await runInContainer({
 				caHostPath: `${dataDir}/ca/certs/ca.pem`,
@@ -259,12 +259,12 @@ async function insertSecret(name: string, value: string, allowedHosts: string[])
 	if (!key) throw new Error('master key unavailable');
 	const enc = encrypt(value, key);
 	await db.query(
-		`INSERT INTO secrets (company_id, project_id, name, encrypted_value, category, allowed_hosts)
+		`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts)
 		 VALUES ($1, NULL, $2, $3, 'api_token'::secret_category, $4)
-		 ON CONFLICT (company_id, project_id, name) DO UPDATE
+		 ON CONFLICT (team_id, project_id, name) DO UPDATE
 		 SET encrypted_value = EXCLUDED.encrypted_value,
 		     allowed_hosts = EXCLUDED.allowed_hosts`,
-		[companyId, name, enc, allowedHosts],
+		[teamId, name, enc, allowedHosts],
 	);
 }
 

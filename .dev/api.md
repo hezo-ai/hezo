@@ -40,7 +40,7 @@ Authorization: Bearer <user_jwt>
 
 ### Board — API key (remote orchestrators)
 For external orchestrators (OpenClaw, scripts, AI agents controlling Hezo
-remotely). Company-scoped. Full board-level access to that company.
+remotely). Team-scoped. Full board-level access to that team.
 
 ```
 Authorization: Bearer hezo_<key>
@@ -61,7 +61,7 @@ Authorization: Bearer <agent_jwt>
 Agent tokens are JWTs signed with the master key (held in memory, never on disk),
 containing:
 ```json
-{ "member_id": "...", "company_id": "...", "run_id": "...", "iat": ..., "exp": ... }
+{ "member_id": "...", "team_id": "...", "run_id": "...", "iat": ..., "exp": ... }
 ```
 
 `member_id` is the agent's ID in the members table (same as agent_id). `run_id`
@@ -70,7 +70,7 @@ four hours after issuance.
 
 Validation on every request:
 1. JWT signature verifies against the master key.
-2. `heartbeat_runs` has a row with `id = run_id`, `member_id` matching, `company_id` matching.
+2. `heartbeat_runs` has a row with `id = run_id`, `member_id` matching, `team_id` matching.
 3. That row's status is `running`.
 
 Any failure returns `401`. When the run finalizes (status moves to `succeeded`,
@@ -88,15 +88,15 @@ All Board API endpoints check the caller's membership role:
 
 | Access Level | Endpoints |
 |-------------|-----------|
-| **Board-only** (member_users with role='board') | Company settings, agent management (hire/fire/pause/resume/terminate), budget adjustments, secrets vault, API keys, connected platforms, audit log, plugin management, invites, member management |
+| **Board-only** (member_users with role='board') | Team settings, agent management (hire/fire/pause/resume/terminate), budget adjustments, secrets vault, API keys, connected platforms, audit log, plugin management, invites, member management |
 | **All members** (agents and users, scoped by `project_ids`) | Issues, comments, KB (read), project docs (file-based, read/write), inbox (filtered), notification preferences |
 
 Members (both agents and users) with role='member' are restricted by `project_ids` — they can only access issues, comments, and documents within their allowed projects. Requests outside their scope return 403.
 
-### Companies
+### Teams
 
-#### `GET /companies`
-List all companies.
+#### `GET /teams`
+List all teams.
 
 Response:
 ```json
@@ -117,8 +117,8 @@ Response:
 }
 ```
 
-#### `POST /companies`
-Create a company. Optionally seed from a template.
+#### `POST /teams`
+Create a team. Optionally seed from a template.
 
 Request:
 ```json
@@ -129,25 +129,25 @@ Request:
 }
 ```
 
-`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). Issue prefixes are configured per project (see `POST /companies/:companyId/projects`), not at the company level.
+`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). Issue prefixes are configured per project (see `POST /teams/:teamId/projects`), not at the team level.
 
-Response: full company object. On creation, the server automatically:
+Response: full team object. On creation, the server automatically:
 
-1. Creates `~/.hezo/companies/{slug}/` folder structure with auto-generated AGENTS.md.
+1. Creates `~/.hezo/teams/{slug}/` folder structure with auto-generated AGENTS.md.
 2. Creates agent team from the selected template. The UI defaults to "Software Development" pre-selected.
 3. Creates an **"Operations" project** and auto-provisions its container.
 
-Docker container provisioning for the Operations project happens at company creation. Other project containers are provisioned when those projects are created.
+Docker container provisioning for the Operations project happens at team creation. Other project containers are provisioned when those projects are created.
 
-The board lands on a company with 11 agents.
+The board lands on a team with 11 agents.
 
-#### `GET /companies/:companyId`
-Get company detail.
+#### `GET /teams/:teamId`
+Get team detail.
 
-Response: full company object with summary stats (same shape as list item).
+Response: full team object with summary stats (same shape as list item).
 
-#### `PATCH /companies/:companyId`
-Update company config.
+#### `PATCH /teams/:teamId`
+Update team config.
 
 Request:
 ```json
@@ -167,23 +167,23 @@ Request:
 }
 ```
 
-`mcp_servers` — company-level MCP servers shared by all agents. Merged with
+`mcp_servers` — team-level MCP servers shared by all agents. Merged with
 agent-level servers at runtime.
 
 `mpp_config` — MPP wallet configuration. The wallet private key is stored in
-the secrets vault (referenced by name). When enabled, the company container has
+the secrets vault (referenced by name). When enabled, the team container has
 `mppx` CLI and wallet credentials are injected into agent subprocesses so they can pay for HTTP 402
 services autonomously. MPP costs are debited against the agent's budget.
 
-#### `DELETE /companies/:companyId`
-Delete company and all associated data. Tears down the company container.
+#### `DELETE /teams/:teamId`
+Delete team and all associated data. Tears down the team container.
 
 ---
 
 ### API Keys
 
-#### `GET /companies/:companyId/api-keys`
-List API keys for a company (metadata only — key values are never returned).
+#### `GET /teams/:teamId/api-keys`
+List API keys for a team (metadata only — key values are never returned).
 
 Response:
 ```json
@@ -200,7 +200,7 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/api-keys`
+#### `POST /teams/:teamId/api-keys`
 Generate a new API key. The raw key is returned **once** in this response and
 never again.
 
@@ -224,7 +224,7 @@ Response:
 }
 ```
 
-#### `DELETE /companies/:companyId/api-keys/:apiKeyId`
+#### `DELETE /teams/:teamId/api-keys/:apiKeyId`
 Revoke an API key. Immediate. Any request using this key will fail.
 
 ---
@@ -244,7 +244,7 @@ Response:
       "slug": "ceo",
       "description": "...",
       "role_description": "...",
-      "system_prompt_template": "You are the CEO of {{company_name}}...",
+      "system_prompt_template": "You are the CEO of {{team_name}}...",
       "default_effort": "max",
       "heartbeat_interval_min": 120,
       "monthly_budget_cents": 2000,
@@ -266,7 +266,7 @@ Request:
   "name": "Data Scientist",
   "description": "ML and data analysis",
   "role_description": "Builds models and analyzes data",
-  "system_prompt_template": "You are a data scientist for {{company_name}}.",
+  "system_prompt_template": "You are a data scientist for {{team_name}}.",
   "default_effort": "medium",
   "heartbeat_interval_min": 60,
   "monthly_budget_cents": 5000
@@ -292,8 +292,8 @@ Delete a custom agent type. Built-in types cannot be deleted (returns 403).
 
 ### Agents
 
-#### `GET /companies/:companyId/agents`
-List agents for a company.
+#### `GET /teams/:teamId/agents`
+List agents for a team.
 
 Query params: `?admin_status=enabled,disabled,terminated`
 
@@ -303,7 +303,7 @@ Response:
   "data": [
     {
       "id": "uuid",
-      "company_id": "uuid",
+      "team_id": "uuid",
       "reports_to": "uuid | null",
       "reports_to_title": "CTO",
       "title": "Dev Engineer",
@@ -322,19 +322,19 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/agents`
-Internal direct-create endpoint used by company provisioning (seeding the template team). Board-initiated hires must go through `POST /companies/:companyId/agents/onboard` instead — this endpoint is not wired to the hire form and skips the CEO/board review cycle. Tests and bootstrap paths are the only expected callers.
+#### `POST /teams/:teamId/agents`
+Internal direct-create endpoint used by team provisioning (seeding the template team). Board-initiated hires must go through `POST /teams/:teamId/agents/onboard` instead — this endpoint is not wired to the hire form and skips the CEO/board review cycle. Tests and bootstrap paths are the only expected callers.
 
 Request fields: `title` (required), `role_description`, `system_prompt`, `reports_to`, `default_effort`, `heartbeat_interval_min`, `monthly_budget_cents`, `touches_code`, `mcp_servers`.
 
 Response: full agent object.
 
-#### `POST /companies/:companyId/agents/onboard`
+#### `POST /teams/:teamId/agents/onboard`
 Starts the CEO-mediated hire workflow. The board submits a draft spec; the server creates a pending `hire` approval holding the draft in its payload, opens an onboarding issue in the Operations project assigned to the CEO, and wakes the CEO to refine the draft. **No `member_agents` row is created yet.**
 
 The CEO revises the draft via the `update_hire_proposal` MCP tool, @-mentions the board for review, and iterates until the board resolves the pending approval. Approving the approval materialises the agent (see `POST /approvals/:approvalId/resolve`); denying leaves nothing behind.
 
-If the company has no enabled CEO or no Operations project (bootstrap case), the endpoint creates the agent directly as `enabled` and returns it with `bootstrap: true`. No approval or ticket is created in that case.
+If the team has no enabled CEO or no Operations project (bootstrap case), the endpoint creates the agent directly as `enabled` and returns it with `bootstrap: true`. No approval or ticket is created in that case.
 
 Request:
 ```json
@@ -377,12 +377,12 @@ Error responses:
 - `400 INVALID_REQUEST` — `title` is missing, or `default_effort` is not a valid enum value.
 - `409 CONFLICT` — an enabled or disabled agent with the same slug already exists, or another pending `hire` approval already claims the same slug.
 
-#### `GET /companies/:companyId/agents/:agentId`
+#### `GET /teams/:teamId/agents/:agentId`
 Get agent detail including system prompt.
 
 Response: full agent object (same as list item + `system_prompt` + `mcp_servers` fields).
 
-#### `PATCH /companies/:companyId/agents/:agentId`
+#### `PATCH /teams/:teamId/agents/:agentId`
 Update agent config: title, role_description, system_prompt, default_effort,
 heartbeat_interval_min, monthly_budget_cents, reports_to, mcp_servers,
 model_override_provider, model_override_model.
@@ -404,17 +404,17 @@ it's passed to the CLI as `--model`, taking precedence over the provider
 config's `default_model`. Clearing the provider also clears the model. Setting
 the model alone requires that a provider is already stored on the agent.
 
-#### `POST /companies/:companyId/agents/:agentId/disable`
+#### `POST /teams/:teamId/agents/:agentId/disable`
 Disable an agent. Stops heartbeats, kills subprocess if running. Does not affect the project container.
 
-#### `POST /companies/:companyId/agents/:agentId/enable`
+#### `POST /teams/:teamId/agents/:agentId/enable`
 Enable a disabled agent.
 
-#### `POST /companies/:companyId/agents/:agentId/terminate`
+#### `POST /teams/:teamId/agents/:agentId/terminate`
 Terminate an agent. Kills the agent's subprocess. Unassigns all issues.
 Agent record is kept for audit trail (admin_status = `terminated`).
 
-#### `GET /companies/:companyId/agents/:agentId/heartbeat-runs`
+#### `GET /teams/:teamId/agents/:agentId/heartbeat-runs`
 Get agent execution history (last 50 runs). Each row includes timing
 (`started_at`, `finished_at`, `status`, `exit_code`), usage (`input_tokens`,
 `output_tokens`, `cost_cents`), and the new log fields:
@@ -446,12 +446,12 @@ Each row also includes resolved trigger fields so the UI can render a
   the agent who posted the replying comment. Null when the source has no
   comment context (e.g. `assignment`, `heartbeat`, `timer`).
 
-#### `GET /companies/:companyId/agents/:agentId/heartbeat-runs/:runId`
+#### `GET /teams/:teamId/agents/:agentId/heartbeat-runs/:runId`
 Get a single heartbeat run with issue metadata, the full log/usage fields
 listed above, and the same resolved `trigger_*` fields used to render the
 "Triggered by" line on the run-detail page.
 
-#### `GET /companies/:companyId/issues/:issueId/latest-run`
+#### `GET /teams/:teamId/issues/:issueId/latest-run`
 Returns the most recent `heartbeat_run` for the issue (or `null` if none).
 Powers the minified log strip on the issue detail page so it can subscribe to
 the run's live stream and link to the full run page.
@@ -460,7 +460,7 @@ the run's live stream and link to the full run page.
 
 ### Org Chart
 
-#### `GET /companies/:companyId/org-chart`
+#### `GET /teams/:teamId/org-chart`
 Returns the full org tree as a nested structure.
 
 Response:
@@ -507,7 +507,7 @@ Response:
 
 ### Projects
 
-#### `GET /companies/:companyId/projects`
+#### `GET /teams/:teamId/projects`
 List projects.
 
 Response:
@@ -516,7 +516,7 @@ Response:
   "data": [
     {
       "id": "uuid",
-      "company_id": "uuid",
+      "team_id": "uuid",
       "name": "Backend API",
       "slug": "backend-api",
       "description": "Authenticated HTTP API for the main app.",
@@ -529,10 +529,10 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/projects`
+#### `POST /teams/:teamId/projects`
 Create a project. Container is auto-provisioned asynchronously. A planning issue titled
 `Draft execution plan for "{name}"` (labeled `planning`) is opened and assigned to the
-company's enabled CEO agent — board users are redirected there so the CEO can draft the
+team's enabled CEO agent — board users are redirected there so the CEO can draft the
 execution plan. The planning ticket's body instructs the CEO to create the first
 milestone's tickets as **top-level** issues (no `parent_issue_id` pointing at the
 planning ticket) — each delegated milestone is the assignee's own first-class
@@ -567,24 +567,24 @@ auto-opened CEO planning issue.
 }
 ```
 
-#### `GET /companies/:companyId/projects/:projectId`
+#### `GET /teams/:teamId/projects/:projectId`
 Get project detail including repos. Accepts project ID or slug.
 
 Response: project object + `repos` array.
 
-#### `PATCH /companies/:companyId/projects/:projectId`
+#### `PATCH /teams/:teamId/projects/:projectId`
 Update name or description.
 
-#### `DELETE /companies/:companyId/projects/:projectId`
+#### `DELETE /teams/:teamId/projects/:projectId`
 Delete project. Cannot delete internal projects (e.g. Operations). Fails if there are open issues referencing it. Tears down the container asynchronously.
 
-#### `POST /companies/:companyId/projects/:projectId/container/start`
+#### `POST /teams/:teamId/projects/:projectId/container/start`
 Start the project container. Container must be provisioned. Wakes agents with pending work. Returns `{ container_status: "running" }`.
 
-#### `POST /companies/:companyId/projects/:projectId/container/stop`
+#### `POST /teams/:teamId/projects/:projectId/container/stop`
 Gracefully stop the project container. Cancels running agent tasks. Returns `{ container_status: "stopping" }`.
 
-#### `POST /companies/:companyId/projects/:projectId/container/rebuild`
+#### `POST /teams/:teamId/projects/:projectId/container/rebuild`
 Tear down and rebuild the project's Docker container. Kills all agent subprocesses
 in this project, destroys the container, provisions a new one. Useful when base
 image or dependency config changes. All agents keep their identity and config.
@@ -594,7 +594,7 @@ Returns `{ container_status: "creating" }`.
 
 ### Repos
 
-#### `GET /companies/:companyId/projects/:projectId/repos`
+#### `GET /teams/:teamId/projects/:projectId/repos`
 List repos for a project.
 
 Response:
@@ -613,12 +613,12 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/projects/:projectId/repos`
+#### `POST /teams/:teamId/projects/:projectId/repos`
 Add a repo — either by linking an existing GitHub repository or creating a new
-one on the user's behalf. Server validates access via the company's connected
+one on the user's behalf. Server validates access via the team's connected
 GitHub OAuth token before saving.
 
-Requires: GitHub platform must be connected for this company.
+Requires: GitHub platform must be connected for this team.
 
 **Mode: link** (default) — link an existing repo:
 ```json
@@ -652,7 +652,7 @@ resolved, and deferred agent wakeups are re-enqueued as `Automation`.
 **Validation flow (mode=link):**
 
 1. Parse `owner/repo` from the URL
-2. Check `connected_platforms` for an active GitHub connection for this company
+2. Check `connected_platforms` for an active GitHub connection for this team
 3. If connected: call `GET https://api.github.com/repos/{owner}/{repo}` with the OAuth token
 4. If accessible (200): insert the repo record
 5. If not accessible (403/404): return `REPO_ACCESS_FAILED`
@@ -664,7 +664,7 @@ Error if GitHub not connected (also creates a board inbox item of type
 {
   "error": {
     "code": "GITHUB_NOT_CONNECTED",
-    "message": "Connect GitHub in company settings before adding repos"
+    "message": "Connect GitHub in team settings before adding repos"
   }
 }
 ```
@@ -684,7 +684,7 @@ The `REPO_ACCESS_FAILED` message includes the connected GitHub username (from
 access to the repository.
 
 **Synchronous clone:** on a successful insert the server clones the repo via
-SSH into `<dataDir>/companies/<company-slug>/projects/<project-slug>/workspace/<short_name>/`
+SSH into `<dataDir>/teams/<team-slug>/projects/<project-slug>/workspace/<short_name>/`
 (bind-mounted as `/workspace/<short_name>/` inside the project container) and
 returns the result in the response body as `clone_status` (`"cloned"`,
 `"skipped"`, or `"failed"`) and `clone_error` (string or `null`). Clone
@@ -692,7 +692,7 @@ failures do not fail the request — the repo record is still created, and
 `ensureProjectRepos` will retry on the next agent run or the next container
 provision.
 
-#### `DELETE /companies/:companyId/projects/:projectId/repos/:repoId`
+#### `DELETE /teams/:teamId/projects/:projectId/repos/:repoId`
 Remove a repo from a project. The server also removes the repo's on-disk
 workspace directory and every per-issue worktree derived from it
 (`<workspace>/<short_name>/` and `<worktrees>/<issue>/<short_name>/`).
@@ -704,11 +704,11 @@ Returns 409 `DESIGNATED_REPO_IMMUTABLE` if `repoId` equals the project's
 
 ### GitHub namespaces
 
-These endpoints proxy GitHub for the connected company token. They exist so
+These endpoints proxy GitHub for the connected team token. They exist so
 the repo-setup wizard can populate org selectors and repo pickers without
 leaking tokens to the browser.
 
-#### `GET /companies/:companyId/github/orgs`
+#### `GET /teams/:teamId/github/orgs`
 List the authenticated GitHub user's personal namespace plus their orgs.
 
 Response:
@@ -721,10 +721,10 @@ Response:
 }
 ```
 
-Returns 422 `GITHUB_NOT_CONNECTED` if the company has no active GitHub
+Returns 422 `GITHUB_NOT_CONNECTED` if the team has no active GitHub
 connection.
 
-#### `GET /companies/:companyId/github/repos?owner={login}&query={q}`
+#### `GET /teams/:teamId/github/repos?owner={login}&query={q}`
 List repos accessible to the authenticated user under `owner` (personal or
 org). `query` is an optional substring filter on repo name. Results capped at
 50.
@@ -749,7 +749,7 @@ Response:
 
 ### Issues
 
-#### `GET /companies/:companyId/issues`
+#### `GET /teams/:teamId/issues`
 List issues. Supports filtering and pagination.
 
 Query params:
@@ -768,7 +768,7 @@ Response:
   "data": [
     {
       "id": "uuid",
-      "company_id": "uuid",
+      "team_id": "uuid",
       "project_id": "uuid",
       "project_name": "Backend API",
       "assignee_id": "uuid",
@@ -795,7 +795,7 @@ Response:
 
 `assignee_type` is `"agent"` or `"user"` depending on whether the assignee is an agent member or a human board member (matches `members.member_type`). `has_active_run` is `true` when at least one `heartbeat_runs` row exists for the issue in `running` or `queued` status — used by the UI to show a live indicator next to the assignee name.
 
-#### `POST /companies/:companyId/issues`
+#### `POST /teams/:teamId/issues`
 Create an issue.
 
 Request:
@@ -825,7 +825,7 @@ Issues in the auto-created Operations project (`slug = 'operations'`, `is_intern
 instance default — the single active AI provider if only one is configured,
 or the oldest/default active provider otherwise.
 
-#### `GET /companies/:companyId/issues/:issueId`
+#### `GET /teams/:teamId/issues/:issueId`
 Full issue detail including description, goal chain, cost.
 
 Response: full issue object + computed fields:
@@ -839,7 +839,7 @@ Response: full issue object + computed fields:
     "project_id": "uuid",
     "project_name": "Backend API",
     "project_goal": "Ship collaboration features",
-    "company_description": "Build the #1 AI note-taking app",
+    "team_description": "Build the #1 AI note-taking app",
     "assignee_id": "uuid",
     "assignee_name": "Dev Engineer",
     "assignee_type": "agent",
@@ -855,7 +855,7 @@ Response: full issue object + computed fields:
 }
 ```
 
-#### `PATCH /companies/:companyId/issues/:issueId`
+#### `PATCH /teams/:teamId/issues/:issueId`
 Update issue fields: title, description, status, priority, assignee_id, labels, rules, progress_summary, runtime_type.
 
 `assignee_id` cannot be set to null — every issue must have an assignee.
@@ -870,10 +870,10 @@ The error message names the blocking sub-issue or agent so the caller knows what
 
 For issues whose project is Operations (`slug = 'operations'`, `is_internal = true`), `assignee_id` must be the CEO; any other value returns `400 INVALID_REQUEST`.
 
-#### `DELETE /companies/:companyId/issues/:issueId`
+#### `DELETE /teams/:teamId/issues/:issueId`
 Delete an issue. Only allowed if status is `backlog`, and no comments exist.
 
-#### `POST /companies/:companyId/issues/:issueId/sub-issues`
+#### `POST /teams/:teamId/issues/:issueId/sub-issues`
 Create a sub-issue. `project_id` is inherited from the parent. When the parent belongs to the Operations project, the sub-issue's `assignee_id` must be the CEO.
 
 Request:
@@ -887,11 +887,11 @@ Request:
 }
 ```
 
-#### `GET /companies/:companyId/issues/:issueId/dependencies`
+#### `GET /teams/:teamId/issues/:issueId/dependencies`
 List dependencies (blocking issues) for an issue.
 
-#### `POST /companies/:companyId/issues/:issueId/dependencies`
-Add a dependency. An issue cannot block itself, and both issues must be in the same company.
+#### `POST /teams/:teamId/issues/:issueId/dependencies`
+Add a dependency. An issue cannot block itself, and both issues must be in the same team.
 
 Request:
 ```json
@@ -900,14 +900,14 @@ Request:
 }
 ```
 
-#### `DELETE /companies/:companyId/issues/:issueId/dependencies/:depId`
+#### `DELETE /teams/:teamId/issues/:issueId/dependencies/:depId`
 Remove a dependency.
 
 ---
 
 ### Issue Comments
 
-#### `GET /companies/:companyId/issues/:issueId/comments`
+#### `GET /teams/:teamId/issues/:issueId/comments`
 List all comments for an issue, ordered by created_at asc.
 
 Query params: `?include_tool_calls=true` — inline tool_calls under each
@@ -957,7 +957,7 @@ Response:
         "label": "Auth flow mockup",
         "description": "Interactive prototype of the login/signup flow"
       },
-      "preview_url": "/api/companies/company-uuid/projects/project-uuid/preview/auth-flow-mockup.html",
+      "preview_url": "/api/teams/team-uuid/projects/project-uuid/preview/auth-flow-mockup.html",
       "tool_calls": [],
       "created_at": "..."
     }
@@ -965,7 +965,7 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/issues/:issueId/comments`
+#### `POST /teams/:teamId/issues/:issueId/comments`
 Board posts a comment.
 
 Request:
@@ -986,7 +986,7 @@ about a tricky piece of feedback. If the comment contains no `@`-mentions,
 `effort` has no observable effect (no wakeup is fired). Invalid values are
 silently dropped. See [Reasoning effort](#reasoning-effort).
 
-#### `POST /companies/:companyId/issues/:issueId/comments/:commentId/choose`
+#### `POST /teams/:teamId/issues/:issueId/comments/:commentId/choose`
 Board picks an option on an options-type comment.
 
 Request:
@@ -1004,7 +1004,7 @@ choice. Triggers the assigned agent.
 The server automatically appends `system`-typed comments for two events:
 
 - **Status change** — fires whenever an issue's status changes, regardless of
-  the path that drove it (PATCH `/companies/:companyId/issues/:issueId`, MCP
+  the path that drove it (PATCH `/teams/:teamId/issues/:issueId`, MCP
   `update_issue`, hire-approval auto-Done, agent-runner auto-flip
   `backlog → in_progress`, Coach auto-close `done → closed`). A no-op PATCH
   (status set to its current value) records nothing.
@@ -1017,20 +1017,20 @@ The server automatically appends `system`-typed comments for two events:
   PATCH `/issues/:issueId`, comments on POST `/issues/:issueId/comments`, and
   the MCP equivalents (`create_issue`, `update_issue`, `create_comment`).
   Subsequent mentions from the same source are silently deduped via the
-  `source_issue_id` JSONB key. Cross-company, self-, code-block, inline-code,
+  `source_issue_id` JSONB key. Cross-team, self-, code-block, inline-code,
   and unknown-identifier mentions are ignored.
   Body: `{ "kind": "issue_link", "source_issue_id": "<uuid>",
   "source_identifier": "<e.g. OP-42>", "actor_id": "<member_uuid|null>",
   "text": "Linked from <source_identifier> by <actor>" }`.
 
-Both events broadcast over the company WebSocket as `RowChange` /
+Both events broadcast over the team WebSocket as `RowChange` /
 `issue_comments` / `INSERT`, so live viewers see them without a refresh.
 
 ---
 
 ### Tool Calls
 
-#### `GET /companies/:companyId/issues/:issueId/comments/:commentId/tool-calls`
+#### `GET /teams/:teamId/issues/:issueId/comments/:commentId/tool-calls`
 List tool calls for a specific comment.
 
 Response:
@@ -1056,7 +1056,7 @@ Response:
 
 ### Secrets
 
-#### `GET /companies/:companyId/secrets`
+#### `GET /teams/:teamId/secrets`
 List secrets (values are never returned, only metadata).
 
 Query params: `?project_id=uuid` — filter by project scope.
@@ -1067,7 +1067,7 @@ Response:
   "data": [
     {
       "id": "uuid",
-      "company_id": "uuid",
+      "team_id": "uuid",
       "project_id": "uuid | null",
       "project_name": "Backend API | null",
       "name": "GITHUB_TOKEN",
@@ -1080,7 +1080,7 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/secrets`
+#### `POST /teams/:teamId/secrets`
 Create a secret.
 
 Request:
@@ -1096,7 +1096,7 @@ Request:
 `value` is encrypted server-side before storage. Never stored or logged in
 plaintext.
 
-#### `PATCH /companies/:companyId/secrets/:secretId`
+#### `PATCH /teams/:teamId/secrets/:secretId`
 Update a secret's value or category. Rotating a value does not revoke existing
 grants.
 
@@ -1108,7 +1108,7 @@ Request:
 }
 ```
 
-#### `DELETE /companies/:companyId/secrets/:secretId`
+#### `DELETE /teams/:teamId/secrets/:secretId`
 Delete a secret. Revokes all grants. Agents with this secret injected will
 lose access on next subprocess invocation.
 
@@ -1116,7 +1116,7 @@ lose access on next subprocess invocation.
 
 ### Secret Grants
 
-#### `GET /companies/:companyId/secrets/:secretId/grants`
+#### `GET /teams/:teamId/secrets/:secretId/grants`
 List grants for a secret.
 
 Response:
@@ -1136,7 +1136,7 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/secrets/:secretId/grants`
+#### `POST /teams/:teamId/secrets/:secretId/grants`
 Directly grant an agent access (board action, no approval needed).
 
 Request:
@@ -1148,19 +1148,19 @@ Request:
 ```
 
 If `scope` is `project`, grants access to all secrets in the same project.
-If `scope` is `company`, grants access to all secrets in the company.
+If `scope` is `team`, grants access to all secrets in the team.
 These expanded grants create individual `secret_grants` rows for each
 matching secret.
 
-#### `DELETE /companies/:companyId/secret-grants/:grantId`
+#### `DELETE /teams/:teamId/secret-grants/:grantId`
 Revoke a grant. Sets `revoked_at`.
 
 ---
 
 ### Approvals
 
-#### `GET /companies/:companyId/approvals`
-List pending approvals for a company.
+#### `GET /teams/:teamId/approvals`
+List pending approvals for a team.
 
 Query params: `?status=pending` (default)
 
@@ -1170,9 +1170,9 @@ Response:
   "data": [
     {
       "id": "uuid",
-      "company_id": "uuid",
-      "company_name": "NoteGenius AI",
-      "company_slug": "notegenius-ai",
+      "team_id": "uuid",
+      "team_name": "NoteGenius AI",
+      "team_slug": "notegenius-ai",
       "type": "secret_access",
       "status": "pending",
       "requested_by_member_id": "uuid",
@@ -1194,9 +1194,9 @@ Response:
 }
 ```
 
-The resolved `payload_*` fields are populated by LEFT JOINing payload UUID references (`member_id`, `project_id`, `issue_id`) against their respective tables. Fields are null when the payload does not contain the corresponding UUID. `company_slug` is always present.
+The resolved `payload_*` fields are populated by LEFT JOINing payload UUID references (`member_id`, `project_id`, `issue_id`) against their respective tables. Fields are null when the payload does not contain the corresponding UUID. `team_slug` is always present.
 
-#### `POST /companies/:companyId/approvals`
+#### `POST /teams/:teamId/approvals`
 Create an approval request directly. Used internally by agents and the board.
 
 Request:
@@ -1231,7 +1231,7 @@ When approved, side effects depend on approval type:
 
 ### Cost & Budget
 
-#### `GET /companies/:companyId/costs`
+#### `GET /teams/:teamId/costs`
 List cost entries with aggregation.
 
 Query params:
@@ -1255,7 +1255,7 @@ Response (when `group_by=agent`):
 }
 ```
 
-#### `POST /companies/:companyId/costs`
+#### `POST /teams/:teamId/costs`
 Create a cost entry. Returns 402 if the agent's budget is exceeded.
 
 Request:
@@ -1273,7 +1273,7 @@ Request:
 
 ### Audit Log
 
-#### `GET /companies/:companyId/audit-log`
+#### `GET /teams/:teamId/audit-log`
 Paginated, read-only.
 
 Query params:
@@ -1305,8 +1305,8 @@ Response:
 
 ### Connected Platforms (Hezo Connect OAuth)
 
-#### `GET /companies/:companyId/connections`
-List all connected platforms for a company.
+#### `GET /teams/:teamId/connections`
+List all connected platforms for a team.
 
 Response:
 ```json
@@ -1334,7 +1334,7 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/connections/:platform/start`
+#### `POST /teams/:teamId/connections/:platform/start`
 Initiate an OAuth connection. Returns a redirect URL that the UI opens in a
 new window/tab for the user to authorize.
 
@@ -1350,11 +1350,11 @@ Response:
 }
 ```
 
-#### `DELETE /companies/:companyId/connections/:connectionId`
+#### `DELETE /teams/:teamId/connections/:connectionId`
 Disconnect a platform. Removes SSH keys from GitHub if applicable, cleans up
 associated secrets, and deletes the connection record.
 
-#### `POST /companies/:companyId/connections/:connectionId/refresh`
+#### `POST /teams/:teamId/connections/:connectionId/refresh`
 Force a token refresh. Returns updated status and token expiry.
 
 Response:
@@ -1371,7 +1371,7 @@ Response:
 
 ### AI Providers
 
-AI provider credentials are **instance-level**: a single set of configs is shared across every company in the Hezo instance. Keys are encrypted with the master key. The web shell blocks the app with a full-screen setup gate until at least one provider is configured; it re-appears if the last active provider is deleted.
+AI provider credentials are **instance-level**: a single set of configs is shared across every team in the Hezo instance. Keys are encrypted with the master key. The web shell blocks the app with a full-screen setup gate until at least one provider is configured; it re-appears if the last active provider is deleted.
 
 Authentication: read endpoints require a board-role token. Mutation endpoints (`POST`, `DELETE`, `PATCH`, OAuth start, verify) additionally require superuser.
 
@@ -1407,7 +1407,7 @@ Remove a configuration.
 Mark a config as the default for its provider (exactly one default per provider is enforced by a partial unique index).
 
 #### `POST /ai-providers/:provider/oauth/start`
-Initiate OAuth flow for a provider (`anthropic`, `openai`, `google`). Returns `auth_url` and `state`. State carries `ai_provider` only — no company context. (DeepSeek has no OAuth flow — API key only.)
+Initiate OAuth flow for a provider (`anthropic`, `openai`, `google`). Returns `auth_url` and `state`. State carries `ai_provider` only — no team context. (DeepSeek has no OAuth flow — API key only.)
 
 #### `POST /ai-providers/:configId/verify`
 Verify a stored key by making a lightweight call to the provider. Updates config status to `invalid` if the key is bad.
@@ -1422,7 +1422,7 @@ Return the models this provider offers for the stored credential. Calls the prov
 
 ### Execution Locks
 
-#### `GET /companies/:companyId/issues/:issueId/lock`
+#### `GET /teams/:teamId/issues/:issueId/lock`
 Get the list of agents currently running against an issue.
 
 Response:
@@ -1434,7 +1434,7 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/issues/:issueId/lock`
+#### `POST /teams/:teamId/issues/:issueId/lock`
 Record that a member is running against the issue. Multiple members can hold locks concurrently; returns 409 only if this specific member already holds an active lock on this issue.
 
 Request:
@@ -1444,15 +1444,15 @@ Request:
 }
 ```
 
-#### `DELETE /companies/:companyId/issues/:issueId/lock`
+#### `DELETE /teams/:teamId/issues/:issueId/lock`
 Release all locks for the issue.
 
 ---
 
 ### Semantic Search
 
-#### `GET /companies/:companyId/search`
-Natural language search across company content.
+#### `GET /teams/:teamId/search`
+Natural language search across team content.
 
 Query params:
 - `?q=query` — search query (required)
@@ -1463,17 +1463,17 @@ Query params:
 
 ### UI State
 
-#### `GET /companies/:companyId/ui-state`
+#### `GET /teams/:teamId/ui-state`
 Get the board user's UI state settings (stored as JSON in member_users). Board users only.
 
-#### `PATCH /companies/:companyId/ui-state`
+#### `PATCH /teams/:teamId/ui-state`
 Update UI state settings (merged with existing). Board users only.
 
 ---
 
 ### Previews (proxy)
 
-#### `GET /companies/:companyId/projects/:projectId/preview/*`
+#### `GET /teams/:teamId/projects/:projectId/preview/*`
 Serves static files from the project container workspace. The wildcard path
 maps to a file within the container's working directory.
 
@@ -1485,14 +1485,14 @@ Cache-Control: no-store
 ```
 
 Returns 404 if file doesn't exist. Returns 403 if the requesting user doesn't
-have board access to the company. Paths are sanitized (no path traversal).
+have board access to the team. Paths are sanitized (no path traversal).
 
 ---
 
 ### Knowledge Base
 
-#### `GET /companies/:companyId/kb-docs`
-List all knowledge base documents for a company.
+#### `GET /teams/:teamId/kb-docs`
+List all knowledge base documents for a team.
 
 Response:
 ```json
@@ -1500,7 +1500,7 @@ Response:
   "data": [
     {
       "id": "uuid",
-      "company_id": "uuid",
+      "team_id": "uuid",
       "title": "Coding Standards",
       "slug": "coding-standards.md",
       "last_updated_by_agent_id": "uuid | null",
@@ -1512,7 +1512,7 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/kb-docs`
+#### `POST /teams/:teamId/kb-docs`
 Create a knowledge base document (board action).
 
 Request:
@@ -1526,12 +1526,12 @@ Request:
 
 `slug` is optional — auto-derived from the title if not provided (lowercased, spaces → hyphens, with a `.md` extension appended). KB docs are always stored as Markdown filenames.
 
-#### `GET /companies/:companyId/kb-docs/:slug`
+#### `GET /teams/:teamId/kb-docs/:slug`
 Get full document content.
 
 Response: full doc object including `content` field.
 
-#### `PATCH /companies/:companyId/kb-docs/:slug`
+#### `PATCH /teams/:teamId/kb-docs/:slug`
 Update a document. Direct edits by the board do not require approval.
 Agent edits create a pending approval instead (returns 202).
 
@@ -1544,10 +1544,10 @@ Request:
 }
 ```
 
-#### `DELETE /companies/:companyId/kb-docs/:slug`
+#### `DELETE /teams/:teamId/kb-docs/:slug`
 Delete a knowledge base document.
 
-#### `POST /companies/:companyId/kb-docs/:slug/restore`
+#### `POST /teams/:teamId/kb-docs/:slug/restore`
 Restore a document to a previous revision. Board-only (agents cannot restore).
 
 Request:
@@ -1557,20 +1557,20 @@ Request:
 }
 ```
 
-#### `GET /companies/:companyId/kb-docs/:slug/revisions`
+#### `GET /teams/:teamId/kb-docs/:slug/revisions`
 List revision history for a knowledge base document, ordered by revision_number descending.
 
 ---
 
 ### Skills
 
-#### `GET /companies/:companyId/skills`
-List the skills manifest for a company. Returns all installed skills with metadata.
+#### `GET /teams/:teamId/skills`
+List the skills manifest for a team. Returns all installed skills with metadata.
 
-#### `GET /companies/:companyId/skills/:slug`
+#### `GET /teams/:teamId/skills/:slug`
 Get a skill's content by slug.
 
-#### `POST /companies/:companyId/skills`
+#### `POST /teams/:teamId/skills`
 Add or download a skill. Downloads content from `source_url`.
 
 Request:
@@ -1586,28 +1586,28 @@ Request:
 
 `source_url` is required (the remote source to download from). `description`, `slug`, and `tags` are optional.
 
-#### `PATCH /companies/:companyId/skills/:slug`
+#### `PATCH /teams/:teamId/skills/:slug`
 Update skill metadata or content. If `content` changes, creates a new skill revision.
 
-#### `DELETE /companies/:companyId/skills/:slug`
+#### `DELETE /teams/:teamId/skills/:slug`
 Remove a skill.
 
-#### `POST /companies/:companyId/skills/:slug/sync`
+#### `POST /teams/:teamId/skills/:slug/sync`
 Sync a skill from its source URL, pulling the latest version.
 
 ---
 
-### Company Preferences
+### Team Preferences
 
-#### `GET /companies/:companyId/preferences`
-Get the company preferences document.
+#### `GET /teams/:teamId/preferences`
+Get the team preferences document.
 
 Response:
 ```json
 {
   "data": {
     "id": "uuid",
-    "company_id": "uuid",
+    "team_id": "uuid",
     "content": "## Code Architecture\n- Prefer functional patterns...\n\n## Design\n...",
     "last_updated_by_agent_id": "uuid | null",
     "last_updated_by_agent_title": "Architect",
@@ -1619,8 +1619,8 @@ Response:
 
 Returns an empty document (auto-created) if no preferences have been set yet.
 
-#### `PATCH /companies/:companyId/preferences`
-Update the company preferences document (board action). Creates a revision automatically.
+#### `PATCH /teams/:teamId/preferences`
+Update the team preferences document (board action). Creates a revision automatically.
 
 Request:
 ```json
@@ -1630,11 +1630,11 @@ Request:
 }
 ```
 
-#### `GET /companies/:companyId/preferences/revisions`
-List revision history for the company preferences document.
+#### `GET /teams/:teamId/preferences/revisions`
+List revision history for the team preferences document.
 
-#### `POST /companies/:companyId/preferences/restore`
-Restore the company preferences document to a previous revision. Board-only.
+#### `POST /teams/:teamId/preferences/restore`
+Restore the team preferences document to a previous revision. Board-only.
 
 Request:
 ```json
@@ -1665,7 +1665,7 @@ Response:
 
 Project documents are stored in the database, identified by filename (e.g. `prd.md`, `spec.md`).
 
-#### `GET /companies/:companyId/projects/:projectId/docs`
+#### `GET /teams/:teamId/projects/:projectId/docs`
 List all project documents.
 
 Response:
@@ -1678,7 +1678,7 @@ Response:
 }
 ```
 
-#### `GET /companies/:companyId/projects/:projectId/docs/:filename`
+#### `GET /teams/:teamId/projects/:projectId/docs/:filename`
 Read a project document by filename.
 
 Response:
@@ -1688,7 +1688,7 @@ Response:
 }
 ```
 
-#### `PUT /companies/:companyId/projects/:projectId/docs/:filename`
+#### `PUT /teams/:teamId/projects/:projectId/docs/:filename`
 Write a project document (upsert). Agent writes to `prd.md` create an approval request (202 response) instead of writing directly. When the content changes, the prior content is captured as a new revision before the update.
 
 Request:
@@ -1699,13 +1699,13 @@ Request:
 }
 ```
 
-#### `DELETE /companies/:companyId/projects/:projectId/docs/:filename`
+#### `DELETE /teams/:teamId/projects/:projectId/docs/:filename`
 Delete a project document.
 
-#### `GET /companies/:companyId/projects/:projectId/docs/:filename/revisions`
+#### `GET /teams/:teamId/projects/:projectId/docs/:filename/revisions`
 List revision history for a project document, ordered by `revision_number` descending.
 
-#### `POST /companies/:companyId/projects/:projectId/docs/:filename/restore`
+#### `POST /teams/:teamId/projects/:projectId/docs/:filename/restore`
 Restore a project document to a previous revision. Board-only (agents cannot restore). Snapshots the current content as a fresh revision before reverting.
 
 Request:
@@ -1715,10 +1715,10 @@ Request:
 }
 ```
 
-#### `GET /companies/:companyId/projects/:projectId/agents-md`
+#### `GET /teams/:teamId/projects/:projectId/agents-md`
 Read the project's AGENTS.md file.
 
-#### `PUT /companies/:companyId/projects/:projectId/agents-md`
+#### `PUT /teams/:teamId/projects/:projectId/agents-md`
 Write the project's AGENTS.md file.
 
 Request:
@@ -1734,7 +1734,7 @@ Request:
 
 **Not yet implemented — planned for Phase 7+.**
 
-#### `GET /companies/:companyId/issues/:issueId/attachments`
+#### `GET /teams/:teamId/issues/:issueId/attachments`
 List file attachments for an issue.
 
 Response:
@@ -1753,7 +1753,7 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/issues/:issueId/attachments`
+#### `POST /teams/:teamId/issues/:issueId/attachments`
 Upload a file attachment. Multipart form data.
 
 Max file size: 10MB. Allowed types: images, PDFs, text files, archezos, logs.
@@ -1772,7 +1772,7 @@ Response:
 }
 ```
 
-#### `DELETE /companies/:companyId/issues/:issueId/attachments/:attachmentId`
+#### `DELETE /teams/:teamId/issues/:issueId/attachments/:attachmentId`
 Remove a file attachment from an issue. The underlying asset is deleted.
 
 ---
@@ -1811,7 +1811,7 @@ Response:
 #### `GET /plugins/registry/:pluginKey`
 Get plugin detail including readme, ratings, reviews, and version history.
 
-#### `POST /companies/:companyId/plugins`
+#### `POST /teams/:teamId/plugins`
 Install a plugin from the registry.
 
 Request:
@@ -1825,7 +1825,7 @@ Request:
 
 Response: full plugin object with status `installed`.
 
-#### `PATCH /companies/:companyId/plugins/:pluginId`
+#### `PATCH /teams/:teamId/plugins/:pluginId`
 Enable, disable, or update a plugin's config.
 
 Request:
@@ -1836,11 +1836,11 @@ Request:
 }
 ```
 
-#### `DELETE /companies/:companyId/plugins/:pluginId`
+#### `DELETE /teams/:teamId/plugins/:pluginId`
 Uninstall a plugin. Stops the worker thread, cleans up state and jobs.
 
-#### `GET /companies/:companyId/plugins`
-List installed plugins for a company.
+#### `GET /teams/:teamId/plugins`
+List installed plugins for a team.
 
 ---
 
@@ -1861,8 +1861,8 @@ OAuth callback endpoint.
 
 **Invite endpoints — not yet implemented — planned for Phase 7+.**
 
-#### `POST /companies/:companyId/invites`
-Invite a new member to the company. Board-only.
+#### `POST /teams/:teamId/invites`
+Invite a new member to the team. Board-only.
 
 Request:
 ```json
@@ -1894,12 +1894,12 @@ Response:
 The invite code can be shared out-of-band (email, chat, etc.).
 
 #### `POST /invites/:code/accept`
-Accept an invite and join the company. Requires authentication (user JWT). The invite's role, title, permissions, and project scope are copied to a new member_users row.
+Accept an invite and join the team. Requires authentication (user JWT). The invite's role, title, permissions, and project scope are copied to a new member_users row.
 
 **Member management endpoints — not yet implemented — planned for Phase 7+.**
 
-#### `GET /companies/:companyId/members`
-List all members of a company.
+#### `GET /teams/:teamId/members`
+List all members of a team.
 
 Response:
 ```json
@@ -1933,7 +1933,7 @@ Response:
 }
 ```
 
-#### `PATCH /companies/:companyId/members/:userId`
+#### `PATCH /teams/:teamId/members/:userId`
 Update a member's role_title, permissions_text, or project_ids. Board-only.
 
 Request:
@@ -1951,7 +1951,7 @@ Request:
 
 **Not yet implemented — planned for Phase 7+.**
 
-#### `GET /companies/:companyId/inbox`
+#### `GET /teams/:teamId/inbox`
 Aggregated notifications. Board members see all items (approvals, escalations, budget alerts, design reviews, etc.). Members see only items relevant to their assigned issues and project scope.
 
 Query params:
@@ -1964,7 +1964,7 @@ Response:
   "data": [
     {
       "id": "uuid",
-      "company_id": "uuid",
+      "team_id": "uuid",
       "type": "approval",
       "title": "Secret access request from Dev Engineer",
       "reference_type": "approval",
@@ -1976,7 +1976,7 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/inbox/:id/dismiss`
+#### `POST /teams/:teamId/inbox/:id/dismiss`
 Dismiss an inbox item. Sets `dismissed_at`.
 
 ---
@@ -2016,11 +2016,11 @@ Update notification preferences. Accepts an array of channel configs. Upserts by
 
 **Not yet implemented — planned for Phase 7+.**
 
-#### `GET /companies/:companyId/slack-connection`
-Get Slack connection status for a company.
+#### `GET /teams/:teamId/slack-connection`
+Get Slack connection status for a team.
 
-#### `POST /companies/:companyId/slack-connection`
-Set up Slack integration for a company. Stores the bot token encrypted in secrets.
+#### `POST /teams/:teamId/slack-connection`
+Set up Slack integration for a team. Stores the bot token encrypted in secrets.
 
 Request:
 ```json
@@ -2031,8 +2031,8 @@ Request:
 }
 ```
 
-#### `DELETE /companies/:companyId/slack-connection`
-Disconnect Slack from a company. Revokes the bot token secret.
+#### `DELETE /teams/:teamId/slack-connection`
+Disconnect Slack from a team. Revokes the bot token secret.
 
 ---
 
@@ -2090,7 +2090,7 @@ All requests require `Authorization: Bearer <agent_token>`.
 
 Base URL: `http://host.docker.internal:3100/agent-api`
 
-The agent token encodes `agent_id` and `company_id`, so routes don't need
+The agent token encodes `agent_id` and `team_id`, so routes don't need
 those as path params.
 
 ---
@@ -2131,7 +2131,7 @@ Response:
         "priority": "urgent",
         "project_name": "Backend API",
         "project_goal": "Ship collaboration features",
-        "company_description": "Build the #1 AI note-taking app",
+        "team_description": "Build the #1 AI note-taking app",
         "repos": [
           { "short_name": "api", "url": "https://github.com/org/api" }
         ],
@@ -2201,14 +2201,14 @@ the agent title (lowercased, spaces → hyphens, e.g. "Dev Engineer" → `dev-en
 Repo short names can also be referenced: `@frontend`, `@api`.
 
 The resolved system prompt every agent receives ends with a **Teammates** block
-listing each enabled peer in the company in `@<slug> — Title` form. This block
+listing each enabled peer in the team in `@<slug> — Title` form. This block
 is built by `template-resolver.ts` from `member_agents` (filtered to
 `admin_status = 'enabled'` and excluding the running agent), so agents see the
 live slug list inline at compose time and don't need to call `list_agents` for
 every teammate reference — the MCP tool remains the way to fetch a specific
 peer's description or reporting structure.
 
-On `POST /companies/:companyId/issues/:issueId/comments`, the server parses
+On `POST /teams/:teamId/issues/:issueId/comments`, the server parses
 mentions out of the comment content (ignoring fenced code blocks and self-
 mentions) and creates a `mention`-source wakeup for each distinct mentioned
 agent. The wakeup payload carries `{ source: "mention", issue_id, comment_id }`,
@@ -2232,7 +2232,7 @@ as the authority on the triggering ticket.
 
 **Closing the loop (`reply` wakeup).** When a mention-triggered run posts its
 reply comment back on the triggering ticket, the server fires a `reply`-source
-wakeup for the original mentioner if both are agents and the company has
+wakeup for the original mentioner if both are agents and the team has
 `settings.wake_mentioner_on_reply` enabled (default true). The wakeup payload
 carries `{ source: "reply", issue_id, comment_id, triggering_comment_id,
 responder_member_id }`, idempotency key `reply:<triggering_comment_id>:<reply_comment_id>`.
@@ -2240,7 +2240,7 @@ The mentioner's next run opens with a "Reply Received" prompt block that shows
 the responder's name, their reply excerpt, the original comment excerpt, and
 any tickets referenced in the reply. When one comment @-mentions several
 agents, each responder fires its own reply wakeup; nearby wakeups are coalesced
-by the standard 2-second window. Companies that prefer to batch replies can
+by the standard 2-second window. Teams that prefer to batch replies can
 set `settings.wake_mentioner_on_reply` to false — in that case the original
 mentioner will observe the accumulated replies on its next scheduled heartbeat.
 
@@ -2345,7 +2345,7 @@ Agent system prompts live as `agent_system_prompt` documents in the unified
 Coach have no API access to any prompt. The Coach applies updates through the
 `update_agent_system_prompt` MCP tool (see MCP section).
 
-#### `GET /companies/:companyId/agents/:agentId/system-prompt`
+#### `GET /teams/:teamId/agents/:agentId/system-prompt`
 Read an agent's current system prompt document (content + metadata).
 
 Response:
@@ -2353,7 +2353,7 @@ Response:
 {
   "data": {
     "id": "uuid",
-    "content": "You are the CEO of {{company_name}}...",
+    "content": "You are the CEO of {{team_name}}...",
     "member_agent_id": "uuid",
     "last_updated_by_member_id": "uuid | null",
     "created_at": "...",
@@ -2363,7 +2363,7 @@ Response:
 ```
 Returns `data: null` if no prompt document exists for the agent.
 
-#### `GET /companies/:companyId/agents/:agentId/system-prompt/revisions`
+#### `GET /teams/:teamId/agents/:agentId/system-prompt/revisions`
 List historical revisions (newest first) for the agent's system prompt.
 
 Response:
@@ -2382,7 +2382,7 @@ Response:
 }
 ```
 
-#### `POST /companies/:companyId/agents/:agentId/system-prompt/restore`
+#### `POST /teams/:teamId/agents/:agentId/system-prompt/restore`
 Roll the agent's prompt back to a prior revision. Board-only. Inserts a new
 revision capturing the pre-restore content.
 
@@ -2391,7 +2391,7 @@ Request:
 { "revision_number": 2 }
 ```
 
-#### `PATCH /companies/:companyId/agents/:agentId`
+#### `PATCH /teams/:teamId/agents/:agentId`
 Board edit path. Accepts a `system_prompt` field (optional) alongside the
 other agent fields. Setting it upserts the agent's prompt document and
 records a revision with `change_summary` defaulting to `"Manual edit by
@@ -2411,7 +2411,7 @@ Request:
 {
   "title": "QA Engineer",
   "role_description": "Automated test coverage",
-  "system_prompt": "You are the QA Engineer at {{company_name}}...",
+  "system_prompt": "You are the QA Engineer at {{team_name}}...",
   "reports_to": "self",
   "heartbeat_interval_min": 120,
   "monthly_budget_cents": 2500,
@@ -2467,7 +2467,7 @@ Response:
       "direct_reports": [],
       "budget_remaining_cents": 1200
     },
-    "company": {
+    "team": {
       "id": "uuid",
       "name": "NoteGenius AI",
       "description": "Build the #1 AI note-taking app"
@@ -2482,7 +2482,7 @@ Response:
     "kb_docs": [
       { "id": "uuid", "title": "Coding Standards", "slug": "coding-standards.md", "updated_at": "..." }
     ],
-    "company_preferences": {
+    "team_preferences": {
       "id": "uuid",
       "content": "## Code Architecture\n- Prefer functional patterns...",
       "updated_at": "..."
@@ -2499,17 +2499,17 @@ Response:
 
 ---
 
-### Company Preferences (agent-side)
+### Team Preferences (agent-side)
 
-#### `GET /company-preferences`
-Agent reads the company preferences document for its company.
+#### `GET /team-preferences`
+Agent reads the team preferences document for its team.
 
 Response: full preferences object including `content`.
 
-#### `POST /company-preferences/update`
+#### `POST /team-preferences/update`
 **Not yet implemented.**
 
-Agent updates the company preferences document. No approval required. Creates a
+Agent updates the team preferences document. No approval required. Creates a
 revision automatically. Auto-creates the preferences document if it doesn't exist.
 
 Request:
@@ -2535,7 +2535,7 @@ Response:
 
 ### Project Documents (agent-side)
 
-Agents access project documents through the same board endpoints (scoped to their company). Project docs are stored in the unified `documents` table with `type = 'project_doc'`. See the board-side Project Documents section for endpoint details.
+Agents access project documents through the same board endpoints (scoped to their team). Project docs are stored in the unified `documents` table with `type = 'project_doc'`. See the board-side Project Documents section for endpoint details.
 
 Agent writes to `prd.md` create an approval request instead of updating the document directly.
 
@@ -2546,7 +2546,7 @@ Agent writes to `prd.md` create an approval request instead of updating the docu
 #### `GET /kb-docs`
 **Not yet implemented.**
 
-Agent lists all knowledge base documents for its company.
+Agent lists all knowledge base documents for its team.
 
 Response: array of doc metadata (same shape as board list, without content).
 
@@ -2642,16 +2642,16 @@ Single WebSocket endpoint. Clients connect to `/ws` on the server (upgraded from
 After connecting, clients subscribe to rooms:
 
 ```json
-{ "action": "subscribe", "room": "company:<uuid>" }
+{ "action": "subscribe", "room": "team:<uuid>" }
 { "action": "subscribe", "room": "container-logs:<projectId>" }
 { "action": "subscribe", "room": "project-runs:<projectId>" }
-{ "action": "unsubscribe", "room": "company:<uuid>" }
+{ "action": "unsubscribe", "room": "team:<uuid>" }
 ```
 
 Room types:
-- `company:<uuid>` — receives row changes and agent lifecycle events for the company. Access is verified (agents/API keys must match company; board users must be members or superusers).
-- `container-logs:<projectId>` — streams Docker container stdout/stderr for a project's main process. Access is verified: the caller's auth must grant access to the project's owning company.
-- `project-runs:<projectId>` — streams `run_log` messages from every agent `docker exec` on that project. Clients filter by `runId` to isolate a specific run. Access is verified: the caller's auth must grant access to the project's owning company.
+- `team:<uuid>` — receives row changes and agent lifecycle events for the team. Access is verified (agents/API keys must match team; board users must be members or superusers).
+- `container-logs:<projectId>` — streams Docker container stdout/stderr for a project's main process. Access is verified: the caller's auth must grant access to the project's owning team.
+- `project-runs:<projectId>` — streams `run_log` messages from every agent `docker exec` on that project. Clients filter by `runId` to isolate a specific run. Access is verified: the caller's auth must grant access to the project's owning team.
 
 Room names always use UUIDs, never slugs. The frontend `useWebSocket` hook takes two params: the UUID for room subscription and the route-param slug for TanStack Query cache invalidation.
 
@@ -2681,7 +2681,7 @@ Defined in `@hezo/shared` as the `WsClientAction` enum:
 
 `RowChange` messages trigger TanStack Query cache invalidation on the client. The frontend maps table names to query cache keys and calls `invalidateQueries`, causing affected queries to refetch. This provides real-time UI updates without requiring the server to push full data payloads.
 
-`heartbeat_runs` row-change broadcasts carry a minimal `{ id, issue_id, company_id, member_id, status }` payload — enough to route cache invalidation without leaking per-run logs or shell args. They are emitted on run INSERT (status transitions to `running`) and on the terminal UPDATE only; mid-run log flushes are not broadcast. The client maps `heartbeat_runs` row changes to invalidate the issues list query so the assignee running indicator updates in real time.
+`heartbeat_runs` row-change broadcasts carry a minimal `{ id, issue_id, team_id, member_id, status }` payload — enough to route cache invalidation without leaking per-run logs or shell args. They are emitted on run INSERT (status transitions to `running`) and on the terminal UPDATE only; mid-run log flushes are not broadcast. The client maps `heartbeat_runs` row changes to invalidate the issues list query so the assignee running indicator updates in real time.
 
 ### Server-side broadcasting
 
@@ -2695,10 +2695,10 @@ Every mutating operation writes to `audit_log`. Standard action names:
 
 | Action | Entity Type | Trigger |
 |--------|-------------|---------|
-| `company.created` | company | Board creates company |
-| `company.updated` | company | Board updates company |
-| `company.deleted` | company | Board deletes company |
-| `company.cloned` | company | Board clones company |
+| `team.created` | team | Board creates team |
+| `team.updated` | team | Board updates team |
+| `team.deleted` | team | Board deletes team |
+| `team.cloned` | team | Board clones team |
 | `connection.created` | connected_platform | Board connects platform via OAuth |
 | `connection.refreshed` | connected_platform | System or board refreshes token |
 | `connection.expired` | connected_platform | System detects expired token |
@@ -2708,7 +2708,7 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `agent.disabled` | agent | Board disables agent |
 | `agent.resumed` | agent | Board resumes |
 | `agent.terminated` | agent | Board terminates |
-| `company.container_rebuilt` | company | Board rebuilds company container |
+| `team.container_rebuilt` | team | Board rebuilds team container |
 | `project.created` | project | Board creates project |
 | `project.updated` | project | Board updates project |
 | `project.deleted` | project | Board deletes project |
@@ -2768,37 +2768,37 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `list_companies` | List accessible companies | — |
-| `get_company` | Get company by ID | `company_id` |
-| `create_company` | Create a new company (superuser only) | `name`, `description` |
-| `list_issues` | List issues with filtering | `company_id`, `project_id?`, `status?` |
-| `get_issue` | Get issue details | `company_id`, `issue_id` |
-| `create_issue` | Create a new issue. Operations-project issues must be assigned to the CEO (slug `ceo`); otherwise an error is returned. | `company_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
-| `update_issue` | Update an issue. Changing `assignee_id` on an Operations-project issue to anyone other than the CEO returns an error. | `company_id`, `issue_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
-| `list_agents` | List agents in a company | `company_id` |
+| `list_teams` | List accessible teams | — |
+| `get_team` | Get team by ID | `team_id` |
+| `create_team` | Create a new team (superuser only) | `name`, `description` |
+| `list_issues` | List issues with filtering | `team_id`, `project_id?`, `status?` |
+| `get_issue` | Get issue details | `team_id`, `issue_id` |
+| `create_issue` | Create a new issue. Operations-project issues must be assigned to the CEO (slug `ceo`); otherwise an error is returned. | `team_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
+| `update_issue` | Update an issue. Changing `assignee_id` on an Operations-project issue to anyone other than the CEO returns an error. | `team_id`, `issue_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
+| `list_agents` | List agents in a team | `team_id` |
 | `update_hire_proposal` | Revise the draft of a pending `hire` approval. **CEO-only.** Rejects non-CEO agents with `Only the CEO can revise hire proposals`. Rejects already-resolved approvals. All draft fields optional — pass only what changes. | `approval_id`, `title?`, `role_description?`, `system_prompt?`, `default_effort?`, `heartbeat_interval_min?`, `monthly_budget_cents?`, `touches_code?` |
-| `list_projects` | List projects | `company_id` |
-| `create_project` | Create a project | `company_id`, `name` |
-| `list_comments` | List issue comments | `company_id`, `issue_id` |
-| `create_comment` | Add comment to issue | `company_id`, `issue_id`, `content`, `content_type?` |
-| `list_approvals` | List pending approvals | `company_id` |
-| `resolve_approval` | Resolve an approval | `company_id`, `approval_id`, `status` (`approved`/`denied`), `resolution_note?` |
-| `list_kb_docs` | List knowledge base documents | `company_id` |
-| `get_kb_doc` | Get KB doc by slug | `company_id`, `slug` |
-| `upsert_kb_doc` | Create or update a KB document | `company_id`, `slug`, `title`, `content` |
-| `get_costs` | Get cost summary | `company_id`, `group_by?` (`agent`/`project`/`day`) |
-| `get_agent_system_prompt` | Read agent's system prompt. Any agent or board user in the same company. | `company_id`, `agent_id` |
-| `update_agent_system_prompt` | Apply a system prompt change. **Coach-only.** Writes immediately and snapshots a revision for board rollback. | `company_id`, `agent_id`, `new_system_prompt`, `change_summary` |
-| `list_project_docs` | List project docs | `company_id`, `project_id` |
-| `read_project_doc` | Read project doc by filename | `company_id`, `project_id`, `filename` |
-| `write_project_doc` | Write project doc | `company_id`, `project_id`, `filename`, `content` |
-| `propose_skill` | Create approval for new skill | `company_id`, `name`, `content`, `description?` |
-| `semantic_search` | Natural language search | `company_id`, `query`, `scope?` (`all`/`kb_docs`/`issues`/`skills`/`project_docs`), `limit?` |
-| `list_skills` | List active skills | `company_id`, `tags?` |
-| `get_skill` | Get skill by slug | `company_id`, `slug` |
-| `create_skill` | Create skill directly | `company_id`, `name`, `content`, `description?` |
-| `set_agent_summary` | Set an agent's auto-generated description | `company_id`, `agent_id`, `summary` (≤1000 chars) |
-| `set_team_summary` | Set the team collaboration description (CEO only) | `company_id`, `summary` (≤4000 chars) |
+| `list_projects` | List projects | `team_id` |
+| `create_project` | Create a project | `team_id`, `name` |
+| `list_comments` | List issue comments | `team_id`, `issue_id` |
+| `create_comment` | Add comment to issue | `team_id`, `issue_id`, `content`, `content_type?` |
+| `list_approvals` | List pending approvals | `team_id` |
+| `resolve_approval` | Resolve an approval | `team_id`, `approval_id`, `status` (`approved`/`denied`), `resolution_note?` |
+| `list_kb_docs` | List knowledge base documents | `team_id` |
+| `get_kb_doc` | Get KB doc by slug | `team_id`, `slug` |
+| `upsert_kb_doc` | Create or update a KB document | `team_id`, `slug`, `title`, `content` |
+| `get_costs` | Get cost summary | `team_id`, `group_by?` (`agent`/`project`/`day`) |
+| `get_agent_system_prompt` | Read agent's system prompt. Any agent or board user in the same team. | `team_id`, `agent_id` |
+| `update_agent_system_prompt` | Apply a system prompt change. **Coach-only.** Writes immediately and snapshots a revision for board rollback. | `team_id`, `agent_id`, `new_system_prompt`, `change_summary` |
+| `list_project_docs` | List project docs | `team_id`, `project_id` |
+| `read_project_doc` | Read project doc by filename | `team_id`, `project_id`, `filename` |
+| `write_project_doc` | Write project doc | `team_id`, `project_id`, `filename`, `content` |
+| `propose_skill` | Create approval for new skill | `team_id`, `name`, `content`, `description?` |
+| `semantic_search` | Natural language search | `team_id`, `query`, `scope?` (`all`/`kb_docs`/`issues`/`skills`/`project_docs`), `limit?` |
+| `list_skills` | List active skills | `team_id`, `tags?` |
+| `get_skill` | Get skill by slug | `team_id`, `slug` |
+| `create_skill` | Create skill directly | `team_id`, `name`, `content`, `description?` |
+| `set_agent_summary` | Set an agent's auto-generated description | `team_id`, `agent_id`, `summary` (≤1000 chars) |
+| `set_team_summary` | Set the team collaboration description (CEO only) | `team_id`, `summary` (≤4000 chars) |
 
 MCP tools call the same business logic layer as REST endpoints.
 
@@ -2807,7 +2807,7 @@ MCP tools call the same business logic layer as REST endpoints.
 To trigger runtime regeneration of agent and team descriptions, the system
 creates an issue with the `description-update` label in the Operations project,
 assigned to the CEO agent. The CEO processes this issue by calling
-`set_agent_summary` for each agent and `set_team_summary` for the company,
+`set_agent_summary` for each agent and `set_team_summary` for the team,
 then marks the issue done.
 
 ---
