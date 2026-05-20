@@ -28,6 +28,7 @@ describe('ensureImage', () => {
 			image: 'hezo/agent-base:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
 			context: '/repo/docker',
+			bundleSourceHash: 'a'.repeat(64),
 		});
 		const build = vi.fn().mockResolvedValue(undefined);
 
@@ -38,7 +39,7 @@ describe('ensureImage', () => {
 			'hezo/agent-base:latest',
 			'/repo/docker',
 			'/repo/docker/Dockerfile.agent-base',
-			undefined,
+			{ onLine: undefined, labels: { 'hezo.bundle.sha': 'a'.repeat(64) } },
 		);
 		expect(docker.pullImage).not.toHaveBeenCalled();
 	});
@@ -52,6 +53,7 @@ describe('ensureImage', () => {
 			image: 'hezo/agent-base:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
 			context: '/repo/docker',
+			bundleSourceHash: 'a'.repeat(64),
 		});
 		const build = vi.fn().mockResolvedValue(undefined);
 		const onLine = vi.fn();
@@ -62,7 +64,7 @@ describe('ensureImage', () => {
 			'hezo/agent-base:latest',
 			'/repo/docker',
 			'/repo/docker/Dockerfile.agent-base',
-			onLine,
+			{ onLine, labels: { 'hezo.bundle.sha': 'a'.repeat(64) } },
 		);
 	});
 
@@ -102,6 +104,7 @@ describe('ensureImage', () => {
 			image: 'hezo/agent-base:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
 			context: '/repo/docker',
+			bundleSourceHash: 'a'.repeat(64),
 		});
 		const build = vi.fn().mockRejectedValue(new Error('docker build exited with code 1'));
 

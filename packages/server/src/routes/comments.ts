@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import { broadcastChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
-import { resolveIssueId } from '../lib/resolve';
+import { resolveActorMemberId, resolveIssueId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -11,6 +11,11 @@ import { requireCompanyAccess } from '../middleware/auth';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
 import { recordIssueLinks } from '../services/issue-events';
+import {
+	addCommentReaction,
+	loadReactionsForIssue,
+	removeCommentReaction,
+} from '../services/reactions';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
@@ -31,7 +36,8 @@ commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) =
 		`SELECT ic.id, ic.issue_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
             m.member_type AS author_type,
             COALESCE(ma.title, m.display_name, 'Board') AS author_name,
-            ic.author_member_id
+            ic.author_member_id,
+            ic.parent_comment_id
      FROM issue_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
@@ -39,6 +45,12 @@ commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) =
      ORDER BY ic.created_at ASC`,
 		[issueId],
 	);
+
+	const viewerMemberId = await resolveActorMemberId(db, c.get('auth'), companyId);
+	const reactionsByComment = await loadReactionsForIssue(db, issueId, viewerMemberId);
+	for (const comment of result.rows as Record<string, unknown>[]) {
+		comment.reactions = reactionsByComment.get(comment.id as string) ?? [];
+	}
 
 	if (includeToolCalls) {
 		for (const comment of result.rows as Record<string, unknown>[]) {
@@ -56,6 +68,81 @@ commentsRoutes.get('/companies/:companyId/issues/:issueId/comments', async (c) =
 
 	return ok(c, result.rows);
 });
+
+commentsRoutes.put(
+	'/companies/:companyId/issues/:issueId/comments/:commentId/reactions/:kind',
+	async (c) => {
+		const access = await requireCompanyAccess(c);
+		if (access instanceof Response) return access;
+
+		const db = c.get('db');
+		const { companyId } = access;
+		const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+		if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+		const commentId = c.req.param('commentId');
+		const kind = c.req.param('kind');
+
+		const memberId = await resolveActorMemberId(db, c.get('auth'), companyId);
+		if (!memberId) {
+			return err(c, 'FORBIDDEN', 'No member identity for caller', 403);
+		}
+
+		const result = await addCommentReaction({ db, companyId, issueId, commentId, kind, memberId });
+		if (!result.ok) {
+			const status = result.code === 'INVALID_KIND' ? 400 : 404;
+			return err(c, result.code, result.message, status);
+		}
+
+		broadcastChange(c, wsRoom.company(companyId), 'comment_reactions', 'INSERT', {
+			comment_id: commentId,
+			issue_id: issueId,
+			member_id: memberId,
+			kind,
+		});
+		return ok(c, { comment_id: commentId, kind, reactions: result.reactions });
+	},
+);
+
+commentsRoutes.delete(
+	'/companies/:companyId/issues/:issueId/comments/:commentId/reactions/:kind',
+	async (c) => {
+		const access = await requireCompanyAccess(c);
+		if (access instanceof Response) return access;
+
+		const db = c.get('db');
+		const { companyId } = access;
+		const issueId = await resolveIssueId(db, companyId, c.req.param('issueId'));
+		if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+		const commentId = c.req.param('commentId');
+		const kind = c.req.param('kind');
+
+		const memberId = await resolveActorMemberId(db, c.get('auth'), companyId);
+		if (!memberId) {
+			return err(c, 'FORBIDDEN', 'No member identity for caller', 403);
+		}
+
+		const result = await removeCommentReaction({
+			db,
+			companyId,
+			issueId,
+			commentId,
+			kind,
+			memberId,
+		});
+		if (!result.ok) {
+			const status = result.code === 'INVALID_KIND' ? 400 : 404;
+			return err(c, result.code, result.message, status);
+		}
+
+		broadcastChange(c, wsRoom.company(companyId), 'comment_reactions', 'DELETE', {
+			comment_id: commentId,
+			issue_id: issueId,
+			member_id: memberId,
+			kind,
+		});
+		return ok(c, { comment_id: commentId, kind, reactions: result.reactions });
+	},
+);
 
 commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) => {
 	const access = await requireCompanyAccess(c);
@@ -80,6 +167,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		content: Record<string, unknown>;
 		effort?: string;
 		wake_assignee?: boolean;
+		parent_comment_id?: string | null;
 	}>();
 
 	if (!body.content) {
@@ -89,6 +177,18 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 	// Optional per-comment effort override. Board users set this to dial up/down
 	// the reasoning budget of the agent run that the comment triggers.
 	const commentEffort = parseEffortFromCommentBody(body);
+
+	let parentCommentId: string | null = null;
+	if (body.parent_comment_id) {
+		const parentCheck = await db.query(
+			'SELECT 1 FROM issue_comments WHERE id = $1 AND issue_id = $2',
+			[body.parent_comment_id, issueId],
+		);
+		if (parentCheck.rows.length === 0) {
+			return err(c, 'INVALID_REQUEST', 'parent_comment_id does not belong to this issue', 400);
+		}
+		parentCommentId = body.parent_comment_id;
+	}
 
 	let authorMemberId: string | null = null;
 	if (auth.type === AuthType.Board) {
@@ -103,12 +203,13 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 	const wakeAssignee = auth.type === AuthType.Board && body.wake_assignee === true;
 
 	const result = await db.query<{ id: string }>(
-		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
-     VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
+		`INSERT INTO issue_comments (issue_id, author_member_id, parent_comment_id, content_type, content)
+     VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
      RETURNING *`,
 		[
 			issueId,
 			authorMemberId,
+			parentCommentId,
 			body.content_type ?? CommentContentType.Text,
 			JSON.stringify(body.content),
 		],
@@ -125,6 +226,7 @@ commentsRoutes.post('/companies/:companyId/issues/:issueId/comments', async (c) 
 		authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
 		effort: commentEffort,
 		wakeAssignee,
+		parentCommentId,
 	});
 
 	const commentText = typeof body.content?.text === 'string' ? body.content.text : '';

@@ -6,16 +6,31 @@ const log = logger.child('image-builder');
 export type BuildLogStream = 'stdout' | 'stderr';
 export type BuildOnLine = (stream: BuildLogStream, text: string) => void;
 
+export interface BuildOptions {
+	onLine?: BuildOnLine;
+	labels?: Record<string, string>;
+}
+
 export async function buildImageViaCli(
 	image: string,
 	contextPath: string,
 	dockerfilePath: string,
-	onLine?: BuildOnLine,
+	options: BuildOptions | BuildOnLine | undefined = undefined,
 ): Promise<void> {
+	const opts: BuildOptions = typeof options === 'function' ? { onLine: options } : (options ?? {});
+	const onLine = opts.onLine;
 	log.info(`Building ${image} from ${dockerfilePath}`);
 
+	const args = ['build', '-t', image, '-f', dockerfilePath];
+	if (opts.labels) {
+		for (const [key, value] of Object.entries(opts.labels)) {
+			args.push('--label', `${key}=${value}`);
+		}
+	}
+	args.push(contextPath);
+
 	await new Promise<void>((resolvePromise, reject) => {
-		const child = spawn('docker', ['build', '-t', image, '-f', dockerfilePath, contextPath], {
+		const child = spawn('docker', args, {
 			stdio: ['ignore', 'pipe', 'pipe'],
 		});
 

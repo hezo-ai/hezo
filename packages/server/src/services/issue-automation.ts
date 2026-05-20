@@ -9,6 +9,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
+import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { logger } from '../logger';
 import { recordStatusChange } from './issue-events';
 import { OAUTH_VERIFICATION_LABEL } from './oauth-verification-tasks';
@@ -114,6 +115,12 @@ export async function triggerStatusAutomations(
 	wsManager?: WebSocketManager,
 ): Promise<void> {
 	await recordStatusChange(db, companyId, issueId, oldStatus, newStatus, actorMemberId, wsManager);
+
+	try {
+		await recomputeDownstreamReadiness(db, companyId, issueId, actorMemberId, wsManager);
+	} catch (e) {
+		log.error('Failed to recompute downstream readiness:', e);
+	}
 
 	if (newStatus === IssueStatus.Done) {
 		const coach = await db.query<{ id: string }>(

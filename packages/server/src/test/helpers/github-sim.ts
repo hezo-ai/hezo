@@ -40,12 +40,19 @@ export interface SigningKey {
 	key: string;
 }
 
+export interface AuthKey {
+	id: number;
+	title: string;
+	key: string;
+}
+
 export interface GitHubSimState {
 	token: string;
 	user: GitHubSimUser;
 	orgs: GitHubSimOrg[];
 	repos: GitHubSimRepo[];
 	signingKeys: SigningKey[];
+	authKeys: AuthKey[];
 	deviceFlows: Map<string, DeviceFlowEntry>;
 	oauthCodes: Map<string, string>;
 }
@@ -66,12 +73,14 @@ export async function createGitHubSim(): Promise<GitHubSim> {
 		orgs: [],
 		repos: [],
 		signingKeys: [],
+		authKeys: [],
 		deviceFlows: new Map(),
 		oauthCodes: new Map(),
 	};
 
 	let nextRepoId = 10_000;
 	let nextSigningKeyId = 200;
+	let nextAuthKeyId = 300;
 
 	const app = new Hono();
 
@@ -171,6 +180,25 @@ export async function createGitHubSim(): Promise<GitHubSim> {
 	app.post('/user/ssh_signing_keys', async (c) => {
 		if (!isAuthed(c.req.header('Authorization'))) return c.json({ message: 'Unauthorized' }, 401);
 		const body = await c.req.json<{ title: string; key: string }>();
+		if (state.signingKeys.some((k) => k.key === body.key)) {
+			return c.json(
+				{
+					message: 'Validation Failed',
+					errors: [
+						{
+							resource: 'GitSigningSshPublicKey',
+							code: 'custom',
+							field: 'key',
+							message: 'key is already in use',
+						},
+					],
+					documentation_url:
+						'https://docs.github.com/rest/users/ssh-signing-keys#create-a-ssh-signing-key-for-the-authenticated-user',
+					status: '422',
+				},
+				422,
+			);
+		}
 		const id = nextSigningKeyId++;
 		const entry = { id, title: body.title, key: body.key };
 		state.signingKeys.push(entry);
@@ -181,6 +209,41 @@ export async function createGitHubSim(): Promise<GitHubSim> {
 		if (!isAuthed(c.req.header('Authorization'))) return c.json({ message: 'Unauthorized' }, 401);
 		const id = Number(c.req.param('id'));
 		state.signingKeys = state.signingKeys.filter((k) => k.id !== id);
+		return c.body(null, 204);
+	});
+
+	app.post('/user/keys', async (c) => {
+		if (!isAuthed(c.req.header('Authorization'))) return c.json({ message: 'Unauthorized' }, 401);
+		const body = await c.req.json<{ title: string; key: string }>();
+		if (state.authKeys.some((k) => k.key === body.key)) {
+			return c.json(
+				{
+					message: 'Validation Failed',
+					errors: [
+						{
+							resource: 'PublicKey',
+							code: 'custom',
+							field: 'key',
+							message: 'key is already in use',
+						},
+					],
+					documentation_url:
+						'https://docs.github.com/rest/users/keys#create-a-public-ssh-key-for-the-authenticated-user',
+					status: '422',
+				},
+				422,
+			);
+		}
+		const id = nextAuthKeyId++;
+		const entry = { id, title: body.title, key: body.key };
+		state.authKeys.push(entry);
+		return c.json(entry, 201);
+	});
+
+	app.delete('/user/keys/:id', (c) => {
+		if (!isAuthed(c.req.header('Authorization'))) return c.json({ message: 'Unauthorized' }, 401);
+		const id = Number(c.req.param('id'));
+		state.authKeys = state.authKeys.filter((k) => k.id !== id);
 		return c.body(null, 204);
 	});
 
@@ -236,6 +299,7 @@ export async function createGitHubSim(): Promise<GitHubSim> {
 			if (partial.orgs) state.orgs = partial.orgs;
 			if (partial.repos) state.repos = partial.repos;
 			if (partial.signingKeys) state.signingKeys = partial.signingKeys;
+			if (partial.authKeys) state.authKeys = partial.authKeys;
 		},
 		approveDeviceFlow(userCode, accessToken) {
 			for (const flow of state.deviceFlows.values()) {

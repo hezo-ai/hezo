@@ -190,6 +190,13 @@ describe('handleWsSubscribe', () => {
 				stream: line.stream,
 				text: line.text,
 			}),
+			buildSnapshot: (text) => ({
+				type: WsMessageType.ContainerLog,
+				projectId,
+				stream: 'stdout',
+				text,
+				replace: true,
+			}),
 		});
 		logs.emit(`provision:${projectId}`, 'stdout', 'replayed line\n');
 
@@ -198,15 +205,17 @@ describe('handleWsSubscribe', () => {
 		await handleWsSubscribe(ws, `container-logs:${projectId}`, deps({ sendToSocket }));
 
 		expect(wsManager.getRoomSize(`container-logs:${projectId}`)).toBe(1);
+		expect(sendToSocket).toHaveBeenCalledTimes(1);
 		expect(sendToSocket).toHaveBeenCalledWith(ws, {
 			type: WsMessageType.ContainerLog,
 			projectId,
 			stream: 'stdout',
-			text: 'replayed line',
+			text: 'replayed line\n',
+			replace: true,
 		});
 	});
 
-	it('replays buffered run logs when subscribing to project-runs', async () => {
+	it('replays buffered run logs as a single snapshot when subscribing to project-runs', async () => {
 		const { userId, projectId } = await seedCompanyWithProject(db);
 		const ws = createMockWs({ type: AuthType.Board, userId });
 
@@ -222,6 +231,15 @@ describe('handleWsSubscribe', () => {
 				stream: line.stream,
 				text: line.text,
 			}),
+			buildSnapshot: (text) => ({
+				type: WsMessageType.RunLog,
+				projectId,
+				runId,
+				issueId: null,
+				stream: 'stdout',
+				text,
+				replace: true,
+			}),
 		});
 		logs.emit(`run:${runId}`, 'stdout', 'first\nsecond\n');
 
@@ -230,22 +248,15 @@ describe('handleWsSubscribe', () => {
 		await handleWsSubscribe(ws, `project-runs:${projectId}`, deps({ sendToSocket }));
 
 		expect(wsManager.getRoomSize(`project-runs:${projectId}`)).toBe(1);
-		expect(sendToSocket).toHaveBeenCalledTimes(2);
-		expect(sendToSocket).toHaveBeenNthCalledWith(1, ws, {
+		expect(sendToSocket).toHaveBeenCalledTimes(1);
+		expect(sendToSocket).toHaveBeenCalledWith(ws, {
 			type: WsMessageType.RunLog,
 			projectId,
 			runId,
 			issueId: null,
 			stream: 'stdout',
-			text: 'first',
-		});
-		expect(sendToSocket).toHaveBeenNthCalledWith(2, ws, {
-			type: WsMessageType.RunLog,
-			projectId,
-			runId,
-			issueId: null,
-			stream: 'stdout',
-			text: 'second',
+			text: 'first\nsecond\n',
+			replace: true,
 		});
 	});
 });

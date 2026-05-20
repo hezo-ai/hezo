@@ -1,4 +1,4 @@
-import { ApprovalStatus } from '@hezo/shared';
+import { ApprovalStatus, type BlockedTicket } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -49,6 +49,21 @@ export function useAllPendingApprovals(companyIds: string[]) {
 			return results.flat();
 		},
 		enabled: companyIds.length > 0,
+	});
+}
+
+export function useBlockedTickets(
+	companyId: string,
+	approvalId: string | null | undefined,
+	enabled = true,
+) {
+	return useQuery({
+		queryKey: ['companies', companyId, 'approvals', approvalId, 'blocked-tickets'],
+		queryFn: () =>
+			api.get<BlockedTicket[]>(
+				`/api/companies/${companyId}/approvals/${approvalId}/blocked-tickets`,
+			),
+		enabled: enabled && !!approvalId,
 	});
 }
 

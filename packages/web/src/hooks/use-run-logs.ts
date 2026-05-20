@@ -15,6 +15,8 @@ export function useRunLogs(
 		enabled: isActive,
 		seedText,
 		extractChunk: (m) =>
-			m.projectId === projectId && m.runId === runId ? { stream: m.stream, text: m.text } : null,
+			m.projectId === projectId && m.runId === runId
+				? { stream: m.stream, text: m.text, replace: m.replace }
+				: null,
 	});
 }

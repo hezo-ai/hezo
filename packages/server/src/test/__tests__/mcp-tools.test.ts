@@ -457,6 +457,29 @@ describe('MCP endpoint: tool call integration', () => {
 		expect(result.error).toBeUndefined();
 		expect(result.status).toBe('in_progress');
 	});
+
+	it('get_agent_system_prompt defaults to substituting placeholders without appending runtime blocks', async () => {
+		const result = (await callToolViaMcp('get_agent_system_prompt', {
+			company_id: companyId,
+			agent_id: agentId,
+		})) as { system_prompt: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.system_prompt).not.toContain('{{company_name}}');
+		expect(result.system_prompt).toContain('MCP Tool Test Co');
+		expect(result.system_prompt).not.toContain('## Working Guidelines');
+		expect(result.system_prompt).not.toContain('## Teammates');
+	});
+
+	it('get_agent_system_prompt with placeholders=false returns the raw stored template', async () => {
+		const result = (await callToolViaMcp('get_agent_system_prompt', {
+			company_id: companyId,
+			agent_id: agentId,
+			placeholders: false,
+		})) as { system_prompt: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.system_prompt).toContain('{{company_name}}');
+		expect(result.system_prompt).not.toContain('MCP Tool Test Co');
+	});
 });
 
 describe('MCP tool handlers: additional data queries via DB', () => {
@@ -727,6 +750,55 @@ describe('MCP tool: set_agent_summary and set_team_summary', () => {
 	});
 });
 
+describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
+	it('both tools are registered', async () => {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
+		});
+		const body = await res.json();
+		const toolNames = body.result.tools.map((t: any) => t.name);
+		expect(toolNames).toContain('set_agent_team_context');
+		expect(toolNames).toContain('get_agent_team_context');
+	});
+
+	it('set_agent_team_context writes and round-trips via direct DB path', async () => {
+		const eng = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1 AND ma.slug = 'engineer'`,
+			[companyId],
+		);
+		await db.query('UPDATE member_agents SET team_context = $1 WHERE id = $2', [
+			'You report to the Architect.',
+			eng.rows[0].id,
+		]);
+
+		const row = await db.query<{ team_context: string }>(
+			'SELECT team_context FROM member_agents WHERE id = $1',
+			[eng.rows[0].id],
+		);
+		expect(row.rows[0].team_context).toBe('You report to the Architect.');
+	});
+
+	it('default_team_context defaults are populated for Startup template agents', async () => {
+		// Use roles the earlier set_agent_summary test doesn't mutate.
+		const agents = await db.query<{ slug: string; team_context: string }>(
+			`SELECT ma.slug, ma.team_context FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1`,
+			[companyId],
+		);
+		const ceoRow = agents.rows.find((r) => r.slug === 'ceo');
+		const qaRow = agents.rows.find((r) => r.slug === 'qa-engineer');
+		const archRow = agents.rows.find((r) => r.slug === 'architect');
+		expect(ceoRow?.team_context).toBeTruthy();
+		expect(qaRow?.team_context).toBeTruthy();
+		expect(qaRow?.team_context).toContain('@architect');
+		expect(archRow?.team_context).toContain('@engineer');
+	});
+});
+
 describe('MCP tool: operations project assignee restriction', () => {
 	it('create_issue on Operations project rejects non-CEO assignee_slug', async () => {
 		const ops = await db.query<{ id: string }>(
@@ -845,6 +917,47 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		expect(issue).toHaveProperty('description');
 	});
 
+	it('get_issue returns blockers and dependents symmetrically', async () => {
+		const upstream = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Upstream for dependents test',
+			assignee_id: agentId,
+		})) as { id: string; identifier: string };
+
+		const downstream = (await callToolViaMcp('create_issue', {
+			company_id: companyId,
+			project_id: projectId,
+			title: 'Downstream for dependents test',
+			assignee_id: agentId,
+			blocked_by_issue_ids: [upstream.identifier],
+		})) as { id: string; identifier: string };
+
+		const upstreamView = (await callToolViaMcp('get_issue', {
+			company_id: companyId,
+			issue_id: upstream.id,
+		})) as {
+			blockers: Array<{ identifier: string }>;
+			dependents: Array<{ id: string; identifier: string; status: string }>;
+		};
+		expect(upstreamView.blockers).toEqual([]);
+		expect(upstreamView.dependents).toHaveLength(1);
+		expect(upstreamView.dependents[0].id).toBe(downstream.id);
+		expect(upstreamView.dependents[0].identifier).toBe(downstream.identifier);
+		expect(upstreamView.dependents[0].status).toBe('blocked');
+
+		const downstreamView = (await callToolViaMcp('get_issue', {
+			company_id: companyId,
+			issue_id: downstream.id,
+		})) as {
+			blockers: Array<{ id: string; identifier: string }>;
+			dependents: Array<unknown>;
+		};
+		expect(downstreamView.blockers).toHaveLength(1);
+		expect(downstreamView.blockers[0].id).toBe(upstream.id);
+		expect(downstreamView.dependents).toEqual([]);
+	});
+
 	it('list_issues with excerpt_chars returns the excerpt/truncated/length triple', async () => {
 		const longBody = `Paragraph one is the headline.\n\n${'detail '.repeat(200)}`;
 		const created = (await callToolViaMcp('create_issue', {
@@ -953,7 +1066,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		});
 		const fatProjectId = (await fatProjectRes.json()).data.id;
 
-		const fatBody = 'lorem '.repeat(800);
+		const fatBody = 'lorem '.repeat(1800);
 		for (let i = 0; i < 8; i++) {
 			await callToolViaMcp('create_issue', {
 				company_id: companyId,

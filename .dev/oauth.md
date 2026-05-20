@@ -42,7 +42,7 @@ That means OAuth tokens flow through the same egress placeholder mechanism as ra
 1. `POST /api/companies/:companyId/oauth/github/device-start` — backend calls `POST https://github.com/login/device/code` with the configured `client_id` (`GITHUB_OAUTH_CLIENT_ID` env, falls back to a public Hezo client_id). Persists the device_code server-side keyed by a short `flow_id`. Returns `{ flow_id, user_code, verification_uri, interval, expires_in }`.
 2. UI opens `verification_uri` in a new tab and shows `user_code` for the user to paste.
 3. UI polls `POST /api/companies/:companyId/oauth/github/device-poll { flow_id }`. Backend calls `POST /login/oauth/access_token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code`. While the user hasn't approved yet, returns 202 + `{ status: 'pending', retry_after }`.
-4. On success: backend calls `GET https://api.github.com/user` to get the GitHub login + user_id, creates an `oauth_connections` row, and (on first connect for that company) calls `POST /user/ssh_signing_keys` to register the company's Ed25519 public key as a signing key. The UI receives `{ status: 'success', connection: {...} }`.
+4. On success: backend calls `GET https://api.github.com/user` to get the GitHub login + user_id, creates (or upserts) an `oauth_connections` row, and registers the company's Ed25519 public key on the connecting user's GitHub account as **both** a signing key (`POST /user/ssh_signing_keys`) and an authentication key (`POST /user/keys`). Both registrations are idempotent — GitHub returns 422 "key is already in use" on repeat calls, which is treated as a no-op. The UI receives `{ status: 'success', connection: {...} }`.
 
 No `client_secret`. No redirect URI registration with GitHub.
 
@@ -67,7 +67,9 @@ To register a refresh function for a provider: `registerRefreshFn(provider, fn)`
 
 ## Egress integration
 
-Once a connection exists, agents (or the host) refer to it via the placeholder `__HEZO_SECRET_<secret_name>__`. For SaaS MCPs with `oauth_connection_id` set, the MCP injector emits `Authorization: Bearer __HEZO_SECRET_OAUTH_<PROVIDER>_<HEX>__`, overriding any user-supplied Authorization header. For repo clone/fetch, `agent-runner` and `repo-sync` look up the access token and pass it via `GIT_HTTP_EXTRAHEADER` (host-side; not visible in `ps` output and never written to the agent container env).
+Once a connection exists, agents (or the host) refer to it via the placeholder `__HEZO_SECRET_<secret_name>__`. For SaaS MCPs with `oauth_connection_id` set, the MCP injector emits `Authorization: Bearer __HEZO_SECRET_OAUTH_<PROVIDER>_<HEX>__`, overriding any user-supplied Authorization header.
+
+Repo clone/fetch/push does **not** use the OAuth token. The OAuth token is reserved for GitHub REST API calls (listing orgs/repos, creating repos via the picker, registering the auth/signing keys). The actual git transport is SSH (`git@github.com:owner/repo.git`), authenticated by the company Ed25519 key via the `SshAgentServer`. Host-side git ops allocate an ephemeral agent socket through `withHostAgentSocket` in `services/ssh-agent/host.ts`; container-side ops use the per-run socat bridge already provisioned for commit signing. See `.dev/ssh-signing.md`.
 
 Secret allowed_hosts gate substitution: a leak attempt to the wrong host (e.g. exfiltration via a placeholder in a header to a non-allowed origin) returns `secret_not_allowed_for_host` and is audited.
 
@@ -83,16 +85,17 @@ Secret allowed_hosts gate substitution: a leak attempt to the wrong host (e.g. e
 | `DELETE /api/companies/:companyId/oauth-connections/:id` | revoke + cascade-null FKs |
 | `GET  /api/companies/:companyId/oauth-connections/:id/orgs` | list GitHub orgs the connection can access |
 | `GET  /api/companies/:companyId/oauth-connections/:id/repos?owner=&q=` | list GitHub repos the connection can access |
+| `GET  /api/companies/:companyId/oauth-connections/:id/scope-status` | report whether the connection's granted scopes cover the minimum required for repo setup; drives the "Permissions needed — re-authorize" banner in the project settings UI |
 
 ## Config
 
+The OAuth App client_id is selected automatically: `NODE_ENV=production` → prod App, otherwise dev App. Both client_ids are hardcoded in `provider-github.ts` (`DEV_CLIENT_ID` / `PROD_CLIENT_ID`) — OAuth client_ids on public device-flow clients are not secrets. Both Apps must have **Enable Device Flow** ticked in their GitHub settings; otherwise `POST /login/device/code` returns 404 + `{"error":"Not Found"}`. The OAuth App requests `repo`, `workflow`, `read:org`, `write:ssh_signing_key`, and `write:public_key` scopes (`DEFAULT_SCOPES`). The last two are required to register the company's Ed25519 key as a GitHub signing key and authentication key, respectively. `repo` and `read:org` are used for REST API calls (listing/creating repos and orgs).
+
 | env var | default | purpose |
 |---|---|---|
-| `GITHUB_OAUTH_CLIENT_ID` | a public Hezo OAuth App client_id | the GitHub OAuth App used for device flow |
+| `GITHUB_OAUTH_CLIENT_ID` | unset | override the auto-selected client_id (use when testing OAuth flow changes against a throwaway App, or self-hosting with your own App) |
 | `GITHUB_OAUTH_BASE_URL` | `https://github.com` | overridden in tests by `github-sim` |
 | `GITHUB_API_BASE_URL` | `https://api.github.com` | same |
-
-A self-host operator who wants to use their own GitHub App sets `GITHUB_OAUTH_CLIENT_ID` to their App's client_id. No secret needed for device flow on a public client.
 
 ## Tests
 

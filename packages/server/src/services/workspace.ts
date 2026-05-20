@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 export function forceRmRecursive(path: string): void {
@@ -34,22 +36,14 @@ export function ensureProjectWorkspace(
 	return projectDir;
 }
 
-export function ensureProjectRunDir(
-	dataDir: string,
-	companySlug: string,
-	projectSlug: string,
-): string {
-	const runDir = join(getProjectDir(dataDir, companySlug, projectSlug), 'run');
-	mkdirSync(runDir, { recursive: true, mode: 0o700 });
-	return runDir;
+export function getRunSocketDir(dataDir: string): string {
+	const tag = createHash('sha1').update(dataDir).digest('hex').slice(0, 8);
+	return join(tmpdir(), `hezo-${tag}`);
 }
 
-export function getProjectRunDir(
-	dataDir: string,
-	companySlug: string,
-	projectSlug: string,
-): string {
-	return join(getProjectDir(dataDir, companySlug, projectSlug), 'run');
+export function getRunSocketPath(dataDir: string, runId: string): string {
+	const id = createHash('sha1').update(runId).digest('hex').slice(0, 12);
+	return join(getRunSocketDir(dataDir), `${id}.sock`);
 }
 
 export function removeProjectWorkspace(

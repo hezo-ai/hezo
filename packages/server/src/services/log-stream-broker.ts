@@ -12,6 +12,7 @@ export interface LogStreamConfig {
 	streamId: string;
 	room: string;
 	buildMessage: (line: LogLine) => WsEvent;
+	buildSnapshot: (text: string) => WsEvent;
 	onFlush?: (text: string) => Promise<void>;
 	capBytes?: number;
 	debounceMs?: number;
@@ -20,7 +21,6 @@ export interface LogStreamConfig {
 interface LogStreamEntry {
 	config: LogStreamConfig;
 	buffer: CappedLogBuffer;
-	lines: LogLine[];
 	dirty: boolean;
 	flushTimer: ReturnType<typeof setTimeout> | null;
 	ended: boolean;
@@ -48,7 +48,6 @@ export class LogStreamBroker {
 		const entry: LogStreamEntry = {
 			config,
 			buffer: new CappedLogBuffer(config.capBytes ?? DEFAULT_CAP_BYTES),
-			lines: [],
 			dirty: false,
 			flushTimer: null,
 			ended: false,
@@ -75,12 +74,9 @@ export class LogStreamBroker {
 
 		const wasTruncated = entry.buffer.isTruncated;
 		entry.buffer.append(stream, text);
-		if (!wasTruncated) {
+		if (!wasTruncated && this.wsManager) {
 			for (const line of newLines) {
-				entry.lines.push(line);
-				if (this.wsManager) {
-					this.wsManager.broadcast(entry.config.room, entry.config.buildMessage(line));
-				}
+				this.wsManager.broadcast(entry.config.room, entry.config.buildMessage(line));
 			}
 		}
 
@@ -96,9 +92,7 @@ export class LogStreamBroker {
 		for (const streamId of streamIds) {
 			const entry = this.streams.get(streamId);
 			if (!entry) continue;
-			for (const line of entry.lines) {
-				send(entry.config.buildMessage(line));
-			}
+			send(entry.config.buildSnapshot(entry.buffer.toString()));
 		}
 	}
 

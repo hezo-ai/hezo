@@ -3,6 +3,7 @@ import { Plus, UserPlus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../../../components/ui/button';
 import { EmptyState } from '../../../../components/ui/empty-state';
+import { ExpandableText } from '../../../../components/ui/expandable-text';
 import { StatusDot } from '../../../../components/ui/status-dot';
 import { useCompany } from '../../../../hooks/use-companies';
 import type { OrgNode } from '../../../../hooks/use-org-chart';
@@ -100,14 +101,18 @@ function TeamPage() {
 
 			<div
 				data-testid="team-summary"
-				className="rounded-lg border border-border-subtle bg-bg-subtle p-4 text-sm leading-relaxed text-text whitespace-pre-line mb-6"
+				className="rounded-lg border border-border-subtle bg-bg-subtle p-4 text-sm leading-relaxed text-text mb-1"
 			>
-				{company?.team_summary?.trim() ? (
-					company.team_summary
-				) : (
-					<span className="italic text-text-muted">Team description being generated…</span>
-				)}
+				<ExpandableText
+					text={company?.team_summary ?? ''}
+					placeholder={
+						<span className="italic text-text-muted">Team description being generated…</span>
+					}
+				/>
 			</div>
+			<p data-testid="team-summary-attribution" className="text-xs text-text-muted italic mb-6">
+				Auto-generated from the agents' system prompts.
+			</p>
 
 			{!hasMembers ? (
 				<EmptyState icon={<Plus className="w-10 h-10" />} title="No team members yet" />

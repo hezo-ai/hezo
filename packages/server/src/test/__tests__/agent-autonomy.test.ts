@@ -59,7 +59,7 @@ afterAll(async () => {
 	await destroyTestContext(ctx);
 });
 
-describe('issue schema: approved status', () => {
+describe('issue schema', () => {
 	it('creates an issue with backlog status by default', async () => {
 		const res = await ctx.app.request(`/api/companies/${companyId}/issues`, {
 			method: 'POST',
@@ -72,57 +72,6 @@ describe('issue schema: approved status', () => {
 		});
 		const data = (await res.json()) as any;
 		expect(data.data.status).toBe('backlog');
-	});
-
-	it('can set status to approved', async () => {
-		const createRes = await ctx.app.request(`/api/companies/${companyId}/issues`, {
-			method: 'POST',
-			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: projectId,
-				title: 'Approval test',
-				assignee_id: engineerAgentId,
-			}),
-		});
-		const issueId = ((await createRes.json()) as any).data.id;
-
-		const patchRes = await ctx.app.request(`/api/companies/${companyId}/issues/${issueId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: IssueStatus.Approved }),
-		});
-		expect(patchRes.status).toBe(200);
-		const updated = ((await patchRes.json()) as any).data;
-		expect(updated.status).toBe('approved');
-	});
-
-	it('approved is not a terminal status (agent can still work on it)', async () => {
-		const createRes = await ctx.app.request(`/api/companies/${companyId}/issues`, {
-			method: 'POST',
-			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: projectId,
-				title: 'Non-terminal test',
-				assignee_id: engineerAgentId,
-			}),
-		});
-		const issueId = ((await createRes.json()) as any).data.id;
-
-		// Set to approved
-		await ctx.app.request(`/api/companies/${companyId}/issues/${issueId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: IssueStatus.Approved }),
-		});
-
-		// Can transition from approved to done
-		const doneRes = await ctx.app.request(`/api/companies/${companyId}/issues/${issueId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: IssueStatus.Done }),
-		});
-		expect(doneRes.status).toBe(200);
-		expect(((await doneRes.json()) as any).data.status).toBe('done');
 	});
 });
 
@@ -552,16 +501,7 @@ describe('agent-runner: mention context loader', () => {
 });
 
 describe('shared types', () => {
-	it('IssueStatus includes Approved', () => {
-		expect(IssueStatus.Approved).toBe('approved');
-	});
-
 	it('ApprovalType includes SkillProposal', () => {
 		expect(ApprovalType.SkillProposal).toBe('skill_proposal');
-	});
-
-	it('Approved is not in terminal statuses', async () => {
-		const { TERMINAL_ISSUE_STATUSES } = await import('@hezo/shared');
-		expect(TERMINAL_ISSUE_STATUSES).not.toContain(IssueStatus.Approved);
 	});
 });

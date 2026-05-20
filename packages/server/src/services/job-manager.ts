@@ -17,6 +17,7 @@ import {
 import { Cron } from 'cron-async';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
+import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { assertChildrenAllClosed } from '../lib/issue-relationships';
 import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
@@ -137,6 +138,8 @@ export class JobManager {
 			wsManager: this.deps.wsManager,
 			masterKeyManager: this.deps.masterKeyManager,
 			logs: this.deps.logs,
+			sshAgentServer: this.deps.sshAgentServer,
+			egressCAPath: this.deps.egressCAPath ?? null,
 		};
 	}
 
@@ -468,6 +471,19 @@ export class JobManager {
 				continue;
 			}
 
+			const targetIssueId =
+				typeof wakeup.payload?.issue_id === 'string' ? wakeup.payload.issue_id : null;
+			if (await shouldDeferWakeupForBlockers(db, wakeup.source, targetIssueId)) {
+				await db.query(
+					`UPDATE agent_wakeup_requests
+					 SET status = $1::wakeup_status, payload = payload || $2::jsonb
+					 WHERE id = $3`,
+					[WakeupStatus.Deferred, JSON.stringify({ reason: 'blocked' }), wakeup.id],
+				);
+				log.debug(`Deferred wakeup ${wakeup.id} — issue ${targetIssueId} has open blockers`);
+				continue;
+			}
+
 			await db.query(
 				'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = now() WHERE id = $2',
 				[WakeupStatus.Claimed, wakeup.id],
@@ -619,13 +635,19 @@ export class JobManager {
 			issue = payloadIssue.rows[0];
 		} else {
 			const issues = await db.query<IssueRow>(
-				`SELECT id, identifier, title, description, status, priority, project_id, rules, assignee_id, runtime_type, parent_issue_id, created_by_run_id
-				 FROM issues
-				 WHERE assignee_id = $1 AND company_id = $2
-				   AND status NOT IN ($3, $4, $5)
+				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.assignee_id, i.runtime_type, i.parent_issue_id, i.created_by_run_id
+				 FROM issues i
+				 WHERE i.assignee_id = $1 AND i.company_id = $2
+				   AND i.status NOT IN ($3, $4, $5)
+				   AND NOT EXISTS (
+				     SELECT 1 FROM issue_dependencies d
+				     JOIN issues b ON b.id = d.blocked_by_issue_id
+				     WHERE d.issue_id = i.id
+				       AND b.status NOT IN ($3, $4, $5)
+				   )
 				 ORDER BY
-				   CASE priority WHEN $6 THEN 0 WHEN $7 THEN 1 WHEN $8 THEN 2 WHEN $9 THEN 3 END,
-				   created_at ASC
+				   CASE i.priority WHEN $6 THEN 0 WHEN $7 THEN 1 WHEN $8 THEN 2 WHEN $9 THEN 3 END,
+				   i.created_at ASC
 				 LIMIT 1`,
 				[
 					memberId,
@@ -964,12 +986,18 @@ export class JobManager {
 	): Promise<void> {
 		const { db } = this.deps;
 		const next = await db.query<{ id: string }>(
-			`SELECT id FROM issues
-			 WHERE assignee_id = $1 AND company_id = $2 AND id != $3
-			   AND status NOT IN ($4::issue_status, $5::issue_status, $6::issue_status)
+			`SELECT i.id FROM issues i
+			 WHERE i.assignee_id = $1 AND i.company_id = $2 AND i.id != $3
+			   AND i.status NOT IN ($4::issue_status, $5::issue_status, $6::issue_status)
+			   AND NOT EXISTS (
+			     SELECT 1 FROM issue_dependencies d
+			     JOIN issues b ON b.id = d.blocked_by_issue_id
+			     WHERE d.issue_id = i.id
+			       AND b.status NOT IN ($4::issue_status, $5::issue_status, $6::issue_status)
+			   )
 			 ORDER BY
-			   CASE priority WHEN $7 THEN 0 WHEN $8 THEN 1 WHEN $9 THEN 2 WHEN $10 THEN 3 END,
-			   created_at ASC
+			   CASE i.priority WHEN $7 THEN 0 WHEN $8 THEN 1 WHEN $9 THEN 2 WHEN $10 THEN 3 END,
+			   i.created_at ASC
 			 LIMIT 1`,
 			[
 				memberId,

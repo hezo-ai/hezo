@@ -145,9 +145,6 @@ describe('status change system events', () => {
 		const ev = after[after.length - 1];
 		expect(ev.content.from).toBe(IssueStatus.Backlog);
 		expect(ev.content.to).toBe(IssueStatus.InProgress);
-		expect(ev.content.text).toContain('Test Admin');
-		expect(ev.content.text).toContain(IssueStatus.Backlog);
-		expect(ev.content.text).toContain(IssueStatus.InProgress);
 		expect(ev.author_member_id).not.toBeNull();
 	});
 
@@ -164,7 +161,6 @@ describe('status change system events', () => {
 
 		const events = await systemComments(issue.id, 'status_change');
 		const ev = events[events.length - 1];
-		expect(ev.content.text).toContain('Status Bot');
 		expect(ev.content.actor_id).toBe(agentId);
 		expect(ev.author_member_id).toBe(agentId);
 	});

@@ -31,6 +31,33 @@ async function resolveActorName(db: PGlite, actorMemberId: string | null): Promi
 	return r.rows[0]?.name ?? 'Board';
 }
 
+interface ActorInfo {
+	name: string;
+	kind: 'agent' | 'user' | 'board';
+	slug: string | null;
+}
+
+async function resolveActor(db: PGlite, actorMemberId: string | null): Promise<ActorInfo> {
+	if (!actorMemberId) return { name: 'Board', kind: 'board', slug: null };
+	const r = await db.query<{
+		name: string | null;
+		member_type: string | null;
+		agent_slug: string | null;
+	}>(
+		`SELECT COALESCE(ma.title, NULLIF(m.display_name, ''), 'Board') AS name,
+		        m.member_type,
+		        ma.slug AS agent_slug
+		   FROM members m
+		   LEFT JOIN member_agents ma ON ma.id = m.id
+		  WHERE m.id = $1`,
+		[actorMemberId],
+	);
+	const row = r.rows[0];
+	if (!row) return { name: 'Board', kind: 'board', slug: null };
+	if (row.agent_slug) return { name: row.name ?? 'Agent', kind: 'agent', slug: row.agent_slug };
+	return { name: row.name ?? 'Board', kind: 'user', slug: null };
+}
+
 export async function recordStatusChange(
 	db: PGlite,
 	companyId: string,
@@ -41,8 +68,6 @@ export async function recordStatusChange(
 	wsManager: WebSocketManager | undefined,
 ): Promise<void> {
 	if (oldStatus === newStatus) return;
-	const actorName = await resolveActorName(db, actorMemberId);
-	const text = `${actorName} changed status from ${oldStatus} to ${newStatus}`;
 	const r = await db.query<Record<string, unknown>>(
 		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb) RETURNING *`,
@@ -55,7 +80,6 @@ export async function recordStatusChange(
 				from: oldStatus,
 				to: newStatus,
 				actor_id: actorMemberId,
-				text,
 			}),
 		],
 	);
@@ -154,12 +178,16 @@ export async function recordIssueLinks(
 	);
 	if (targets.rows.length === 0) return;
 
-	const source = await db.query<{ identifier: string }>(
-		`SELECT identifier FROM issues WHERE id = $1`,
+	const source = await db.query<{ identifier: string; project_slug: string }>(
+		`SELECT i.identifier, p.slug AS project_slug
+		   FROM issues i
+		   JOIN projects p ON p.id = i.project_id
+		  WHERE i.id = $1`,
 		[sourceIssueId],
 	);
 	const sourceIdentifier = source.rows[0]?.identifier ?? '';
-	const actorName = await resolveActorName(db, actorMemberId);
+	const sourceProjectSlug = source.rows[0]?.project_slug ?? '';
+	const actor = await resolveActor(db, actorMemberId);
 
 	for (const target of targets.rows) {
 		const exists = await db.query(
@@ -173,7 +201,7 @@ export async function recordIssueLinks(
 		);
 		if (exists.rows.length > 0) continue;
 
-		const linkText = `Linked from ${sourceIdentifier} by ${actorName}`;
+		const linkText = `Linked from ${sourceIdentifier} by ${actor.name}`;
 		const r = await db.query<Record<string, unknown>>(
 			`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
 			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb) RETURNING *`,
@@ -185,7 +213,11 @@ export async function recordIssueLinks(
 					kind: 'issue_link',
 					source_issue_id: sourceIssueId,
 					source_identifier: sourceIdentifier,
+					source_project_slug: sourceProjectSlug,
 					actor_id: actorMemberId,
+					actor_name: actor.name,
+					actor_kind: actor.kind,
+					actor_slug: actor.slug,
 					text: linkText,
 				}),
 			],

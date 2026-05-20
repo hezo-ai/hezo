@@ -7,7 +7,7 @@ const WEB_PORT = 5174;
 const TEST_DATA_DIR = join(tmpdir(), 'hezo-e2e-test');
 
 export default defineConfig({
-	testDir: './tests/e2e',
+	testDir: './test/e2e',
 	timeout: 180_000,
 	retries: 1,
 	workers: 2,

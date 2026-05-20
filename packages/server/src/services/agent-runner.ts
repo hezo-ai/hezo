@@ -33,11 +33,12 @@ import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import type { EgressProxy } from './egress';
-import { ensureIssueWorktree, fetchRepo } from './git';
+import { ensureGithubKnownHosts, ensureIssueWorktree, fetchRepo } from './git';
 import { recordStatusChange } from './issue-events';
 import type { LogStreamBroker } from './log-stream-broker';
 import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
+import { loadReactionsForIssue, type ReactionGroup } from './reactions';
 import { ensureProjectRepos } from './repo-sync';
 import {
 	buildSubscriptionMount as buildSubscriptionMountImpl,
@@ -50,8 +51,9 @@ import {
 } from './runtime-home';
 import { resolveRuntimeForIssue } from './runtime-resolver';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
+import { withHostAgentSocket } from './ssh-agent/host';
 import { resolveSystemPrompt } from './template-resolver';
-import { getProjectRunDir, getWorkspacePath, getWorktreesPath } from './workspace';
+import { getRunSocketPath, getWorkspacePath, getWorktreesPath } from './workspace';
 import type { WebSocketManager } from './ws';
 
 export interface AgentInfo {
@@ -472,6 +474,15 @@ export async function runAgent(
 			stream: line.stream,
 			text: line.text,
 		}),
+		buildSnapshot: (text) => ({
+			type: WsMessageType.RunLog,
+			projectId: project.id,
+			runId: heartbeatRunId,
+			issueId: issue.id,
+			stream: 'stdout',
+			text,
+			replace: true,
+		}),
 		onFlush: async (text) => {
 			await deps.db.query('UPDATE heartbeat_runs SET log_text = $1 WHERE id = $2', [
 				text,
@@ -579,8 +590,7 @@ export async function runAgent(
 	let sshSocketHostPath: string | null = null;
 	let bridge: BridgeRunnerArgs | null = null;
 	if (deps.sshAgentServer) {
-		const runDir = getProjectRunDir(deps.dataDir, project.company_slug, project.slug);
-		sshSocketHostPath = join(runDir, `${heartbeatRunId}.sock`);
+		sshSocketHostPath = getRunSocketPath(deps.dataDir, heartbeatRunId);
 		const allocated = await deps.sshAgentServer.allocateRunSocket(
 			heartbeatRunId,
 			{ companyId: agent.company_id, agentId: agent.id },
@@ -786,24 +796,6 @@ export async function runAgent(
 	}
 }
 
-async function loadOAuthAccessToken(
-	deps: RunnerDeps,
-	oauthConnectionId: string,
-): Promise<string | null> {
-	const key = deps.masterKeyManager.getKey();
-	if (!key) return null;
-	const result = await deps.db.query<{ encrypted_value: string }>(
-		`SELECT s.encrypted_value
-		 FROM oauth_connections oc
-		 JOIN secrets s ON s.id = oc.access_token_secret_id
-		 WHERE oc.id = $1`,
-		[oauthConnectionId],
-	);
-	if (result.rows.length === 0) return null;
-	const { decrypt } = await import('../crypto/encryption');
-	return decrypt(result.rows[0].encrypted_value, key);
-}
-
 function failedResult(stderr: string, startTime: number): RunResult {
 	return { success: false, exitCode: -1, stdout: '', stderr, durationMs: Date.now() - startTime };
 }
@@ -825,8 +817,8 @@ async function prepareWorktrees(
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 	signal?: AbortSignal,
 ): Promise<{ workingDir: string; designatedRepo: RepoRow | null }> {
-	const repos = await deps.db.query<RepoRow & { oauth_connection_id: string | null }>(
-		`SELECT id, short_name, repo_identifier, oauth_connection_id FROM repos
+	const repos = await deps.db.query<RepoRow>(
+		`SELECT id, short_name, repo_identifier FROM repos
 		 WHERE project_id = $1 ORDER BY created_at ASC`,
 		[project.id],
 	);
@@ -847,6 +839,7 @@ async function prepareWorktrees(
 			projectSlug: project.slug,
 		},
 		deps.dataDir,
+		deps.sshAgentServer,
 		(stream, text) => emit(stream, `${text}\n`),
 	);
 	if (syncRes.cloned.length > 0) {
@@ -861,6 +854,32 @@ async function prepareWorktrees(
 	mkdirSync(issueWorktreeRoot, { recursive: true });
 
 	const branchName = `hezo/${issue.identifier}`;
+	const knownHostsPath = await ensureGithubKnownHosts(deps.dataDir);
+	const reposNeedingWorktree = repos.rows.filter(
+		(r) => !signal?.aborted && existsSync(join(workspaceRoot, r.short_name, '.git')),
+	);
+
+	if (reposNeedingWorktree.length > 0 && deps.sshAgentServer) {
+		await withHostAgentSocket(
+			deps.sshAgentServer,
+			project.company_id,
+			deps.dataDir,
+			async ({ sshAuthSock }) => {
+				for (const repo of reposNeedingWorktree) {
+					if (signal?.aborted) break;
+					const repoDir = join(workspaceRoot, repo.short_name);
+
+					emit('stdout', `git fetch ${repo.short_name}...\n`);
+					const fetchRes = await fetchRepo(repoDir, sshAuthSock, knownHostsPath);
+					if (fetchRes.success) {
+						emit('stdout', `git fetch ${repo.short_name} done\n`);
+					} else {
+						emit('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
+					}
+				}
+			},
+		);
+	}
 
 	for (const repo of repos.rows) {
 		if (signal?.aborted) break;
@@ -870,19 +889,6 @@ async function prepareWorktrees(
 		if (!existsSync(join(repoDir, '.git'))) {
 			emit('stderr', `(skipping worktree for ${repo.short_name} — not cloned)\n`);
 			continue;
-		}
-
-		if (repo.oauth_connection_id) {
-			const token = await loadOAuthAccessToken(deps, repo.oauth_connection_id);
-			if (token) {
-				emit('stdout', `git fetch ${repo.short_name}...\n`);
-				const fetchRes = await fetchRepo(repoDir, token);
-				if (fetchRes.success) {
-					emit('stdout', `git fetch ${repo.short_name} done\n`);
-				} else {
-					emit('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
-				}
-			}
 		}
 
 		emit('stdout', `git worktree ${repo.short_name}...\n`);
@@ -963,6 +969,22 @@ export async function loadMentionContext(
 		excerpt,
 		openTickets: tickets.rows,
 	};
+}
+
+const REACTION_GLYPH: Record<string, string> = { ack: '✓' };
+
+function reactorLabel(m: { slug: string | null; display_name: string | null }): string {
+	if (m.slug) return `@${m.slug}`;
+	return m.display_name ?? 'someone';
+}
+
+export function formatReactionLine(groups: ReactionGroup[] | undefined): string | null {
+	if (!groups || groups.length === 0) return null;
+	const parts = groups.map((g) => {
+		const glyph = REACTION_GLYPH[g.kind] ?? g.kind;
+		return `${glyph} ${g.members.map(reactorLabel).join(', ')}`;
+	});
+	return `Reactions: ${parts.join(' · ')}`;
 }
 
 function extractCommentText(content: unknown): string {
@@ -1231,12 +1253,13 @@ export async function buildCoachReviewPrompt(
 	companyId: string,
 ): Promise<string> {
 	const comments = await db.query<{
+		id: string;
 		content_type: string;
 		content: Record<string, unknown>;
 		author_name: string;
 		created_at: string;
 	}>(
-		`SELECT ic.content_type, ic.content,
+		`SELECT ic.id, ic.content_type, ic.content,
 		        COALESCE(ma.title, m.display_name, 'Unknown') AS author_name,
 		        ic.created_at::text
 		 FROM issue_comments ic
@@ -1246,6 +1269,8 @@ export async function buildCoachReviewPrompt(
 		 ORDER BY ic.created_at ASC`,
 		[issue.id],
 	);
+
+	const reactionsByComment = await loadReactionsForIssue(db, issue.id);
 
 	const involvedAgents = await db.query<{
 		id: string;
@@ -1267,7 +1292,9 @@ export async function buildCoachReviewPrompt(
 				c.content_type === 'text'
 					? (c.content as Record<string, unknown>).text
 					: JSON.stringify(c.content);
-			return `[${c.created_at}] ${c.author_name} (${c.content_type}): ${text}`;
+			const base = `[${c.created_at}] ${c.author_name} (${c.content_type}): ${text}`;
+			const reactionLine = formatReactionLine(reactionsByComment.get(c.id));
+			return reactionLine ? `${base}\n${reactionLine}` : base;
 		})
 		.join('\n');
 
@@ -1296,10 +1323,10 @@ export async function buildCoachReviewPrompt(
 		'### Your Task',
 		'Review this completed ticket. Analyze the comment history for patterns where agents struggled,',
 		'received feedback, had work rejected, or needed multiple attempts. For each improvement opportunity,',
-		"use the `get_agent_system_prompt` tool to read the affected agent's current prompt, then use",
-		'`update_agent_system_prompt` to add a specific rule to their `## Learned Rules` section. Updates',
-		'apply immediately and a revision snapshot is recorded so the board can roll back from the agent',
-		'settings page if needed.',
+		"use `get_agent_system_prompt` with `placeholders: false` to read the affected agent's raw prompt",
+		'(you need the `{{…}}` placeholders intact for a safe round-trip), then use `update_agent_system_prompt`',
+		'to add a specific rule to their `## Learned Rules` section. Updates apply immediately and a revision',
+		'snapshot is recorded so the board can roll back from the agent settings page if needed.',
 		'',
 		'If the ticket completed smoothly without significant rework or feedback, no changes are needed.',
 		'',

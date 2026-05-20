@@ -7,6 +7,7 @@ interface ResolveContext {
 	issueId?: string;
 	agentId?: string;
 	dataDir?: string;
+	mode?: 'runtime' | 'preview' | 'placeholders';
 }
 
 const SHARED_INSTRUCTIONS = `
@@ -24,6 +25,11 @@ const SHARED_INSTRUCTIONS = `
   - \`approved\` — after QA approval (QA sets this)
   - \`done\` — when work is complete and merged (triggers Coach review)
 
+### Completion Handoff
+- **Mark \`done\` instead of announcing completion via mentions.** When your work on the current ticket is genuinely complete (the deliverable exists, no further step from you is expected), call \`update_issue(status: "done")\`. Do not skip the status update and try to hand off via an \`@\`-mention to the next owner — the status transition *is* the handoff.
+- **The server does the wake.** Marking a ticket terminal (\`done\`, \`closed\`, \`cancelled\`) walks the dependency graph: every ticket blocked on it has its status reconciled out of \`blocked\`, and its assignee is auto-woken. Coach is also woken automatically. You do not need to ping anyone — the server already has. To see which tickets your completion will unblock, look at the \`dependents\` field on \`get_issue\`.
+- **Wrap-up comment carries no \`@\`-mentions.** A short closing comment (a sentence or two summarizing what shipped, optionally listing the bare identifiers of the dependents that will now unblock, e.g. \`BE-4\`, \`BE-5\`) is the right end-of-run move so humans following along have context. But **whenever a comment coincides with marking the ticket \`done\` in the same wrap-up step, do not \`@\`-mention any agent in that comment** — every notification the mention would serve is already covered by the auto-wake from the status transition, so an \`@\`-mention on top creates a redundant mention-source wakeup. If a truly out-of-band ping is needed (someone whose attention is unrelated to the dependency chain), do it as a separate later comment, not stapled to the done transition.
+
 ### Knowledge Maintenance
 - **Project docs**: Use \`list_project_docs\`, \`read_project_doc\`, and \`write_project_doc\` for high-level project context — PRDs, architecture decisions, API designs, schemas, implementation plans. Docs live in the project-doc store and are addressed by bare filename (e.g. \`prd.md\`, \`spec.md\`, \`research.md\`) — they are NOT filesystem paths, so never prefix a folder. Keep them aligned with the actual codebase. Do NOT put agent-specific working knowledge here.
 - **AGENTS.md**: For practical conventions, commands, and constraints that agents need when working on this project. Update via git in the repo.
@@ -37,6 +43,12 @@ const SHARED_INSTRUCTIONS = `
 
 ### Sub-Issue Delegation
 - Use \`create_issue\` with \`parent_issue_id\` and \`assignee_slug\` to create sub-issues and delegate work to other agents. The Teammates block above lists every enabled peer's slug — use \`list_agents\` only when you need details (description / reports_to) on a specific teammate.
+
+### Comment Timing
+- Post comments at the end of your run, after every other action. A comment almost always tends to be either a summary of what you did and/or a request for someone else to take a look — both are end-of-run moves.
+- If your run will create new tickets (sub-issues, follow-ups, delegations) that the comment should reference, call \`create_issue\` first and quote the resulting identifiers in the wrap-up comment. A comment announcing work you have not yet filed leaves readers without anywhere to look.
+- Skip play-by-play narration ("starting now", "halfway done"). The run record already shows every tool call you made; restating it in a comment burns wakeups for no gain.
+- Acknowledging an @-mention per the mention-handoff guidance is itself a single end-of-turn comment, so the same rule applies — do any ticket creation first, then post once and end the turn.
 `;
 
 export async function resolveSystemPrompt(
@@ -78,6 +90,18 @@ export async function resolveSystemPrompt(
 			managerName = result.rows[0]?.display_name ?? '';
 		}
 		resolved = resolved.replace(/\{\{reports_to\}\}/g, managerName);
+	}
+
+	if (resolved.includes('{{team_context}}')) {
+		let teamContext = '';
+		if (ctx.agentId) {
+			const result = await db.query<{ team_context: string }>(
+				'SELECT team_context FROM member_agents WHERE id = $1',
+				[ctx.agentId],
+			);
+			teamContext = result.rows[0]?.team_context ?? '';
+		}
+		resolved = resolved.replace(/\{\{team_context\}\}/g, teamContext);
 	}
 
 	if (resolved.includes('{{kb_context}}')) {
@@ -126,9 +150,14 @@ export async function resolveSystemPrompt(
 				[ctx.projectId],
 			);
 			if (docs.rows.length > 0) {
-				docsText = docs.rows
-					.map((d) => `## ${d.filename} (link: ${d.filename})\n${d.content}`)
-					.join('\n\n---\n\n');
+				const body = docs.rows.map((d) => `### ${d.filename}\n${d.content}`).join('\n\n---\n\n');
+				docsText = [
+					'The following project docs are stored in the project-doc database, not the filesystem.',
+					'To modify any of them, use `write_project_doc` (with the bare filename, e.g. `prd.md`).',
+					'The filesystem `Edit`/`Write` tools will NOT work on these — they are not files in your worktree.',
+					'',
+					body,
+				].join('\n');
 			}
 		}
 		resolved = resolved.replace(/\{\{project_docs_context\}\}/g, docsText);
@@ -162,12 +191,40 @@ export async function resolveSystemPrompt(
 
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
 
-	resolved += buildRunContextBlock(ctx);
+	if (ctx.mode === 'placeholders') {
+		return resolved;
+	}
+
+	if (ctx.mode !== 'preview') {
+		resolved += buildRunContextBlock(ctx);
+	}
 	resolved += await buildProjectStateBlock(db, ctx);
+	resolved += await buildTeamContextBlock(db, ctx);
 	resolved += await buildTeammatesBlock(db, ctx);
 	resolved += SHARED_INSTRUCTIONS;
 
 	return resolved;
+}
+
+async function buildTeamContextBlock(db: PGlite, ctx: ResolveContext): Promise<string> {
+	if (!ctx.agentId) return '';
+
+	const result = await db.query<{ team_context: string }>(
+		'SELECT team_context FROM member_agents WHERE id = $1',
+		[ctx.agentId],
+	);
+	const content = result.rows[0]?.team_context?.trim() ?? '';
+	if (!content) return '';
+
+	return `
+
+---
+
+## Your Team
+
+Your relationship to every other employee in the company, precomputed so you don't need to derive the org chart from scratch. Regenerated by the CEO when teammates are added, removed, or restructured.
+
+${content}`;
 }
 
 async function buildTeammatesBlock(db: PGlite, ctx: ResolveContext): Promise<string> {

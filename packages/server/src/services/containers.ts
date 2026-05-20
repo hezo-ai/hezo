@@ -17,7 +17,7 @@ import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
 import type { SshAgentServer } from './ssh-agent';
 import { createWakeup } from './wakeup';
-import { ensureProjectRunDir, ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
+import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
 import type { WebSocketManager } from './ws';
 
 export type ContainerExitReason = 'container_error' | 'container_stopped';
@@ -71,6 +71,13 @@ function beginProvisionStream(logs: LogStreamBroker | undefined, projectId: stri
 			projectId,
 			stream: line.stream,
 			text: line.text,
+		}),
+		buildSnapshot: (text) => ({
+			type: WsMessageType.ContainerLog,
+			projectId,
+			stream: 'stdout',
+			text,
+			replace: true,
 		}),
 		capBytes: PROVISION_CAP_BYTES,
 	});
@@ -146,12 +153,6 @@ export async function provisionContainer(
 		const workspacePath = join(projectDir, 'workspace');
 		const worktreesPath = join(projectDir, 'worktrees');
 		const previewsPath = join(projectDir, '.previews');
-
-		// Host-side SSH agent socket lives in this dir for host-side git operations.
-		// In-container SSH socket is allocated fresh by the per-run socat bridge so
-		// no bind-mount is required, which sidesteps Docker Desktop's lack of
-		// AF_UNIX bind-mount forwarding on macOS.
-		ensureProjectRunDir(dataDir, companySlug, project.slug);
 
 		const binds = [
 			`${workspacePath}:/workspace:rw`,
@@ -246,6 +247,7 @@ export async function provisionContainer(
 					projectSlug: project.slug,
 				},
 				dataDir,
+				deps.sshAgentServer ?? null,
 				(stream, text) => emit(stream, text),
 			);
 			if (syncRes.failed.length > 0) {

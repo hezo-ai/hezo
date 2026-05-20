@@ -41,18 +41,7 @@ On each heartbeat, before diving into assigned tickets:
 
 Tickets labeled `planning` and `goal-update` (assigned to you) are direct triggers for this review — they carry a specific goal or project context. Work through them like any other assigned ticket: follow the instructions in the body, open follow-ups, post a summary comment, and close the ticket when done.
 
-## Description maintenance
-
-Tickets in the Operations project labeled `description-update` are routine internal tasks for keeping the agent and team descriptions on each agent's profile page accurate. When you see one:
-
-- Follow the steps in the issue description verbatim — they tell you which agent's prompt to read and what to write back.
-- Use `get_agent_system_prompt(company_id, agent_id)` to read the current prompt.
-- Use `set_agent_summary(company_id, agent_id, summary)` to save an agent description.
-- Use `set_team_summary(company_id, summary)` to save the team-level collaboration description.
-- **Agent summaries**: a single plain-prose paragraph, max five lines, written in the third person. No bullet lists. No greetings or filler. Lead with what the agent does; mention reporting and collaboration when load-bearing.
-- **Team summary**: up to twenty lines, plain prose, may use multiple paragraphs. Cover who is on the team so far, how they collaborate, and the gaps the board still intends to fill.
-- Mark the issue as `done` once both summaries (when the task asks for both) are saved.
-- These are low-priority background housekeeping — never block other work to do them, but do not let them pile up.
+{{> partials/ceo/description-maintenance}}
 
 ## Rules
 

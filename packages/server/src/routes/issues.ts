@@ -1,10 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	AuditAction,
 	AuditActorType,
-	AuditEntityType,
 	AuthType,
-	IssuePriority,
 	IssueStatus,
 	TERMINAL_ISSUE_STATUSES,
 	WakeupSource,
@@ -12,19 +9,24 @@ import {
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { assertNoActiveRun } from '../lib/active-run';
-import { auditLog } from '../lib/audit';
 import { broadcastChange } from '../lib/broadcast';
-import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import {
-	assertChildDepthAllowed,
-	assertChildrenAllClosed,
-	assertNoOutstandingActivity,
-} from '../lib/issue-relationships';
+	coerceTargetStatusForBlockers,
+	reconcileBlockedStatus,
+	wakeIfReady,
+	wouldCreateCycle,
+} from '../lib/dependencies';
+import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/issue-relationships';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
-import { getProjectLocator, resolveIssueId, resolveProjectId } from '../lib/resolve';
+import {
+	getProjectLocator,
+	resolveActorMemberId as resolveAuthActorMemberId,
+	resolveIssueId,
+	resolveProjectId,
+} from '../lib/resolve';
 import { err, ok } from '../lib/response';
-import type { Env } from '../lib/types';
+import type { AuthInfo, Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
 import { triggerStatusAutomations } from '../services/issue-automation';
@@ -33,10 +35,39 @@ import {
 	recordIssueLinks,
 	recordTitleChange,
 } from '../services/issue-events';
+import {
+	type CreateIssueCaller,
+	CreateIssueError,
+	type CreateIssueInput,
+	createIssue,
+} from '../services/issues';
 import { removeIssueWorktrees } from '../services/repo-sync';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
+
+const MAX_BATCH_ISSUES = 50;
+
+function actorTypeFromAuth(auth: AuthInfo): AuditActorType {
+	return auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Board;
+}
+
+async function buildCreateIssueCaller(
+	c: Context<Env>,
+	companyId: string,
+): Promise<CreateIssueCaller> {
+	const auth = c.get('auth');
+	const actorMemberId = await resolveAuthActorMemberId(c.get('db'), auth, companyId);
+	const caller: CreateIssueCaller = {
+		actorType: actorTypeFromAuth(auth),
+		actorMemberId,
+	};
+	if (auth.type === AuthType.Agent) {
+		caller.agentMemberId = auth.memberId;
+		caller.runId = auth.runId;
+	}
+	return caller;
+}
 
 async function wakeAgentIfAssigned(
 	db: PGlite,
@@ -54,18 +85,7 @@ async function wakeAgentIfAssigned(
 }
 
 async function resolveActorMemberId(c: Context<Env>, companyId: string): Promise<string | null> {
-	const auth = c.get('auth');
-	if (auth.type === AuthType.Agent) return auth.memberId;
-	if (auth.type === AuthType.Board) {
-		const r = await c.get('db').query<{ id: string }>(
-			`SELECT m.id FROM members m
-			   JOIN member_users mu ON mu.id = m.id
-			  WHERE mu.user_id = $1 AND m.company_id = $2`,
-			[auth.userId, companyId],
-		);
-		return r.rows[0]?.id ?? null;
-	}
-	return null;
+	return resolveAuthActorMemberId(c.get('db'), c.get('auth'), companyId);
 }
 
 export const issuesRoutes = new Hono<Env>();
@@ -188,100 +208,64 @@ issuesRoutes.post('/companies/:companyId/issues', async (c) => {
 	const db = c.get('db');
 	const { companyId } = access;
 
-	const body = await c.req.json<{
-		project_id: string;
-		title: string;
-		description?: string;
-		assignee_id?: string;
-		parent_issue_id?: string;
-		priority?: string;
-		labels?: string[];
-		runtime_type?: string;
-	}>();
+	const body = await c.req.json<CreateIssueInput>();
+	const caller = await buildCreateIssueCaller(c, companyId);
 
-	if (!body.project_id || !body.title?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'project_id and title are required', 400);
-	}
-	if (!body.assignee_id) {
-		return err(c, 'INVALID_REQUEST', 'assignee_id is required', 400);
-	}
-
-	const opsCheck = await assertOperationsAssignee(db, companyId, body.project_id, body.assignee_id);
-	if (!opsCheck.ok) {
-		return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
-	}
-
-	if (body.parent_issue_id) {
-		const depthCheck = await assertChildDepthAllowed(db, companyId, body.parent_issue_id);
-		if (!depthCheck.ok) {
-			return err(c, 'INVALID_REQUEST', depthCheck.message, 400);
+	try {
+		const issue = await createIssue(db, companyId, body, caller, c.get('wsManager'));
+		return ok(c, issue, 201);
+	} catch (e) {
+		if (e instanceof CreateIssueError) {
+			const status = e.code === 'NOT_FOUND' ? 404 : e.code === 'FORBIDDEN' ? 403 : 400;
+			return err(c, e.code, e.message, status);
 		}
+		throw e;
+	}
+});
+
+issuesRoutes.post('/companies/:companyId/issues/batch', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+
+	const body = await c.req.json<{ items?: unknown }>();
+	const raw = body.items;
+	if (!Array.isArray(raw)) {
+		return err(c, 'INVALID_REQUEST', 'items must be an array', 400);
+	}
+	if (raw.length === 0) {
+		return err(c, 'INVALID_REQUEST', 'items must contain at least one entry', 400);
+	}
+	if (raw.length > MAX_BATCH_ISSUES) {
+		return err(c, 'INVALID_REQUEST', `items array may not exceed ${MAX_BATCH_ISSUES} entries`, 400);
 	}
 
-	const { number: issueNumber, identifier } = await allocateIssueIdentifier(db, body.project_id);
+	const caller = await buildCreateIssueCaller(c, companyId);
+	const wsManager = c.get('wsManager');
 
-	const result = await db.query(
-		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,
-                         number, identifier, title, description, status, priority, labels, runtime_type)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb, $12::agent_runtime)
-     RETURNING *`,
-		[
-			companyId,
-			body.project_id,
-			body.assignee_id ?? null,
-			body.parent_issue_id ?? null,
-			issueNumber,
-			identifier,
-			body.title.trim(),
-			body.description ?? '',
-			IssueStatus.Backlog,
-			body.priority ?? IssuePriority.Medium,
-			JSON.stringify(body.labels ?? []),
-			body.runtime_type ?? null,
-		],
+	const results = await Promise.all(
+		raw.map(async (item, index) => {
+			try {
+				const issue = await createIssue(db, companyId, item as CreateIssueInput, caller, wsManager);
+				return { index, ok: true as const, issue };
+			} catch (e) {
+				if (e instanceof CreateIssueError) {
+					return { index, ok: false as const, error: e.message, code: e.code };
+				}
+				log.error('Unexpected error in batch issue creation:', e);
+				return {
+					index,
+					ok: false as const,
+					error: e instanceof Error ? e.message : 'internal_error',
+					code: 'INTERNAL_ERROR' as const,
+				};
+			}
+		}),
 	);
 
-	const issue = result.rows[0] as Record<string, unknown>;
-
-	if (body.assignee_id) {
-		const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
-			body.assignee_id,
-		]);
-		if (isAgent.rows.length > 0) {
-			createWakeup(db, body.assignee_id, companyId, WakeupSource.Assignment, {
-				issue_id: issue.id as string,
-			}).catch((e) => log.error('Failed to create wakeup:', e));
-		}
-	}
-
-	broadcastChange(c, wsRoom.company(companyId), 'issues', 'INSERT', issue);
-	auditLog(
-		db,
-		companyId,
-		AuditActorType.Board,
-		null,
-		AuditAction.Created,
-		AuditEntityType.Issue,
-		issue.id as string,
-		{
-			identifier,
-		},
-	).catch(() => {});
-	wakeAgentIfAssigned(db, body.assignee_id, companyId, issue.id as string);
-
-	if (body.description) {
-		const actorMemberId = await resolveActorMemberId(c, companyId);
-		recordIssueLinks(
-			db,
-			companyId,
-			issue.id as string,
-			body.description,
-			actorMemberId,
-			c.get('wsManager'),
-		).catch((e) => log.error('Failed to record issue links from description:', e));
-	}
-
-	return ok(c, issue, 201);
+	return ok(c, results, 200);
 });
 
 issuesRoutes.get('/companies/:companyId/issues/:issueId', async (c) => {
@@ -448,6 +432,10 @@ issuesRoutes.patch('/companies/:companyId/issues/:issueId', async (c) => {
 		if (!activityCheck.ok) {
 			return err(c, 'INVALID_REQUEST', activityCheck.message, 400);
 		}
+	}
+
+	if (body.status !== undefined) {
+		body.status = await coerceTargetStatusForBlockers(db, issueId, body.status);
 	}
 
 	const sets: string[] = [];
@@ -642,67 +630,29 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/sub-issues', async (c) 
 		return err(c, 'NOT_FOUND', 'Parent issue not found', 404);
 	}
 
-	const depthCheck = await assertChildDepthAllowed(db, companyId, parentIssueId);
-	if (!depthCheck.ok) {
-		return err(c, 'INVALID_REQUEST', depthCheck.message, 400);
-	}
+	const body = await c.req.json<Omit<CreateIssueInput, 'project_id' | 'parent_issue_id'>>();
+	const caller = await buildCreateIssueCaller(c, companyId);
 
-	const body = await c.req.json<{
-		title: string;
-		description?: string;
-		assignee_id?: string;
-		priority?: string;
-		labels?: string[];
-		runtime_type?: string;
-	}>();
-
-	if (!body.title?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'title is required', 400);
-	}
-	if (!body.assignee_id) {
-		return err(c, 'INVALID_REQUEST', 'assignee_id is required', 400);
-	}
-
-	const opsCheck = await assertOperationsAssignee(
-		db,
-		companyId,
-		parent.rows[0].project_id,
-		body.assignee_id,
-	);
-	if (!opsCheck.ok) {
-		return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
-	}
-
-	const { number: issueNumber, identifier } = await allocateIssueIdentifier(
-		db,
-		parent.rows[0].project_id,
-	);
-
-	const result = await db.query(
-		`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id,
-                         number, identifier, title, description, status, priority, labels, runtime_type)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb, $12::agent_runtime)
-     RETURNING *`,
-		[
+	try {
+		const subIssue = await createIssue(
+			db,
 			companyId,
-			parent.rows[0].project_id,
-			body.assignee_id ?? null,
-			parentIssueId,
-			issueNumber,
-			identifier,
-			body.title.trim(),
-			body.description ?? '',
-			IssueStatus.Backlog,
-			body.priority ?? IssuePriority.Medium,
-			JSON.stringify(body.labels ?? []),
-			body.runtime_type ?? null,
-		],
-	);
-
-	const subIssue = result.rows[0] as Record<string, unknown>;
-	broadcastChange(c, wsRoom.company(companyId), 'issues', 'INSERT', subIssue);
-	wakeAgentIfAssigned(db, body.assignee_id, companyId, subIssue.id as string);
-	return ok(c, subIssue, 201);
+			{
+				...body,
+				project_id: parent.rows[0].project_id,
+				parent_issue_id: parentIssueId,
+			},
+			caller,
+			c.get('wsManager'),
+		);
+		return ok(c, subIssue, 201);
+	} catch (e) {
+		if (e instanceof CreateIssueError) {
+			const status = e.code === 'NOT_FOUND' ? 404 : e.code === 'FORBIDDEN' ? 403 : 400;
+			return err(c, e.code, e.message, status);
+		}
+		throw e;
+	}
 });
 
 issuesRoutes.get('/companies/:companyId/issues/:issueId/ancestors', async (c) => {
@@ -752,9 +702,11 @@ issuesRoutes.get('/companies/:companyId/issues/:issueId/dependencies', async (c)
 
 	const result = await db.query(
 		`SELECT d.id, d.issue_id, d.blocked_by_issue_id, d.created_at,
-            i.identifier AS blocked_by_identifier, i.title AS blocked_by_title, i.status AS blocked_by_status
+            i.identifier AS blocked_by_identifier, i.title AS blocked_by_title, i.status AS blocked_by_status,
+            p.slug AS blocked_by_project_slug
      FROM issue_dependencies d
      JOIN issues i ON i.id = d.blocked_by_issue_id
+     JOIN projects p ON p.id = i.project_id
      WHERE d.issue_id = $1`,
 		[issueId],
 	);
@@ -784,6 +736,10 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
 		return err(c, 'INVALID_REQUEST', 'An issue cannot block itself', 400);
 	}
 
+	if (await wouldCreateCycle(db, issueId, blockerId)) {
+		return err(c, 'INVALID_REQUEST', 'Dependency would create a cycle', 400);
+	}
+
 	const result = await db.query(
 		`INSERT INTO issue_dependencies (issue_id, blocked_by_issue_id)
      VALUES ($1, $2)
@@ -795,6 +751,9 @@ issuesRoutes.post('/companies/:companyId/issues/:issueId/dependencies', async (c
 	if (result.rows.length === 0) {
 		return err(c, 'CONFLICT', 'Dependency already exists', 409);
 	}
+
+	const actorMemberId = await resolveActorMemberId(c, companyId);
+	await reconcileBlockedStatus(db, companyId, issueId, actorMemberId, c.get('wsManager'));
 
 	return ok(c, result.rows[0], 201);
 });
@@ -809,7 +768,6 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId/dependencies/:depId',
 	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
 	const depId = c.req.param('depId');
 
-	// Verify issue belongs to company and dependency belongs to issue
 	const depCheck = await db.query(
 		`SELECT d.id FROM issue_dependencies d
      JOIN issues i ON i.id = d.issue_id
@@ -821,5 +779,8 @@ issuesRoutes.delete('/companies/:companyId/issues/:issueId/dependencies/:depId',
 	}
 
 	await db.query('DELETE FROM issue_dependencies WHERE id = $1', [depId]);
+	const actorMemberId = await resolveActorMemberId(c, companyId);
+	await reconcileBlockedStatus(db, companyId, issueId, actorMemberId, c.get('wsManager'));
+	await wakeIfReady(db, issueId);
 	return c.json({ data: null }, 200);
 });

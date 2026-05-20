@@ -60,15 +60,15 @@ When `deps.sshAgentServer` is present the runner allocates a socket per run and 
   ...agentCmd ]
 ```
 
-`SSH_AUTH_SOCK=/run/hezo/<runId>.sock` is set in the container env. Tools that consult ssh-agent (`git commit -S`, `ssh-keygen -Y sign`) go through the bridge → host TCP → SshAgentServer → key-blob match → signature. `git fetch`/`git push` do **not** consult the socket; they use HTTPS+OAuth (egress proxy substitutes the bearer token, see `.dev/oauth.md`).
+`SSH_AUTH_SOCK=/run/hezo/<runId>.sock` is set in the container env. Tools that consult ssh-agent (`git commit -S`, `ssh-keygen -Y sign`, and `ssh`/`git@github.com:` clone/fetch/push) all go through the bridge → host TCP → SshAgentServer → key-blob match → signature. Same socket, same key, served for both signing and SSH authentication. Host-side git ops in `services/repo-sync.ts` / `services/agent-runner.ts` connect to the same `SshAgentServer` via its Unix socket directly (via `withHostAgentSocket` in `services/ssh-agent/host.ts`).
 
 There is no in-container Unix-socket bind-mount from the host. The previous `<runDir>:/run/hezo:rw` bind-mount has been removed; the in-container socket lives purely in the container's overlay filesystem and is created fresh by socat at run start.
 
 ## Verified-on-GitHub bootstrap
 
-The same Ed25519 key the agent runner uses for in-container signing is auto-registered on GitHub as a signing key on first OAuth connect (`POST /user/ssh_signing_keys` against the GitHub API, see `.dev/oauth.md`). That makes commits agents push from worktree-runs show up as `Verified` in the GitHub UI without any manual setup. One key per company; reused across every GitHub OAuth connection the company adds.
+The same Ed25519 key the agent runner uses for in-container signing is auto-registered on GitHub on every successful OAuth connect, as **both** a signing key (`POST /user/ssh_signing_keys` — drives `Verified` badges on commits) and an authentication key (`POST /user/keys` — so SSH `git@github.com:` clone/fetch/push works). Registration is idempotent: GitHub returns 422 "key is already in use" for repeat calls, treated as a no-op. One key per company; reused across every GitHub OAuth connection the company adds.
 
-Repo *access* (clone, fetch, push) does **not** use this key. It uses an OAuth token bound to a GitHub connection, threaded as an `Authorization: bearer …` header on the HTTPS request to GitHub.
+Repo *access* (clone, fetch, push) uses this same key over SSH (`git@github.com:owner/repo.git`). The OAuth token is reserved for REST API calls only (listing orgs/repos, creating repos via the picker).
 
 ## Tests
 

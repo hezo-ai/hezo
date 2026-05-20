@@ -3,6 +3,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	ApprovalStatus,
 	ApprovalType,
+	AuditActorType,
 	AuthType,
 	CEO_AGENT_SLUG,
 	COACH_AGENT_SLUG,
@@ -10,27 +11,37 @@ import {
 	CredentialInputType,
 	CredentialKind,
 	DocumentType,
-	IssuePriority,
 	IssueStatus,
+	ReactionKind,
 	WakeupSource,
+	wsRoom,
 } from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { assertNoActiveRun } from '../lib/active-run';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
+import { broadcastRowChange } from '../lib/broadcast';
 import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
-import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import {
-	assertChildDepthAllowed,
-	assertChildrenAllClosed,
-	assertNoOutstandingActivity,
-} from '../lib/issue-relationships';
+	coerceTargetStatusForBlockers,
+	reconcileBlockedStatus,
+	wakeIfReady,
+	wouldCreateCycle,
+} from '../lib/dependencies';
+import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/issue-relationships';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
+import { resolveActorMemberId, resolveIssueId } from '../lib/resolve';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import { resolveProjectIssuePrefix } from '../routes/projects';
+import {
+	AgentSystemPromptError,
+	fetchAgentSystemPromptForBatch,
+	type SystemPromptMode,
+} from '../services/agent-system-prompts';
 import { fireCommentWakeups } from '../services/comment-wakeups';
+import { enqueueTeamContextTaskForAllAgents } from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
 	getDocument,
@@ -39,6 +50,19 @@ import {
 } from '../services/documents';
 import { triggerStatusAutomations } from '../services/issue-automation';
 import { recordIssueLinks } from '../services/issue-events';
+import {
+	type CreateIssueCaller,
+	CreateIssueError,
+	type CreateIssueInput,
+	createIssue,
+	ISSUE_COLUMNS_BARE,
+} from '../services/issues';
+import {
+	addCommentReaction,
+	loadReactionsForIssue,
+	removeCommentReaction,
+} from '../services/reactions';
+import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
 
@@ -54,18 +78,10 @@ export interface ToolDef {
 
 const registeredTools: ToolDef[] = [];
 
-// Explicit column lists keep the `embedding` vector(384) out of MCP responses
-// (~4KB per row of float noise that the LLM caller can't use) and let us
-// audit projections at a glance.
-const ISSUE_COLUMNS = `i.id, i.company_id, i.project_id, i.assignee_id, i.parent_issue_id,
-	i.created_by_member_id, i.created_by_run_id,
-	i.number, i.identifier, i.title, i.description, i.rules,
-	i.status, i.priority, i.labels,
-	i.progress_summary, i.progress_summary_updated_at, i.progress_summary_updated_by,
-	i.branch_name, i.runtime_type,
-	i.created_at, i.updated_at`;
-
-const ISSUE_COLUMNS_BARE = ISSUE_COLUMNS.replace(/\bi\./g, '');
+// Qualified-column variant of services/issues.ts ISSUE_COLUMNS_BARE — prefixes
+// every column with the `i.` alias for SELECT ... FROM issues i JOIN ...
+// patterns.
+const ISSUE_COLUMNS = ISSUE_COLUMNS_BARE.replace(/[A-Za-z_][A-Za-z_0-9]*/g, 'i.$&');
 
 const SKILL_COLUMNS = `id, company_id, name, slug, description, content, source_url,
 	content_hash, created_by_member_id, tags, is_active, created_at, updated_at`;
@@ -77,7 +93,7 @@ const APPROVAL_COLUMNS = `id, company_id, type, status, requested_by_member_id,
 // Claude Code harness's ~25k-token tool-result limit. Oversized results would
 // otherwise be persisted to disk by the harness and become unreadable for the
 // agent (the persisted file itself trips the same cap).
-export const MCP_RESULT_BYTE_LIMIT = 24_000;
+export const MCP_RESULT_BYTE_LIMIT = 64_000;
 
 export interface Excerpt {
 	excerpt: string | null;
@@ -187,6 +203,40 @@ function tool(
 		}
 		return { content: [{ type: 'text' as const, text }] };
 	});
+}
+
+const MAX_BATCH_CREATE_ISSUES = 50;
+const MAX_BATCH_AGENT_SYSTEM_PROMPTS = 50;
+
+async function buildMcpCreateIssueCaller(
+	db: PGlite,
+	auth: AuthInfo,
+	companyId: string,
+): Promise<CreateIssueCaller> {
+	const actorMemberId = await resolveActorMemberId(db, auth, companyId);
+	const caller: CreateIssueCaller = {
+		actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Board,
+		actorMemberId,
+	};
+	if (auth.type === AuthType.Agent) {
+		caller.agentMemberId = auth.memberId;
+		caller.runId = auth.runId;
+	}
+	return caller;
+}
+
+function mcpArgsToCreateIssueInput(args: Record<string, unknown>): CreateIssueInput {
+	return {
+		project_id: args.project_id as string,
+		title: args.title as string,
+		description: args.description as string | undefined,
+		assignee_id: args.assignee_id as string | undefined,
+		assignee_slug: args.assignee_slug as string | undefined,
+		parent_issue_id: args.parent_issue_id as string | undefined,
+		priority: args.priority as string | undefined,
+		runtime_type: args.runtime_type as string | undefined,
+		blocked_by_issue_ids: args.blocked_by_issue_ids as string[] | undefined,
+	};
 }
 
 /**
@@ -373,7 +423,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_issue',
-		'Get issue details',
+		"Get issue details, including the ticket's declared blockers (upstream — what this ticket is waiting on) and dependents (downstream — tickets that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this ticket is paused until every blocker reaches a terminal status (done, closed, cancelled). The dependents list shows which teammates' tickets will be auto-unblocked when this ticket is marked terminal — you do not need to @-mention them, the auto-wake handles it.",
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
@@ -385,7 +435,29 @@ export function registerTools(
 				`SELECT ${ISSUE_COLUMNS_BARE} FROM issues i WHERE i.id = $1 AND i.company_id = $2`,
 				[args.issue_id, args.company_id],
 			);
-			return r.rows[0] ?? null;
+			const issue = r.rows[0];
+			if (!issue) return null;
+			const blockers = await db.query(
+				`SELECT d.id AS dependency_id, b.id, b.identifier, b.title, b.status::text AS status
+				 FROM issue_dependencies d
+				 JOIN issues b ON b.id = d.blocked_by_issue_id
+				 WHERE d.issue_id = $1
+				 ORDER BY d.created_at ASC`,
+				[args.issue_id],
+			);
+			const dependents = await db.query(
+				`SELECT d.id AS dependency_id, b.id, b.identifier, b.title, b.status::text AS status
+				 FROM issue_dependencies d
+				 JOIN issues b ON b.id = d.issue_id
+				 WHERE d.blocked_by_issue_id = $1
+				 ORDER BY d.created_at ASC`,
+				[args.issue_id],
+			);
+			return {
+				...(issue as Record<string, unknown>),
+				blockers: blockers.rows,
+				dependents: dependents.rows,
+			};
 		},
 		db,
 	);
@@ -393,7 +465,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_issue',
-		'Create a new issue. Use parent_issue_id for sub-issues — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-issues themselves can have sub-issues, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Create a new issue. Use parent_issue_id for sub-issues — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-issues themselves can have sub-issues, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_issue_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			company_id: z.string().describe('Company ID'),
 			project_id: z.string().describe('Project ID'),
@@ -417,93 +489,105 @@ export function registerTools(
 				.describe(
 					'Pin this issue to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default.',
 				),
+			blocked_by_issue_ids: z
+				.array(z.string())
+				.optional()
+				.describe(
+					'Issue identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this ticket is started. The assignee will not be woken on this ticket until every blocker is satisfied.',
+				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
 			if (denied) return { error: denied };
 
-			// Resolve assignee: prefer assignee_id, fall back to slug lookup
-			let assigneeId = args.assignee_id as string | undefined;
-			if (!assigneeId && args.assignee_slug) {
-				const agent = await db.query<{ id: string }>(
-					`SELECT ma.id FROM member_agents ma
-					 JOIN members m ON m.id = ma.id
-					 WHERE ma.slug = $1 AND m.company_id = $2`,
-					[args.assignee_slug, args.company_id],
-				);
-				if (agent.rows.length === 0)
-					return { error: `Agent with slug '${args.assignee_slug}' not found` };
-				assigneeId = agent.rows[0].id;
+			const companyId = args.company_id as string;
+			const caller = await buildMcpCreateIssueCaller(db, auth, companyId);
+			try {
+				return await createIssue(db, companyId, mcpArgsToCreateIssueInput(args), caller, wsManager);
+			} catch (e) {
+				if (e instanceof CreateIssueError) return { error: e.message };
+				throw e;
 			}
-			if (!assigneeId) return { error: 'Either assignee_id or assignee_slug is required' };
+		},
+		db,
+	);
 
-			const opsCheck = await assertOperationsAssignee(
-				db,
-				args.company_id as string,
-				args.project_id as string,
-				assigneeId,
+	tool(
+		server,
+		'create_issues',
+		`Create multiple issues in one call (max ${MAX_BATCH_CREATE_ISSUES}). Each item has the same shape as create_issue; per-item errors are returned without aborting the rest. Use this when filing a related set of tickets in one go (planning a feature, splitting a project into sub-issues). For a single issue, use create_issue.`,
+		{
+			company_id: z.string().describe('Company ID'),
+			items: z
+				.array(
+					z.object({
+						project_id: z.string().describe('Project ID'),
+						title: z.string().describe('Issue title'),
+						description: z.string().optional().describe('Issue description'),
+						priority: z.string().optional().describe('Priority: low, medium, high, urgent'),
+						assignee_id: z.string().optional().describe('Assignee member ID'),
+						assignee_slug: z
+							.string()
+							.optional()
+							.describe('Assignee agent slug (alternative to assignee_id)'),
+						parent_issue_id: z
+							.string()
+							.optional()
+							.describe(
+								'Parent issue ID (creates a sub-issue). Sub-issues can themselves have sub-issues, but no deeper — depth is capped at 2.',
+							),
+						runtime_type: z
+							.string()
+							.optional()
+							.describe(
+								'Pin this issue to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default.',
+							),
+						blocked_by_issue_ids: z
+							.array(z.string())
+							.optional()
+							.describe(
+								'Issue identifiers (e.g. ["BE-2"]) or UUIDs that must reach a terminal status before this ticket is started.',
+							),
+					}),
+				)
+				.min(1)
+				.max(MAX_BATCH_CREATE_ISSUES)
+				.describe(`Up to ${MAX_BATCH_CREATE_ISSUES} items.`),
+		},
+		async (args, db, auth) => {
+			const companyId = args.company_id as string;
+			const denied = await verifyCompanyAccess(db, auth, companyId);
+			if (denied) return { error: denied };
+
+			const items = args.items as Array<Record<string, unknown>>;
+			const caller = await buildMcpCreateIssueCaller(db, auth, companyId);
+
+			const results = await Promise.all(
+				items.map(async (item, index) => {
+					try {
+						const issue = await createIssue(
+							db,
+							companyId,
+							mcpArgsToCreateIssueInput(item),
+							caller,
+							wsManager,
+						);
+						return { index, ok: true as const, issue };
+					} catch (e) {
+						if (e instanceof CreateIssueError) {
+							return { index, ok: false as const, error: e.message, code: e.code };
+						}
+						log.error('Unexpected error in create_issues batch:', e);
+						return {
+							index,
+							ok: false as const,
+							error: e instanceof Error ? e.message : 'internal_error',
+							code: 'INTERNAL_ERROR' as const,
+						};
+					}
+				}),
 			);
-			if (!opsCheck.ok) return { error: opsCheck.message };
-
-			if (auth.type === AuthType.Agent) {
-				const hierarchyCheck = await assertSubordinateAssignee(db, auth.memberId, assigneeId);
-				if (!hierarchyCheck.ok) return { error: hierarchyCheck.message };
-			}
-
-			if (args.parent_issue_id) {
-				const depthCheck = await assertChildDepthAllowed(
-					db,
-					args.company_id as string,
-					args.parent_issue_id as string,
-				);
-				if (!depthCheck.ok) return { error: depthCheck.message };
-			}
-
-			const { number: num, identifier } = await allocateIssueIdentifier(
-				db,
-				args.project_id as string,
-			);
-			const createdByRunId = auth.type === AuthType.Agent ? auth.runId : null;
-			const r = await db.query<{ id: string }>(
-				`INSERT INTO issues (company_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, runtime_type)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::issue_status, $11::issue_priority, $12::agent_runtime) RETURNING ${ISSUE_COLUMNS_BARE}`,
-				[
-					args.company_id,
-					args.project_id,
-					assigneeId,
-					args.parent_issue_id ?? null,
-					createdByRunId,
-					num,
-					identifier,
-					args.title,
-					args.description ?? '',
-					IssueStatus.Backlog,
-					args.priority ?? IssuePriority.Medium,
-					args.runtime_type ?? null,
-				],
-			);
-
-			// Wake the assigned agent
-			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
-			if (isAgent.rows.length > 0) {
-				createWakeup(db, assigneeId, args.company_id as string, WakeupSource.Assignment, {
-					issue_id: r.rows[0].id,
-				}).catch((e) => log.error('Failed to wake agent:', e));
-			}
-
-			if (args.description) {
-				const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-				recordIssueLinks(
-					db,
-					args.company_id as string,
-					r.rows[0].id,
-					args.description as string,
-					actorMemberId,
-					wsManager,
-				).catch((e) => log.error('Failed to record issue links from description:', e));
-			}
-
-			return r.rows[0];
+			return results;
 		},
 		db,
 	);
@@ -521,7 +605,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'New status (backlog, in_progress, review, approved, blocked, done, closed, cancelled). Once an issue is `closed`, only board members can change its status again.',
+					'New status (backlog, in_progress, review, blocked, done, closed, cancelled). Once an issue is `closed`, only board members can change its status again.',
 				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z.string().optional().describe('New assignee ID'),
@@ -574,6 +658,14 @@ export function registerTools(
 					callerMemberId,
 				);
 				if (!activityCheck.ok) return { error: activityCheck.message };
+			}
+
+			if (args.status !== undefined) {
+				args.status = await coerceTargetStatusForBlockers(
+					db,
+					args.issue_id as string,
+					args.status as string,
+				);
 			}
 
 			if (args.assignee_id) {
@@ -692,6 +784,71 @@ export function registerTools(
 			}
 
 			return r.rows[0];
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'add_issue_blocker',
+		'Declare that one issue blocks another. The downstream ticket will not start an automatic agent run until the blocker reaches a terminal status (done, closed, cancelled). Use this when you discover that a ticket you have been woken on depends on work that has not landed yet — declare the blocker and end your turn; the system will wake you again when the blocker resolves. Cycles are rejected.',
+		{
+			company_id: z.string().describe('Company ID'),
+			issue_id: z.string().describe('Issue identifier or UUID that should be blocked'),
+			blocked_by_issue_id: z.string().describe('Issue identifier or UUID of the upstream blocker'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const companyId = args.company_id as string;
+			const issueId = await resolveIssueId(db, companyId, args.issue_id as string);
+			if (!issueId) return { error: 'Issue not found' };
+			const blockerId = await resolveIssueId(db, companyId, args.blocked_by_issue_id as string);
+			if (!blockerId) return { error: 'Blocking issue not found in this company' };
+			if (blockerId === issueId) return { error: 'An issue cannot block itself' };
+			if (await wouldCreateCycle(db, issueId, blockerId)) {
+				return { error: 'Dependency would create a cycle' };
+			}
+			const r = await db.query(
+				`INSERT INTO issue_dependencies (issue_id, blocked_by_issue_id)
+				 VALUES ($1, $2) ON CONFLICT DO NOTHING
+				 RETURNING id, issue_id, blocked_by_issue_id, created_at`,
+				[issueId, blockerId],
+			);
+			if (r.rows.length === 0) return { error: 'Dependency already exists' };
+			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			await reconcileBlockedStatus(db, companyId, issueId, actorMemberId, wsManager);
+			return r.rows[0];
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'remove_issue_blocker',
+		"Remove a blocker between two issues. Call this when a dependency that was previously declared no longer applies. If removing this dependency clears the downstream ticket's last open blocker, its assignee is woken automatically.",
+		{
+			company_id: z.string().describe('Company ID'),
+			issue_id: z.string().describe('Issue identifier or UUID that is currently blocked'),
+			blocked_by_issue_id: z.string().describe('Issue identifier or UUID of the blocker to remove'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+			const companyId = args.company_id as string;
+			const issueId = await resolveIssueId(db, companyId, args.issue_id as string);
+			if (!issueId) return { error: 'Issue not found' };
+			const blockerId = await resolveIssueId(db, companyId, args.blocked_by_issue_id as string);
+			if (!blockerId) return { error: 'Blocking issue not found' };
+			const r = await db.query(
+				'DELETE FROM issue_dependencies WHERE issue_id = $1 AND blocked_by_issue_id = $2 RETURNING id',
+				[issueId, blockerId],
+			);
+			if (r.rows.length === 0) return { error: 'Dependency not found' };
+			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			await reconcileBlockedStatus(db, companyId, issueId, actorMemberId, wsManager);
+			await wakeIfReady(db, issueId);
+			return { removed: true };
 		},
 		db,
 	);
@@ -867,7 +1024,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_comments',
-		'List comments for an issue. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/issue_link) are always returned whole.',
+		"List comments for an issue. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/issue_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading — when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment.",
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
@@ -901,8 +1058,8 @@ export function registerTools(
 				);
 			}
 			const r = await db.query<Record<string, unknown>>(
-				`SELECT ic.id, ic.issue_id, ic.author_member_id, ic.content_type, ic.content,
-				        ic.chosen_option, ic.created_at,
+				`SELECT ic.id, ic.issue_id, ic.author_member_id, ic.parent_comment_id,
+				        ic.content_type, ic.content, ic.chosen_option, ic.created_at,
 				        COALESCE(ma.title, m.display_name, 'Board') AS author_name
 				 FROM issue_comments ic
 				 LEFT JOIN members m ON m.id = ic.author_member_id
@@ -911,9 +1068,19 @@ export function registerTools(
 				 ORDER BY ic.created_at DESC, ic.id DESC LIMIT 50`,
 				params,
 			);
+			const viewerMemberId = await resolveActorMemberId(db, auth, args.company_id as string);
+			const reactionsByComment = await loadReactionsForIssue(
+				db,
+				args.issue_id as string,
+				viewerMemberId,
+			);
+			const withReactions: Record<string, unknown>[] = r.rows.map((row) => ({
+				...row,
+				reactions: reactionsByComment.get(row.id as string) ?? [],
+			}));
 			const max = args.excerpt_chars as number | undefined;
-			if (max == null) return r.rows;
-			return r.rows.map((row) => {
+			if (max == null) return withReactions;
+			return withReactions.map((row) => {
 				if (row.content_type !== CommentContentType.Text) return row;
 				const content = row.content as { text?: string } | null;
 				const text = content?.text;
@@ -930,14 +1097,106 @@ export function registerTools(
 		db,
 	);
 
+	const reactionKindSchema = z.enum(Object.values(ReactionKind) as [string, ...string[]]);
+
+	tool(
+		server,
+		'add_reaction',
+		'React to a comment without waking its author. Use this to acknowledge mentions or signal "seen / picked up" without forcing the original commenter to run again. Prefer this over a follow-up create_comment when you have nothing substantive to add — comments wake the author, reactions do not. Only react when the situation calls for it: a clean handoff to your own new ticket (✓ on the mention), or a brief acknowledgement that a request landed. If you need the original commenter to read something, post a comment instead.',
+		{
+			company_id: z.string().describe('Company ID'),
+			issue_id: z.string().describe('Issue ID the comment belongs to'),
+			comment_id: z.string().describe('Comment ID to react to'),
+			kind: reactionKindSchema.describe(
+				`Reaction kind. v1 supports: ${Object.values(ReactionKind).join(', ')}`,
+			),
+		},
+		async (args, db, auth) => {
+			const companyId = args.company_id as string;
+			const denied = await verifyCompanyAccess(db, auth, companyId);
+			if (denied) return { error: denied };
+			const memberId = await resolveActorMemberId(db, auth, companyId);
+			if (!memberId) return { error: 'No member identity for caller' };
+			const result = await addCommentReaction({
+				db,
+				companyId,
+				issueId: args.issue_id as string,
+				commentId: args.comment_id as string,
+				kind: args.kind as string,
+				memberId,
+			});
+			if (!result.ok) return { error: result.message };
+			broadcastRowChange(wsManager, wsRoom.company(companyId), 'comment_reactions', 'INSERT', {
+				comment_id: args.comment_id,
+				issue_id: args.issue_id,
+				member_id: memberId,
+				kind: args.kind,
+			});
+			return {
+				comment_id: args.comment_id,
+				kind: args.kind,
+				reactions: result.reactions,
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'remove_reaction',
+		'Remove your own reaction from a comment. Removing a reaction does not wake the comment author.',
+		{
+			company_id: z.string().describe('Company ID'),
+			issue_id: z.string().describe('Issue ID the comment belongs to'),
+			comment_id: z.string().describe('Comment ID to remove the reaction from'),
+			kind: reactionKindSchema.describe(
+				`Reaction kind. v1 supports: ${Object.values(ReactionKind).join(', ')}`,
+			),
+		},
+		async (args, db, auth) => {
+			const companyId = args.company_id as string;
+			const denied = await verifyCompanyAccess(db, auth, companyId);
+			if (denied) return { error: denied };
+			const memberId = await resolveActorMemberId(db, auth, companyId);
+			if (!memberId) return { error: 'No member identity for caller' };
+			const result = await removeCommentReaction({
+				db,
+				companyId,
+				issueId: args.issue_id as string,
+				commentId: args.comment_id as string,
+				kind: args.kind as string,
+				memberId,
+			});
+			if (!result.ok) return { error: result.message };
+			broadcastRowChange(wsManager, wsRoom.company(companyId), 'comment_reactions', 'DELETE', {
+				comment_id: args.comment_id,
+				issue_id: args.issue_id,
+				member_id: memberId,
+				kind: args.kind,
+			});
+			return {
+				comment_id: args.comment_id,
+				kind: args.kind,
+				reactions: result.reactions,
+			};
+		},
+		db,
+	);
+
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to an issue. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Add a comment to an issue. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert. When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
 		{
 			company_id: z.string().describe('Company ID'),
 			issue_id: z.string().describe('Issue ID'),
 			content: z.string().describe('Comment text'),
+			parent_comment_id: z
+				.string()
+				.optional()
+				.describe(
+					'UUID of the comment you are replying to. Setting this wakes that comment\'s author with source=reply and renders this comment as "replying to ..." in the UI.',
+				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -948,11 +1207,28 @@ export function registerTools(
 				args.company_id,
 			]);
 			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this company' };
+			let parentCommentId: string | null = null;
+			if (args.parent_comment_id) {
+				const parentCheck = await db.query(
+					'SELECT 1 FROM issue_comments WHERE id = $1 AND issue_id = $2',
+					[args.parent_comment_id, args.issue_id],
+				);
+				if (parentCheck.rows.length === 0) {
+					return { error: 'parent_comment_id does not belong to this issue' };
+				}
+				parentCommentId = args.parent_comment_id as string;
+			}
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const content = { text: args.content };
 			const r = await db.query<{ id: string }>(
-				`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content) VALUES ($1, $2, $3::comment_content_type, $4::jsonb) RETURNING *`,
-				[args.issue_id, authorMemberId, CommentContentType.Text, JSON.stringify(content)],
+				`INSERT INTO issue_comments (issue_id, author_member_id, parent_comment_id, content_type, content) VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
+				[
+					args.issue_id,
+					authorMemberId,
+					parentCommentId,
+					CommentContentType.Text,
+					JSON.stringify(content),
+				],
 			);
 			await fireCommentWakeups({
 				db,
@@ -963,6 +1239,7 @@ export function registerTools(
 				contentType: CommentContentType.Text,
 				authorMemberId,
 				authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
+				parentCommentId,
 			});
 			recordIssueLinks(
 				db,
@@ -1243,10 +1520,17 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_system_prompt',
-		"Read an agent's system prompt. Accessible by any agent or board user in the same company.",
+		"Read an agent's system prompt. Accessible by any agent or board user in the same company. Returns the resolved role doc by default — `{{…}}` placeholders substituted with the real company name, mission, manager, KB, project docs, and team context — so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.",
 		{
 			company_id: z.string().describe('Company ID'),
 			agent_id: z.string().describe('Target agent member ID'),
+			placeholders: z
+				.boolean()
+				.optional()
+				.default(true)
+				.describe(
+					'When true (default) substitutes `{{…}}` placeholders with real company/team values. When false returns the raw stored template — needed when reading before update_agent_system_prompt so placeholders survive the round-trip.',
+				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
@@ -1264,12 +1548,80 @@ export function registerTools(
 			);
 			if (agent.rows.length === 0) return { error: 'Agent not found in this company' };
 
-			const system_prompt = await getAgentSystemPrompt(
+			const raw = await getAgentSystemPrompt(
 				db,
 				args.company_id as string,
 				args.agent_id as string,
 			);
+			const system_prompt = args.placeholders
+				? await resolveSystemPrompt(db, raw, {
+						companyId: args.company_id as string,
+						agentId: args.agent_id as string,
+						mode: 'placeholders',
+					})
+				: raw;
 			return { ...agent.rows[0], system_prompt };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'get_agent_system_prompts',
+		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. CEO auditing how team_context renders for every agent. For a single prompt, use get_agent_system_prompt.`,
+		{
+			company_id: z.string().describe('Company ID'),
+			items: z
+				.array(
+					z.object({
+						agent_id: z.string().describe('Target agent member ID or slug'),
+						mode: z
+							.enum(['raw', 'placeholders', 'preview'])
+							.optional()
+							.describe(
+								'Resolution depth: raw | placeholders (default) | preview. See tool description.',
+							),
+					}),
+				)
+				.min(1)
+				.max(MAX_BATCH_AGENT_SYSTEM_PROMPTS)
+				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} items.`),
+		},
+		async (args, db, auth) => {
+			const companyId = args.company_id as string;
+			const denied = await verifyCompanyAccess(db, auth, companyId);
+			if (denied) return { error: denied };
+
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
+				return { error: 'Access denied' };
+			}
+
+			const items = args.items as Array<{ agent_id: string; mode?: SystemPromptMode }>;
+			const results = await Promise.all(
+				items.map(async (item, index) => {
+					try {
+						const out = await fetchAgentSystemPromptForBatch(
+							db,
+							companyId,
+							item.agent_id,
+							item.mode ?? 'placeholders',
+						);
+						return { index, ok: true as const, ...out };
+					} catch (e) {
+						if (e instanceof AgentSystemPromptError) {
+							return { index, ok: false as const, agent_id: item.agent_id, error: e.message };
+						}
+						log.error('Unexpected error in get_agent_system_prompts:', e);
+						return {
+							index,
+							ok: false as const,
+							agent_id: item.agent_id,
+							error: e instanceof Error ? e.message : 'internal_error',
+						};
+					}
+				}),
+			);
+			return results;
 		},
 		db,
 	);
@@ -1351,6 +1703,15 @@ export function registerTools(
 			);
 			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
 
+			// Other agents' team_context blobs reference this agent's summary,
+			// so they need to be regenerated to pick up the new wording.
+			enqueueTeamContextTaskForAllAgents(
+				db,
+				args.company_id as string,
+				'summary_updated',
+				args.agent_id as string,
+			).catch((e) => log.error('Failed to enqueue team_context fan-out:', e));
+
 			return { updated: true };
 		},
 		db,
@@ -1384,6 +1745,73 @@ export function registerTools(
 			]);
 
 			return { updated: true };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'set_agent_team_context',
+		"Save the team-relationships context for an agent (≤6000 chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the CEO of the same company.",
+		{
+			company_id: z.string().describe('Company ID'),
+			agent_id: z.string().describe('Target agent member ID'),
+			content: z.string().describe('The new team_context, ≤6000 chars'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			if (!(await isCeoOfCompany(db, auth, args.company_id as string))) {
+				return { error: 'Access denied: only the CEO can update agent team contexts' };
+			}
+
+			const content = String(args.content ?? '').trim();
+			if (content.length === 0) return { error: 'content must be non-empty' };
+			if (content.length > 6000) {
+				return { error: `content too long (${content.length} chars; max 6000)` };
+			}
+
+			const r = await db.query<{ id: string }>(
+				`UPDATE member_agents SET team_context = $1, updated_at = now()
+				 WHERE id = $2 AND id IN (
+				   SELECT m.id FROM members m WHERE m.id = $2 AND m.company_id = $3
+				 )
+				 RETURNING id`,
+				[content, args.agent_id, args.company_id],
+			);
+			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
+
+			return { updated: true };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'get_agent_team_context',
+		"Read an agent's stored team-relationships context. Useful for the CEO when regenerating siblings' contexts. Accessible by any agent or board user in the same company.",
+		{
+			company_id: z.string().describe('Company ID'),
+			agent_id: z.string().describe('Target agent member ID'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyCompanyAccess(db, auth, args.company_id as string);
+			if (denied) return { error: denied };
+
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
+				return { error: 'Access denied' };
+			}
+
+			const r = await db.query<{ title: string; slug: string; team_context: string }>(
+				`SELECT ma.title, ma.slug, ma.team_context
+				 FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE ma.id = $1 AND m.company_id = $2`,
+				[args.agent_id, args.company_id],
+			);
+			if (r.rows.length === 0) return { error: 'Agent not found in this company' };
+
+			return r.rows[0];
 		},
 		db,
 	);

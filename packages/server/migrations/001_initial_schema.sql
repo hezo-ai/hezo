@@ -46,7 +46,7 @@ CREATE TYPE agent_effort AS ENUM ('minimal', 'low', 'medium', 'high', 'max');
 CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
 CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopping', 'stopped', 'error');
-CREATE TYPE issue_status AS ENUM ('backlog', 'in_progress', 'review', 'approved', 'blocked', 'done', 'closed', 'cancelled');
+CREATE TYPE issue_status AS ENUM ('backlog', 'in_progress', 'review', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');
 CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run', 'action', 'credential_request');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
@@ -81,6 +81,7 @@ CREATE TABLE agent_types (
     description            TEXT NOT NULL DEFAULT '',
     role_description       TEXT NOT NULL DEFAULT '',
     default_summary        TEXT NOT NULL DEFAULT '',
+    default_team_context   TEXT NOT NULL DEFAULT '',
     system_prompt_template TEXT NOT NULL DEFAULT '',
     default_effort         agent_effort NOT NULL DEFAULT 'medium',
     heartbeat_interval_min INTEGER NOT NULL DEFAULT 60,
@@ -114,6 +115,7 @@ CREATE TABLE company_types (
     mcp_servers         JSONB NOT NULL DEFAULT '[]'::jsonb,
     mpp_config          JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
     builtin_agent_prompts JSONB NOT NULL DEFAULT '{}'::jsonb,
+    builtin_agent_team_contexts JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -194,6 +196,7 @@ CREATE TABLE member_agents (
     slug                    TEXT NOT NULL,
     role_description        TEXT NOT NULL DEFAULT '',
     summary                 TEXT NOT NULL DEFAULT '',
+    team_context            TEXT NOT NULL DEFAULT '',
     default_effort          agent_effort NOT NULL DEFAULT 'medium',
     heartbeat_interval_min  INTEGER NOT NULL DEFAULT 60,
     monthly_budget_cents    INTEGER NOT NULL DEFAULT 3000,
@@ -541,17 +544,35 @@ CREATE INDEX idx_exec_locks_member ON execution_locks(member_id);
 -------------------------------------------------------------------------------
 
 CREATE TABLE issue_comments (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    issue_id         UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    author_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    content_type     comment_content_type NOT NULL DEFAULT 'text',
-    content          JSONB NOT NULL,
-    chosen_option    JSONB,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    issue_id          UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    author_member_id  UUID REFERENCES members(id) ON DELETE SET NULL,
+    parent_comment_id UUID REFERENCES issue_comments(id) ON DELETE SET NULL,
+    content_type      comment_content_type NOT NULL DEFAULT 'text',
+    content           JSONB NOT NULL,
+    chosen_option     JSONB,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_comments_issue ON issue_comments(issue_id);
 CREATE INDEX idx_comments_author ON issue_comments(author_member_id);
+CREATE INDEX idx_comments_parent ON issue_comments(parent_comment_id)
+    WHERE parent_comment_id IS NOT NULL;
+
+-------------------------------------------------------------------------------
+-- COMMENT REACTIONS
+-------------------------------------------------------------------------------
+
+CREATE TABLE comment_reactions (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    comment_id  UUID NOT NULL REFERENCES issue_comments(id) ON DELETE CASCADE,
+    member_id   UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (comment_id, member_id, kind)
+);
+
+CREATE INDEX idx_comment_reactions_comment ON comment_reactions(comment_id);
 
 -------------------------------------------------------------------------------
 -- TOOL CALLS

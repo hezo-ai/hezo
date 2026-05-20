@@ -26,7 +26,17 @@ import { buildUpdateSet, terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireCompanyAccess } from '../middleware/auth';
-import { enqueueAgentSummaryTask, enqueueTeamSummaryTask } from '../services/description-tasks';
+import {
+	AgentSystemPromptError,
+	fetchAgentSystemPromptForBatch,
+	type SystemPromptMode,
+} from '../services/agent-system-prompts';
+import {
+	enqueueAgentSummaryTask,
+	enqueueAgentTeamContextTask,
+	enqueueTeamContextTaskForAllAgents,
+	enqueueTeamSummaryTask,
+} from '../services/description-tasks';
 import {
 	getDocument,
 	initAgentSystemPrompt,
@@ -34,7 +44,11 @@ import {
 	restoreRevision,
 	upsertDocument,
 } from '../services/documents';
+import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
+
+const MAX_BATCH_AGENT_SYSTEM_PROMPTS = 50;
+const VALID_PROMPT_MODES: ReadonlyArray<SystemPromptMode> = ['raw', 'placeholders', 'preview'];
 
 const log = logger.child('routes');
 
@@ -45,7 +59,7 @@ export const agentsRoutes = new Hono<Env>();
  * `assigned_issue_count` requires the caller to bind terminal statuses via `terminalStatusParams`.
  */
 const AGENT_BASE_COLUMNS = `m.id, m.company_id, m.display_name, m.created_at,
-	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
+	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary, ma.team_context,
 	ma.default_effort,
 	ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
 	ma.touches_code,
@@ -220,6 +234,12 @@ agentsRoutes.post('/companies/:companyId/agents', async (c) => {
 		enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
 			log.error('Failed to enqueue team summary task:', e),
 		);
+		enqueueAgentTeamContextTask(db, companyId, memberId, 'initial').catch((e) =>
+			log.error('Failed to enqueue team_context task for new agent:', e),
+		);
+		enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added', memberId).catch((e) =>
+			log.error('Failed to fan out team_context tasks for existing agents:', e),
+		);
 
 		return ok(c, result.rows[0], 201);
 	} catch (e) {
@@ -352,6 +372,12 @@ agentsRoutes.post('/companies/:companyId/agents/onboard', async (c) => {
 		);
 		enqueueTeamSummaryTask(db, companyId, 'agent_added').catch((e) =>
 			log.error('Failed to enqueue team summary task:', e),
+		);
+		enqueueAgentTeamContextTask(db, companyId, agentRow.id as string, 'initial').catch((e) =>
+			log.error('Failed to enqueue team_context task for bootstrapped agent:', e),
+		);
+		enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added', agentRow.id as string).catch(
+			(e) => log.error('Failed to fan out team_context tasks for existing agents:', e),
 		);
 
 		return ok(c, { agent: agentRow, issue: null, approval: null, bootstrap: true }, 201);
@@ -500,6 +526,95 @@ agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt', async (c
 		memberAgentId: agentId,
 	});
 	return ok(c, doc);
+});
+
+agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt/preview', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+	const agentId = await resolveAgentId(db, companyId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+
+	const doc = await getDocument(db, {
+		type: DocumentType.AgentSystemPrompt,
+		companyId,
+		memberAgentId: agentId,
+	});
+	if (!doc) return err(c, 'NOT_FOUND', 'Agent system prompt not found', 404);
+
+	const resolved = await resolveSystemPrompt(db, doc.content, {
+		companyId,
+		agentId,
+		mode: 'preview',
+	});
+	return ok(c, { content: resolved });
+});
+
+agentsRoutes.post('/companies/:companyId/agents/system-prompts/batch', async (c) => {
+	const access = await requireCompanyAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { companyId } = access;
+
+	const body = await c.req.json<{ items?: unknown }>();
+	const raw = body.items;
+	if (!Array.isArray(raw)) {
+		return err(c, 'INVALID_REQUEST', 'items must be an array', 400);
+	}
+	if (raw.length === 0) {
+		return err(c, 'INVALID_REQUEST', 'items must contain at least one entry', 400);
+	}
+	if (raw.length > MAX_BATCH_AGENT_SYSTEM_PROMPTS) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			`items array may not exceed ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} entries`,
+			400,
+		);
+	}
+
+	const items = raw as Array<Record<string, unknown>>;
+	const results = await Promise.all(
+		items.map(async (item, index) => {
+			const agentRef = typeof item.agent_id === 'string' ? item.agent_id : '';
+			const requestedMode = item.mode;
+			const mode: SystemPromptMode =
+				typeof requestedMode === 'string' &&
+				VALID_PROMPT_MODES.includes(requestedMode as SystemPromptMode)
+					? (requestedMode as SystemPromptMode)
+					: 'placeholders';
+
+			if (!agentRef) {
+				return {
+					index,
+					ok: false as const,
+					agent_id: agentRef,
+					error: 'agent_id is required',
+				};
+			}
+
+			try {
+				const out = await fetchAgentSystemPromptForBatch(db, companyId, agentRef, mode);
+				return { index, ok: true as const, ...out };
+			} catch (e) {
+				if (e instanceof AgentSystemPromptError) {
+					return { index, ok: false as const, agent_id: agentRef, error: e.message };
+				}
+				log.error('Unexpected error in system-prompts/batch:', e);
+				return {
+					index,
+					ok: false as const,
+					agent_id: agentRef,
+					error: e instanceof Error ? e.message : 'internal_error',
+				};
+			}
+		}),
+	);
+
+	return ok(c, results);
 });
 
 agentsRoutes.get('/companies/:companyId/agents/:agentId/system-prompt/revisions', async (c) => {
@@ -660,6 +775,15 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		return ok(c, result.rows[0]);
 	}
 
+	let priorReportsTo: string | null | undefined;
+	if (body.reports_to !== undefined) {
+		const prior = await db.query<{ reports_to: string | null }>(
+			'SELECT reports_to FROM member_agents WHERE id = $1',
+			[agentId],
+		);
+		priorReportsTo = prior.rows[0]?.reports_to ?? null;
+	}
+
 	if (body.title?.trim()) {
 		await db.query('UPDATE members SET display_name = $1 WHERE id = $2', [
 			body.title.trim(),
@@ -703,6 +827,18 @@ agentsRoutes.patch('/companies/:companyId/agents/:agentId', async (c) => {
 		enqueueTeamSummaryTask(db, companyId, 'prompt_updated').catch((e) =>
 			log.error('Failed to enqueue team summary task:', e),
 		);
+		enqueueAgentTeamContextTask(db, companyId, agentId, 'prompt_updated').catch((e) =>
+			log.error('Failed to enqueue team_context task on prompt change:', e),
+		);
+	}
+
+	if (body.reports_to !== undefined && (body.reports_to ?? null) !== (priorReportsTo ?? null)) {
+		enqueueTeamSummaryTask(db, companyId, 'reports_to_changed').catch((e) =>
+			log.error('Failed to enqueue team summary task on reports_to change:', e),
+		);
+		enqueueTeamContextTaskForAllAgents(db, companyId, 'reports_to_changed').catch((e) =>
+			log.error('Failed to fan out team_context tasks on reports_to change:', e),
+		);
 	}
 
 	return ok(c, updatedRow);
@@ -744,6 +880,9 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/disable', async (c) => 
 	enqueueTeamSummaryTask(db, companyId, 'enabled_changed').catch((e) =>
 		log.error('Failed to enqueue team summary task:', e),
 	);
+	enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_removed', agentId).catch((e) =>
+		log.error('Failed to fan out team_context tasks on disable:', e),
+	);
 
 	return ok(c, { admin_status: AgentAdminStatus.Disabled });
 });
@@ -777,6 +916,12 @@ agentsRoutes.post('/companies/:companyId/agents/:agentId/enable', async (c) => {
 
 	enqueueTeamSummaryTask(db, companyId, 'enabled_changed').catch((e) =>
 		log.error('Failed to enqueue team summary task:', e),
+	);
+	enqueueAgentTeamContextTask(db, companyId, agentId, 'agent_added').catch((e) =>
+		log.error('Failed to enqueue team_context task for re-enabled agent:', e),
+	);
+	enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added', agentId).catch((e) =>
+		log.error('Failed to fan out team_context tasks on enable:', e),
 	);
 
 	return ok(c, { admin_status: AgentAdminStatus.Enabled });

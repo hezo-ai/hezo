@@ -1157,7 +1157,7 @@ cancelled → backlog (reopen)
 
 The system enforces these transitions. Invalid transitions return an error.
 
-**Auto-promotion on run start.** When an agent's heartbeat run starts on an issue assigned to that agent, the system promotes `backlog → in_progress` atomically as part of the run-creation transaction (see `createHeartbeatRun` in `services/agent-runner.ts`). The transition is gated on `assignee_id === agent.id` and `status === backlog` — mention-triage runs by non-assignees do not flip the column, and deliberate states (`review`, `blocked`, `approved`) are never overwritten by run start. The change is broadcast on the `issues` row channel so kanban surfaces update in real time.
+**Auto-promotion on run start.** When an agent's heartbeat run starts on an issue assigned to that agent, the system promotes `backlog → in_progress` atomically as part of the run-creation transaction (see `createHeartbeatRun` in `services/agent-runner.ts`). The transition is gated on `assignee_id === agent.id` and `status === backlog` — mention-triage runs by non-assignees do not flip the column, and deliberate states (`review`, `blocked`) are never overwritten by run start. The change is broadcast on the `issues` row channel so kanban surfaces update in real time.
 
 **Inviolable closure rules.** Two server-enforced guards block the `→ done` and `→ closed` transitions when the ticket is not actually finished:
 

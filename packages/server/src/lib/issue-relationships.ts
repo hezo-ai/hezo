@@ -32,7 +32,6 @@ const OPEN_CHILD_STATUSES = [
 	IssueStatus.Backlog,
 	IssueStatus.InProgress,
 	IssueStatus.Review,
-	IssueStatus.Approved,
 	IssueStatus.Blocked,
 	IssueStatus.Done,
 	IssueStatus.Cancelled,

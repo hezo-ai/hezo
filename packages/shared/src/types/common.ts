@@ -64,13 +64,26 @@ export const IssueStatus = {
 	Backlog: 'backlog',
 	InProgress: 'in_progress',
 	Review: 'review',
-	Approved: 'approved',
 	Blocked: 'blocked',
 	Done: 'done',
 	Closed: 'closed',
 	Cancelled: 'cancelled',
 } as const;
 export type IssueStatus = (typeof IssueStatus)[keyof typeof IssueStatus];
+
+export const ISSUE_STATUS_LABELS: Record<IssueStatus, string> = {
+	[IssueStatus.Backlog]: 'Backlog',
+	[IssueStatus.InProgress]: 'In Progress',
+	[IssueStatus.Review]: 'Review',
+	[IssueStatus.Blocked]: 'Blocked',
+	[IssueStatus.Done]: 'Done',
+	[IssueStatus.Closed]: 'Closed',
+	[IssueStatus.Cancelled]: 'Cancelled',
+};
+
+export function formatIssueStatus(status: string): string {
+	return ISSUE_STATUS_LABELS[status as IssueStatus] ?? status;
+}
 
 export const IssuePriority = {
 	Urgent: 'urgent',
@@ -114,11 +127,38 @@ export const ActionCommentKind = {
 } as const;
 export type ActionCommentKind = (typeof ActionCommentKind)[keyof typeof ActionCommentKind];
 
+export const ReactionKind = {
+	Ack: 'ack',
+} as const;
+export type ReactionKind = (typeof ReactionKind)[keyof typeof ReactionKind];
+
+export function isReactionKind(value: unknown): value is ReactionKind {
+	return typeof value === 'string' && (Object.values(ReactionKind) as string[]).includes(value);
+}
+
 export const OAuthRequestReason = {
 	DesignatedRepo: 'designated_repo',
 	RepoAdd: 'repo_add',
 } as const;
 export type OAuthRequestReason = (typeof OAuthRequestReason)[keyof typeof OAuthRequestReason];
+
+export interface BlockedTicket {
+	issue_id: string;
+	identifier: string;
+	title: string;
+	project_slug: string;
+	comment_id: string;
+	comment_created_at: string;
+	agent_name: string | null;
+	agent_slug: string | null;
+	snippet: string;
+}
+
+export interface ScopeStatusResponse {
+	sufficient: boolean;
+	missing: string[];
+	required: string[];
+}
 
 export const ToolCallStatus = { Running: 'running', Success: 'success', Error: 'error' } as const;
 export type ToolCallStatus = (typeof ToolCallStatus)[keyof typeof ToolCallStatus];

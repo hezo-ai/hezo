@@ -11,6 +11,7 @@ export interface Agent {
 	slug: string;
 	role_description: string | null;
 	summary: string | null;
+	team_context: string | null;
 	default_effort: AgentEffort;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
@@ -97,6 +98,17 @@ export function useAgentSystemPrompt(companyId: string, agentId: string) {
 				`/api/companies/${companyId}/agents/${agentId}/system-prompt`,
 			),
 		enabled: !!companyId && !!agentId,
+	});
+}
+
+export function useAgentSystemPromptPreview(companyId: string, agentId: string, enabled: boolean) {
+	return useQuery({
+		queryKey: ['companies', companyId, 'agents', agentId, 'system-prompt', 'preview'],
+		queryFn: () =>
+			api.get<{ content: string }>(
+				`/api/companies/${companyId}/agents/${agentId}/system-prompt/preview`,
+			),
+		enabled: enabled && !!companyId && !!agentId,
 	});
 }
 

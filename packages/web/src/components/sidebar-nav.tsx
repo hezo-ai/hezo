@@ -1,5 +1,6 @@
 import { Link, useMatchRoute } from '@tanstack/react-router';
 import { Plus } from 'lucide-react';
+import { Tooltip } from './ui/tooltip';
 
 interface SidebarNavItem {
 	to: string;
@@ -42,19 +43,20 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 	const matchRoute = useMatchRoute();
 
 	return (
-		<nav className="flex flex-col gap-0.5 sticky top-0">
+		<nav className="flex flex-col gap-0.5">
 			{sections.map((section) => (
 				<div key={section.title ?? `section-${sections.indexOf(section)}`}>
 					{section.title && <SectionHeader section={section} />}
 					{section.items.map((item) => {
 						const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
+						const paddingClass = section.title ? 'pl-5 pr-3 py-1' : 'px-3 py-1.5';
 						return (
 							<Link
 								key={item.to}
 								to={item.to}
 								params={item.params ?? {}}
 								data-testid={item.testId}
-								className={`block text-left text-[13px] px-3 py-1.5 rounded-radius-md transition-colors ${
+								className={`block text-left text-[13px] ${paddingClass} rounded-radius-md transition-colors ${
 									isActive
 										? 'text-text font-medium bg-bg-subtle'
 										: 'text-text-muted hover:text-text hover:bg-bg-subtle'
@@ -131,15 +133,16 @@ function SectionHeader({ section }: { section: SidebarNavSection }) {
 	);
 
 	const addButton = section.onAdd && (
-		<button
-			type="button"
-			onClick={section.onAdd}
-			className="text-text-subtle hover:text-text transition-colors p-0.5 -m-0.5 cursor-pointer shrink-0"
-			title={section.addLabel ?? 'Add'}
-			aria-label={section.addLabel ?? 'Add'}
-		>
-			<Plus className="w-3.5 h-3.5" />
-		</button>
+		<Tooltip content={section.addLabel ?? 'Add'} side="right">
+			<button
+				type="button"
+				onClick={section.onAdd}
+				className="text-text-subtle hover:text-text transition-colors p-0.5 -m-0.5 cursor-pointer shrink-0"
+				aria-label={section.addLabel ?? 'Add'}
+			>
+				<Plus className="w-3.5 h-3.5" />
+			</button>
+		</Tooltip>
 	);
 
 	const titleNode = section.titleTo ? (

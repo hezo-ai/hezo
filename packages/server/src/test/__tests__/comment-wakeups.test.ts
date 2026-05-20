@@ -360,45 +360,10 @@ describe('board POST comments honors wake_assignee opt-in', () => {
 	});
 });
 
-describe('reply wakeups from mention-triggered runs', () => {
-	async function mintTriggeringMention(params: {
-		issueId: string;
-		triggeringCommentId: string;
-		mentionedAgentId: string;
-	}): Promise<{ runId: string; token: string }> {
-		const wakeup = await db.query<{ id: string }>(
-			`INSERT INTO agent_wakeup_requests (member_id, company_id, source, payload)
-			 VALUES ($1, $2, 'mention'::wakeup_source, $3::jsonb)
-			 RETURNING id`,
-			[
-				params.mentionedAgentId,
-				companyId,
-				JSON.stringify({
-					source: WakeupSource.Mention,
-					issue_id: params.issueId,
-					comment_id: params.triggeringCommentId,
-				}),
-			],
-		);
-		const run = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, wakeup_id, status, started_at)
-			 VALUES ($1, $2, $3, $4, 'running'::heartbeat_run_status, now())
-			 RETURNING id`,
-			[params.mentionedAgentId, companyId, params.issueId, wakeup.rows[0].id],
-		);
-		const { signAgentJwt } = await import('../../middleware/auth');
-		const token = await signAgentJwt(
-			masterKeyManager,
-			params.mentionedAgentId,
-			companyId,
-			run.rows[0].id,
-		);
-		return { runId: run.rows[0].id, token };
-	}
-
-	async function insertMentionComment(
+describe('explicit reply wakeups via parent_comment_id', () => {
+	async function insertCommentBy(
 		issueId: string,
-		authorMemberId: string,
+		authorMemberId: string | null,
 		text: string,
 	): Promise<string> {
 		const res = await db.query<{ id: string }>(
@@ -417,6 +382,37 @@ describe('reply wakeups from mention-triggered runs', () => {
 		]);
 	}
 
+	async function postMcpReply(
+		agentToken: string,
+		issueId: string,
+		text: string,
+		parentCommentId: string,
+	): Promise<string> {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: {
+					name: 'create_comment',
+					arguments: {
+						company_id: companyId,
+						issue_id: issueId,
+						content: text,
+						parent_comment_id: parentCommentId,
+					},
+				},
+				id: 1,
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
+		const inserted = JSON.parse(body.result.content[0].text) as { id?: string; error?: string };
+		if (!inserted.id) throw new Error(`MCP reply rejected: ${inserted.error}`);
+		return inserted.id;
+	}
+
 	beforeEach(async () => {
 		await db.query('DELETE FROM agent_wakeup_requests');
 		await db.query('DELETE FROM heartbeat_runs');
@@ -424,24 +420,18 @@ describe('reply wakeups from mention-triggered runs', () => {
 		await setCompanySetting('wake_mentioner_on_reply', true);
 	});
 
-	it('wakes the original mentioner when the mentioned agent replies in the triggering ticket', async () => {
-		const issueId = await insertIssue(ceoId, 'Reply wakeup basic');
-		const triggeringCommentId = await insertMentionComment(
+	it('wakes the parent comment author when an agent replies via MCP create_comment', async () => {
+		const issueId = await insertIssue(ceoId, 'Reply basic MCP');
+		const parentId = await insertCommentBy(issueId, ceoId, 'Please proceed with the plan.');
+		const { token: architectToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			companyId,
 			issueId,
-			ceoId,
-			'@architect please take a look.',
 		);
-		const { token: architectToken } = await mintTriggeringMention({
-			issueId,
-			triggeringCommentId,
-			mentionedAgentId: architectId,
-		});
 
-		const replyId = await postMcpComment(
-			architectToken,
-			issueId,
-			"On it — I've opened a ticket to carry this forward.",
-		);
+		const replyId = await postMcpReply(architectToken, issueId, 'On it.', parentId);
 
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Reply)).toHaveLength(1);
@@ -449,102 +439,127 @@ describe('reply wakeups from mention-triggered runs', () => {
 		expect(reply.member_id).toBe(ceoId);
 		expect(reply.payload.issue_id).toBe(issueId);
 		expect(reply.payload.comment_id).toBe(replyId);
-		expect((reply.payload as Record<string, unknown>).triggering_comment_id).toBe(
-			triggeringCommentId,
-		);
+		expect((reply.payload as Record<string, unknown>).triggering_comment_id).toBe(parentId);
 		expect((reply.payload as Record<string, unknown>).responder_member_id).toBe(architectId);
 	});
 
 	it('also fires when the reply is posted via the agent-api', async () => {
-		const issueId = await insertIssue(ceoId, 'Reply wakeup agent-api');
-		const triggeringCommentId = await insertMentionComment(issueId, ceoId, '@architect thoughts?');
-		const { token: architectToken } = await mintTriggeringMention({
+		const issueId = await insertIssue(ceoId, 'Reply agent-api');
+		const parentId = await insertCommentBy(issueId, ceoId, 'Thoughts?');
+		const { token: architectToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			companyId,
 			issueId,
-			triggeringCommentId,
-			mentionedAgentId: architectId,
-		});
+		);
 
-		const replyId = await postAgentApiComment(architectToken, issueId, 'Acknowledged.');
+		const res = await app.request(`/agent-api/issues/${issueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(architectToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: CommentContentType.Text,
+				content: { text: 'Acknowledged.' },
+				parent_comment_id: parentId,
+			}),
+		});
+		expect(res.status).toBe(201);
+		const replyId = (await res.json()).data.id;
+
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.some((w) => w.source === WakeupSource.Reply && w.member_id === ceoId)).toBe(
 			true,
 		);
 	});
 
-	it('does not wake the mentioner when the reply is posted on a different issue', async () => {
-		const issueA = await insertIssue(ceoId, 'Reply wakeup A');
-		const issueB = await insertIssue(architectId, 'Reply wakeup B (different)');
-		const triggeringCommentId = await insertMentionComment(
-			issueA,
-			ceoId,
-			'@architect please take a look.',
-		);
-		const { token: architectToken } = await mintTriggeringMention({
-			issueId: issueA,
-			triggeringCommentId,
-			mentionedAgentId: architectId,
-		});
+	it('fires when a Board (human) user posts the reply', async () => {
+		const issueId = await insertIssue(architectId, 'Board reply');
+		const parentId = await insertCommentBy(issueId, architectId, 'Update from architect.');
 
-		const replyId = await postMcpComment(architectToken, issueB, 'Picking this up elsewhere.');
+		const res = await app.request(`/api/companies/${companyId}/issues/${issueId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: CommentContentType.Text,
+				content: { text: 'Thanks, please continue.' },
+				parent_comment_id: parentId,
+			}),
+		});
+		expect(res.status).toBe(201);
+		const replyId = (await res.json()).data.id;
+
+		const wakeups = await wakeupsForComment(replyId);
+		const reply = wakeups.find((w) => w.source === WakeupSource.Reply);
+		expect(reply).toBeDefined();
+		expect(reply!.member_id).toBe(architectId);
+		expect((reply!.payload as Record<string, unknown>).responder_member_id).toBe(null);
+	});
+
+	it('does not wake when the parent author is a human (no member id)', async () => {
+		const issueId = await insertIssue(architectId, 'Human parent');
+		const parentId = await insertCommentBy(issueId, null, 'Board user kicked this off.');
+		const { token: architectToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			companyId,
+			issueId,
+		);
+
+		const replyId = await postMcpReply(architectToken, issueId, 'Looking into it.', parentId);
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Reply)).toEqual([]);
 	});
 
-	it('does not wake the mentioner when the original comment author is a Board (human) user', async () => {
-		const issueId = await insertIssue(architectId, 'Board mentioner no wake');
-		const triggeringCommentId = await db.query<{ id: string }>(
-			`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
-			 VALUES ($1, NULL, 'text'::comment_content_type, $2::jsonb)
-			 RETURNING id`,
-			[issueId, JSON.stringify({ text: '@architect please help' })],
-		);
-		const { token: architectToken } = await mintTriggeringMention({
+	it('does not wake when the agent replies to its own earlier comment', async () => {
+		const issueId = await insertIssue(architectId, 'Self reply');
+		const parentId = await insertCommentBy(issueId, architectId, 'First note.');
+		const { token: architectToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			companyId,
 			issueId,
-			triggeringCommentId: triggeringCommentId.rows[0].id,
-			mentionedAgentId: architectId,
-		});
+		);
 
-		const replyId = await postMcpComment(architectToken, issueId, 'Looking into it.');
+		const replyId = await postMcpReply(architectToken, issueId, 'Follow-up note.', parentId);
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Reply)).toEqual([]);
 	});
 
 	it('suppresses reply wakeups when wake_mentioner_on_reply is false', async () => {
 		await setCompanySetting('wake_mentioner_on_reply', false);
-		const issueId = await insertIssue(ceoId, 'Reply wakeup disabled');
-		const triggeringCommentId = await insertMentionComment(
+		const issueId = await insertIssue(ceoId, 'Reply disabled');
+		const parentId = await insertCommentBy(issueId, ceoId, '@architect please take a look.');
+		const { token: architectToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			companyId,
 			issueId,
-			ceoId,
-			'@architect please take a look.',
 		);
-		const { token: architectToken } = await mintTriggeringMention({
-			issueId,
-			triggeringCommentId,
-			mentionedAgentId: architectId,
-		});
 
-		const replyId = await postMcpComment(architectToken, issueId, 'Following up.');
+		const replyId = await postMcpReply(architectToken, issueId, 'Following up.', parentId);
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Reply)).toEqual([]);
 	});
 
-	it('dedupes reply wakeups with mention wakeups when the reply also @-mentions the original author', async () => {
+	it('dedupes reply wakeups with mention wakeups when the reply also @-mentions the parent author', async () => {
 		const issueId = await insertIssue(ceoId, 'Reply overlap mention');
-		const triggeringCommentId = await insertMentionComment(
+		const parentId = await insertCommentBy(issueId, ceoId, 'Please proceed.');
+		const { token: architectToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			companyId,
 			issueId,
-			ceoId,
-			'@architect please take a look.',
 		);
-		const { token: architectToken } = await mintTriggeringMention({
-			issueId,
-			triggeringCommentId,
-			mentionedAgentId: architectId,
-		});
 
-		const replyId = await postMcpComment(
+		const replyId = await postMcpReply(
 			architectToken,
 			issueId,
 			'@ceo done — follow-up in new ticket.',
+			parentId,
 		);
 
 		const wakeups = await wakeupsForComment(replyId);
@@ -553,29 +568,55 @@ describe('reply wakeups from mention-triggered runs', () => {
 		expect(ceoWakeups[0].source).toBe(WakeupSource.Mention);
 	});
 
-	it('does nothing when the run was not a mention-triggered run', async () => {
-		const issueId = await insertIssue(architectId, 'Assignment run');
-		const wakeup = await db.query<{ id: string }>(
-			`INSERT INTO agent_wakeup_requests (member_id, company_id, source, payload)
-			 VALUES ($1, $2, 'assignment'::wakeup_source, $3::jsonb)
-			 RETURNING id`,
-			[architectId, companyId, JSON.stringify({ issue_id: issueId })],
-		);
-		const run = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, company_id, issue_id, wakeup_id, status, started_at)
-			 VALUES ($1, $2, $3, $4, 'running'::heartbeat_run_status, now())
-			 RETURNING id`,
-			[architectId, companyId, issueId, wakeup.rows[0].id],
-		);
-		const { signAgentJwt } = await import('../../middleware/auth');
-		const architectToken = await signAgentJwt(
+	it('rejects parent_comment_id from a different issue', async () => {
+		const issueA = await insertIssue(ceoId, 'Issue A');
+		const issueB = await insertIssue(architectId, 'Issue B');
+		const parentIdInA = await insertCommentBy(issueA, ceoId, 'Comment in A.');
+		const { token: architectToken } = await mintAgentToken(
+			db,
 			masterKeyManager,
 			architectId,
 			companyId,
-			run.rows[0].id,
+			issueB,
 		);
 
-		const replyId = await postMcpComment(architectToken, issueId, 'Progress update.');
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(architectToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: {
+					name: 'create_comment',
+					arguments: {
+						company_id: companyId,
+						issue_id: issueB,
+						content: 'Cross-issue reply.',
+						parent_comment_id: parentIdInA,
+					},
+				},
+				id: 1,
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
+		const result = JSON.parse(body.result.content[0].text) as { id?: string; error?: string };
+		expect(result.error).toContain('parent_comment_id');
+		expect(result.id).toBeUndefined();
+	});
+
+	it('does not fire reply wakeup when parent_comment_id is omitted', async () => {
+		const issueId = await insertIssue(ceoId, 'No parent');
+		await insertCommentBy(issueId, ceoId, '@architect please take a look.');
+		const { token: architectToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			companyId,
+			issueId,
+		);
+
+		const replyId = await postMcpComment(architectToken, issueId, 'Acknowledging.');
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Reply)).toEqual([]);
 	});

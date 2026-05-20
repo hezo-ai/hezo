@@ -1,8 +1,10 @@
 import { ApprovalStatus, ApprovalType, OAuthRequestReason } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { Check, Loader2, X } from 'lucide-react';
+import { useState } from 'react';
 import type { Approval } from '../hooks/use-approvals';
 import { useResolveApproval } from '../hooks/use-approvals';
+import { RepoSetupApprovalModal } from './repo-setup-approval-modal';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 
@@ -221,24 +223,6 @@ function resolveOauthDestination(approval: Approval) {
 	const reason = approval.payload.reason as string | undefined;
 	const companySlug = approval.company_slug;
 
-	if (reason === OAuthRequestReason.DesignatedRepo && approval.payload_issue_identifier) {
-		if (approval.payload_project_slug) {
-			return {
-				to: '/companies/$companyId/projects/$projectId/issues/$issueId' as const,
-				params: {
-					companyId: companySlug,
-					projectId: approval.payload_project_slug,
-					issueId: approval.payload_issue_identifier.toLowerCase(),
-				},
-				hash: 'setup-repo',
-			};
-		}
-		return {
-			to: '/companies/$companyId/issues/$issueId' as const,
-			params: { companyId: companySlug, issueId: approval.payload_issue_identifier.toLowerCase() },
-			hash: 'setup-repo',
-		};
-	}
 	if (reason === OAuthRequestReason.RepoAdd && approval.payload_project_slug) {
 		return {
 			to: '/companies/$companyId/projects/$projectId/settings' as const,
@@ -246,21 +230,43 @@ function resolveOauthDestination(approval: Approval) {
 		};
 	}
 	return {
-		to: '/companies/$companyId/settings' as const,
+		to: '/companies/$companyId/settings/general' as const,
 		params: { companyId: companySlug },
 	};
 }
 
 export function ApprovalCard({ approval, showCompany = false }: ApprovalCardProps) {
 	const resolveApproval = useResolveApproval();
+	const [modalOpen, setModalOpen] = useState(false);
 
 	if (approval.type === ApprovalType.DesignatedRepoRequest) {
+		const reason = approval.payload.reason as string | undefined;
+
+		if (reason === OAuthRequestReason.DesignatedRepo) {
+			return (
+				<>
+					<button
+						type="button"
+						className={`${linkCardClass} w-full text-left`}
+						data-testid="approval-card"
+						onClick={() => setModalOpen(true)}
+					>
+						<CardBody approval={approval} showCompany={showCompany} />
+					</button>
+					<RepoSetupApprovalModal
+						approval={approval}
+						open={modalOpen}
+						onOpenChange={setModalOpen}
+					/>
+				</>
+			);
+		}
+
 		const dest = resolveOauthDestination(approval);
 		return (
 			<Link
 				to={dest.to as never}
 				params={dest.params as never}
-				{...(dest.hash ? { hash: dest.hash } : {})}
 				className={linkCardClass}
 				data-testid="approval-card"
 			>

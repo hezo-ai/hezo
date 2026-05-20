@@ -2,7 +2,11 @@ import type { PGlite } from '@electric-sql/pglite';
 import { AgentEffort } from '@hezo/shared';
 import agentSummaries from './agent-summaries.json' with { type: 'json' };
 
-const summaries: { agents: Record<string, string>; teams: Record<string, string> } = agentSummaries;
+const summaries: {
+	agents: Record<string, string>;
+	teams: Record<string, string>;
+	team_contexts: Record<string, Record<string, string>>;
+} = agentSummaries;
 
 interface AgentTypeDef {
 	name: string;
@@ -163,17 +167,23 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 	const defs = buildAgentTypeDefs();
 	const role = (slug: string) => roleDocs[`software-development/${slug}.md`] ?? '';
 
+	const defaultTeamContextFor = (slug: string): string => {
+		if (slug === 'coach') return summaries.team_contexts.builtin?.coach ?? '';
+		return summaries.team_contexts['software-development']?.[slug] ?? '';
+	};
+
 	for (const def of defs) {
 		await db.query(
 			`INSERT INTO agent_types (name, slug, description, role_description, default_summary,
-			                          system_prompt_template,
+			                          default_team_context, system_prompt_template,
 			                          default_effort, heartbeat_interval_min, monthly_budget_cents,
 			                          touches_code, is_builtin, source)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7::agent_effort, $8, $9, $10, true, 'builtin'::agent_type_source)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, true, 'builtin'::agent_type_source)
 			 ON CONFLICT (slug) DO UPDATE SET
 			     name = EXCLUDED.name,
 			     role_description = EXCLUDED.role_description,
 			     default_summary = EXCLUDED.default_summary,
+			     default_team_context = EXCLUDED.default_team_context,
 			     system_prompt_template = EXCLUDED.system_prompt_template,
 			     default_effort = EXCLUDED.default_effort,
 			     heartbeat_interval_min = EXCLUDED.heartbeat_interval_min,
@@ -186,6 +196,7 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 				def.role_description,
 				def.role_description,
 				summaries.agents[def.slug] ?? '',
+				defaultTeamContextFor(def.slug),
 				role(def.slug),
 				def.default_effort,
 				def.heartbeat_interval_min,
@@ -230,9 +241,10 @@ Issues progress through these statuses:
 1. **Backlog** — captured but not yet picked up
 2. **In Progress** — actively being worked on
 3. **Review** — implementation complete, awaiting QA review
-4. **Approved** — QA-approved, ready to land
-5. **Done** — landed, awaiting Coach post-mortem
-6. **Closed** — Coach review complete
+4. **Done** — QA-approved and landed, awaiting Coach post-mortem
+5. **Closed** — Coach review complete
+
+Approval is conveyed via comment, not status. From **Review**, the ticket either goes back to **In Progress** (more work needed) or forward to **Done** (work complete and approved). The **Blocked** status is reserved for explicit "I'm stuck" signals; agents and the system also use ticket dependencies to gate runs on prerequisites without setting this status.
 
 ## Branching Strategy
 
@@ -347,20 +359,27 @@ Significant technical decisions should be documented with:
 		coach: roleDocs['blank/coach.md'] ?? '',
 	};
 
+	const blankBuiltinTeamContexts = {
+		ceo: summaries.team_contexts.blank?.ceo ?? '',
+		coach: summaries.team_contexts.builtin?.coach ?? '',
+	};
+
 	await db.query(
 		`INSERT INTO company_types (name, description, default_team_summary, is_builtin, source,
-		                            builtin_agent_prompts)
-		 VALUES ($1, $2, $3, true, 'builtin'::company_type_source, $4::jsonb)
+		                            builtin_agent_prompts, builtin_agent_team_contexts)
+		 VALUES ($1, $2, $3, true, 'builtin'::company_type_source, $4::jsonb, $5::jsonb)
 		 ON CONFLICT (name) DO UPDATE SET
 		     description = EXCLUDED.description,
 		     default_team_summary = EXCLUDED.default_team_summary,
 		     source = EXCLUDED.source,
-		     builtin_agent_prompts = EXCLUDED.builtin_agent_prompts`,
+		     builtin_agent_prompts = EXCLUDED.builtin_agent_prompts,
+		     builtin_agent_team_contexts = EXCLUDED.builtin_agent_team_contexts`,
 		[
 			'Blank',
 			'Start from scratch with only the built-in CEO and Coach agents',
 			summaries.teams.Blank ?? '',
 			JSON.stringify(blankBuiltinPrompts),
+			JSON.stringify(blankBuiltinTeamContexts),
 		],
 	);
 }

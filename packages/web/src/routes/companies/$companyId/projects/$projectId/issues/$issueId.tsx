@@ -1,12 +1,21 @@
 import {
 	AgentEffort,
+	AgentRuntimeStatus,
 	CEO_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	IssueStatus,
 	OPERATIONS_PROJECT_SLUG,
 } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { ArrowDown, ChevronDown, Info, Loader2, Plus, Trash2 } from 'lucide-react';
+import {
+	ArrowDown,
+	ChevronDown,
+	CornerDownRight,
+	Loader2,
+	Plus,
+	Reply,
+	Trash2,
+} from 'lucide-react';
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
@@ -15,19 +24,22 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 import { AgentStatusLabel } from '../../../../../../components/agent-status-label';
 import {
 	type CommentData,
+	CommentReactions,
 	CommentRenderer,
 	inlineEventIcon,
 	isInlineEventType,
 } from '../../../../../../components/comment-renderers';
+import { IssueStatusBadge } from '../../../../../../components/issue-status-badge';
 import { MarkdownProse } from '../../../../../../components/markdown-prose';
 import { MentionTextarea } from '../../../../../../components/mention-textarea';
 import { Avatar, avatarColorFromString } from '../../../../../../components/ui/avatar';
 import { Badge } from '../../../../../../components/ui/badge';
 import { Button } from '../../../../../../components/ui/button';
 import { ConfirmDialog } from '../../../../../../components/ui/confirm-dialog';
-import { Tooltip } from '../../../../../../components/ui/tooltip';
+import { InfoTooltip } from '../../../../../../components/ui/info-tooltip';
 import { useAgents } from '../../../../../../hooks/use-agents';
 import {
+	type Comment,
 	useChooseOption,
 	useComments,
 	useCreateComment,
@@ -43,16 +55,18 @@ import {
 	useUpdateIssue,
 } from '../../../../../../hooks/use-issues';
 
-const statusColors: Record<string, string> = {
-	backlog: 'neutral',
-	in_progress: 'warning',
-	review: 'purple',
-	approved: 'success',
-	blocked: 'danger',
-	done: 'success',
-	closed: 'neutral',
-	cancelled: 'neutral',
-};
+function previewCommentText(c: Comment): string {
+	const raw = c.content as unknown;
+	let text = '';
+	if (typeof raw === 'string') text = raw;
+	else if (raw && typeof raw === 'object' && 'text' in raw) {
+		const t = (raw as { text?: unknown }).text;
+		text = typeof t === 'string' ? t : '';
+	}
+	text = text.trim().replace(/\s+/g, ' ');
+	if (!text) return '(non-text comment)';
+	return text.length > 60 ? `${text.slice(0, 60)}…` : text;
+}
 
 const priorityColors: Record<string, string> = {
 	urgent: 'danger',
@@ -112,6 +126,9 @@ function IssueDetailPage() {
 	// leave effort unset on submit and let the server resolve the agent default.
 	const [commentEffort, setCommentEffort] = useState<AgentEffort | null>(null);
 	const [wakeAssignee, setWakeAssignee] = useState(true);
+	const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
+	const commentFormRef = useRef<HTMLFormElement>(null);
+	const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
 	const [subIssueTitle, setSubIssueTitle] = useState('');
 	const [showSubForm, setShowSubForm] = useState(false);
 	const [subIssuesOpen, setSubIssuesOpen] = useState(true);
@@ -130,6 +147,7 @@ function IssueDetailPage() {
 	const [assigneeOpen, setAssigneeOpen] = useState(false);
 	const [closeOpen, setCloseOpen] = useState(false);
 	const [reopenOpen, setReopenOpen] = useState(false);
+	const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
 	const assigneeRef = useRef<HTMLDivElement>(null);
 	const virtuosoRef = useRef<VirtuosoHandle>(null);
 	const didScrollToHashRef = useRef(false);
@@ -177,9 +195,24 @@ function IssueDetailPage() {
 		if (!scrollParent) return;
 		const target = scrollParent;
 		target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
-		for (const delay of [200, 500, 900, 1400]) {
-			setTimeout(() => target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' }), delay);
-		}
+		// Lazy virtualised content keeps growing scrollHeight as new rows render,
+		// so re-anchor at the bottom until the height stops changing or the budget runs out.
+		const deadline = Date.now() + 5000;
+		let lastScrollHeight = -1;
+		let stableTicks = 0;
+		const tick = () => {
+			target.scrollTo({ top: target.scrollHeight, behavior: 'auto' });
+			if (target.scrollHeight === lastScrollHeight) {
+				stableTicks++;
+				if (stableTicks >= 3) return;
+			} else {
+				lastScrollHeight = target.scrollHeight;
+				stableTicks = 0;
+			}
+			if (Date.now() >= deadline) return;
+			setTimeout(tick, 100);
+		};
+		setTimeout(tick, 400);
 	};
 
 	useEffect(() => {
@@ -206,9 +239,11 @@ function IssueDetailPage() {
 		const scrollToHash = () => {
 			const hash = window.location.hash;
 			let idx = -1;
+			let highlightId: string | null = null;
 			if (hash.startsWith('#comment-')) {
 				const targetId = hash.slice('#comment-'.length);
 				idx = comments.findIndex((c) => c.id === targetId);
+				if (idx >= 0) highlightId = targetId;
 			} else if (hash === '#setup-repo') {
 				idx = comments.findIndex((c) => {
 					if (c.content_type !== 'action') return false;
@@ -224,6 +259,15 @@ function IssueDetailPage() {
 						virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center' });
 					}, delay),
 				);
+			}
+			if (highlightId) {
+				setHighlightedCommentId(highlightId);
+				out.push(
+					setTimeout(() => {
+						setHighlightedCommentId(null);
+					}, 2000),
+				);
+				window.history.replaceState(null, '', window.location.pathname + window.location.search);
 			}
 			if (hash === '#setup-repo') {
 				window.history.replaceState(null, '', window.location.pathname + window.location.search);
@@ -265,10 +309,29 @@ function IssueDetailPage() {
 			content: commentText,
 			...(commentEffort ? { effort: commentEffort } : {}),
 			...(issue?.assignee_id ? { wake_assignee: wakeAssignee } : {}),
+			...(replyTarget ? { parent_comment_id: replyTarget.id } : {}),
 		});
 		setCommentText('');
 		setCommentEffort(null);
 		setWakeAssignee(true);
+		setReplyTarget(null);
+	}
+
+	function startReply(c: Comment) {
+		setReplyTarget(c);
+		requestAnimationFrame(() => {
+			commentFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			commentTextareaRef.current?.focus();
+		});
+	}
+
+	function jumpToComment(commentId: string) {
+		return (e: React.MouseEvent) => {
+			e.preventDefault();
+			const target = `#comment-${commentId}`;
+			window.history.pushState(null, '', target);
+			window.dispatchEvent(new HashChangeEvent('hashchange'));
+		};
 	}
 
 	async function handleSubIssue(e: React.FormEvent) {
@@ -293,9 +356,7 @@ function IssueDetailPage() {
 				<h1 className="text-xl font-medium mb-3">{issue.title}</h1>
 
 				<div className="flex flex-wrap gap-1.5 mb-4">
-					<Badge color={statusColors[issue.status] as 'neutral'}>
-						{issue.status.replace('_', ' ')}
-					</Badge>
+					<IssueStatusBadge status={issue.status} />
 					<Badge color={priorityColors[issue.priority] as 'neutral'}>{issue.priority}</Badge>
 					{issue.project_name && issue.project_slug && (
 						<Link
@@ -333,9 +394,16 @@ function IssueDetailPage() {
 					className="bg-bg-subtle rounded-radius-md p-3 mb-3 text-[13px] text-text-muted leading-relaxed"
 				>
 					<div className="flex items-center justify-between mb-1">
-						<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
-							Progress Summary
-						</span>
+						<div className="flex items-center gap-1">
+							<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
+								Progress Summary
+							</span>
+							<InfoTooltip
+								label="About Progress Summary"
+								data-testid="progress-summary-info"
+								content="A running checkpoint of what's been done and what's left on this issue. Agents update it at natural milestones via the update_issue tool. Not auto-included in the agent's prompt — agents fetch it on demand to stay continuous across runs."
+							/>
+						</div>
 						{!editingSummary && (
 							<button
 								type="button"
@@ -389,9 +457,16 @@ function IssueDetailPage() {
 					className="bg-bg-subtle rounded-radius-md p-3 mb-5 text-[13px] text-text-muted leading-relaxed border-l-2 border-accent-blue"
 				>
 					<div className="flex items-center justify-between mb-1">
-						<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
-							Rules
-						</span>
+						<div className="flex items-center gap-1">
+							<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
+								Rules
+							</span>
+							<InfoTooltip
+								label="About Rules"
+								data-testid="rules-info"
+								content="Approach constraints and required workflows for this issue — e.g. 'run the full suite before pushing' or 'consult the architect before touching auth'. Automatically prepended to every agent run's task prompt. Agents can update via the update_issue tool as they discover new rules."
+							/>
+						</div>
 						{!editingRules && (
 							<button
 								type="button"
@@ -516,11 +591,11 @@ function IssueDetailPage() {
 									className="flex items-center gap-2 text-[13px] hover:bg-bg-subtle rounded px-2 py-1"
 									data-testid="sub-issue-item"
 								>
-									<Badge color={statusColors[s.status] as 'neutral'}>
-										{s.status.replace('_', ' ')}
-									</Badge>
-									<span className="font-mono text-xs text-text-muted">{s.identifier}</span>
-									<span className="truncate">{s.title}</span>
+									<IssueStatusBadge status={s.status} className="shrink-0" />
+									<span className="font-mono text-xs text-text-muted shrink-0 whitespace-nowrap">
+										{s.identifier}
+									</span>
+									<span className="truncate min-w-0">{s.title}</span>
 								</Link>
 							))}
 							{subIssues && subIssues.data.length > subIssuesShown && (
@@ -556,18 +631,27 @@ function IssueDetailPage() {
 						</h3>
 						<div className="flex flex-col gap-1">
 							{deps?.map((d) => (
-								<div key={d.id} className="flex items-center gap-2 text-[13px]">
-									<Badge color={statusColors[d.blocked_by_status] as 'neutral'}>
-										{d.blocked_by_status}
-									</Badge>
-									<span className="font-mono text-xs text-text-muted">
-										{d.blocked_by_identifier}
-									</span>
-									<span>{d.blocked_by_title}</span>
+								<div key={d.id} className="flex items-center gap-2">
+									<Link
+										to="/companies/$companyId/projects/$projectId/issues/$issueId"
+										params={{
+											companyId,
+											projectId: d.blocked_by_project_slug,
+											issueId: d.blocked_by_identifier.toLowerCase(),
+										}}
+										className="flex items-center gap-2 text-[13px] hover:bg-bg-subtle rounded px-2 py-1 flex-1 min-w-0"
+										data-testid="blocked-by-item"
+									>
+										<IssueStatusBadge status={d.blocked_by_status} />
+										<span className="font-mono text-xs text-text-muted">
+											{d.blocked_by_identifier}
+										</span>
+										<span className="truncate">{d.blocked_by_title}</span>
+									</Link>
 									<button
 										type="button"
 										onClick={() => removeDep.mutate(d.id)}
-										className="text-text-subtle hover:text-accent-red ml-auto"
+										className="text-text-subtle hover:text-accent-red"
 									>
 										<Trash2 className="w-3 h-3" />
 									</button>
@@ -605,14 +689,16 @@ function IssueDetailPage() {
 										c.content_type === 'action' &&
 										content?.kind === 'setup_repo' &&
 										!c.chosen_option;
+									const isHighlighted = highlightedCommentId === c.id;
 
 									if (isInlineEventType(c.content_type)) {
 										const Icon = inlineEventIcon(commentData);
 										return (
 											<div
 												id={`comment-${c.id}`}
-												className="flex items-start gap-2.5 scroll-mt-20 pb-4"
+												className={`flex items-start gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-accent-blue/60 transition-shadow' : ''}`}
 												data-testid="comment-item"
+												data-comment-highlighted={isHighlighted ? 'true' : undefined}
 											>
 												<div className="w-[26px] h-[26px] flex items-center justify-center shrink-0 text-text-subtle">
 													<Icon className="w-3.5 h-3.5" />
@@ -637,8 +723,9 @@ function IssueDetailPage() {
 									return (
 										<div
 											id={`comment-${c.id}`}
-											className="flex gap-2.5 scroll-mt-20 pb-4"
+											className={`flex gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-accent-blue/60 transition-shadow' : ''}`}
 											data-testid="comment-item"
+											data-comment-highlighted={isHighlighted ? 'true' : undefined}
 											{...(isPendingSetupRepo ? { 'data-setup-repo-anchor': '' } : {})}
 										>
 											<Avatar
@@ -657,6 +744,22 @@ function IssueDetailPage() {
 													<span className="text-[11px] text-text-subtle">
 														{new Date(c.created_at).toLocaleString()}
 													</span>
+													{c.parent_comment_id &&
+														(() => {
+															const parent = comments?.find((x) => x.id === c.parent_comment_id);
+															if (!parent) return null;
+															return (
+																<a
+																	href={`#comment-${parent.id}`}
+																	onClick={jumpToComment(parent.id)}
+																	className="ml-auto flex items-center gap-1 text-[11px] text-text-subtle hover:text-text"
+																	data-testid="replying-to"
+																>
+																	<CornerDownRight className="w-3 h-3" />
+																	replying to {parent.author_name}
+																</a>
+															);
+														})()}
 												</div>
 												<div className="px-3 py-2.5">
 													<CommentRenderer
@@ -669,6 +772,24 @@ function IssueDetailPage() {
 														projectSlug={issueProjectSlug}
 														issueId={issue?.id ?? undefined}
 													/>
+													<div className="flex items-end justify-between gap-2">
+														<div className="min-w-0 flex-1">
+															<CommentReactions
+																comment={commentData}
+																companyId={companyId}
+																issueId={issue?.id}
+															/>
+														</div>
+														<button
+															type="button"
+															onClick={() => startReply(c)}
+															className="mt-2 text-text-subtle hover:text-text shrink-0 p-1 -m-1"
+															aria-label="Reply to comment"
+															data-testid="comment-reply"
+														>
+															<Reply className="w-3.5 h-3.5" />
+														</button>
+													</div>
 												</div>
 											</div>
 										</div>
@@ -678,38 +799,67 @@ function IssueDetailPage() {
 						)}
 					</div>
 
-					<form onSubmit={handleComment} className="flex flex-col gap-2">
-						<MentionTextarea
-							companyId={companyId}
-							projectSlug={issueProjectSlug}
-							value={commentText}
-							onChange={(e) => setCommentText(e.target.value)}
-							placeholder="Add a comment..."
-							className="min-h-[60px]"
-						/>
-						<div className="flex items-center justify-between gap-2">
-							{issue.assignee_id ? (
-								<label className="flex items-center gap-2 text-[13px] text-text-muted cursor-pointer select-none">
-									<input
-										type="checkbox"
-										checked={wakeAssignee}
-										onChange={(e) => setWakeAssignee(e.target.checked)}
-										className="rounded"
-										aria-label="Wake assignee on submit"
-									/>
-									<span>Wake assignee</span>
-								</label>
-							) : (
-								<span />
+					<form ref={commentFormRef} onSubmit={handleComment} className="flex gap-2.5 scroll-mt-20">
+						<div className="w-[26px] shrink-0" aria-hidden />
+						<div className="flex-1 min-w-0 flex flex-col gap-2">
+							<MentionTextarea
+								ref={commentTextareaRef}
+								companyId={companyId}
+								projectSlug={issueProjectSlug}
+								value={commentText}
+								onChange={(e) => setCommentText(e.target.value)}
+								placeholder="Add a comment..."
+								className="min-h-[60px]"
+							/>
+							{replyTarget && (
+								<div
+									className="flex items-center gap-2 text-[13px] text-text-muted"
+									data-testid="reply-indicator"
+								>
+									<CornerDownRight className="w-3.5 h-3.5 shrink-0" />
+									<span className="shrink-0">In response to</span>
+									<a
+										href={`#comment-${replyTarget.id}`}
+										onClick={jumpToComment(replyTarget.id)}
+										className="truncate text-accent-blue hover:underline"
+									>
+										{replyTarget.author_name}: {previewCommentText(replyTarget)}
+									</a>
+									<button
+										type="button"
+										onClick={() => setReplyTarget(null)}
+										className="text-text-subtle hover:text-text shrink-0"
+										aria-label="Clear reply target"
+										data-testid="clear-reply"
+									>
+										<Trash2 className="w-3.5 h-3.5" />
+									</button>
+								</div>
 							)}
-							<Button
-								type="submit"
-								size="sm"
-								disabled={!commentText.trim() || createComment.isPending}
-							>
-								{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-								Comment
-							</Button>
+							<div className="flex items-center justify-between gap-2">
+								{issue.assignee_id ? (
+									<label className="flex items-center gap-2 text-[13px] text-text-muted cursor-pointer select-none">
+										<input
+											type="checkbox"
+											checked={wakeAssignee}
+											onChange={(e) => setWakeAssignee(e.target.checked)}
+											className="rounded"
+											aria-label="Wake assignee on submit"
+										/>
+										<span>Wake assignee</span>
+									</label>
+								) : (
+									<span />
+								)}
+								<Button
+									type="submit"
+									size="sm"
+									disabled={!commentText.trim() || createComment.isPending}
+								>
+									{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+									Comment
+								</Button>
+							</div>
 						</div>
 					</form>
 				</div>
@@ -741,7 +891,7 @@ function IssueDetailPage() {
 					</select>
 				</div>
 
-				<div ref={assigneeRef} className="relative">
+				<div ref={assigneeRef} className="relative" data-testid="issue-assignee">
 					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
 						Assignee
 					</span>
@@ -749,18 +899,13 @@ function IssueDetailPage() {
 						<div className="flex items-center gap-1 w-full text-[13px] text-text px-1 py-0.5">
 							<AgentStatusLabel
 								name={assignedAgent?.title ?? '—'}
-								runtimeStatus={assignedAgent?.runtime_status ?? 'idle'}
+								runtimeStatus={AgentRuntimeStatus.Active}
 								className="flex-1 min-w-0"
 							/>
-							<Tooltip content="Cannot change assignee while an agent is running on this issue">
-								<button
-									type="button"
-									aria-label="Assignee locked: agent is running"
-									className="shrink-0 text-text-subtle hover:text-text transition-colors"
-								>
-									<Info className="w-3.5 h-3.5" />
-								</button>
-							</Tooltip>
+							<InfoTooltip
+								content="Cannot change assignee while an agent is running on this issue"
+								label="Assignee locked: agent is running"
+							/>
 						</div>
 					) : (
 						<>
@@ -771,7 +916,7 @@ function IssueDetailPage() {
 							>
 								<AgentStatusLabel
 									name={assignedAgent?.title ?? '—'}
-									runtimeStatus={assignedAgent?.runtime_status ?? 'idle'}
+									runtimeStatus={AgentRuntimeStatus.Idle}
 									className="flex-1 min-w-0"
 								/>
 								<ChevronDown
@@ -792,7 +937,7 @@ function IssueDetailPage() {
 												a.id === issue.assignee_id ? 'bg-bg-subtle font-medium' : ''
 											}`}
 										>
-											<AgentStatusLabel name={a.title} runtimeStatus={a.runtime_status} />
+											<AgentStatusLabel name={a.title} runtimeStatus={AgentRuntimeStatus.Idle} />
 										</button>
 									))}
 								</div>

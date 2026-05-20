@@ -12,6 +12,7 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 let companyId: string;
 let projectId: string;
+let projectSlug: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -33,7 +34,9 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Main Project', description: 'Test project.' }),
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectBody = (await projectRes.json()).data;
+	projectId = projectBody.id;
+	projectSlug = projectBody.slug;
 
 	const agentRes = await app.request(`/api/companies/${companyId}/agents`, {
 		method: 'POST',
@@ -235,6 +238,8 @@ describe('issues CRUD', () => {
 		expect(listDepsRes.status).toBe(200);
 		const deps = (await listDepsRes.json()).data;
 		expect(deps).toHaveLength(1);
+		expect(deps[0].blocked_by_project_slug).toBe(projectSlug);
+		expect(deps[0].blocked_by_identifier).toBe(issues[1].identifier);
 
 		// Remove dependency
 		const removeRes = await app.request(
@@ -369,7 +374,7 @@ describe('issues CRUD', () => {
 		});
 		expect(res.status).toBe(400);
 		const body = await res.json();
-		expect(body.error.message).toContain('assignee_id is required');
+		expect(body.error.message).toMatch(/assignee_(id|slug)/);
 	});
 
 	it('rejects sub-issue creation without assignee_id', async () => {
@@ -388,7 +393,7 @@ describe('issues CRUD', () => {
 		);
 		expect(res.status).toBe(400);
 		const body = await res.json();
-		expect(body.error.message).toContain('assignee_id is required');
+		expect(body.error.message).toMatch(/assignee_(id|slug)/);
 	});
 
 	it('rejects setting assignee_id to null on update', async () => {

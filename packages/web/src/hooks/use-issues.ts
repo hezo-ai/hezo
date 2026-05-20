@@ -166,6 +166,7 @@ export interface IssueDependency {
 	blocked_by_identifier: string;
 	blocked_by_title: string;
 	blocked_by_status: string;
+	blocked_by_project_slug: string;
 }
 
 export function useIssueDependencies(companyId: string, issueId: string) {

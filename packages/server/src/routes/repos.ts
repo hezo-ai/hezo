@@ -154,6 +154,9 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 		resolvedApprovalId: null,
 		affectedIssueIds: [],
 		deferredWakeups: [],
+		approvalRow: null,
+		updatedCommentRows: [],
+		systemCommentRows: [],
 	};
 
 	await db.query('BEGIN');
@@ -216,6 +219,7 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 					projectSlug: locator.slug,
 				},
 				dataDir,
+				c.get('sshAgentServer'),
 			);
 			const failed = syncRes.failed.find((f) => f.short_name === insertedRepo.short_name);
 			if (failed) {
@@ -251,6 +255,21 @@ reposRoutes.post('/companies/:companyId/projects/:projectId/repos', async (c) =>
 			id: projectId,
 			designated_repo_id: insertedRepo.id,
 		});
+		if (finalizeResult.approvalRow) {
+			broadcastChange(
+				c,
+				wsRoom.company(companyId),
+				'approvals',
+				'UPDATE',
+				finalizeResult.approvalRow,
+			);
+		}
+		for (const row of finalizeResult.updatedCommentRows) {
+			broadcastChange(c, wsRoom.company(companyId), 'issue_comments', 'UPDATE', row);
+		}
+		for (const row of finalizeResult.systemCommentRows) {
+			broadcastChange(c, wsRoom.company(companyId), 'issue_comments', 'INSERT', row);
+		}
 	}
 
 	return ok(

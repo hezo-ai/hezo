@@ -2,7 +2,12 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
-import { enqueueAgentSummaryTask, enqueueTeamSummaryTask } from '../../services/description-tasks';
+import {
+	enqueueAgentSummaryTask,
+	enqueueAgentTeamContextTask,
+	enqueueTeamContextTaskForAllAgents,
+	enqueueTeamSummaryTask,
+} from '../../services/description-tasks';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
@@ -153,8 +158,10 @@ describe('enqueueAgentSummaryTask', () => {
 		expect(result).toBeNull();
 
 		const issues = await db.query<{ n: number }>(
-			`SELECT count(*)::int AS n FROM issues WHERE company_id = $1`,
-			[blankCompanyId],
+			`SELECT count(*)::int AS n FROM issues
+			 WHERE company_id = $1
+			   AND description LIKE $2`,
+			[blankCompanyId, `%target=agent:${blankCeoId}%`],
 		);
 		expect(issues.rows[0].n).toBe(0);
 	});
@@ -215,5 +222,108 @@ describe('enqueueTeamSummaryTask', () => {
 			[companyId],
 		);
 		expect(count.rows[0].n).toBe(1);
+	});
+});
+
+describe('enqueueAgentTeamContextTask', () => {
+	it('creates an agent-scoped team_context issue in Operations assigned to the CEO', async () => {
+		const issueId = await enqueueAgentTeamContextTask(
+			db,
+			companyId,
+			engineerMemberId,
+			'agent_added',
+		);
+		expect(issueId).toBeTruthy();
+
+		const issue = await db.query<{
+			assignee_id: string;
+			title: string;
+			description: string;
+			labels: string[];
+			status: string;
+		}>('SELECT assignee_id, title, description, labels, status FROM issues WHERE id = $1', [
+			issueId,
+		]);
+		const row = issue.rows[0];
+		expect(row.assignee_id).toBe(ceoMemberId);
+		expect(row.title).toContain('team relationships');
+		expect(row.description).toContain(`target=team_context:${engineerMemberId}`);
+		expect(row.description).toContain('set_agent_team_context');
+		expect(row.labels).toEqual(expect.arrayContaining(['internal', 'description-update']));
+		expect(row.status).toBe('backlog');
+	});
+
+	it('dedupes by agent: only one open team_context issue per agent at a time', async () => {
+		const first = await enqueueAgentTeamContextTask(db, companyId, engineerMemberId, 'agent_added');
+		const second = await enqueueAgentTeamContextTask(
+			db,
+			companyId,
+			engineerMemberId,
+			'prompt_updated',
+		);
+		expect(second).toBe(first);
+
+		const count = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM issues
+			 WHERE labels @> '["description-update"]'::jsonb
+			   AND description LIKE $1`,
+			[`%target=team_context:${engineerMemberId}%`],
+		);
+		expect(count.rows[0].n).toBe(1);
+	});
+
+	it('does not dedupe against the agent-summary task for the same agent', async () => {
+		const summaryIssue = await enqueueAgentSummaryTask(db, companyId, engineerMemberId, 'created');
+		const contextIssue = await enqueueAgentTeamContextTask(
+			db,
+			companyId,
+			engineerMemberId,
+			'agent_added',
+		);
+		expect(contextIssue).toBeTruthy();
+		expect(contextIssue).not.toBe(summaryIssue);
+	});
+});
+
+describe('enqueueTeamContextTaskForAllAgents', () => {
+	it('enqueues one issue per enabled agent in the company', async () => {
+		const agents = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.company_id = $1 AND ma.admin_status = 'enabled'`,
+			[companyId],
+		);
+		const enabledAgentCount = agents.rows[0].n;
+
+		await enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added');
+
+		const count = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM issues
+			 WHERE company_id = $1
+			   AND labels @> '["description-update"]'::jsonb
+			   AND description LIKE '%target=team_context:%'`,
+			[companyId],
+		);
+		expect(count.rows[0].n).toBe(enabledAgentCount);
+	});
+
+	it('skips the excepted agent', async () => {
+		await enqueueTeamContextTaskForAllAgents(db, companyId, 'agent_added', engineerMemberId);
+
+		const engineerTasks = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM issues
+			 WHERE labels @> '["description-update"]'::jsonb
+			   AND description LIKE $1`,
+			[`%target=team_context:${engineerMemberId}%`],
+		);
+		expect(engineerTasks.rows[0].n).toBe(0);
+
+		const ceoTasks = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM issues
+			 WHERE labels @> '["description-update"]'::jsonb
+			   AND description LIKE $1`,
+			[`%target=team_context:${ceoMemberId}%`],
+		);
+		expect(ceoTasks.rows[0].n).toBe(1);
 	});
 });

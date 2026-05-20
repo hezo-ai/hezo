@@ -45,6 +45,7 @@ import { skillsRoutes } from './routes/skills';
 import { uiStateRoutes } from './routes/ui-state';
 import { DockerClient } from './services/docker';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
+import { pruneStaleBundledImages } from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
 import { SshAgentServer } from './services/ssh-agent';
@@ -105,6 +106,16 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker = createFakeDockerClient();
 	} else {
 		docker = new DockerClient();
+		try {
+			const outcome = await pruneStaleBundledImages(docker);
+			if (outcome.removed.length > 0 || outcome.skipped.length > 0) {
+				log.info(
+					`bundled-image prune: kept=${outcome.kept.length} removed=${outcome.removed.length} skipped=${outcome.skipped.length}`,
+				);
+			}
+		} catch (err) {
+			log.error('bundled-image prune failed (continuing startup):', err);
+		}
 	}
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
@@ -220,10 +231,11 @@ export function buildApp(
 		return c.text(md, 200, { 'Content-Type': 'text/markdown' });
 	});
 
-	// MCP endpoint (authenticated)
+	// MCP endpoint (authenticated). Only JSON-RPC POST is supported; the
+	// server does not offer an SSE event stream or session lifecycle, so
+	// GET/DELETE return 405 per the MCP Streamable-HTTP transport spec.
 	app.post('/mcp', (c) => handleMcpRequest(c));
-	app.get('/mcp', (c) => handleMcpRequest(c));
-	app.delete('/mcp', (c) => handleMcpRequest(c));
+	app.on(['GET', 'DELETE'], '/mcp', (c) => c.text('Method Not Allowed', 405, { Allow: 'POST' }));
 
 	// Auth routes (token endpoint is public, handled before auth middleware)
 	app.route('/api', authRoutes);
@@ -309,33 +321,14 @@ export function buildApp(
 	return app;
 }
 
-async function cleanupOrphanRunSockets(db: PGlite, dataDir: string): Promise<void> {
+async function cleanupOrphanRunSockets(_db: PGlite, dataDir: string): Promise<void> {
 	const fs = await import('node:fs/promises');
 	const { join } = await import('node:path');
-	const companiesDir = join(dataDir, 'companies');
-	if (!existsSync(companiesDir)) return;
-
-	const liveRunIds = new Set<string>();
-	try {
-		const live = await db.query<{ id: string }>(
-			"SELECT id FROM heartbeat_runs WHERE status = 'running'",
-		);
-		for (const row of live.rows) liveRunIds.add(row.id);
-	} catch {
-		return;
-	}
-
-	for (const company of await fs.readdir(companiesDir).catch(() => [])) {
-		const projectsDir = join(companiesDir, company, 'projects');
-		for (const project of await fs.readdir(projectsDir).catch(() => [])) {
-			const runDir = join(projectsDir, project, 'run');
-			for (const entry of await fs.readdir(runDir).catch(() => [])) {
-				if (!entry.endsWith('.sock')) continue;
-				const runId = entry.replace(/\.sock$/, '').replace(/^bootstrap-/, '');
-				if (liveRunIds.has(runId)) continue;
-				await fs.rm(join(runDir, entry), { force: true }).catch(() => undefined);
-			}
-		}
+	const { getRunSocketDir } = await import('./services/workspace.js');
+	const socketDir = getRunSocketDir(dataDir);
+	for (const entry of await fs.readdir(socketDir).catch(() => [])) {
+		if (!entry.endsWith('.sock')) continue;
+		await fs.rm(join(socketDir, entry), { force: true }).catch(() => undefined);
 	}
 }
 

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, writeFileSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
 
 function spawn(
@@ -33,57 +34,77 @@ function formatGitError(stderr: string): string {
 	return trimmed;
 }
 
-const HTTPS_HOSTS: Record<RepoHostType, string> = {
+const SSH_HOSTS: Record<RepoHostType, string> = {
 	[RepoHostType.GitHub]: 'github.com',
 };
 
-export function buildGitHttpsUrl(hostType: RepoHostType, repoIdentifier: string): string {
-	const host = HTTPS_HOSTS[hostType];
+export function buildGitSshUrl(hostType: RepoHostType, repoIdentifier: string): string {
+	const host = SSH_HOSTS[hostType];
 	if (!host) throw new Error(`Unsupported repo host type: ${hostType}`);
-	return `https://${host}/${repoIdentifier}.git`;
+	return `git@${host}:${repoIdentifier}.git`;
 }
 
-function httpsEnvWithToken(token: string): Record<string, string> {
+/**
+ * Pinned public host keys for github.com, sourced from
+ * https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints.
+ * Used as the `UserKnownHostsFile` for every host-side git op so SSH refuses
+ * to connect to anything that doesn't present one of these keys.
+ */
+const GITHUB_KNOWN_HOSTS = `github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
+`;
+
+/**
+ * Writes the bundled known_hosts to a stable path under `<dataDir>/ssh/known_hosts`
+ * and returns that path. Idempotent — overwrites only if the file is missing
+ * or stale, so multiple concurrent callers converge on the same content.
+ */
+export async function ensureGithubKnownHosts(dataDir: string): Promise<string> {
+	const path = join(dataDir, 'ssh', 'known_hosts');
+	if (!existsSync(path)) {
+		await mkdir(dirname(path), { recursive: true });
+		writeFileSync(path, GITHUB_KNOWN_HOSTS, { mode: 0o644 });
+	}
+	return path;
+}
+
+function sshEnv(sshAuthSock: string, knownHostsPath: string): Record<string, string> {
 	return {
 		GIT_TERMINAL_PROMPT: '0',
-		GIT_ASKPASS: '/bin/echo',
-		GIT_HTTP_EXTRAHEADER: `Authorization: bearer ${token}`,
+		SSH_AUTH_SOCK: sshAuthSock,
+		GIT_SSH_COMMAND: `ssh -o UserKnownHostsFile=${knownHostsPath} -o StrictHostKeyChecking=yes -o IdentityAgent=${sshAuthSock} -o IdentitiesOnly=no`,
 	};
 }
 
 export async function cloneRepo(
 	repoIdentifier: string,
 	targetDir: string,
-	accessToken: string,
+	sshAuthSock: string,
+	knownHostsPath: string,
 	hostType: RepoHostType = RepoHostType.GitHub,
 ): Promise<{ success: boolean; error?: string }> {
-	const url = buildGitHttpsUrl(hostType, repoIdentifier);
-	const { exitCode, stderr } = await spawn(
-		'git',
-		[
-			'-c',
-			`http.${url}.extraHeader=Authorization: bearer ${token(accessToken)}`,
-			'clone',
-			url,
-			targetDir,
-		],
-		{
-			env: httpsEnvWithToken(accessToken),
-			timeout: 120_000,
-		},
-	);
-	if (exitCode !== 0)
-		return { success: false, error: redactToken(formatGitError(stderr), accessToken) };
+	const url = buildGitSshUrl(hostType, repoIdentifier);
+	const { exitCode, stderr } = await spawn('git', ['clone', url, targetDir], {
+		env: sshEnv(sshAuthSock, knownHostsPath),
+		timeout: 120_000,
+	});
+	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
 	return { success: true };
 }
 
-function token(t: string): string {
-	return t;
-}
-
-function redactToken(text: string, accessToken: string): string {
-	if (!accessToken) return text;
-	return text.split(accessToken).join('***');
+export async function fetchRepo(
+	repoDir: string,
+	sshAuthSock: string,
+	knownHostsPath: string,
+): Promise<{ success: boolean; error?: string }> {
+	const { exitCode, stderr } = await spawn('git', ['fetch', '--all', '--prune'], {
+		cwd: repoDir,
+		env: sshEnv(sshAuthSock, knownHostsPath),
+		timeout: 60_000,
+	});
+	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
+	return { success: true };
 }
 
 export async function createWorktree(
@@ -98,20 +119,6 @@ export async function createWorktree(
 	);
 
 	if (exitCode !== 0) return { success: false, error: stderr.trim() };
-	return { success: true };
-}
-
-export async function fetchRepo(
-	repoDir: string,
-	accessToken: string,
-): Promise<{ success: boolean; error?: string }> {
-	const { exitCode, stderr } = await spawn('git', ['fetch', '--all', '--prune'], {
-		cwd: repoDir,
-		env: httpsEnvWithToken(accessToken),
-		timeout: 60_000,
-	});
-	if (exitCode !== 0)
-		return { success: false, error: redactToken(formatGitError(stderr), accessToken) };
 	return { success: true };
 }
 
