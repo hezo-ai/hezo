@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
@@ -15,10 +16,11 @@ export interface ServerTestContext {
 	token: string;
 	masterKeyHex: string;
 	masterKeyManager: MasterKeyManager;
+	dataDir: string;
 }
 
 export async function createTestContext(): Promise<ServerTestContext> {
-	const { app, db, token, masterKeyHex, masterKeyManager } = await createTestApp();
+	const { app, db, token, masterKeyHex, masterKeyManager, dataDir } = await createTestApp();
 
 	const server = createServer(async (req, res) => {
 		const url = `http://localhost${req.url}`;
@@ -49,10 +51,11 @@ export async function createTestContext(): Promise<ServerTestContext> {
 	const port = typeof addr === 'object' && addr ? addr.port : 0;
 	const baseUrl = `http://localhost:${port}`;
 
-	return { db, app, server, baseUrl, port, token, masterKeyHex, masterKeyManager };
+	return { db, app, server, baseUrl, port, token, masterKeyHex, masterKeyManager, dataDir };
 }
 
 export async function destroyTestContext(ctx: ServerTestContext): Promise<void> {
 	await new Promise<void>((resolve) => ctx.server.close(() => resolve()));
 	await safeClose(ctx.db);
+	rmSync(ctx.dataDir, { recursive: true, force: true });
 }

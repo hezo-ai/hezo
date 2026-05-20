@@ -20,6 +20,7 @@ import {
 import type { ComponentType, SVGProps } from 'react';
 import { useState } from 'react';
 import {
+	type CommentAttachment,
 	type ReactionGroup,
 	useAddReaction,
 	useFulfillCredential,
@@ -32,6 +33,7 @@ import {
 	useHeartbeatRun,
 } from '../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../hooks/use-run-logs';
+import { CommentAttachmentThumb } from './comment-attachment-thumb';
 import { LazyMount } from './lazy-mount';
 import { LogViewer } from './log-viewer';
 import { MarkdownProse } from './markdown-prose';
@@ -50,6 +52,7 @@ export interface CommentData {
 	created_at: string;
 	tool_calls?: ToolCall[];
 	reactions?: ReactionGroup[];
+	attachments?: CommentAttachment[];
 }
 
 const REACTION_GLYPH: Record<string, string> = { ack: '✓' };
@@ -400,9 +403,18 @@ function TextComment({
 			? comment.content.text || JSON.stringify(comment.content)
 			: String(comment.content);
 	return (
-		<MarkdownProse testId="text-comment-body" teamId={teamId} projectSlug={projectSlug}>
-			{content}
-		</MarkdownProse>
+		<>
+			<MarkdownProse testId="text-comment-body" teamId={teamId} projectSlug={projectSlug}>
+				{content}
+			</MarkdownProse>
+			{comment.attachments && comment.attachments.length > 0 ? (
+				<div className="mt-2 flex flex-wrap gap-1.5" data-testid="comment-attachments">
+					{comment.attachments.map((a) => (
+						<CommentAttachmentThumb key={a.id} attachment={a} />
+					))}
+				</div>
+			) : null}
+		</>
 	);
 }
 

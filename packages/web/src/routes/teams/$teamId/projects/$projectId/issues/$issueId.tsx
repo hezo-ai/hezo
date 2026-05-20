@@ -22,6 +22,7 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 import { AgentStatusLabel } from '../../../../../../components/agent-status-label';
+import { CommentAttachmentsDrop } from '../../../../../../components/comment-attachments-drop';
 import {
 	type CommentData,
 	CommentReactions,
@@ -127,6 +128,7 @@ function IssueDetailPage() {
 	const [commentEffort, setCommentEffort] = useState<AgentEffort | null>(null);
 	const [wakeAssignee, setWakeAssignee] = useState(true);
 	const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
+	const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
 	const commentFormRef = useRef<HTMLFormElement>(null);
 	const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
 	const [subIssueTitle, setSubIssueTitle] = useState('');
@@ -304,17 +306,19 @@ function IssueDetailPage() {
 
 	async function handleComment(e: React.FormEvent) {
 		e.preventDefault();
-		if (!commentText.trim()) return;
+		if (!commentText.trim() && pendingAttachmentIds.length === 0) return;
 		await createComment.mutateAsync({
 			content: commentText,
 			...(commentEffort ? { effort: commentEffort } : {}),
 			...(issue?.assignee_id ? { wake_assignee: wakeAssignee } : {}),
 			...(replyTarget ? { parent_comment_id: replyTarget.id } : {}),
+			...(pendingAttachmentIds.length > 0 ? { attachment_ids: pendingAttachmentIds } : {}),
 		});
 		setCommentText('');
 		setCommentEffort(null);
 		setWakeAssignee(true);
 		setReplyTarget(null);
+		setPendingAttachmentIds([]);
 	}
 
 	function startReply(c: Comment) {
@@ -802,15 +806,22 @@ function IssueDetailPage() {
 					<form ref={commentFormRef} onSubmit={handleComment} className="flex gap-2.5 scroll-mt-20">
 						<div className="w-[26px] shrink-0" aria-hidden />
 						<div className="flex-1 min-w-0 flex flex-col gap-2">
-							<MentionTextarea
-								ref={commentTextareaRef}
+							<CommentAttachmentsDrop
 								teamId={teamId}
-								projectSlug={issueProjectSlug}
-								value={commentText}
-								onChange={(e) => setCommentText(e.target.value)}
-								placeholder="Add a comment..."
-								className="min-h-[60px]"
-							/>
+								issueId={issue.id}
+								value={pendingAttachmentIds}
+								onChange={setPendingAttachmentIds}
+							>
+								<MentionTextarea
+									ref={commentTextareaRef}
+									teamId={teamId}
+									projectSlug={issueProjectSlug}
+									value={commentText}
+									onChange={(e) => setCommentText(e.target.value)}
+									placeholder="Add a comment..."
+									className="min-h-[60px]"
+								/>
+							</CommentAttachmentsDrop>
 							{replyTarget && (
 								<div
 									className="flex items-center gap-2 text-[13px] text-text-muted"
@@ -854,7 +865,10 @@ function IssueDetailPage() {
 								<Button
 									type="submit"
 									size="sm"
-									disabled={!commentText.trim() || createComment.isPending}
+									disabled={
+										(!commentText.trim() && pendingAttachmentIds.length === 0) ||
+										createComment.isPending
+									}
 								>
 									{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
 									Comment

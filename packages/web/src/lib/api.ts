@@ -23,6 +23,15 @@ class ApiClient {
 		localStorage.removeItem(TOKEN_KEY);
 	}
 
+	private async extractError(res: Response): Promise<ApiError> {
+		const json = await res.json().catch(() => null);
+		return {
+			code: json?.error?.code ?? 'UNKNOWN',
+			message: json?.error?.message ?? res.statusText,
+			status: res.status,
+		};
+	}
+
 	private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
 		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 		if (this.token) headers.Authorization = `Bearer ${this.token}`;
@@ -33,15 +42,7 @@ class ApiClient {
 			body: body !== undefined ? JSON.stringify(body) : undefined,
 		});
 
-		if (!res.ok) {
-			const json = await res.json().catch(() => null);
-			const err: ApiError = {
-				code: json?.error?.code ?? 'UNKNOWN',
-				message: json?.error?.message ?? res.statusText,
-				status: res.status,
-			};
-			throw err;
-		}
+		if (!res.ok) throw await this.extractError(res);
 
 		const json = await res.json();
 		return json.data !== undefined ? json.data : json;
@@ -73,6 +74,15 @@ class ApiClient {
 
 	delete<T>(path: string) {
 		return this.request<T>('DELETE', path);
+	}
+
+	async postForm<T>(path: string, formData: FormData): Promise<T> {
+		const headers: Record<string, string> = {};
+		if (this.token) headers.Authorization = `Bearer ${this.token}`;
+		const res = await fetch(path, { method: 'POST', headers, body: formData });
+		if (!res.ok) throw await this.extractError(res);
+		const json = await res.json();
+		return json.data !== undefined ? json.data : json;
 	}
 }
 

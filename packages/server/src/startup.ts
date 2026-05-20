@@ -20,6 +20,7 @@ import { agentsRoutes } from './routes/agents';
 import { aiProvidersRoutes } from './routes/ai-providers';
 import { apiKeysRoutes } from './routes/api-keys';
 import { approvalsRoutes } from './routes/approvals';
+import { assetsRoutes, publicAssetsRoutes } from './routes/assets';
 import { auditLogRoutes } from './routes/audit-log';
 import { authRoutes } from './routes/auth';
 import { commentsRoutes } from './routes/comments';
@@ -240,6 +241,10 @@ export function buildApp(
 	// Auth routes (token endpoint is public, handled before auth middleware)
 	app.route('/api', authRoutes);
 
+	// Public signed-URL asset read endpoint (sig query is the credential, so it
+	// must be reachable without a bearer token).
+	app.route('/', publicAssetsRoutes);
+
 	// Auth middleware for all /api/* and /agent-api/* routes
 	app.use('/api/*', authMiddleware);
 	app.use('/agent-api/*', authMiddleware);
@@ -256,6 +261,7 @@ export function buildApp(
 	app.route('/api', goalsRoutes);
 	app.route('/api', issuesRoutes);
 	app.route('/api', commentsRoutes);
+	app.route('/api', assetsRoutes);
 	app.route('/api', secretsRoutes);
 	app.route('/api', approvalsRoutes);
 	app.route('/api', costsRoutes);

@@ -105,6 +105,53 @@ export const CommentContentType = {
 } as const;
 export type CommentContentType = (typeof CommentContentType)[keyof typeof CommentContentType];
 
+export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+export const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 3600;
+
+export const ATTACHMENT_EXTENSIONS = {
+	txt: 'text/plain',
+	pdf: 'application/pdf',
+	png: 'image/png',
+	jpg: 'image/jpeg',
+	jpeg: 'image/jpeg',
+	gif: 'image/gif',
+	mp3: 'audio/mpeg',
+	opus: 'audio/opus',
+	aac: 'audio/aac',
+	wav: 'audio/wav',
+	mp4: 'video/mp4',
+	webm: 'video/webm',
+	mov: 'video/quicktime',
+} as const;
+export type AttachmentExtension = keyof typeof ATTACHMENT_EXTENSIONS;
+
+export const ATTACHMENT_MIME_ALLOWLIST: ReadonlySet<string> = new Set(
+	Object.values(ATTACHMENT_EXTENSIONS),
+);
+
+export function extensionOf(filename: string): string | null {
+	const dot = filename.lastIndexOf('.');
+	if (dot < 0 || dot === filename.length - 1) return null;
+	return filename.slice(dot + 1).toLowerCase();
+}
+
+export function isAllowedAttachmentExtension(filename: string): boolean {
+	const ext = extensionOf(filename);
+	return ext !== null && Object.hasOwn(ATTACHMENT_EXTENSIONS, ext);
+}
+
+export function isAllowedAttachmentMime(mime: string): boolean {
+	return ATTACHMENT_MIME_ALLOWLIST.has(mime);
+}
+
+export interface CommentAttachment {
+	id: string;
+	content_type: string;
+	byte_size: number;
+	original_filename: string;
+	url: string;
+}
+
 export const CredentialKind = {
 	ApiKey: 'api_key',
 	SshPrivateKey: 'ssh_private_key',

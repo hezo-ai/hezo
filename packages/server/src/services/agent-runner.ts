@@ -987,6 +987,50 @@ export function formatReactionLine(groups: ReactionGroup[] | undefined): string 
 	return `Reactions: ${parts.join(' · ')}`;
 }
 
+export interface AgentAttachment {
+	id: string;
+	original_filename: string;
+	content_type: string;
+	byte_size: number;
+	path: string;
+}
+
+export const AGENT_ATTACHMENT_DIR = '/workspace/.hezo/assets';
+
+export async function loadAgentAttachmentsForComments(
+	db: PGlite,
+	commentIds: string[],
+): Promise<Map<string, AgentAttachment[]>> {
+	if (commentIds.length === 0) return new Map();
+	const rows = await db.query<{
+		comment_id: string;
+		id: string;
+		original_filename: string;
+		content_type: string;
+		byte_size: number;
+	}>(
+		`SELECT ca.comment_id, a.id, a.original_filename, a.content_type, a.byte_size
+		 FROM comment_attachments ca
+		 JOIN assets a ON a.id = ca.asset_id
+		 WHERE ca.comment_id = ANY($1::uuid[])
+		 ORDER BY ca.created_at ASC`,
+		[commentIds],
+	);
+	const out = new Map<string, AgentAttachment[]>();
+	for (const row of rows.rows) {
+		const list = out.get(row.comment_id) ?? [];
+		list.push({
+			id: row.id,
+			original_filename: row.original_filename,
+			content_type: row.content_type,
+			byte_size: row.byte_size,
+			path: `${AGENT_ATTACHMENT_DIR}/${row.id}`,
+		});
+		out.set(row.comment_id, list);
+	}
+	return out;
+}
+
 function extractCommentText(content: unknown): string {
 	if (!content || typeof content !== 'object') return '';
 	const obj = content as Record<string, unknown>;
@@ -1286,6 +1330,9 @@ export async function buildCoachReviewPrompt(
 		[teamId, issue.id],
 	);
 
+	const commentIds = comments.rows.map((c) => c.id);
+	const attachmentsByComment = await loadAgentAttachmentsForComments(db, commentIds);
+
 	const commentLog = comments.rows
 		.map((c) => {
 			const text =
@@ -1294,7 +1341,12 @@ export async function buildCoachReviewPrompt(
 					: JSON.stringify(c.content);
 			const base = `[${c.created_at}] ${c.author_name} (${c.content_type}): ${text}`;
 			const reactionLine = formatReactionLine(reactionsByComment.get(c.id));
-			return reactionLine ? `${base}\n${reactionLine}` : base;
+			const attachmentLines = (attachmentsByComment.get(c.id) ?? []).map(
+				(a) =>
+					`  attachment: ${a.original_filename} (${a.content_type}, ${a.byte_size} bytes) → ${a.path}`,
+			);
+			const extra = [reactionLine, ...attachmentLines].filter((l): l is string => l !== null);
+			return extra.length > 0 ? `${base}\n${extra.join('\n')}` : base;
 		})
 		.join('\n');
 

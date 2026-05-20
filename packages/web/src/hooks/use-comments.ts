@@ -14,6 +14,14 @@ export interface ReactionGroup {
 	you_reacted: boolean;
 }
 
+export interface CommentAttachment {
+	id: string;
+	content_type: string;
+	byte_size: number;
+	original_filename: string;
+	url: string;
+}
+
 export interface Comment {
 	id: string;
 	issue_id: string;
@@ -27,6 +35,7 @@ export interface Comment {
 	parent_comment_id: string | null;
 	tool_calls?: unknown[];
 	reactions?: ReactionGroup[];
+	attachments?: CommentAttachment[];
 }
 
 export function useComments(teamId: string, issueId: string) {
@@ -47,6 +56,7 @@ export function useCreateComment(teamId: string, issueId: string) {
 			effort?: string;
 			wake_assignee?: boolean;
 			parent_comment_id?: string;
+			attachment_ids?: string[];
 		}) => api.post<Comment>(`/api/teams/${teamId}/issues/${issueId}/comments`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({

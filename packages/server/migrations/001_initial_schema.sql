@@ -767,8 +767,7 @@ CREATE UNIQUE INDEX ai_provider_configs_default_per_provider
 CREATE TABLE assets (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id               UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    provider              TEXT NOT NULL DEFAULT 'local_disk',
-    object_key            TEXT NOT NULL,
+    project_id            UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     content_type          TEXT NOT NULL,
     byte_size             BIGINT NOT NULL,
     sha256                TEXT NOT NULL,
@@ -777,7 +776,7 @@ CREATE TABLE assets (
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_assets_team ON assets(team_id);
+CREATE INDEX idx_assets_project ON assets(project_id);
 
 CREATE TABLE issue_attachments (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -789,6 +788,17 @@ CREATE TABLE issue_attachments (
 );
 
 CREATE INDEX idx_issue_attachments_issue ON issue_attachments(issue_id);
+
+CREATE TABLE comment_attachments (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    comment_id UUID NOT NULL REFERENCES issue_comments(id) ON DELETE CASCADE,
+    asset_id   UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (comment_id, asset_id)
+);
+
+CREATE INDEX idx_comment_attachments_comment ON comment_attachments(comment_id);
 
 -------------------------------------------------------------------------------
 -- SKILLS
