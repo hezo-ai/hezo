@@ -362,6 +362,13 @@ describe('provisionContainer broadcasting', () => {
 		expect(event.action).toBe('UPDATE');
 		expect(event.row.container_status).toBe('running');
 		expect(event.row.container_id).toBe('test-container-123');
+
+		const binds = mockDocker.createContainer.mock.calls[0][1].HostConfig.Binds as string[];
+		const assetsBind = binds.find((b) => b.endsWith(':/workspace/.hezo/assets:ro'));
+		expect(assetsBind).toBeDefined();
+		expect(assetsBind).toContain(
+			`${dataDir}/teams/container-sync-co/projects/${project.slug}/assets`,
+		);
 	});
 
 	it('broadcasts row_change on provisioning error', async () => {

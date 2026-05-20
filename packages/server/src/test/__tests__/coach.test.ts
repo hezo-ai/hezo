@@ -163,6 +163,41 @@ describe('Coach review prompt builder', () => {
 		expect(prompt).toMatch(/following the format defined in your system prompt/i);
 	});
 
+	it('includes attachment paths in the comment log so the agent can read them', async () => {
+		const issueRow = await db.query<IssueInfo>(
+			`SELECT id, identifier, title, description, status::text AS status,
+			        priority::text AS priority, project_id, rules,
+			        parent_issue_id, created_by_run_id
+			 FROM issues WHERE id = $1`,
+			[issueId],
+		);
+
+		const commentRes = await db.query<{ id: string }>(
+			`INSERT INTO issue_comments (issue_id, content_type, content)
+			 VALUES ($1, 'text'::comment_content_type, $2::jsonb)
+			 RETURNING id`,
+			[issueId, JSON.stringify({ text: 'logs attached' })],
+		);
+		const commentId = commentRes.rows[0].id;
+
+		const assetRes = await db.query<{ id: string }>(
+			`INSERT INTO assets (team_id, project_id, content_type, byte_size, sha256, original_filename)
+			 VALUES ($1, $2, 'text/plain', 42, 'abc', 'crash.log')
+			 RETURNING id`,
+			[teamId, projectId],
+		);
+		const assetId = assetRes.rows[0].id;
+
+		await db.query('INSERT INTO comment_attachments (comment_id, asset_id) VALUES ($1, $2)', [
+			commentId,
+			assetId,
+		]);
+
+		const prompt = await buildCoachReviewPrompt(db, 'SYS', issueRow.rows[0], teamId);
+		expect(prompt).toContain('attachment: crash.log');
+		expect(prompt).toContain(`/workspace/.hezo/assets/${assetId}`);
+	});
+
 	it('seeded coach system prompt contains the summary-comment rule from the partial', async () => {
 		const res = await db.query<{ system_prompt_template: string }>(
 			"SELECT system_prompt_template FROM agent_types WHERE slug = 'coach'",

@@ -32,6 +32,7 @@ const TABLE_TO_QUERY_KEY: Record<
 	},
 	issue_comments: (cid) => [['teams', cid, 'issues']],
 	comment_reactions: (cid) => [['teams', cid, 'issues']],
+	comment_attachments: (cid) => [['teams', cid, 'issues']],
 	member_agents: (cid) => [['teams', cid, 'agents']],
 	projects: (cid) => [['teams', cid, 'projects']],
 	approvals: (cid) => [['teams', cid, 'approvals']],

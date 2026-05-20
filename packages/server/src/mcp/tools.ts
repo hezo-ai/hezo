@@ -35,6 +35,7 @@ import { resolveActorMemberId, resolveIssueId } from '../lib/resolve';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import { resolveProjectIssuePrefix } from '../routes/projects';
+import { loadAgentAttachmentsForComments } from '../services/agent-runner';
 import {
 	AgentSystemPromptError,
 	fetchAgentSystemPromptForBatch,
@@ -1074,13 +1075,16 @@ export function registerTools(
 				args.issue_id as string,
 				viewerMemberId,
 			);
-			const withReactions: Record<string, unknown>[] = r.rows.map((row) => ({
+			const commentIds = r.rows.map((row) => row.id as string);
+			const attachmentsByComment = await loadAgentAttachmentsForComments(db, commentIds);
+			const enriched: Record<string, unknown>[] = r.rows.map((row) => ({
 				...row,
 				reactions: reactionsByComment.get(row.id as string) ?? [],
+				attachments: attachmentsByComment.get(row.id as string) ?? [],
 			}));
 			const max = args.excerpt_chars as number | undefined;
-			if (max == null) return withReactions;
-			return withReactions.map((row) => {
+			if (max == null) return enriched;
+			return enriched.map((row) => {
 				if (row.content_type !== CommentContentType.Text) return row;
 				const content = row.content as { text?: string } | null;
 				const text = content?.text;

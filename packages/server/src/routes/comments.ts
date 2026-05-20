@@ -1,6 +1,7 @@
 import { AuthType, CommentContentType, GrantScope, WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
+import { signAssetUrl } from '../lib/asset-urls';
 import { broadcastChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
 import { resolveActorMemberId, resolveIssueId } from '../lib/resolve';
@@ -50,6 +51,16 @@ commentsRoutes.get('/teams/:teamId/issues/:issueId/comments', async (c) => {
 	const reactionsByComment = await loadReactionsForIssue(db, issueId, viewerMemberId);
 	for (const comment of result.rows as Record<string, unknown>[]) {
 		comment.reactions = reactionsByComment.get(comment.id as string) ?? [];
+	}
+
+	const commentIds = (result.rows as Array<{ id: string }>).map((r) => r.id);
+	const attachmentsByComment = await loadAttachmentsForComments(
+		db,
+		commentIds,
+		c.get('masterKeyManager'),
+	);
+	for (const comment of result.rows as Record<string, unknown>[]) {
+		comment.attachments = attachmentsByComment.get(comment.id as string) ?? [];
 	}
 
 	if (includeToolCalls) {
@@ -168,10 +179,40 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments', async (c) => {
 		effort?: string;
 		wake_assignee?: boolean;
 		parent_comment_id?: string | null;
+		attachment_ids?: string[];
 	}>();
 
-	if (!body.content) {
+	const attachmentIds = Array.isArray(body.attachment_ids) ? body.attachment_ids : [];
+	const contentType = body.content_type ?? CommentContentType.Text;
+	const isText = contentType === CommentContentType.Text;
+	if (isText) {
+		const text =
+			typeof body.content === 'string'
+				? body.content
+				: typeof body.content === 'object' && body.content !== null
+					? ((body.content as Record<string, unknown>).text as string | undefined)
+					: undefined;
+		if ((typeof text !== 'string' || text.length === 0) && attachmentIds.length === 0) {
+			return err(c, 'INVALID_REQUEST', 'content or attachment_ids is required', 400);
+		}
+	} else if (!body.content) {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
+	}
+	if (attachmentIds.length > 0) {
+		const matched = await db.query<{ id: string }>(
+			`SELECT id FROM assets
+			 WHERE id = ANY($1::uuid[])
+			   AND project_id = (SELECT project_id FROM issues WHERE id = $2)`,
+			[attachmentIds, issueId],
+		);
+		if (matched.rows.length !== attachmentIds.length) {
+			return err(
+				c,
+				'INVALID_REQUEST',
+				'One or more attachments do not belong to this project',
+				400,
+			);
+		}
 	}
 
 	// Optional per-comment effort override. Board users set this to dial up/down
@@ -202,18 +243,35 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments', async (c) => {
 	// regardless of the body field.
 	const wakeAssignee = auth.type === AuthType.Board && body.wake_assignee === true;
 
-	const result = await db.query<{ id: string }>(
-		`INSERT INTO issue_comments (issue_id, author_member_id, parent_comment_id, content_type, content)
+	await db.query('BEGIN');
+	let result: Awaited<ReturnType<typeof db.query<{ id: string }>>>;
+	try {
+		result = await db.query<{ id: string }>(
+			`INSERT INTO issue_comments (issue_id, author_member_id, parent_comment_id, content_type, content)
      VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
      RETURNING *`,
-		[
-			issueId,
-			authorMemberId,
-			parentCommentId,
-			body.content_type ?? CommentContentType.Text,
-			JSON.stringify(body.content),
-		],
-	);
+			[
+				issueId,
+				authorMemberId,
+				parentCommentId,
+				body.content_type ?? CommentContentType.Text,
+				JSON.stringify(body.content),
+			],
+		);
+
+		if (attachmentIds.length > 0) {
+			const newCommentId = result.rows[0].id;
+			await db.query(
+				`INSERT INTO comment_attachments (comment_id, asset_id)
+				 SELECT $1::uuid, asset FROM UNNEST($2::uuid[]) AS asset`,
+				[newCommentId, attachmentIds],
+			);
+		}
+		await db.query('COMMIT');
+	} catch (e) {
+		await db.query('ROLLBACK');
+		throw e;
+	}
 
 	await fireCommentWakeups({
 		db,
@@ -243,7 +301,20 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments', async (c) => {
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
 	);
-	return ok(c, result.rows[0], 201);
+	if (attachmentIds.length > 0) {
+		broadcastChange(c, wsRoom.team(teamId), 'comment_attachments', 'INSERT', {
+			comment_id: result.rows[0].id,
+			asset_ids: attachmentIds,
+		});
+	}
+
+	const masterKeyManager = c.get('masterKeyManager');
+	const attachments = await loadAttachmentsForComments(db, [result.rows[0].id], masterKeyManager);
+	const created = {
+		...(result.rows[0] as Record<string, unknown>),
+		attachments: attachments.get(result.rows[0].id) ?? [],
+	};
+	return ok(c, created, 201);
 });
 
 commentsRoutes.post('/teams/:teamId/issues/:issueId/comments/:commentId/choose', async (c) => {
@@ -474,6 +545,64 @@ commentsRoutes.post(
 		return ok(c, { secret_id: secretId, comment_id: commentId });
 	},
 );
+
+interface CommentAttachmentRow {
+	comment_id: string;
+	id: string;
+	content_type: string;
+	byte_size: number;
+	original_filename: string;
+}
+
+async function loadAttachmentsForComments(
+	db: import('@electric-sql/pglite').PGlite,
+	commentIds: string[],
+	masterKeyManager: import('../crypto/master-key').MasterKeyManager,
+): Promise<
+	Map<
+		string,
+		Array<{
+			id: string;
+			content_type: string;
+			byte_size: number;
+			original_filename: string;
+			url: string;
+		}>
+	>
+> {
+	if (commentIds.length === 0) return new Map();
+	const rows = await db.query<CommentAttachmentRow>(
+		`SELECT ca.comment_id, a.id, a.content_type, a.byte_size, a.original_filename
+		 FROM comment_attachments ca
+		 JOIN assets a ON a.id = ca.asset_id
+		 WHERE ca.comment_id = ANY($1::uuid[])
+		 ORDER BY ca.created_at ASC`,
+		[commentIds],
+	);
+	const out = new Map<
+		string,
+		Array<{
+			id: string;
+			content_type: string;
+			byte_size: number;
+			original_filename: string;
+			url: string;
+		}>
+	>();
+	for (const row of rows.rows) {
+		const url = await signAssetUrl(row.id, masterKeyManager);
+		const list = out.get(row.comment_id) ?? [];
+		list.push({
+			id: row.id,
+			content_type: row.content_type,
+			byte_size: row.byte_size,
+			original_filename: row.original_filename,
+			url,
+		});
+		out.set(row.comment_id, list);
+	}
+	return out;
+}
 
 function pickSecretCategory(kind: string): string {
 	switch (kind) {

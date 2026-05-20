@@ -5,6 +5,7 @@ import {
 	AgentRuntimeStatus,
 	type AiProvider,
 	COACH_AGENT_SLUG,
+	CommentContentType,
 	ContainerStatus,
 	HeartbeatRunStatus,
 	IssuePriority,
@@ -41,6 +42,13 @@ import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('job-manager');
+
+const MAX_CONSECUTIVE_FAILURE_PINGS = 3;
+const FAILURE_PING_ERROR_MAX_LEN = 500;
+const FAILURE_TERMINAL_STATUSES: HeartbeatRunStatus[] = [
+	HeartbeatRunStatus.Failed,
+	HeartbeatRunStatus.TimedOut,
+];
 
 const cronLog = {
 	trace: (msg: unknown) => log.debug(msg),
@@ -934,6 +942,10 @@ export class JobManager {
 			);
 		}
 
+		if (!result.success && result.heartbeatRunId) {
+			await this.postFailurePing(memberId, agentSlug, issueId, teamId, result.heartbeatRunId);
+		}
+
 		if (
 			agentSlug === COACH_AGENT_SLUG &&
 			result.success &&
@@ -971,6 +983,88 @@ export class JobManager {
 		}
 
 		await this.chainNextIssueWakeup(memberId, issueId, teamId);
+	}
+
+	private async postFailurePing(
+		memberId: string,
+		agentSlug: string,
+		issueId: string,
+		teamId: string,
+		runId: string,
+	): Promise<void> {
+		const { db } = this.deps;
+
+		const runRow = await db.query<{ status: HeartbeatRunStatus; error: string | null }>(
+			'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		const run = runRow.rows[0];
+		if (!run || !FAILURE_TERMINAL_STATUSES.includes(run.status)) return;
+
+		const recent = await db.query<{ status: HeartbeatRunStatus }>(
+			`SELECT status FROM heartbeat_runs
+			 WHERE member_id = $1 AND issue_id = $2 AND status IN ($3::heartbeat_run_status, $4::heartbeat_run_status, $5::heartbeat_run_status)
+			 ORDER BY started_at DESC NULLS LAST
+			 LIMIT $6`,
+			[
+				memberId,
+				issueId,
+				HeartbeatRunStatus.Succeeded,
+				HeartbeatRunStatus.Failed,
+				HeartbeatRunStatus.TimedOut,
+				MAX_CONSECUTIVE_FAILURE_PINGS,
+			],
+		);
+		const streak = recent.rows.every((r) => FAILURE_TERMINAL_STATUSES.includes(r.status));
+		if (recent.rows.length >= MAX_CONSECUTIVE_FAILURE_PINGS && streak) {
+			log.warn(
+				`Suppressing failure ping for agent ${agentSlug} on issue ${issueId}: ${MAX_CONSECUTIVE_FAILURE_PINGS} consecutive failed runs`,
+			);
+			return;
+		}
+
+		const truncatedError = run.error
+			? run.error.length > FAILURE_PING_ERROR_MAX_LEN
+				? `${run.error.slice(0, FAILURE_PING_ERROR_MAX_LEN)}…`
+				: run.error
+			: null;
+
+		const inserted = await db.query<Record<string, unknown>>(
+			`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+			 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
+			 RETURNING *`,
+			[
+				issueId,
+				CommentContentType.System,
+				JSON.stringify({
+					kind: 'run_failed',
+					run_id: runId,
+					status: run.status,
+					error: truncatedError,
+					member_id: memberId,
+					agent_slug: agentSlug,
+				}),
+			],
+		);
+		const commentRow = inserted.rows[0];
+		if (!commentRow) return;
+		const commentId = commentRow.id as string;
+
+		broadcastRowChange(
+			this.deps.wsManager,
+			wsRoom.team(teamId),
+			'issue_comments',
+			'INSERT',
+			commentRow,
+		);
+
+		await createWakeup(db, memberId, teamId, WakeupSource.Automation, {
+			source: WakeupSource.Automation,
+			issue_id: issueId,
+			comment_id: commentId,
+			run_id: runId,
+			reason: 'run_failed',
+		});
 	}
 
 	private async chainNextIssueWakeup(

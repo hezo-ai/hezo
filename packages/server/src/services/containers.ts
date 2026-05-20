@@ -153,11 +153,13 @@ export async function provisionContainer(
 		const workspacePath = join(projectDir, 'workspace');
 		const worktreesPath = join(projectDir, 'worktrees');
 		const previewsPath = join(projectDir, '.previews');
+		const assetsPath = join(projectDir, 'assets');
 
 		const binds = [
 			`${workspacePath}:/workspace:rw`,
 			`${worktreesPath}:/worktrees:rw`,
 			`${previewsPath}:/workspace/.previews:rw`,
+			`${assetsPath}:/workspace/.hezo/assets:ro`,
 		];
 		if (deps.egressCAPath) {
 			binds.push(`${deps.egressCAPath}:${CONTAINER_CA_PATH}:ro`);
