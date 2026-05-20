@@ -1,6 +1,7 @@
 import { formatIssueStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import {
+	AlertTriangle,
 	ArrowRightLeft,
 	Check,
 	ChevronDown,
@@ -124,6 +125,8 @@ function systemEventIcon(kind: string | undefined): LucideIcon {
 			return UserRoundCog;
 		case 'issue_link':
 			return Link2;
+		case 'run_failed':
+			return AlertTriangle;
 		default:
 			return Dot;
 	}
@@ -429,6 +432,40 @@ function SystemComment({ comment, teamId }: { comment: CommentData; teamId?: str
 				<span className="text-xs text-text-muted">
 					{actorName} changed status from <em className="italic">{formatIssueStatus(from)}</em> to{' '}
 					<em className="italic">{formatIssueStatus(to)}</em>
+				</span>
+				{timestamp}
+			</div>
+		);
+	}
+
+	if (content?.kind === 'run_failed') {
+		const agentSlug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
+		const status = typeof content.status === 'string' ? content.status : 'failed';
+		const error =
+			typeof content.error === 'string' && content.error.length > 0 ? content.error : null;
+		const statusLabel = status === 'timed_out' ? 'timed out' : 'failed';
+		const agentNode =
+			agentSlug && teamId ? (
+				<Link
+					to="/teams/$teamId/agents/$agentId"
+					params={{ teamId, agentId: agentSlug }}
+					className="text-xs text-accent-blue-text hover:underline"
+					data-testid="run-failed-agent"
+				>
+					@{agentSlug}
+				</Link>
+			) : (
+				<span className="text-xs text-text-muted">agent</span>
+			);
+		return (
+			<div
+				className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
+				data-testid="run-failed-comment"
+			>
+				<span className="text-xs text-text-muted">
+					Run for {agentNode} {statusLabel}
+					{error ? <span className="text-text-subtle">: {error}</span> : null}. Waking agent to
+					retry.
 				</span>
 				{timestamp}
 			</div>

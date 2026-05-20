@@ -656,6 +656,258 @@ describe('JobManager workflow methods', () => {
 			manager.shutdown();
 		});
 
+		describe('failure pings', () => {
+			async function seedRun(
+				status: HeartbeatRunStatus,
+				error: string | null = null,
+				startedOffsetSeconds = 0,
+			): Promise<string> {
+				const r = await db.query<{ id: string }>(
+					`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, error, started_at)
+					 VALUES ($1, $2, $3, $4::heartbeat_run_status, $5, now() - ($6 || ' seconds')::interval)
+					 RETURNING id`,
+					[agentId, teamId, issueId, status, error, String(startedOffsetSeconds)],
+				);
+				return r.rows[0].id;
+			}
+
+			async function clearRunsAndComments(): Promise<void> {
+				await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+				await db.query(
+					"DELETE FROM issue_comments WHERE issue_id = $1 AND content_type = 'system'",
+					[issueId],
+				);
+				await db.query('DELETE FROM heartbeat_runs WHERE issue_id = $1 AND member_id = $2', [
+					issueId,
+					agentId,
+				]);
+			}
+
+			async function readSystemComments(): Promise<
+				Array<{ content: Record<string, unknown>; author_member_id: string | null }>
+			> {
+				const r = await db.query<{
+					content: Record<string, unknown>;
+					author_member_id: string | null;
+				}>(
+					`SELECT content, author_member_id FROM issue_comments
+					 WHERE issue_id = $1 AND content_type = 'system'
+					 ORDER BY created_at ASC`,
+					[issueId],
+				);
+				return r.rows;
+			}
+
+			it('posts a system comment and automation wakeup on failed status', async () => {
+				await clearRunsAndComments();
+				const runId = await seedRun(HeartbeatRunStatus.Failed, 'The operation timed out.');
+
+				const manager = createJobManager();
+				await (manager as any).onAgentComplete(
+					agentId,
+					'researcher',
+					issueId,
+					teamId,
+					undefined,
+					undefined,
+					{
+						success: false,
+						exitCode: -1,
+						stdout: '',
+						stderr: 'The operation timed out.',
+						heartbeatRunId: runId,
+					},
+				);
+
+				const comments = await readSystemComments();
+				const failurePings = comments.filter((c) => c.content.kind === 'run_failed');
+				expect(failurePings.length).toBe(1);
+				expect(failurePings[0].author_member_id).toBeNull();
+				expect(failurePings[0].content.run_id).toBe(runId);
+				expect(failurePings[0].content.status).toBe(HeartbeatRunStatus.Failed);
+				expect(failurePings[0].content.error).toBe('The operation timed out.');
+				expect(failurePings[0].content.agent_slug).toBe('researcher');
+				expect(failurePings[0].content.member_id).toBe(agentId);
+
+				const wakeups = await db.query<{ source: string; payload: Record<string, unknown> }>(
+					`SELECT source::text AS source, payload FROM agent_wakeup_requests
+					 WHERE member_id = $1 AND source = 'automation'
+					 ORDER BY created_at DESC LIMIT 1`,
+					[agentId],
+				);
+				expect(wakeups.rows.length).toBe(1);
+				expect(wakeups.rows[0].payload).toMatchObject({
+					issue_id: issueId,
+					run_id: runId,
+					reason: 'run_failed',
+				});
+
+				manager.shutdown();
+				await clearRunsAndComments();
+			});
+
+			it('posts the ping on timed_out status', async () => {
+				await clearRunsAndComments();
+				const runId = await seedRun(HeartbeatRunStatus.TimedOut, 'Heartbeat lapsed');
+
+				const manager = createJobManager();
+				await (manager as any).onAgentComplete(
+					agentId,
+					'researcher',
+					issueId,
+					teamId,
+					undefined,
+					undefined,
+					{
+						success: false,
+						exitCode: -1,
+						stdout: '',
+						stderr: '',
+						heartbeatRunId: runId,
+					},
+				);
+
+				const comments = await readSystemComments();
+				const failurePings = comments.filter((c) => c.content.kind === 'run_failed');
+				expect(failurePings.length).toBe(1);
+				expect(failurePings[0].content.status).toBe(HeartbeatRunStatus.TimedOut);
+
+				manager.shutdown();
+				await clearRunsAndComments();
+			});
+
+			it('suppresses the ping after 3 consecutive failures', async () => {
+				await clearRunsAndComments();
+				await seedRun(HeartbeatRunStatus.Failed, 'first', 30);
+				await seedRun(HeartbeatRunStatus.Failed, 'second', 20);
+				const runId = await seedRun(HeartbeatRunStatus.Failed, 'third', 10);
+
+				const manager = createJobManager();
+				await (manager as any).onAgentComplete(
+					agentId,
+					'researcher',
+					issueId,
+					teamId,
+					undefined,
+					undefined,
+					{
+						success: false,
+						exitCode: -1,
+						stdout: '',
+						stderr: 'third',
+						heartbeatRunId: runId,
+					},
+				);
+
+				const comments = await readSystemComments();
+				const failurePings = comments.filter((c) => c.content.kind === 'run_failed');
+				expect(failurePings.length).toBe(0);
+
+				const wakeups = await db.query<{ id: string }>(
+					`SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'automation'`,
+					[agentId],
+				);
+				expect(wakeups.rows.length).toBe(0);
+
+				manager.shutdown();
+				await clearRunsAndComments();
+			});
+
+			it('resumes pinging after an intervening successful run', async () => {
+				await clearRunsAndComments();
+				await seedRun(HeartbeatRunStatus.Failed, 'first', 40);
+				await seedRun(HeartbeatRunStatus.Failed, 'second', 30);
+				await seedRun(HeartbeatRunStatus.Succeeded, null, 20);
+				const runId = await seedRun(HeartbeatRunStatus.Failed, 'after recovery', 10);
+
+				const manager = createJobManager();
+				await (manager as any).onAgentComplete(
+					agentId,
+					'researcher',
+					issueId,
+					teamId,
+					undefined,
+					undefined,
+					{
+						success: false,
+						exitCode: -1,
+						stdout: '',
+						stderr: 'after recovery',
+						heartbeatRunId: runId,
+					},
+				);
+
+				const comments = await readSystemComments();
+				const failurePings = comments.filter((c) => c.content.kind === 'run_failed');
+				expect(failurePings.length).toBe(1);
+
+				manager.shutdown();
+				await clearRunsAndComments();
+			});
+
+			it('does not ping on cancelled status', async () => {
+				await clearRunsAndComments();
+				const runId = await seedRun(HeartbeatRunStatus.Cancelled, null);
+
+				const manager = createJobManager();
+				await (manager as any).onAgentComplete(
+					agentId,
+					'researcher',
+					issueId,
+					teamId,
+					undefined,
+					undefined,
+					{
+						success: false,
+						exitCode: -1,
+						stdout: '',
+						stderr: 'cancelled',
+						heartbeatRunId: runId,
+					},
+				);
+
+				const comments = await readSystemComments();
+				expect(comments.filter((c) => c.content.kind === 'run_failed').length).toBe(0);
+
+				const wakeups = await db.query<{ id: string }>(
+					`SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'automation'`,
+					[agentId],
+				);
+				expect(wakeups.rows.length).toBe(0);
+
+				manager.shutdown();
+				await clearRunsAndComments();
+			});
+
+			it('does not ping on successful runs', async () => {
+				await clearRunsAndComments();
+				const runId = await seedRun(HeartbeatRunStatus.Succeeded, null);
+
+				const manager = createJobManager();
+				await (manager as any).onAgentComplete(
+					agentId,
+					'researcher',
+					issueId,
+					teamId,
+					undefined,
+					undefined,
+					{
+						success: true,
+						exitCode: 0,
+						stdout: '',
+						stderr: '',
+						heartbeatRunId: runId,
+					},
+				);
+
+				const comments = await readSystemComments();
+				expect(comments.filter((c) => c.content.kind === 'run_failed').length).toBe(0);
+
+				manager.shutdown();
+				await clearRunsAndComments();
+			});
+		});
+
 		it('chains a wakeup for the next assigned non-terminal issue', async () => {
 			const manager = createJobManager();
 
