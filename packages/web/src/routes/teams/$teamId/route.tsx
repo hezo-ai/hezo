@@ -11,7 +11,7 @@ function TeamLayout() {
 
 	useEffect(() => {
 		if (error && (error as { status?: number }).status === 404) {
-			navigate({ to: '/teams', replace: true });
+			navigate({ to: '/', replace: true });
 		}
 	}, [error, navigate]);
 

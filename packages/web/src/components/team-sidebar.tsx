@@ -1,5 +1,6 @@
 import { AgentAdminStatus, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
-import { useNavigate } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
+import { Settings } from 'lucide-react';
 import { useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useProjects } from '../hooks/use-projects';
@@ -8,6 +9,7 @@ import { useUiState, useUpdateUiState } from '../hooks/use-ui-state';
 import { AgentStatusLabel } from './agent-status-label';
 import { CreateProjectDialog } from './create-project-dialog';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
+import { ThemeSwitcher } from './ui/theme-switcher';
 
 interface TeamSidebarProps {
 	teamId: string;
@@ -138,7 +140,22 @@ export function TeamSidebar({ teamId }: TeamSidebarProps) {
 
 	return (
 		<>
-			<SidebarNav sections={sections} />
+			<div className="flex flex-col h-full">
+				<div className="flex-1">
+					<SidebarNav sections={sections} />
+				</div>
+				<div className="mt-2 pt-2 px-3 border-t border-border flex items-center justify-between gap-2">
+					<Link
+						to="/settings"
+						className="inline-flex items-center gap-2 px-2 py-1 rounded-radius-md text-[13px] text-text-muted hover:text-text hover:bg-bg-subtle transition-colors"
+						title="Settings"
+					>
+						<Settings className="w-4 h-4" />
+						<span>Settings</span>
+					</Link>
+					<ThemeSwitcher />
+				</div>
+			</div>
 			<CreateProjectDialog
 				teamId={teamId}
 				open={createProjectOpen}

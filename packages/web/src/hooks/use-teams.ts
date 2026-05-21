@@ -24,26 +24,11 @@ export interface Team {
 	created_at: string;
 }
 
-export function useTeams() {
-	return useQuery({
-		queryKey: ['teams'],
-		queryFn: () => api.get<Team[]>('/api/teams'),
-	});
-}
-
 export function useTeam(id: string, enabled = true) {
 	return useQuery({
 		queryKey: ['teams', id],
 		queryFn: () => api.get<Team>(`/api/teams/${id}`),
 		enabled,
-	});
-}
-
-export function useCreateTeam() {
-	return useMutation({
-		mutationFn: (data: { name: string; description?: string; template_id?: string }) =>
-			api.post<Team>('/api/teams', data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams'] }),
 	});
 }
 
@@ -59,12 +44,5 @@ export function useUpdateTeam(id: string) {
 			queryClient.setQueryData(['teams', id], updated);
 			queryClient.invalidateQueries({ queryKey: ['teams'] });
 		},
-	});
-}
-
-export function useDeleteTeam() {
-	return useMutation({
-		mutationFn: (id: string) => api.delete(`/api/teams/${id}`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams'] }),
 	});
 }

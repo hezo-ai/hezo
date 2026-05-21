@@ -1,9 +1,11 @@
 import { expect, test } from './fixtures';
 
-test('invalid team slug redirects to /teams', async ({ authedPage }) => {
+const DEFAULT_TEAM_SLUG = 'default';
+
+test('invalid team slug redirects to default team', async ({ authedPage }) => {
 	await authedPage.goto('/teams/does-not-exist-abc123/issues');
-	await authedPage.waitForURL('**/teams', { timeout: 20000 });
-	expect(new URL(authedPage.url()).pathname).toBe('/teams');
+	await authedPage.waitForURL(`**/teams/${DEFAULT_TEAM_SLUG}/**`, { timeout: 20000 });
+	expect(new URL(authedPage.url()).pathname.startsWith(`/teams/${DEFAULT_TEAM_SLUG}`)).toBe(true);
 });
 
 test('fresh instance (unset master key) redirects deep URL to /', async ({ page }) => {
