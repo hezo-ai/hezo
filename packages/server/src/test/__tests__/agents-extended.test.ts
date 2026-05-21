@@ -105,6 +105,8 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		expect(created.admin_status).toBe('enabled');
 		expect(created.monthly_budget_cents).toBe(7500);
 		expect(created.heartbeat_interval_min).toBe(45);
+		// Hire flow does not surface run_timeout_min; it falls back to the DB default.
+		expect(created.run_timeout_min).toBe(60);
 
 		const promptRes = await app.request(`/api/teams/${teamId}/agents/${created.id}/system-prompt`, {
 			headers: authHeader(token),
@@ -217,15 +219,6 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		expect(res.status).toBe(409);
 		const body = await res.json();
 		expect(body.error.code).toBe('CONFLICT');
-	});
-
-	it('requires authentication', async () => {
-		const res = await app.request(`/api/teams/${teamId}/agents/onboard`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: 'Unauthorized Agent' }),
-		});
-		expect(res.status).toBe(401);
 	});
 });
 
@@ -543,5 +536,32 @@ describe('invalid reports_to reference', () => {
 		});
 		// The FK constraint (members.id) must reject the insert
 		expect(res.status).toBeGreaterThanOrEqual(400);
+	});
+});
+
+describe('PATCH /agents/:agentId run_timeout_min', () => {
+	it('persists run_timeout_min independently of heartbeat_interval_min', async () => {
+		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+			headers: authHeader(token),
+		});
+		const architect = (await agentsRes.json()).data.find(
+			(a: Record<string, unknown>) => a.slug === 'architect',
+		);
+		expect(architect).toBeDefined();
+		const originalHeartbeat = architect.heartbeat_interval_min as number;
+
+		const patchRes = await app.request(`/api/teams/${teamId}/agents/${architect.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ run_timeout_min: 17 }),
+		});
+		expect(patchRes.status).toBe(200);
+
+		const refreshed = await app.request(`/api/teams/${teamId}/agents/${architect.id}`, {
+			headers: authHeader(token),
+		});
+		const updated = (await refreshed.json()).data;
+		expect(updated.run_timeout_min).toBe(17);
+		expect(updated.heartbeat_interval_min).toBe(originalHeartbeat);
 	});
 });

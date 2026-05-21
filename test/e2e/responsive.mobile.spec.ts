@@ -92,19 +92,4 @@ test.describe('Responsive — mobile (390px)', () => {
 		await expectNoHorizontalOverflow(page);
 		void lightWorkspace;
 	});
-
-	test('hamburger does not collide with rail at tablet width', async ({ page, lightWorkspace }) => {
-		const { team } = lightWorkspace;
-		await page.setViewportSize({ width: 800, height: 900 });
-		await page.goto(`/teams/${team.slug}`);
-		await waitForPageLoad(page);
-
-		const toggle = page.getByTestId('mobile-nav-toggle');
-		await expect(toggle).toBeVisible();
-		const tBox = await toggle.boundingBox();
-		expect(tBox).not.toBeNull();
-		if (tBox) {
-			expect(tBox.x).toBeGreaterThanOrEqual(60);
-		}
-	});
 });

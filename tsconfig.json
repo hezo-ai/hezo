@@ -1,0 +1,18 @@
+{
+	"compilerOptions": {
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"target": "ESNext",
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"resolveJsonModule": true,
+		"strict": true,
+		"noEmit": true,
+		"baseUrl": ".",
+		"paths": {
+			"@hezo/shared": ["./packages/shared/src/index.ts"],
+			"@hezo/shared/*": ["./packages/shared/src/*"]
+		}
+	},
+	"include": ["test/**/*.ts"]
+}

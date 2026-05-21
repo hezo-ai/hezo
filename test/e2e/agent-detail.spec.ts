@@ -64,8 +64,52 @@ test('agent settings tab shows budget, heartbeat, title, and save controls', asy
 	await expect(page.getByText('Budget Usage')).toBeVisible({ timeout: 15000 });
 	await expect(page.getByText('Heartbeat').first()).toBeVisible({ timeout: 15000 });
 	await expect(page.getByLabel('Title')).toBeVisible({ timeout: 15000 });
+	await expect(page.getByLabel('Run timeout (min)')).toBeVisible({ timeout: 15000 });
 	await expect(page.getByRole('button', { name: 'Save Changes' })).toBeVisible({ timeout: 15000 });
 });
+
+for (const viewport of [
+	{ name: 'mobile', width: 375, height: 800 },
+	{ name: 'desktop', width: 1280, height: 800 },
+]) {
+	test(`agent settings persists run_timeout_min independently of heartbeat (${viewport.name})`, async ({
+		page,
+		freshWorkspace,
+	}) => {
+		await page.setViewportSize({ width: viewport.width, height: viewport.height });
+		const { team, agents, token } = freshWorkspace;
+		const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		const fresh = (
+			(await agentsRes.json()) as {
+				data: Array<{
+					id: string;
+					admin_status: string;
+					heartbeat_interval_min: number;
+					run_timeout_min: number;
+				}>;
+			}
+		).data;
+		const agent = fresh.find((a) => a.admin_status === 'enabled') ?? fresh[0];
+		const originalHeartbeat = agent.heartbeat_interval_min;
+
+		await page.goto(`/teams/${team.slug}/agents/${agent.id}/settings`);
+		await dismissAiProviderModal(page);
+
+		const runTimeoutInput = page.getByLabel('Run timeout (min)');
+		await expect(runTimeoutInput).toBeVisible({ timeout: 15000 });
+		await runTimeoutInput.fill('23');
+		await page.getByRole('button', { name: 'Save Changes' }).click();
+
+		await page.waitForTimeout(500);
+		await page.reload();
+		await expect(page.getByLabel('Run timeout (min)')).toHaveValue('23', { timeout: 15000 });
+		await expect(page.getByLabel('Heartbeat (min)')).toHaveValue(String(originalHeartbeat), {
+			timeout: 15000,
+		});
+	});
+}
 
 test('agent settings tab edits the title and persists across reload', async ({
 	page,

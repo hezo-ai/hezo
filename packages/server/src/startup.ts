@@ -138,6 +138,20 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		egressCAPath: egressCA.certPath,
 	});
 
+	const { seedDefaultTeam } = await import('./services/teams.js');
+	try {
+		await seedDefaultTeam({
+			db,
+			docker,
+			wsManager,
+			masterKeyManager,
+			logs,
+			dataDir: config.dataDir,
+		});
+	} catch (err) {
+		log.error('Failed to seed default team:', err);
+	}
+
 	masterKeyManager.onUnlock(() => {
 		jobManager
 			.reconcileOnStartup()

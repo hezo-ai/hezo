@@ -523,7 +523,7 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 	await expect(dropdown).toBeHidden();
 });
 
-test('operations project restricts assignee dropdown to the CEO', async ({ page }) => {
+test('internal project restricts assignee dropdown to the CEO', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
@@ -545,11 +545,11 @@ test('operations project restricts assignee dropdown to the CEO', async ({ page 
 	});
 	await page.getByRole('button', { name: 'New Issue' }).first().click();
 
-	await page.getByLabel('Title').fill('Operations-only assignee check');
+	await page.getByLabel('Title').fill('Internal-only assignee check');
 	await page
 		.locator('select')
 		.filter({ hasText: 'Select project' })
-		.selectOption({ label: 'Operations' });
+		.selectOption({ label: '(Internal)' });
 
 	const assigneeSelect = page.locator('select').filter({ hasText: /Select assignee|CEO/ });
 	const optionLabels = await assigneeSelect.locator('option').allTextContents();

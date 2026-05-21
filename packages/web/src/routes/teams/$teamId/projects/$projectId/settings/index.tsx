@@ -1,4 +1,5 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { RepoSetupSection } from '../../../../../../components/repo-setup-section';
@@ -98,5 +99,14 @@ function ProjectSettingsPage() {
 }
 
 export const Route = createFileRoute('/teams/$teamId/projects/$projectId/settings/')({
+	beforeLoad: ({ params }) => {
+		if (params.projectId === OPERATIONS_PROJECT_SLUG) {
+			throw redirect({
+				to: '/teams/$teamId/projects/$projectId/issues',
+				params,
+				replace: true,
+			});
+		}
+	},
 	component: ProjectSettingsPage,
 });

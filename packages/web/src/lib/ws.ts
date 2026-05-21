@@ -14,9 +14,10 @@ export class WebSocketClient {
 	private subscribedRooms = new Set<string>();
 	onStatusChange?: (connected: boolean) => void;
 
-	connect(token: string): void {
+	connect(token: string | null): void {
 		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const url = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`;
+		const query = token ? `?token=${encodeURIComponent(token)}` : '';
+		const url = `${protocol}//${window.location.host}/ws${query}`;
 
 		this.ws = new ReconnectingWebSocket(url, [], {
 			maxReconnectionDelay: 10000,
