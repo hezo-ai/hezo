@@ -5,7 +5,13 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
-import { safeCompareHex, signAgentJwt, signBoardJwt, verifyToken } from '../../middleware/auth';
+import {
+	loadAdminAuth,
+	safeCompareHex,
+	signAgentJwt,
+	signBoardJwt,
+	verifyToken,
+} from '../../middleware/auth';
 import { safeClose } from '../helpers';
 import {
 	authHeader,
@@ -235,18 +241,16 @@ describe('authMiddleware (via HTTP)', () => {
 		expect(res.status).not.toBe(401);
 	});
 
-	it('rejects API requests without auth header', async () => {
+	it('allows API requests without auth header (anonymous admin while unlocked)', async () => {
 		const res = await app.request('/api/teams');
-		expect(res.status).toBe(401);
-		const body = await res.json();
-		expect(body.error.code).toBe('UNAUTHORIZED');
+		expect(res.status).toBe(200);
 	});
 
-	it('rejects API requests with malformed auth header', async () => {
+	it('allows API requests with non-Bearer auth header (treated as anonymous)', async () => {
 		const res = await app.request('/api/teams', {
 			headers: { Authorization: 'Basic abc123' },
 		});
-		expect(res.status).toBe(401);
+		expect(res.status).toBe(200);
 	});
 
 	it('rejects API requests with invalid token', async () => {
@@ -276,6 +280,58 @@ describe('authMiddleware (via HTTP)', () => {
 	it('skips non-API paths (no auth needed)', async () => {
 		const res = await app.request('/');
 		expect(res.status).toBe(200);
+	});
+});
+
+describe('loadAdminAuth', () => {
+	it('returns Board/superuser auth for the bootstrap admin', async () => {
+		const auth = await loadAdminAuth(db);
+		expect(auth).not.toBeNull();
+		expect(auth!.type).toBe(AuthType.Board);
+		if (auth!.type === AuthType.Board) {
+			expect(auth!.isSuperuser).toBe(true);
+			expect(typeof auth!.userId).toBe('string');
+		}
+	});
+
+	it('returns null when no superuser exists', async () => {
+		const { createTestDbWithMigrations } = await import('../helpers/db');
+		const freshDb = await createTestDbWithMigrations();
+		try {
+			expect(await loadAdminAuth(freshDb)).toBeNull();
+		} finally {
+			await safeClose(freshDb);
+		}
+	});
+});
+
+describe('authMiddleware on a locked server', () => {
+	it('rejects no-auth-header requests with LOCKED', async () => {
+		const { createTestDbWithMigrations } = await import('../helpers/db');
+		const { MasterKeyManager } = await import('../../crypto/master-key');
+		const { buildApp } = await import('../../startup');
+		const { mkdtempSync } = await import('node:fs');
+		const { tmpdir } = await import('node:os');
+		const { join } = await import('node:path');
+		const { createStubDocker } = await import('../helpers/app');
+
+		const lockedDb = await createTestDbWithMigrations();
+		try {
+			const mkm = new MasterKeyManager();
+			// initialize with no master key → state stays 'unset' (no canary yet)
+			await mkm.initialize(lockedDb);
+			const lockedApp = buildApp(
+				lockedDb,
+				mkm,
+				{ dataDir: mkdtempSync(join(tmpdir(), 'hezo-locked-')), webUrl: '' },
+				createStubDocker(),
+			);
+
+			const res = await lockedApp.request('/api/teams');
+			expect(res.status).toBe(401);
+		} finally {
+			await safeClose(lockedDb);
+		}
 	});
 });
 

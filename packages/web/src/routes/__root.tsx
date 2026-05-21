@@ -35,10 +35,9 @@ function AppShell() {
 	const params = useParams({ strict: false }) as Record<string, string>;
 	const teamId = params.teamId;
 	const unlocked = status?.masterKeyState === 'unlocked';
-	const hasToken = !!api.getToken();
 
 	const { data: providerStatus, isLoading: providersLoading } = useAiProviderStatus({
-		enabled: unlocked && hasToken,
+		enabled: unlocked,
 	});
 
 	useEffect(() => {

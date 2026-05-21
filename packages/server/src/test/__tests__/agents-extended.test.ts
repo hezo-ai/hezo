@@ -220,15 +220,6 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		const body = await res.json();
 		expect(body.error.code).toBe('CONFLICT');
 	});
-
-	it('requires authentication', async () => {
-		const res = await app.request(`/api/teams/${teamId}/agents/onboard`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: 'Unauthorized Agent' }),
-		});
-		expect(res.status).toBe(401);
-	});
 });
 
 describe('seeded agent system prompts', () => {

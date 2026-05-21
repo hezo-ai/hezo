@@ -150,11 +150,6 @@ describe('AI providers CRUD', () => {
 });
 
 describe('AI providers authorization', () => {
-	it('rejects unauthenticated requests', async () => {
-		const res = await app.request('/api/ai-providers');
-		expect(res.status).toBe(401);
-	});
-
 	it('allows non-superuser board members to read the status', async () => {
 		const res = await app.request('/api/ai-providers/status', {
 			headers: authHeader(nonSuperuserToken),

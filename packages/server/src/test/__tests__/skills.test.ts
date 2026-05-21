@@ -250,11 +250,6 @@ describe('Skills API', () => {
 		});
 		expect(res.status).toBe(404);
 	});
-
-	it('requires auth', async () => {
-		const res = await app.request(`/api/teams/${teamId}/skills`);
-		expect(res.status).toBe(401);
-	});
 });
 
 describe('Template resolver with skills_context', () => {
