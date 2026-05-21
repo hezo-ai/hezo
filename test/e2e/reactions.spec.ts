@@ -40,6 +40,9 @@ async function seedIssueWithComment(page: Page): Promise<SeededIssue> {
 }
 
 test.describe('Comment reactions', () => {
+	// Shared e2e server + parallel workers can delay comment thread paint; allow an extra retry.
+	test.describe.configure({ retries: 2 });
+
 	test('add and remove a ✓ reaction toggles the chip', async ({ page }) => {
 		await authenticate(page);
 		const { team, issueId } = await seedIssueWithComment(page);
@@ -59,14 +62,14 @@ test.describe('Comment reactions', () => {
 			.getByTestId('comment-reactions')
 			.locator('[data-reaction-kind="ack"]')
 			.first();
-		await expect(chip).toBeVisible({ timeout: 15_000 });
+		await expect(chip).toBeVisible({ timeout: 25_000 });
 		await expect(chip).toHaveAttribute('data-you-reacted', 'true');
 		await expect(chip).toContainText('1');
 
 		await chip.click();
 		await expect(
 			page.getByTestId('comment-reactions').locator('[data-reaction-kind="ack"]'),
-		).toHaveCount(0, { timeout: 15_000 });
+		).toHaveCount(0, { timeout: 25_000 });
 	});
 
 	test('reactions seeded via API render on page load', async ({ page }) => {

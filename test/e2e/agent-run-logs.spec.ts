@@ -1,23 +1,10 @@
 import { expect, type Page, test } from '@playwright/test';
 import {
 	authenticate,
-	createProjectAndClearPlanning,
+	createProjectReadyForAgents,
 	createTeamWithAgents,
 	waitForCaptainIdle,
 } from './helpers';
-
-async function waitForContainer(page: Page, teamId: string, projectId: string, token: string) {
-	const headers = { Authorization: `Bearer ${token}` };
-	for (let i = 0; i < 150; i++) {
-		const res = await page.request.get(`/api/teams/${teamId}/projects/${projectId}`, {
-			headers,
-		});
-		const body = (await res.json()) as { data: { container_status?: string } };
-		if (body.data?.container_status === 'running') return;
-		await new Promise((r) => setTimeout(r, 100));
-	}
-	throw new Error('Container did not reach running state within 15s');
-}
 
 async function waitForRunStatus(
 	page: Page,
@@ -25,7 +12,7 @@ async function waitForRunStatus(
 	issueId: string,
 	token: string,
 	target: 'running' | 'succeeded' | 'failed',
-	timeoutMs = 120_000,
+	timeoutMs = 180_000,
 ) {
 	const headers = { Authorization: `Bearer ${token}` };
 	const deadline = Date.now() + timeoutMs;
@@ -57,12 +44,10 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 
 	await waitForCaptainIdle(page, team.id, token);
 
-	const project = await createProjectAndClearPlanning(page, team.id, token, {
+	const project = await createProjectReadyForAgents(page, team.id, token, {
 		name: 'Log Test Project',
 		description: 'Test project.',
 	});
-
-	await waitForContainer(page, team.id, project.id, token);
 
 	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,

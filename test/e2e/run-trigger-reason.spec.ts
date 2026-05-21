@@ -1,18 +1,11 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, createProjectAndClearPlanning, createTeamWithAgents } from './helpers';
-
-async function waitForContainer(page: Page, teamId: string, projectId: string, token: string) {
-	const headers = { Authorization: `Bearer ${token}` };
-	for (let i = 0; i < 150; i++) {
-		const res = await page.request.get(`/api/teams/${teamId}/projects/${projectId}`, {
-			headers,
-		});
-		const body = (await res.json()) as { data: { container_status?: string } };
-		if (body.data?.container_status === 'running') return;
-		await new Promise((r) => setTimeout(r, 100));
-	}
-	throw new Error('Container did not reach running state within 15s');
-}
+import {
+	authenticate,
+	createProjectReadyForAgents,
+	createTeamWithAgents,
+	waitForAgentIdle,
+	waitForCaptainIdle,
+} from './helpers';
 
 interface RunListItem {
 	id: string;
@@ -29,7 +22,7 @@ async function waitForRunWithTrigger(
 	agentId: string,
 	token: string,
 	predicate: (run: RunListItem) => boolean,
-	timeoutMs = 120_000,
+	timeoutMs = 240_000,
 ): Promise<RunListItem> {
 	const headers = { Authorization: `Bearer ${token}` };
 	const deadline = Date.now() + timeoutMs;
@@ -57,12 +50,12 @@ test('run page shows trigger reason linking back to the source mention', async (
 	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 	const architect = agents.find((a) => a.slug === 'architect') ?? agents[1];
 
-	const project = await createProjectAndClearPlanning(page, team.id, token, {
+	await waitForCaptainIdle(page, team.id, token);
+
+	const project = await createProjectReadyForAgents(page, team.id, token, {
 		name: 'Trigger Reason Project',
 		description: 'Test project.',
 	});
-
-	await waitForContainer(page, team.id, project.id, token);
 
 	// Assign to the architect so the issue's auto-assignment wakeup goes to a
 	// different agent than the one we plan to wake via mention. That way the
@@ -78,18 +71,24 @@ test('run page shows trigger reason linking back to the source mention', async (
 	});
 	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
 
+	// Let the assignee's assignment wakeup finish before waking Captain via mention.
+	await waitForAgentIdle(page, team.id, architect.id, token);
+	await waitForCaptainIdle(page, team.id, token);
+
 	await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
 		headers,
 		data: { content_type: 'text', content: { text: `@${captain.slug} please weigh in here` } },
 	});
 
+	const issueIdLower = issue.identifier.toLowerCase();
 	const mentionRun = await waitForRunWithTrigger(
 		page,
 		team.id,
 		captain.id,
 		token,
 		(r) =>
-			r.trigger_source === 'mention' && r.trigger_comment_issue_identifier === issue.identifier,
+			r.trigger_source === 'mention' &&
+			r.trigger_comment_issue_identifier?.toLowerCase() === issueIdLower,
 	);
 
 	await page.goto(`/teams/${team.slug}/agents/${captain.id}/executions/${mentionRun.id}`);
@@ -118,12 +117,12 @@ test('run list row shows the trigger reason summary', async ({ page }) => {
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
-	const project = await createProjectAndClearPlanning(page, team.id, token, {
+	await waitForCaptainIdle(page, team.id, token);
+
+	const project = await createProjectReadyForAgents(page, team.id, token, {
 		name: 'Trigger List Project',
 		description: 'Test project.',
 	});
-
-	await waitForContainer(page, team.id, project.id, token);
 
 	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
 		headers,

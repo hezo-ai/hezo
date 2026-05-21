@@ -100,6 +100,41 @@ export async function createProjectAndClearPlanning(
 	return project;
 }
 
+/** Poll until the project container is provisioned (required before agent wakeups run). */
+export async function waitForProjectContainer(
+	page: Page,
+	teamId: string,
+	projectId: string,
+	token: string,
+	timeoutMs = 90_000,
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${token}` };
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const res = await page.request.get(`/api/teams/${teamId}/projects/${projectId}`, { headers });
+		const body = (await res.json()) as {
+			data: { container_status?: string; container_id?: string | null };
+		};
+		if (body.data?.container_status === 'running' && body.data?.container_id) return;
+		await new Promise((r) => setTimeout(r, 200));
+	}
+	throw new Error(`Project container did not reach running state within ${timeoutMs}ms`);
+}
+
+/**
+ * Create a project, close its planning issue, and wait for the dev container — ready for agent runs.
+ */
+export async function createProjectReadyForAgents(
+	page: Page,
+	teamId: string,
+	token: string,
+	data: { name: string; description?: string },
+) {
+	const project = await createProjectAndClearPlanning(page, teamId, token, data);
+	await waitForProjectContainer(page, teamId, project.id, token);
+	return project;
+}
+
 /** Pin home/rail onboarding to a specific team (avoids stale sessionStorage from other tests). */
 export async function setActiveTeamSlug(page: Page, teamSlug: string) {
 	await page.evaluate((slug) => {
@@ -162,24 +197,38 @@ export async function confirmTeamExecutionStarted(
 	expect(startRes.ok()).toBe(true);
 }
 
+/** Wait until a specific agent is idle (no active heartbeat run). */
+export async function waitForAgentIdle(
+	page: Page,
+	teamId: string,
+	agentId: string,
+	token: string,
+	timeoutMs = 180_000,
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${token}` };
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const res = await page.request.get(`/api/teams/${teamId}/agents/${agentId}`, { headers });
+		const agent = ((await res.json()) as { data: { runtime_status: string } }).data;
+		if (agent?.runtime_status === 'idle') return;
+		await new Promise((r) => setTimeout(r, 500));
+	}
+	throw new Error(`Agent ${agentId} did not return to idle within ${timeoutMs}ms`);
+}
+
 /** Wait until Captain is idle (e.g. after onboarding intake wakeups finish). */
 export async function waitForCaptainIdle(
 	page: Page,
 	teamId: string,
 	token: string,
-	timeoutMs = 120_000,
+	timeoutMs = 180_000,
 ): Promise<void> {
 	const headers = { Authorization: `Bearer ${token}` };
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		const res = await page.request.get(`/api/teams/${teamId}/agents`, { headers });
-		const agents = ((await res.json()) as { data: Array<{ slug: string; runtime_status: string }> })
-			.data;
-		const captain = agents.find((a) => a.slug === 'captain');
-		if (captain?.runtime_status === 'idle') return;
-		await new Promise((r) => setTimeout(r, 500));
-	}
-	throw new Error(`Captain did not return to idle within ${timeoutMs}ms`);
+	const res = await page.request.get(`/api/teams/${teamId}/agents`, { headers });
+	const agents = ((await res.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const captain = agents.find((a) => a.slug === 'captain');
+	if (!captain) throw new Error('Captain agent not found');
+	await waitForAgentIdle(page, teamId, captain.id, token, timeoutMs);
 }
 
 export async function createTeamWithAgents(page: Page) {

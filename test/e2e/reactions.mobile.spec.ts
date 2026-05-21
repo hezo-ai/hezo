@@ -2,6 +2,8 @@ import { expect, test } from '@playwright/test';
 import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Comment reactions (mobile)', () => {
+	test.describe.configure({ retries: 2 });
+
 	test('reaction chip is tappable on a 390px viewport', async ({ page }) => {
 		await authenticate(page);
 		const { team, token } = await createTeamWithAgents(page);

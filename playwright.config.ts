@@ -24,15 +24,23 @@ export default defineConfig({
 			workers: 1,
 		},
 		{
-			name: 'parallel',
-			testIgnore: /(?:ai-providers|\.mobile)\.spec\.ts$/,
+			name: 'agent-runs-serial',
+			testMatch: /(?:agent-run-logs|run-trigger-reason)\.spec\.ts$/,
+			fullyParallel: false,
+			workers: 1,
+			timeout: 300_000,
 			dependencies: ['ai-provider-serial'],
+		},
+		{
+			name: 'parallel',
+			testIgnore: /(?:ai-providers|\.mobile|agent-run-logs|run-trigger-reason)\.spec\.ts$/,
+			dependencies: ['ai-provider-serial', 'agent-runs-serial'],
 		},
 		{
 			name: 'mobile',
 			testMatch: /\.mobile\.spec\.ts$/,
 			use: { viewport: { width: 390, height: 844 } },
-			dependencies: ['ai-provider-serial'],
+			dependencies: ['ai-provider-serial', 'agent-runs-serial'],
 		},
 	],
 	webServer: [
