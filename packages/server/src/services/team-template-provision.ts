@@ -138,77 +138,86 @@ export async function provisionTeamTemplate(
 	const skippedSlugs: string[] = [];
 	const slugToMemberId = new Map<string, string>();
 
-	for (const row of dedupedRows) {
-		if (skipExistingSlugs && existingSlugs.has(row.slug)) {
-			skippedSlugs.push(row.slug);
-			const existing = await db.query<{ id: string }>(
-				`SELECT ma.id FROM member_agents ma
+	await db.query('BEGIN');
+	try {
+		for (const row of dedupedRows) {
+			if (skipExistingSlugs && existingSlugs.has(row.slug)) {
+				skippedSlugs.push(row.slug);
+				const existing = await db.query<{ id: string }>(
+					`SELECT ma.id FROM member_agents ma
 				 JOIN members m ON m.id = ma.id
 				 WHERE m.team_id = $1 AND ma.slug = $2`,
-				[teamId, row.slug],
-			);
-			if (existing.rows[0]) slugToMemberId.set(row.slug, existing.rows[0].id);
-			continue;
-		}
+					[teamId, row.slug],
+				);
+				if (existing.rows[0]) slugToMemberId.set(row.slug, existing.rows[0].id);
+				continue;
+			}
 
-		const heartbeat = row.heartbeat_interval_override ?? row.heartbeat_interval_min;
-		const budget = row.monthly_budget_override ?? row.monthly_budget_cents;
+			const heartbeat = row.heartbeat_interval_override ?? row.heartbeat_interval_min;
+			const budget = row.monthly_budget_override ?? row.monthly_budget_cents;
 
-		const memberResult = await db.query<{ id: string }>(
-			`INSERT INTO members (team_id, member_type, display_name)
+			const memberResult = await db.query<{ id: string }>(
+				`INSERT INTO members (team_id, member_type, display_name)
 			 VALUES ($1, $2, $3)
 			 RETURNING id`,
-			[teamId, MemberType.Agent, row.name],
-		);
-		const memberId = memberResult.rows[0].id;
-		slugToMemberId.set(row.slug, memberId);
-		createdSlugs.push(row.slug);
+				[teamId, MemberType.Agent, row.name],
+			);
+			const memberId = memberResult.rows[0].id;
+			slugToMemberId.set(row.slug, memberId);
+			createdSlugs.push(row.slug);
 
-		await db.query(
-			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
+			await db.query(
+				`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
 			                            team_context,
 			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
 			                            touches_code)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11)`,
-			[
-				memberId,
-				row.id,
-				row.name,
-				row.slug,
-				row.role_description,
-				row.default_summary ?? '',
-				row.default_team_context ?? '',
-				row.default_effort,
-				heartbeat,
-				budget,
-				row.touches_code ?? false,
-			],
-		);
-
-		await initAgentSystemPrompt(db, teamId, memberId, row.system_prompt_template, null);
-	}
-
-	for (const row of dedupedRows) {
-		if (row.reports_to_slug && row.reports_to_slug !== 'board') {
-			const reportsToId = slugToMemberId.get(row.reports_to_slug);
-			const memberId = slugToMemberId.get(row.slug);
-			if (reportsToId && memberId) {
-				await db.query('UPDATE member_agents SET reports_to = $1 WHERE id = $2', [
-					reportsToId,
+				[
 					memberId,
-				]);
+					row.id,
+					row.name,
+					row.slug,
+					row.role_description,
+					row.default_summary ?? '',
+					row.default_team_context ?? '',
+					row.default_effort,
+					heartbeat,
+					budget,
+					row.touches_code ?? false,
+				],
+			);
+
+			await initAgentSystemPrompt(db, teamId, memberId, row.system_prompt_template, null);
+		}
+
+		for (const row of dedupedRows) {
+			if (row.reports_to_slug && row.reports_to_slug !== 'board') {
+				const reportsToId = slugToMemberId.get(row.reports_to_slug);
+				const memberId = slugToMemberId.get(row.slug);
+				if (reportsToId && memberId) {
+					await db.query('UPDATE member_agents SET reports_to = $1 WHERE id = $2', [
+						reportsToId,
+						memberId,
+					]);
+				}
 			}
 		}
-	}
 
-	await db.query(
-		`INSERT INTO team_template_assignments (team_id, team_template_id)
+		await db.query(
+			`INSERT INTO team_template_assignments (team_id, team_template_id)
 		 VALUES ($1, $2)
 		 ON CONFLICT DO NOTHING`,
-		[teamId, templateId],
-	);
+			[teamId, templateId],
+		);
 
-	await createKbDocsFromTemplate(db, teamId, templateId);
+		await createKbDocsFromTemplate(db, teamId, templateId);
+
+		await db.query('COMMIT');
+	} catch (e) {
+		await db.query('ROLLBACK');
+		throw e;
+	}
+
 	if (options?.dataDir) {
 		await createSkillsFromTemplate(db, teamId, templateId);
 	}

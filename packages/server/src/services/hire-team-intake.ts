@@ -1,21 +1,12 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	AgentAdminStatus,
-	CAPTAIN_AGENT_SLUG,
-	CommentContentType,
-	IssuePriority,
-	IssueStatus,
-	OPERATIONS_PROJECT_SLUG,
-	TERMINAL_ISSUE_STATUSES,
-	WakeupSource,
-	wsRoom,
-} from '@hezo/shared';
+import { CommentContentType, IssuePriority, IssueStatus, WakeupSource, wsRoom } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
 import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { terminalStatusParams } from '../lib/sql';
 import { logger } from '../logger';
 import { recordStatusChange } from './issue-events';
+import { findOpenLabeledIssue, loadCaptainOpsContext } from './operations-intake';
 import { REQUIREMENTS_INTAKE_LABEL } from './requirements-intake';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -31,9 +22,15 @@ export const CAPTAIN_HIRE_TEAM_GREETING = `Your first project is set up. Next we
 I'll recommend a team structure from our templates (for example **Startup** for software development work), explain who we'd add and why, then ask you to approve it in the inbox. Once approved, the agents are provisioned automatically.`;
 
 export function buildTeamTemplateApprovedAckText(templateName: string): string {
-	return `Thanks for approving the **${templateName}** team template in the inbox.
+	return `Thanks for approving the **${templateName}** team template in the inbox. Agents are provisioned — see the update below when setup is complete.`;
+}
 
-I'm setting up the team now — provisioning agents and loading their roles. This may take a little while; I'll post another update here once everyone is ready.`;
+export function buildTeamTemplateDeniedText(resolutionNote: string | null): string {
+	const note = resolutionNote?.trim();
+	if (note) {
+		return `The board declined the team template approval (${note}). Reply here if you'd like me to recommend a different structure.`;
+	}
+	return `The board declined the team template approval. Reply here if you'd like me to recommend a different structure.`;
 }
 
 export function buildProvisioningCompleteText(
@@ -99,7 +96,7 @@ export async function completeHireTeamIntakeAfterProvisioning(
 	skippedSlugs: string[],
 	wsManager?: WebSocketManager,
 ): Promise<HireTeamProvisioningCompleteResult> {
-	const ctx = await loadTeamContext(db, teamId);
+	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) {
 		log.warn(`Cannot complete hire-team intake for ${teamId}; missing Captain`);
 		return { summaryComment: null, issue: null };
@@ -180,62 +177,15 @@ Requirements intake is complete and the board has a first user-facing project. Y
 5. When the board approves the template in the inbox, agents are provisioned automatically. The server posts setup updates here and closes this ticket when provisioning finishes so the board can move on to **Start project** on the home screen.`;
 }
 
-interface TeamContext {
-	captainMemberId: string;
-	operationsProjectId: string;
-}
-
-async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
-	const captain = await db.query<{ id: string }>(
-		`SELECT ma.id FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
-		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
-	);
-	const ops = await db.query<{ id: string }>(
-		`SELECT id FROM projects
-		 WHERE team_id = $1 AND is_internal = true AND slug = $2
-		 LIMIT 1`,
-		[teamId, OPERATIONS_PROJECT_SLUG],
-	);
-	if (!captain.rows[0] || !ops.rows[0]) return null;
-	return {
-		captainMemberId: captain.rows[0].id,
-		operationsProjectId: ops.rows[0].id,
-	};
-}
-
-async function findOpenHireTeamIssue(
-	db: PGlite,
-	teamId: string,
-): Promise<{
-	id: string;
-	identifier: string;
-	project_slug: string;
-} | null> {
-	const terminalPlaceholders = TERMINAL_ISSUE_STATUSES.map(
-		(_, i) => `$${i + 3}::issue_status`,
-	).join(', ');
-	const result = await db.query<{ id: string; identifier: string; project_slug: string }>(
-		`SELECT i.id, i.identifier, p.slug AS project_slug
-		 FROM issues i
-		 JOIN projects p ON p.id = i.project_id
-		 WHERE i.team_id = $1
-		   AND i.labels @> $2::jsonb
-		   AND i.status NOT IN (${terminalPlaceholders})
-		 ORDER BY i.created_at ASC
-		 LIMIT 1`,
-		[teamId, JSON.stringify([HIRE_TEAM_INTAKE_LABEL]), ...TERMINAL_ISSUE_STATUSES],
-	);
-	return result.rows[0] ?? null;
+async function findOpenHireTeamIssue(db: PGlite, teamId: string) {
+	return findOpenLabeledIssue(db, teamId, HIRE_TEAM_INTAKE_LABEL);
 }
 
 export async function createHireTeamIntakeIssue(
 	db: PGlite,
 	teamId: string,
 ): Promise<{ issueId: string; captainMemberId: string } | null> {
-	const ctx = await loadTeamContext(db, teamId);
+	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) {
 		log.warn(`Cannot create hire-team intake for ${teamId}; missing Captain or Operations`);
 		return null;
@@ -292,7 +242,7 @@ export async function postHireTeamTemplateApprovedAck(
 	hireIssueId: string,
 	templateName: string,
 ): Promise<Record<string, unknown> | null> {
-	const ctx = await loadTeamContext(db, teamId);
+	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) {
 		log.warn(`Cannot post template-approved ack for team ${teamId}; missing Captain`);
 		return null;
@@ -318,6 +268,37 @@ export async function postHireTeamTemplateApprovedAck(
 			ctx.captainMemberId,
 			CommentContentType.Text,
 			JSON.stringify({ text: buildTeamTemplateApprovedAckText(templateName) }),
+		],
+	);
+	return commentResult.rows[0] ?? null;
+}
+
+export async function postHireTeamTemplateDeniedNote(
+	db: PGlite,
+	teamId: string,
+	hireIssueId: string,
+	resolutionNote: string | null,
+): Promise<Record<string, unknown> | null> {
+	const ctx = await loadCaptainOpsContext(db, teamId);
+	if (!ctx) return null;
+
+	const issue = await db.query<{ id: string }>(
+		`SELECT id FROM issues
+		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
+		 LIMIT 1`,
+		[hireIssueId, teamId, JSON.stringify([HIRE_TEAM_INTAKE_LABEL])],
+	);
+	if (!issue.rows[0]) return null;
+
+	const commentResult = await db.query<Record<string, unknown>>(
+		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
+		 RETURNING *`,
+		[
+			hireIssueId,
+			ctx.captainMemberId,
+			CommentContentType.Text,
+			JSON.stringify({ text: buildTeamTemplateDeniedText(resolutionNote) }),
 		],
 	);
 	return commentResult.rows[0] ?? null;
@@ -349,7 +330,7 @@ export interface HireTeamIntakeIssue {
 
 async function buildIntakeResponse(
 	db: PGlite,
-	ctx: TeamContext,
+	ctx: { captainMemberId: string },
 	row: { id: string; identifier: string; project_slug: string },
 ): Promise<HireTeamIntakeIssue> {
 	const captainTitle = await db.query<{ title: string }>(
@@ -371,7 +352,7 @@ export async function getOpenHireTeamIntakeIssue(
 	db: PGlite,
 	teamId: string,
 ): Promise<HireTeamIntakeIssue | null> {
-	const ctx = await loadTeamContext(db, teamId);
+	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) return null;
 	const row = await findOpenHireTeamIssue(db, teamId);
 	if (!row) return null;

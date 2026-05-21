@@ -178,6 +178,53 @@ services autonomously. MPP costs are debited against the agent's budget.
 #### `DELETE /teams/:teamId`
 Delete team and all associated data. Tears down the team container.
 
+### Board onboarding (home)
+
+Three stages drive the home welcome card and intake panels:
+
+1. **Requirements** — open `requirements-intake` Operations issue; Captain gathers goals and creates the first user-facing project via MCP/REST.
+2. **Hire team** — open `hire-team-intake` issue; Captain requests a `team_template` approval; board approves in inbox; agents provision and the hire ticket closes.
+3. **Start project** — board confirms on home; sets `execution_started_at` on the first user-facing project and wakes Captain on the planning issue.
+
+`show_welcome` is true until `execution_started_at` is set on the primary (oldest non-internal) project. The project list on home is hidden until stage 3 completes.
+
+#### `GET /teams/:teamId/onboarding`
+Onboarding stage status for the home progress UI.
+
+Response:
+```json
+{
+  "data": {
+    "show_welcome": true,
+    "current_stage": "requirements",
+    "stages": {
+      "requirements": "current",
+      "hire_team": "pending",
+      "start_project": "pending"
+    },
+    "primary_project": null,
+    "goals": []
+  }
+}
+```
+
+Stage values: `complete` | `current` | `pending`. `primary_project` includes `execution_started_at` (null until the board starts execution).
+
+#### `GET /teams/:teamId/requirements-intake`
+Returns the open requirements intake issue for home chat, or 404 if none.
+
+Query `?ensure=true` creates the intake issue when missing (used before any user-facing project exists).
+
+#### `GET /teams/:teamId/hire-team-intake`
+Returns the open hire-the-team intake issue, or 404 when requirements are incomplete or hire intake is closed.
+
+#### `POST /teams/:teamId/onboarding/start-project`
+Board confirms execution start. Sets `projects.execution_started_at` on the team's first user-facing project and creates a Captain assignment wakeup on the planning issue (labeled `planning`). Fails with 400 if requirements or hire intake tickets are still open.
+
+Response: `{ "data": { "project": { ... } } }` with updated `execution_started_at`.
+
+The first user-facing project created via `POST /teams/:teamId/projects` or MCP `create_project` does **not** wake Captain on the planning issue until this endpoint runs (or a later project is created).
+
 ---
 
 ### API Keys

@@ -32,6 +32,24 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
+async function callMcpTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
+	const res = await app.request('/mcp', {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			jsonrpc: '2.0',
+			method: 'tools/call',
+			params: { name: toolName, arguments: args },
+			id: 1,
+		}),
+	});
+	expect(res.status).toBe(200);
+	const body = (await res.json()) as {
+		result: { content: Array<{ type: string; text: string }> };
+	};
+	return JSON.parse(body.result.content[0].text);
+}
+
 describe('hire-team intake', () => {
 	it('creates hire-the-team issue when requirements intake is marked done', async () => {
 		const blank = await db.query<{ id: string }>(
@@ -155,7 +173,7 @@ describe('hire-team intake', () => {
 		);
 		expect(ack).toBeDefined();
 		expect(ack?.author_name).toBe('Captain');
-		expect(ack?.content.text).toContain('setting up the team');
+		expect(ack?.content.text).toContain('Agents are provisioned');
 
 		const complete = comments.find((c) => c.content.text.includes('Team setup is complete'));
 		expect(complete?.author_name).toBe('Captain');
@@ -177,5 +195,168 @@ describe('hire-team intake', () => {
 		});
 		const onboarding = (await onboardingRes.json()).data as { current_stage: string };
 		expect(onboarding.current_stage).toBe('start_project');
+	});
+
+	it('provisions template agents when MCP resolve_approval approves team_template', async () => {
+		const blank = await db.query<{ id: string }>(
+			"SELECT id FROM team_templates WHERE name = 'Blank' LIMIT 1",
+		);
+		const startup = await db.query<{ id: string }>(
+			"SELECT id FROM team_templates WHERE name = 'Startup' LIMIT 1",
+		);
+		const teamRes = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'MCP Provision Co', template_id: blank.rows[0].id }),
+		});
+		const team = (await teamRes.json()).data as { id: string; slug: string };
+
+		const intakeRes = await app.request(`/api/teams/${team.slug}/requirements-intake`, {
+			headers: authHeader(token),
+		});
+		const intake = (await intakeRes.json()).data as { issue_id: string };
+		await app.request(`/api/teams/${team.slug}/issues/${intake.issue_id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: IssueStatus.Done }),
+		});
+
+		const hireRes = await app.request(`/api/teams/${team.slug}/hire-team-intake`, {
+			headers: authHeader(token),
+		});
+		expect(hireRes.status).toBe(200);
+		const hire = (await hireRes.json()).data as { issue_id: string };
+
+		const agentsBefore = await app.request(`/api/teams/${team.slug}/agents`, {
+			headers: authHeader(token),
+		});
+		const countBefore = ((await agentsBefore.json()).data as unknown[]).length;
+
+		const approvalInsert = await db.query<{ id: string }>(
+			`INSERT INTO approvals (team_id, type, payload, status)
+			 VALUES ($1, $2::approval_type, $3::jsonb, $4::approval_status)
+			 RETURNING id`,
+			[
+				team.id,
+				ApprovalType.TeamTemplate,
+				JSON.stringify({
+					template_id: startup.rows[0].id,
+					template_name: 'Startup',
+					rationale: 'Software project',
+					issue_id: hire.issue_id,
+				}),
+				ApprovalStatus.Pending,
+			],
+		);
+		const approvalId = approvalInsert.rows[0].id;
+
+		const mcpResult = (await callMcpTool('resolve_approval', {
+			approval_id: approvalId,
+			status: ApprovalStatus.Approved,
+		})) as { error?: string; status?: string };
+		expect(mcpResult.error).toBeUndefined();
+		expect(mcpResult.status).toBe(ApprovalStatus.Approved);
+
+		const agentsAfter = await app.request(`/api/teams/${team.slug}/agents`, {
+			headers: authHeader(token),
+		});
+		const countAfter = ((await agentsAfter.json()).data as unknown[]).length;
+		expect(countAfter).toBeGreaterThan(countBefore);
+
+		const commentsRes = await app.request(
+			`/api/teams/${team.slug}/issues/${hire.issue_id}/comments`,
+			{ headers: authHeader(token) },
+		);
+		const comments = (await commentsRes.json()).data as Array<{
+			content: { text: string };
+			author_name: string;
+		}>;
+		const ack = comments.find((c) =>
+			c.content.text.includes(buildTeamTemplateApprovedAckText('Startup').slice(0, 40)),
+		);
+		expect(ack).toBeDefined();
+		expect(ack?.author_name).toBe('Captain');
+		expect(ack?.content.text).toContain('Agents are provisioned');
+
+		const hireIssueRes = await app.request(`/api/teams/${team.slug}/issues/${hire.issue_id}`, {
+			headers: authHeader(token),
+		});
+		const hireIssue = (await hireIssueRes.json()).data as { status: string };
+		expect(hireIssue.status).toBe(IssueStatus.Done);
+
+		const onboardingRes = await app.request(`/api/teams/${team.slug}/onboarding`, {
+			headers: authHeader(token),
+		});
+		const onboarding = (await onboardingRes.json()).data as { current_stage: string };
+		expect(onboarding.current_stage).toBe('start_project');
+	});
+
+	it('posts Captain note on hire ticket when team_template approval is denied', async () => {
+		const blank = await db.query<{ id: string }>(
+			"SELECT id FROM team_templates WHERE name = 'Blank' LIMIT 1",
+		);
+		const startup = await db.query<{ id: string }>(
+			"SELECT id FROM team_templates WHERE name = 'Startup' LIMIT 1",
+		);
+		const teamRes = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Deny Template Co', template_id: blank.rows[0].id }),
+		});
+		const team = (await teamRes.json()).data as { id: string; slug: string };
+
+		const intakeRes = await app.request(`/api/teams/${team.slug}/requirements-intake`, {
+			headers: authHeader(token),
+		});
+		const intake = (await intakeRes.json()).data as { issue_id: string };
+		await app.request(`/api/teams/${team.slug}/issues/${intake.issue_id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: IssueStatus.Done }),
+		});
+
+		const hireRes = await app.request(`/api/teams/${team.slug}/hire-team-intake`, {
+			headers: authHeader(token),
+		});
+		const hire = (await hireRes.json()).data as { issue_id: string };
+
+		const approvalInsert = await db.query<{ id: string }>(
+			`INSERT INTO approvals (team_id, type, payload, status)
+			 VALUES ($1, $2::approval_type, $3::jsonb, $4::approval_status)
+			 RETURNING id`,
+			[
+				team.id,
+				ApprovalType.TeamTemplate,
+				JSON.stringify({
+					template_id: startup.rows[0].id,
+					template_name: 'Startup',
+					issue_id: hire.issue_id,
+				}),
+				ApprovalStatus.Pending,
+			],
+		);
+
+		const resolveRes = await app.request(`/api/approvals/${approvalInsert.rows[0].id}/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				status: ApprovalStatus.Denied,
+				resolution_note: 'Not the right fit',
+			}),
+		});
+		expect(resolveRes.status).toBe(200);
+
+		const hireIssueRes = await app.request(`/api/teams/${team.slug}/issues/${hire.issue_id}`, {
+			headers: authHeader(token),
+		});
+		const hireIssue = (await hireIssueRes.json()).data as { status: string };
+		expect(hireIssue.status).not.toBe(IssueStatus.Done);
+
+		const commentsRes = await app.request(
+			`/api/teams/${team.slug}/issues/${hire.issue_id}/comments`,
+			{ headers: authHeader(token) },
+		);
+		const comments = (await commentsRes.json()).data as Array<{ content: { text: string } }>;
+		expect(comments.some((c) => c.content.text.includes('declined the team template'))).toBe(true);
 	});
 });

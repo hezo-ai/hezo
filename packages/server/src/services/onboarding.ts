@@ -3,24 +3,22 @@ import {
 	AgentAdminStatus,
 	CAPTAIN_AGENT_SLUG,
 	GoalStatus,
-	MemberType,
 	TERMINAL_ISSUE_STATUSES,
 	WakeupSource,
+	wsRoom,
 } from '@hezo/shared';
+import { broadcastRowChange } from '../lib/broadcast';
+import { terminalStatusParams } from '../lib/sql';
 import { logger } from '../logger';
 import { HIRE_TEAM_INTAKE_LABEL } from './hire-team-intake';
 import { REQUIREMENTS_INTAKE_LABEL } from './requirements-intake';
 import { createWakeup } from './wakeup';
+import type { WebSocketManager } from './ws';
 
 const log = logger.child('onboarding');
 
 export type OnboardingStageKey = 'requirements' | 'hire_team' | 'start_project';
 export type OnboardingStageStatus = 'complete' | 'current' | 'pending';
-
-export interface OnboardingAgentSummary {
-	title: string;
-	slug: string;
-}
 
 export interface OnboardingGoalSummary {
 	id: string;
@@ -44,20 +42,17 @@ export interface OnboardingStatus {
 	current_stage: OnboardingStageKey;
 	stages: Record<OnboardingStageKey, OnboardingStageStatus>;
 	primary_project: OnboardingPrimaryProject | null;
-	agents: OnboardingAgentSummary[];
 	goals: OnboardingGoalSummary[];
 }
 
 async function hasOpenIntakeLabel(db: PGlite, teamId: string, label: string): Promise<boolean> {
-	const terminalPlaceholders = TERMINAL_ISSUE_STATUSES.map(
-		(_, i) => `$${i + 3}::issue_status`,
-	).join(', ');
+	const ts = terminalStatusParams(3);
 	const result = await db.query<{ id: string }>(
 		`SELECT id FROM issues
 		 WHERE team_id = $1 AND labels @> $2::jsonb
-		   AND status NOT IN (${terminalPlaceholders})
+		   AND status NOT IN (${ts.placeholders})
 		 LIMIT 1`,
-		[teamId, JSON.stringify([label]), ...TERMINAL_ISSUE_STATUSES],
+		[teamId, JSON.stringify([label]), ...ts.values],
 	);
 	return result.rows.length > 0;
 }
@@ -145,17 +140,6 @@ export async function getOnboardingStatus(db: PGlite, teamId: string): Promise<O
 		executionStarted,
 	);
 
-	const agents = await db.query<{ title: string; slug: string }>(
-		`SELECT ma.title, ma.slug
-		 FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND m.member_type = $2::member_type
-		   AND ma.admin_status = $3::agent_admin_status
-		   AND ma.slug NOT IN ($4, $5)
-		 ORDER BY ma.title`,
-		[teamId, MemberType.Agent, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG, 'coach'],
-	);
-
 	let goals: OnboardingGoalSummary[] = [];
 	if (primaryProject) {
 		const goalRows = await db.query<{ id: string; title: string; status: string }>(
@@ -173,7 +157,6 @@ export async function getOnboardingStatus(db: PGlite, teamId: string): Promise<O
 		current_stage: current,
 		stages,
 		primary_project: primaryProject,
-		agents: agents.rows,
 		goals,
 	};
 }
@@ -191,6 +174,7 @@ export async function isFirstUserFacingProject(db: PGlite, teamId: string): Prom
 export async function confirmProjectExecutionStart(
 	db: PGlite,
 	teamId: string,
+	wsManager?: WebSocketManager,
 ): Promise<{ project: OnboardingPrimaryProject } | { error: string }> {
 	const requirementsOpen = await hasOpenIntakeLabel(db, teamId, REQUIREMENTS_INTAKE_LABEL);
 	const hireOpen = await hasOpenIntakeLabel(db, teamId, HIRE_TEAM_INTAKE_LABEL);
@@ -221,6 +205,14 @@ export async function confirmProjectExecutionStart(
 		`UPDATE projects SET execution_started_at = now(), updated_at = now() WHERE id = $1`,
 		[project.id],
 	);
+
+	const projectRow = await db.query<Record<string, unknown>>(
+		'SELECT * FROM projects WHERE id = $1',
+		[project.id],
+	);
+	if (projectRow.rows[0] && wsManager) {
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'UPDATE', projectRow.rows[0]);
+	}
 
 	if (project.planning_issue_id) {
 		await createWakeup(db, captain.rows[0].id, teamId, WakeupSource.Assignment, {

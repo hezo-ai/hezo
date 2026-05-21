@@ -11,6 +11,7 @@ import { Card } from '../../components/ui/card';
 import { useHireTeamIntake } from '../../hooks/use-hire-team-intake';
 import { type OnboardingStatus, useOnboarding } from '../../hooks/use-onboarding';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
+import { useRailTeamId } from '../../hooks/use-rail-team-id';
 import { useRequirementsIntake } from '../../hooks/use-requirements-intake';
 import { useTeams } from '../../hooks/use-teams';
 
@@ -153,7 +154,7 @@ function HomeProjectsSection({
 function HomePage() {
 	const { data: teams, isLoading: teamsLoading } = useTeams();
 	const hasTeams = (teams?.length ?? 0) > 0;
-	const primaryTeamSlug = teams?.[0]?.slug ?? '';
+	const primaryTeamSlug = useRailTeamId() ?? '';
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects(teams);
 	const noUserProjects = !projectsLoading && projects.length === 0;
 	const intakeQueryEnabled = hasTeams && (noUserProjects || !projectsLoading);

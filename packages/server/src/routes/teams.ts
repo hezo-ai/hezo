@@ -113,7 +113,7 @@ teamsRoutes.post('/teams/:teamId/onboarding/start-project', async (c) => {
 	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
-	const result = await confirmProjectExecutionStart(c.get('db'), access.teamId);
+	const result = await confirmProjectExecutionStart(c.get('db'), access.teamId, c.get('wsManager'));
 	if ('error' in result) {
 		return err(c, 'INVALID_REQUEST', result.error, 400);
 	}

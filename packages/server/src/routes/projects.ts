@@ -24,7 +24,6 @@ import {
 	teardownContainer,
 } from '../services/containers';
 import type { JobManager } from '../services/job-manager';
-import { isFirstUserFacingProject } from '../services/onboarding';
 import { createProjectWithPlanningIssue } from '../services/project-create';
 import { createWakeup } from '../services/wakeup';
 
@@ -223,23 +222,24 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 		return r.rows.length > 0;
 	});
 
-	const deferPlanningWake = await isFirstUserFacingProject(db, teamId);
-
-	const { project, planningIssue } = await createProjectWithPlanningIssue(db, {
-		teamId,
-		captainMemberId,
-		name: body.name.trim(),
-		slug,
-		issuePrefix,
-		description: body.description.trim(),
-		dockerBaseImage: body.docker_base_image,
-		initialPrd: body.initial_prd?.trim() || null,
-	});
+	const { project, planningIssue, deferCaptainPlanningWake } = await createProjectWithPlanningIssue(
+		db,
+		{
+			teamId,
+			captainMemberId,
+			name: body.name.trim(),
+			slug,
+			issuePrefix,
+			description: body.description.trim(),
+			dockerBaseImage: body.docker_base_image,
+			initialPrd: body.initial_prd?.trim() || null,
+		},
+	);
 
 	broadcastChange(c, wsRoom.team(teamId), 'projects', 'INSERT', project);
 	broadcastChange(c, wsRoom.team(teamId), 'issues', 'INSERT', planningIssue);
 
-	if (!deferPlanningWake) {
+	if (!deferCaptainPlanningWake) {
 		createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
 			issue_id: planningIssue.id,
 		}).catch((e) => log.error('Failed to wake Captain for project planning:', e));

@@ -43,6 +43,7 @@ import {
 	type SystemPromptMode,
 } from '../services/agent-system-prompts';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
+import { resolveApproval } from '../services/approval-resolve';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { enqueueTeamContextTaskForAllAgents } from '../services/description-tasks';
 import {
@@ -60,7 +61,6 @@ import {
 	createIssue,
 	ISSUE_COLUMNS_BARE,
 } from '../services/issues';
-import { isFirstUserFacingProject } from '../services/onboarding';
 import { createProjectWithPlanningIssue } from '../services/project-create';
 import {
 	addCommentReaction,
@@ -272,7 +272,7 @@ async function verifyTeamAccess(
 export function registerTools(
 	server: McpServer,
 	db: PGlite,
-	_dataDir: string,
+	dataDir: string,
 	_masterKeyManager: MasterKeyManager,
 	wsManager?: WebSocketManager,
 ): ToolDef[] {
@@ -1149,20 +1149,20 @@ export function registerTools(
 			);
 			if (!prefixResult.ok) return { error: prefixResult.message };
 
-			const deferPlanningWake = await isFirstUserFacingProject(db, teamId);
-			const { project, planningIssue } = await createProjectWithPlanningIssue(db, {
-				teamId,
-				captainMemberId,
-				name: args.name as string,
-				slug,
-				issuePrefix: prefixResult.prefix,
-				description: (args.description as string | undefined) ?? '',
-			});
+			const { project, planningIssue, deferCaptainPlanningWake } =
+				await createProjectWithPlanningIssue(db, {
+					teamId,
+					captainMemberId,
+					name: args.name as string,
+					slug,
+					issuePrefix: prefixResult.prefix,
+					description: (args.description as string | undefined) ?? '',
+				});
 
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'issues', 'INSERT', planningIssue);
 
-			if (!deferPlanningWake) {
+			if (!deferCaptainPlanningWake) {
 				await createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
 					issue_id: planningIssue.id,
 				});
@@ -1584,7 +1584,6 @@ export function registerTools(
 			resolution_note: z.string().optional().describe('Note'),
 		},
 		async (args, db, auth) => {
-			// Look up the approval's team and verify access
 			const existing = await db.query<{ team_id: string }>(
 				'SELECT team_id FROM approvals WHERE id = $1',
 				[args.approval_id],
@@ -1592,15 +1591,29 @@ export function registerTools(
 			if (existing.rows.length === 0) return { error: 'Approval not found' };
 			const denied = await verifyTeamAccess(db, auth, existing.rows[0].team_id);
 			if (denied) return { error: denied };
-			const r = await db.query<Record<string, unknown>>(
-				`UPDATE approvals SET status = $1::approval_status, resolution_note = $2, resolved_at = now() WHERE id = $3 RETURNING ${APPROVAL_COLUMNS}`,
-				[args.status, args.resolution_note ?? null, args.approval_id],
-			);
-			const row = r.rows[0];
-			if (row) {
-				broadcastApprovalChange(wsManager, existing.rows[0].team_id, 'UPDATE', row);
+
+			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const resolved = await resolveApproval(db, args.approval_id as string, {
+				status: args.status as typeof ApprovalStatus.Approved | typeof ApprovalStatus.Denied,
+				resolutionNote: typeof args.resolution_note === 'string' ? args.resolution_note : null,
+				dataDir,
+				actorMemberId,
+				wsManager,
+			});
+			if (!resolved.ok) {
+				return { error: resolved.message };
 			}
-			return row ?? null;
+
+			const { row, sideEffects } = resolved;
+			const teamId = existing.rows[0].team_id;
+			broadcastApprovalChange(wsManager, teamId, 'UPDATE', row);
+			if (wsManager) {
+				const room = wsRoom.team(teamId);
+				for (const effect of sideEffects) {
+					broadcastRowChange(wsManager, room, effect.table, effect.op, effect.row);
+				}
+			}
+			return row;
 		},
 		db,
 	);

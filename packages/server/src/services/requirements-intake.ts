@@ -1,18 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	AgentAdminStatus,
-	CAPTAIN_AGENT_SLUG,
-	CommentContentType,
-	IssuePriority,
-	IssueStatus,
-	OPERATIONS_PROJECT_SLUG,
-	TERMINAL_ISSUE_STATUSES,
-	WakeupSource,
-	wsRoom,
-} from '@hezo/shared';
+import { CommentContentType, IssuePriority, IssueStatus, WakeupSource, wsRoom } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { logger } from '../logger';
+import { findOpenLabeledIssue, loadCaptainOpsContext } from './operations-intake';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -42,57 +33,6 @@ The board is starting fresh. Use this ticket as a conversation thread to learn w
 4. After the first project exists and the board is oriented, post a short summary comment and move this issue to **done**.`;
 }
 
-interface TeamContext {
-	captainMemberId: string;
-	operationsProjectId: string;
-}
-
-async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
-	const captain = await db.query<{ id: string }>(
-		`SELECT ma.id FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
-		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
-	);
-	const ops = await db.query<{ id: string }>(
-		`SELECT id FROM projects
-		 WHERE team_id = $1 AND is_internal = true AND slug = $2
-		 LIMIT 1`,
-		[teamId, OPERATIONS_PROJECT_SLUG],
-	);
-	if (!captain.rows[0] || !ops.rows[0]) return null;
-	return {
-		captainMemberId: captain.rows[0].id,
-		operationsProjectId: ops.rows[0].id,
-	};
-}
-
-async function findOpenIntakeIssue(
-	db: PGlite,
-	teamId: string,
-): Promise<{
-	id: string;
-	identifier: string;
-	project_slug: string;
-} | null> {
-	const terminalPlaceholders = TERMINAL_ISSUE_STATUSES.map(
-		(_, i) => `$${i + 3}::issue_status`,
-	).join(', ');
-	const result = await db.query<{ id: string; identifier: string; project_slug: string }>(
-		`SELECT i.id, i.identifier, p.slug AS project_slug
-		 FROM issues i
-		 JOIN projects p ON p.id = i.project_id
-		 WHERE i.team_id = $1
-		   AND i.labels @> $2::jsonb
-		   AND i.status NOT IN (${terminalPlaceholders})
-		 ORDER BY i.created_at ASC
-		 LIMIT 1`,
-		[teamId, JSON.stringify([REQUIREMENTS_INTAKE_LABEL]), ...TERMINAL_ISSUE_STATUSES],
-	);
-	return result.rows[0] ?? null;
-}
-
 /**
  * Creates the Operations requirements-intake issue and Captain greeting comment.
  * Idempotent: returns null if an open intake issue already exists.
@@ -101,13 +41,13 @@ export async function createRequirementsIntakeIssue(
 	db: PGlite,
 	teamId: string,
 ): Promise<{ issueId: string; captainMemberId: string } | null> {
-	const ctx = await loadTeamContext(db, teamId);
+	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) {
 		log.warn(`Cannot create requirements intake for ${teamId}; missing Captain or Operations`);
 		return null;
 	}
 
-	const existing = await findOpenIntakeIssue(db, teamId);
+	const existing = await findOpenLabeledIssue(db, teamId, REQUIREMENTS_INTAKE_LABEL);
 	if (existing) return null;
 
 	const { number: issueNumber, identifier } = await allocateIssueIdentifier(
@@ -179,7 +119,7 @@ export interface RequirementsIntakeIssue {
 async function buildIntakeResponse(
 	db: PGlite,
 	_teamId: string,
-	ctx: TeamContext,
+	ctx: { captainMemberId: string },
 	row: { id: string; identifier: string; project_slug: string },
 ): Promise<RequirementsIntakeIssue> {
 	const captainTitle = await db.query<{ title: string }>(
@@ -202,9 +142,9 @@ export async function getOpenRequirementsIntakeIssue(
 	db: PGlite,
 	teamId: string,
 ): Promise<RequirementsIntakeIssue | null> {
-	const ctx = await loadTeamContext(db, teamId);
+	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) return null;
-	const row = await findOpenIntakeIssue(db, teamId);
+	const row = await findOpenLabeledIssue(db, teamId, REQUIREMENTS_INTAKE_LABEL);
 	if (!row) return null;
 	return buildIntakeResponse(db, teamId, ctx, row);
 }
@@ -217,16 +157,16 @@ export async function ensureRequirementsIntakeIssue(
 	teamId: string,
 	wsManager?: WebSocketManager,
 ): Promise<RequirementsIntakeIssue | null> {
-	const ctx = await loadTeamContext(db, teamId);
+	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) return null;
 
-	let row = await findOpenIntakeIssue(db, teamId);
+	let row = await findOpenLabeledIssue(db, teamId, REQUIREMENTS_INTAKE_LABEL);
 	if (!row) {
 		const created = await createRequirementsIntakeIssue(db, teamId);
 		if (!created) {
-			row = await findOpenIntakeIssue(db, teamId);
+			row = await findOpenLabeledIssue(db, teamId, REQUIREMENTS_INTAKE_LABEL);
 		} else {
-			row = await findOpenIntakeIssue(db, teamId);
+			row = await findOpenLabeledIssue(db, teamId, REQUIREMENTS_INTAKE_LABEL);
 			if (row && wsManager) {
 				const issueFull = await db.query<Record<string, unknown>>(
 					'SELECT * FROM issues WHERE id = $1',

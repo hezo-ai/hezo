@@ -1,341 +1,10 @@
-import { createHash } from 'node:crypto';
-import type { PGlite } from '@electric-sql/pglite';
-import {
-	AgentAdminStatus,
-	ApprovalStatus,
-	ApprovalType,
-	AuthType,
-	DocumentType,
-	IssueStatus,
-	MemberType,
-	wsRoom,
-} from '@hezo/shared';
+import { ApprovalStatus, ApprovalType, AuthType, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { logger } from '../logger';
 import { requireTeamAccess, requireTeamAccessForResource } from '../middleware/auth';
-import {
-	enqueueAgentSummaryTask,
-	enqueueAgentTeamContextTask,
-	enqueueTeamContextTaskForAllAgents,
-	enqueueTeamSummaryTask,
-} from '../services/description-tasks';
-import { upsertDocument } from '../services/documents';
-import {
-	completeHireTeamIntakeAfterProvisioning,
-	postHireTeamTemplateApprovedAck,
-} from '../services/hire-team-intake';
-import { recordStatusChange } from '../services/issue-events';
-import {
-	createSkillsFromTemplate,
-	provisionTeamTemplate,
-} from '../services/team-template-provision';
-import type { WebSocketManager } from '../services/ws';
-
-const log = logger.child('approvals');
-
-interface SideEffectBroadcast {
-	table: string;
-	op: 'INSERT' | 'UPDATE';
-	row: Record<string, unknown>;
-}
-
-async function applyApprovalSideEffect(
-	db: PGlite,
-	approval: Record<string, unknown>,
-	_dataDir: string,
-	actorMemberId: string | null,
-	wsManager: WebSocketManager | undefined,
-): Promise<SideEffectBroadcast[]> {
-	const payload = approval.payload as Record<string, unknown>;
-	const broadcasts: SideEffectBroadcast[] = [];
-	switch (approval.type) {
-		case ApprovalType.Hire: {
-			const teamId = approval.team_id as string;
-			const title = (payload.title as string)?.trim();
-			const slug = payload.slug as string;
-			if (!title || !slug) {
-				throw new Error('hire approval payload missing title/slug');
-			}
-
-			const slugCheck = await db.query(
-				`SELECT ma.id FROM member_agents ma
-				 JOIN members m ON m.id = ma.id
-				 WHERE m.team_id = $1 AND ma.slug = $2`,
-				[teamId, slug],
-			);
-			if (slugCheck.rows.length > 0) {
-				throw new Error(`cannot materialise hire: slug '${slug}' already exists in this team`);
-			}
-
-			const memberResult = await db.query<{ id: string }>(
-				`INSERT INTO members (team_id, member_type, display_name)
-				 VALUES ($1, $2, $3) RETURNING id`,
-				[teamId, MemberType.Agent, title],
-			);
-			const memberId = memberResult.rows[0].id;
-
-			await db.query(
-				`INSERT INTO member_agents (id, title, slug, role_description,
-				                            default_effort, heartbeat_interval_min,
-				                            monthly_budget_cents, touches_code, admin_status)
-				 VALUES ($1, $2, $3, $4, $5::agent_effort, $6, $7, $8, $9::agent_admin_status)`,
-				[
-					memberId,
-					title,
-					slug,
-					(payload.role_description as string) ?? '',
-					(payload.default_effort as string) ?? 'medium',
-					(payload.heartbeat_interval_min as number) ?? 60,
-					(payload.monthly_budget_cents as number) ?? 3000,
-					(payload.touches_code as boolean) ?? false,
-					AgentAdminStatus.Enabled,
-				],
-			);
-
-			const promptDoc = await upsertDocument(db, undefined, {
-				scope: {
-					type: DocumentType.AgentSystemPrompt,
-					teamId,
-					memberAgentId: memberId,
-				},
-				content: (payload.system_prompt as string) ?? '',
-				changeSummary: 'Initial system prompt',
-				authorMemberId: (approval.requested_by_member_id as string) ?? null,
-			});
-			broadcasts.push({
-				table: 'documents',
-				op: 'INSERT',
-				row: promptDoc as unknown as Record<string, unknown>,
-			});
-
-			if (payload.issue_id) {
-				const issueId = payload.issue_id as string;
-				const prior = await db.query<{ status: string }>(
-					'SELECT status FROM issues WHERE id = $1',
-					[issueId],
-				);
-				const oldStatus = prior.rows[0]?.status;
-				const issueUpdate = await db.query<Record<string, unknown>>(
-					`UPDATE issues SET status = $1::issue_status, updated_at = now()
-					 WHERE id = $2 RETURNING *`,
-					[IssueStatus.Done, issueId],
-				);
-				if (issueUpdate.rows[0]) {
-					broadcasts.push({ table: 'issues', op: 'UPDATE', row: issueUpdate.rows[0] });
-					if (oldStatus) {
-						await recordStatusChange(
-							db,
-							teamId,
-							issueId,
-							oldStatus,
-							IssueStatus.Done,
-							actorMemberId,
-							wsManager,
-						);
-					}
-				}
-			}
-
-			const newAgent = await db.query<Record<string, unknown>>(
-				`SELECT m.id, m.team_id, m.display_name, m.created_at,
-				        ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
-				        ma.default_effort, ma.heartbeat_interval_min,
-				        ma.monthly_budget_cents, ma.budget_used_cents, ma.touches_code,
-				        ma.budget_reset_at, ma.runtime_status, ma.admin_status,
-				        ma.last_heartbeat_at, ma.reports_to, ma.mcp_servers, ma.updated_at
-				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1`,
-				[memberId],
-			);
-			if (newAgent.rows[0]) {
-				broadcasts.push({ table: 'member_agents', op: 'INSERT', row: newAgent.rows[0] });
-			}
-
-			enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
-				log.error('Failed to enqueue agent summary task:', e),
-			);
-			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-				log.error('Failed to enqueue team summary task:', e),
-			);
-			enqueueAgentTeamContextTask(db, teamId, memberId, 'initial').catch((e) =>
-				log.error('Failed to enqueue team_context task for new agent:', e),
-			);
-			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
-				log.error('Failed to fan out team_context tasks for existing agents:', e),
-			);
-			break;
-		}
-		case ApprovalType.KbUpdate: {
-			const slug = payload.slug as string;
-			const requestedBy = (approval.requested_by_member_id as string) ?? null;
-			const doc = await upsertDocument(db, undefined, {
-				scope: {
-					type: DocumentType.KbDoc,
-					teamId: approval.team_id as string,
-					slug,
-				},
-				title: typeof payload.title === 'string' ? payload.title : undefined,
-				content: typeof payload.content === 'string' ? payload.content : '',
-				changeSummary: (payload.change_summary as string) ?? '',
-				authorMemberId: requestedBy,
-			});
-			broadcasts.push({
-				table: 'documents',
-				op: 'UPDATE',
-				row: doc as unknown as Record<string, unknown>,
-			});
-			break;
-		}
-		case ApprovalType.Strategy: {
-			if (
-				typeof payload.action === 'string' &&
-				payload.action === 'update_prd' &&
-				typeof payload.filename === 'string' &&
-				typeof payload.content === 'string' &&
-				typeof payload.project_id === 'string'
-			) {
-				const requestedBy = (approval.requested_by_member_id as string) ?? null;
-				const doc = await upsertDocument(db, undefined, {
-					scope: {
-						type: DocumentType.ProjectDoc,
-						teamId: approval.team_id as string,
-						projectId: payload.project_id,
-						slug: payload.filename,
-					},
-					content: payload.content,
-					authorMemberId: requestedBy,
-				});
-				broadcasts.push({
-					table: 'documents',
-					op: 'UPDATE',
-					row: doc as unknown as Record<string, unknown>,
-				});
-			}
-			break;
-		}
-		case ApprovalType.TeamTemplate: {
-			const teamId = approval.team_id as string;
-			const templateId = payload.template_id as string;
-			if (!templateId) {
-				throw new Error('team_template approval payload missing template_id');
-			}
-
-			const hireIssueId = payload.issue_id as string | undefined;
-			const templateName =
-				(typeof payload.template_name === 'string' && payload.template_name.trim()) ||
-				'team template';
-			if (hireIssueId) {
-				const ackComment = await postHireTeamTemplateApprovedAck(
-					db,
-					teamId,
-					hireIssueId,
-					templateName,
-				);
-				if (ackComment) {
-					broadcasts.push({ table: 'issue_comments', op: 'INSERT', row: ackComment });
-				}
-			}
-
-			const provision = await provisionTeamTemplate(db, teamId, templateId, {
-				skipExistingSlugs: true,
-				dataDir: _dataDir,
-			});
-			await createSkillsFromTemplate(db, teamId, templateId);
-
-			for (const slug of provision.created_slugs) {
-				const agentRow = await db.query<{ id: string }>(
-					`SELECT ma.id FROM member_agents ma
-					 JOIN members m ON m.id = ma.id
-					 WHERE m.team_id = $1 AND ma.slug = $2`,
-					[teamId, slug],
-				);
-				const memberId = agentRow.rows[0]?.id;
-				if (memberId) {
-					enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
-						log.error('Failed to enqueue agent summary after template provision:', e),
-					);
-					const newAgent = await db.query<Record<string, unknown>>(
-						`SELECT m.id, m.team_id, m.display_name, m.created_at,
-						        ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
-						        ma.default_effort, ma.heartbeat_interval_min,
-						        ma.monthly_budget_cents, ma.budget_used_cents, ma.touches_code,
-						        ma.budget_reset_at, ma.runtime_status, ma.admin_status,
-						        ma.last_heartbeat_at, ma.reports_to, ma.mcp_servers, ma.updated_at
-						 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1`,
-						[memberId],
-					);
-					if (newAgent.rows[0]) {
-						broadcasts.push({
-							table: 'member_agents',
-							op: 'INSERT',
-							row: newAgent.rows[0],
-						});
-					}
-				}
-			}
-
-			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-				log.error('Failed to enqueue team summary after template provision:', e),
-			);
-
-			if (hireIssueId) {
-				const completed = await completeHireTeamIntakeAfterProvisioning(
-					db,
-					teamId,
-					hireIssueId,
-					templateName,
-					provision.created_slugs,
-					provision.skipped_slugs,
-					wsManager,
-				);
-				if (completed.summaryComment) {
-					broadcasts.push({
-						table: 'issue_comments',
-						op: 'INSERT',
-						row: completed.summaryComment,
-					});
-				}
-				if (completed.issue) {
-					broadcasts.push({ table: 'issues', op: 'UPDATE', row: completed.issue });
-				}
-			}
-			break;
-		}
-		case ApprovalType.SkillProposal: {
-			const teamId = approval.team_id as string;
-			const slug = payload.skill_slug as string;
-			const name = payload.skill_name as string;
-			const content = payload.content as string;
-			const contentHash = createHash('sha256').update(content).digest('hex');
-			const requestedBy =
-				(payload.requested_by as string) ?? (approval.requested_by_member_id as string) ?? null;
-
-			// Write to DB (source of truth)
-			const skillResult = await db.query<{ id: string }>(
-				`INSERT INTO skills (team_id, name, slug, description, content, content_hash, created_by_member_id)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7)
-				 ON CONFLICT (team_id, slug) DO UPDATE SET
-				   content = EXCLUDED.content,
-				   content_hash = EXCLUDED.content_hash,
-				   updated_at = now()
-				 RETURNING id`,
-				[teamId, name, slug, (payload.reason as string) ?? '', content, contentHash, requestedBy],
-			);
-
-			if (skillResult.rows[0]) {
-				await db.query(
-					`INSERT INTO skill_revisions (skill_id, revision_number, content, content_hash, change_summary, author_member_id)
-					 VALUES ($1, (SELECT COALESCE(MAX(revision_number), 0) + 1 FROM skill_revisions WHERE skill_id = $1), $2, $3, 'Created via approval', $4)`,
-					[skillResult.rows[0].id, content, contentHash, requestedBy],
-				);
-			}
-			break;
-		}
-	}
-	return broadcasts;
-}
+import { resolveApproval } from '../services/approval-resolve';
 
 export const approvalsRoutes = new Hono<Env>();
 
@@ -521,39 +190,36 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 		return err(c, 'INVALID_REQUEST', "status must be 'approved' or 'denied'", 400);
 	}
 
-	const result = await db.query(
-		`UPDATE approvals SET status = $1::approval_status, resolution_note = $2, resolved_at = now()
-     WHERE id = $3 RETURNING *`,
-		[body.status, body.resolution_note ?? null, approvalId],
-	);
-
-	const row = result.rows[0] as Record<string, unknown>;
-	let sideEffects: SideEffectBroadcast[] = [];
-
-	if (body.status === ApprovalStatus.Approved) {
-		const dataDir = c.get('dataDir');
-		const auth = c.get('auth');
-		let actorMemberId: string | null = null;
-		if (auth.type === AuthType.Agent) {
-			actorMemberId = auth.memberId;
-		} else if (auth.type === AuthType.Board) {
-			const r = await db.query<{ id: string }>(
-				`SELECT m.id FROM members m
-				   JOIN member_users mu ON mu.id = m.id
-				  WHERE mu.user_id = $1 AND m.team_id = $2`,
-				[auth.userId, existing.rows[0].team_id],
-			);
-			actorMemberId = r.rows[0]?.id ?? null;
-		}
-		sideEffects = await applyApprovalSideEffect(
-			db,
-			row,
-			dataDir,
-			actorMemberId,
-			c.get('wsManager'),
+	const auth = c.get('auth');
+	let actorMemberId: string | null = null;
+	if (auth.type === AuthType.Agent) {
+		actorMemberId = auth.memberId;
+	} else if (auth.type === AuthType.Board) {
+		const r = await db.query<{ id: string }>(
+			`SELECT m.id FROM members m
+			   JOIN member_users mu ON mu.id = m.id
+			  WHERE mu.user_id = $1 AND m.team_id = $2`,
+			[auth.userId, existing.rows[0].team_id],
 		);
+		actorMemberId = r.rows[0]?.id ?? null;
 	}
 
+	const resolved = await resolveApproval(db, approvalId, {
+		status: body.status,
+		resolutionNote: body.resolution_note ?? null,
+		dataDir: c.get('dataDir'),
+		actorMemberId,
+		wsManager: c.get('wsManager'),
+	});
+
+	if (!resolved.ok) {
+		if (resolved.error === 'NOT_FOUND') {
+			return err(c, 'NOT_FOUND', resolved.message, 404);
+		}
+		return err(c, 'INVALID_STATE', resolved.message, 409);
+	}
+
+	const { row, sideEffects } = resolved;
 	if (row.team_id) {
 		const room = wsRoom.team(row.team_id as string);
 		broadcastChange(c, room, 'approvals', 'UPDATE', row);

@@ -14,6 +14,7 @@ const typeColors: Record<string, string> = {
 	designated_repo_request: 'yellow',
 	secret_access: 'red',
 	hire: 'green',
+	team_template: 'green',
 	plan_review: 'blue',
 	deploy_production: 'red',
 	skill_proposal: 'blue',
@@ -88,6 +89,50 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 					</span>
 					{p.reason && (
 						<span className="block text-xs text-text-muted mt-1">{p.reason as string}</span>
+					)}
+				</>
+			);
+		}
+		case ApprovalType.TeamTemplate: {
+			const templateName = (p.template_name as string) ?? 'Team template';
+			const rationale = p.rationale as string | undefined;
+			const roles = (p.roles as Array<{ name: string; slug: string }> | undefined) ?? [];
+			const hireIssueId = p.issue_id as string | undefined;
+			const hireIssueIdentifier = approval.payload_issue_identifier;
+			const hireProjectSlug = approval.payload_project_slug;
+			return (
+				<>
+					<span>
+						Approve provisioning the <span className="font-medium">{templateName}</span> team
+						template
+						{hireIssueIdentifier && hireProjectSlug && (
+							<>
+								{' '}
+								(
+								<EntityLink
+									to="/teams/$teamId/projects/$projectId/issues/$issueId"
+									params={{
+										teamId: teamSlug,
+										projectId: hireProjectSlug,
+										issueId: hireIssueIdentifier.toLowerCase(),
+									}}
+								>
+									{hireIssueIdentifier}
+								</EntityLink>
+								)
+							</>
+						)}
+					</span>
+					{rationale && <span className="block text-xs text-text-muted mt-1">{rationale}</span>}
+					{roles.length > 0 && (
+						<span className="block text-xs text-text-muted mt-1">
+							Roles: {roles.map((r) => r.name).join(', ')}
+						</span>
+					)}
+					{hireIssueId && !hireIssueIdentifier && (
+						<span className="block text-xs text-text-subtle mt-1">
+							Linked to hire-the-team intake
+						</span>
 					)}
 				</>
 			);

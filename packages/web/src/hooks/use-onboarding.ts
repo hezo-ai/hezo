@@ -5,11 +5,6 @@ import { queryClient } from '../lib/query-client';
 export type OnboardingStageKey = 'requirements' | 'hire_team' | 'start_project';
 export type OnboardingStageStatus = 'complete' | 'current' | 'pending';
 
-export interface OnboardingAgentSummary {
-	title: string;
-	slug: string;
-}
-
 export interface OnboardingGoalSummary {
 	id: string;
 	title: string;
@@ -32,7 +27,6 @@ export interface OnboardingStatus {
 	current_stage: OnboardingStageKey;
 	stages: Record<OnboardingStageKey, OnboardingStageStatus>;
 	primary_project: OnboardingPrimaryProject | null;
-	agents: OnboardingAgentSummary[];
 	goals: OnboardingGoalSummary[];
 }
 

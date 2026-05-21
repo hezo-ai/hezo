@@ -16,6 +16,8 @@ export interface CreateProjectWithPlanningInput {
 export interface CreateProjectWithPlanningResult {
 	project: Record<string, unknown>;
 	planningIssue: Record<string, unknown>;
+	/** True when this was the first user-facing project at insert time (defer Captain planning wakeup). */
+	deferCaptainPlanningWake: boolean;
 }
 
 export async function createProjectWithPlanningIssue(
@@ -28,6 +30,14 @@ export async function createProjectWithPlanningIssue(
 
 	await db.query('BEGIN');
 	try {
+		await db.query('SELECT id FROM teams WHERE id = $1 FOR UPDATE', [input.teamId]);
+		const countResult = await db.query<{ count: string }>(
+			`SELECT count(*)::text AS count FROM projects
+			 WHERE team_id = $1 AND is_internal = false`,
+			[input.teamId],
+		);
+		const deferCaptainPlanningWake = Number(countResult.rows[0]?.count ?? 0) === 0;
+
 		const projectResult = await db.query(
 			`INSERT INTO projects (team_id, name, slug, issue_prefix, description, docker_base_image)
 			 VALUES ($1, $2, $3, $4, $5, $6)
@@ -108,7 +118,7 @@ Container provisioning for this project is in progress. Focus on planning while 
 		const planningIssue = issueResult.rows[0] as Record<string, unknown>;
 
 		await db.query('COMMIT');
-		return { project, planningIssue };
+		return { project, planningIssue, deferCaptainPlanningWake };
 	} catch (e) {
 		await db.query('ROLLBACK');
 		throw e;

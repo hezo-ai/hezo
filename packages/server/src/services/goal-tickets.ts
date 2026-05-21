@@ -1,19 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	AgentAdminStatus,
-	CAPTAIN_AGENT_SLUG,
-	CommentContentType,
-	IssuePriority,
-	IssueStatus,
-	OPERATIONS_PROJECT_SLUG,
-	TERMINAL_ISSUE_STATUSES,
-	WakeupSource,
-	wsRoom,
-} from '@hezo/shared';
+import { CommentContentType, IssuePriority, IssueStatus, WakeupSource, wsRoom } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
 import { allocateIssueIdentifier } from '../lib/issue-identifier';
+import { terminalStatusParams } from '../lib/sql';
 import { logger } from '../logger';
 import { isTeamExecutionStarted } from './onboarding';
+import { loadCaptainOpsContext } from './operations-intake';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -22,32 +14,6 @@ const log = logger.child('goal-tickets');
 const GOAL_LABEL = 'goal-update';
 
 export type GoalChangeReason = 'created' | 'updated';
-
-interface TeamContext {
-	captainMemberId: string;
-	operationsProjectId: string;
-}
-
-async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
-	const captain = await db.query<{ id: string }>(
-		`SELECT ma.id FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
-		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
-	);
-	const ops = await db.query<{ id: string }>(
-		`SELECT id FROM projects
-		 WHERE team_id = $1 AND is_internal = true AND slug = $2
-		 LIMIT 1`,
-		[teamId, OPERATIONS_PROJECT_SLUG],
-	);
-	if (!captain.rows[0] || !ops.rows[0]) return null;
-	return {
-		captainMemberId: captain.rows[0].id,
-		operationsProjectId: ops.rows[0].id,
-	};
-}
 
 function buildGoalBody(
 	goalId: string,
@@ -88,7 +54,7 @@ export async function enqueueGoalReviewTask(
 		return null;
 	}
 
-	const ctx = await loadTeamContext(db, teamId);
+	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) {
 		log.warn(`Cannot enqueue goal review for ${goalId}; missing Captain or Operations project`);
 		return null;
@@ -115,17 +81,15 @@ export async function enqueueGoalReviewTask(
 	const targetProjectId = goal.project_id ?? ctx.operationsProjectId;
 	const scopeLabel = goal.project_name ? `Project: ${goal.project_name}` : 'Team-wide';
 
-	const terminalPlaceholders = TERMINAL_ISSUE_STATUSES.map(
-		(_, i) => `$${i + 2}::issue_status`,
-	).join(', ');
+	const ts = terminalStatusParams(2);
 	const existingResult = await db.query<{ id: string }>(
 		`SELECT id FROM issues
 		 WHERE team_id = $1
 		   AND labels @> '["${GOAL_LABEL}"]'::jsonb
-		   AND status NOT IN (${terminalPlaceholders})
+		   AND status NOT IN (${ts.placeholders})
 		   AND description LIKE '%goal=${goalId}%'
 		 LIMIT 1`,
-		[teamId, ...TERMINAL_ISSUE_STATUSES],
+		[teamId, ...ts.values],
 	);
 
 	if (existingResult.rows[0]) {
