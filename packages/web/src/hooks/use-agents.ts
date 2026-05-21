@@ -14,6 +14,7 @@ export interface Agent {
 	team_context: string | null;
 	default_effort: AgentEffort;
 	heartbeat_interval_min: number;
+	run_timeout_min: number;
 	monthly_budget_cents: number;
 	budget_used_cents: number;
 	touches_code: boolean;
@@ -77,6 +78,7 @@ export function useUpdateAgent(teamId: string, agentId: string) {
 			reports_to?: string | null;
 			monthly_budget_cents?: number;
 			heartbeat_interval_min?: number;
+			run_timeout_min?: number;
 			touches_code?: boolean;
 			model_override_provider?: string | null;
 			model_override_model?: string | null;

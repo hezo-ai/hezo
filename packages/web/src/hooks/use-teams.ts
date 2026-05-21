@@ -39,14 +39,6 @@ export function useTeam(id: string, enabled = true) {
 	});
 }
 
-export function useCreateTeam() {
-	return useMutation({
-		mutationFn: (data: { name: string; description?: string; template_id?: string }) =>
-			api.post<Team>('/api/teams', data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams'] }),
-	});
-}
-
 export function useUpdateTeam(id: string) {
 	return useMutation({
 		mutationFn: (data: {
@@ -59,12 +51,5 @@ export function useUpdateTeam(id: string) {
 			queryClient.setQueryData(['teams', id], updated);
 			queryClient.invalidateQueries({ queryKey: ['teams'] });
 		},
-	});
-}
-
-export function useDeleteTeam() {
-	return useMutation({
-		mutationFn: (id: string) => api.delete(`/api/teams/${id}`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams'] }),
 	});
 }

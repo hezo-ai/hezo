@@ -47,14 +47,14 @@ test.describe('Project CRUD', () => {
 		expect(listStyle).not.toBe('none');
 	});
 
-	test('project list shows default Operations project', async ({ page }) => {
+	test('project list shows default (Internal) project', async ({ page }) => {
 		await authenticate(page);
 		const { team } = await createTeamWithAgents(page);
 
 		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByRole('heading', { name: 'Operations' })).toBeVisible({ timeout: 15000 });
+		await expect(page.getByRole('heading', { name: '(Internal)' })).toBeVisible({ timeout: 15000 });
 	});
 
 	test('project list shows issue and repo counts', async ({ page }) => {

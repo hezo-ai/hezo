@@ -44,6 +44,7 @@ function AgentSettingsPage() {
 	const [reportsTo, setReportsTo] = useState('');
 	const [budget, setBudget] = useState('');
 	const [heartbeat, setHeartbeat] = useState('');
+	const [runTimeout, setRunTimeout] = useState('');
 	const [touchesCode, setTouchesCode] = useState(false);
 	const [modelProvider, setModelProvider] = useState<AiProvider | ''>('');
 	const [modelId, setModelId] = useState('');
@@ -55,6 +56,7 @@ function AgentSettingsPage() {
 			setReportsTo(agent.reports_to ?? '');
 			setBudget(String(agent.monthly_budget_cents / 100));
 			setHeartbeat(String(agent.heartbeat_interval_min));
+			setRunTimeout(String(agent.run_timeout_min));
 			setTouchesCode(agent.touches_code);
 			setModelProvider((agent.model_override_provider ?? '') as AiProvider | '');
 			setModelId(agent.model_override_model ?? '');
@@ -81,6 +83,7 @@ function AgentSettingsPage() {
 			reports_to: reportsTo || null,
 			monthly_budget_cents: Math.round(Number.parseFloat(budget) * 100),
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
+			run_timeout_min: Number.parseInt(runTimeout, 10),
 			touches_code: touchesCode,
 			model_override_provider: modelProvider || null,
 			model_override_model: modelProvider ? modelId || null : null,
@@ -235,7 +238,7 @@ function AgentSettingsPage() {
 					</p>
 				</div>
 
-				<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+				<div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
 					<Input
 						label="Monthly Budget ($)"
 						type="number"
@@ -250,6 +253,13 @@ function AgentSettingsPage() {
 						min="1"
 						value={heartbeat}
 						onChange={(e) => setHeartbeat(e.target.value)}
+					/>
+					<Input
+						label="Run timeout (min)"
+						type="number"
+						min="1"
+						value={runTimeout}
+						onChange={(e) => setRunTimeout(e.target.value)}
 					/>
 				</div>
 

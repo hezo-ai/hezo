@@ -82,20 +82,8 @@ test.describe('Sidebar — sections and nav targets', () => {
 	});
 });
 
-test.describe('Main rail — team members', () => {
-	test('home page shows team member avatars on the main rail', async ({ page, freshWorkspace }) => {
-		const { team } = freshWorkspace;
-		await suppressAiModal(page);
-		await page.goto('/home');
-		await waitForPageLoad(page);
-
-		const rail = page.getByTestId('team-rail-members');
-		await expect(rail).toBeVisible({ timeout: 20000 });
-		await expect(rail.getByRole('link', { name: 'Captain' })).toBeVisible();
-		await expect(page).toHaveURL(/\/home\/?$/);
-	});
-
-	test('sidebar does not list agent names; rail shows avatars that link to agent pages', async ({
+test.describe('Sidebar — Team section', () => {
+	test('Team section lists agents directly and clicking an agent navigates to its detail page', async ({
 		page,
 		freshWorkspace,
 	}) => {
@@ -107,52 +95,42 @@ test.describe('Main rail — team members', () => {
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
-		await expect(nav.getByText('Captain')).not.toBeVisible();
-		await expect(nav.getByText('Architect')).not.toBeVisible();
+		await expect(nav.getByText('Captain')).toBeVisible({ timeout: 20000 });
+		await expect(nav.getByText('Architect')).toBeVisible();
 
-		const rail = page.getByTestId('team-rail-members');
-		await expect(rail).toBeVisible({ timeout: 20000 });
-		const memberLinks = rail.getByTestId('team-rail-member');
-		await expect(memberLinks).not.toHaveCount(0);
-
-		await rail.getByRole('link', { name: 'Captain' }).click();
+		await nav.getByText('Captain').click();
 		await expect(page).toHaveURL(
 			new RegExp(`/teams/${team.slug}/agents/${(captain as { slug: string }).slug}`),
 			{ timeout: 15000 },
 		);
 	});
 
-	test('projects list page shows team member avatars on the main rail', async ({
+	test('Team section collapses, expands, and persists collapse state across navigation', async ({
 		page,
 		freshWorkspace,
 	}) => {
 		const { team } = freshWorkspace;
-		await suppressAiModal(page);
-		await page.goto(`/teams/${team.slug}/projects`);
-		await waitForPageLoad(page);
-
-		await expect(page.getByTestId('team-rail-members')).toBeVisible({ timeout: 20000 });
-	});
-
-	test('mobile drawer includes team member avatars on the main rail', async ({
-		page,
-		freshWorkspace,
-	}) => {
-		await page.setViewportSize({ width: 375, height: 812 });
-		const { team } = freshWorkspace;
-
 		await suppressAiModal(page);
 		await page.goto(`/teams/${team.slug}/issues`);
 		await waitForPageLoad(page);
 
-		await page.getByTestId('mobile-nav-toggle').click();
-		const drawer = page.getByTestId('mobile-nav-drawer');
-		await expect(drawer.getByTestId('team-rail-members')).toBeVisible({ timeout: 20000 });
+		const nav = page.locator('nav');
+		await expect(nav.getByText('Captain')).toBeVisible({ timeout: 20000 });
+
+		await nav.getByRole('button', { name: 'Collapse' }).nth(1).click();
+		await expect(nav.getByText('Captain')).not.toBeVisible({ timeout: 15000 });
+
+		await nav.getByText('Inbox', { exact: true }).click();
+		await waitForPageLoad(page);
+		await expect(nav.getByText('Captain')).not.toBeVisible();
+
+		await nav.getByRole('button', { name: 'Expand' }).first().click();
+		await expect(nav.getByText('Captain')).toBeVisible({ timeout: 15000 });
 	});
 });
 
 test.describe('Sidebar — Projects section', () => {
-	test('Projects section lists projects with Operations pinned first and click navigates to detail', async ({
+	test('Projects section lists projects with (Internal) pinned last and click navigates to detail', async ({
 		page,
 		freshWorkspace,
 	}) => {
@@ -166,15 +144,15 @@ test.describe('Sidebar — Projects section', () => {
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
-		await expect(nav.getByText('Operations')).toBeVisible({ timeout: 20000 });
+		await expect(nav.getByText('(Internal)')).toBeVisible({ timeout: 20000 });
 		await expect(nav.getByText('Aardvark')).toBeVisible();
 		await expect(nav.getByText('Zebra')).toBeVisible();
 
-		const links = nav.locator('a').filter({ hasText: /^(Operations|Aardvark|Zebra)$/ });
+		const links = nav.locator('a').filter({ hasText: /^(\(Internal\)|Aardvark|Zebra)$/ });
 		const texts = await links.allTextContents();
-		expect(texts[0]).toBe('Operations');
-		expect(texts[1]).toBe('Aardvark');
-		expect(texts[2]).toBe('Zebra');
+		expect(texts[0]).toBe('Aardvark');
+		expect(texts[1]).toBe('Zebra');
+		expect(texts[2]).toBe('(Internal)');
 
 		await nav.getByText('Aardvark').click();
 		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/aardvark`), {
@@ -192,17 +170,17 @@ test.describe('Sidebar — Projects section', () => {
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
-		await expect(nav.getByText('Operations')).toBeVisible({ timeout: 20000 });
+		await expect(nav.getByText('(Internal)')).toBeVisible({ timeout: 20000 });
 
 		await nav.getByRole('button', { name: 'Collapse' }).first().click();
-		await expect(nav.getByText('Operations')).not.toBeVisible({ timeout: 15000 });
+		await expect(nav.getByText('(Internal)')).not.toBeVisible({ timeout: 15000 });
 
 		await nav.getByText('Inbox', { exact: true }).click();
 		await waitForPageLoad(page);
-		await expect(nav.getByText('Operations')).not.toBeVisible();
+		await expect(nav.getByText('(Internal)')).not.toBeVisible();
 
 		await nav.getByRole('button', { name: 'Expand' }).first().click();
-		await expect(nav.getByText('Operations')).toBeVisible({ timeout: 15000 });
+		await expect(nav.getByText('(Internal)')).toBeVisible({ timeout: 15000 });
 	});
 
 	test('creating a project from the page or sidebar appears in the sidebar without reload', async ({

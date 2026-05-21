@@ -85,16 +85,25 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 	if (PUBLIC_PATHS.includes(path)) return next();
 	if (!path.startsWith('/api') && !path.startsWith('/agent-api')) return next();
 
+	const masterKeyManager = c.get('masterKeyManager');
+	const db = c.get('db');
 	const header = c.req.header('Authorization');
+
 	if (!header?.startsWith('Bearer ')) {
+		// While the server is unlocked, requests without a token are accepted as
+		// the bootstrap admin so the instance is publicly viewable.
+		if (masterKeyManager.getState() === 'unlocked') {
+			const adminAuth = await loadAdminAuth(db);
+			if (adminAuth) {
+				c.set('auth', adminAuth);
+				return next();
+			}
+		}
 		return c.json(
 			{ error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' } },
 			401,
 		);
 	}
-
-	const token = header.slice(7);
-	const masterKeyManager = c.get('masterKeyManager');
 
 	if (masterKeyManager.getState() !== 'unlocked') {
 		return c.json(
@@ -103,7 +112,7 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 		);
 	}
 
-	const db = c.get('db');
+	const token = header.slice(7);
 	const auth = await verifyToken(token, db, masterKeyManager);
 	if (!auth) {
 		return c.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' } }, 401);
@@ -112,6 +121,15 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 	c.set('auth', auth);
 	return next();
 });
+
+export async function loadAdminAuth(db: PGlite): Promise<AuthInfo | null> {
+	const result = await db.query<{ id: string }>(
+		'SELECT id FROM users WHERE is_superuser = true LIMIT 1',
+	);
+	const userId = result.rows[0]?.id;
+	if (!userId) return null;
+	return { type: AuthType.Board, userId, isSuperuser: true };
+}
 
 export async function signBoardJwt(
 	masterKeyManager: { getJwtKey: () => Promise<Buffer> },

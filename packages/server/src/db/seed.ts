@@ -15,6 +15,7 @@ interface AgentTypeDef {
 	sort_order: number;
 	default_effort: string;
 	heartbeat_interval_min: number;
+	run_timeout_min: number;
 	monthly_budget_cents: number;
 	touches_code: boolean;
 	role_description: string;
@@ -30,6 +31,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			// Strategy + delegation requires deep reasoning — default to max (ultrathink).
 			default_effort: AgentEffort.Max,
 			heartbeat_interval_min: 120,
+			run_timeout_min: 60,
 			monthly_budget_cents: 2000,
 			touches_code: false,
 			role_description:
@@ -43,6 +45,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			// Planning is the core job — always ultrathink.
 			default_effort: AgentEffort.Max,
 			heartbeat_interval_min: 60,
+			run_timeout_min: 60,
 			monthly_budget_cents: 4000,
 			touches_code: false,
 			role_description:
@@ -56,6 +59,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			// Scoping/PRD work is planning-heavy.
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 60,
+			run_timeout_min: 60,
 			monthly_budget_cents: 3000,
 			touches_code: false,
 			role_description:
@@ -69,6 +73,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			// Implementation default — callers/comments can bump to high for tricky work.
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 30,
+			run_timeout_min: 60,
 			monthly_budget_cents: 5000,
 			touches_code: true,
 			role_description:
@@ -82,6 +87,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			// Review needs careful thought about correctness and coverage.
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 60,
+			run_timeout_min: 60,
 			monthly_budget_cents: 4000,
 			touches_code: true,
 			role_description:
@@ -94,6 +100,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			sort_order: 5,
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 60,
+			run_timeout_min: 60,
 			monthly_budget_cents: 3000,
 			touches_code: true,
 			role_description:
@@ -106,6 +113,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			sort_order: 6,
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 60,
+			run_timeout_min: 60,
 			monthly_budget_cents: 3000,
 			touches_code: true,
 			role_description:
@@ -118,6 +126,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			sort_order: 7,
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 60,
+			run_timeout_min: 60,
 			monthly_budget_cents: 3000,
 			touches_code: true,
 			role_description:
@@ -130,6 +139,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			sort_order: 8,
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 120,
+			run_timeout_min: 60,
 			monthly_budget_cents: 2000,
 			touches_code: false,
 			role_description:
@@ -143,6 +153,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			// Research benefits from deep thinking.
 			default_effort: AgentEffort.High,
 			heartbeat_interval_min: 120,
+			run_timeout_min: 60,
 			monthly_budget_cents: 3000,
 			touches_code: false,
 			role_description:
@@ -155,6 +166,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			sort_order: 10,
 			default_effort: AgentEffort.Medium,
 			heartbeat_interval_min: 120,
+			run_timeout_min: 60,
 			monthly_budget_cents: 3000,
 			touches_code: false,
 			role_description:
@@ -176,9 +188,9 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 		await db.query(
 			`INSERT INTO agent_types (name, slug, description, role_description, default_summary,
 			                          default_team_context, system_prompt_template,
-			                          default_effort, heartbeat_interval_min, monthly_budget_cents,
-			                          touches_code, is_builtin, source)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, true, 'builtin'::agent_type_source)
+			                          default_effort, heartbeat_interval_min, run_timeout_min,
+			                          monthly_budget_cents, touches_code, is_builtin, source)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12, true, 'builtin'::agent_type_source)
 			 ON CONFLICT (slug) DO UPDATE SET
 			     name = EXCLUDED.name,
 			     role_description = EXCLUDED.role_description,
@@ -187,6 +199,7 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 			     system_prompt_template = EXCLUDED.system_prompt_template,
 			     default_effort = EXCLUDED.default_effort,
 			     heartbeat_interval_min = EXCLUDED.heartbeat_interval_min,
+			     run_timeout_min = EXCLUDED.run_timeout_min,
 			     monthly_budget_cents = EXCLUDED.monthly_budget_cents,
 			     touches_code = EXCLUDED.touches_code,
 			     updated_at = now()`,
@@ -200,6 +213,7 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 				role(def.slug),
 				def.default_effort,
 				def.heartbeat_interval_min,
+				def.run_timeout_min,
 				def.monthly_budget_cents,
 				def.touches_code,
 			],

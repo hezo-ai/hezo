@@ -85,11 +85,6 @@ describe('GET /teams/:teamId/search', () => {
 		expect(res.status).toBe(200);
 	});
 
-	it('requires authentication', async () => {
-		const res = await app.request(`/api/teams/${teamId}/search?q=test`);
-		expect(res.status).toBe(401);
-	});
-
 	it('handles non-existent team gracefully', async () => {
 		const res = await app.request('/api/teams/00000000-0000-0000-0000-000000000099/search?q=test', {
 			headers: authHeader(token),

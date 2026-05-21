@@ -4,7 +4,6 @@ import { ChevronsLeft, ChevronsRight, Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AiProviderSetupModal } from '../components/ai-provider-setup-modal';
 import { MasterKeyGate } from '../components/master-key-gate';
-import { TeamRail } from '../components/team-rail';
 import { TeamSidebar } from '../components/team-sidebar';
 import { SocketProvider } from '../contexts/socket-context';
 import { useAiProviderStatus } from '../hooks/use-ai-providers';
@@ -132,9 +131,6 @@ function ShellLayout({ teamId }: { teamId: string | undefined }) {
 
 	return (
 		<div className="h-screen flex flex-row overflow-hidden">
-			<div className="hidden md:flex">
-				<TeamRail />
-			</div>
 			{teamId && (
 				<div className="hidden lg:block">
 					<TeamSidebarShell teamId={teamId} />
@@ -146,7 +142,7 @@ function ShellLayout({ teamId }: { teamId: string | undefined }) {
 					onClick={() => setDrawerOpen(true)}
 					aria-label="Open navigation"
 					data-testid="mobile-nav-toggle"
-					className="lg:hidden fixed top-3 left-3 md:left-[72px] z-40 w-9 h-9 rounded-radius-md bg-bg-elevated border border-border flex items-center justify-center text-text-muted hover:text-text shadow-sm"
+					className="lg:hidden fixed top-3 left-3 z-40 w-9 h-9 rounded-radius-md bg-bg-elevated border border-border flex items-center justify-center text-text-muted hover:text-text shadow-sm"
 				>
 					<Menu className="w-4 h-4" />
 				</button>
@@ -161,9 +157,6 @@ function ShellLayout({ teamId }: { teamId: string | undefined }) {
 						className="absolute inset-0 bg-black/50 cursor-default"
 					/>
 					<div className="relative flex h-full bg-bg shadow-xl">
-						<div className="md:hidden">
-							<TeamRail />
-						</div>
 						{teamId && (
 							<div className="w-[260px] h-full overflow-y-auto py-2 border-r border-border bg-bg">
 								<TeamSidebar teamId={teamId} />

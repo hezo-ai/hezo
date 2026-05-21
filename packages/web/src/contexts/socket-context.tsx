@@ -25,12 +25,7 @@ export function SocketProvider({
 		const client = clientRef.current;
 		client.onStatusChange = setConnected;
 
-		if (token) {
-			client.connect(token);
-		} else {
-			client.disconnect();
-			setConnected(false);
-		}
+		client.connect(token);
 
 		return () => {
 			client.disconnect();

@@ -61,7 +61,7 @@ export const agentsRoutes = new Hono<Env>();
 const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary, ma.team_context,
 	ma.default_effort,
-	ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.budget_used_cents,
+	ma.heartbeat_interval_min, ma.run_timeout_min, ma.monthly_budget_cents, ma.budget_used_cents,
 	ma.touches_code,
 	ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
 	ma.mcp_servers, ma.model_override_provider, ma.model_override_model, ma.updated_at`;
@@ -690,6 +690,7 @@ agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
 		reports_to?: string | null;
 		default_effort?: string;
 		heartbeat_interval_min?: number;
+		run_timeout_min?: number;
 		monthly_budget_cents?: number;
 		touches_code?: boolean;
 		mcp_servers?: unknown[];
@@ -759,6 +760,7 @@ agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
 		{ column: 'reports_to', value: body.reports_to },
 		{ column: 'default_effort', value: body.default_effort, cast: 'agent_effort' },
 		{ column: 'heartbeat_interval_min', value: body.heartbeat_interval_min },
+		{ column: 'run_timeout_min', value: body.run_timeout_min },
 		{ column: 'monthly_budget_cents', value: body.monthly_budget_cents },
 		{ column: 'touches_code', value: body.touches_code },
 		{ column: 'mcp_servers', value: body.mcp_servers, cast: 'jsonb' },

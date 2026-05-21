@@ -65,7 +65,6 @@ teamsRoutes.post('/teams', async (c) => {
 	}
 
 	const auth = c.get('auth');
-
 	const team = await createTeam(
 		{
 			db: c.get('db'),

@@ -545,11 +545,11 @@ test('operations project restricts assignee dropdown to the Captain', async ({ p
 	});
 	await page.getByRole('button', { name: 'New Issue' }).first().click();
 
-	await page.getByLabel('Title').fill('Operations-only assignee check');
+	await page.getByLabel('Title').fill('Internal-only assignee check');
 	await page
 		.locator('select')
 		.filter({ hasText: 'Select project' })
-		.selectOption({ label: 'Operations' });
+		.selectOption({ label: '(Internal)' });
 
 	const assigneeSelect = page.locator('select').filter({ hasText: /Select assignee|Captain/ });
 	const optionLabels = await assigneeSelect.locator('option').allTextContents();

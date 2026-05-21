@@ -54,14 +54,11 @@ function WelcomeCard({
 			<div>
 				<h1 className="text-xl md:text-2xl font-semibold mb-2">Get started with Hezo</h1>
 				<p className="text-[13px] md:text-sm text-text-muted max-w-md">
-					Create your first team to get started.
+					Configure an AI provider in Settings, then open your team workspace.
 				</p>
 			</div>
-			<Link to="/teams/new">
-				<Button>
-					<Plus className="w-4 h-4" />
-					Create Team
-				</Button>
+			<Link to="/settings/ai-providers">
+				<Button>Configure AI provider</Button>
 			</Link>
 		</div>
 	);

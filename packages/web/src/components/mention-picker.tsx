@@ -46,7 +46,7 @@ export function MentionPicker({
 
 	if (!loading && results.length === 0) {
 		return (
-			<div className="absolute left-0 right-0 top-full z-40 mt-1 rounded-radius-md border border-border bg-bg-raised shadow-md">
+			<div className="absolute left-0 right-0 top-full z-40 mt-1 rounded-radius-md border border-border bg-bg-elevated shadow-md">
 				<div className="px-3 py-2 text-xs text-text-muted">
 					{query ? `No matches for @${query}` : 'Type to search'}
 				</div>
@@ -57,7 +57,7 @@ export function MentionPicker({
 	return (
 		<div
 			ref={listRef}
-			className="absolute left-0 right-0 top-full z-40 mt-1 max-h-64 overflow-y-auto rounded-radius-md border border-border bg-bg-raised shadow-md"
+			className="absolute left-0 right-0 top-full z-40 mt-1 max-h-64 overflow-y-auto rounded-radius-md border border-border bg-bg-elevated shadow-md"
 			data-testid="mention-picker"
 		>
 			{loading && <div className="px-3 py-2 text-xs text-text-muted">Searching…</div>}

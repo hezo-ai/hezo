@@ -156,11 +156,6 @@ describe('team types CRUD', () => {
 		expect(res.status).toBe(403);
 	});
 
-	it('returns 401 without auth', async () => {
-		const res = await app.request('/api/team-templates');
-		expect(res.status).toBe(401);
-	});
-
 	it('returns 400 for missing name', async () => {
 		const res = await app.request('/api/team-templates', {
 			method: 'POST',

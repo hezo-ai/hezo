@@ -5,7 +5,7 @@ import { app } from './app';
 import { parseArgs } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { logger } from './logger';
-import { verifyToken } from './middleware/auth';
+import { loadAdminAuth, verifyToken } from './middleware/auth';
 import { ContainerLogStreamer } from './services/container-logs';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
@@ -85,6 +85,12 @@ async function validateToken(token: string): Promise<WsData['auth'] | null> {
 	return verifyToken(token, dbRef, mkmRef);
 }
 
+async function validateAnonymous(): Promise<WsData['auth'] | null> {
+	if (!mkmRef || !dbRef) return null;
+	if (mkmRef.getState() !== 'unlocked') return null;
+	return loadAdminAuth(dbRef);
+}
+
 async function canAccessTeam(auth: WsData['auth'], teamId: string): Promise<boolean> {
 	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
 		return auth.teamId === teamId;
@@ -146,10 +152,8 @@ export default {
 			return startingResponse();
 		}
 		if (url.pathname === '/ws') {
-			const token = url.searchParams.get('token') || req.headers.get('Authorization')?.slice(7);
-			if (!token) {
-				return new Response('Missing auth token', { status: 401 });
-			}
+			const token =
+				url.searchParams.get('token') || req.headers.get('Authorization')?.slice(7) || '';
 			const upgraded = server.upgrade(req, {
 				data: { auth: { type: 'pending' }, rooms: new Set<string>(), _token: token },
 			});
@@ -164,13 +168,9 @@ export default {
 				return;
 			}
 			const token = ws.data._token;
-			if (!token) {
-				ws.close(1008, 'No token');
-				return;
-			}
 			delete ws.data._token;
 
-			const auth = await validateToken(token);
+			const auth = token ? await validateToken(token) : await validateAnonymous();
 			if (!auth) {
 				ws.close(1008, 'Invalid auth');
 				return;

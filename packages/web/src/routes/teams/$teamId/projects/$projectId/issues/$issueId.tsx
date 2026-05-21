@@ -1140,16 +1140,14 @@ function RunningAgentsLine({
 
 	return (
 		<div
-			className="flex items-center flex-wrap gap-x-1.5 gap-y-1 rounded-radius-md bg-accent-blue-bg px-3 py-2 text-xs"
+			className="rounded-radius-md bg-accent-blue-bg px-3 py-2 text-xs"
 			data-testid="running-agents-line"
 		>
-			<span className="w-2 h-2 rounded-full bg-accent-blue animate-pulse shrink-0" />
-			<span>
-				{parts.map((p) => (
-					<Fragment key={p.key}>{p.node}</Fragment>
-				))}{' '}
-				<span className="text-text-muted">{verb} running</span>
-			</span>
+			<span className="inline-block w-2 h-2 rounded-full bg-accent-blue animate-pulse mr-1.5 align-middle" />
+			{parts.map((p) => (
+				<Fragment key={p.key}>{p.node}</Fragment>
+			))}{' '}
+			<span className="text-text-muted">{verb} running</span>
 		</div>
 	);
 }
