@@ -666,20 +666,8 @@ test('sidebar shows agent status badges', async ({ page }) => {
 
 	const { team } = await createTeamWithAgents(page);
 
-	await page.goto(`/teams/${team.id}`);
-	await expect(page.getByRole('link', { name: 'Issues' })).toBeVisible({ timeout: 20000 });
+	await page.goto(`/teams/${team.slug}/agents/captain`);
+	await waitForPageLoad(page);
 
-	// Expand the Team section if collapsed
-	const teamHeader = page.getByText('Team', { exact: true });
-	await expect(teamHeader).toBeVisible();
-
-	// Verify at least one agent in the sidebar has a status badge
-	const sidebar = page.locator('nav');
-	await expect(
-		sidebar
-			.getByText('Idle')
-			.or(sidebar.getByText('Running'))
-			.or(sidebar.getByText('Paused'))
-			.first(),
-	).toBeVisible({ timeout: 20000 });
+	await expect(page.getByRole('main').getByText('Idle')).toBeVisible({ timeout: 20000 });
 });

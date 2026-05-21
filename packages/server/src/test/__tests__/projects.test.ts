@@ -84,20 +84,42 @@ describe('projects CRUD', () => {
 
 		expect(body.data.planning_issue_id).toBe(issue.id);
 
-		const wakeupResult = await db.query<{
-			source: string;
-			payload: Record<string, unknown> | string;
-		}>(
-			`SELECT source, payload FROM agent_wakeup_requests
-			 WHERE member_id = $1 AND team_id = $2 AND source = 'assignment'`,
-			[captainId, teamId],
+		const firstProjectWakeups = await db.query(
+			`SELECT 1 FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND team_id = $2 AND source = 'assignment'
+			   AND payload->>'issue_id' = $3`,
+			[captainId, teamId, issue.id],
 		);
-		expect(wakeupResult.rows.length).toBeGreaterThanOrEqual(1);
-		const payload =
-			typeof wakeupResult.rows[0].payload === 'string'
-				? JSON.parse(wakeupResult.rows[0].payload)
-				: wakeupResult.rows[0].payload;
-		expect(payload.issue_id).toBe(issue.id);
+		expect(firstProjectWakeups.rows.length).toBe(0);
+
+		const secondRes = await app.request(`/api/teams/${teamId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Mobile App',
+				description: VALID_DESCRIPTION,
+			}),
+		});
+		expect(secondRes.status).toBe(201);
+		const secondBody = await secondRes.json();
+		const secondIssueResult = await db.query<{ id: string }>(
+			'SELECT id FROM issues WHERE project_id = $1',
+			[secondBody.data.id],
+		);
+		const secondPlanningIssueId = secondIssueResult.rows[0].id;
+
+		const secondWakeups = await db.query<{ payload: Record<string, unknown> | string }>(
+			`SELECT payload FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND team_id = $2 AND source = 'assignment'
+			   AND payload->>'issue_id' = $3`,
+			[captainId, teamId, secondPlanningIssueId],
+		);
+		expect(secondWakeups.rows.length).toBeGreaterThanOrEqual(1);
+		const secondPayload =
+			typeof secondWakeups.rows[0].payload === 'string'
+				? JSON.parse(secondWakeups.rows[0].payload)
+				: secondWakeups.rows[0].payload;
+		expect(secondPayload.issue_id).toBe(secondPlanningIssueId);
 	});
 
 	it('defaults docker_base_image to the bundled agent-base image when not supplied', async () => {

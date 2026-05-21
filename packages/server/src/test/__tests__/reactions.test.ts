@@ -29,18 +29,24 @@ interface ReactionGroup {
 	members: ReactionMember[];
 }
 
-async function insertIssue(assigneeId: string, title: string): Promise<string> {
+async function insertIssue(
+	assigneeId: string,
+	title: string,
+	opts?: { teamId?: string; projectId?: string },
+): Promise<string> {
+	const cid = opts?.teamId ?? teamId;
+	const pid = opts?.projectId ?? projectId;
 	const meta = await db.query<{ issue_prefix: string; number: number }>(
 		`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
 		 FROM projects p WHERE p.id = $1`,
-		[projectId],
+		[pid],
 	);
 	const n = meta.rows[0].number;
 	const res = await db.query<{ id: string }>(
 		`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
 		 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
 		 RETURNING id`,
-		[teamId, projectId, assigneeId, n, `${meta.rows[0].issue_prefix}-${n}`, title],
+		[cid, pid, assigneeId, n, `${meta.rows[0].issue_prefix}-${n}`, title],
 	);
 	return res.rows[0].id;
 }
@@ -288,19 +294,26 @@ describe('REST reactions endpoints', () => {
 		const otherCeo = (await otherAgents.json()).data.find(
 			(a: { slug: string }) => a.slug === 'captain',
 		);
-		const otherIssue = await db.query<{ id: string }>(
-			`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
-			 SELECT $1, p.id, $2, 1, 'OTH-1', 'other', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb
-			 FROM projects p WHERE p.team_id = $1 LIMIT 1
-			 RETURNING id`,
-			[otherTeamId, otherCeo.id],
-		);
+		const otherProjectRes = await app.request(`/api/teams/${otherTeamId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Other Project',
+				description: 'Cross-team reactions isolation project.',
+			}),
+		});
+		expect(otherProjectRes.status).toBe(201);
+		const otherProjectId = (await otherProjectRes.json()).data.id as string;
+		const otherIssueId = await insertIssue(otherCeo.id, 'other', {
+			teamId: otherTeamId,
+			projectId: otherProjectId,
+		});
 		const { token: otherToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			otherCeo.id,
 			otherTeamId,
-			otherIssue.rows[0].id,
+			otherIssueId,
 		);
 
 		const res = await app.request(

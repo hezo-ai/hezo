@@ -36,6 +36,18 @@ beforeAll(async () => {
 	});
 	projectId = (await projectRes.json()).data.id;
 
+	// Goal review tickets are deferred until the board confirms project execution.
+	await db.query(
+		`UPDATE projects SET execution_started_at = now()
+		 WHERE id = (
+		   SELECT id FROM projects
+		   WHERE team_id = $1 AND is_internal = false
+		   ORDER BY created_at ASC
+		   LIMIT 1
+		 )`,
+		[teamId],
+	);
+
 	const otherRes = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },

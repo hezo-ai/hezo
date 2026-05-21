@@ -277,6 +277,12 @@ test.describe('Sidebar — Issues count and mobile drawer', () => {
 	}) => {
 		const { team, agents, token } = freshWorkspace;
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+		const teamRes = await page.request.get(`/api/teams/${team.slug}`, {
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		const baselineOpen = ((await teamRes.json()) as { data: { open_issue_count: number } }).data
+			.open_issue_count;
+
 		const project = await createProjectAndClearPlanning(page, team.id, token, {
 			name: 'Count Project',
 			description: 'Sidebar count test.',
@@ -296,15 +302,16 @@ test.describe('Sidebar — Issues count and mobile drawer', () => {
 
 		const sidebarIssues = page.getByTestId('sidebar-link-issues');
 		await expect(sidebarIssues).toContainText('Issues');
-		await expect(sidebarIssues).toContainText('3');
+		const expectedOpen = baselineOpen + 3;
+		await expect(sidebarIssues).toContainText(String(expectedOpen));
 
 		await page.request.patch(`/api/teams/${team.id}/issues/${issueIds[0]}`, {
 			headers,
 			data: { status: 'closed' },
 		});
 
-		await expect(sidebarIssues).toContainText('2', { timeout: 15000 });
-		await expect(sidebarIssues).not.toContainText('3');
+		await expect(sidebarIssues).toContainText(String(expectedOpen - 1), { timeout: 15000 });
+		await expect(sidebarIssues).not.toContainText(String(expectedOpen));
 	});
 
 	test('mobile viewport opens navigation via hamburger drawer', async ({

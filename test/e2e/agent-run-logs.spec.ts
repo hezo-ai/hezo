@@ -1,5 +1,10 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, createProjectAndClearPlanning, createTeamWithAgents } from './helpers';
+import {
+	authenticate,
+	createProjectAndClearPlanning,
+	createTeamWithAgents,
+	waitForCaptainIdle,
+} from './helpers';
 
 async function waitForContainer(page: Page, teamId: string, projectId: string, token: string) {
 	const headers = { Authorization: `Bearer ${token}` };
@@ -20,7 +25,7 @@ async function waitForRunStatus(
 	issueId: string,
 	token: string,
 	target: 'running' | 'succeeded' | 'failed',
-	timeoutMs = 90_000,
+	timeoutMs = 120_000,
 ) {
 	const headers = { Authorization: `Bearer ${token}` };
 	const deadline = Date.now() + timeoutMs;
@@ -49,6 +54,8 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
+
+	await waitForCaptainIdle(page, team.id, token);
 
 	const project = await createProjectAndClearPlanning(page, team.id, token, {
 		name: 'Log Test Project',

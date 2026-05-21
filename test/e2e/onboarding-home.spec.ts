@@ -1,13 +1,12 @@
 import { expect, test } from './fixtures';
-import { authenticate, waitForPageLoad } from './helpers';
+import { authenticate, getToken, setActiveTeamSlug, waitForPageLoad } from './helpers';
 
 test.describe('Home onboarding', () => {
 	test.use({ viewport: { width: 390, height: 844 } });
 
 	test('shows requirements intake and progress on a new team', async ({ page }) => {
 		await authenticate(page);
-
-		const token = await page.evaluate(() => localStorage.getItem('hezo_token'));
+		const token = await getToken(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
 		const typesRes = await page.request.get('/api/team-templates', { headers });
@@ -24,6 +23,9 @@ test.describe('Home onboarding', () => {
 		const team = ((await teamRes.json()) as { data: { slug: string } }).data;
 
 		await page.goto('/home');
+		await waitForPageLoad(page);
+		await setActiveTeamSlug(page, team.slug);
+		await page.reload();
 		await waitForPageLoad(page);
 
 		await expect(page.getByTestId('home-welcome-card')).toBeVisible();

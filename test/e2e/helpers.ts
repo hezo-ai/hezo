@@ -83,7 +83,7 @@ export async function createProjectAndClearPlanning(
 	token: string,
 	data: { name: string; description?: string },
 ) {
-	const headers = { Authorization: `Bearer ${token}` };
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 	const res = await page.request.post(`/api/teams/${teamId}/projects`, {
 		headers,
 		data,
@@ -98,6 +98,88 @@ export async function createProjectAndClearPlanning(
 		data: { status: 'done' },
 	});
 	return project;
+}
+
+/** Pin home/rail onboarding to a specific team (avoids stale sessionStorage from other tests). */
+export async function setActiveTeamSlug(page: Page, teamSlug: string) {
+	await page.evaluate((slug) => {
+		sessionStorage.setItem('hezo:activeTeamSlug', slug);
+	}, teamSlug);
+}
+
+/**
+ * Close requirements and hire-team intake tickets so Captain is not busy on onboarding work.
+ * Safe to call when intake is already complete (404s are ignored).
+ */
+export async function completeOnboardingIntakes(
+	page: Page,
+	teamSlug: string,
+	token: string,
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+	const reqRes = await page.request.get(`/api/teams/${teamSlug}/requirements-intake`, { headers });
+	if (reqRes.ok()) {
+		const { issue_id } = ((await reqRes.json()) as { data: { issue_id: string } }).data;
+		if (issue_id) {
+			await page.request.patch(`/api/teams/${teamSlug}/issues/${issue_id}`, {
+				headers,
+				data: { status: 'done' },
+			});
+		}
+	}
+
+	for (let i = 0; i < 50; i++) {
+		const hireRes = await page.request.get(`/api/teams/${teamSlug}/hire-team-intake`, { headers });
+		if (hireRes.status() === 404) {
+			await new Promise((r) => setTimeout(r, 100));
+			continue;
+		}
+		if (hireRes.ok()) {
+			const { issue_id } = ((await hireRes.json()) as { data: { issue_id: string } }).data;
+			if (issue_id) {
+				await page.request.patch(`/api/teams/${teamSlug}/issues/${issue_id}`, {
+					headers,
+					data: { status: 'done' },
+				});
+			}
+		}
+		break;
+	}
+}
+
+/** Finish onboarding intakes and confirm the first user-facing project may execute (goal tickets, planning wakeup). */
+export async function confirmTeamExecutionStarted(
+	page: Page,
+	teamSlug: string,
+	token: string,
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+	await completeOnboardingIntakes(page, teamSlug, token);
+	const startRes = await page.request.post(`/api/teams/${teamSlug}/onboarding/start-project`, {
+		headers,
+	});
+	expect(startRes.ok()).toBe(true);
+}
+
+/** Wait until Captain is idle (e.g. after onboarding intake wakeups finish). */
+export async function waitForCaptainIdle(
+	page: Page,
+	teamId: string,
+	token: string,
+	timeoutMs = 120_000,
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${token}` };
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const res = await page.request.get(`/api/teams/${teamId}/agents`, { headers });
+		const agents = ((await res.json()) as { data: Array<{ slug: string; runtime_status: string }> })
+			.data;
+		const captain = agents.find((a) => a.slug === 'captain');
+		if (captain?.runtime_status === 'idle') return;
+		await new Promise((r) => setTimeout(r, 500));
+	}
+	throw new Error(`Captain did not return to idle within ${timeoutMs}ms`);
 }
 
 export async function createTeamWithAgents(page: Page) {
@@ -119,6 +201,8 @@ export async function createTeamWithAgents(page: Page) {
 		},
 	});
 	const team = ((await teamRes.json()) as any).data;
+
+	await completeOnboardingIntakes(page, team.slug, token);
 
 	return { team, token };
 }
