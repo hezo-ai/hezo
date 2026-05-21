@@ -126,12 +126,14 @@ export async function waitForProjectContainer(
  */
 export async function createProjectReadyForAgents(
 	page: Page,
-	teamId: string,
+	team: { id: string; slug: string },
 	token: string,
 	data: { name: string; description?: string },
 ) {
-	const project = await createProjectAndClearPlanning(page, teamId, token, data);
-	await waitForProjectContainer(page, teamId, project.id, token);
+	const project = await createProjectAndClearPlanning(page, team.id, token, data);
+	await confirmTeamExecutionStarted(page, team.slug, token);
+	await waitForProjectContainer(page, team.id, project.id, token);
+	await waitForCaptainIdle(page, team.id, token);
 	return project;
 }
 
@@ -164,10 +166,11 @@ export async function completeOnboardingIntakes(
 		}
 	}
 
-	for (let i = 0; i < 50; i++) {
+	// Hire intake is created when requirements intake closes — poll until it appears, then close it.
+	for (let i = 0; i < 100; i++) {
 		const hireRes = await page.request.get(`/api/teams/${teamSlug}/hire-team-intake`, { headers });
 		if (hireRes.status() === 404) {
-			await new Promise((r) => setTimeout(r, 100));
+			await new Promise((r) => setTimeout(r, 200));
 			continue;
 		}
 		if (hireRes.ok()) {
@@ -252,6 +255,8 @@ export async function createTeamWithAgents(page: Page) {
 	const team = ((await teamRes.json()) as any).data;
 
 	await completeOnboardingIntakes(page, team.slug, token);
+	// Intake close can queue Captain runs; wait before tests create projects and trigger wakeups.
+	await waitForCaptainIdle(page, team.id, token);
 
 	return { team, token };
 }

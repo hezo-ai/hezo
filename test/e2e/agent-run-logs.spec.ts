@@ -44,7 +44,7 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 
 	await waitForCaptainIdle(page, team.id, token);
 
-	const project = await createProjectReadyForAgents(page, team.id, token, {
+	const project = await createProjectReadyForAgents(page, team, token, {
 		name: 'Log Test Project',
 		description: 'Test project.',
 	});

@@ -153,7 +153,10 @@ function HomePage() {
 	const hasTeams = (teams?.length ?? 0) > 0;
 	const primaryTeamSlug = useRailTeamId() ?? '';
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects(teams);
-	const noUserProjects = !projectsLoading && projects.length === 0;
+	const primaryTeamProjects = primaryTeamSlug
+		? projects.filter((p) => p.teamSlug === primaryTeamSlug)
+		: [];
+	const noUserProjects = !projectsLoading && primaryTeamProjects.length === 0;
 	const intakeQueryEnabled = hasTeams && (noUserProjects || !projectsLoading);
 	const {
 		data: requirementsIntake,

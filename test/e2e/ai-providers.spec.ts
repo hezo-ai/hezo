@@ -1,6 +1,12 @@
 import { DEFAULT_TEAM_SLUG } from '@hezo/shared';
 import { expect, test } from '@playwright/test';
-import { authenticate, clearAiProviders, getToken, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	clearAiProviders,
+	getToken,
+	setActiveTeamSlug,
+	waitForPageLoad,
+} from './helpers';
 
 test.describe('AI Providers instance settings', () => {
 	test('lists all three provider cards on /settings/ai-providers', async ({ page }) => {
@@ -209,9 +215,13 @@ test.describe('AI provider gate (post-master-key, pre-team)', () => {
 		const token = await getToken(page);
 		await clearAiProviders(page, token);
 
-		await page.addInitScript((t: string) => {
-			localStorage.setItem('hezo_token', t);
-		}, token);
+		await page.addInitScript(
+			({ t, teamSlug }: { t: string; teamSlug: string }) => {
+				localStorage.setItem('hezo_token', t);
+				sessionStorage.setItem('hezo:activeTeamSlug', teamSlug);
+			},
+			{ t: token, teamSlug: DEFAULT_TEAM_SLUG },
+		);
 
 		await page.goto('/');
 
@@ -236,10 +246,13 @@ test.describe('AI provider gate (post-master-key, pre-team)', () => {
 			timeout: 20000,
 		});
 		await expect(page).toHaveURL(/\/home(\/|$)/);
+		await setActiveTeamSlug(page, DEFAULT_TEAM_SLUG);
+		await page.reload();
 		await expect(page.getByTestId('home-welcome')).toBeVisible({ timeout: 20000 });
+		await expect(page.getByTestId('onboarding-progress')).toBeVisible();
+		// Seeded default Startup team begins at requirements gathering.
 		await expect(page.getByTestId('home-captain-intake')).toBeVisible({ timeout: 20000 });
-		await expect(page.getByTestId('home-captain-intake-input')).toBeVisible();
-		await expect(page.getByText("I'm the Captain for your team")).toBeVisible();
+		await expect(page.getByTestId('onboarding-start-panel')).toBeHidden();
 	});
 
 	test('re-raises the gate after deleting the last provider', async ({ page }) => {

@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { BUILTIN_AGENT_SLUGS, MemberType, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
-import { toProjectIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
+import { toSlug, uniqueSlug } from '../lib/slug';
 import { logger } from '../logger';
 import { type ProjectRow, provisionContainer } from './containers';
 import { enqueueTeamContextTaskForAllAgents } from './description-tasks';
@@ -182,9 +182,9 @@ export async function createTeam(
 
 		const opsProjectResult = await db.query<{ id: string }>(
 			`INSERT INTO projects (team_id, name, slug, issue_prefix, description, is_internal)
-			 VALUES ($1, 'Operations', $2, $3, 'Administrative workspace for internal operations such as agent onboarding, team coordination, and team-wide tasks.', true)
+			 VALUES ($1, '(Internal)', $2, 'OP', 'Internal team coordination project, used for onboarding and team-level changes.', true)
 			 RETURNING id`,
-			[team.id, OPERATIONS_PROJECT_SLUG, toProjectIssuePrefix('Operations')],
+			[team.id, OPERATIONS_PROJECT_SLUG],
 		);
 		await db.query('INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)', [
 			opsProjectResult.rows[0].id,

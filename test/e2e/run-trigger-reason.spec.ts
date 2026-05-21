@@ -52,7 +52,7 @@ test('run page shows trigger reason linking back to the source mention', async (
 
 	await waitForCaptainIdle(page, team.id, token);
 
-	const project = await createProjectReadyForAgents(page, team.id, token, {
+	const project = await createProjectReadyForAgents(page, team, token, {
 		name: 'Trigger Reason Project',
 		description: 'Test project.',
 	});
@@ -119,7 +119,7 @@ test('run list row shows the trigger reason summary', async ({ page }) => {
 
 	await waitForCaptainIdle(page, team.id, token);
 
-	const project = await createProjectReadyForAgents(page, team.id, token, {
+	const project = await createProjectReadyForAgents(page, team, token, {
 		name: 'Trigger List Project',
 		description: 'Test project.',
 	});
