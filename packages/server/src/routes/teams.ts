@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { AuthType, BUILTIN_AGENT_SLUGS, MemberType, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
-import { toProjectIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
+import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -107,9 +107,9 @@ teamsRoutes.post('/teams', async (c) => {
 
 		const opsProjectResult = await db.query<{ id: string }>(
 			`INSERT INTO projects (team_id, name, slug, issue_prefix, description, is_internal)
-			 VALUES ($1, 'Operations', $2, $3, 'Administrative workspace for internal operations such as agent onboarding, team coordination, and team-wide tasks.', true)
+			 VALUES ($1, '(Internal)', $2, 'OP', 'Internal team coordination project, used for onboarding and team-level changes.', true)
 			 RETURNING id`,
-			[team.id, OPERATIONS_PROJECT_SLUG, toProjectIssuePrefix('Operations')],
+			[team.id, OPERATIONS_PROJECT_SLUG],
 		);
 		await db.query('INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)', [
 			opsProjectResult.rows[0].id,

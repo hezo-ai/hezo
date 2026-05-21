@@ -130,7 +130,7 @@ test.describe('Sidebar — Team section', () => {
 });
 
 test.describe('Sidebar — Projects section', () => {
-	test('Projects section lists projects with Operations pinned first and click navigates to detail', async ({
+	test('Projects section lists projects with (Internal) pinned first and click navigates to detail', async ({
 		page,
 		freshWorkspace,
 	}) => {
@@ -144,13 +144,13 @@ test.describe('Sidebar — Projects section', () => {
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
-		await expect(nav.getByText('Operations')).toBeVisible({ timeout: 20000 });
+		await expect(nav.getByText('(Internal)')).toBeVisible({ timeout: 20000 });
 		await expect(nav.getByText('Aardvark')).toBeVisible();
 		await expect(nav.getByText('Zebra')).toBeVisible();
 
-		const links = nav.locator('a').filter({ hasText: /^(Operations|Aardvark|Zebra)$/ });
+		const links = nav.locator('a').filter({ hasText: /^(\(Internal\)|Aardvark|Zebra)$/ });
 		const texts = await links.allTextContents();
-		expect(texts[0]).toBe('Operations');
+		expect(texts[0]).toBe('(Internal)');
 		expect(texts[1]).toBe('Aardvark');
 		expect(texts[2]).toBe('Zebra');
 
@@ -170,17 +170,17 @@ test.describe('Sidebar — Projects section', () => {
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
-		await expect(nav.getByText('Operations')).toBeVisible({ timeout: 20000 });
+		await expect(nav.getByText('(Internal)')).toBeVisible({ timeout: 20000 });
 
 		await nav.getByRole('button', { name: 'Collapse' }).first().click();
-		await expect(nav.getByText('Operations')).not.toBeVisible({ timeout: 15000 });
+		await expect(nav.getByText('(Internal)')).not.toBeVisible({ timeout: 15000 });
 
 		await nav.getByText('Inbox', { exact: true }).click();
 		await waitForPageLoad(page);
-		await expect(nav.getByText('Operations')).not.toBeVisible();
+		await expect(nav.getByText('(Internal)')).not.toBeVisible();
 
 		await nav.getByRole('button', { name: 'Expand' }).first().click();
-		await expect(nav.getByText('Operations')).toBeVisible({ timeout: 15000 });
+		await expect(nav.getByText('(Internal)')).toBeVisible({ timeout: 15000 });
 	});
 
 	test('creating a project from the page or sidebar appears in the sidebar without reload', async ({

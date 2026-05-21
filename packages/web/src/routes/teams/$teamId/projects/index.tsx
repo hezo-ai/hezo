@@ -1,3 +1,4 @@
+import { OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { FolderKanban, Plus } from 'lucide-react';
 import { useState } from 'react';
@@ -63,10 +64,19 @@ function ProjectListPage() {
 						>
 							<Card className="cursor-pointer">
 								<div className="flex items-start gap-3">
-									<Avatar initials={getInitials(p.name)} color={avatarColorFromString(p.name)} />
+									<Avatar
+										initials={p.slug === OPERATIONS_PROJECT_SLUG ? 'IN' : getInitials(p.name)}
+										color={avatarColorFromString(p.name)}
+									/>
 									<div className="flex flex-col gap-1 min-w-0 flex-1">
 										<div className="flex items-center justify-between gap-2">
-											<h2 className="text-[15px] font-medium text-text truncate">{p.name}</h2>
+											<h2
+												className={`text-[15px] font-medium text-text truncate ${
+													p.slug === OPERATIONS_PROJECT_SLUG ? 'italic' : ''
+												}`}
+											>
+												{p.name}
+											</h2>
 											{p.container_status && p.container_status !== 'running' && (
 												<span
 													role="img"

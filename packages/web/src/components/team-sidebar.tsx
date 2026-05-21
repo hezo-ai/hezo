@@ -67,33 +67,39 @@ export function TeamSidebar({ teamId }: TeamSidebarProps) {
 			items: [],
 			children: sortedProjects.map((project) => {
 				const projectParams = { teamId, projectId: project.slug };
+				const isInternal = project.slug === OPERATIONS_PROJECT_SLUG;
+				const issuesItem = {
+					to: '/teams/$teamId/projects/$projectId/issues',
+					params: projectParams,
+					label: 'Issues',
+					count: project.open_issue_count,
+				};
+				const containerItem = {
+					to: '/teams/$teamId/projects/$projectId/container',
+					params: projectParams,
+					label: 'Container',
+				};
+				const subItems = isInternal
+					? [issuesItem, containerItem]
+					: [
+							issuesItem,
+							{
+								to: '/teams/$teamId/projects/$projectId/documents',
+								params: projectParams,
+								label: 'Documents',
+							},
+							containerItem,
+							{
+								to: '/teams/$teamId/projects/$projectId/settings',
+								params: projectParams,
+								label: 'Settings',
+							},
+						];
 				return {
 					to: '/teams/$teamId/projects/$projectId',
 					params: projectParams,
-					label: project.name,
-					subItems: [
-						{
-							to: '/teams/$teamId/projects/$projectId/issues',
-							params: projectParams,
-							label: 'Issues',
-							count: project.open_issue_count,
-						},
-						{
-							to: '/teams/$teamId/projects/$projectId/documents',
-							params: projectParams,
-							label: 'Documents',
-						},
-						{
-							to: '/teams/$teamId/projects/$projectId/container',
-							params: projectParams,
-							label: 'Container',
-						},
-						{
-							to: '/teams/$teamId/projects/$projectId/settings',
-							params: projectParams,
-							label: 'Settings',
-						},
-					],
+					label: isInternal ? <span className="italic">{project.name}</span> : project.name,
+					subItems,
 				};
 			}),
 		},

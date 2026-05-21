@@ -1,4 +1,5 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { type DocItem, DocsLibrary } from '../../../../../components/docs-library';
@@ -220,5 +221,14 @@ export const Route = createFileRoute('/teams/$teamId/projects/$projectId/documen
 	validateSearch: (search: Record<string, unknown>): DocumentsSearch => ({
 		file: typeof search.file === 'string' ? search.file : undefined,
 	}),
+	beforeLoad: ({ params }) => {
+		if (params.projectId === OPERATIONS_PROJECT_SLUG) {
+			throw redirect({
+				to: '/teams/$teamId/projects/$projectId/issues',
+				params,
+				replace: true,
+			});
+		}
+	},
 	component: ProjectDocumentsPage,
 });

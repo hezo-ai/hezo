@@ -1,4 +1,6 @@
+import { OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Outlet, useLocation, useParams, useSearch } from '@tanstack/react-router';
+import { Info } from 'lucide-react';
 import { Breadcrumb } from '../../../../../components/ui/breadcrumb';
 import { useIssueAncestors } from '../../../../../hooks/use-issues';
 import { useProject } from '../../../../../hooks/use-projects';
@@ -19,16 +21,23 @@ function ProjectLayout() {
 		onIssueDetail ? allParams.issueId : undefined,
 	);
 	const projectParams = { teamId, projectId };
+	const isInternal = project?.slug === OPERATIONS_PROJECT_SLUG;
+	const showBanner =
+		isInternal && (pathname === `${base}/issues` || pathname === `${base}/container`);
 
 	const items: Array<{
-		label: string;
+		label: React.ReactNode;
 		to?: string;
 		params?: Record<string, string>;
 		key?: string;
 	}> = [
 		{ label: 'Projects', to: '/teams/$teamId/projects', params: { teamId } },
 		{
-			label: project?.name ?? projectId,
+			label: isInternal ? (
+				<span className="italic">{project?.name}</span>
+			) : (
+				(project?.name ?? projectId)
+			),
 			to: '/teams/$teamId/projects/$projectId',
 			params: projectParams,
 		},
@@ -71,6 +80,14 @@ function ProjectLayout() {
 	return (
 		<div>
 			<Breadcrumb items={items} />
+			{showBanner && (
+				<div className="flex items-start gap-2 mb-4 px-3 py-2 rounded-radius-md bg-bg-subtle text-text-muted text-[13px]">
+					<Info className="w-4 h-4 mt-px shrink-0" aria-hidden="true" />
+					<span>
+						Internal team coordination project, used for onboarding and team-level changes.
+					</span>
+				</div>
+			)}
 			<Outlet />
 		</div>
 	);
