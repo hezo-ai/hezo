@@ -1,6 +1,5 @@
+import { DEFAULT_TEAM_SLUG } from '@hezo/shared';
 import { expect, test } from './fixtures';
-
-const DEFAULT_TEAM_SLUG = 'default';
 
 test('invalid team slug redirects to default team', async ({ authedPage }) => {
 	await authedPage.goto('/teams/does-not-exist-abc123/issues');
