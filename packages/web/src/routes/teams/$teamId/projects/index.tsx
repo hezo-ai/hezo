@@ -24,6 +24,12 @@ function ProjectListPage() {
 	const { data: projects, isLoading } = useProjects(teamId);
 	const [createOpen, setCreateOpen] = useState(create ?? false);
 
+	const sortedProjects = [...(projects ?? [])].sort((a, b) => {
+		if (a.slug === OPERATIONS_PROJECT_SLUG) return 1;
+		if (b.slug === OPERATIONS_PROJECT_SLUG) return -1;
+		return a.name.localeCompare(b.name);
+	});
+
 	function handleCreateOpenChange(open: boolean) {
 		setCreateOpen(open);
 		if (!open && create) {
@@ -48,7 +54,7 @@ function ProjectListPage() {
 
 			{isLoading ? (
 				<div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>
-			) : projects?.length === 0 ? (
+			) : sortedProjects.length === 0 ? (
 				<EmptyState
 					icon={<FolderKanban className="w-10 h-10" />}
 					title="No projects yet"
@@ -56,7 +62,7 @@ function ProjectListPage() {
 				/>
 			) : (
 				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-					{projects?.map((p) => (
+					{sortedProjects.map((p) => (
 						<Link
 							key={p.id}
 							to="/teams/$teamId/projects/$projectId"

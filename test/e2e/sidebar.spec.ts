@@ -130,7 +130,7 @@ test.describe('Sidebar — Team section', () => {
 });
 
 test.describe('Sidebar — Projects section', () => {
-	test('Projects section lists projects with (Internal) pinned first and click navigates to detail', async ({
+	test('Projects section lists projects with (Internal) pinned last and click navigates to detail', async ({
 		page,
 		freshWorkspace,
 	}) => {
@@ -150,9 +150,9 @@ test.describe('Sidebar — Projects section', () => {
 
 		const links = nav.locator('a').filter({ hasText: /^(\(Internal\)|Aardvark|Zebra)$/ });
 		const texts = await links.allTextContents();
-		expect(texts[0]).toBe('(Internal)');
-		expect(texts[1]).toBe('Aardvark');
-		expect(texts[2]).toBe('Zebra');
+		expect(texts[0]).toBe('Aardvark');
+		expect(texts[1]).toBe('Zebra');
+		expect(texts[2]).toBe('(Internal)');
 
 		await nav.getByText('Aardvark').click();
 		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/aardvark`), {
