@@ -1,3 +1,4 @@
+import { DEFAULT_TEAM_SLUG } from '@hezo/shared';
 import { expect, test } from '@playwright/test';
 import { authenticate, clearAiProviders, getToken, waitForPageLoad } from './helpers';
 
@@ -14,12 +15,16 @@ test.describe('AI Providers instance settings', () => {
 		await expect(page.getByRole('button', { name: /OAuth/i })).toHaveCount(0);
 	});
 
-	test('rail Settings icon opens global settings with AI providers section', async ({ page }) => {
+	test('sidebar Settings link opens global settings with AI providers section', async ({
+		page,
+	}) => {
 		await authenticate(page);
-		await page.goto('/teams');
+		await page.goto(`/teams/${DEFAULT_TEAM_SLUG}/issues`);
 		await waitForPageLoad(page);
 
-		await page.getByTitle('Settings').click();
+		const settingsLink = page.locator('a[href="/settings"]');
+		await expect(settingsLink).toBeVisible({ timeout: 15_000 });
+		await settingsLink.click();
 		await expect(page).toHaveURL(/\/settings\/?$/);
 		await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 		await expect(page.getByRole('heading', { name: 'AI providers' })).toBeVisible();
