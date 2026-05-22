@@ -1,0 +1,66 @@
+import { Loader2 } from 'lucide-react';
+import { useAiProviderStatus } from '../../hooks/use-ai-providers';
+import { AiProviderPicker } from '../ai-provider-picker';
+import { Stepper } from './stepper';
+
+export type WizardStep = 'ai-provider' | 'done';
+
+export function SetupWizard() {
+	return (
+		<div className="min-h-screen flex flex-col items-center px-4 py-8 sm:py-16 bg-bg">
+			<div className="w-full max-w-2xl">
+				<div className="text-center mb-6 sm:mb-10">
+					<h1 className="text-xl sm:text-2xl font-semibold mb-2">Welcome to Hezo</h1>
+					<p className="text-[13px] text-text-muted">A quick setup before you get to work.</p>
+				</div>
+				<Stepper
+					steps={[
+						{ label: 'Master key', status: 'complete' },
+						{ label: 'AI provider', status: 'current' },
+					]}
+				/>
+				<div className="rounded-radius-lg border border-border bg-bg-elevated p-5 sm:p-8 shadow-sm">
+					<div data-testid="setup-step-ai-provider">
+						<h2 className="text-base sm:text-lg font-semibold mb-1">Set up an AI provider</h2>
+						<p className="text-[13px] text-text-muted mb-5">
+							Configure at least one provider so your agents can run. Shared across every team on
+							this instance — you can add more later in settings.
+						</p>
+						<AiProviderPicker />
+					</div>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Returns the current wizard step, or 'done' once an AI provider is configured.
+ * SetupGate is only mounted when the master key is unlocked, so this hook does
+ * not re-check master-key state — that would add a second observer to
+ * useStatus() and trigger a refetch loop against AppShell's isFetching gate.
+ */
+export function useWizardStep(): WizardStep | 'loading' {
+	const { data: providerStatus, isPending } = useAiProviderStatus();
+	if (isPending) return 'loading';
+	if (!providerStatus?.configured) return 'ai-provider';
+	return 'done';
+}
+
+interface SetupGateProps {
+	children: React.ReactNode;
+}
+
+/** Wraps the app shell: shows the wizard until an AI provider is configured. */
+export function SetupGate({ children }: SetupGateProps) {
+	const step = useWizardStep();
+	if (step === 'loading') {
+		return (
+			<div className="flex items-center justify-center h-screen text-text-muted">
+				<Loader2 className="w-4 h-4 animate-spin" />
+			</div>
+		);
+	}
+	if (step === 'done') return <>{children}</>;
+	return <SetupWizard />;
+}

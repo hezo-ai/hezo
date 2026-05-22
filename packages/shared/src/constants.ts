@@ -10,7 +10,10 @@ export const OPERATIONS_PROJECT_SLUG = 'operations';
 export const DEFAULT_TEAM_ID = '00000000-0000-0000-0000-000000000001';
 export const DEFAULT_TEAM_SLUG = 'default';
 export const DEFAULT_TEAM_NAME = 'Team';
-export const DEFAULT_TEAM_TEMPLATE_NAME = 'Startup';
+export const DEFAULT_TEAM_TEMPLATE_NAME = 'Blank';
+
+export const ONBOARDING_INTAKE_SKIP_SIGNAL_TEXT =
+	'Board chose to skip further questions — propose a template and a project based on what we have so far.';
 
 export const wsRoom = {
 	team: (id: string) => `team:${id}`,

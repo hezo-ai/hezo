@@ -2,11 +2,10 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, Outlet, useNavigate, useParams } from '@tanstack/react-router';
 import { ChevronsLeft, ChevronsRight, Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { AiProviderSetupModal } from '../components/ai-provider-setup-modal';
 import { MasterKeyGate } from '../components/master-key-gate';
+import { SetupGate } from '../components/setup/setup-wizard';
 import { TeamSidebar } from '../components/team-sidebar';
 import { SocketProvider } from '../contexts/socket-context';
-import { useAiProviderStatus } from '../hooks/use-ai-providers';
 import { useStatus } from '../hooks/use-status';
 import { useTeams } from '../hooks/use-teams';
 import { useUiState, useUpdateUiState } from '../hooks/use-ui-state';
@@ -35,20 +34,6 @@ function AppShell() {
 	const navigate = useNavigate();
 	const params = useParams({ strict: false }) as Record<string, string>;
 	const teamId = params.teamId;
-	const statusSettled = !isPending && !isFetching;
-	const unlocked = statusSettled && status?.masterKeyState === 'unlocked';
-	const hasToken = !!api.getToken();
-
-	const {
-		data: providerStatus,
-		isPending: providersPending,
-		isFetching: providersFetching,
-		isError: providersError,
-		error: providersQueryError,
-		refetch: refetchProviderStatus,
-	} = useAiProviderStatus({
-		enabled: unlocked && hasToken,
-	});
 
 	useEffect(() => {
 		if (status?.masterKeyState === 'unset' && window.location.pathname !== '/') {
@@ -56,8 +41,6 @@ function AppShell() {
 		}
 	}, [status?.masterKeyState, navigate]);
 
-	// Wait for a fresh /api/status before gating — stale cached "unlocked" after a DB
-	// reset would otherwise skip straight to the AI provider setup screen.
 	if (isPending || isFetching) return <Spinner />;
 
 	if (isError || !status) {
@@ -78,48 +61,18 @@ function AppShell() {
 		);
 	}
 
-	if (status?.masterKeyState === 'unset' || status?.masterKeyState === 'locked') {
+	// Master-key gate stays inline as a blocking modal so we never render the
+	// setup wizard before we have a token to query everything else.
+	if (status.masterKeyState !== 'unlocked') {
 		api.clearToken();
 		return <MasterKeyGate state={status.masterKeyState} />;
 	}
 
-	const providerLocked =
-		providersError &&
-		(providersQueryError as { code?: string; status?: number } | null)?.code === 'LOCKED';
-
-	if (providerLocked) {
-		api.clearToken();
-		queryClient.invalidateQueries({ queryKey: ['status'] });
-		return <MasterKeyGate state="locked" />;
-	}
-
-	if (providersPending || providersFetching) return <Spinner />;
-
-	if (providersError || !providerStatus) {
-		const message =
-			(providersQueryError as { message?: string } | null)?.message ??
-			'Could not reach the server. If you just reset the database, wait a few seconds and retry.';
-		return (
-			<div className="flex flex-col items-center justify-center h-screen gap-4 px-4 text-center">
-				<p className="text-[13px] text-accent-red max-w-md">{message}</p>
-				<button
-					type="button"
-					onClick={() => refetchProviderStatus()}
-					className="text-[13px] font-medium text-primary hover:underline"
-				>
-					Retry
-				</button>
-			</div>
-		);
-	}
-
-	if (!providerStatus.configured) {
-		return <AiProviderSetupModal />;
-	}
-
 	return (
 		<SocketProvider token={api.getToken()}>
-			<ShellLayout teamId={teamId} />
+			<SetupGate>
+				<ShellLayout teamId={teamId} />
+			</SetupGate>
 		</SocketProvider>
 	);
 }

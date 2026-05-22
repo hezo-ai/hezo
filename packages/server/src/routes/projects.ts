@@ -222,28 +222,23 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 		return r.rows.length > 0;
 	});
 
-	const { project, planningIssue, deferCaptainPlanningWake } = await createProjectWithPlanningIssue(
-		db,
-		{
-			teamId,
-			captainMemberId,
-			name: body.name.trim(),
-			slug,
-			issuePrefix,
-			description: body.description.trim(),
-			dockerBaseImage: body.docker_base_image,
-			initialPrd: body.initial_prd?.trim() || null,
-		},
-	);
+	const { project, planningIssue } = await createProjectWithPlanningIssue(db, {
+		teamId,
+		captainMemberId,
+		name: body.name.trim(),
+		slug,
+		issuePrefix,
+		description: body.description.trim(),
+		dockerBaseImage: body.docker_base_image,
+		initialPrd: body.initial_prd?.trim() || null,
+	});
 
 	broadcastChange(c, wsRoom.team(teamId), 'projects', 'INSERT', project);
 	broadcastChange(c, wsRoom.team(teamId), 'issues', 'INSERT', planningIssue);
 
-	if (!deferCaptainPlanningWake) {
-		createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
-			issue_id: planningIssue.id,
-		}).catch((e) => log.error('Failed to wake Captain for project planning:', e));
-	}
+	createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
+		issue_id: planningIssue.id,
+	}).catch((e) => log.error('Failed to wake Captain for project planning:', e));
 
 	provisionContainer(buildContainerDeps(c), project as unknown as ProjectRow, teamMeta.slug).catch(
 		(error) => {

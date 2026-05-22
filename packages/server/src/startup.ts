@@ -133,6 +133,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			masterKeyManager,
 			logs,
 			dataDir: config.dataDir,
+			egressCAPath: egressCA.certPath,
 		});
 	} catch (err) {
 		log.error('Failed to seed default team:', err);

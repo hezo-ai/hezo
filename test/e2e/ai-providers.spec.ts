@@ -250,9 +250,9 @@ test.describe('AI provider gate (post-master-key, pre-team)', () => {
 		await page.reload();
 		await expect(page.getByTestId('home-welcome')).toBeVisible({ timeout: 20000 });
 		await expect(page.getByTestId('onboarding-progress')).toBeVisible();
-		// Seeded default Startup team begins at requirements gathering.
-		await expect(page.getByTestId('home-captain-intake')).toBeVisible({ timeout: 20000 });
-		await expect(page.getByTestId('onboarding-start-panel')).toBeHidden();
+		// Seeded default Blank team has no auto-intake — the home shows the choice card.
+		await expect(page.getByTestId('onboarding-choice')).toBeVisible({ timeout: 20000 });
+		await expect(page.getByTestId('home-captain-intake')).toHaveCount(0);
 	});
 
 	test('re-raises the gate after deleting the last provider', async ({ page }) => {

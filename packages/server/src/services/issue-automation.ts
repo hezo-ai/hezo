@@ -11,7 +11,6 @@ import {
 import { broadcastRowChange } from '../lib/broadcast';
 import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { logger } from '../logger';
-import { onRequirementsIntakeCompleted } from './hire-team-intake';
 import { recordStatusChange } from './issue-events';
 import { OAUTH_VERIFICATION_LABEL } from './oauth-verification-tasks';
 import { createWakeup } from './wakeup';
@@ -143,12 +142,6 @@ export async function triggerStatusAutomations(
 			await notifyParentOfOAuthVerification(db, teamId, issueId, wsManager);
 		} catch (e) {
 			log.error('Failed to notify parent of OAuth verification:', e);
-		}
-
-		try {
-			await onRequirementsIntakeCompleted(db, teamId, issueId, wsManager);
-		} catch (e) {
-			log.error('Failed to start hire-team intake after requirements:', e);
 		}
 	}
 }

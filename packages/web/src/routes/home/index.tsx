@@ -4,16 +4,16 @@ import { useState } from 'react';
 import { CaptainHomeIntakePanel } from '../../components/captain-home-intake-panel';
 import { CreateProjectDialog } from '../../components/create-project-dialog';
 import { OnboardingProgress } from '../../components/onboarding-progress';
-import { OnboardingStartPanel } from '../../components/onboarding-start-panel';
+import { OnboardingChoice } from '../../components/setup/onboarding-choice';
 import { Avatar, avatarColorFromString } from '../../components/ui/avatar';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
-import { useHireTeamIntake } from '../../hooks/use-hire-team-intake';
 import { type OnboardingStatus, useOnboarding } from '../../hooks/use-onboarding';
+import { useOnboardingIntake } from '../../hooks/use-onboarding-intake';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
 import { useRailTeamId } from '../../hooks/use-rail-team-id';
-import { useRequirementsIntake } from '../../hooks/use-requirements-intake';
 import { useTeams } from '../../hooks/use-teams';
+import { queryClient } from '../../lib/query-client';
 
 function getInitials(name: string): string {
 	const words = name.split(/\s+/).filter(Boolean);
@@ -22,45 +22,23 @@ function getInitials(name: string): string {
 }
 
 function WelcomeCard({
-	showCreateTeam,
 	showProgress,
 	onboardingStages,
 }: {
-	showCreateTeam: boolean;
 	showProgress: boolean;
 	onboardingStages?: OnboardingStatus['stages'];
 }) {
-	if (!showCreateTeam) {
-		return (
-			<Card className="mb-4 p-0 overflow-hidden" data-testid="home-welcome-card">
-				<div
-					className="flex items-center justify-center gap-2.5 px-4 py-3"
-					data-testid="home-welcome"
-				>
-					<Building2 className="w-7 h-7 text-text-muted shrink-0" />
-					<h1 className="text-base font-semibold text-text">Get started with Hezo</h1>
-				</div>
-				{showProgress && onboardingStages && <OnboardingProgress stages={onboardingStages} />}
-			</Card>
-		);
-	}
-
 	return (
-		<div
-			className="flex flex-col items-center text-center gap-4 py-10 md:py-14 mb-4"
-			data-testid="home-welcome"
-		>
-			<Building2 className="w-12 h-12 md:w-16 md:h-16 text-text-muted" />
-			<div>
-				<h1 className="text-xl md:text-2xl font-semibold mb-2">Get started with Hezo</h1>
-				<p className="text-[13px] md:text-sm text-text-muted max-w-md">
-					Configure an AI provider in Settings, then open your team workspace.
-				</p>
+		<Card className="mb-4 p-0 overflow-hidden" data-testid="home-welcome-card">
+			<div
+				className="flex items-center justify-center gap-2.5 px-4 py-3"
+				data-testid="home-welcome"
+			>
+				<Building2 className="w-7 h-7 text-text-muted shrink-0" />
+				<h1 className="text-base font-semibold text-text">Get started with Hezo</h1>
 			</div>
-			<Link to="/settings/ai-providers">
-				<Button>Configure AI provider</Button>
-			</Link>
-		</div>
+			{showProgress && onboardingStages && <OnboardingProgress stages={onboardingStages} />}
+		</Card>
 	);
 }
 
@@ -150,25 +128,10 @@ function HomeProjectsSection({
 
 function HomePage() {
 	const { data: teams, isLoading: teamsLoading } = useTeams();
-	const hasTeams = (teams?.length ?? 0) > 0;
 	const primaryTeamSlug = useRailTeamId() ?? '';
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects(teams);
-	const primaryTeamProjects = primaryTeamSlug
-		? projects.filter((p) => p.teamSlug === primaryTeamSlug)
-		: [];
-	const noUserProjects = !projectsLoading && primaryTeamProjects.length === 0;
-	const intakeQueryEnabled = hasTeams && (noUserProjects || !projectsLoading);
-	const {
-		data: requirementsIntake,
-		isLoading: requirementsLoading,
-		isError: requirementsError,
-	} = useRequirementsIntake(primaryTeamSlug, intakeQueryEnabled, { ensure: noUserProjects });
-	const {
-		data: hireTeamIntake,
-		isLoading: hireTeamLoading,
-		isError: hireTeamError,
-	} = useHireTeamIntake(primaryTeamSlug, hasTeams && !projectsLoading);
-	const { data: onboarding } = useOnboarding(primaryTeamSlug, hasTeams);
+	const { data: intake } = useOnboardingIntake(primaryTeamSlug, !!primaryTeamSlug);
+	const { data: onboarding } = useOnboarding(primaryTeamSlug, !!primaryTeamSlug);
 
 	if (teamsLoading) {
 		return (
@@ -176,72 +139,41 @@ function HomePage() {
 		);
 	}
 
-	if (!hasTeams) {
-		return (
-			<div className="flex flex-col items-center justify-center min-h-[70vh] px-4">
-				<WelcomeCard showCreateTeam showProgress={false} />
-			</div>
-		);
-	}
-
-	const showRequirementsPanel =
-		hasTeams &&
-		(noUserProjects
-			? requirementsLoading || !!requirementsIntake || requirementsError
-			: !!requirementsIntake);
-	const showHireTeamPanel = hasTeams && (hireTeamLoading || !!hireTeamIntake || hireTeamError);
-	const showCaptainSection = showRequirementsPanel || showHireTeamPanel;
-
-	const activeIntake = hireTeamIntake
-		? { ...hireTeamIntake, kind: 'hire-team' as const }
-		: requirementsIntake
-			? { ...requirementsIntake, kind: 'requirements' as const }
-			: null;
-	const captainPanelLoading =
-		(showHireTeamPanel && hireTeamLoading) ||
-		(showRequirementsPanel && !hireTeamIntake && requirementsLoading);
-
-	const showWelcomeCard = onboarding?.show_welcome ?? true;
-	const showStartProjectPanel =
-		onboarding?.stages.start_project === 'current' && !showCaptainSection;
-	const onboardingComplete = onboarding?.stages.start_project === 'complete';
+	const hasIntake = !!intake;
+	const hasProject = !!onboarding?.primary_project;
+	const showChoice = !!primaryTeamSlug && !hasIntake && !hasProject;
+	const showProgress = !!onboarding && (showChoice || hasIntake);
 
 	return (
 		<div className="max-w-7xl mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
-			{showWelcomeCard && (
-				<WelcomeCard
-					showCreateTeam={false}
-					showProgress={!!onboarding}
-					onboardingStages={onboarding?.stages}
-				/>
+			{showProgress && (
+				<WelcomeCard showProgress={!!onboarding} onboardingStages={onboarding?.stages} />
 			)}
 
-			{showCaptainSection && (
+			{showChoice && (
+				<div className="mb-6" data-testid="home-onboarding-choice-section">
+					<OnboardingChoice
+						teamId={primaryTeamSlug}
+						onChosen={() => {
+							queryClient.invalidateQueries({
+								queryKey: ['teams', primaryTeamSlug, 'onboarding'],
+							});
+							queryClient.invalidateQueries({
+								queryKey: ['teams', primaryTeamSlug, 'onboarding-intake'],
+							});
+							queryClient.invalidateQueries({ queryKey: ['projects'] });
+						}}
+					/>
+				</div>
+			)}
+
+			{hasIntake && intake && (
 				<div className="mb-6" data-testid="home-captain-intake-section">
-					{captainPanelLoading && (
-						<div className="text-text-muted text-[13px] py-8 text-center">Loading…</div>
-					)}
-					{!captainPanelLoading && activeIntake && (
-						<CaptainHomeIntakePanel teamId={primaryTeamSlug} intake={activeIntake} />
-					)}
-					{!captainPanelLoading &&
-						!activeIntake &&
-						(requirementsError || hireTeamError) &&
-						(noUserProjects || hireTeamError) && (
-							<Card className="border-dashed bg-transparent p-6 text-center text-sm text-text-muted">
-								Could not load the Captain conversation. Try refreshing the page.
-							</Card>
-						)}
+					<CaptainHomeIntakePanel teamId={primaryTeamSlug} intake={intake} />
 				</div>
 			)}
 
-			{showStartProjectPanel && onboarding && (
-				<div className="mb-6">
-					<OnboardingStartPanel teamId={primaryTeamSlug} onboarding={onboarding} />
-				</div>
-			)}
-
-			{onboardingComplete && (
+			{hasProject && (
 				<HomeProjectsSection teams={teams ?? []} projects={projects} isLoading={projectsLoading} />
 			)}
 		</div>

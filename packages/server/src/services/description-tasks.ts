@@ -16,7 +16,9 @@ import { createWakeup } from './wakeup';
 const log = logger.child('description-tasks');
 
 const DESCRIPTION_LABEL = 'description-update';
+const COHERENCE_LABEL = 'team-coherence-review';
 const TEAM_TARGET = 'team';
+const TEAM_COHERENCE_TARGET = 'team_coherence';
 
 export type AgentSummaryReason = 'created' | 'prompt_updated' | 'role_updated';
 export type TeamSummaryReason =
@@ -32,6 +34,11 @@ export type AgentTeamContextReason =
 	| 'reports_to_changed'
 	| 'prompt_updated'
 	| 'summary_updated';
+export type TeamCoherenceReviewReason =
+	| 'template_applied'
+	| 'agent_hired'
+	| 'agent_removed'
+	| 'reports_to_changed';
 
 const TEAM_CONTEXT_TARGET_PREFIX = 'team_context:';
 
@@ -65,9 +72,10 @@ async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext 
 	};
 }
 
-async function findOpenDescriptionIssue(
+async function findOpenLabeledIssueByTarget(
 	db: PGlite,
 	teamId: string,
+	label: string,
 	target: string,
 ): Promise<string | null> {
 	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${i + 3}::issue_status`).join(', ');
@@ -78,18 +86,28 @@ async function findOpenDescriptionIssue(
 		   AND status NOT IN (${placeholders})
 		   AND description LIKE '%target=' || $${TERMINAL_ISSUE_STATUSES.length + 3} || '%'
 		 LIMIT 1`,
-		[teamId, JSON.stringify([DESCRIPTION_LABEL]), ...TERMINAL_ISSUE_STATUSES, target],
+		[teamId, JSON.stringify([label]), ...TERMINAL_ISSUE_STATUSES, target],
 	);
 	return result.rows[0]?.id ?? null;
 }
 
-async function createDescriptionIssue(
+async function findOpenDescriptionIssue(
+	db: PGlite,
+	teamId: string,
+	target: string,
+): Promise<string | null> {
+	return findOpenLabeledIssueByTarget(db, teamId, DESCRIPTION_LABEL, target);
+}
+
+async function createLabeledOperationsIssue(
 	db: PGlite,
 	teamId: string,
 	ctx: TeamContext,
 	target: string,
 	title: string,
 	body: string,
+	label: string,
+	priority: IssuePriority,
 ): Promise<string | null> {
 	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
 
@@ -98,8 +116,6 @@ async function createDescriptionIssue(
 		ctx.operationsProjectId,
 	);
 
-	// Embed `target=...` in the description so dedup queries can find it without
-	// adding a separate column or jsonb payload field.
 	const description = `<!-- target=${target} -->\n\n${body}`;
 
 	const insertResult = await db.query<{ id: string }>(
@@ -116,8 +132,8 @@ async function createDescriptionIssue(
 			title,
 			description,
 			IssueStatus.Backlog,
-			IssuePriority.Low,
-			JSON.stringify(['internal', DESCRIPTION_LABEL]),
+			priority,
+			JSON.stringify(['internal', label]),
 		],
 	);
 
@@ -128,10 +144,30 @@ async function createDescriptionIssue(
 			issue_id: issueId,
 		});
 	} catch (e) {
-		log.error('Failed to wake Captain for description task:', e);
+		log.error(`Failed to wake Captain for ${label}:`, e);
 	}
 
 	return issueId;
+}
+
+async function createDescriptionIssue(
+	db: PGlite,
+	teamId: string,
+	ctx: TeamContext,
+	target: string,
+	title: string,
+	body: string,
+): Promise<string | null> {
+	return createLabeledOperationsIssue(
+		db,
+		teamId,
+		ctx,
+		target,
+		title,
+		body,
+		DESCRIPTION_LABEL,
+		IssuePriority.Low,
+	);
 }
 
 function buildAgentSummaryBody(
@@ -277,6 +313,62 @@ export async function enqueueAgentTeamContextTask(
 		target,
 		`Update team relationships for "${agentTitle}"`,
 		body,
+	);
+}
+
+function buildTeamCoherenceReviewBody(reason: TeamCoherenceReviewReason): string {
+	return `## Team coherence review
+
+The team roster changed (reason: ${reason}). Review the team to make sure everyone fits together and reports to the right place.
+
+**Steps**
+
+1. Call \`list_agents(team_id)\` to enumerate every enabled agent and their \`reports_to\` relationships.
+2. For each agent, call \`get_agent_system_prompt(team_id, agent_id=...)\` to read its current system prompt.
+3. Identify problems:
+   - **Orphans** — agents with no manager who should report to someone (only you and the Coach legitimately report to the board).
+   - **Cycles** — reports_to chains that loop.
+   - **Stale prompts** — system prompts that describe a manager, peer, or report that no longer matches the actual team structure.
+   - **Coverage gaps** — responsibilities the team is expected to own but no agent describes itself as covering.
+   - **Conflicts** — two agents claiming the same responsibility with no division of work.
+4. Reconcile what you can:
+   - Use \`update_agent_system_prompt(agent_id, content)\` to rewrite a prompt so it matches the current team structure.
+   - Use \`set_agent_team_context(agent_id, content)\` to refresh an agent's relationships narrative if needed.
+   - Use \`set_agent_summary(agent_id, summary)\` and \`set_team_summary(summary)\` after substantive changes.
+5. For changes you cannot make through MCP tools (re-parenting an agent, removing an agent, hiring a new role), post a single summary comment on this ticket explaining what should change and request board confirmation.
+6. Move this issue to **done** once the team is coherent.`;
+}
+
+export async function enqueueTeamCoherenceReviewTask(
+	db: PGlite,
+	teamId: string,
+	reason: TeamCoherenceReviewReason,
+): Promise<string | null> {
+	const ctx = await loadTeamContext(db, teamId);
+	if (!ctx) return null;
+	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
+
+	const existing = await findOpenLabeledIssueByTarget(
+		db,
+		teamId,
+		COHERENCE_LABEL,
+		TEAM_COHERENCE_TARGET,
+	);
+	if (existing) {
+		log.debug(`Skipping duplicate team coherence review; open issue ${existing}`);
+		return existing;
+	}
+
+	const body = buildTeamCoherenceReviewBody(reason);
+	return createLabeledOperationsIssue(
+		db,
+		teamId,
+		ctx,
+		TEAM_COHERENCE_TARGET,
+		'Review team coherence after roster change',
+		body,
+		COHERENCE_LABEL,
+		IssuePriority.High,
 	);
 }
 

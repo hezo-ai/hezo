@@ -1,8 +1,7 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { queryClient } from '../lib/query-client';
 
-export type OnboardingStageKey = 'requirements' | 'hire_team' | 'start_project';
+export type OnboardingStageKey = 'intake' | 'done';
 export type OnboardingStageStatus = 'complete' | 'current' | 'pending';
 
 export interface OnboardingGoalSummary {
@@ -36,18 +35,5 @@ export function useOnboarding(teamId: string, enabled = true) {
 		queryFn: () => api.get<OnboardingStatus>(`/api/teams/${teamId}/onboarding`),
 		enabled: enabled && !!teamId,
 		staleTime: 10_000,
-	});
-}
-
-export function useConfirmProjectStart(teamId: string) {
-	return useMutation({
-		mutationFn: () =>
-			api.post<{ project: OnboardingPrimaryProject }>(
-				`/api/teams/${teamId}/onboarding/start-project`,
-			),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'onboarding'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] });
-		},
 	});
 }

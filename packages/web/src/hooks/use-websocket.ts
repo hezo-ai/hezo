@@ -14,8 +14,7 @@ const TABLE_TO_QUERY_KEY: Record<
 		['teams', cid],
 		['teams'],
 		['teams', cid, 'projects'],
-		['teams', cid, 'requirements-intake'],
-		['teams', cid, 'hire-team-intake'],
+		['teams', cid, 'onboarding-intake'],
 		['teams', cid, 'onboarding'],
 	],
 	heartbeat_runs: (cid, row) => {

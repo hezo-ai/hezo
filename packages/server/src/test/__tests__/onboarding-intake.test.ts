@@ -5,9 +5,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
 import {
 	CAPTAIN_GREETING_TEXT,
-	REQUIREMENTS_INTAKE_LABEL,
-	REQUIREMENTS_INTAKE_TITLE,
-} from '../../services/requirements-intake';
+	ONBOARDING_INTAKE_LABEL,
+	ONBOARDING_INTAKE_TITLE,
+} from '../../services/onboarding-intake';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
@@ -30,8 +30,8 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('requirements intake', () => {
-	it('creates an Operations issue with Captain greeting when a team is created', async () => {
+describe('onboarding intake', () => {
+	it('creates an Operations issue with Captain greeting on demand', async () => {
 		const blank = await db.query<{ id: string }>(
 			"SELECT id FROM team_templates WHERE name = 'Blank' LIMIT 1",
 		);
@@ -45,7 +45,7 @@ describe('requirements intake', () => {
 		expect(res.status).toBe(201);
 		const team = (await res.json()).data as { slug: string };
 
-		const intakeRes = await app.request(`/api/teams/${team.slug}/requirements-intake`, {
+		const intakeRes = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
 		expect(intakeRes.status).toBe(200);
@@ -66,9 +66,9 @@ describe('requirements intake', () => {
 			labels: string[];
 			assignee_name: string;
 		}>;
-		const intakeIssue = issues.find((i) => i.title === REQUIREMENTS_INTAKE_TITLE);
+		const intakeIssue = issues.find((i) => i.title === ONBOARDING_INTAKE_TITLE);
 		expect(intakeIssue).toBeDefined();
-		expect(intakeIssue?.labels).toContain(REQUIREMENTS_INTAKE_LABEL);
+		expect(intakeIssue?.labels).toContain(ONBOARDING_INTAKE_LABEL);
 		expect(intakeIssue?.assignee_name).toBe('Captain');
 
 		const commentsRes = await app.request(
@@ -95,10 +95,10 @@ describe('requirements intake', () => {
 		});
 		const team = (await createRes.json()).data as { slug: string };
 
-		const first = await app.request(`/api/teams/${team.slug}/requirements-intake`, {
+		const first = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
-		const second = await app.request(`/api/teams/${team.slug}/requirements-intake`, {
+		const second = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
 		const a = (await first.json()).data as { issue_id: string };
@@ -109,12 +109,12 @@ describe('requirements intake', () => {
 			`SELECT count(*)::int AS count FROM issues
 			 WHERE team_id = (SELECT id FROM teams WHERE slug = $1)
 			   AND labels @> $2::jsonb`,
-			[team.slug, JSON.stringify([REQUIREMENTS_INTAKE_LABEL])],
+			[team.slug, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
 		);
 		expect(count.rows[0].count).toBe(1);
 	});
 
-	it('returns 404 without ensure when the discuss-requirements ticket is closed', async () => {
+	it('returns 404 without ensure when the onboarding ticket is closed', async () => {
 		const blank = await db.query<{ id: string }>(
 			"SELECT id FROM team_templates WHERE name = 'Blank' LIMIT 1",
 		);
@@ -125,7 +125,7 @@ describe('requirements intake', () => {
 		});
 		const team = (await createRes.json()).data as { slug: string };
 
-		const openRes = await app.request(`/api/teams/${team.slug}/requirements-intake`, {
+		const openRes = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
 		const open = (await openRes.json()).data as { issue_id: string };
@@ -136,14 +136,50 @@ describe('requirements intake', () => {
 			open.issue_id,
 		]);
 
-		const closedRes = await app.request(`/api/teams/${team.slug}/requirements-intake`, {
+		const closedRes = await app.request(`/api/teams/${team.slug}/onboarding-intake`, {
 			headers: authHeader(token),
 		});
 		expect(closedRes.status).toBe(404);
 
-		const ensureRes = await app.request(`/api/teams/${team.slug}/requirements-intake?ensure=true`, {
+		const ensureRes = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
 		expect(ensureRes.status).toBe(200);
+	});
+
+	it('posts a system comment and wakes Captain on skip-questions', async () => {
+		const blank = await db.query<{ id: string }>(
+			"SELECT id FROM team_templates WHERE name = 'Blank' LIMIT 1",
+		);
+		const createRes = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Skip Q Co', template_id: blank.rows[0].id }),
+		});
+		const team = (await createRes.json()).data as { slug: string };
+
+		const ensureRes = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
+			headers: authHeader(token),
+		});
+		const intake = (await ensureRes.json()).data as { issue_id: string; issue_identifier: string };
+
+		const skipRes = await app.request(`/api/teams/${team.slug}/onboarding-intake/skip-questions`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+		expect(skipRes.status).toBe(200);
+
+		const commentsRes = await app.request(
+			`/api/teams/${team.slug}/issues/${intake.issue_identifier}/comments`,
+			{ headers: authHeader(token) },
+		);
+		const comments = (await commentsRes.json()).data as Array<{
+			content_type: string;
+			content: { text: string };
+		}>;
+		const systemComment = comments.find(
+			(c) => c.content_type === 'system' && c.content.text.toLowerCase().includes('skip'),
+		);
+		expect(systemComment).toBeDefined();
 	});
 });

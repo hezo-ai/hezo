@@ -1,11 +1,10 @@
 import { AI_PROVIDER_INFO, AiAuthMethod, AiProvider } from '@hezo/shared';
-import { ClipboardPaste, Key, Loader2, Shield } from 'lucide-react';
+import { ClipboardPaste, Key, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useCreateAiProvider } from '../hooks/use-ai-providers';
 import { SubscriptionPasteForm } from './subscription-paste-form';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { dialogContentClassName } from './ui/dialog';
 import { Input } from './ui/input';
 
 const PROVIDERS = [
@@ -16,25 +15,12 @@ const PROVIDERS = [
 	AiProvider.Google,
 ] as const;
 
-export function AiProviderSetupModal() {
+export function AiProviderPicker() {
 	return (
-		<div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-			<div className={dialogContentClassName.xl}>
-				<div className="flex items-center gap-2 mb-1">
-					<Shield className="w-5 h-5 text-text-muted" />
-					<h2 className="text-lg font-semibold">Set up an AI provider</h2>
-				</div>
-				<p className="text-[13px] text-text-muted mb-6">
-					Configure at least one AI provider so your agents can run. These credentials are shared
-					across every team in this Hezo instance.
-				</p>
-
-				<div className="space-y-3">
-					{PROVIDERS.map((provider) => (
-						<ProviderCard key={provider} provider={provider} />
-					))}
-				</div>
-			</div>
+		<div className="space-y-3">
+			{PROVIDERS.map((provider) => (
+				<ProviderCard key={provider} provider={provider} />
+			))}
 		</div>
 	);
 }

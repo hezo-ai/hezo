@@ -996,15 +996,27 @@ export function registerTools(
 	tool(
 		server,
 		'request_team_template_approval',
-		'Request board approval to provision agents from a team template onto this team. Captain-only. Call after the board agrees to your recommendation.',
+		'Request board approval to provision agents from a team template onto this team AND (optionally) create the user project in one approval. Captain-only. Call after the board agrees to your recommendation. When `project_name` is set, the server creates the project automatically on approval and closes the onboarding intake ticket.',
 		{
 			team_id: z.string().describe('Team ID'),
 			template_id: z.string().describe('Team template UUID from list_team_templates'),
 			issue_id: z
 				.string()
 				.optional()
-				.describe('Hire-the-team Operations issue id (for post-approval Captain wake)'),
-			rationale: z.string().describe('Why this template fits the first project'),
+				.describe(
+					'Onboarding-intake Operations issue id. The server closes this ticket once provisioning + project creation finish.',
+				),
+			rationale: z.string().describe('Why this template fits the work the board described'),
+			project_name: z
+				.string()
+				.optional()
+				.describe(
+					'When set, the user project to create on approval. Pair with project_description.',
+				),
+			project_description: z
+				.string()
+				.optional()
+				.describe('Description for the user project being created on approval'),
 		},
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent) {
@@ -1055,6 +1067,8 @@ export function registerTools(
 				rationale: args.rationale,
 				roles: roles.rows,
 				issue_id: args.issue_id ?? null,
+				project_name: (args.project_name as string | undefined)?.trim() || null,
+				project_description: (args.project_description as string | undefined)?.trim() || null,
 			};
 
 			const inserted = await db.query<Record<string, unknown>>(

@@ -3,25 +3,33 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	ApprovalType,
+	CAPTAIN_AGENT_SLUG,
 	DocumentType,
 	IssueStatus,
 	MemberType,
+	WakeupSource,
+	wsRoom,
 } from '@hezo/shared';
+import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
+import { resolveProjectIssuePrefix } from '../routes/projects';
 import {
 	enqueueAgentSummaryTask,
 	enqueueAgentTeamContextTask,
+	enqueueTeamCoherenceReviewTask,
 	enqueueTeamContextTaskForAllAgents,
 	enqueueTeamSummaryTask,
 } from './description-tasks';
 import { upsertDocument } from './documents';
-import {
-	completeHireTeamIntakeAfterProvisioning,
-	postHireTeamTemplateApprovedAck,
-	postHireTeamTemplateDeniedNote,
-} from './hire-team-intake';
 import { recordStatusChange } from './issue-events';
-import { createSkillsFromTemplate, provisionTeamTemplate } from './team-template-provision';
+import {
+	completeOnboardingIntakeAfterProvisioning,
+	postOnboardingTemplateApprovedAck,
+	postOnboardingTemplateDeniedNote,
+} from './onboarding-intake';
+import { createProjectWithPlanningIssue } from './project-create';
+import { applyTemplateToTeam } from './team-template-apply';
+import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('approval-side-effects');
@@ -39,12 +47,12 @@ export async function applyApprovalDeniedSideEffect(
 	if (approval.type !== ApprovalType.TeamTemplate) return [];
 	const payload = approval.payload as Record<string, unknown>;
 	const teamId = approval.team_id as string;
-	const hireIssueId = payload.issue_id as string | undefined;
-	if (!hireIssueId) return [];
-	const comment = await postHireTeamTemplateDeniedNote(
+	const intakeIssueId = payload.issue_id as string | undefined;
+	if (!intakeIssueId) return [];
+	const comment = await postOnboardingTemplateDeniedNote(
 		db,
 		teamId,
-		hireIssueId,
+		intakeIssueId,
 		(approval.resolution_note as string | null) ?? null,
 	);
 	if (!comment) return [];
@@ -174,6 +182,9 @@ export async function applyApprovalSideEffect(
 			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
 				log.error('Failed to fan out team_context tasks for existing agents:', e),
 			);
+			enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
+				log.error('Failed to enqueue team coherence review after hire:', e),
+			);
 			break;
 		}
 		case ApprovalType.KbUpdate: {
@@ -231,24 +242,21 @@ export async function applyApprovalSideEffect(
 				throw new Error('team_template approval payload missing template_id');
 			}
 
-			const hireIssueId = payload.issue_id as string | undefined;
+			const intakeIssueId = payload.issue_id as string | undefined;
 			const templateName =
 				(typeof payload.template_name === 'string' && payload.template_name.trim()) ||
 				'team template';
+			const projectName = (payload.project_name as string | null | undefined)?.trim() || null;
+			const projectDescription =
+				(payload.project_description as string | null | undefined)?.trim() ?? '';
 
-			const provision = await provisionTeamTemplate(db, teamId, templateId, {
-				skipExistingSlugs: true,
-				dataDir,
-			});
-			if (dataDir) {
-				await createSkillsFromTemplate(db, teamId, templateId);
-			}
+			const apply = await applyTemplateToTeam(db, teamId, templateId, { dataDir, wsManager });
 
-			if (hireIssueId) {
-				const ackComment = await postHireTeamTemplateApprovedAck(
+			if (intakeIssueId) {
+				const ackComment = await postOnboardingTemplateApprovedAck(
 					db,
 					teamId,
-					hireIssueId,
+					intakeIssueId,
 					templateName,
 				);
 				if (ackComment) {
@@ -256,7 +264,7 @@ export async function applyApprovalSideEffect(
 				}
 			}
 
-			for (const slug of provision.created_slugs) {
+			for (const slug of apply.created_slugs) {
 				const agentRow = await db.query<{ id: string }>(
 					`SELECT ma.id FROM member_agents ma
 					 JOIN members m ON m.id = ma.id
@@ -292,14 +300,57 @@ export async function applyApprovalSideEffect(
 				log.error('Failed to enqueue team summary after template provision:', e),
 			);
 
-			if (hireIssueId) {
-				const completed = await completeHireTeamIntakeAfterProvisioning(
+			if (projectName) {
+				const captain = await db.query<{ id: string }>(
+					`SELECT ma.id FROM member_agents ma
+					 JOIN members m ON m.id = ma.id
+					 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
+					 LIMIT 1`,
+					[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
+				);
+				const captainMemberId = captain.rows[0]?.id;
+				if (!captainMemberId) {
+					throw new Error('Cannot create project on approval: no enabled Captain on team');
+				}
+
+				const projectSlug = projectName
+					.toLowerCase()
+					.replace(/[^a-z0-9]+/g, '-')
+					.replace(/^-|-$/g, '');
+				const prefixResult = await resolveProjectIssuePrefix(db, teamId, undefined, projectName);
+				if (!prefixResult.ok) {
+					throw new Error(`Cannot create project on approval: ${prefixResult.message}`);
+				}
+
+				const { project, planningIssue, deferCaptainPlanningWake } =
+					await createProjectWithPlanningIssue(db, {
+						teamId,
+						captainMemberId,
+						name: projectName,
+						slug: projectSlug,
+						issuePrefix: prefixResult.prefix,
+						description: projectDescription,
+					});
+
+				broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
+				broadcastRowChange(wsManager, wsRoom.team(teamId), 'issues', 'INSERT', planningIssue);
+
+				if (!deferCaptainPlanningWake) {
+					await createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
+						issue_id: planningIssue.id as string,
+					});
+				}
+			}
+
+			if (intakeIssueId) {
+				const completed = await completeOnboardingIntakeAfterProvisioning(
 					db,
 					teamId,
-					hireIssueId,
+					intakeIssueId,
 					templateName,
-					provision.created_slugs,
-					provision.skipped_slugs,
+					projectName,
+					apply.created_slugs,
+					apply.skipped_slugs,
 					wsManager,
 				);
 				if (completed.summaryComment) {

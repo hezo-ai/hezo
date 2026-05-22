@@ -3,9 +3,8 @@ import { Fragment } from 'react';
 import type { OnboardingStageKey, OnboardingStageStatus } from '../hooks/use-onboarding';
 
 const STAGES: { key: OnboardingStageKey; label: string }[] = [
-	{ key: 'requirements', label: 'Requirements gathering' },
-	{ key: 'hire_team', label: 'Team hiring' },
-	{ key: 'start_project', label: 'Start project' },
+	{ key: 'intake', label: 'Set up your first project' },
+	{ key: 'done', label: 'Ready' },
 ];
 
 function stageDotClass(status: OnboardingStageStatus): string {

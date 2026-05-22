@@ -131,7 +131,6 @@ export async function createProjectReadyForAgents(
 	data: { name: string; description?: string },
 ) {
 	const project = await createProjectAndClearPlanning(page, team.id, token, data);
-	await confirmTeamExecutionStarted(page, team.slug, token);
 	await waitForProjectContainer(page, team.id, project.id, token);
 	await waitForCaptainIdle(page, team.id, token);
 	return project;
@@ -145,59 +144,24 @@ export async function setActiveTeamSlug(page: Page, teamSlug: string) {
 }
 
 /**
- * Close requirements and hire-team intake tickets so Captain is not busy on onboarding work.
- * Safe to call when intake is already complete (404s are ignored).
+ * Close the single onboarding-intake ticket if one is open. Safe to call when no
+ * intake exists (returns silently). In the new flow the ticket is only opened
+ * on demand from the wizard chat path, so most tests never need this.
  */
-export async function completeOnboardingIntakes(
+export async function closeOnboardingIntakeIfOpen(
 	page: Page,
 	teamSlug: string,
 	token: string,
 ): Promise<void> {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-
-	const reqRes = await page.request.get(`/api/teams/${teamSlug}/requirements-intake`, { headers });
-	if (reqRes.ok()) {
-		const { issue_id } = ((await reqRes.json()) as { data: { issue_id: string } }).data;
-		if (issue_id) {
-			await page.request.patch(`/api/teams/${teamSlug}/issues/${issue_id}`, {
-				headers,
-				data: { status: 'done' },
-			});
-		}
-	}
-
-	// Hire intake is created when requirements intake closes — poll until it appears, then close it.
-	for (let i = 0; i < 100; i++) {
-		const hireRes = await page.request.get(`/api/teams/${teamSlug}/hire-team-intake`, { headers });
-		if (hireRes.status() === 404) {
-			await new Promise((r) => setTimeout(r, 200));
-			continue;
-		}
-		if (hireRes.ok()) {
-			const { issue_id } = ((await hireRes.json()) as { data: { issue_id: string } }).data;
-			if (issue_id) {
-				await page.request.patch(`/api/teams/${teamSlug}/issues/${issue_id}`, {
-					headers,
-					data: { status: 'done' },
-				});
-			}
-		}
-		break;
-	}
-}
-
-/** Finish onboarding intakes and confirm the first user-facing project may execute (goal tickets, planning wakeup). */
-export async function confirmTeamExecutionStarted(
-	page: Page,
-	teamSlug: string,
-	token: string,
-): Promise<void> {
-	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	await completeOnboardingIntakes(page, teamSlug, token);
-	const startRes = await page.request.post(`/api/teams/${teamSlug}/onboarding/start-project`, {
+	const res = await page.request.get(`/api/teams/${teamSlug}/onboarding-intake`, { headers });
+	if (!res.ok()) return;
+	const { issue_id } = ((await res.json()) as { data: { issue_id: string } }).data;
+	if (!issue_id) return;
+	await page.request.patch(`/api/teams/${teamSlug}/issues/${issue_id}`, {
 		headers,
+		data: { status: 'done' },
 	});
-	expect(startRes.ok()).toBe(true);
 }
 
 /** Wait until a specific agent is idle (no active heartbeat run). */
@@ -254,8 +218,8 @@ export async function createTeamWithAgents(page: Page) {
 	});
 	const team = ((await teamRes.json()) as any).data;
 
-	await completeOnboardingIntakes(page, team.slug, token);
-	// Intake close can queue Captain runs; wait before tests create projects and trigger wakeups.
+	// Template apply queues team_context regeneration + a coherence review for Captain;
+	// wait for Captain to drain those before tests start their own work.
 	await waitForCaptainIdle(page, team.id, token);
 
 	return { team, token };
@@ -281,11 +245,11 @@ export async function createTeamLight(page: Page) {
 	return { team, token };
 }
 
-/** Dismiss the AI provider setup gate by entering a test API key via the UI. */
+/** Drive the wizard's AI-provider step by entering a test API key. */
 export async function dismissAiProviderModal(page: Page) {
-	const modal = page.getByText('Set up an AI provider');
+	const aiStep = page.getByTestId('setup-step-ai-provider');
 	try {
-		await modal.waitFor({ state: 'visible', timeout: 15000 });
+		await aiStep.waitFor({ state: 'visible', timeout: 15000 });
 	} catch {
 		return;
 	}
@@ -294,7 +258,7 @@ export async function dismissAiProviderModal(page: Page) {
 	await page.locator('input[type="password"]').first().fill('sk-ant-e2e-test-key');
 	await page.getByRole('button', { name: 'Save' }).first().click();
 
-	await expect(modal).toBeHidden({ timeout: 20000 });
+	await expect(aiStep).toBeHidden({ timeout: 20000 });
 }
 
 export async function waitForPageLoad(page: Page, timeout = 15000) {

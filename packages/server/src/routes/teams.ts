@@ -5,13 +5,14 @@ import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { requireSuperuser, requireTeamAccess } from '../middleware/auth';
-import { getOpenHireTeamIntakeIssue } from '../services/hire-team-intake';
-import { confirmProjectExecutionStart, getOnboardingStatus } from '../services/onboarding';
+import { getOnboardingStatus } from '../services/onboarding';
+import { runOnboardingDirect } from '../services/onboarding-direct';
 import {
-	ensureRequirementsIntakeIssue,
-	getOpenRequirementsIntakeIssue,
-} from '../services/requirements-intake';
-import { createTeam } from '../services/team-create';
+	ensureOnboardingIntakeIssue,
+	getOpenOnboardingIntakeIssue,
+	postSkipQuestionsSignal,
+} from '../services/onboarding-intake';
+import { createTeam } from '../services/teams';
 
 export const teamsRoutes = new Hono<Env>();
 
@@ -86,18 +87,34 @@ teamsRoutes.post('/teams', async (c) => {
 	return ok(c, team, 201);
 });
 
-teamsRoutes.get('/teams/:teamId/requirements-intake', async (c) => {
+teamsRoutes.get('/teams/:teamId/onboarding-intake', async (c) => {
 	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const ensure = c.req.query('ensure') === 'true';
 	const intake = ensure
-		? await ensureRequirementsIntakeIssue(c.get('db'), access.teamId, c.get('wsManager'))
-		: await getOpenRequirementsIntakeIssue(c.get('db'), access.teamId);
+		? await ensureOnboardingIntakeIssue(c.get('db'), access.teamId, c.get('wsManager'))
+		: await getOpenOnboardingIntakeIssue(c.get('db'), access.teamId);
 	if (!intake) {
-		return err(c, 'NOT_FOUND', 'Requirements intake is not available for this team', 404);
+		return err(c, 'NOT_FOUND', 'Onboarding intake is not available for this team', 404);
 	}
 	return ok(c, intake);
+});
+
+teamsRoutes.post('/teams/:teamId/onboarding-intake/skip-questions', async (c) => {
+	const access = await requireTeamAccess(c);
+	if (access instanceof Response) return access;
+
+	const intake = await getOpenOnboardingIntakeIssue(c.get('db'), access.teamId);
+	if (!intake) {
+		return err(c, 'NOT_FOUND', 'No open onboarding intake to skip', 404);
+	}
+
+	const comment = await postSkipQuestionsSignal(c.get('db'), access.teamId, intake.issue_id);
+	if (!comment) {
+		return err(c, 'INTERNAL', 'Failed to post skip signal', 500);
+	}
+	return ok(c, { issue_id: intake.issue_id, comment_id: comment.id });
 });
 
 teamsRoutes.get('/teams/:teamId/onboarding', async (c) => {
@@ -108,26 +125,36 @@ teamsRoutes.get('/teams/:teamId/onboarding', async (c) => {
 	return ok(c, status);
 });
 
-teamsRoutes.post('/teams/:teamId/onboarding/start-project', async (c) => {
+teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
-	const result = await confirmProjectExecutionStart(c.get('db'), access.teamId, c.get('wsManager'));
-	if ('error' in result) {
-		return err(c, 'INVALID_REQUEST', result.error, 400);
+	const body = await c.req.json<{
+		template_id?: string;
+		project_name?: string;
+		project_description?: string;
+	}>();
+	if (!body.template_id?.trim()) {
+		return err(c, 'INVALID_REQUEST', 'template_id is required', 400);
 	}
-	return ok(c, result);
-});
-
-teamsRoutes.get('/teams/:teamId/hire-team-intake', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
-	const intake = await getOpenHireTeamIntakeIssue(c.get('db'), access.teamId);
-	if (!intake) {
-		return err(c, 'NOT_FOUND', 'Hire-the-team intake is not available for this team', 404);
+	if (!body.project_name?.trim()) {
+		return err(c, 'INVALID_REQUEST', 'project_name is required', 400);
 	}
-	return ok(c, intake);
+
+	const result = await runOnboardingDirect(c.get('db'), {
+		teamId: access.teamId,
+		templateId: body.template_id.trim(),
+		projectName: body.project_name.trim(),
+		projectDescription: body.project_description,
+		dataDir: c.get('dataDir'),
+		wsManager: c.get('wsManager'),
+	});
+
+	if (!result.ok) {
+		const status = result.code === 'NOT_FOUND' ? 404 : result.code === 'CONFLICT' ? 409 : 400;
+		return err(c, result.code, result.message, status);
+	}
+	return ok(c, result, 201);
 });
 
 teamsRoutes.get('/teams/:teamId', async (c) => {

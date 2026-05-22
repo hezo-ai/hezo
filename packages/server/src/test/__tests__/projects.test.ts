@@ -90,7 +90,7 @@ describe('projects CRUD', () => {
 			   AND payload->>'issue_id' = $3`,
 			[captainId, teamId, issue.id],
 		);
-		expect(firstProjectWakeups.rows.length).toBe(0);
+		expect(firstProjectWakeups.rows.length).toBeGreaterThanOrEqual(1);
 
 		const secondRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
