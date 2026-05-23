@@ -149,6 +149,11 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 		projectDescription: body.project_description,
 		dataDir: c.get('dataDir'),
 		wsManager: c.get('wsManager'),
+		docker: c.get('docker'),
+		masterKeyManager: c.get('masterKeyManager'),
+		logs: c.get('logs'),
+		sshAgentServer: c.get('sshAgentServer'),
+		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
 		skipPlanningTask: body.skip_planning_task === true,
 	});
 

@@ -128,4 +128,50 @@ test.describe('Onboarding direct flow', () => {
 		const tasks = (await tasksRes.json()) as { data: unknown[] };
 		expect(tasks.data).toHaveLength(0);
 	});
+
+	test('"general help" provisions a container for the General project so agent wakeups can run', async ({
+		page,
+	}) => {
+		await authenticate(page);
+		const token = await getToken(page);
+		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+		const typesRes = await page.request.get('/api/team-templates', { headers });
+		const types = (await typesRes.json()) as { data: Array<{ id: string; name: string }> };
+		const blank = types.data.find((t) => t.name === 'Blank');
+
+		const uid = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+		const teamRes = await page.request.post('/api/teams', {
+			headers,
+			data: { name: `Onboard General Container E2E ${uid}`, template_id: blank?.id },
+		});
+		const team = ((await teamRes.json()) as { data: { slug: string } }).data;
+
+		const generalRes = await page.request.post(`/api/teams/${team.slug}/onboarding/direct`, {
+			headers,
+			data: {
+				template_id: blank?.id,
+				project_name: 'General',
+				project_description: 'Catch-all for ad-hoc help and one-off tasks.',
+				skip_planning_task: true,
+			},
+		});
+		expect(generalRes.status()).toBe(201);
+
+		// provisionContainer is fire-and-forget; poll until the General project's
+		// container_status flips out of null. Without this, agent wakeups for tasks
+		// in the project would be silently marked Failed by activateAgent.
+		await expect
+			.poll(
+				async () => {
+					const res = await page.request.get(`/api/teams/${team.slug}/projects`, { headers });
+					const json = (await res.json()) as {
+						data: Array<{ slug: string; container_status: string | null }>;
+					};
+					return json.data.find((p) => p.slug === 'general')?.container_status ?? null;
+				},
+				{ timeout: 30_000, intervals: [500, 1000, 2000] },
+			)
+			.not.toBeNull();
+	});
 });

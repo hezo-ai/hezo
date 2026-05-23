@@ -1,9 +1,14 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { AgentAdminStatus, CAPTAIN_AGENT_SLUG, WakeupSource, wsRoom } from '@hezo/shared';
+import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { resolveProjectTaskPrefix } from '../routes/projects';
+import { type ProjectRow, provisionContainer } from './containers';
+import type { DockerClient } from './docker';
+import type { LogStreamBroker } from './log-stream-broker';
 import { createProjectWithPlanningTask } from './project-create';
+import type { SshAgentServer } from './ssh-agent';
 import { applyTemplateToTeam } from './team-template-apply';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -17,6 +22,12 @@ export interface OnboardingDirectInput {
 	projectDescription?: string;
 	dataDir: string;
 	wsManager?: WebSocketManager;
+	docker: DockerClient;
+	masterKeyManager?: MasterKeyManager;
+	logs?: LogStreamBroker;
+	sshAgentServer?: SshAgentServer | null;
+	/** Host path to the egress CA PEM; bind-mounted into the project container. */
+	egressCAPath?: string | null;
 	/** When true, the project is created without a planning task (e.g. the "general help" exploratory project). */
 	skipPlanningTask?: boolean;
 }
@@ -129,6 +140,31 @@ export async function runOnboardingDirect(
 		} catch (e) {
 			log.error('Failed to wake Captain on planning task after direct onboarding:', e);
 		}
+	}
+
+	const teamSlugRow = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
+		input.teamId,
+	]);
+	const teamSlug = teamSlugRow.rows[0]?.slug;
+	if (teamSlug) {
+		provisionContainer(
+			{
+				db,
+				docker: input.docker,
+				dataDir: input.dataDir,
+				wsManager: input.wsManager,
+				masterKeyManager: input.masterKeyManager,
+				logs: input.logs,
+				sshAgentServer: input.sshAgentServer,
+				egressCAPath: input.egressCAPath ?? null,
+			},
+			project as unknown as ProjectRow,
+			teamSlug,
+		).catch((error) => {
+			log.error(`Failed to provision container for project ${project.slug}:`, error);
+		});
+	} else {
+		log.error(`Team ${input.teamId} not found when provisioning container after direct onboarding`);
 	}
 
 	return {
