@@ -28,7 +28,6 @@ function ProjectLayout() {
 		params?: Record<string, string>;
 		key?: string;
 	}> = [
-		{ label: 'Projects', to: '/teams/$teamId/projects', params: { teamId } },
 		{
 			label: isInternal ? (
 				<span className="italic">{project?.name}</span>

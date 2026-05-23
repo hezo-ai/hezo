@@ -51,6 +51,37 @@ test.describe('Onboarding direct flow', () => {
 		expect(created?.name).toBe('My First App');
 	});
 
+	test('clicking "general help" on the home choice navigates to the General project tasks page', async ({
+		page,
+	}) => {
+		await authenticate(page);
+		const token = await getToken(page);
+		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+		// The home page is pinned to the seeded default team, so the OnboardingChoice
+		// only renders when that team has no intake and no project. Other parallel
+		// tests may have already onboarded it; in that case skip the UI navigation
+		// check since the button cannot appear.
+		await page.goto('/home');
+		await waitForPageLoad(page);
+		await page.reload();
+		await waitForPageLoad(page);
+
+		const generalButton = page.getByTestId('choice-general');
+		if (!(await generalButton.isVisible().catch(() => false))) {
+			test.skip(true, 'default team already onboarded by a parallel test');
+			return;
+		}
+
+		await generalButton.click();
+		await page.waitForURL(/\/teams\/default\/projects\/general\/tasks/, { timeout: 15_000 });
+		expect(page.url()).toMatch(/\/teams\/default\/projects\/general\/tasks/);
+
+		const projectsRes = await page.request.get('/api/teams/default/projects', { headers });
+		const projects = (await projectsRes.json()) as { data: Array<{ slug: string; name: string }> };
+		expect(projects.data.some((p) => p.slug === 'general' && p.name === 'General')).toBe(true);
+	});
+
 	test('"general help" creates a Blank-template General project with no planning task', async ({
 		page,
 	}) => {

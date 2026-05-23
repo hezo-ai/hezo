@@ -345,7 +345,7 @@ export function TaskList({ teamId, projectId }: TaskListProps) {
 					variant="hero"
 					icon={<ListPlus className="w-8 h-8" />}
 					title="No tasks yet"
-					description="Create the first task to get the team moving."
+					description="Create a task to get the team moving."
 					action={
 						<Button
 							size="lg"
@@ -353,7 +353,7 @@ export function TaskList({ teamId, projectId }: TaskListProps) {
 							data-testid="task-list-empty-create"
 						>
 							<Plus className="w-4 h-4" />
-							Create your first task
+							Create a task
 						</Button>
 					}
 				/>

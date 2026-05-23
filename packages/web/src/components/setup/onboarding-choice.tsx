@@ -1,3 +1,4 @@
+import { useNavigate } from '@tanstack/react-router';
 import { MessagesSquare, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { useOnboardingDirect } from '../../hooks/use-onboarding-direct';
@@ -20,6 +21,7 @@ export function OnboardingChoice({ teamId, onChosen }: OnboardingChoiceProps) {
 	const startIntake = useStartOnboardingIntake(teamId);
 	const directOnboarding = useOnboardingDirect(teamId);
 	const { data: templates } = useTeamTemplates();
+	const navigate = useNavigate();
 
 	const blankTemplate = templates?.find((t) => t.name === 'Blank');
 
@@ -30,13 +32,17 @@ export function OnboardingChoice({ teamId, onChosen }: OnboardingChoiceProps) {
 
 	async function handleGeneralHelp() {
 		if (!blankTemplate) return;
-		await directOnboarding.mutateAsync({
+		const result = await directOnboarding.mutateAsync({
 			template_id: blankTemplate.id,
 			project_name: 'General',
 			project_description: 'Catch-all for ad-hoc help and one-off tasks.',
 			skip_planning_task: true,
 		});
 		onChosen();
+		navigate({
+			to: '/teams/$teamId/projects/$projectId/tasks',
+			params: { teamId, projectId: result.project_slug },
+		});
 	}
 
 	if (mode === 'direct') {
