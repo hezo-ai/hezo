@@ -1,4 +1,4 @@
-import { AgentAdminStatus, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { AgentAdminStatus, DEFAULT_TEAM_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { Settings } from 'lucide-react';
 import { useState } from 'react';
@@ -11,11 +11,8 @@ import { CreateProjectDialog } from './create-project-dialog';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 import { ThemeSwitcher } from './ui/theme-switcher';
 
-interface TeamSidebarProps {
-	teamId: string;
-}
-
-export function TeamSidebar({ teamId }: TeamSidebarProps) {
+export function TeamSidebar() {
+	const teamId = DEFAULT_TEAM_SLUG;
 	const params = { teamId };
 	const navigate = useNavigate();
 	const { data: agents } = useAgents(teamId);

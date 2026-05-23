@@ -1,3 +1,4 @@
+import { DEFAULT_TEAM_SLUG } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Building2, Plus } from 'lucide-react';
 import { useState } from 'react';
@@ -11,7 +12,6 @@ import { Card } from '../../components/ui/card';
 import { type OnboardingStatus, useOnboarding } from '../../hooks/use-onboarding';
 import { useOnboardingIntake } from '../../hooks/use-onboarding-intake';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
-import { useRailTeamId } from '../../hooks/use-rail-team-id';
 import { useTeams } from '../../hooks/use-teams';
 import { queryClient } from '../../lib/query-client';
 
@@ -128,10 +128,10 @@ function HomeProjectsSection({
 
 function HomePage() {
 	const { data: teams, isLoading: teamsLoading } = useTeams();
-	const primaryTeamSlug = useRailTeamId() ?? '';
+	const primaryTeamSlug = DEFAULT_TEAM_SLUG;
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects(teams);
-	const { data: intake } = useOnboardingIntake(primaryTeamSlug, !!primaryTeamSlug);
-	const { data: onboarding } = useOnboarding(primaryTeamSlug, !!primaryTeamSlug);
+	const { data: intake } = useOnboardingIntake(primaryTeamSlug, true);
+	const { data: onboarding } = useOnboarding(primaryTeamSlug, true);
 
 	if (teamsLoading) {
 		return (
@@ -141,7 +141,7 @@ function HomePage() {
 
 	const hasIntake = !!intake;
 	const hasProject = !!onboarding?.primary_project;
-	const showChoice = !!primaryTeamSlug && !hasIntake && !hasProject;
+	const showChoice = !hasIntake && !hasProject;
 	const showProgress = !!onboarding && (showChoice || hasIntake);
 
 	return (
