@@ -194,6 +194,11 @@ function ContainerPage() {
 							<Loader2 className="w-3 h-3 animate-spin" />
 							Stopping container…
 						</span>
+					) : isRunning ? (
+						<span className="inline-flex items-center gap-2">
+							<Loader2 className="w-3 h-3 animate-spin" />
+							Waiting for container output…
+						</span>
 					) : hasContainer ? (
 						'Container is not running and no logs were captured.'
 					) : (

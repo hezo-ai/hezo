@@ -4,6 +4,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { resolveProjectTaskPrefix } from '../routes/projects';
+import type { ContainerLogStreamer } from './container-logs';
 import { type ProjectRow, provisionContainer } from './containers';
 import type { DockerClient } from './docker';
 import type { LogStreamBroker } from './log-stream-broker';
@@ -25,6 +26,7 @@ export interface OnboardingDirectInput {
 	docker: DockerClient;
 	masterKeyManager?: MasterKeyManager;
 	logs?: LogStreamBroker;
+	containerLogStreamer?: ContainerLogStreamer;
 	sshAgentServer?: SshAgentServer | null;
 	/** Host path to the egress CA PEM; bind-mounted into the project container. */
 	egressCAPath?: string | null;
@@ -155,6 +157,7 @@ export async function runOnboardingDirect(
 				wsManager: input.wsManager,
 				masterKeyManager: input.masterKeyManager,
 				logs: input.logs,
+				containerLogStreamer: input.containerLogStreamer,
 				sshAgentServer: input.sshAgentServer,
 				egressCAPath: input.egressCAPath ?? null,
 			},

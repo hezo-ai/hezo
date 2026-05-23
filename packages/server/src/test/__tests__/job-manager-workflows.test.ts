@@ -10,6 +10,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
+import { ContainerLogStreamer } from '../../services/container-logs';
 import type { DockerClient } from '../../services/docker';
 import { JobManager, type JobManagerDeps } from '../../services/job-manager';
 import { LogStreamBroker } from '../../services/log-stream-broker';
@@ -55,6 +56,7 @@ function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 		dataDir: '/tmp/test-data',
 		wsManager: { broadcast: () => {} } as any,
 		logs: new LogStreamBroker(),
+		containerLogStreamer: new ContainerLogStreamer(),
 		...overrides,
 	});
 }

@@ -35,6 +35,7 @@ function buildContainerDeps(c: Context<Env>): ContainerDeps {
 		wsManager: c.get('wsManager'),
 		masterKeyManager: c.get('masterKeyManager'),
 		logs: c.get('logs'),
+		containerLogStreamer: c.get('containerLogStreamer'),
 		sshAgentServer: c.get('sshAgentServer'),
 		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
 	};
@@ -425,12 +426,14 @@ projectsRoutes.post('/teams/:teamId/projects/:projectId/container/start', async 
 	if (!result.rows[0].container_id) return err(c, 'NO_CONTAINER', 'No container provisioned', 400);
 
 	const docker = c.get('docker');
+	const containerId = result.rows[0].container_id;
 	try {
-		await docker.startContainer(result.rows[0].container_id);
+		await docker.startContainer(containerId);
 		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 			ContainerStatus.Running,
 			projectId,
 		]);
+		c.get('containerLogStreamer').subscribe(projectId, containerId, c.get('logs'), docker);
 		broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', {
 			id: projectId,
 			container_status: ContainerStatus.Running,

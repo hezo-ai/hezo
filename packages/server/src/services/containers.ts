@@ -11,6 +11,7 @@ import {
 import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
+import type { ContainerLogStreamer } from './container-logs';
 import type { DockerClient } from './docker';
 import { ensureImage } from './ensure-image';
 import type { LogStreamBroker } from './log-stream-broker';
@@ -48,6 +49,7 @@ export interface ContainerDeps {
 	wsManager?: WebSocketManager;
 	masterKeyManager?: MasterKeyManager;
 	logs?: LogStreamBroker;
+	containerLogStreamer?: ContainerLogStreamer;
 	sshAgentServer?: SshAgentServer | null;
 	egressCAPath?: string | null;
 }
@@ -221,6 +223,10 @@ export async function provisionContainer(
 			'UPDATE projects SET container_id = $1, container_status = $2::container_status, container_error = NULL WHERE id = $3',
 			[Id, ContainerStatus.Running, project.id],
 		);
+
+		if (deps.containerLogStreamer && deps.logs) {
+			deps.containerLogStreamer.subscribe(project.id, Id, deps.logs, docker);
+		}
 
 		if (deps.egressCAPath) {
 			emit('stdout', '→ Trusting Hezo egress CA (update-ca-certificates)');

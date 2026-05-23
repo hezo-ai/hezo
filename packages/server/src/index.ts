@@ -6,7 +6,7 @@ import { parseArgs } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { logger } from './logger';
 import { loadAdminAuth, verifyToken } from './middleware/auth';
-import { ContainerLogStreamer } from './services/container-logs';
+import type { ContainerLogStreamer } from './services/container-logs';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
@@ -78,7 +78,7 @@ let dbRef: PGlite | null = null;
 let mkmRef: MasterKeyManager | null = null;
 let dockerRef: import('./services/docker').DockerClient | null = null;
 let logsRef: LogStreamBroker | null = null;
-const containerLogStreamer = new ContainerLogStreamer();
+let containerLogStreamerRef: ContainerLogStreamer | null = null;
 
 async function validateToken(token: string): Promise<WsData['auth'] | null> {
 	if (!mkmRef || !dbRef) return null;
@@ -131,6 +131,7 @@ void (async () => {
 		mkmRef = result.masterKeyManager;
 		dockerRef = result.docker;
 		logsRef = result.logs;
+		containerLogStreamerRef = result.containerLogStreamer;
 		serverReady = true;
 		const url = `http://localhost:${result.port}`;
 		log.info(`Hezo server running at ${url} [${result.masterKeyState}]`);
@@ -184,8 +185,8 @@ export default {
 					const logsMatch = room.match(/^container-logs:(.+)$/);
 					if (logsMatch) {
 						wsManager.unsubscribe(ws as unknown as WsSocket, room);
-						if (wsManager.getRoomSize(room) === 0) {
-							containerLogStreamer.unsubscribe(logsMatch[1], logsRef ?? undefined);
+						if (wsManager.getRoomSize(room) === 0 && containerLogStreamerRef) {
+							containerLogStreamerRef.unsubscribe(logsMatch[1], logsRef ?? undefined);
 						}
 					}
 				}
@@ -193,7 +194,7 @@ export default {
 			}
 		},
 		async message(ws: Bun.ServerWebSocket<WsConnectionData>, msg: string | Buffer) {
-			if (!wsManager) return;
+			if (!wsManager || !containerLogStreamerRef) return;
 			try {
 				const data = JSON.parse(typeof msg === 'string' ? msg : msg.toString());
 				if (data.action === 'subscribe' && typeof data.room === 'string') {
@@ -201,7 +202,7 @@ export default {
 						db: dbRef,
 						wsManager,
 						docker: dockerRef,
-						containerLogStreamer,
+						containerLogStreamer: containerLogStreamerRef,
 						logs: logsRef,
 						canAccessTeam,
 						sendToSocket: (_s, payload) => ws.send(JSON.stringify(payload)),
@@ -209,7 +210,7 @@ export default {
 				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {
 					handleWsUnsubscribe(ws as unknown as WsSocket, data.room, {
 						wsManager,
-						containerLogStreamer,
+						containerLogStreamer: containerLogStreamerRef,
 						logs: logsRef,
 					});
 				}

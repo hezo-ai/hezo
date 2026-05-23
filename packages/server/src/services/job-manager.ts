@@ -22,6 +22,7 @@ import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
+import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerDeps,
 	type ContainerExitReason,
@@ -81,12 +82,15 @@ export interface JobManagerDeps {
 	dataDir: string;
 	wsManager: WebSocketManager;
 	logs: LogStreamBroker;
+	containerLogStreamer: ContainerLogStreamer;
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string;
 }
 
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
+const WAKEUP_CRON = process.env.HEZO_WAKEUP_CRON ?? '*/5 * * * * *';
+const HEARTBEAT_CRON = process.env.HEZO_HEARTBEAT_CRON ?? '*/5 * * * * *';
 
 export class JobManager {
 	private cron: Cron;
@@ -146,6 +150,7 @@ export class JobManager {
 			wsManager: this.deps.wsManager,
 			masterKeyManager: this.deps.masterKeyManager,
 			logs: this.deps.logs,
+			containerLogStreamer: this.deps.containerLogStreamer,
 			sshAgentServer: this.deps.sshAgentServer,
 			egressCAPath: this.deps.egressCAPath ?? null,
 		};
@@ -155,12 +160,12 @@ export class JobManager {
 		if (this.started) return;
 		this.started = true;
 		this.cron.createJob('wakeups', {
-			cron: '*/5 * * * * *',
+			cron: WAKEUP_CRON,
 			log: cronLog,
 			onTick: () => this.guarded('wakeups', () => this.processWakeups()),
 		});
 		this.cron.createJob('heartbeats', {
-			cron: '*/5 * * * * *',
+			cron: HEARTBEAT_CRON,
 			log: cronLog,
 			onTick: () => this.guarded('heartbeats', () => this.processScheduledHeartbeats()),
 		});
@@ -371,7 +376,7 @@ export class JobManager {
 	}
 
 	private async selfHealErroredContainers(docker: DockerClient): Promise<void> {
-		const { db, wsManager } = this.deps;
+		const { db, wsManager, containerLogStreamer, logs } = this.deps;
 
 		const reachable = await docker.ping();
 		if (!reachable) {
@@ -408,6 +413,7 @@ export class JobManager {
 				`UPDATE projects SET container_id = $1, container_status = $2::container_status WHERE id = $3`,
 				[info.Id, ContainerStatus.Running, project.id],
 			);
+			containerLogStreamer.subscribe(project.id, info.Id, logs, docker);
 			broadcastRowChange(wsManager, wsRoom.team(project.team_id), 'projects', 'UPDATE', {
 				id: project.id,
 				container_id: info.Id,

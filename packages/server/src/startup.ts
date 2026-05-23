@@ -44,6 +44,7 @@ import { tasksRoutes } from './routes/tasks';
 import { teamTemplatesRoutes } from './routes/team-templates';
 import { teamsRoutes } from './routes/teams';
 import { uiStateRoutes } from './routes/ui-state';
+import { ContainerLogStreamer } from './services/container-logs';
 import { DockerClient } from './services/docker';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
 import { pruneStaleBundledImages } from './services/image-registry';
@@ -71,6 +72,7 @@ export interface StartupResult {
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
 	logs: LogStreamBroker;
+	containerLogStreamer: ContainerLogStreamer;
 	sshAgentServer: SshAgentServer;
 	egressProxy: EgressProxy;
 }
@@ -107,6 +109,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
+	const containerLogStreamer = new ContainerLogStreamer();
 	const sshAgentServer = new SshAgentServer({ db, masterKeyManager });
 	await cleanupOrphanRunSockets(db, config.dataDir);
 	const egressCA = await loadOrCreateCA(config.dataDir);
@@ -119,6 +122,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		dataDir: config.dataDir,
 		wsManager,
 		logs,
+		containerLogStreamer,
 		sshAgentServer,
 		egressProxy,
 		egressCAPath: egressCA.certPath,
@@ -132,6 +136,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			wsManager,
 			masterKeyManager,
 			logs,
+			containerLogStreamer,
 			dataDir: config.dataDir,
 			egressCAPath: egressCA.certPath,
 		});
@@ -166,6 +171,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		logs,
 		sshAgentServer,
 		egressProxy,
+		containerLogStreamer,
 	);
 
 	return {
@@ -178,6 +184,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker,
 		masterKeyManager,
 		logs,
+		containerLogStreamer,
 		sshAgentServer,
 		egressProxy,
 	};
@@ -193,6 +200,7 @@ export function buildApp(
 	logs: LogStreamBroker = new LogStreamBroker(),
 	sshAgentServer: SshAgentServer | null = null,
 	egressProxy: EgressProxy | null = null,
+	containerLogStreamer: ContainerLogStreamer = new ContainerLogStreamer(),
 ): Hono<Env> {
 	const app = new Hono<Env>();
 	logs.setWsManager(wsManager);
@@ -209,6 +217,7 @@ export function buildApp(
 		c.set('wsManager', wsManager);
 		if (jobManager) c.set('jobManager', jobManager);
 		c.set('logs', logs);
+		c.set('containerLogStreamer', containerLogStreamer);
 		c.set('dataDir', config.dataDir);
 		c.set('webUrl', config.webUrl);
 		c.set('sshAgentServer', sshAgentServer);

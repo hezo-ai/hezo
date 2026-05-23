@@ -10,6 +10,7 @@ import {
 import type { MasterKeyManager } from '../crypto/master-key';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { logger } from '../logger';
+import type { ContainerLogStreamer } from './container-logs';
 import { type ProjectRow, provisionContainer } from './containers';
 import { enqueueTeamContextTaskForAllAgents } from './description-tasks';
 import type { DockerClient } from './docker';
@@ -25,6 +26,7 @@ export interface CreateTeamDeps {
 	wsManager?: WebSocketManager;
 	masterKeyManager?: MasterKeyManager;
 	logs?: LogStreamBroker;
+	containerLogStreamer?: ContainerLogStreamer;
 	dataDir: string;
 	/** Host path to the egress CA PEM; bind-mounted into the operations container. */
 	egressCAPath?: string | null;
@@ -154,6 +156,7 @@ export async function createTeam(
 				wsManager,
 				masterKeyManager,
 				logs,
+				containerLogStreamer: deps.containerLogStreamer,
 				egressCAPath: deps.egressCAPath ?? null,
 			},
 			opsResult.rows[0],

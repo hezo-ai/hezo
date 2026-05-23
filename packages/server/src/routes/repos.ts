@@ -392,6 +392,7 @@ async function ensureProjectContainerUp(c: Context<Env>, projectId: string): Pro
 	const masterKeyManager = c.get('masterKeyManager');
 	const wsManager = c.get('wsManager');
 	const logs = c.get('logs');
+	const containerLogStreamer = c.get('containerLogStreamer');
 	const sshAgentServer = c.get('sshAgentServer');
 	const egressProxy = c.get('egressProxy');
 
@@ -426,6 +427,7 @@ async function ensureProjectContainerUp(c: Context<Env>, projectId: string): Pro
 				wsManager,
 				masterKeyManager,
 				logs,
+				containerLogStreamer,
 				sshAgentServer,
 				egressCAPath: egressProxy?.caCertPath ?? null,
 			},

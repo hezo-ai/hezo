@@ -152,6 +152,7 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 		docker: c.get('docker'),
 		masterKeyManager: c.get('masterKeyManager'),
 		logs: c.get('logs'),
+		containerLogStreamer: c.get('containerLogStreamer'),
 		sshAgentServer: c.get('sshAgentServer'),
 		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
 		skipPlanningTask: body.skip_planning_task === true,

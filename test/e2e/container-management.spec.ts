@@ -35,6 +35,48 @@ test.describe('Container Management', () => {
 		}
 	});
 
+	test('container page shows "Waiting for container output…" when status is running but no logs yet (mobile)', async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 375, height: 800 });
+		await authenticate(page);
+		const { team } = await createTeamWithAgents(page);
+
+		const fakeProject = {
+			id: '22222222-2222-2222-2222-000000000001',
+			slug: 'running-no-logs',
+			name: 'Running No Logs',
+			team_id: team.id,
+			task_prefix: 'RN',
+			description: '',
+			docker_base_image: 'hezo/agent-base:latest',
+			container_id: 'abc123def456',
+			container_status: 'running',
+			container_error: null,
+			container_last_logs: null,
+			dev_ports: [],
+			repo_count: 0,
+			open_task_count: 0,
+			created_at: new Date().toISOString(),
+		};
+
+		await page.route(`**/api/teams/*/projects/running-no-logs`, async (route) => {
+			if (route.request().method() !== 'GET') return route.continue();
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ data: fakeProject }),
+			});
+		});
+
+		await page.goto(`/teams/${team.slug}/projects/${fakeProject.slug}/container`);
+		await waitForPageLoad(page);
+
+		await expect(page.getByText(/^Running$/).first()).toBeVisible({ timeout: 15000 });
+		await expect(page.getByText(/Waiting for container output/i)).toBeVisible({ timeout: 15000 });
+		await expect(page.getByText(/Container is not running/i)).not.toBeVisible();
+	});
+
 	test('banner consolidates multiple unhealthy projects with + N others format and rebuild all button', async ({
 		page,
 	}) => {
