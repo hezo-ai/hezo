@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { IssueStatus } from '@hezo/shared';
+import { TaskStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
@@ -84,7 +84,7 @@ describe('onboarding status', () => {
 		const intakeRes = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
-		const intake = (await intakeRes.json()).data as { issue_id: string };
+		const intake = (await intakeRes.json()).data as { task_id: string };
 
 		const projectRes = await app.request(`/api/teams/${team.slug}/projects`, {
 			method: 'POST',
@@ -93,10 +93,10 @@ describe('onboarding status', () => {
 		});
 		expect(projectRes.status).toBe(201);
 
-		await app.request(`/api/teams/${team.slug}/issues/${intake.issue_id}`, {
+		await app.request(`/api/teams/${team.slug}/tasks/${intake.task_id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: IssueStatus.Done }),
+			body: JSON.stringify({ status: TaskStatus.Done }),
 		});
 
 		const res = await app.request(`/api/teams/${team.slug}/onboarding`, {
@@ -121,18 +121,18 @@ describe('onboarding status', () => {
 		const first = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
-		const intake = (await first.json()).data as { issue_id: string };
+		const intake = (await first.json()).data as { task_id: string };
 
 		await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
 
-		const issuesRes = await app.request(`/api/teams/${team.slug}/issues`, {
+		const tasksRes = await app.request(`/api/teams/${team.slug}/tasks`, {
 			headers: authHeader(token),
 		});
-		const issues = (await issuesRes.json()).data as Array<{ id: string; title: string }>;
-		const onboarding = issues.filter((i) => i.title === ONBOARDING_INTAKE_TITLE);
+		const tasks = (await tasksRes.json()).data as Array<{ id: string; title: string }>;
+		const onboarding = tasks.filter((i) => i.title === ONBOARDING_INTAKE_TITLE);
 		expect(onboarding.length).toBe(1);
-		expect(onboarding[0].id).toBe(intake.issue_id);
+		expect(onboarding[0].id).toBe(intake.task_id);
 	});
 });

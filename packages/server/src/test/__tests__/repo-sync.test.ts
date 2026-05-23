@@ -7,8 +7,8 @@ import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import {
 	ensureProjectRepos,
-	removeIssueWorktrees,
 	removeRepoFromWorkspace,
+	removeTaskWorktrees,
 } from '../../services/repo-sync';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
@@ -96,7 +96,7 @@ describe('ensureProjectRepos', () => {
 });
 
 describe('removeRepoFromWorkspace', () => {
-	it('removes the repo subdirectory and its per-issue worktrees', async () => {
+	it('removes the repo subdirectory and its per-task worktrees', async () => {
 		const workspacePath = join(dataDir, 'teams', teamSlug, 'projects', projectSlug, 'workspace');
 		const worktreesPath = join(dataDir, 'teams', teamSlug, 'projects', projectSlug, 'worktrees');
 
@@ -128,16 +128,16 @@ describe('removeRepoFromWorkspace', () => {
 	});
 });
 
-describe('removeIssueWorktrees', () => {
-	it('removes the issue directory under worktrees', () => {
+describe('removeTaskWorktrees', () => {
+	it('removes the task directory under worktrees', () => {
 		const worktreesPath = join(dataDir, 'teams', teamSlug, 'projects', projectSlug, 'worktrees');
-		const issueDir = join(worktreesPath, 'RS-9');
-		mkdirSync(join(issueDir, 'main'), { recursive: true });
-		mkdirSync(join(issueDir, 'secondary'), { recursive: true });
+		const taskDir = join(worktreesPath, 'RS-9');
+		mkdirSync(join(taskDir, 'main'), { recursive: true });
+		mkdirSync(join(taskDir, 'secondary'), { recursive: true });
 
-		removeIssueWorktrees(dataDir, teamSlug, projectSlug, 'RS-9');
+		removeTaskWorktrees(dataDir, teamSlug, projectSlug, 'RS-9');
 
-		expect(existsSync(issueDir)).toBe(false);
+		expect(existsSync(taskDir)).toBe(false);
 	});
 
 	it('is a no-op for dangerous identifier values', () => {
@@ -145,8 +145,8 @@ describe('removeIssueWorktrees', () => {
 		const stayDir = join(worktreesPath, 'RS-10');
 		mkdirSync(stayDir, { recursive: true });
 
-		removeIssueWorktrees(dataDir, teamSlug, projectSlug, '..');
-		removeIssueWorktrees(dataDir, teamSlug, projectSlug, '');
+		removeTaskWorktrees(dataDir, teamSlug, projectSlug, '..');
+		removeTaskWorktrees(dataDir, teamSlug, projectSlug, '');
 
 		expect(existsSync(stayDir)).toBe(true);
 	});

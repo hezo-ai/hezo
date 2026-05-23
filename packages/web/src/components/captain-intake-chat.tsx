@@ -37,14 +37,14 @@ function formatMessageTime(iso: string): string {
 
 interface CaptainIntakeChatProps {
 	teamSlug: string;
-	issueIdentifier: string;
+	taskIdentifier: string;
 	captainTitle: string;
 	awaitingCaptainReply: boolean;
 }
 
 export function CaptainIntakeChat({
 	teamSlug,
-	issueIdentifier,
+	taskIdentifier,
 	captainTitle,
 	awaitingCaptainReply,
 }: CaptainIntakeChatProps) {
@@ -52,7 +52,7 @@ export function CaptainIntakeChat({
 	const { data: team } = useTeam(teamSlug);
 	useWebSocket(team?.id, teamSlug);
 
-	const { data: comments, isLoading } = useComments(teamSlug, issueIdentifier);
+	const { data: comments, isLoading } = useComments(teamSlug, taskIdentifier);
 
 	const chatMessages = useMemo(() => {
 		return (comments ?? []).filter((c) => c.content_type === CommentContentType.Text);

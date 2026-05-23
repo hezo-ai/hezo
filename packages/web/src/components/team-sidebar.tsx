@@ -43,11 +43,11 @@ export function TeamSidebar() {
 			title: 'Work',
 			items: [
 				{
-					to: '/teams/$teamId/issues',
+					to: '/teams/$teamId/tasks',
 					params,
-					label: 'Issues',
-					count: team?.open_issue_count,
-					testId: 'sidebar-link-issues',
+					label: 'Tasks',
+					count: team?.open_task_count,
+					testId: 'sidebar-link-tasks',
 				},
 				{ to: '/teams/$teamId/goals', params, label: 'Goals' },
 			],
@@ -67,11 +67,11 @@ export function TeamSidebar() {
 			children: sortedProjects.map((project) => {
 				const projectParams = { teamId, projectId: project.slug };
 				const isInternal = project.slug === OPERATIONS_PROJECT_SLUG;
-				const issuesItem = {
-					to: '/teams/$teamId/projects/$projectId/issues',
+				const tasksItem = {
+					to: '/teams/$teamId/projects/$projectId/tasks',
 					params: projectParams,
-					label: 'Issues',
-					count: project.open_issue_count,
+					label: 'Tasks',
+					count: project.open_task_count,
 				};
 				const containerItem = {
 					to: '/teams/$teamId/projects/$projectId/container',
@@ -79,9 +79,9 @@ export function TeamSidebar() {
 					label: 'Container',
 				};
 				const subItems = isInternal
-					? [issuesItem, containerItem]
+					? [tasksItem, containerItem]
 					: [
-							issuesItem,
+							tasksItem,
 							{
 								to: '/teams/$teamId/projects/$projectId/documents',
 								params: projectParams,

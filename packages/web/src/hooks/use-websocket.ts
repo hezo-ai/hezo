@@ -9,8 +9,8 @@ const TABLE_TO_QUERY_KEY: Record<
 	string,
 	(teamSlug: string, row: Record<string, unknown>) => string[][]
 > = {
-	issues: (cid) => [
-		['teams', cid, 'issues'],
+	tasks: (cid) => [
+		['teams', cid, 'tasks'],
 		['teams', cid],
 		['teams'],
 		['teams', cid, 'projects'],
@@ -18,7 +18,7 @@ const TABLE_TO_QUERY_KEY: Record<
 		['teams', cid, 'onboarding'],
 	],
 	heartbeat_runs: (cid, row) => {
-		const keys: string[][] = [['teams', cid, 'issues']];
+		const keys: string[][] = [['teams', cid, 'tasks']];
 		if (row.member_id) {
 			keys.push(['teams', cid, 'agents', row.member_id as string, 'heartbeat-runs']);
 			if (row.id) {
@@ -34,9 +34,9 @@ const TABLE_TO_QUERY_KEY: Record<
 		}
 		return keys;
 	},
-	issue_comments: (cid) => [['teams', cid, 'issues']],
-	comment_reactions: (cid) => [['teams', cid, 'issues']],
-	comment_attachments: (cid) => [['teams', cid, 'issues']],
+	task_comments: (cid) => [['teams', cid, 'tasks']],
+	comment_reactions: (cid) => [['teams', cid, 'tasks']],
+	comment_attachments: (cid) => [['teams', cid, 'tasks']],
 	member_agents: (cid) => [['teams', cid, 'agents']],
 	projects: (cid) => [
 		['teams', cid, 'projects'],

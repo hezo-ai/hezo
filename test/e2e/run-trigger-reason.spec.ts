@@ -13,7 +13,7 @@ interface RunListItem {
 	trigger_source: string | null;
 	trigger_actor_slug: string | null;
 	trigger_comment_id: string | null;
-	trigger_comment_issue_identifier: string | null;
+	trigger_comment_task_identifier: string | null;
 }
 
 async function waitForRunWithTrigger(
@@ -57,10 +57,10 @@ test('run page shows trigger reason linking back to the source mention', async (
 		description: 'Test project.',
 	});
 
-	// Assign to the architect so the issue's auto-assignment wakeup goes to a
+	// Assign to the architect so the task's auto-assignment wakeup goes to a
 	// different agent than the one we plan to wake via mention. That way the
 	// architect's mention-driven run is unambiguous to find.
-	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers,
 		data: {
 			project_id: project.id,
@@ -69,18 +69,18 @@ test('run page shows trigger reason linking back to the source mention', async (
 			assignee_id: architect.id,
 		},
 	});
-	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
+	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
 
 	// Let the assignee's assignment wakeup finish before waking Captain via mention.
 	await waitForAgentIdle(page, team.id, architect.id, token);
 	await waitForCaptainIdle(page, team.id, token);
 
-	await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
+	await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
 		headers,
 		data: { content_type: 'text', content: { text: `@${captain.slug} please weigh in here` } },
 	});
 
-	const issueIdLower = issue.identifier.toLowerCase();
+	const taskIdLower = task.identifier.toLowerCase();
 	const mentionRun = await waitForRunWithTrigger(
 		page,
 		team.id,
@@ -88,7 +88,7 @@ test('run page shows trigger reason linking back to the source mention', async (
 		token,
 		(r) =>
 			r.trigger_source === 'mention' &&
-			r.trigger_comment_issue_identifier?.toLowerCase() === issueIdLower,
+			r.trigger_comment_task_identifier?.toLowerCase() === taskIdLower,
 	);
 
 	await page.goto(`/teams/${team.slug}/agents/${captain.id}/executions/${mentionRun.id}`);
@@ -104,7 +104,7 @@ test('run page shows trigger reason linking back to the source mention', async (
 	await expect(triggerLink).toContainText(/Mentioned/);
 
 	const href = await triggerLink.getAttribute('href');
-	expect(href?.toLowerCase()).toContain(`/issues/${issue.identifier.toLowerCase()}`);
+	expect(href?.toLowerCase()).toContain(`/tasks/${task.identifier.toLowerCase()}`);
 	expect(href).toContain('#c-');
 });
 
@@ -124,7 +124,7 @@ test('run list row shows the trigger reason summary', async ({ page }) => {
 		description: 'Test project.',
 	});
 
-	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers,
 		data: {
 			project_id: project.id,
@@ -133,7 +133,7 @@ test('run list row shows the trigger reason summary', async ({ page }) => {
 			assignee_id: captain.id,
 		},
 	});
-	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
+	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
 
 	// Wait for at least one terminal run on the assigned agent so the list page
 	// has a row to render.
@@ -144,9 +144,9 @@ test('run list row shows the trigger reason summary', async ({ page }) => {
 	const firstRow = page.locator('a[href*="/executions/"]').first();
 	await expect(firstRow).toBeVisible({ timeout: 15000 });
 	// Any of the rendered sources should appear; the assignment wakeup
-	// is the most reliable since it fires synchronously on issue creation.
+	// is the most reliable since it fires synchronously on task creation.
 	await expect(firstRow).toContainText(
 		/Assigned to|Mentioned by|Scheduled heartbeat|Manually started/,
 	);
-	expect((issue as { identifier: string }).identifier).toBeTruthy();
+	expect((task as { identifier: string }).identifier).toBeTruthy();
 });

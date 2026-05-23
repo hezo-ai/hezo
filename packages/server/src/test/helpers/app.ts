@@ -66,7 +66,7 @@ export async function createAgentRun(
 	db: PGlite,
 	agentId: string,
 	teamId: string,
-	issueId?: string | null,
+	taskId?: string | null,
 	wakeupOpts?: { source?: string; payload?: Record<string, unknown> },
 ): Promise<string> {
 	const source = wakeupOpts?.source ?? 'on_demand';
@@ -79,10 +79,10 @@ export async function createAgentRun(
 	);
 	const wakeupId = wakeup.rows[0].id;
 	const result = await db.query<{ id: string }>(
-		`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, wakeup_id, status, started_at)
+		`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status, started_at)
 		 VALUES ($1, $2, $3, $4, 'running'::heartbeat_run_status, now())
 		 RETURNING id`,
-		[agentId, teamId, issueId ?? null, wakeupId],
+		[agentId, teamId, taskId ?? null, wakeupId],
 	);
 	return result.rows[0].id;
 }
@@ -92,9 +92,9 @@ export async function mintAgentToken(
 	masterKeyManager: MasterKeyManager,
 	agentId: string,
 	teamId: string,
-	issueId?: string | null,
+	taskId?: string | null,
 ): Promise<{ token: string; runId: string }> {
-	const runId = await createAgentRun(db, agentId, teamId, issueId);
+	const runId = await createAgentRun(db, agentId, teamId, taskId);
 	const token = await signAgentJwt(masterKeyManager, agentId, teamId, runId);
 	return { token, runId };
 }

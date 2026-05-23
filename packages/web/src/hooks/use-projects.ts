@@ -8,7 +8,7 @@ export interface Project {
 	team_id: string;
 	name: string;
 	slug: string;
-	issue_prefix: string;
+	task_prefix: string;
 	description: string;
 	is_internal?: boolean;
 	docker_base_image: string | null;
@@ -18,11 +18,11 @@ export interface Project {
 	container_last_logs: string | null;
 	dev_ports: Array<{ container: number; host: number }>;
 	repo_count: number;
-	open_issue_count: number;
+	open_task_count: number;
 	created_at: string;
 	repos?: Repo[];
-	planning_issue_id?: string;
-	planning_issue_identifier?: string;
+	planning_task_id?: string;
+	planning_task_identifier?: string;
 }
 
 export interface Repo {
@@ -86,7 +86,7 @@ export function useCreateProject(teamId: string) {
 			name: string;
 			description: string;
 			initial_prd?: string;
-			issue_prefix?: string;
+			task_prefix?: string;
 		}) => api.post<Project>(`/api/teams/${teamId}/projects`, data),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] }),
 	});

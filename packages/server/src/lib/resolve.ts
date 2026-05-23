@@ -39,14 +39,14 @@ export async function resolveProjectId(
 	return result.rows[0]?.id ?? null;
 }
 
-export async function resolveIssueId(
+export async function resolveTaskId(
 	db: PGlite,
 	teamId: string,
 	raw: string,
 ): Promise<string | null> {
 	if (UUID_RE.test(raw)) return raw;
 	const result = await db.query<{ id: string }>(
-		'SELECT id FROM issues WHERE team_id = $1 AND LOWER(identifier) = LOWER($2)',
+		'SELECT id FROM tasks WHERE team_id = $1 AND LOWER(identifier) = LOWER($2)',
 		[teamId, raw],
 	);
 	return result.rows[0]?.id ?? null;

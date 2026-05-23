@@ -97,27 +97,27 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 			const templateName = (p.template_name as string) ?? 'Team template';
 			const rationale = p.rationale as string | undefined;
 			const roles = (p.roles as Array<{ name: string; slug: string }> | undefined) ?? [];
-			const hireIssueId = p.issue_id as string | undefined;
-			const hireIssueIdentifier = approval.payload_issue_identifier;
+			const hireTaskId = p.task_id as string | undefined;
+			const hireTaskIdentifier = approval.payload_task_identifier;
 			const hireProjectSlug = approval.payload_project_slug;
 			return (
 				<>
 					<span>
 						Approve provisioning the <span className="font-medium">{templateName}</span> team
 						template
-						{hireIssueIdentifier && hireProjectSlug && (
+						{hireTaskIdentifier && hireProjectSlug && (
 							<>
 								{' '}
 								(
 								<EntityLink
-									to="/teams/$teamId/projects/$projectId/issues/$issueId"
+									to="/teams/$teamId/projects/$projectId/tasks/$taskId"
 									params={{
 										teamId: teamSlug,
 										projectId: hireProjectSlug,
-										issueId: hireIssueIdentifier.toLowerCase(),
+										taskId: hireTaskIdentifier.toLowerCase(),
 									}}
 								>
-									{hireIssueIdentifier}
+									{hireTaskIdentifier}
 								</EntityLink>
 								)
 							</>
@@ -129,7 +129,7 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 							Roles: {roles.map((r) => r.name).join(', ')}
 						</span>
 					)}
-					{hireIssueId && !hireIssueIdentifier && (
+					{hireTaskId && !hireTaskIdentifier && (
 						<span className="block text-xs text-text-subtle mt-1">
 							Linked to hire-the-team intake
 						</span>
@@ -139,32 +139,32 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 		}
 		case ApprovalType.Hire: {
 			const title = (p.title as string) ?? 'a new agent';
-			const issueId = approval.payload_issue_identifier;
-			const issueProjectSlug = approval.payload_project_slug;
+			const taskId = approval.payload_task_identifier;
+			const taskProjectSlug = approval.payload_project_slug;
 			return (
 				<span>
 					Proposing to hire <span className="font-medium">{title}</span>
-					{issueId && (
+					{taskId && (
 						<>
 							{' '}
 							(
-							{issueProjectSlug ? (
+							{taskProjectSlug ? (
 								<EntityLink
-									to="/teams/$teamId/projects/$projectId/issues/$issueId"
+									to="/teams/$teamId/projects/$projectId/tasks/$taskId"
 									params={{
 										teamId: teamSlug,
-										projectId: issueProjectSlug,
-										issueId: issueId.toLowerCase(),
+										projectId: taskProjectSlug,
+										taskId: taskId.toLowerCase(),
 									}}
 								>
-									{issueId}
+									{taskId}
 								</EntityLink>
 							) : (
 								<EntityLink
-									to="/teams/$teamId/issues/$issueId"
-									params={{ teamId: teamSlug, issueId: issueId.toLowerCase() }}
+									to="/teams/$teamId/tasks/$taskId"
+									params={{ teamId: teamSlug, taskId: taskId.toLowerCase() }}
 								>
-									{issueId}
+									{taskId}
 								</EntityLink>
 							)}
 							)

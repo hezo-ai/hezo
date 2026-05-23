@@ -27,7 +27,7 @@ approvalsRoutes.get('/teams/:teamId/approvals', async (c) => {
             pma.slug AS payload_member_slug,
             pp.name AS payload_project_name,
             pp.slug AS payload_project_slug,
-            pi.identifier AS payload_issue_identifier
+            pi.identifier AS payload_task_identifier
      FROM approvals a
      JOIN teams co ON co.id = a.team_id
      LEFT JOIN members m ON m.id = a.requested_by_member_id
@@ -35,7 +35,7 @@ approvalsRoutes.get('/teams/:teamId/approvals', async (c) => {
      LEFT JOIN members pm ON pm.id = (a.payload->>'member_id')::uuid
      LEFT JOIN member_agents pma ON pma.id = pm.id
      LEFT JOIN projects pp ON pp.id = (a.payload->>'project_id')::uuid
-     LEFT JOIN issues pi ON pi.id = (a.payload->>'issue_id')::uuid
+     LEFT JOIN tasks pi ON pi.id = (a.payload->>'task_id')::uuid
      WHERE a.team_id = $1 AND a.status IN (${statusFilter
 				.split(',')
 				.map((_, i) => `$${i + 2}::approval_status`)
@@ -70,7 +70,7 @@ approvalsRoutes.get('/teams/:teamId/approvals/:approvalId/blocked-tickets', asyn
 	}
 
 	const rows = await db.query<{
-		issue_id: string;
+		task_id: string;
 		identifier: string;
 		title: string;
 		project_slug: string;
@@ -81,7 +81,7 @@ approvalsRoutes.get('/teams/:teamId/approvals/:approvalId/blocked-tickets', asyn
 		snippet: string | null;
 	}>(
 		`SELECT
-			   i.id AS issue_id,
+			   i.id AS task_id,
 			   i.identifier,
 			   i.title,
 			   p.slug AS project_slug,
@@ -91,16 +91,16 @@ approvalsRoutes.get('/teams/:teamId/approvals/:approvalId/blocked-tickets', asyn
 			   ma.slug AS agent_slug,
 			   (
 			     SELECT LEFT(prev.content->>'text', 120)
-			     FROM issue_comments prev
-			     WHERE prev.issue_id = i.id
+			     FROM task_comments prev
+			     WHERE prev.task_id = i.id
 			       AND prev.content_type IN ('text'::comment_content_type, 'system'::comment_content_type)
 			       AND prev.content->>'text' IS NOT NULL
 			       AND prev.created_at < ic.created_at
 			     ORDER BY prev.created_at DESC
 			     LIMIT 1
 			   ) AS snippet
-			 FROM issue_comments ic
-			 JOIN issues i ON i.id = ic.issue_id
+			 FROM task_comments ic
+			 JOIN tasks i ON i.id = ic.task_id
 			 JOIN projects p ON p.id = i.project_id
 			 LEFT JOIN members m ON m.id = i.assignee_id
 			 LEFT JOIN member_agents ma ON ma.id = m.id
@@ -114,7 +114,7 @@ approvalsRoutes.get('/teams/:teamId/approvals/:approvalId/blocked-tickets', asyn
 	);
 
 	const tickets = rows.rows.map((r) => ({
-		issue_id: r.issue_id,
+		task_id: r.task_id,
 		identifier: r.identifier,
 		title: r.title,
 		project_slug: r.project_slug,

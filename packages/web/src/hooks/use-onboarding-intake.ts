@@ -3,8 +3,8 @@ import { type ApiError, api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
 export interface OnboardingIntake {
-	issue_id: string;
-	issue_identifier: string;
+	task_id: string;
+	task_identifier: string;
 	project_slug: string;
 	captain_greeting: string;
 	captain_member_id: string;
@@ -12,7 +12,7 @@ export interface OnboardingIntake {
 }
 
 export interface UseOnboardingIntakeOptions {
-	/** When true, creates the intake issue if missing. */
+	/** When true, creates the intake task if missing. */
 	ensure?: boolean;
 }
 
@@ -48,7 +48,7 @@ export function useStartOnboardingIntake(teamId: string) {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'onboarding-intake'] });
 			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'onboarding'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'issues'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'tasks'] });
 		},
 	});
 }
@@ -56,12 +56,12 @@ export function useStartOnboardingIntake(teamId: string) {
 export function useSkipOnboardingQuestions(teamId: string) {
 	return useMutation({
 		mutationFn: () =>
-			api.post<{ issue_id: string; comment_id: string }>(
+			api.post<{ task_id: string; comment_id: string }>(
 				`/api/teams/${teamId}/onboarding-intake/skip-questions`,
 			),
 		onSuccess: (data) => {
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'issues', data.issue_id, 'comments'],
+				queryKey: ['teams', teamId, 'tasks', data.task_id, 'comments'],
 			});
 		},
 	});

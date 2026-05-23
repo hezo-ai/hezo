@@ -46,10 +46,10 @@ function ExecutionRow({
 				{run.status}
 			</Badge>
 
-			{run.issue_identifier && (
+			{run.task_identifier && (
 				<span className="text-text-muted font-mono">
-					{run.issue_identifier}
-					{run.issue_title && <span className="font-sans ml-1.5 text-text">{run.issue_title}</span>}
+					{run.task_identifier}
+					{run.task_title && <span className="font-sans ml-1.5 text-text">{run.task_title}</span>}
 				</span>
 			)}
 

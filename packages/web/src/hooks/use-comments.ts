@@ -24,7 +24,7 @@ export interface CommentAttachment {
 
 export interface Comment {
 	id: string;
-	issue_id: string;
+	task_id: string;
 	content_type: string;
 	content: string;
 	chosen_option: string | null;
@@ -38,11 +38,11 @@ export interface Comment {
 	attachments?: CommentAttachment[];
 }
 
-export function useComments(teamId: string, issueId: string, options?: { enabled?: boolean }) {
+export function useComments(teamId: string, taskId: string, options?: { enabled?: boolean }) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
+		queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
 		queryFn: () =>
-			api.get<Comment[]>(`/api/teams/${teamId}/issues/${issueId}/comments`, {
+			api.get<Comment[]>(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 				include_tool_calls: 'true',
 			}),
 		enabled: options?.enabled ?? true,
@@ -50,7 +50,7 @@ export function useComments(teamId: string, issueId: string, options?: { enabled
 	});
 }
 
-export function useCreateComment(teamId: string, issueId: string) {
+export function useCreateComment(teamId: string, taskId: string) {
 	return useMutation({
 		mutationFn: (data: {
 			content: string;
@@ -59,32 +59,29 @@ export function useCreateComment(teamId: string, issueId: string) {
 			wake_assignee?: boolean;
 			parent_comment_id?: string;
 			attachment_ids?: string[];
-		}) => api.post<Comment>(`/api/teams/${teamId}/issues/${issueId}/comments`, data),
+		}) => api.post<Comment>(`/api/teams/${teamId}/tasks/${taskId}/comments`, data),
 		onSuccess: (created) => {
-			queryClient.setQueryData<Comment[]>(
-				['teams', teamId, 'issues', issueId, 'comments'],
-				(old) => {
-					if (!old) return [created];
-					if (old.some((c) => c.id === created.id)) return old;
-					return [...old, created];
-				},
-			);
+			queryClient.setQueryData<Comment[]>(['teams', teamId, 'tasks', taskId, 'comments'], (old) => {
+				if (!old) return [created];
+				if (old.some((c) => c.id === created.id)) return old;
+				return [...old, created];
+			});
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
+				queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
 			});
 		},
 	});
 }
 
-export function useChooseOption(teamId: string, issueId: string) {
+export function useChooseOption(teamId: string, taskId: string) {
 	return useMutation({
 		mutationFn: ({ commentId, chosen_id }: { commentId: string; chosen_id: string }) =>
-			api.post(`/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/choose`, {
+			api.post(`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/choose`, {
 				chosen_id,
 			}),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
+				queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
 			}),
 	});
 }
@@ -95,34 +92,34 @@ export interface ReactionMutationResponse {
 	reactions: ReactionGroup[];
 }
 
-export function useAddReaction(teamId: string, issueId: string) {
+export function useAddReaction(teamId: string, taskId: string) {
 	return useMutation({
 		mutationFn: ({ commentId, kind }: { commentId: string; kind: string }) =>
 			api.put<ReactionMutationResponse>(
-				`/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/reactions/${kind}`,
+				`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${kind}`,
 				{},
 			),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
+				queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
 			}),
 	});
 }
 
-export function useRemoveReaction(teamId: string, issueId: string) {
+export function useRemoveReaction(teamId: string, taskId: string) {
 	return useMutation({
 		mutationFn: ({ commentId, kind }: { commentId: string; kind: string }) =>
 			api.delete<ReactionMutationResponse>(
-				`/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/reactions/${kind}`,
+				`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${kind}`,
 			),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
+				queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
 			}),
 	});
 }
 
-export function useFulfillCredential(teamId: string, issueId: string) {
+export function useFulfillCredential(teamId: string, taskId: string) {
 	return useMutation({
 		mutationFn: ({
 			commentId,
@@ -133,13 +130,13 @@ export function useFulfillCredential(teamId: string, issueId: string) {
 			value?: string;
 			confirmed?: boolean;
 		}) =>
-			api.post(`/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/fulfill-credential`, {
+			api.post(`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/fulfill-credential`, {
 				value,
 				confirmed,
 			}),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'issues', issueId, 'comments'],
+				queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
 			}),
 	});
 }

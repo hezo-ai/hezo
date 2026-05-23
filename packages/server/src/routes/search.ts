@@ -13,7 +13,7 @@ searchRoutes.get('/teams/:teamId/search', async (c) => {
 	const { teamId } = access;
 	const db = c.get('db');
 	const query = c.req.query('q');
-	const scope = (c.req.query('scope') as 'all' | 'kb_docs' | 'issues' | 'skills') || 'all';
+	const scope = (c.req.query('scope') as 'all' | 'kb_docs' | 'tasks' | 'skills') || 'all';
 	const limit = Number.parseInt(c.req.query('limit') || '10', 10);
 
 	if (!query?.trim()) {

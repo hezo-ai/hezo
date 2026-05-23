@@ -10,7 +10,7 @@ import { type Context, Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
-import { toProjectIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
+import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -24,7 +24,7 @@ import {
 	teardownContainer,
 } from '../services/containers';
 import type { JobManager } from '../services/job-manager';
-import { createProjectWithPlanningIssue } from '../services/project-create';
+import { createProjectWithPlanningTask } from '../services/project-create';
 import { createWakeup } from '../services/wakeup';
 
 function buildContainerDeps(c: Context<Env>): ContainerDeps {
@@ -50,8 +50,8 @@ async function cancelRunningAgentTasks(
 ): Promise<void> {
 	const running = await db.query<{ assignee_id: string }>(
 		`SELECT DISTINCT i.assignee_id
-		 FROM issues i
-		 JOIN execution_locks el ON el.issue_id = i.id AND el.released_at IS NULL
+		 FROM tasks i
+		 JOIN execution_locks el ON el.task_id = i.id AND el.released_at IS NULL
 		 WHERE i.project_id = $1 AND i.team_id = $2 AND i.assignee_id IS NOT NULL`,
 		[projectId, teamId],
 	);
@@ -68,7 +68,7 @@ async function wakeAgentsWithPendingWork(
 	const { placeholders, values } = terminalStatusParams(3);
 	const pending = await db.query<{ agent_id: string }>(
 		`SELECT DISTINCT i.assignee_id AS agent_id
-		 FROM issues i
+		 FROM tasks i
 		 JOIN member_agents ma ON ma.id = i.assignee_id
 		 WHERE i.project_id = $1 AND i.team_id = $2
 		   AND i.status NOT IN (${placeholders})
@@ -83,60 +83,59 @@ async function wakeAgentsWithPendingWork(
 	}
 }
 
-export const ISSUE_PREFIX_SHAPE = /^[A-Z][A-Z0-9]{1,3}$/;
+export const TASK_PREFIX_SHAPE = /^[A-Z][A-Z0-9]{1,3}$/;
 
-export type IssuePrefixResult =
+export type TaskPrefixResult =
 	| { ok: true; prefix: string }
 	| { ok: false; code: 'INVALID_REQUEST' | 'CONFLICT'; message: string; status: 400 | 409 };
 
-export async function resolveProjectIssuePrefix(
+export async function resolveProjectTaskPrefix(
 	db: PGlite,
 	teamId: string,
 	provided: string | undefined,
 	projectName: string,
-): Promise<IssuePrefixResult> {
+): Promise<TaskPrefixResult> {
 	if (provided?.trim()) {
 		const candidate = provided.trim().toUpperCase();
-		if (!ISSUE_PREFIX_SHAPE.test(candidate)) {
+		if (!TASK_PREFIX_SHAPE.test(candidate)) {
 			return {
 				ok: false,
 				code: 'INVALID_REQUEST',
-				message:
-					'issue_prefix must be 2-4 uppercase alphanumeric characters starting with a letter',
+				message: 'task_prefix must be 2-4 uppercase alphanumeric characters starting with a letter',
 				status: 400,
 			};
 		}
 		const collision = await db.query(
-			'SELECT 1 FROM projects WHERE team_id = $1 AND issue_prefix = $2',
+			'SELECT 1 FROM projects WHERE team_id = $1 AND task_prefix = $2',
 			[teamId, candidate],
 		);
 		if (collision.rows.length > 0) {
 			return {
 				ok: false,
 				code: 'CONFLICT',
-				message: `Issue prefix '${candidate}' is already in use for this team`,
+				message: `Task prefix '${candidate}' is already in use for this team`,
 				status: 409,
 			};
 		}
 		return { ok: true, prefix: candidate };
 	}
 
-	const base = toProjectIssuePrefix(projectName);
-	const existing = await db.query<{ issue_prefix: string }>(
-		'SELECT issue_prefix FROM projects WHERE team_id = $1 AND issue_prefix LIKE $2',
+	const base = toProjectTaskPrefix(projectName);
+	const existing = await db.query<{ task_prefix: string }>(
+		'SELECT task_prefix FROM projects WHERE team_id = $1 AND task_prefix LIKE $2',
 		[teamId, `${base}%`],
 	);
-	const taken = new Set(existing.rows.map((r) => r.issue_prefix));
+	const taken = new Set(existing.rows.map((r) => r.task_prefix));
 	if (!taken.has(base)) return { ok: true, prefix: base };
 	for (let n = 2; n < 1000; n++) {
 		const candidate = `${base}${n}`;
-		if (!ISSUE_PREFIX_SHAPE.test(candidate)) break;
+		if (!TASK_PREFIX_SHAPE.test(candidate)) break;
 		if (!taken.has(candidate)) return { ok: true, prefix: candidate };
 	}
 	return {
 		ok: false,
 		code: 'CONFLICT',
-		message: `Unable to derive a unique issue_prefix from '${projectName}'; supply one explicitly`,
+		message: `Unable to derive a unique task_prefix from '${projectName}'; supply one explicitly`,
 		status: 409,
 	};
 }
@@ -154,7 +153,7 @@ projectsRoutes.get('/teams/:teamId/projects', async (c) => {
 	const result = await db.query(
 		`SELECT p.*,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
-       (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN (${ts.placeholders}))::int AS open_issue_count
+       (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count
      FROM projects p
      WHERE p.team_id = $1
      ORDER BY p.created_at DESC`,
@@ -175,7 +174,7 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 		description?: string;
 		docker_base_image?: string;
 		initial_prd?: string;
-		issue_prefix?: string;
+		task_prefix?: string;
 	}>();
 
 	if (!body.name?.trim()) {
@@ -193,9 +192,9 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 		return err(c, 'NOT_FOUND', 'Team not found', 404);
 	}
 
-	const prefixResult = await resolveProjectIssuePrefix(db, teamId, body.issue_prefix, body.name);
+	const prefixResult = await resolveProjectTaskPrefix(db, teamId, body.task_prefix, body.name);
 	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
-	const issuePrefix = prefixResult.prefix;
+	const taskPrefix = prefixResult.prefix;
 
 	const captainResult = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
@@ -222,22 +221,26 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 		return r.rows.length > 0;
 	});
 
-	const { project, planningIssue } = await createProjectWithPlanningIssue(db, {
+	const { project, planningTask } = await createProjectWithPlanningTask(db, {
 		teamId,
 		captainMemberId,
 		name: body.name.trim(),
 		slug,
-		issuePrefix,
+		taskPrefix,
 		description: body.description.trim(),
 		dockerBaseImage: body.docker_base_image,
 		initialPrd: body.initial_prd?.trim() || null,
+		createPlanningTask: true,
 	});
 
 	broadcastChange(c, wsRoom.team(teamId), 'projects', 'INSERT', project);
-	broadcastChange(c, wsRoom.team(teamId), 'issues', 'INSERT', planningIssue);
+	if (!planningTask) {
+		throw new Error('Expected planning task for direct project creation');
+	}
+	broadcastChange(c, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
 
 	createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
-		issue_id: planningIssue.id,
+		task_id: planningTask.id,
 	}).catch((e) => log.error('Failed to wake Captain for project planning:', e));
 
 	provisionContainer(buildContainerDeps(c), project as unknown as ProjectRow, teamMeta.slug).catch(
@@ -250,8 +253,8 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 		c,
 		{
 			...project,
-			planning_issue_id: planningIssue.id,
-			planning_issue_identifier: planningIssue.identifier,
+			planning_task_id: planningTask.id,
+			planning_task_identifier: planningTask.identifier,
 		},
 		201,
 	);
@@ -270,7 +273,7 @@ projectsRoutes.get('/teams/:teamId/projects/:projectId', async (c) => {
 	const result = await db.query(
 		`SELECT p.*,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
-       (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_issue_count
+       (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count
      FROM projects p
      WHERE p.id = $1 AND p.team_id = $2`,
 		[projectId, teamId, ...ts2.values],
@@ -376,12 +379,12 @@ projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
 	}
 
 	const ts3 = terminalStatusParams(2);
-	const openIssues = await db.query<{ count: number }>(
-		`SELECT count(*)::int AS count FROM issues WHERE project_id = $1 AND status NOT IN (${ts3.placeholders})`,
+	const openTasks = await db.query<{ count: number }>(
+		`SELECT count(*)::int AS count FROM tasks WHERE project_id = $1 AND status NOT IN (${ts3.placeholders})`,
 		[projectId, ...ts3.values],
 	);
-	if (openIssues.rows[0].count > 0) {
-		return err(c, 'CONFLICT', 'Cannot delete project with open issues', 409);
+	if (openTasks.rows[0].count > 0) {
+		return err(c, 'CONFLICT', 'Cannot delete project with open tasks', 409);
 	}
 
 	const teamSlugResult = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [

@@ -13,7 +13,7 @@ let agentId: string;
 let agent2Id: string;
 let projectId: string;
 let project2Id: string;
-let issueId: string;
+let taskId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -60,29 +60,29 @@ beforeAll(async () => {
 	});
 	project2Id = (await proj2Res.json()).data.id;
 
-	// Create an issue under project 1
-	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
+	// Create an task under project 1
+	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
-			title: 'Test Issue',
+			title: 'Test Task',
 			project_id: projectId,
 			assignee_id: agentId,
 		}),
 	});
-	issueId = (await issueRes.json()).data.id;
+	taskId = (await taskRes.json()).data.id;
 
 	// Insert cost entries with varied dates, agents, and projects directly via DB
 	// so we can control timestamps precisely for date-range tests.
 	// All amounts are small to stay within budget limits.
 	await db.query(
-		`INSERT INTO cost_entries (team_id, member_id, project_id, issue_id, amount_cents, description, created_at)
+		`INSERT INTO cost_entries (team_id, member_id, project_id, task_id, amount_cents, description, created_at)
      VALUES
        ($1, $2, $3, $4, 50,  'past entry',          '2024-01-15 10:00:00+00'),
-       ($1, $2, $3, NULL, 75,  'past no-issue',      '2024-01-20 12:00:00+00'),
+       ($1, $2, $3, NULL, 75,  'past no-task',      '2024-01-20 12:00:00+00'),
        ($1, $5, $6, NULL, 120, 'agent2 project2',    '2024-02-10 08:00:00+00'),
        ($1, $2, NULL, NULL, 30, 'agent1 no project',  '2024-03-01 09:00:00+00')`,
-		[teamId, agentId, projectId, issueId, agent2Id, project2Id],
+		[teamId, agentId, projectId, taskId, agent2Id, project2Id],
 	);
 });
 
@@ -108,7 +108,7 @@ describe('costs – date range filtering', () => {
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		// Only entries on/before 2024-01-31: past entry (50) + past no-issue (75)
+		// Only entries on/before 2024-01-31: past entry (50) + past no-task (75)
 		expect(body.data.entries.length).toBe(2);
 		expect(body.data.total_cents).toBe(125);
 	});
@@ -119,7 +119,7 @@ describe('costs – date range filtering', () => {
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		// Entries in range: past no-issue (75, Jan 20) + agent2 project2 (120, Feb 10)
+		// Entries in range: past no-task (75, Jan 20) + agent2 project2 (120, Feb 10)
 		expect(body.data.entries.length).toBe(2);
 		expect(body.data.total_cents).toBe(195);
 	});
@@ -132,7 +132,7 @@ describe('costs – project_id filter', () => {
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		// past entry (50) + past no-issue (75) both belong to project 1
+		// past entry (50) + past no-task (75) both belong to project 1
 		expect(body.data.entries.length).toBe(2);
 		for (const entry of body.data.entries) {
 			expect(entry.project_id).toBe(projectId);
@@ -150,16 +150,16 @@ describe('costs – project_id filter', () => {
 	});
 });
 
-describe('costs – issue_id filter', () => {
-	it('returns only entries linked to the specified issue', async () => {
-		const res = await app.request(`/api/teams/${teamId}/costs?issue_id=${issueId}`, {
+describe('costs – task_id filter', () => {
+	it('returns only entries linked to the specified task', async () => {
+		const res = await app.request(`/api/teams/${teamId}/costs?task_id=${taskId}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		// Only "past entry" (50) has issue_id set
+		// Only "past entry" (50) has task_id set
 		expect(body.data.entries.length).toBe(1);
-		expect(body.data.entries[0].issue_id).toBe(issueId);
+		expect(body.data.entries[0].task_id).toBe(taskId);
 		expect(body.data.total_cents).toBe(50);
 	});
 });

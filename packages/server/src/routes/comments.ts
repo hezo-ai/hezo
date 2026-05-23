@@ -4,51 +4,51 @@ import { encrypt } from '../crypto/encryption';
 import { signAssetUrl } from '../lib/asset-urls';
 import { broadcastChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
-import { resolveActorMemberId, resolveIssueId } from '../lib/resolve';
+import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireTeamAccess } from '../middleware/auth';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
-import { recordIssueLinks } from '../services/issue-events';
 import {
 	addCommentReaction,
-	loadReactionsForIssue,
+	loadReactionsForTask,
 	removeCommentReaction,
 } from '../services/reactions';
+import { recordTaskLinks } from '../services/task-events';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
 
 export const commentsRoutes = new Hono<Env>();
 
-commentsRoutes.get('/teams/:teamId/issues/:issueId/comments', async (c) => {
+commentsRoutes.get('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const { teamId } = access;
-	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
-	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
+	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 	const includeToolCalls = c.req.query('include_tool_calls') === 'true';
 
 	const result = await db.query(
-		`SELECT ic.id, ic.issue_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
+		`SELECT ic.id, ic.task_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
             m.member_type AS author_type,
             COALESCE(ma.title, m.display_name, 'Board') AS author_name,
             ic.author_member_id,
             ic.parent_comment_id
-     FROM issue_comments ic
+     FROM task_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
-     WHERE ic.issue_id = $1
+     WHERE ic.task_id = $1
      ORDER BY ic.created_at ASC`,
-		[issueId],
+		[taskId],
 	);
 
 	const viewerMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
-	const reactionsByComment = await loadReactionsForIssue(db, issueId, viewerMemberId);
+	const reactionsByComment = await loadReactionsForTask(db, taskId, viewerMemberId);
 	for (const comment of result.rows as Record<string, unknown>[]) {
 		comment.reactions = reactionsByComment.get(comment.id as string) ?? [];
 	}
@@ -81,15 +81,15 @@ commentsRoutes.get('/teams/:teamId/issues/:issueId/comments', async (c) => {
 });
 
 commentsRoutes.put(
-	'/teams/:teamId/issues/:issueId/comments/:commentId/reactions/:kind',
+	'/teams/:teamId/tasks/:taskId/comments/:commentId/reactions/:kind',
 	async (c) => {
 		const access = await requireTeamAccess(c);
 		if (access instanceof Response) return access;
 
 		const db = c.get('db');
 		const { teamId } = access;
-		const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
-		if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+		const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
+		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 		const commentId = c.req.param('commentId');
 		const kind = c.req.param('kind');
 
@@ -98,7 +98,7 @@ commentsRoutes.put(
 			return err(c, 'FORBIDDEN', 'No member identity for caller', 403);
 		}
 
-		const result = await addCommentReaction({ db, teamId, issueId, commentId, kind, memberId });
+		const result = await addCommentReaction({ db, teamId, taskId, commentId, kind, memberId });
 		if (!result.ok) {
 			const status = result.code === 'INVALID_KIND' ? 400 : 404;
 			return err(c, result.code, result.message, status);
@@ -106,7 +106,7 @@ commentsRoutes.put(
 
 		broadcastChange(c, wsRoom.team(teamId), 'comment_reactions', 'INSERT', {
 			comment_id: commentId,
-			issue_id: issueId,
+			task_id: taskId,
 			member_id: memberId,
 			kind,
 		});
@@ -115,15 +115,15 @@ commentsRoutes.put(
 );
 
 commentsRoutes.delete(
-	'/teams/:teamId/issues/:issueId/comments/:commentId/reactions/:kind',
+	'/teams/:teamId/tasks/:taskId/comments/:commentId/reactions/:kind',
 	async (c) => {
 		const access = await requireTeamAccess(c);
 		if (access instanceof Response) return access;
 
 		const db = c.get('db');
 		const { teamId } = access;
-		const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
-		if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+		const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
+		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 		const commentId = c.req.param('commentId');
 		const kind = c.req.param('kind');
 
@@ -135,7 +135,7 @@ commentsRoutes.delete(
 		const result = await removeCommentReaction({
 			db,
 			teamId,
-			issueId,
+			taskId,
 			commentId,
 			kind,
 			memberId,
@@ -147,7 +147,7 @@ commentsRoutes.delete(
 
 		broadcastChange(c, wsRoom.team(teamId), 'comment_reactions', 'DELETE', {
 			comment_id: commentId,
-			issue_id: issueId,
+			task_id: taskId,
 			member_id: memberId,
 			kind,
 		});
@@ -155,22 +155,22 @@ commentsRoutes.delete(
 	},
 );
 
-commentsRoutes.post('/teams/:teamId/issues/:issueId/comments', async (c) => {
+commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const { teamId } = access;
-	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
-	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
+	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 	const auth = c.get('auth');
 
-	const issueCheck = await db.query<{ id: string; assignee_id: string | null }>(
-		'SELECT id, assignee_id FROM issues WHERE id = $1 AND team_id = $2',
-		[issueId, teamId],
+	const taskCheck = await db.query<{ id: string; assignee_id: string | null }>(
+		'SELECT id, assignee_id FROM tasks WHERE id = $1 AND team_id = $2',
+		[taskId, teamId],
 	);
-	if (issueCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	if (taskCheck.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Task not found', 404);
 	}
 
 	const body = await c.req.json<{
@@ -202,8 +202,8 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments', async (c) => {
 		const matched = await db.query<{ id: string }>(
 			`SELECT id FROM assets
 			 WHERE id = ANY($1::uuid[])
-			   AND project_id = (SELECT project_id FROM issues WHERE id = $2)`,
-			[attachmentIds, issueId],
+			   AND project_id = (SELECT project_id FROM tasks WHERE id = $2)`,
+			[attachmentIds, taskId],
 		);
 		if (matched.rows.length !== attachmentIds.length) {
 			return err(
@@ -222,11 +222,11 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments', async (c) => {
 	let parentCommentId: string | null = null;
 	if (body.parent_comment_id) {
 		const parentCheck = await db.query(
-			'SELECT 1 FROM issue_comments WHERE id = $1 AND issue_id = $2',
-			[body.parent_comment_id, issueId],
+			'SELECT 1 FROM task_comments WHERE id = $1 AND task_id = $2',
+			[body.parent_comment_id, taskId],
 		);
 		if (parentCheck.rows.length === 0) {
-			return err(c, 'INVALID_REQUEST', 'parent_comment_id does not belong to this issue', 400);
+			return err(c, 'INVALID_REQUEST', 'parent_comment_id does not belong to this task', 400);
 		}
 		parentCommentId = body.parent_comment_id;
 	}
@@ -247,11 +247,11 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments', async (c) => {
 	let result: Awaited<ReturnType<typeof db.query<{ id: string }>>>;
 	try {
 		result = await db.query<{ id: string }>(
-			`INSERT INTO issue_comments (issue_id, author_member_id, parent_comment_id, content_type, content)
+			`INSERT INTO task_comments (task_id, author_member_id, parent_comment_id, content_type, content)
      VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
      RETURNING *`,
 			[
-				issueId,
+				taskId,
 				authorMemberId,
 				parentCommentId,
 				body.content_type ?? CommentContentType.Text,
@@ -275,7 +275,7 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments', async (c) => {
 
 	await fireCommentWakeups({
 		db,
-		issueId,
+		taskId,
 		teamId,
 		commentId: result.rows[0].id,
 		content: body.content,
@@ -289,15 +289,15 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments', async (c) => {
 
 	const commentText = typeof body.content?.text === 'string' ? body.content.text : '';
 	if (commentText) {
-		recordIssueLinks(db, teamId, issueId, commentText, authorMemberId, c.get('wsManager')).catch(
-			(e) => log.error('Failed to record issue links from comment:', e),
+		recordTaskLinks(db, teamId, taskId, commentText, authorMemberId, c.get('wsManager')).catch(
+			(e) => log.error('Failed to record task links from comment:', e),
 		);
 	}
 
 	broadcastChange(
 		c,
 		wsRoom.team(teamId),
-		'issue_comments',
+		'task_comments',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
 	);
@@ -317,14 +317,14 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments', async (c) => {
 	return ok(c, created, 201);
 });
 
-commentsRoutes.post('/teams/:teamId/issues/:issueId/comments/:commentId/choose', async (c) => {
+commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments/:commentId/choose', async (c) => {
 	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
 	const db = c.get('db');
 	const { teamId } = access;
-	const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
-	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
+	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 	const commentId = c.req.param('commentId');
 
 	const body = await c.req.json<{ chosen_id: string }>();
@@ -332,10 +332,10 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments/:commentId/choose',
 		return err(c, 'INVALID_REQUEST', 'chosen_id is required', 400);
 	}
 
-	// Verify comment belongs to the issue
-	const existing = await db.query<{ content_type: string; issue_id: string }>(
-		'SELECT content_type, issue_id FROM issue_comments WHERE id = $1 AND issue_id = $2',
-		[commentId, issueId],
+	// Verify comment belongs to the task
+	const existing = await db.query<{ content_type: string; task_id: string }>(
+		'SELECT content_type, task_id FROM task_comments WHERE id = $1 AND task_id = $2',
+		[commentId, taskId],
 	);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Comment not found', 404);
@@ -348,15 +348,15 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments/:commentId/choose',
 	let result: Awaited<ReturnType<typeof db.query>>;
 	try {
 		result = await db.query(
-			'UPDATE issue_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *',
+			'UPDATE task_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *',
 			[JSON.stringify({ chosen_id: body.chosen_id }), commentId],
 		);
 
 		await db.query(
-			`INSERT INTO issue_comments (issue_id, content_type, content)
+			`INSERT INTO task_comments (task_id, content_type, content)
          VALUES ($1, $2::comment_content_type, $3::jsonb)`,
 			[
-				existing.rows[0].issue_id,
+				existing.rows[0].task_id,
 				CommentContentType.System,
 				JSON.stringify({ text: `Board selected option: ${body.chosen_id}` }),
 			],
@@ -367,16 +367,16 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments/:commentId/choose',
 		throw e;
 	}
 
-	const issue = await db.query<{ assignee_id: string | null }>(
-		'SELECT assignee_id FROM issues WHERE id = $1',
-		[existing.rows[0].issue_id],
+	const task = await db.query<{ assignee_id: string | null }>(
+		'SELECT assignee_id FROM tasks WHERE id = $1',
+		[existing.rows[0].task_id],
 	);
-	const assigneeId = issue.rows[0]?.assignee_id;
+	const assigneeId = task.rows[0]?.assignee_id;
 	if (assigneeId) {
 		const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
 		if (isAgent.rows.length > 0) {
 			createWakeup(db, assigneeId, teamId, WakeupSource.OptionChosen, {
-				issue_id: existing.rows[0].issue_id,
+				task_id: existing.rows[0].task_id,
 				chosen_id: body.chosen_id,
 			}).catch((e) => log.error('Failed to create option_chosen wakeup:', e));
 		}
@@ -385,7 +385,7 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments/:commentId/choose',
 	broadcastChange(
 		c,
 		wsRoom.team(teamId),
-		'issue_comments',
+		'task_comments',
 		'UPDATE',
 		result.rows[0] as Record<string, unknown>,
 	);
@@ -393,7 +393,7 @@ commentsRoutes.post('/teams/:teamId/issues/:issueId/comments/:commentId/choose',
 });
 
 commentsRoutes.post(
-	'/teams/:teamId/issues/:issueId/comments/:commentId/fulfill-credential',
+	'/teams/:teamId/tasks/:taskId/comments/:commentId/fulfill-credential',
 	async (c) => {
 		const access = await requireTeamAccess(c);
 		if (access instanceof Response) return access;
@@ -401,21 +401,21 @@ commentsRoutes.post(
 		const db = c.get('db');
 		const masterKeyManager = c.get('masterKeyManager');
 		const { teamId } = access;
-		const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
-		if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+		const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
+		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 		const commentId = c.req.param('commentId');
 
 		const body = await c.req.json<{ value?: string; confirmed?: boolean }>();
 
 		const existing = await db.query<{
 			content_type: string;
-			issue_id: string;
+			task_id: string;
 			content: Record<string, unknown>;
 			chosen_option: Record<string, unknown> | null;
 			author_member_id: string | null;
 		}>(
-			'SELECT content_type, issue_id, content, chosen_option, author_member_id FROM issue_comments WHERE id = $1 AND issue_id = $2',
-			[commentId, issueId],
+			'SELECT content_type, task_id, content, chosen_option, author_member_id FROM task_comments WHERE id = $1 AND task_id = $2',
+			[commentId, taskId],
 		);
 		if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Comment not found', 404);
 		const row = existing.rows[0];
@@ -494,7 +494,7 @@ commentsRoutes.post(
 			}
 
 			const updated = await db.query(
-				`UPDATE issue_comments
+				`UPDATE task_comments
 				   SET chosen_option = $1::jsonb
 				 WHERE id = $2
 				 RETURNING *`,
@@ -506,10 +506,10 @@ commentsRoutes.post(
 			updatedComment = updated.rows[0] as Record<string, unknown>;
 
 			await db.query(
-				`INSERT INTO issue_comments (issue_id, content_type, content)
+				`INSERT INTO task_comments (task_id, content_type, content)
 				 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
 				[
-					issueId,
+					taskId,
 					JSON.stringify({
 						text: isConfirmation
 							? `Confirmed: ${name}`
@@ -530,7 +530,7 @@ commentsRoutes.post(
 			if (isAgent.rows.length > 0) {
 				try {
 					await createWakeup(db, requestingAgentId, teamId, WakeupSource.CredentialProvided, {
-						issue_id: issueId,
+						task_id: taskId,
 						comment_id: commentId,
 						secret_id: secretId,
 						name,
@@ -541,7 +541,7 @@ commentsRoutes.post(
 			}
 		}
 
-		broadcastChange(c, wsRoom.team(teamId), 'issue_comments', 'UPDATE', updatedComment);
+		broadcastChange(c, wsRoom.team(teamId), 'task_comments', 'UPDATE', updatedComment);
 		return ok(c, { secret_id: secretId, comment_id: commentId });
 	},
 );

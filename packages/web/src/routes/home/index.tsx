@@ -106,7 +106,7 @@ function HomeProjectsSection({
 										<p className="text-xs text-text-muted line-clamp-2">{p.description}</p>
 									)}
 									<div className="flex gap-3 text-xs text-text-muted mt-1">
-										<span>{p.open_issue_count} issues</span>
+										<span>{p.open_task_count} tasks</span>
 										<span>{p.repo_count} repos</span>
 									</div>
 								</div>

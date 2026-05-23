@@ -33,7 +33,8 @@ export function OnboardingChoice({ teamId, onChosen }: OnboardingChoiceProps) {
 		await directOnboarding.mutateAsync({
 			template_id: blankTemplate.id,
 			project_name: 'General',
-			project_description: 'General workspace for ad-hoc help.',
+			project_description: 'Catch-all for ad-hoc help and one-off tasks.',
+			skip_planning_task: true,
 		});
 		onChosen();
 	}

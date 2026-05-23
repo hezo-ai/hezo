@@ -8,9 +8,9 @@ import {
 	CommentContentType,
 	ContainerStatus,
 	HeartbeatRunStatus,
-	IssuePriority,
-	IssueStatus,
-	TERMINAL_ISSUE_STATUSES,
+	TaskPriority,
+	TaskStatus,
+	TERMINAL_TASK_STATUSES,
 	WakeupSource,
 	WakeupStatus,
 	wsRoom,
@@ -19,7 +19,7 @@ import { Cron } from 'cron-async';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
-import { assertChildrenAllClosed } from '../lib/issue-relationships';
+import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
 import {
@@ -33,11 +33,11 @@ import {
 } from './containers';
 import type { DockerClient } from './docker';
 import type { EgressProxy } from './egress';
-import { recordStatusChange } from './issue-events';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans } from './orphan-detector';
 import { ensureRepoSetupAction } from './repo-setup';
 import type { SshAgentServer } from './ssh-agent';
+import { recordStatusChange } from './task-events';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -67,7 +67,7 @@ interface RunningTask {
 export interface LiveRun {
 	runId: string;
 	memberId: string;
-	issueId: string;
+	taskId: string;
 	projectId: string;
 	teamId: string;
 	taskKey: string;
@@ -93,10 +93,10 @@ export class JobManager {
 	private runningTasks = new Map<string, RunningTask>();
 	private liveRuns = new Map<string, LiveRun>();
 	private guards = new Map<string, boolean>();
-	// Issues currently held by a dispatched run. Populated synchronously in activateAgent
+	// Tasks currently held by a dispatched run. Populated synchronously in activateAgent
 	// before launchTask, cleared in the launchTask finally. Closes the race window between
 	// dispatch and createHeartbeatRun where the DB-backed check is not yet authoritative.
-	private activeIssueRuns = new Set<string>();
+	private activeTaskRuns = new Set<string>();
 	private deps: JobManagerDeps;
 	private started = false;
 
@@ -248,7 +248,7 @@ export class JobManager {
 			id: string;
 			member_id: string;
 			team_id: string;
-			issue_id: string | null;
+			task_id: string | null;
 		}>(
 			`UPDATE heartbeat_runs
 			 SET status = $1::heartbeat_run_status,
@@ -256,7 +256,7 @@ export class JobManager {
 			     error = COALESCE(error, $2),
 			     exit_code = COALESCE(exit_code, -1)
 			 WHERE status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
-			 RETURNING id, member_id, team_id, issue_id`,
+			 RETURNING id, member_id, team_id, task_id`,
 			[
 				HeartbeatRunStatus.Failed,
 				'Server restarted while run in flight',
@@ -281,7 +281,7 @@ export class JobManager {
 			broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
 				id: run.id,
 				member_id: run.member_id,
-				issue_id: run.issue_id,
+				task_id: run.task_id,
 				status: HeartbeatRunStatus.Failed,
 				error: 'Server restarted while run in flight',
 			});
@@ -295,10 +295,10 @@ export class JobManager {
 		}
 
 		for (const run of stranded.rows) {
-			if (!run.issue_id) continue;
+			if (!run.task_id) continue;
 			await createWakeup(db, run.member_id, run.team_id, WakeupSource.Timer, {
 				reason: 'startup_recovery',
-				issue_id: run.issue_id,
+				task_id: run.task_id,
 				previous_run_id: run.id,
 			}).catch((e) => log.error('Failed to enqueue startup recovery wakeup:', e));
 		}
@@ -429,17 +429,17 @@ export class JobManager {
 		}
 	}
 
-	private async isIssueBusy(payload: Record<string, unknown> | null | undefined): Promise<boolean> {
-		const issueId = typeof payload?.issue_id === 'string' ? payload.issue_id : null;
-		if (!issueId) return false;
-		if (this.activeIssueRuns.has(issueId)) return true;
+	private async isTaskBusy(payload: Record<string, unknown> | null | undefined): Promise<boolean> {
+		const taskId = typeof payload?.task_id === 'string' ? payload.task_id : null;
+		if (!taskId) return false;
+		if (this.activeTaskRuns.has(taskId)) return true;
 		const { db } = this.deps;
 		const active = await db.query(
 			`SELECT 1 FROM heartbeat_runs
-			 WHERE issue_id = $1
+			 WHERE task_id = $1
 			   AND status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)
 			 LIMIT 1`,
-			[issueId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
+			[taskId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
 		);
 		return active.rows.length > 0;
 	}
@@ -474,21 +474,21 @@ export class JobManager {
 				continue;
 			}
 
-			if (await this.isIssueBusy(wakeup.payload)) {
-				log.debug(`Skipping wakeup ${wakeup.id} — target issue already has an active run`);
+			if (await this.isTaskBusy(wakeup.payload)) {
+				log.debug(`Skipping wakeup ${wakeup.id} — target task already has an active run`);
 				continue;
 			}
 
-			const targetIssueId =
-				typeof wakeup.payload?.issue_id === 'string' ? wakeup.payload.issue_id : null;
-			if (await shouldDeferWakeupForBlockers(db, wakeup.source, targetIssueId)) {
+			const targetTaskId =
+				typeof wakeup.payload?.task_id === 'string' ? wakeup.payload.task_id : null;
+			if (await shouldDeferWakeupForBlockers(db, wakeup.source, targetTaskId)) {
 				await db.query(
 					`UPDATE agent_wakeup_requests
 					 SET status = $1::wakeup_status, payload = payload || $2::jsonb
 					 WHERE id = $3`,
 					[WakeupStatus.Deferred, JSON.stringify({ reason: 'blocked' }), wakeup.id],
 				);
-				log.debug(`Deferred wakeup ${wakeup.id} — issue ${targetIssueId} has open blockers`);
+				log.debug(`Deferred wakeup ${wakeup.id} — task ${targetTaskId} has open blockers`);
 				continue;
 			}
 
@@ -599,7 +599,7 @@ export class JobManager {
 			return;
 		}
 
-		type IssueRow = {
+		type TaskRow = {
 			id: string;
 			identifier: string;
 			title: string;
@@ -610,23 +610,23 @@ export class JobManager {
 			rules: string | null;
 			assignee_id: string | null;
 			runtime_type: AgentRuntime | null;
-			parent_issue_id: string | null;
+			parent_task_id: string | null;
 			created_by_run_id: string | null;
 		};
 
-		let issue: IssueRow | undefined;
+		let task: TaskRow | undefined;
 
-		// Wakeups with an explicit issue_id (mentions, comments, coach triggers) target
-		// that specific issue — even if the agent isn't the assignee.
-		const payloadIssueId =
-			typeof wakeupPayload?.issue_id === 'string' ? wakeupPayload.issue_id : undefined;
-		if (payloadIssueId) {
-			const payloadIssue = await db.query<IssueRow>(
-				'SELECT id, identifier, title, description, status, priority, project_id, rules, assignee_id, runtime_type, parent_issue_id, created_by_run_id FROM issues WHERE id = $1 AND team_id = $2',
-				[payloadIssueId, teamId],
+		// Wakeups with an explicit task_id (mentions, comments, coach triggers) target
+		// that specific task — even if the agent isn't the assignee.
+		const payloadTaskId =
+			typeof wakeupPayload?.task_id === 'string' ? wakeupPayload.task_id : undefined;
+		if (payloadTaskId) {
+			const payloadTask = await db.query<TaskRow>(
+				'SELECT id, identifier, title, description, status, priority, project_id, rules, assignee_id, runtime_type, parent_task_id, created_by_run_id FROM tasks WHERE id = $1 AND team_id = $2',
+				[payloadTaskId, teamId],
 			);
-			if (payloadIssue.rows.length === 0) {
-				log.debug(`Payload issue ${payloadIssueId} not found for agent ${memberId}`);
+			if (payloadTask.rows.length === 0) {
+				log.debug(`Payload task ${payloadTaskId} not found for agent ${memberId}`);
 				if (wakeupId) {
 					await db.query(
 						`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
@@ -635,17 +635,17 @@ export class JobManager {
 				}
 				return;
 			}
-			issue = payloadIssue.rows[0];
+			task = payloadTask.rows[0];
 		} else {
-			const issues = await db.query<IssueRow>(
-				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.assignee_id, i.runtime_type, i.parent_issue_id, i.created_by_run_id
-				 FROM issues i
+			const tasks = await db.query<TaskRow>(
+				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
+				 FROM tasks i
 				 WHERE i.assignee_id = $1 AND i.team_id = $2
 				   AND i.status NOT IN ($3, $4, $5)
 				   AND NOT EXISTS (
-				     SELECT 1 FROM issue_dependencies d
-				     JOIN issues b ON b.id = d.blocked_by_issue_id
-				     WHERE d.issue_id = i.id
+				     SELECT 1 FROM task_dependencies d
+				     JOIN tasks b ON b.id = d.blocked_by_task_id
+				     WHERE d.task_id = i.id
 				       AND b.status NOT IN ($3, $4, $5)
 				   )
 				 ORDER BY
@@ -655,15 +655,15 @@ export class JobManager {
 				[
 					memberId,
 					teamId,
-					...TERMINAL_ISSUE_STATUSES,
-					IssuePriority.Urgent,
-					IssuePriority.High,
-					IssuePriority.Medium,
-					IssuePriority.Low,
+					...TERMINAL_TASK_STATUSES,
+					TaskPriority.Urgent,
+					TaskPriority.High,
+					TaskPriority.Medium,
+					TaskPriority.Low,
 				],
 			);
-			if (issues.rows.length === 0) {
-				log.debug(`No actionable issues for agent ${memberId}`);
+			if (tasks.rows.length === 0) {
+				log.debug(`No actionable tasks for agent ${memberId}`);
 				if (wakeupId) {
 					await db.query(
 						`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
@@ -672,17 +672,17 @@ export class JobManager {
 				}
 				return;
 			}
-			issue = issues.rows[0];
+			task = tasks.rows[0];
 		}
 
-		// Per-issue serialisation: only one agent runs on a given issue at a time. Most
-		// blocked wakeups are filtered earlier by processWakeups via isIssueBusy; this
-		// guard catches heartbeat-style wakeups (no payload.issue_id) where the chosen
-		// issue is determined here, plus any race where the issue became busy between
+		// Per-task serialisation: only one agent runs on a given task at a time. Most
+		// blocked wakeups are filtered earlier by processWakeups via isTaskBusy; this
+		// guard catches heartbeat-style wakeups (no payload.task_id) where the chosen
+		// task is determined here, plus any race where the task became busy between
 		// the dispatcher check and now.
-		if (await this.isIssueBusy({ issue_id: issue.id })) {
+		if (await this.isTaskBusy({ task_id: task.id })) {
 			log.debug(
-				`Issue ${issue.identifier} already has an active run — re-queuing wakeup for ${memberId}`,
+				`Task ${task.identifier} already has an active run — re-queuing wakeup for ${memberId}`,
 			);
 			if (wakeupId) {
 				await db.query(
@@ -707,11 +707,11 @@ export class JobManager {
 			 FROM projects p
 			 JOIN teams c ON c.id = p.team_id
 			 WHERE p.id = $1`,
-			[issue.project_id],
+			[task.project_id],
 		);
 
 		if (project.rows.length === 0) {
-			log.debug(`Project ${issue.project_id} not found — wakeup failed`);
+			log.debug(`Project ${task.project_id} not found — wakeup failed`);
 			if (wakeupId) {
 				await db.query(
 					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
@@ -732,13 +732,13 @@ export class JobManager {
 				const ensured = await ensureRepoSetupAction(db, {
 					teamId,
 					projectId: projectRow.id,
-					issueId: issue.id,
+					taskId: task.id,
 				});
 				if (ensured.commentRow) {
 					broadcastRowChange(
 						this.deps.wsManager,
 						wsRoom.team(teamId),
-						'issue_comments',
+						'task_comments',
 						'INSERT',
 						ensured.commentRow,
 					);
@@ -767,20 +767,20 @@ export class JobManager {
 						JSON.stringify({
 							reason: 'awaiting_repo_setup',
 							project_id: projectRow.id,
-							issue_id: issue.id,
+							task_id: task.id,
 						}),
 						wakeupId,
 					],
 				);
 			}
 			log.debug(
-				`Agent ${agentSlug} deferred on issue ${issue.identifier} — project has no designated repo`,
+				`Agent ${agentSlug} deferred on task ${task.identifier} — project has no designated repo`,
 			);
 			return;
 		}
 
 		if (!projectRow.container_id) {
-			log.debug(`No container for project ${issue.project_id} — wakeup failed`);
+			log.debug(`No container for project ${task.project_id} — wakeup failed`);
 			if (wakeupId) {
 				await db.query(
 					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
@@ -791,22 +791,22 @@ export class JobManager {
 		}
 
 		// Execution locks are observational — multiple agents can run concurrently on the
-		// same issue. The only acquisition guard is per-agent-per-issue: if this agent
-		// already holds an active lock on this issue, coalesce the wakeup.
+		// same task. The only acquisition guard is per-agent-per-task: if this agent
+		// already holds an active lock on this task, coalesce the wakeup.
 		const lockResult = await db.query<{ id: string }>(
-			`INSERT INTO execution_locks (issue_id, member_id, lock_type)
+			`INSERT INTO execution_locks (task_id, member_id, lock_type)
 			 SELECT $1, $2, 'read'
 			 WHERE NOT EXISTS (
 			   SELECT 1 FROM execution_locks
-			   WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL
+			   WHERE task_id = $1 AND member_id = $2 AND released_at IS NULL
 			 )
 			 RETURNING id`,
-			[issue.id, memberId],
+			[task.id, memberId],
 		);
 
 		if (lockResult.rows.length === 0) {
 			log.debug(
-				`Agent ${agent.rows[0].slug} already holds a lock on issue ${issue.identifier} — deferring wakeup`,
+				`Agent ${agent.rows[0].slug} already holds a lock on task ${task.identifier} — deferring wakeup`,
 			);
 			if (wakeupId) {
 				await db.query(
@@ -826,7 +826,7 @@ export class JobManager {
 			runtime_status: AgentRuntimeStatus.Active,
 		});
 
-		log.debug(`Launching agent ${agent.rows[0].title} for issue ${issue.identifier}`);
+		log.debug(`Launching agent ${agent.rows[0].title} for task ${task.identifier}`);
 
 		const deps: RunnerDeps = {
 			db,
@@ -844,8 +844,8 @@ export class JobManager {
 
 		const projectId = project.rows[0].id;
 		const taskKey = wsRoom.agent(memberId);
-		const lockedIssueId = issue.id;
-		this.activeIssueRuns.add(lockedIssueId);
+		const lockedTaskId = task.id;
+		this.activeTaskRuns.add(lockedTaskId);
 
 		this.launchTask(
 			taskKey,
@@ -863,7 +863,7 @@ export class JobManager {
 							model_override_provider: agent.rows[0].model_override_provider,
 							model_override_model: agent.rows[0].model_override_model,
 						},
-						issue,
+						task,
 						project.rows[0],
 						wakeupPayload,
 						signal,
@@ -872,7 +872,7 @@ export class JobManager {
 							this.registerLiveRun({
 								runId,
 								memberId,
-								issueId: issue.id,
+								taskId: task.id,
 								projectId,
 								teamId,
 								taskKey,
@@ -885,7 +885,7 @@ export class JobManager {
 					await this.onAgentComplete(
 						memberId,
 						agent.rows[0].slug,
-						issue.id,
+						task.id,
 						teamId,
 						wakeupId,
 						wakeupPayload,
@@ -896,11 +896,11 @@ export class JobManager {
 					// Background run errors must not become unhandled rejections — they
 					// most commonly fire when a test or shutdown closes the DB while a
 					// run is still cleaning up. Log and swallow.
-					log.error(`Background run for agent ${memberId} on issue ${issue.id} failed:`, err);
+					log.error(`Background run for agent ${memberId} on task ${task.id} failed:`, err);
 					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
 					return null;
 				} finally {
-					this.activeIssueRuns.delete(lockedIssueId);
+					this.activeTaskRuns.delete(lockedTaskId);
 				}
 			},
 			timeoutMs,
@@ -910,7 +910,7 @@ export class JobManager {
 	private async onAgentComplete(
 		memberId: string,
 		agentSlug: string,
-		issueId: string,
+		taskId: string,
 		teamId: string,
 		wakeupId: string | undefined,
 		wakeupPayload: Record<string, unknown> | undefined,
@@ -923,8 +923,8 @@ export class JobManager {
 		);
 
 		await db.query(
-			'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL',
-			[issueId, memberId],
+			'UPDATE execution_locks SET released_at = now() WHERE task_id = $1 AND member_id = $2 AND released_at IS NULL',
+			[taskId, memberId],
 		);
 
 		await db.query(
@@ -944,38 +944,38 @@ export class JobManager {
 		}
 
 		if (!result.success && result.heartbeatRunId) {
-			await this.postFailurePing(memberId, agentSlug, issueId, teamId, result.heartbeatRunId);
+			await this.postFailurePing(memberId, agentSlug, taskId, teamId, result.heartbeatRunId);
 		}
 
 		if (
 			agentSlug === COACH_AGENT_SLUG &&
 			result.success &&
-			wakeupPayload?.trigger === 'issue_done'
+			wakeupPayload?.trigger === 'task_done'
 		) {
-			const childrenCheck = await assertChildrenAllClosed(db, teamId, issueId);
+			const childrenCheck = await assertChildrenAllClosed(db, teamId, taskId);
 			if (!childrenCheck.ok) {
-				log.warn(`Skipping coach auto-close for issue ${issueId}: ${childrenCheck.message}`);
+				log.warn(`Skipping coach auto-close for task ${taskId}: ${childrenCheck.message}`);
 			} else {
 				const closed = await db.query<Record<string, unknown>>(
-					`UPDATE issues SET status = $1::issue_status, updated_at = now()
-					 WHERE id = $2 AND team_id = $3 AND status = $4::issue_status
+					`UPDATE tasks SET status = $1::task_status, updated_at = now()
+					 WHERE id = $2 AND team_id = $3 AND status = $4::task_status
 					 RETURNING *`,
-					[IssueStatus.Closed, issueId, teamId, IssueStatus.Done],
+					[TaskStatus.Closed, taskId, teamId, TaskStatus.Done],
 				);
 				if (closed.rows[0]) {
 					broadcastRowChange(
 						this.deps.wsManager,
 						wsRoom.team(teamId),
-						'issues',
+						'tasks',
 						'UPDATE',
 						closed.rows[0],
 					);
 					await recordStatusChange(
 						db,
 						teamId,
-						issueId,
-						IssueStatus.Done,
-						IssueStatus.Closed,
+						taskId,
+						TaskStatus.Done,
+						TaskStatus.Closed,
 						memberId,
 						this.deps.wsManager,
 					);
@@ -983,13 +983,13 @@ export class JobManager {
 			}
 		}
 
-		await this.chainNextIssueWakeup(memberId, issueId, teamId);
+		await this.chainNextTaskWakeup(memberId, taskId, teamId);
 	}
 
 	private async postFailurePing(
 		memberId: string,
 		agentSlug: string,
-		issueId: string,
+		taskId: string,
 		teamId: string,
 		runId: string,
 	): Promise<void> {
@@ -1004,12 +1004,12 @@ export class JobManager {
 
 		const recent = await db.query<{ status: HeartbeatRunStatus }>(
 			`SELECT status FROM heartbeat_runs
-			 WHERE member_id = $1 AND issue_id = $2 AND status IN ($3::heartbeat_run_status, $4::heartbeat_run_status, $5::heartbeat_run_status)
+			 WHERE member_id = $1 AND task_id = $2 AND status IN ($3::heartbeat_run_status, $4::heartbeat_run_status, $5::heartbeat_run_status)
 			 ORDER BY started_at DESC NULLS LAST
 			 LIMIT $6`,
 			[
 				memberId,
-				issueId,
+				taskId,
 				HeartbeatRunStatus.Succeeded,
 				HeartbeatRunStatus.Failed,
 				HeartbeatRunStatus.TimedOut,
@@ -1019,7 +1019,7 @@ export class JobManager {
 		const streak = recent.rows.every((r) => FAILURE_TERMINAL_STATUSES.includes(r.status));
 		if (recent.rows.length >= MAX_CONSECUTIVE_FAILURE_PINGS && streak) {
 			log.warn(
-				`Suppressing failure ping for agent ${agentSlug} on issue ${issueId}: ${MAX_CONSECUTIVE_FAILURE_PINGS} consecutive failed runs`,
+				`Suppressing failure ping for agent ${agentSlug} on task ${taskId}: ${MAX_CONSECUTIVE_FAILURE_PINGS} consecutive failed runs`,
 			);
 			return;
 		}
@@ -1031,11 +1031,11 @@ export class JobManager {
 			: null;
 
 		const inserted = await db.query<Record<string, unknown>>(
-			`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 			 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
 			 RETURNING *`,
 			[
-				issueId,
+				taskId,
 				CommentContentType.System,
 				JSON.stringify({
 					kind: 'run_failed',
@@ -1054,35 +1054,35 @@ export class JobManager {
 		broadcastRowChange(
 			this.deps.wsManager,
 			wsRoom.team(teamId),
-			'issue_comments',
+			'task_comments',
 			'INSERT',
 			commentRow,
 		);
 
 		await createWakeup(db, memberId, teamId, WakeupSource.Automation, {
 			source: WakeupSource.Automation,
-			issue_id: issueId,
+			task_id: taskId,
 			comment_id: commentId,
 			run_id: runId,
 			reason: 'run_failed',
 		});
 	}
 
-	private async chainNextIssueWakeup(
+	private async chainNextTaskWakeup(
 		memberId: string,
-		justCompletedIssueId: string,
+		justCompletedTaskId: string,
 		teamId: string,
 	): Promise<void> {
 		const { db } = this.deps;
 		const next = await db.query<{ id: string }>(
-			`SELECT i.id FROM issues i
+			`SELECT i.id FROM tasks i
 			 WHERE i.assignee_id = $1 AND i.team_id = $2 AND i.id != $3
-			   AND i.status NOT IN ($4::issue_status, $5::issue_status, $6::issue_status)
+			   AND i.status NOT IN ($4::task_status, $5::task_status, $6::task_status)
 			   AND NOT EXISTS (
-			     SELECT 1 FROM issue_dependencies d
-			     JOIN issues b ON b.id = d.blocked_by_issue_id
-			     WHERE d.issue_id = i.id
-			       AND b.status NOT IN ($4::issue_status, $5::issue_status, $6::issue_status)
+			     SELECT 1 FROM task_dependencies d
+			     JOIN tasks b ON b.id = d.blocked_by_task_id
+			     WHERE d.task_id = i.id
+			       AND b.status NOT IN ($4::task_status, $5::task_status, $6::task_status)
 			   )
 			 ORDER BY
 			   CASE i.priority WHEN $7 THEN 0 WHEN $8 THEN 1 WHEN $9 THEN 2 WHEN $10 THEN 3 END,
@@ -1091,19 +1091,19 @@ export class JobManager {
 			[
 				memberId,
 				teamId,
-				justCompletedIssueId,
-				...TERMINAL_ISSUE_STATUSES,
-				IssuePriority.Urgent,
-				IssuePriority.High,
-				IssuePriority.Medium,
-				IssuePriority.Low,
+				justCompletedTaskId,
+				...TERMINAL_TASK_STATUSES,
+				TaskPriority.Urgent,
+				TaskPriority.High,
+				TaskPriority.Medium,
+				TaskPriority.Low,
 			],
 		);
 		if (next.rows.length === 0) return;
 
 		try {
 			await createWakeup(db, memberId, teamId, WakeupSource.Timer, {
-				issue_id: next.rows[0].id,
+				task_id: next.rows[0].id,
 				reason: 'chain_after_completion',
 			});
 		} catch (e) {

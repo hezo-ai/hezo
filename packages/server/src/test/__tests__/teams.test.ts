@@ -45,11 +45,11 @@ describe('teams CRUD', () => {
 		expect(body.data.slug).toBe('notegenius-ai');
 		expect(body.data.agent_count).toBe(11);
 
-		const opsPrefix = await db.query<{ issue_prefix: string }>(
-			"SELECT issue_prefix FROM projects WHERE team_id = $1 AND slug = 'operations'",
+		const opsPrefix = await db.query<{ task_prefix: string }>(
+			"SELECT task_prefix FROM projects WHERE team_id = $1 AND slug = 'operations'",
 			[body.data.id],
 		);
-		expect(opsPrefix.rows[0].issue_prefix).toBe('OP');
+		expect(opsPrefix.rows[0].task_prefix).toBe('OP');
 
 		const kbRes = await app.request(`/api/teams/${body.data.id}/kb-docs`, {
 			headers: authHeader(token),
@@ -93,7 +93,7 @@ describe('teams CRUD', () => {
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(2);
 		expect(body.data[0]).toHaveProperty('agent_count');
-		expect(body.data[0]).toHaveProperty('open_issue_count');
+		expect(body.data[0]).toHaveProperty('open_task_count');
 	});
 
 	it('gets a team by id', async () => {
@@ -187,7 +187,7 @@ describe('teams CRUD', () => {
 		expect(opsProject.rows[0].container_status).not.toBeNull();
 	});
 
-	it('seeds the Operations project with an OP issue prefix', async () => {
+	it('seeds the Operations project with an OP task prefix', async () => {
 		const res = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -195,11 +195,11 @@ describe('teams CRUD', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		const opsPrefix = await db.query<{ issue_prefix: string }>(
-			"SELECT issue_prefix FROM projects WHERE team_id = $1 AND slug = 'operations'",
+		const opsPrefix = await db.query<{ task_prefix: string }>(
+			"SELECT task_prefix FROM projects WHERE team_id = $1 AND slug = 'operations'",
 			[body.data.id],
 		);
-		expect(opsPrefix.rows[0].issue_prefix).toBe('OP');
+		expect(opsPrefix.rows[0].task_prefix).toBe('OP');
 	});
 });
 

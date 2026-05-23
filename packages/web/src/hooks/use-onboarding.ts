@@ -15,9 +15,9 @@ export interface OnboardingPrimaryProject {
 	slug: string;
 	name: string;
 	description: string;
-	planning_issue_id: string | null;
-	planning_issue_identifier: string | null;
-	planning_issue_title: string | null;
+	planning_task_id: string | null;
+	planning_task_identifier: string | null;
+	planning_task_title: string | null;
 	execution_started_at: string | null;
 }
 

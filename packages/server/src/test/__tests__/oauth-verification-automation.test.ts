@@ -1,10 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { IssueStatus, PlatformType } from '@hezo/shared';
+import { PlatformType, TaskStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
-import { triggerStatusAutomations } from '../../services/issue-automation';
 import { enqueueOAuthVerificationTask } from '../../services/oauth-verification-tasks';
+import { triggerStatusAutomations } from '../../services/task-automation';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp } from '../helpers/app';
 
@@ -52,38 +52,38 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-async function createParentIssue(title = 'Originating ticket'): Promise<string> {
-	const meta = await db.query<{ issue_prefix: string; number: number }>(
-		`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
+async function createParentTask(title = 'Originating ticket'): Promise<string> {
+	const meta = await db.query<{ task_prefix: string; number: number }>(
+		`SELECT p.task_prefix, next_project_task_number(p.id) AS number
 		 FROM projects p WHERE p.id = $1`,
 		[parentProjectId],
 	);
 	const row = meta.rows[0];
 	const inserted = await db.query<{ id: string }>(
-		`INSERT INTO issues (team_id, project_id, number, identifier, title)
+		`INSERT INTO tasks (team_id, project_id, number, identifier, title)
 		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING id`,
-		[teamId, parentProjectId, row.number, `${row.issue_prefix}-${row.number}`, title],
+		[teamId, parentProjectId, row.number, `${row.task_prefix}-${row.number}`, title],
 	);
 	return inserted.rows[0].id;
 }
 
 describe('triggerStatusAutomations: OAuth verification done', () => {
-	it('posts a Captain-authored comment on the parent when the verification issue moves to done', async () => {
-		const parentId = await createParentIssue();
+	it('posts a Captain-authored comment on the parent when the verification task moves to done', async () => {
+		const parentId = await createParentTask();
 		const verif = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, parentId, {});
-		expect(verif?.issueId).toBeTruthy();
+		expect(verif?.taskId).toBeTruthy();
 
-		await db.query('UPDATE issues SET status = $1::issue_status WHERE id = $2', [
-			IssueStatus.Done,
-			verif!.issueId,
+		await db.query('UPDATE tasks SET status = $1::task_status WHERE id = $2', [
+			TaskStatus.Done,
+			verif!.taskId,
 		]);
 		await triggerStatusAutomations(
 			db,
 			teamId,
-			verif!.issueId,
-			IssueStatus.Backlog,
-			IssueStatus.Done,
+			verif!.taskId,
+			TaskStatus.Backlog,
+			TaskStatus.Done,
 			null,
 			undefined,
 		);
@@ -92,7 +92,7 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 			content: { text?: string };
 			author_member_id: string | null;
 			content_type: string;
-		}>('SELECT content, author_member_id, content_type FROM issue_comments WHERE issue_id = $1', [
+		}>('SELECT content, author_member_id, content_type FROM task_comments WHERE task_id = $1', [
 			parentId,
 		]);
 		const ceoComment = comments.rows.find((c) => c.author_member_id === captainMemberId);
@@ -102,71 +102,71 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 		expect(ceoComment?.content.text?.toLowerCase()).toContain('verified');
 	});
 
-	it('does nothing when the done issue has no parent_issue_id', async () => {
+	it('does nothing when the done task has no parent_task_id', async () => {
 		const verif = await enqueueOAuthVerificationTask(db, teamId, PlatformType.Stripe, null, {});
 		const commentsBefore = await db.query<{ count: string }>(
-			`SELECT count(*)::text AS count FROM issue_comments
+			`SELECT count(*)::text AS count FROM task_comments
 			 WHERE author_member_id = $1`,
 			[captainMemberId],
 		);
 
-		await db.query('UPDATE issues SET status = $1::issue_status WHERE id = $2', [
-			IssueStatus.Done,
-			verif!.issueId,
+		await db.query('UPDATE tasks SET status = $1::task_status WHERE id = $2', [
+			TaskStatus.Done,
+			verif!.taskId,
 		]);
 		await triggerStatusAutomations(
 			db,
 			teamId,
-			verif!.issueId,
-			IssueStatus.Backlog,
-			IssueStatus.Done,
+			verif!.taskId,
+			TaskStatus.Backlog,
+			TaskStatus.Done,
 			null,
 			undefined,
 		);
 
 		const commentsAfter = await db.query<{ count: string }>(
-			`SELECT count(*)::text AS count FROM issue_comments
+			`SELECT count(*)::text AS count FROM task_comments
 			 WHERE author_member_id = $1`,
 			[captainMemberId],
 		);
 		expect(commentsAfter.rows[0].count).toBe(commentsBefore.rows[0].count);
 	});
 
-	it('does nothing when a non-verification issue moves to done (beyond the Coach wake-up)', async () => {
-		const parentId = await createParentIssue('Plain issue');
+	it('does nothing when a non-verification task moves to done (beyond the Coach wake-up)', async () => {
+		const parentId = await createParentTask('Plain task');
 		const before = await db.query<{ count: string }>(
-			'SELECT count(*)::text AS count FROM issue_comments WHERE issue_id = $1',
+			'SELECT count(*)::text AS count FROM task_comments WHERE task_id = $1',
 			[parentId],
 		);
 
-		await db.query('UPDATE issues SET status = $1::issue_status WHERE id = $2', [
-			IssueStatus.Done,
+		await db.query('UPDATE tasks SET status = $1::task_status WHERE id = $2', [
+			TaskStatus.Done,
 			parentId,
 		]);
 		await triggerStatusAutomations(
 			db,
 			teamId,
 			parentId,
-			IssueStatus.Backlog,
-			IssueStatus.Done,
+			TaskStatus.Backlog,
+			TaskStatus.Done,
 			null,
 			undefined,
 		);
 
 		const after = await db.query<{ count: string }>(
-			'SELECT count(*)::text AS count FROM issue_comments WHERE issue_id = $1',
+			'SELECT count(*)::text AS count FROM task_comments WHERE task_id = $1',
 			[parentId],
 		);
 		expect(Number.parseInt(after.rows[0].count, 10)).toBe(
 			Number.parseInt(before.rows[0].count, 10) + 1,
 		);
 		const sysComment = await db.query<{ content: { kind?: string; from?: string; to?: string } }>(
-			`SELECT content FROM issue_comments
-			 WHERE issue_id = $1 AND content_type = 'system'
+			`SELECT content FROM task_comments
+			 WHERE task_id = $1 AND content_type = 'system'
 			 ORDER BY created_at DESC LIMIT 1`,
 			[parentId],
 		);
 		expect(sysComment.rows[0]?.content.kind).toBe('status_change');
-		expect(sysComment.rows[0]?.content.to).toBe(IssueStatus.Done);
+		expect(sysComment.rows[0]?.content.to).toBe(TaskStatus.Done);
 	});
 });

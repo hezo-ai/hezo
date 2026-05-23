@@ -23,7 +23,7 @@ test.describe('Container Management', () => {
 		});
 		await expect(page.getByRole('button', { name: /rebuild/i })).toBeVisible({ timeout: 20000 });
 
-		await page.goto(`/teams/${team.slug}/projects/${project.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/tasks`);
 		await waitForPageLoad(page);
 
 		const containerLink = page.getByRole('link', { name: /container/i });
@@ -48,7 +48,7 @@ test.describe('Container Management', () => {
 		].map((p) => ({
 			...p,
 			team_id: team.id,
-			issue_prefix: 'AB',
+			task_prefix: 'AB',
 			description: '',
 			docker_base_image: null,
 			container_id: null,
@@ -57,7 +57,7 @@ test.describe('Container Management', () => {
 			container_last_logs: null,
 			dev_ports: [],
 			repo_count: 0,
-			open_issue_count: 0,
+			open_task_count: 0,
 			created_at: new Date().toISOString(),
 		}));
 

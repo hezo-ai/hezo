@@ -1,4 +1,4 @@
-import { formatIssueStatus } from '@hezo/shared';
+import { formatTaskStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import {
 	AlertTriangle,
@@ -77,7 +77,7 @@ interface RenderProps {
 	teamId?: string;
 	projectId?: string;
 	projectSlug?: string;
-	issueId?: string;
+	taskId?: string;
 	inline?: boolean;
 }
 
@@ -91,7 +91,7 @@ export function CommentRenderer({
 	teamId,
 	projectId,
 	projectSlug,
-	issueId,
+	taskId,
 	inline,
 }: RenderProps) {
 	switch (comment.content_type) {
@@ -102,14 +102,14 @@ export function CommentRenderer({
 		case 'options':
 			return <OptionsComment comment={comment} onChoose={onChooseOption} />;
 		case 'credential_request':
-			return <CredentialRequestComment comment={comment} teamId={teamId} issueId={issueId} />;
+			return <CredentialRequestComment comment={comment} teamId={teamId} taskId={taskId} />;
 		case 'preview':
 			return <PreviewComment comment={comment} />;
 		case 'system':
 			return <SystemComment comment={comment} teamId={teamId} />;
 		case 'action':
 			return (
-				<ActionComment comment={comment} teamId={teamId} projectId={projectId} issueId={issueId} />
+				<ActionComment comment={comment} teamId={teamId} projectId={projectId} taskId={taskId} />
 			);
 		default:
 			return <TextComment comment={comment} teamId={teamId} projectSlug={projectSlug} />;
@@ -126,7 +126,7 @@ function systemEventIcon(kind: string | undefined): LucideIcon {
 			return Pencil;
 		case 'assignee_change':
 			return UserRoundCog;
-		case 'issue_link':
+		case 'task_link':
 			return Link2;
 		case 'run_failed':
 			return AlertTriangle;
@@ -152,7 +152,7 @@ function ActionComment({
 	comment: CommentData;
 	teamId?: string;
 	projectId?: string;
-	issueId?: string;
+	taskId?: string;
 }) {
 	const content = typeof comment.content === 'object' ? comment.content : {};
 	const kind: string = content.kind ?? '';
@@ -266,7 +266,7 @@ function RunCommentBody({
 	const status = run?.status ?? 'queued';
 	const isActive = isActiveRunStatus(status);
 	const { lines } = useRunLogs(run?.project_id, runId, run?.log_text, isActive);
-	const createdIssues = run?.created_issues ?? [];
+	const createdTasks = run?.created_tasks ?? [];
 	const completed = run != null && !isActive;
 	const durationMs =
 		run?.started_at && run.finished_at
@@ -366,21 +366,21 @@ function RunCommentBody({
 					/>
 				</div>
 			)}
-			{createdIssues.length > 0 && (
-				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-issues">
+			{createdTasks.length > 0 && (
+				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-tasks">
 					<span className="text-xs text-text-subtle">Created tickets</span>
-					{createdIssues.map((issue) => (
+					{createdTasks.map((task) => (
 						<Link
-							key={issue.id}
-							to="/teams/$teamId/projects/$projectId/issues/$issueId"
+							key={task.id}
+							to="/teams/$teamId/projects/$projectId/tasks/$taskId"
 							params={{
 								teamId,
-								projectId: issue.project_slug,
-								issueId: issue.identifier.toLowerCase(),
+								projectId: task.project_slug,
+								taskId: task.identifier.toLowerCase(),
 							}}
 							className="text-xs text-accent-blue-text hover:underline self-start"
 						>
-							{issue.identifier} — {issue.title}
+							{task.identifier} — {task.title}
 						</Link>
 					))}
 				</div>
@@ -426,10 +426,10 @@ function SystemComment({ comment, teamId }: { comment: CommentData; teamId?: str
 		</span>
 	);
 
-	if (content?.kind === 'issue_link' && teamId) {
+	if (content?.kind === 'task_link' && teamId) {
 		return (
 			<div className="flex items-baseline gap-2 leading-[26px]">
-				<IssueLinkSystemBody comment={comment} teamId={teamId} />
+				<TaskLinkSystemBody comment={comment} teamId={teamId} />
 				{timestamp}
 			</div>
 		);
@@ -442,8 +442,8 @@ function SystemComment({ comment, teamId }: { comment: CommentData; teamId?: str
 		return (
 			<div className="flex items-baseline gap-2 leading-[26px]">
 				<span className="text-xs text-text-muted">
-					{actorName} changed status from <em className="italic">{formatIssueStatus(from)}</em> to{' '}
-					<em className="italic">{formatIssueStatus(to)}</em>
+					{actorName} changed status from <em className="italic">{formatTaskStatus(from)}</em> to{' '}
+					<em className="italic">{formatTaskStatus(to)}</em>
 				</span>
 				{timestamp}
 			</div>
@@ -493,7 +493,7 @@ function SystemComment({ comment, teamId }: { comment: CommentData; teamId?: str
 	);
 }
 
-function IssueLinkSystemBody({ comment, teamId }: { comment: CommentData; teamId: string }) {
+function TaskLinkSystemBody({ comment, teamId }: { comment: CommentData; teamId: string }) {
 	const content = comment.content as {
 		source_identifier?: string;
 		source_project_slug?: string;
@@ -514,14 +514,14 @@ function IssueLinkSystemBody({ comment, teamId }: { comment: CommentData; teamId
 	const sourceNode =
 		sourceIdentifier && sourceProjectSlug ? (
 			<Link
-				to="/teams/$teamId/projects/$projectId/issues/$issueId"
+				to="/teams/$teamId/projects/$projectId/tasks/$taskId"
 				params={{
 					teamId,
 					projectId: sourceProjectSlug,
-					issueId: sourceIdentifier.toLowerCase(),
+					taskId: sourceIdentifier.toLowerCase(),
 				}}
 				className={linkClass}
-				data-testid="issue-link-source"
+				data-testid="task-link-source"
 			>
 				{sourceIdentifier}
 			</Link>
@@ -535,7 +535,7 @@ function IssueLinkSystemBody({ comment, teamId }: { comment: CommentData; teamId
 				to="/teams/$teamId/agents/$agentId"
 				params={{ teamId, agentId: actorSlug }}
 				className={linkClass}
-				data-testid="issue-link-actor"
+				data-testid="task-link-actor"
 			>
 				{actorName}
 			</Link>
@@ -677,11 +677,11 @@ function OptionsComment({
 function CredentialRequestComment({
 	comment,
 	teamId,
-	issueId,
+	taskId,
 }: {
 	comment: CommentData;
 	teamId?: string;
-	issueId?: string;
+	taskId?: string;
 }) {
 	const content = typeof comment.content === 'object' ? comment.content : {};
 	const name: string = content.name ?? '';
@@ -698,9 +698,9 @@ function CredentialRequestComment({
 
 	const [value, setValue] = useState('');
 	const [error, setError] = useState<string | null>(null);
-	const fulfill = useFulfillCredential(teamId ?? '', issueId ?? '');
+	const fulfill = useFulfillCredential(teamId ?? '', taskId ?? '');
 
-	if (!teamId || !issueId) {
+	if (!teamId || !taskId) {
 		return (
 			<p className="text-xs text-text-subtle italic">
 				Credential request unavailable in this view.
@@ -844,18 +844,18 @@ function reactorsTooltip(group: ReactionGroup): string {
 export function CommentReactions({
 	comment,
 	teamId,
-	issueId,
+	taskId,
 }: {
 	comment: CommentData;
 	teamId?: string;
-	issueId?: string;
+	taskId?: string;
 }) {
 	const groups = comment.reactions ?? [];
 	const [pickerOpen, setPickerOpen] = useState(false);
-	const addReaction = useAddReaction(teamId ?? '', issueId ?? '');
-	const removeReaction = useRemoveReaction(teamId ?? '', issueId ?? '');
+	const addReaction = useAddReaction(teamId ?? '', taskId ?? '');
+	const removeReaction = useRemoveReaction(teamId ?? '', taskId ?? '');
 
-	if (!teamId || !issueId) return null;
+	if (!teamId || !taskId) return null;
 	const busy = addReaction.isPending || removeReaction.isPending;
 
 	const toggle = (kind: string, youReacted: boolean) => {

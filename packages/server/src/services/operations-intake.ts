@@ -31,7 +31,7 @@ export async function loadCaptainOpsContext(
 	};
 }
 
-export async function findOpenLabeledIssue(
+export async function findOpenLabeledTask(
 	db: PGlite,
 	teamId: string,
 	label: string,
@@ -39,7 +39,7 @@ export async function findOpenLabeledIssue(
 	const ts = terminalStatusParams(3);
 	const result = await db.query<{ id: string; identifier: string; project_slug: string }>(
 		`SELECT i.id, i.identifier, p.slug AS project_slug
-		 FROM issues i
+		 FROM tasks i
 		 JOIN projects p ON p.id = i.project_id
 		 WHERE i.team_id = $1
 		   AND i.labels @> $2::jsonb

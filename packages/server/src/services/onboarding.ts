@@ -17,9 +17,9 @@ export interface OnboardingPrimaryProject {
 	slug: string;
 	name: string;
 	description: string;
-	planning_issue_id: string | null;
-	planning_issue_identifier: string | null;
-	planning_issue_title: string | null;
+	planning_task_id: string | null;
+	planning_task_identifier: string | null;
+	planning_task_title: string | null;
 	execution_started_at: string | null;
 }
 
@@ -34,7 +34,7 @@ export interface OnboardingStatus {
 async function hasOpenIntakeLabel(db: PGlite, teamId: string, label: string): Promise<boolean> {
 	const ts = terminalStatusParams(3);
 	const result = await db.query<{ id: string }>(
-		`SELECT id FROM issues
+		`SELECT id FROM tasks
 		 WHERE team_id = $1 AND labels @> $2::jsonb
 		   AND status NOT IN (${ts.placeholders})
 		 LIMIT 1`,
@@ -53,18 +53,18 @@ async function getPrimaryUserProject(
 		name: string;
 		description: string;
 		execution_started_at: string | null;
-		planning_issue_id: string | null;
-		planning_issue_identifier: string | null;
-		planning_issue_title: string | null;
+		planning_task_id: string | null;
+		planning_task_identifier: string | null;
+		planning_task_title: string | null;
 	}>(
 		`SELECT p.id, p.slug, p.name, p.description, p.execution_started_at,
-		        pi.id AS planning_issue_id,
-		        pi.identifier AS planning_issue_identifier,
-		        pi.title AS planning_issue_title
+		        pi.id AS planning_task_id,
+		        pi.identifier AS planning_task_identifier,
+		        pi.title AS planning_task_title
 		 FROM projects p
 		 LEFT JOIN LATERAL (
 		   SELECT i.id, i.identifier, i.title
-		   FROM issues i
+		   FROM tasks i
 		   WHERE i.project_id = p.id AND i.labels @> '["planning"]'::jsonb
 		   ORDER BY i.created_at ASC
 		   LIMIT 1
@@ -81,9 +81,9 @@ async function getPrimaryUserProject(
 		slug: row.slug,
 		name: row.name,
 		description: row.description,
-		planning_issue_id: row.planning_issue_id,
-		planning_issue_identifier: row.planning_issue_identifier,
-		planning_issue_title: row.planning_issue_title,
+		planning_task_id: row.planning_task_id,
+		planning_task_identifier: row.planning_task_identifier,
+		planning_task_title: row.planning_task_title,
 		execution_started_at: row.execution_started_at,
 	};
 }

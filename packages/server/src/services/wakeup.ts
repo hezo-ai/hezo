@@ -22,16 +22,16 @@ export async function createWakeup(
 		}
 	}
 
-	const issueId = typeof payload.issue_id === 'string' ? payload.issue_id : null;
+	const taskId = typeof payload.task_id === 'string' ? payload.task_id : null;
 	const coalescingCutoff = new Date(Date.now() - COALESCING_WINDOW_MS).toISOString();
 	const coalesceResult = await db.query<{ id: string; payload: Record<string, unknown> }>(
 		`SELECT id, payload FROM agent_wakeup_requests
 		 WHERE member_id = $1 AND status = $3::wakeup_status
 		   AND created_at > $2
-		   AND (($4::text IS NULL AND payload->>'issue_id' IS NULL)
-		     OR payload->>'issue_id' = $4::text)
+		   AND (($4::text IS NULL AND payload->>'task_id' IS NULL)
+		     OR payload->>'task_id' = $4::text)
 		 ORDER BY created_at DESC LIMIT 1`,
-		[memberId, coalescingCutoff, WakeupStatus.Queued, issueId],
+		[memberId, coalescingCutoff, WakeupStatus.Queued, taskId],
 	);
 
 	if (coalesceResult.rows.length > 0) {

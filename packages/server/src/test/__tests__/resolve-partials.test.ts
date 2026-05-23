@@ -130,8 +130,8 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 
 		// Every role doc picks up the subtask-preference guidance.
 		for (const key of allRoleKeys) {
-			expect(docs[key], `${key} should include the sub-issue heading`).toContain(
-				'## Sub-issues vs top-level tickets',
+			expect(docs[key], `${key} should include the sub-task heading`).toContain(
+				'## Sub-tasks vs top-level tickets',
 			);
 			expect(docs[key], `${key} should mention the depth-2 cap`).toContain(
 				'capped at two levels deep',
@@ -166,8 +166,8 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			expect(docs[key], `${key} should include the duplicate-check heading`).toContain(
 				'## Check before you create',
 			);
-			expect(docs[key], `${key} should reference list_issues for the duplicate check`).toContain(
-				'`list_issues`',
+			expect(docs[key], `${key} should reference list_tasks for the duplicate check`).toContain(
+				'`list_tasks`',
 			);
 		}
 

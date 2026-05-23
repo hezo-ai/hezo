@@ -24,7 +24,7 @@ test.describe('Mention handoff', () => {
 		const architect = agents.find((a) => a.slug === 'architect');
 		if (!captain || !architect) throw new Error('Captain and architect agents required');
 
-		const ceoIssueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+		const ceoTaskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 			headers,
 			data: {
 				project_id: project.id,
@@ -32,9 +32,9 @@ test.describe('Mention handoff', () => {
 				assignee_id: captain.id,
 			},
 		});
-		const ceoIssue = ((await ceoIssueRes.json()) as any).data;
+		const ceoTask = ((await ceoTaskRes.json()) as any).data;
 
-		const archIssueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+		const archTaskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 			headers,
 			data: {
 				project_id: project.id,
@@ -42,18 +42,18 @@ test.describe('Mention handoff', () => {
 				assignee_id: architect.id,
 			},
 		});
-		const architectIssue = ((await archIssueRes.json()) as any).data;
+		const architectTask = ((await archTaskRes.json()) as any).data;
 
-		return { team, token, headers, captain, architect, ceoIssue, architectIssue };
+		return { team, token, headers, captain, architect, ceoTask, architectTask };
 	}
 
 	test('posting an @architect mention in a comment renders as a link to the architect page', async ({
 		page,
 	}) => {
 		await authenticate(page);
-		const { team, architect, ceoIssue } = await setup(page);
+		const { team, architect, ceoTask } = await setup(page);
 
-		await page.goto(`/teams/${team.slug}/issues/${ceoIssue.id}`);
+		await page.goto(`/teams/${team.slug}/tasks/${ceoTask.id}`);
 		await waitForPageLoad(page);
 
 		const composer = page.getByPlaceholder('Add a comment...');
@@ -79,15 +79,15 @@ test.describe('Mention handoff', () => {
 		page,
 	}) => {
 		await authenticate(page);
-		const { team, architect, ceoIssue, headers } = await setup(page);
+		const { team, architect, ceoTask, headers } = await setup(page);
 
 		const body = `Here is the template we discussed:\n\`\`\`\n@${architect.slug}\n\`\`\`\nThat's it.`;
-		await page.request.post(`/api/teams/${team.id}/issues/${ceoIssue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/tasks/${ceoTask.id}/comments`, {
 			headers,
 			data: { content: { text: body } },
 		});
 
-		await page.goto(`/teams/${team.slug}/issues/${ceoIssue.id}`);
+		await page.goto(`/teams/${team.slug}/tasks/${ceoTask.id}`);
 		await waitForPageLoad(page);
 
 		const comment = page
@@ -104,14 +104,14 @@ test.describe('Mention handoff', () => {
 		page,
 	}) => {
 		await authenticate(page);
-		const { team, architect, ceoIssue, headers } = await setup(page);
+		const { team, architect, ceoTask, headers } = await setup(page);
 
-		await page.request.post(`/api/teams/${team.id}/issues/${ceoIssue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/tasks/${ceoTask.id}/comments`, {
 			headers,
 			data: { content: { text: `@${architect.slug} heads up` } },
 		});
 
-		await page.goto(`/teams/${team.slug}/issues/${ceoIssue.id}`);
+		await page.goto(`/teams/${team.slug}/tasks/${ceoTask.id}`);
 		await waitForPageLoad(page);
 
 		await page.getByTestId('agent-mention-link').first().click();
@@ -122,16 +122,16 @@ test.describe('Mention handoff', () => {
 
 	test('mentioning multiple agents in one comment renders all mentions', async ({ page }) => {
 		await authenticate(page);
-		const { team, captain, architect, ceoIssue, headers } = await setup(page);
+		const { team, captain, architect, ceoTask, headers } = await setup(page);
 
-		await page.request.post(`/api/teams/${team.id}/issues/${ceoIssue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/tasks/${ceoTask.id}/comments`, {
 			headers,
 			data: {
 				content: { text: `cc @${architect.slug} and @${captain.slug} for visibility` },
 			},
 		});
 
-		await page.goto(`/teams/${team.slug}/issues/${ceoIssue.id}`);
+		await page.goto(`/teams/${team.slug}/tasks/${ceoTask.id}`);
 		await waitForPageLoad(page);
 
 		const comment = page

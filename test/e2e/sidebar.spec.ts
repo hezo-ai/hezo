@@ -34,7 +34,7 @@ test.describe('Sidebar — sections and nav targets', () => {
 	}) => {
 		const { team } = freshWorkspace;
 		await suppressAiModal(page);
-		await page.goto(`/teams/${team.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/tasks`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
@@ -43,7 +43,7 @@ test.describe('Sidebar — sections and nav targets', () => {
 		await expect(nav.getByText('Projects', { exact: true })).toBeVisible();
 		await expect(nav.getByText('Team', { exact: true })).toBeVisible();
 		await expect(nav.getByText('Resources', { exact: true })).toBeVisible();
-		await expect(nav.getByRole('link', { name: 'Issues' })).toBeVisible();
+		await expect(nav.getByRole('link', { name: 'Tasks' })).toBeVisible();
 		await expect(nav.getByRole('link', { name: 'Projects' })).toBeVisible();
 		await expect(nav.getByRole('link', { name: 'Team' })).toBeVisible();
 		await expect(nav.getByText('All agents')).not.toBeVisible();
@@ -55,7 +55,7 @@ test.describe('Sidebar — sections and nav targets', () => {
 	}) => {
 		const { team } = freshWorkspace;
 		await suppressAiModal(page);
-		await page.goto(`/teams/${team.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/tasks`);
 		await waitForPageLoad(page);
 
 		await page.locator('nav').getByRole('link', { name: 'Team' }).click();
@@ -71,7 +71,7 @@ test.describe('Sidebar — sections and nav targets', () => {
 	}) => {
 		const { team } = freshWorkspace;
 		await suppressAiModal(page);
-		await page.goto(`/teams/${team.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/tasks`);
 		await waitForPageLoad(page);
 
 		await page.locator('nav').getByRole('link', { name: 'Projects' }).click();
@@ -91,7 +91,7 @@ test.describe('Sidebar — Team section', () => {
 		const captain = agents.find((a) => (a as { slug?: string }).slug === 'captain') ?? agents[0];
 
 		await suppressAiModal(page);
-		await page.goto(`/teams/${team.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/tasks`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
@@ -111,7 +111,7 @@ test.describe('Sidebar — Team section', () => {
 	}) => {
 		const { team } = freshWorkspace;
 		await suppressAiModal(page);
-		await page.goto(`/teams/${team.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/tasks`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
@@ -140,7 +140,7 @@ test.describe('Sidebar — Projects section', () => {
 		await createProject(page, team.id, token, 'Zebra');
 
 		await suppressAiModal(page);
-		await page.goto(`/teams/${team.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/tasks`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
@@ -166,7 +166,7 @@ test.describe('Sidebar — Projects section', () => {
 	}) => {
 		const { team } = freshWorkspace;
 		await suppressAiModal(page);
-		await page.goto(`/teams/${team.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/tasks`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
@@ -225,14 +225,14 @@ test.describe('Sidebar — Projects section', () => {
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
-		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/issues"]`)).toBeVisible({
+		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/tasks"]`)).toBeVisible({
 			timeout: 20000,
 		});
 		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/documents"]`)).toBeVisible();
 		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/container"]`)).toBeVisible();
 		await expect(nav.locator(`a[href$="/projects/${alpha.slug}/settings"]`)).toBeVisible();
 
-		await expect(nav.locator(`a[href$="/projects/${beta.slug}/issues"]`)).toHaveCount(0);
+		await expect(nav.locator(`a[href$="/projects/${beta.slug}/tasks"]`)).toHaveCount(0);
 		await expect(nav.locator(`a[href$="/projects/${beta.slug}/settings"]`)).toHaveCount(0);
 
 		await nav.locator(`a[href$="/projects/${alpha.slug}/documents"]`).click();
@@ -248,8 +248,8 @@ test.describe('Sidebar — Projects section', () => {
 	});
 });
 
-test.describe('Sidebar — Issues count and mobile drawer', () => {
-	test('sidebar Issues count reflects non-terminal issues and updates live', async ({
+test.describe('Sidebar — Tasks count and mobile drawer', () => {
+	test('sidebar Tasks count reflects non-terminal tasks and updates live', async ({
 		page,
 		freshWorkspace,
 	}) => {
@@ -258,38 +258,38 @@ test.describe('Sidebar — Issues count and mobile drawer', () => {
 		const teamRes = await page.request.get(`/api/teams/${team.slug}`, {
 			headers: { Authorization: `Bearer ${token}` },
 		});
-		const baselineOpen = ((await teamRes.json()) as { data: { open_issue_count: number } }).data
-			.open_issue_count;
+		const baselineOpen = ((await teamRes.json()) as { data: { open_task_count: number } }).data
+			.open_task_count;
 
 		const project = await createProjectAndClearPlanning(page, team.id, token, {
 			name: 'Count Project',
 			description: 'Sidebar count test.',
 		});
 
-		const issueIds: string[] = [];
+		const taskIds: string[] = [];
 		for (const title of ['Alpha', 'Beta', 'Gamma']) {
-			const r = await page.request.post(`/api/teams/${team.id}/issues`, {
+			const r = await page.request.post(`/api/teams/${team.id}/tasks`, {
 				headers,
 				data: { project_id: project.id, title, assignee_id: agents[0].id },
 			});
-			issueIds.push(((await r.json()) as { data: { id: string } }).data.id);
+			taskIds.push(((await r.json()) as { data: { id: string } }).data.id);
 		}
 
-		await page.goto(`/teams/${team.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/tasks`);
 		await waitForPageLoad(page);
 
-		const sidebarIssues = page.getByTestId('sidebar-link-issues');
-		await expect(sidebarIssues).toContainText('Issues');
+		const sidebarTasks = page.getByTestId('sidebar-link-tasks');
+		await expect(sidebarTasks).toContainText('Tasks');
 		const expectedOpen = baselineOpen + 3;
-		await expect(sidebarIssues).toContainText(String(expectedOpen));
+		await expect(sidebarTasks).toContainText(String(expectedOpen));
 
-		await page.request.patch(`/api/teams/${team.id}/issues/${issueIds[0]}`, {
+		await page.request.patch(`/api/teams/${team.id}/tasks/${taskIds[0]}`, {
 			headers,
 			data: { status: 'closed' },
 		});
 
-		await expect(sidebarIssues).toContainText(String(expectedOpen - 1), { timeout: 15000 });
-		await expect(sidebarIssues).not.toContainText(String(expectedOpen));
+		await expect(sidebarTasks).toContainText(String(expectedOpen - 1), { timeout: 15000 });
+		await expect(sidebarTasks).not.toContainText(String(expectedOpen));
 	});
 
 	test('mobile viewport opens navigation via hamburger drawer', async ({
@@ -299,10 +299,10 @@ test.describe('Sidebar — Issues count and mobile drawer', () => {
 		await page.setViewportSize({ width: 375, height: 812 });
 		const { team } = freshWorkspace;
 
-		await page.goto(`/teams/${team.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/tasks`);
 		await waitForPageLoad(page);
 
-		await expect(page.getByTestId('sidebar-link-issues')).toBeHidden();
+		await expect(page.getByTestId('sidebar-link-tasks')).toBeHidden();
 
 		const toggle = page.getByTestId('mobile-nav-toggle');
 		await expect(toggle).toBeVisible();
@@ -310,7 +310,7 @@ test.describe('Sidebar — Issues count and mobile drawer', () => {
 
 		const drawer = page.getByTestId('mobile-nav-drawer');
 		await expect(drawer).toBeVisible();
-		await expect(drawer.getByTestId('sidebar-link-issues')).toBeVisible();
+		await expect(drawer.getByTestId('sidebar-link-tasks')).toBeVisible();
 
 		await page.getByTestId('mobile-nav-close').click();
 		await expect(drawer).toBeHidden();
@@ -362,7 +362,7 @@ test.describe('Sidebar — collapse', () => {
 			team_id: team.id,
 			name: 'Banner Regression Project',
 			slug: 'banner-regression-project',
-			issue_prefix: 'BR',
+			task_prefix: 'BR',
 			description: '',
 			docker_base_image: null,
 			container_id: null,
@@ -371,7 +371,7 @@ test.describe('Sidebar — collapse', () => {
 			container_last_logs: null,
 			dev_ports: [],
 			repo_count: 0,
-			open_issue_count: 0,
+			open_task_count: 0,
 			created_at: new Date().toISOString(),
 		};
 

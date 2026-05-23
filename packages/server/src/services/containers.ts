@@ -535,7 +535,7 @@ export async function syncAllContainerStatuses(
 }
 
 /**
- * Mark all in-flight heartbeat_runs for a project's issues as failed with the
+ * Mark all in-flight heartbeat_runs for a project's tasks as failed with the
  * given reason, reset affected agents' runtime_status to idle, release execution
  * locks, and broadcast row changes. Caller is responsible for first aborting any
  * live in-process runs via the JobManager registry.
@@ -548,15 +548,15 @@ export async function failProjectRuns(
 ): Promise<void> {
 	const { db, wsManager } = deps;
 
-	const failedRuns = await db.query<{ id: string; member_id: string; issue_id: string | null }>(
+	const failedRuns = await db.query<{ id: string; member_id: string; task_id: string | null }>(
 		`UPDATE heartbeat_runs
 		 SET status = $1::heartbeat_run_status,
 		     finished_at = now(),
 		     error = $2,
 		     exit_code = -1
 		 WHERE status = $3::heartbeat_run_status
-		   AND issue_id IN (SELECT id FROM issues WHERE project_id = $4)
-		 RETURNING id, member_id, issue_id`,
+		   AND task_id IN (SELECT id FROM tasks WHERE project_id = $4)
+		 RETURNING id, member_id, task_id`,
 		[HeartbeatRunStatus.Failed, reason, HeartbeatRunStatus.Running, projectId],
 	);
 
@@ -573,7 +573,7 @@ export async function failProjectRuns(
 	await db.query(
 		`UPDATE execution_locks SET released_at = now()
 		 WHERE released_at IS NULL
-		   AND issue_id IN (SELECT id FROM issues WHERE project_id = $1)`,
+		   AND task_id IN (SELECT id FROM tasks WHERE project_id = $1)`,
 		[projectId],
 	);
 
@@ -581,7 +581,7 @@ export async function failProjectRuns(
 		broadcastRowChange(wsManager, wsRoom.team(teamId), 'heartbeat_runs', 'UPDATE', {
 			id: run.id,
 			member_id: run.member_id,
-			issue_id: run.issue_id,
+			task_id: run.task_id,
 			status: HeartbeatRunStatus.Failed,
 			error: reason,
 		});
@@ -617,20 +617,20 @@ export async function requeueContainerKilledRuns(
 	const killed = await db.query<{
 		id: string;
 		member_id: string;
-		issue_id: string;
+		task_id: string;
 	}>(
-		`SELECT DISTINCT ON (member_id, issue_id) id, member_id, issue_id
+		`SELECT DISTINCT ON (member_id, task_id) id, member_id, task_id
 		 FROM heartbeat_runs
-		 WHERE issue_id IN (SELECT id FROM issues WHERE project_id = $1)
+		 WHERE task_id IN (SELECT id FROM tasks WHERE project_id = $1)
 		   AND error = $2
 		   AND finished_at > now() - ($3 || ' hours')::interval
 		   AND NOT EXISTS (
 		     SELECT 1 FROM heartbeat_runs h2
 		     WHERE h2.member_id = heartbeat_runs.member_id
-		       AND h2.issue_id = heartbeat_runs.issue_id
+		       AND h2.task_id = heartbeat_runs.task_id
 		       AND h2.started_at > heartbeat_runs.finished_at
 		   )
-		 ORDER BY member_id, issue_id, finished_at DESC
+		 ORDER BY member_id, task_id, finished_at DESC
 		 LIMIT $4`,
 		[projectId, 'container_error', String(REQUEUE_LOOKBACK_HOURS), REQUEUE_LIMIT],
 	);
@@ -638,7 +638,7 @@ export async function requeueContainerKilledRuns(
 	for (const run of killed.rows) {
 		await createWakeup(db, run.member_id, teamId, WakeupSource.Timer, {
 			reason: 'container_recovery',
-			issue_id: run.issue_id,
+			task_id: run.task_id,
 			previous_run_id: run.id,
 		});
 	}

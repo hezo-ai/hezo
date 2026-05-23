@@ -4,7 +4,7 @@ import { createRootRoute, Outlet, useNavigate } from '@tanstack/react-router';
 import { ChevronsLeft, ChevronsRight, Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { MasterKeyGate } from '../components/master-key-gate';
-import { SetupGate } from '../components/setup/setup-wizard';
+import { MasterKeyStep, SetupGate } from '../components/setup/setup-wizard';
 import { TeamSidebar } from '../components/team-sidebar';
 import { SocketProvider } from '../contexts/socket-context';
 import { useStatus } from '../hooks/use-status';
@@ -60,10 +60,14 @@ function AppShell() {
 		);
 	}
 
-	// Master-key gate stays inline as a blocking modal so we never render the
-	// setup wizard before we have a token to query everything else.
 	if (status.masterKeyState !== 'unlocked') {
 		api.clearToken();
+		// Initial setup: render the master-key step inside the wizard chrome so the
+		// stepper makes the two-step flow obvious. On server restart (locked state),
+		// the modal unlock dialog is the right primitive — there's no setup to flow into.
+		if (status.masterKeyState === 'unset') {
+			return <MasterKeyStep state={status.masterKeyState} />;
+		}
 		return <MasterKeyGate state={status.masterKeyState} />;
 	}
 

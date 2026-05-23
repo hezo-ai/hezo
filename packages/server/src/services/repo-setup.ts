@@ -17,7 +17,7 @@ const log = logger.child('repo-setup');
 export interface RepoSetupGateCtx {
 	teamId: string;
 	projectId: string;
-	issueId: string;
+	taskId: string;
 }
 
 export interface EnsureResult {
@@ -52,7 +52,7 @@ export async function ensureRepoSetupAction(
 							platform: PlatformType.GitHub,
 							reason: OAuthRequestReason.DesignatedRepo,
 							project_id: ctx.projectId,
-							issue_id: ctx.issueId,
+							task_id: ctx.taskId,
 						}),
 					],
 				);
@@ -66,14 +66,14 @@ export async function ensureRepoSetupAction(
 		}
 
 		const existingComment = await db.query<{ id: string }>(
-			`SELECT id FROM issue_comments
-			 WHERE issue_id = $1
+			`SELECT id FROM task_comments
+			 WHERE task_id = $1
 			   AND content_type = $2::comment_content_type
 			   AND content->>'kind' = $3
 			   AND content->>'approval_id' = $4
 			   AND chosen_option IS NULL
 			 LIMIT 1`,
-			[ctx.issueId, CommentContentType.Action, ActionCommentKind.SetupRepo, approvalId],
+			[ctx.taskId, CommentContentType.Action, ActionCommentKind.SetupRepo, approvalId],
 		);
 
 		let commentId: string;
@@ -82,11 +82,11 @@ export async function ensureRepoSetupAction(
 			commentId = existingComment.rows[0].id;
 		} else {
 			const ins = await db.query<{ id: string }>(
-				`INSERT INTO issue_comments (issue_id, content_type, content)
+				`INSERT INTO task_comments (task_id, content_type, content)
 				 VALUES ($1, $2::comment_content_type, $3::jsonb)
 				 RETURNING id`,
 				[
-					ctx.issueId,
+					ctx.taskId,
 					CommentContentType.Action,
 					JSON.stringify({ kind: ActionCommentKind.SetupRepo, approval_id: approvalId }),
 				],
@@ -106,7 +106,7 @@ export async function ensureRepoSetupAction(
 		}
 		if (commentCreated) {
 			const r = await db.query<Record<string, unknown>>(
-				'SELECT * FROM issue_comments WHERE id = $1',
+				'SELECT * FROM task_comments WHERE id = $1',
 				[commentId],
 			);
 			if (r.rows[0]) result.commentRow = r.rows[0];
@@ -149,8 +149,8 @@ export interface FinalizeInput {
 
 export interface FinalizeResult {
 	resolvedApprovalId: string | null;
-	affectedIssueIds: string[];
-	deferredWakeups: Array<{ memberId: string; issueId: string; wakeupId: string }>;
+	affectedTaskIds: string[];
+	deferredWakeups: Array<{ memberId: string; taskId: string; wakeupId: string }>;
 	approvalRow: Record<string, unknown> | null;
 	updatedCommentRows: Record<string, unknown>[];
 	systemCommentRows: Record<string, unknown>[];
@@ -170,7 +170,7 @@ export async function finalizePendingRepoSetup(
 	if (!approvalId) {
 		return {
 			resolvedApprovalId: null,
-			affectedIssueIds: [],
+			affectedTaskIds: [],
 			deferredWakeups: [],
 			approvalRow: null,
 			updatedCommentRows: [],
@@ -178,9 +178,9 @@ export async function finalizePendingRepoSetup(
 		};
 	}
 
-	const pendingComments = await db.query<{ id: string; issue_id: string }>(
-		`SELECT ic.id, ic.issue_id FROM issue_comments ic
-		 JOIN issues i ON i.id = ic.issue_id
+	const pendingComments = await db.query<{ id: string; task_id: string }>(
+		`SELECT ic.id, ic.task_id FROM task_comments ic
+		 JOIN tasks i ON i.id = ic.task_id
 		 WHERE ic.content_type = $1::comment_content_type
 		   AND ic.content->>'kind' = $2
 		   AND ic.content->>'approval_id' = $3
@@ -189,12 +189,12 @@ export async function finalizePendingRepoSetup(
 		[CommentContentType.Action, ActionCommentKind.SetupRepo, approvalId, input.projectId],
 	);
 
-	const affectedIssueIds: string[] = [];
+	const affectedTaskIds: string[] = [];
 	const updatedCommentRows: Record<string, unknown>[] = [];
 	const systemCommentRows: Record<string, unknown>[] = [];
 	for (const row of pendingComments.rows) {
 		const updated = await db.query<Record<string, unknown>>(
-			`UPDATE issue_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *`,
+			`UPDATE task_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *`,
 			[
 				JSON.stringify({
 					status: 'complete',
@@ -210,11 +210,11 @@ export async function finalizePendingRepoSetup(
 		if (updated.rows[0]) updatedCommentRows.push(updated.rows[0]);
 
 		const sys = await db.query<Record<string, unknown>>(
-			`INSERT INTO issue_comments (issue_id, content_type, content)
+			`INSERT INTO task_comments (task_id, content_type, content)
 			 VALUES ($1, $2::comment_content_type, $3::jsonb)
 			 RETURNING *`,
 			[
-				row.issue_id,
+				row.task_id,
 				CommentContentType.System,
 				JSON.stringify({
 					text: `Repository ${input.repoIdentifier} set as the designated repo.`,
@@ -222,7 +222,7 @@ export async function finalizePendingRepoSetup(
 			],
 		);
 		if (sys.rows[0]) systemCommentRows.push(sys.rows[0]);
-		affectedIssueIds.push(row.issue_id);
+		affectedTaskIds.push(row.task_id);
 	}
 
 	const approvalUpdate = await db.query<Record<string, unknown>>(
@@ -251,13 +251,13 @@ export async function finalizePendingRepoSetup(
 
 	const deferredWakeups = deferred.rows.map((w) => ({
 		memberId: w.member_id,
-		issueId: typeof w.payload.issue_id === 'string' ? w.payload.issue_id : '',
+		taskId: typeof w.payload.task_id === 'string' ? w.payload.task_id : '',
 		wakeupId: w.id,
 	}));
 
 	return {
 		resolvedApprovalId: approvalId,
-		affectedIssueIds,
+		affectedTaskIds,
 		deferredWakeups,
 		approvalRow,
 		updatedCommentRows,
@@ -267,7 +267,7 @@ export async function finalizePendingRepoSetup(
 
 /**
  * Re-enqueues each deferred wakeup as a fresh Automation wakeup pointing at the
- * previously-blocked issue. The old Deferred rows are left for audit — they are
+ * previously-blocked task. The old Deferred rows are left for audit — they are
  * terminal from the wakeup queue's perspective.
  */
 export async function enqueueRepoSetupResumeWakeups(
@@ -278,11 +278,11 @@ export async function enqueueRepoSetupResumeWakeups(
 	deferredWakeups: FinalizeResult['deferredWakeups'],
 ): Promise<void> {
 	for (const w of deferredWakeups) {
-		if (!w.issueId) continue;
+		if (!w.taskId) continue;
 		try {
 			await createWakeup(db, w.memberId, teamId, WakeupSource.Automation, {
 				reason: 'repo_setup_complete',
-				issue_id: w.issueId,
+				task_id: w.taskId,
 				approval_id: approvalId,
 				repo_id: repoId,
 			});

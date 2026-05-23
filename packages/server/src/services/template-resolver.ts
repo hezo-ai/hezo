@@ -4,7 +4,7 @@ import { terminalStatusParams } from '../lib/sql';
 interface ResolveContext {
 	teamId: string;
 	projectId?: string;
-	issueId?: string;
+	taskId?: string;
 	agentId?: string;
 	dataDir?: string;
 	mode?: 'runtime' | 'preview' | 'placeholders';
@@ -17,8 +17,8 @@ const SHARED_INSTRUCTIONS = `
 ## Working Guidelines
 
 ### Ticket Maintenance
-- **Progress**: Update the current ticket's progress_summary via \`update_issue\` at natural milestones to reflect what you've accomplished and what remains.
-- **Rules**: The ticket \`rules\` field captures *how this ticket should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_issue\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the ticket \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or team-wide knowledge belongs in project docs (\`write_project_doc\`) or the team KB (\`upsert_kb_doc\`).
+- **Progress**: Update the current ticket's progress_summary via \`update_task\` at natural milestones to reflect what you've accomplished and what remains.
+- **Rules**: The ticket \`rules\` field captures *how this ticket should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_task\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the ticket \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or team-wide knowledge belongs in project docs (\`write_project_doc\`) or the team KB (\`upsert_kb_doc\`).
 - **Status**: Update the ticket status as you progress:
   - \`in_progress\` — when you begin active work
   - \`review\` — when handing off for review
@@ -26,8 +26,8 @@ const SHARED_INSTRUCTIONS = `
   - \`done\` — when work is complete and merged (triggers Coach review)
 
 ### Completion Handoff
-- **Mark \`done\` instead of announcing completion via mentions.** When your work on the current ticket is genuinely complete (the deliverable exists, no further step from you is expected), call \`update_issue(status: "done")\`. Do not skip the status update and try to hand off via an \`@\`-mention to the next owner — the status transition *is* the handoff.
-- **The server does the wake.** Marking a ticket terminal (\`done\`, \`closed\`, \`cancelled\`) walks the dependency graph: every ticket blocked on it has its status reconciled out of \`blocked\`, and its assignee is auto-woken. Coach is also woken automatically. You do not need to ping anyone — the server already has. To see which tickets your completion will unblock, look at the \`dependents\` field on \`get_issue\`.
+- **Mark \`done\` instead of announcing completion via mentions.** When your work on the current ticket is genuinely complete (the deliverable exists, no further step from you is expected), call \`update_task(status: "done")\`. Do not skip the status update and try to hand off via an \`@\`-mention to the next owner — the status transition *is* the handoff.
+- **The server does the wake.** Marking a ticket terminal (\`done\`, \`closed\`, \`cancelled\`) walks the dependency graph: every ticket blocked on it has its status reconciled out of \`blocked\`, and its assignee is auto-woken. Coach is also woken automatically. You do not need to ping anyone — the server already has. To see which tickets your completion will unblock, look at the \`dependents\` field on \`get_task\`.
 - **Wrap-up comment carries no \`@\`-mentions.** A short closing comment (a sentence or two summarizing what shipped, optionally listing the bare identifiers of the dependents that will now unblock, e.g. \`BE-4\`, \`BE-5\`) is the right end-of-run move so humans following along have context. But **whenever a comment coincides with marking the ticket \`done\` in the same wrap-up step, do not \`@\`-mention any agent in that comment** — every notification the mention would serve is already covered by the auto-wake from the status transition, so an \`@\`-mention on top creates a redundant mention-source wakeup. If a truly out-of-band ping is needed (someone whose attention is unrelated to the dependency chain), do it as a separate later comment, not stapled to the done transition.
 
 ### Knowledge Maintenance
@@ -39,14 +39,14 @@ const SHARED_INSTRUCTIONS = `
 - Use sub-agents aggressively to split up your work and explore alternative approaches in parallel.
 - When facing a non-trivial decision, spawn sub-agents to try different approaches simultaneously. Each sub-agent works in an isolated worktree so branches don't interfere.
 - Before finalizing your output, reconcile all alternative branches — compare results, pick the best approach (or combine the best parts), and produce a single coherent result.
-- Sub-agents are for work within YOUR run. For delegating work to other team members, use sub-issues.
+- Sub-agents are for work within YOUR run. For delegating work to other team members, use sub-tasks.
 
-### Sub-Issue Delegation
-- Use \`create_issue\` with \`parent_issue_id\` and \`assignee_slug\` to create sub-issues and delegate work to other agents. The Teammates block above lists every enabled peer's slug — use \`list_agents\` only when you need details (description / reports_to) on a specific teammate.
+### Sub-Task Delegation
+- Use \`create_task\` with \`parent_task_id\` and \`assignee_slug\` to create sub-tasks and delegate work to other agents. The Teammates block above lists every enabled peer's slug — use \`list_agents\` only when you need details (description / reports_to) on a specific teammate.
 
 ### Comment Timing
 - Post comments at the end of your run, after every other action. A comment almost always tends to be either a summary of what you did and/or a request for someone else to take a look — both are end-of-run moves.
-- If your run will create new tickets (sub-issues, follow-ups, delegations) that the comment should reference, call \`create_issue\` first and quote the resulting identifiers in the wrap-up comment. A comment announcing work you have not yet filed leaves readers without anywhere to look.
+- If your run will create new tickets (sub-tasks, follow-ups, delegations) that the comment should reference, call \`create_task\` first and quote the resulting identifiers in the wrap-up comment. A comment announcing work you have not yet filed leaves readers without anywhere to look.
 - Skip play-by-play narration ("starting now", "halfway done"). The run record already shows every tool call you made; restating it in a comment burns wakeups for no gain.
 - Acknowledging an @-mention per the mention-handoff guidance is itself a single end-of-turn comment, so the same rule applies — do any ticket creation first, then post once and end the turn.
 `;
@@ -271,7 +271,7 @@ async function buildProjectStateBlock(db: PGlite, ctx: ResolveContext): Promise<
 	}>(
 		`SELECT i.identifier, i.title, i.status::text AS status, i.priority::text AS priority,
 		        m.display_name AS assignee_name
-		 FROM issues i
+		 FROM tasks i
 		 LEFT JOIN members m ON m.id = i.assignee_id
 		 WHERE i.project_id = $1
 		   AND i.status NOT IN (${terminal.placeholders})
@@ -295,7 +295,7 @@ async function buildProjectStateBlock(db: PGlite, ctx: ResolveContext): Promise<
 		}>(
 			`SELECT i.identifier, i.title, i.status::text AS status,
 			        m.display_name AS assignee_name
-			 FROM issues i
+			 FROM tasks i
 			 JOIN heartbeat_runs r ON r.id = i.created_by_run_id
 			 LEFT JOIN members m ON m.id = i.assignee_id
 			 WHERE r.member_id = $1
@@ -323,7 +323,7 @@ ${createdText}`;
 
 ## Project State
 
-A live snapshot of this project, regenerated every run from the database. Read this before calling \`list_issues\` — if a ticket is here, it already exists and you don't need to spawn a duplicate.
+A live snapshot of this project, regenerated every run from the database. Read this before calling \`list_tasks\` — if a ticket is here, it already exists and you don't need to spawn a duplicate.
 
 ### Active tickets (top ${PROJECT_STATE_RECENT_LIMIT}, most recently updated, non-terminal)
 
@@ -354,14 +354,14 @@ function formatCreatedTicket(t: {
 function buildRunContextBlock(ctx: ResolveContext): string {
 	const lines = [`- Team ID: ${ctx.teamId}`];
 	if (ctx.projectId) lines.push(`- Project ID: ${ctx.projectId}`);
-	if (ctx.issueId) lines.push(`- Issue ID: ${ctx.issueId}`);
+	if (ctx.taskId) lines.push(`- Task ID: ${ctx.taskId}`);
 	return `
 
 ---
 
 ## Run Context
 
-You are currently running with the following identifiers. Pass them directly to MCP tools that take \`team_id\` / \`project_id\` / \`issue_id\` — do not guess or re-derive them.
+You are currently running with the following identifiers. Pass them directly to MCP tools that take \`team_id\` / \`project_id\` / \`task_id\` — do not guess or re-derive them.
 
 ${lines.join('\n')}`;
 }

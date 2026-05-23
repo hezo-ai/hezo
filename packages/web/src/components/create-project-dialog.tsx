@@ -31,14 +31,14 @@ export function CreateProjectDialog({ teamId, open, onOpenChange }: CreateProjec
 	const [description, setDescription] = useState('');
 	const [initialPrd, setInitialPrd] = useState('');
 	const [prdFilename, setPrdFilename] = useState<string | null>(null);
-	const [issuePrefix, setIssuePrefix] = useState('');
+	const [taskPrefix, setTaskPrefix] = useState('');
 	const [prefixTouched, setPrefixTouched] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const createProject = useCreateProject(teamId);
 	const navigate = useNavigate();
 
 	const derivedPrefix = derivePrefix(name);
-	const effectivePrefix = prefixTouched ? issuePrefix : derivedPrefix;
+	const effectivePrefix = prefixTouched ? taskPrefix : derivedPrefix;
 
 	const handleFileUpload = useCallback((file: File) => {
 		const reader = new FileReader();
@@ -55,27 +55,27 @@ export function CreateProjectDialog({ teamId, open, onOpenChange }: CreateProjec
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!name.trim() || !description.trim()) return;
-		const customPrefix = prefixTouched ? issuePrefix.trim().toUpperCase() : undefined;
+		const customPrefix = prefixTouched ? taskPrefix.trim().toUpperCase() : undefined;
 		const project = await createProject.mutateAsync({
 			name: name.trim(),
 			description: description.trim(),
 			initial_prd: initialPrd.trim() || undefined,
-			issue_prefix: customPrefix && customPrefix.length > 0 ? customPrefix : undefined,
+			task_prefix: customPrefix && customPrefix.length > 0 ? customPrefix : undefined,
 		});
 		onOpenChange(false);
 		setName('');
 		setDescription('');
 		setInitialPrd('');
 		setPrdFilename(null);
-		setIssuePrefix('');
+		setTaskPrefix('');
 		setPrefixTouched(false);
-		if (project.planning_issue_identifier) {
+		if (project.planning_task_identifier) {
 			navigate({
-				to: '/teams/$teamId/projects/$projectId/issues/$issueId',
+				to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
 				params: {
 					teamId,
 					projectId: project.slug,
-					issueId: project.planning_issue_identifier.toLowerCase(),
+					taskId: project.planning_task_identifier.toLowerCase(),
 				},
 			});
 		}
@@ -95,11 +95,11 @@ export function CreateProjectDialog({ teamId, open, onOpenChange }: CreateProjec
 					<form onSubmit={handleSubmit} className="flex flex-col gap-4">
 						<Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
 						<Input
-							label="Issue prefix"
+							label="Task prefix"
 							value={effectivePrefix}
 							onChange={(e) => {
 								setPrefixTouched(true);
-								setIssuePrefix(e.target.value.toUpperCase());
+								setTaskPrefix(e.target.value.toUpperCase());
 							}}
 							placeholder={derivedPrefix || 'Auto-derived from name'}
 							maxLength={4}

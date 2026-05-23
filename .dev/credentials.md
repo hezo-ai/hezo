@@ -25,7 +25,7 @@ The agent calls the `request_credential` MCP tool with:
 - `instructions` — markdown explaining where the human should fetch the value from
 - `confirmation_text` — what the human will see on the action button
 
-This posts a `credential_request` comment on the issue. The issue thread now shows a form with the agent's instructions and an input the human can paste into.
+This posts a `credential_request` comment on the task. The task thread now shows a form with the agent's instructions and an input the human can paste into.
 
 When the human submits the form the server:
 1. Encrypts and writes the value to `secrets`.

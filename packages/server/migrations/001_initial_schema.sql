@@ -46,8 +46,8 @@ CREATE TYPE agent_effort AS ENUM ('minimal', 'low', 'medium', 'high', 'max');
 CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
 CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopping', 'stopped', 'error');
-CREATE TYPE issue_status AS ENUM ('backlog', 'in_progress', 'review', 'blocked', 'done', 'closed', 'cancelled');
-CREATE TYPE issue_priority AS ENUM ('urgent', 'high', 'medium', 'low');
+CREATE TYPE task_status AS ENUM ('backlog', 'in_progress', 'review', 'blocked', 'done', 'closed', 'cancelled');
+CREATE TYPE task_priority AS ENUM ('urgent', 'high', 'medium', 'low');
 CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run', 'action', 'credential_request');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
@@ -286,7 +286,7 @@ CREATE TABLE projects (
     team_id             UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     name                TEXT NOT NULL,
     slug                TEXT NOT NULL,
-    issue_prefix        TEXT NOT NULL,
+    task_prefix        TEXT NOT NULL,
     description         TEXT NOT NULL DEFAULT '',
     is_internal         BOOLEAN NOT NULL DEFAULT false,
     docker_base_image   TEXT NOT NULL DEFAULT 'hezo/agent-base:latest',
@@ -303,7 +303,7 @@ CREATE TABLE projects (
 
 CREATE INDEX idx_projects_team ON projects(team_id);
 CREATE UNIQUE INDEX idx_projects_team_slug ON projects(team_id, slug);
-CREATE UNIQUE INDEX idx_projects_team_issue_prefix ON projects(team_id, issue_prefix);
+CREATE UNIQUE INDEX idx_projects_team_task_prefix ON projects(team_id, task_prefix);
 
 -------------------------------------------------------------------------------
 -- REPOS
@@ -466,28 +466,28 @@ CREATE TABLE team_ssh_keys (
 );
 
 -------------------------------------------------------------------------------
--- ISSUES
+-- TASKS
 -------------------------------------------------------------------------------
 
-CREATE TABLE project_issue_counters (
+CREATE TABLE project_task_counters (
     project_id  UUID PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
     next_number INTEGER NOT NULL DEFAULT 1
 );
 
-CREATE TABLE issues (
+CREATE TABLE tasks (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id              UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     project_id           UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     assignee_id          UUID REFERENCES members(id) ON DELETE SET NULL,
-    parent_issue_id      UUID REFERENCES issues(id) ON DELETE SET NULL,
+    parent_task_id      UUID REFERENCES tasks(id) ON DELETE SET NULL,
     created_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
     created_by_run_id    UUID,
     number               INTEGER NOT NULL,
     identifier           TEXT NOT NULL,
     title                TEXT NOT NULL,
     description          TEXT NOT NULL DEFAULT '',
-    status               issue_status NOT NULL DEFAULT 'backlog',
-    priority             issue_priority NOT NULL DEFAULT 'medium',
+    status               task_status NOT NULL DEFAULT 'backlog',
+    priority             task_priority NOT NULL DEFAULT 'medium',
     labels               JSONB NOT NULL DEFAULT '[]'::jsonb,
     progress_summary             TEXT,
     progress_summary_updated_at  TIMESTAMPTZ,
@@ -503,28 +503,28 @@ CREATE TABLE issues (
     UNIQUE (team_id, identifier)
 );
 
-CREATE INDEX idx_issues_team ON issues(team_id);
-CREATE INDEX idx_issues_project ON issues(project_id);
-CREATE INDEX idx_issues_assignee ON issues(assignee_id);
-CREATE INDEX idx_issues_status ON issues(team_id, status);
-CREATE INDEX idx_issues_parent ON issues(parent_issue_id);
-CREATE INDEX idx_issues_identifier ON issues(team_id, identifier);
-CREATE INDEX idx_issues_embedding ON issues USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX idx_tasks_team ON tasks(team_id);
+CREATE INDEX idx_tasks_project ON tasks(project_id);
+CREATE INDEX idx_tasks_assignee ON tasks(assignee_id);
+CREATE INDEX idx_tasks_status ON tasks(team_id, status);
+CREATE INDEX idx_tasks_parent ON tasks(parent_task_id);
+CREATE INDEX idx_tasks_identifier ON tasks(team_id, identifier);
+CREATE INDEX idx_tasks_embedding ON tasks USING hnsw (embedding vector_cosine_ops);
 
 -------------------------------------------------------------------------------
--- ISSUE DEPENDENCIES
+-- TASK DEPENDENCIES
 -------------------------------------------------------------------------------
 
-CREATE TABLE issue_dependencies (
+CREATE TABLE task_dependencies (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    issue_id            UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    blocked_by_issue_id UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    task_id            UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    blocked_by_task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (issue_id, blocked_by_issue_id)
+    UNIQUE (task_id, blocked_by_task_id)
 );
 
-CREATE INDEX idx_issue_deps_issue ON issue_dependencies(issue_id);
-CREATE INDEX idx_issue_deps_blocked ON issue_dependencies(blocked_by_issue_id);
+CREATE INDEX idx_task_deps_task ON task_dependencies(task_id);
+CREATE INDEX idx_task_deps_blocked ON task_dependencies(blocked_by_task_id);
 
 -------------------------------------------------------------------------------
 -- EXECUTION LOCKS
@@ -532,34 +532,34 @@ CREATE INDEX idx_issue_deps_blocked ON issue_dependencies(blocked_by_issue_id);
 
 CREATE TABLE execution_locks (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    issue_id    UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    task_id    UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     member_id   UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     lock_type   TEXT NOT NULL DEFAULT 'write' CHECK (lock_type IN ('read', 'write')),
     locked_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     released_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_exec_locks_issue ON execution_locks(issue_id);
+CREATE INDEX idx_exec_locks_task ON execution_locks(task_id);
 CREATE INDEX idx_exec_locks_member ON execution_locks(member_id);
 
 -------------------------------------------------------------------------------
--- ISSUE COMMENTS
+-- TASK COMMENTS
 -------------------------------------------------------------------------------
 
-CREATE TABLE issue_comments (
+CREATE TABLE task_comments (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    issue_id          UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    task_id          UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     author_member_id  UUID REFERENCES members(id) ON DELETE SET NULL,
-    parent_comment_id UUID REFERENCES issue_comments(id) ON DELETE SET NULL,
+    parent_comment_id UUID REFERENCES task_comments(id) ON DELETE SET NULL,
     content_type      comment_content_type NOT NULL DEFAULT 'text',
     content           JSONB NOT NULL,
     chosen_option     JSONB,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_comments_issue ON issue_comments(issue_id);
-CREATE INDEX idx_comments_author ON issue_comments(author_member_id);
-CREATE INDEX idx_comments_parent ON issue_comments(parent_comment_id)
+CREATE INDEX idx_comments_task ON task_comments(task_id);
+CREATE INDEX idx_comments_author ON task_comments(author_member_id);
+CREATE INDEX idx_comments_parent ON task_comments(parent_comment_id)
     WHERE parent_comment_id IS NOT NULL;
 
 -------------------------------------------------------------------------------
@@ -568,7 +568,7 @@ CREATE INDEX idx_comments_parent ON issue_comments(parent_comment_id)
 
 CREATE TABLE comment_reactions (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    comment_id  UUID NOT NULL REFERENCES issue_comments(id) ON DELETE CASCADE,
+    comment_id  UUID NOT NULL REFERENCES task_comments(id) ON DELETE CASCADE,
     member_id   UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     kind        TEXT NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -583,7 +583,7 @@ CREATE INDEX idx_comment_reactions_comment ON comment_reactions(comment_id);
 
 CREATE TABLE tool_calls (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    comment_id  UUID NOT NULL REFERENCES issue_comments(id) ON DELETE CASCADE,
+    comment_id  UUID NOT NULL REFERENCES task_comments(id) ON DELETE CASCADE,
     member_id   UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     tool_name   TEXT NOT NULL,
     input       JSONB,
@@ -636,7 +636,7 @@ CREATE INDEX idx_approvals_status ON approvals(team_id, status);
 
 -- One pending designated-repo setup approval per project: allows concurrent
 -- agent runs on the same project to share a single approval while still posting
--- their own action comments on their respective issues.
+-- their own action comments on their respective tasks.
 CREATE UNIQUE INDEX idx_one_pending_repo_setup
     ON approvals (team_id, (payload->>'project_id'))
     WHERE type = 'designated_repo_request'
@@ -651,7 +651,7 @@ CREATE TABLE cost_entries (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id      UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     member_id    UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
-    issue_id     UUID REFERENCES issues(id) ON DELETE SET NULL,
+    task_id     UUID REFERENCES tasks(id) ON DELETE SET NULL,
     project_id   UUID REFERENCES projects(id) ON DELETE SET NULL,
     amount_cents INTEGER NOT NULL,
     description  TEXT NOT NULL DEFAULT '',
@@ -660,7 +660,7 @@ CREATE TABLE cost_entries (
 
 CREATE INDEX idx_costs_team ON cost_entries(team_id);
 CREATE INDEX idx_costs_member ON cost_entries(member_id);
-CREATE INDEX idx_costs_issue ON cost_entries(issue_id);
+CREATE INDEX idx_costs_task ON cost_entries(task_id);
 CREATE INDEX idx_costs_project ON cost_entries(project_id);
 CREATE INDEX idx_costs_created ON cost_entries(created_at);
 
@@ -781,20 +781,20 @@ CREATE TABLE assets (
 
 CREATE INDEX idx_assets_project ON assets(project_id);
 
-CREATE TABLE issue_attachments (
+CREATE TABLE task_attachments (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    issue_id   UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    task_id   UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     asset_id   UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE (issue_id, asset_id)
+    UNIQUE (task_id, asset_id)
 );
 
-CREATE INDEX idx_issue_attachments_issue ON issue_attachments(issue_id);
+CREATE INDEX idx_task_attachments_task ON task_attachments(task_id);
 
 CREATE TABLE comment_attachments (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    comment_id UUID NOT NULL REFERENCES issue_comments(id) ON DELETE CASCADE,
+    comment_id UUID NOT NULL REFERENCES task_comments(id) ON DELETE CASCADE,
     asset_id   UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -879,7 +879,7 @@ CREATE TABLE heartbeat_runs (
     team_id                  UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     member_id                UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     wakeup_id                UUID REFERENCES agent_wakeup_requests(id) ON DELETE SET NULL,
-    issue_id                 UUID REFERENCES issues(id) ON DELETE SET NULL,
+    task_id                 UUID REFERENCES tasks(id) ON DELETE SET NULL,
     status                   heartbeat_run_status NOT NULL DEFAULT 'queued',
     started_at               TIMESTAMPTZ,
     finished_at              TIMESTAMPTZ,
@@ -900,13 +900,13 @@ CREATE TABLE heartbeat_runs (
 CREATE INDEX idx_runs_member ON heartbeat_runs(member_id);
 CREATE INDEX idx_runs_status ON heartbeat_runs(status);
 CREATE INDEX idx_runs_team ON heartbeat_runs(team_id);
-CREATE INDEX idx_runs_issue ON heartbeat_runs(issue_id);
+CREATE INDEX idx_runs_task ON heartbeat_runs(task_id);
 
-ALTER TABLE issues
-    ADD CONSTRAINT issues_created_by_run_fk
+ALTER TABLE tasks
+    ADD CONSTRAINT tasks_created_by_run_fk
     FOREIGN KEY (created_by_run_id) REFERENCES heartbeat_runs(id) ON DELETE SET NULL;
 
-CREATE INDEX idx_issues_created_by_run ON issues(created_by_run_id) WHERE created_by_run_id IS NOT NULL;
+CREATE INDEX idx_tasks_created_by_run ON tasks(created_by_run_id) WHERE created_by_run_id IS NOT NULL;
 
 -------------------------------------------------------------------------------
 -- AGENT TASK SESSIONS
@@ -1040,7 +1040,7 @@ CREATE TRIGGER trg_member_users_updated BEFORE UPDATE ON member_users
 CREATE TRIGGER trg_projects_updated BEFORE UPDATE ON projects
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER trg_issues_updated BEFORE UPDATE ON issues
+CREATE TRIGGER trg_tasks_updated BEFORE UPDATE ON tasks
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER trg_secrets_updated BEFORE UPDATE ON secrets
@@ -1074,15 +1074,15 @@ CREATE TRIGGER trg_notification_prefs_updated BEFORE UPDATE ON notification_pref
 -- FUNCTIONS
 -------------------------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION next_project_issue_number(p_project_id UUID)
+CREATE OR REPLACE FUNCTION next_project_task_number(p_project_id UUID)
 RETURNS INTEGER AS $$
 DECLARE
     v_number INTEGER;
 BEGIN
-    INSERT INTO project_issue_counters (project_id, next_number)
+    INSERT INTO project_task_counters (project_id, next_number)
     VALUES (p_project_id, 2)
     ON CONFLICT (project_id)
-    DO UPDATE SET next_number = project_issue_counters.next_number + 1
+    DO UPDATE SET next_number = project_task_counters.next_number + 1
     RETURNING next_number - 1 INTO v_number;
 
     RETURN v_number;

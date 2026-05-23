@@ -2,14 +2,14 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	CAPTAIN_AGENT_SLUG,
-	IssuePriority,
-	IssueStatus,
 	OPERATIONS_PROJECT_SLUG,
-	TERMINAL_ISSUE_STATUSES,
+	TaskPriority,
+	TaskStatus,
+	TERMINAL_TASK_STATUSES,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
-import { allocateIssueIdentifier } from '../lib/issue-identifier';
+import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import { createWakeup } from './wakeup';
 
@@ -72,34 +72,34 @@ async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext 
 	};
 }
 
-async function findOpenLabeledIssueByTarget(
+async function findOpenLabeledTaskByTarget(
 	db: PGlite,
 	teamId: string,
 	label: string,
 	target: string,
 ): Promise<string | null> {
-	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${i + 3}::issue_status`).join(', ');
+	const placeholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 3}::task_status`).join(', ');
 	const result = await db.query<{ id: string }>(
-		`SELECT id FROM issues
+		`SELECT id FROM tasks
 		 WHERE team_id = $1
 		   AND labels @> $2::jsonb
 		   AND status NOT IN (${placeholders})
-		   AND description LIKE '%target=' || $${TERMINAL_ISSUE_STATUSES.length + 3} || '%'
+		   AND description LIKE '%target=' || $${TERMINAL_TASK_STATUSES.length + 3} || '%'
 		 LIMIT 1`,
-		[teamId, JSON.stringify([label]), ...TERMINAL_ISSUE_STATUSES, target],
+		[teamId, JSON.stringify([label]), ...TERMINAL_TASK_STATUSES, target],
 	);
 	return result.rows[0]?.id ?? null;
 }
 
-async function findOpenDescriptionIssue(
+async function findOpenDescriptionTask(
 	db: PGlite,
 	teamId: string,
 	target: string,
 ): Promise<string | null> {
-	return findOpenLabeledIssueByTarget(db, teamId, DESCRIPTION_LABEL, target);
+	return findOpenLabeledTaskByTarget(db, teamId, DESCRIPTION_LABEL, target);
 }
 
-async function createLabeledOperationsIssue(
+async function createLabeledOperationsTask(
 	db: PGlite,
 	teamId: string,
 	ctx: TeamContext,
@@ -107,11 +107,11 @@ async function createLabeledOperationsIssue(
 	title: string,
 	body: string,
 	label: string,
-	priority: IssuePriority,
+	priority: TaskPriority,
 ): Promise<string | null> {
 	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
 
-	const { number: issueNumber, identifier } = await allocateIssueIdentifier(
+	const { number: taskNumber, identifier } = await allocateTaskIdentifier(
 		db,
 		ctx.operationsProjectId,
 	);
@@ -119,38 +119,38 @@ async function createLabeledOperationsIssue(
 	const description = `<!-- target=${target} -->\n\n${body}`;
 
 	const insertResult = await db.query<{ id: string }>(
-		`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier,
+		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
 		                     title, description, status, priority, labels)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb)
 		 RETURNING id`,
 		[
 			teamId,
 			ctx.operationsProjectId,
 			ctx.captainMemberId,
-			issueNumber,
+			taskNumber,
 			identifier,
 			title,
 			description,
-			IssueStatus.Backlog,
+			TaskStatus.Backlog,
 			priority,
 			JSON.stringify(['internal', label]),
 		],
 	);
 
-	const issueId = insertResult.rows[0].id;
+	const taskId = insertResult.rows[0].id;
 
 	try {
 		await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Assignment, {
-			issue_id: issueId,
+			task_id: taskId,
 		});
 	} catch (e) {
 		log.error(`Failed to wake Captain for ${label}:`, e);
 	}
 
-	return issueId;
+	return taskId;
 }
 
-async function createDescriptionIssue(
+async function createDescriptionTask(
 	db: PGlite,
 	teamId: string,
 	ctx: TeamContext,
@@ -158,7 +158,7 @@ async function createDescriptionIssue(
 	title: string,
 	body: string,
 ): Promise<string | null> {
-	return createLabeledOperationsIssue(
+	return createLabeledOperationsTask(
 		db,
 		teamId,
 		ctx,
@@ -166,7 +166,7 @@ async function createDescriptionIssue(
 		title,
 		body,
 		DESCRIPTION_LABEL,
-		IssuePriority.Low,
+		TaskPriority.Low,
 	);
 }
 
@@ -186,7 +186,7 @@ Regenerate the human-readable summary for the agent "${agentTitle}" (reason: ${r
 3. Call \`set_agent_summary(team_id, agent_id="${agentId}", summary="...")\` to save.
 4. Then read the prompts of every enabled agent in the team via \`get_agent_system_prompt\` and synthesise an updated team summary describing reporting structure, handoffs, and escalation paths. Up to twenty lines, plain prose.
 5. Call \`set_team_summary(team_id, summary="...")\` to save.
-6. Move this issue to "done".`;
+6. Move this task to "done".`;
 }
 
 function buildTeamSummaryBody(reason: TeamSummaryReason): string {
@@ -199,7 +199,7 @@ Regenerate the team-collaboration summary for this team (reason: ${reason}).
 1. Read the prompts of every enabled agent in the team via \`get_agent_system_prompt\`.
 2. Synthesise a team summary describing reporting structure, handoffs, and escalation paths. Up to twenty lines, plain prose. May span multiple paragraphs.
 3. Call \`set_team_summary(team_id, summary="...")\` to save.
-4. Move this issue to "done".`;
+4. Move this task to "done".`;
 }
 
 export async function enqueueAgentSummaryTask(
@@ -213,9 +213,9 @@ export async function enqueueAgentSummaryTask(
 	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
 
 	const target = wsRoom.agent(agentId);
-	const existing = await findOpenDescriptionIssue(db, teamId, target);
+	const existing = await findOpenDescriptionTask(db, teamId, target);
 	if (existing) {
-		log.debug(`Skipping duplicate agent summary task for ${agentId}; open issue ${existing}`);
+		log.debug(`Skipping duplicate agent summary task for ${agentId}; open task ${existing}`);
 		return existing;
 	}
 
@@ -226,7 +226,7 @@ export async function enqueueAgentSummaryTask(
 	const agentTitle = agentResult.rows[0]?.title ?? 'Unknown agent';
 
 	const body = buildAgentSummaryBody(agentId, agentTitle, reason);
-	return createDescriptionIssue(
+	return createDescriptionTask(
 		db,
 		teamId,
 		ctx,
@@ -246,14 +246,14 @@ export async function enqueueTeamSummaryTask(
 	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
 
 	const target = TEAM_TARGET;
-	const existing = await findOpenDescriptionIssue(db, teamId, target);
+	const existing = await findOpenDescriptionTask(db, teamId, target);
 	if (existing) {
-		log.debug(`Skipping duplicate team summary task; open issue ${existing}`);
+		log.debug(`Skipping duplicate team summary task; open task ${existing}`);
 		return existing;
 	}
 
 	const body = buildTeamSummaryBody(reason);
-	return createDescriptionIssue(db, teamId, ctx, target, 'Update team description', body);
+	return createDescriptionTask(db, teamId, ctx, target, 'Update team description', body);
 }
 
 function buildAgentTeamContextBody(
@@ -279,7 +279,7 @@ This blob is injected into the agent's own system prompt at the start of every r
    - Indirect reports / agents two+ levels away and the correct routing path
    - Humans on the board and when to involve them
 5. Call \`set_agent_team_context(team_id, agent_id="${agentId}", content="...")\` to save.
-6. Move this issue to "done".`;
+6. Move this task to "done".`;
 }
 
 export async function enqueueAgentTeamContextTask(
@@ -293,9 +293,9 @@ export async function enqueueAgentTeamContextTask(
 	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
 
 	const target = `${TEAM_CONTEXT_TARGET_PREFIX}${agentId}`;
-	const existing = await findOpenDescriptionIssue(db, teamId, target);
+	const existing = await findOpenDescriptionTask(db, teamId, target);
 	if (existing) {
-		log.debug(`Skipping duplicate agent team_context task for ${agentId}; open issue ${existing}`);
+		log.debug(`Skipping duplicate agent team_context task for ${agentId}; open task ${existing}`);
 		return existing;
 	}
 
@@ -306,7 +306,7 @@ export async function enqueueAgentTeamContextTask(
 	const agentTitle = agentResult.rows[0]?.title ?? 'Unknown agent';
 
 	const body = buildAgentTeamContextBody(agentId, agentTitle, reason);
-	return createDescriptionIssue(
+	return createDescriptionTask(
 		db,
 		teamId,
 		ctx,
@@ -336,7 +336,7 @@ The team roster changed (reason: ${reason}). Review the team to make sure everyo
    - Use \`set_agent_team_context(agent_id, content)\` to refresh an agent's relationships narrative if needed.
    - Use \`set_agent_summary(agent_id, summary)\` and \`set_team_summary(summary)\` after substantive changes.
 5. For changes you cannot make through MCP tools (re-parenting an agent, removing an agent, hiring a new role), post a single summary comment on this ticket explaining what should change and request board confirmation.
-6. Move this issue to **done** once the team is coherent.`;
+6. Move this task to **done** once the team is coherent.`;
 }
 
 export async function enqueueTeamCoherenceReviewTask(
@@ -348,19 +348,19 @@ export async function enqueueTeamCoherenceReviewTask(
 	if (!ctx) return null;
 	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
 
-	const existing = await findOpenLabeledIssueByTarget(
+	const existing = await findOpenLabeledTaskByTarget(
 		db,
 		teamId,
 		COHERENCE_LABEL,
 		TEAM_COHERENCE_TARGET,
 	);
 	if (existing) {
-		log.debug(`Skipping duplicate team coherence review; open issue ${existing}`);
+		log.debug(`Skipping duplicate team coherence review; open task ${existing}`);
 		return existing;
 	}
 
 	const body = buildTeamCoherenceReviewBody(reason);
-	return createLabeledOperationsIssue(
+	return createLabeledOperationsTask(
 		db,
 		teamId,
 		ctx,
@@ -368,7 +368,7 @@ export async function enqueueTeamCoherenceReviewTask(
 		'Review team coherence after roster change',
 		body,
 		COHERENCE_LABEL,
-		IssuePriority.High,
+		TaskPriority.High,
 	);
 }
 

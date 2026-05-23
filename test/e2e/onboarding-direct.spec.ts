@@ -33,7 +33,7 @@ test.describe('Onboarding direct flow', () => {
 		expect(directRes.status()).toBe(201);
 		const direct = (
 			(await directRes.json()) as {
-				data: { project_slug: string; planning_issue_identifier: string };
+				data: { project_slug: string; planning_task_identifier: string };
 			}
 		).data;
 
@@ -51,7 +51,9 @@ test.describe('Onboarding direct flow', () => {
 		expect(created?.name).toBe('My First App');
 	});
 
-	test('"general help" creates a Blank-template General project', async ({ page }) => {
+	test('"general help" creates a Blank-template General project with no planning task', async ({
+		page,
+	}) => {
 		await authenticate(page);
 		const token = await getToken(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -72,13 +74,27 @@ test.describe('Onboarding direct flow', () => {
 			data: {
 				template_id: blank?.id,
 				project_name: 'General',
-				project_description: 'General workspace for ad-hoc help.',
+				project_description: 'Catch-all for ad-hoc help and one-off tasks.',
+				skip_planning_task: true,
 			},
 		});
 		expect(generalRes.status()).toBe(201);
+		const general = (
+			(await generalRes.json()) as {
+				data: { project_id: string; planning_task_id: string | null };
+			}
+		).data;
+		expect(general.planning_task_id).toBeNull();
 
 		const projectsRes = await page.request.get(`/api/teams/${team.slug}/projects`, { headers });
 		const projects = (await projectsRes.json()) as { data: Array<{ slug: string; name: string }> };
 		expect(projects.data.some((p) => p.slug === 'general' && p.name === 'General')).toBe(true);
+
+		const tasksRes = await page.request.get(
+			`/api/teams/${team.slug}/tasks?project_id=${general.project_id}`,
+			{ headers },
+		);
+		const tasks = (await tasksRes.json()) as { data: unknown[] };
+		expect(tasks.data).toHaveLength(0);
 	});
 });

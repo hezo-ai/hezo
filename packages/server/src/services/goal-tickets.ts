@@ -1,8 +1,8 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CommentContentType, IssuePriority, IssueStatus, WakeupSource, wsRoom } from '@hezo/shared';
+import { CommentContentType, TaskPriority, TaskStatus, WakeupSource, wsRoom } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
-import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { terminalStatusParams } from '../lib/sql';
+import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import { isTeamExecutionStarted } from './onboarding';
 import { loadCaptainOpsContext } from './operations-intake';
@@ -37,9 +37,9 @@ ${description || '_(no description provided)_'}
 ### Your task
 
 1. Re-read the goal above and consider whether any active project plans need updating to serve it.
-2. Review the relevant projects' current open issues, sprint plans, and docs. For each project whose direction has drifted, open a ticket for the responsible agent with a clear call-to-action.
-3. If no changes are needed, post a short comment on this issue summarising why the current plan already covers the goal.
-4. Move this issue to **done** once you have opened any required follow-ups or confirmed no action is needed.`;
+2. Review the relevant projects' current open tasks, sprint plans, and docs. For each project whose direction has drifted, open a ticket for the responsible agent with a clear call-to-action.
+3. If no changes are needed, post a short comment on this task summarising why the current plan already covers the goal.
+4. Move this task to **done** once you have opened any required follow-ups or confirmed no action is needed.`;
 }
 
 export async function enqueueGoalReviewTask(
@@ -83,7 +83,7 @@ export async function enqueueGoalReviewTask(
 
 	const ts = terminalStatusParams(2);
 	const existingResult = await db.query<{ id: string }>(
-		`SELECT id FROM issues
+		`SELECT id FROM tasks
 		 WHERE team_id = $1
 		   AND labels @> '["${GOAL_LABEL}"]'::jsonb
 		   AND status NOT IN (${ts.placeholders})
@@ -93,12 +93,12 @@ export async function enqueueGoalReviewTask(
 	);
 
 	if (existingResult.rows[0]) {
-		const existingIssueId = existingResult.rows[0].id;
+		const existingTaskId = existingResult.rows[0].id;
 		await db.query(
-			`INSERT INTO issue_comments (issue_id, content_type, content)
+			`INSERT INTO task_comments (task_id, content_type, content)
 			 VALUES ($1, $2::comment_content_type, $3::jsonb)`,
 			[
-				existingIssueId,
+				existingTaskId,
 				CommentContentType.System,
 				JSON.stringify({
 					text: `Goal "${goal.title}" was ${reason === 'created' ? 'recreated' : 'updated again'}. Please re-read and re-evaluate.`,
@@ -107,49 +107,49 @@ export async function enqueueGoalReviewTask(
 		);
 		try {
 			await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Comment, {
-				issue_id: existingIssueId,
+				task_id: existingTaskId,
 				goal_id: goalId,
 			});
 		} catch (e) {
 			log.error('Failed to wake Captain for goal update (dedup path):', e);
 		}
-		return existingIssueId;
+		return existingTaskId;
 	}
 
-	const { number: issueNumber, identifier } = await allocateIssueIdentifier(db, targetProjectId);
+	const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, targetProjectId);
 
-	const issueResult = await db.query<Record<string, unknown>>(
-		`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier,
+	const taskResult = await db.query<Record<string, unknown>>(
+		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
 		                     title, description, status, priority, labels)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb)
 		 RETURNING *`,
 		[
 			teamId,
 			targetProjectId,
 			ctx.captainMemberId,
-			issueNumber,
+			taskNumber,
 			identifier,
 			`Review plans for goal: "${goal.title}"`,
 			buildGoalBody(goalId, goal.title, goal.description, scopeLabel, reason),
-			IssueStatus.Backlog,
-			IssuePriority.Medium,
+			TaskStatus.Backlog,
+			TaskPriority.Medium,
 			JSON.stringify([GOAL_LABEL]),
 		],
 	);
-	const issue = issueResult.rows[0];
+	const task = taskResult.rows[0];
 
 	if (wsManager) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'issues', 'INSERT', issue);
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', task);
 	}
 
 	try {
 		await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Assignment, {
-			issue_id: issue.id,
+			task_id: task.id,
 			goal_id: goalId,
 		});
 	} catch (e) {
 		log.error('Failed to wake Captain for goal review:', e);
 	}
 
-	return issue.id as string;
+	return task.id as string;
 }

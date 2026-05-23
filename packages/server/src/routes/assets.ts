@@ -9,7 +9,7 @@ import {
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { signAssetUrl, verifyAssetUrl } from '../lib/asset-urls';
-import { resolveActorMemberId, resolveIssueId } from '../lib/resolve';
+import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -22,7 +22,7 @@ const log = logger.child('routes');
 export const assetsRoutes = new Hono<Env>();
 
 assetsRoutes.post(
-	'/teams/:teamId/issues/:issueId/assets',
+	'/teams/:teamId/tasks/:taskId/assets',
 	bodyLimit({
 		maxSize: ATTACHMENT_MAX_BYTES,
 		onError: (c) => err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400),
@@ -33,29 +33,29 @@ assetsRoutes.post(
 
 		const db = c.get('db');
 		const { teamId } = access;
-		const issueId = await resolveIssueId(db, teamId, c.req.param('issueId'));
-		if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+		const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
+		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
-		const issueLocator = await db.query<{
+		const taskLocator = await db.query<{
 			team_slug: string;
 			project_id: string;
 			project_slug: string;
 		}>(
 			`SELECT t.slug AS team_slug, p.id AS project_id, p.slug AS project_slug
-			 FROM issues i
+			 FROM tasks i
 			 JOIN teams t ON t.id = i.team_id
 			 JOIN projects p ON p.id = i.project_id
 			 WHERE i.id = $1 AND i.team_id = $2`,
-			[issueId, teamId],
+			[taskId, teamId],
 		);
-		if (issueLocator.rows.length === 0) {
-			return err(c, 'NOT_FOUND', 'Issue not found', 404);
+		if (taskLocator.rows.length === 0) {
+			return err(c, 'NOT_FOUND', 'Task not found', 404);
 		}
 		const {
 			team_slug: teamSlug,
 			project_id: projectId,
 			project_slug: projectSlug,
-		} = issueLocator.rows[0];
+		} = taskLocator.rows[0];
 
 		let form: Awaited<ReturnType<typeof c.req.parseBody>>;
 		try {

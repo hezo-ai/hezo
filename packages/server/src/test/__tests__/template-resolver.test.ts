@@ -219,50 +219,50 @@ describe('template resolver', () => {
 		expect(result).toContain('### Completion Handoff');
 		expect(result).toContain('### Knowledge Maintenance');
 		expect(result).toContain('### Sub-Agents & Parallel Exploration');
-		expect(result).toContain('### Sub-Issue Delegation');
+		expect(result).toContain('### Sub-Task Delegation');
 		expect(result).toContain('### Comment Timing');
-		expect(result).toContain('update_issue');
+		expect(result).toContain('update_task');
 		expect(result).toContain('write_project_doc');
 		expect(result).toContain('upsert_kb_doc');
-		expect(result).toContain('create_issue');
+		expect(result).toContain('create_task');
 	});
 
 	it('completion handoff guidance covers mark-done, auto-wake, and no-mention rules', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('### Completion Handoff');
-		expect(result).toContain('update_issue(status: "done")');
+		expect(result).toContain('update_task(status: "done")');
 		expect(result).toContain('dependents');
 		expect(result).toContain('do not `@`-mention any agent in that comment');
 	});
 
-	it('injects Run Context with only team id when no project/issue', async () => {
+	it('injects Run Context with only team id when no project/task', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('## Run Context');
 		expect(result).toContain(`Team ID: ${teamId}`);
 		expect(result).not.toContain('Project ID:');
-		expect(result).not.toContain('Issue ID:');
+		expect(result).not.toContain('Task ID:');
 	});
 
-	it('injects Run Context with team + project ids when issue missing', async () => {
+	it('injects Run Context with team + project ids when task missing', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
 			teamId,
 			projectId,
 		});
 		expect(result).toContain(`Team ID: ${teamId}`);
 		expect(result).toContain(`Project ID: ${projectId}`);
-		expect(result).not.toContain('Issue ID:');
+		expect(result).not.toContain('Task ID:');
 	});
 
-	it('injects Run Context with all three ids when issueId supplied', async () => {
-		const fakeIssueId = '11111111-2222-3333-4444-555555555555';
+	it('injects Run Context with all three ids when taskId supplied', async () => {
+		const fakeTaskId = '11111111-2222-3333-4444-555555555555';
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
 			teamId,
 			projectId,
-			issueId: fakeIssueId,
+			taskId: fakeTaskId,
 		});
 		expect(result).toContain(`Team ID: ${teamId}`);
 		expect(result).toContain(`Project ID: ${projectId}`);
-		expect(result).toContain(`Issue ID: ${fakeIssueId}`);
+		expect(result).toContain(`Task ID: ${fakeTaskId}`);
 	});
 
 	it('preview mode substitutes placeholders, omits Run Context, keeps Teammates and Working Guidelines', async () => {
@@ -716,7 +716,7 @@ describe('project state block', () => {
 		});
 		const emptyProjectId = ((await projectRes.json()) as any).data.id;
 
-		await db.query(`UPDATE issues SET status = 'cancelled'::issue_status WHERE project_id = $1`, [
+		await db.query(`UPDATE tasks SET status = 'cancelled'::task_status WHERE project_id = $1`, [
 			emptyProjectId,
 		]);
 
@@ -729,7 +729,7 @@ describe('project state block', () => {
 	});
 
 	it('lists active tickets and excludes terminal-status ones', async () => {
-		const activeRes = await app.request(`/api/teams/${psTeamId}/issues`, {
+		const activeRes = await app.request(`/api/teams/${psTeamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -740,7 +740,7 @@ describe('project state block', () => {
 		});
 		const active = ((await activeRes.json()) as any).data;
 
-		const doneRes = await app.request(`/api/teams/${psTeamId}/issues`, {
+		const doneRes = await app.request(`/api/teams/${psTeamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -750,7 +750,7 @@ describe('project state block', () => {
 			}),
 		});
 		const done = ((await doneRes.json()) as any).data;
-		await app.request(`/api/teams/${psTeamId}/issues/${done.id}`, {
+		await app.request(`/api/teams/${psTeamId}/tasks/${done.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
@@ -768,7 +768,7 @@ describe('project state block', () => {
 	});
 
 	it('shows "Tickets you created" subsection scoped to the agent\'s prior runs', async () => {
-		const planningIssueRes = await app.request(`/api/teams/${psTeamId}/issues`, {
+		const planningTaskRes = await app.request(`/api/teams/${psTeamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -777,18 +777,18 @@ describe('project state block', () => {
 				assignee_id: psCaptainMemberId,
 			}),
 		});
-		const planningIssue = ((await planningIssueRes.json()) as any).data;
+		const planningTask = ((await planningTaskRes.json()) as any).data;
 
 		const run = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
 			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now())
 			 RETURNING id`,
-			[psCaptainMemberId, psTeamId, planningIssue.id],
+			[psCaptainMemberId, psTeamId, planningTask.id],
 		);
 
 		const subRes = await db.query<{ identifier: string }>(
-			`INSERT INTO issues (team_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
-			 VALUES ($1, $2, $3, NULL, $4, next_project_issue_number($2), 'PS-CR-1', 'Delegated to architect by Captain', '', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
+			`INSERT INTO tasks (team_id, project_id, assignee_id, parent_task_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
+			 VALUES ($1, $2, $3, NULL, $4, next_project_task_number($2), 'PS-CR-1', 'Delegated to architect by Captain', '', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
 			 RETURNING identifier`,
 			[psTeamId, psProjectId, psArchitectMemberId, run.rows[0].id],
 		);

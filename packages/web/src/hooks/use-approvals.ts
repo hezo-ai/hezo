@@ -24,7 +24,7 @@ export interface Approval {
 	payload_member_slug: string | null;
 	payload_project_name: string | null;
 	payload_project_slug: string | null;
-	payload_issue_identifier: string | null;
+	payload_task_identifier: string | null;
 }
 
 export function useApprovals(

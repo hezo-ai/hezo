@@ -8,8 +8,8 @@ import { requireSuperuser, requireTeamAccess } from '../middleware/auth';
 import { getOnboardingStatus } from '../services/onboarding';
 import { runOnboardingDirect } from '../services/onboarding-direct';
 import {
-	ensureOnboardingIntakeIssue,
-	getOpenOnboardingIntakeIssue,
+	ensureOnboardingIntakeTask,
+	getOpenOnboardingIntakeTask,
 	postSkipQuestionsSignal,
 } from '../services/onboarding-intake';
 import { createTeam } from '../services/teams';
@@ -32,13 +32,13 @@ teamsRoutes.get('/teams', async (c) => {
 	if (!isBoard || isSuperuser) {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
-       (SELECT count(*) FROM issues i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_issue_count
+       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count
      FROM teams c
      ORDER BY c.created_at DESC`;
 	} else {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
-       (SELECT count(*) FROM issues i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_issue_count
+       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count
      FROM teams c
      JOIN members m2 ON m2.team_id = c.id
      JOIN member_users mu ON mu.id = m2.id
@@ -93,8 +93,8 @@ teamsRoutes.get('/teams/:teamId/onboarding-intake', async (c) => {
 
 	const ensure = c.req.query('ensure') === 'true';
 	const intake = ensure
-		? await ensureOnboardingIntakeIssue(c.get('db'), access.teamId, c.get('wsManager'))
-		: await getOpenOnboardingIntakeIssue(c.get('db'), access.teamId);
+		? await ensureOnboardingIntakeTask(c.get('db'), access.teamId, c.get('wsManager'))
+		: await getOpenOnboardingIntakeTask(c.get('db'), access.teamId);
 	if (!intake) {
 		return err(c, 'NOT_FOUND', 'Onboarding intake is not available for this team', 404);
 	}
@@ -105,16 +105,16 @@ teamsRoutes.post('/teams/:teamId/onboarding-intake/skip-questions', async (c) =>
 	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
-	const intake = await getOpenOnboardingIntakeIssue(c.get('db'), access.teamId);
+	const intake = await getOpenOnboardingIntakeTask(c.get('db'), access.teamId);
 	if (!intake) {
 		return err(c, 'NOT_FOUND', 'No open onboarding intake to skip', 404);
 	}
 
-	const comment = await postSkipQuestionsSignal(c.get('db'), access.teamId, intake.issue_id);
+	const comment = await postSkipQuestionsSignal(c.get('db'), access.teamId, intake.task_id);
 	if (!comment) {
 		return err(c, 'INTERNAL', 'Failed to post skip signal', 500);
 	}
-	return ok(c, { issue_id: intake.issue_id, comment_id: comment.id });
+	return ok(c, { task_id: intake.task_id, comment_id: comment.id });
 });
 
 teamsRoutes.get('/teams/:teamId/onboarding', async (c) => {
@@ -133,6 +133,7 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 		template_id?: string;
 		project_name?: string;
 		project_description?: string;
+		skip_planning_task?: boolean;
 	}>();
 	if (!body.template_id?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'template_id is required', 400);
@@ -148,6 +149,7 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 		projectDescription: body.project_description,
 		dataDir: c.get('dataDir'),
 		wsManager: c.get('wsManager'),
+		skipPlanningTask: body.skip_planning_task === true,
 	});
 
 	if (!result.ok) {
@@ -168,7 +170,7 @@ teamsRoutes.get('/teams/:teamId', async (c) => {
 	const result = await db.query(
 		`SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $2)::int AS agent_count,
-       (SELECT count(*) FROM issues i WHERE i.team_id = c.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_issue_count
+       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count
      FROM teams c WHERE c.id = $1`,
 		[teamId, MemberType.Agent, ...ts2.values],
 	);

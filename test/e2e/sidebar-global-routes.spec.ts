@@ -55,7 +55,7 @@ test.describe('Sidebar — visible on global routes (no :teamId in URL)', () => 
 		await page.goto('/home');
 		await waitForPageLoad(page);
 
-		await expect(page.getByTestId('sidebar-link-issues')).toBeHidden();
+		await expect(page.getByTestId('sidebar-link-tasks')).toBeHidden();
 
 		const toggle = page.getByTestId('mobile-nav-toggle');
 		await expect(toggle).toBeVisible();
@@ -64,7 +64,7 @@ test.describe('Sidebar — visible on global routes (no :teamId in URL)', () => 
 		const drawer = page.getByTestId('mobile-nav-drawer');
 		await expect(drawer).toBeVisible();
 		await expect(drawer.getByText('Inbox', { exact: true })).toBeVisible();
-		await expect(drawer.getByTestId('sidebar-link-issues')).toBeVisible();
+		await expect(drawer.getByTestId('sidebar-link-tasks')).toBeVisible();
 
 		await page.getByTestId('mobile-nav-close').click();
 		await expect(drawer).toBeHidden();

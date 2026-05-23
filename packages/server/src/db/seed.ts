@@ -249,9 +249,9 @@ Describe your product, its target users, and key value propositions.
 			slug: 'development-workflow.md',
 			content: `# Development Workflow
 
-## Issue Lifecycle
+## Task Lifecycle
 
-Issues progress through these statuses:
+Tasks progress through these statuses:
 1. **Backlog** — captured but not yet picked up
 2. **In Progress** — actively being worked on
 3. **Review** — implementation complete, awaiting QA review
@@ -265,8 +265,8 @@ Approval is conveyed via comment, not status. From **Review**, the ticket either
 <!-- TODO: customize for your repository -->
 
 - Main branch: \`main\`
-- Feature branches: \`feat/<issue-id>-short-description\`
-- Bug fix branches: \`fix/<issue-id>-short-description\`
+- Feature branches: \`feat/<task-id>-short-description\`
+- Bug fix branches: \`fix/<task-id>-short-description\`
 
 ## Pull Requests
 

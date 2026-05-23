@@ -5,14 +5,14 @@ import {
 	ApprovalType,
 	CAPTAIN_AGENT_SLUG,
 	DocumentType,
-	IssueStatus,
 	MemberType,
+	TaskStatus,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
-import { resolveProjectIssuePrefix } from '../routes/projects';
+import { resolveProjectTaskPrefix } from '../routes/projects';
 import {
 	enqueueAgentSummaryTask,
 	enqueueAgentTeamContextTask,
@@ -21,13 +21,13 @@ import {
 	enqueueTeamSummaryTask,
 } from './description-tasks';
 import { upsertDocument } from './documents';
-import { recordStatusChange } from './issue-events';
 import {
 	completeOnboardingIntakeAfterProvisioning,
 	postOnboardingTemplateApprovedAck,
 	postOnboardingTemplateDeniedNote,
 } from './onboarding-intake';
-import { createProjectWithPlanningIssue } from './project-create';
+import { createProjectWithPlanningTask } from './project-create';
+import { recordStatusChange } from './task-events';
 import { applyTemplateToTeam } from './team-template-apply';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -47,16 +47,16 @@ export async function applyApprovalDeniedSideEffect(
 	if (approval.type !== ApprovalType.TeamTemplate) return [];
 	const payload = approval.payload as Record<string, unknown>;
 	const teamId = approval.team_id as string;
-	const intakeIssueId = payload.issue_id as string | undefined;
-	if (!intakeIssueId) return [];
+	const intakeTaskId = payload.task_id as string | undefined;
+	if (!intakeTaskId) return [];
 	const comment = await postOnboardingTemplateDeniedNote(
 		db,
 		teamId,
-		intakeIssueId,
+		intakeTaskId,
 		(approval.resolution_note as string | null) ?? null,
 	);
 	if (!comment) return [];
-	return [{ table: 'issue_comments', op: 'INSERT', row: comment }];
+	return [{ table: 'task_comments', op: 'INSERT', row: comment }];
 }
 
 export async function applyApprovalSideEffect(
@@ -128,27 +128,26 @@ export async function applyApprovalSideEffect(
 				row: promptDoc as unknown as Record<string, unknown>,
 			});
 
-			if (payload.issue_id) {
-				const issueId = payload.issue_id as string;
-				const prior = await db.query<{ status: string }>(
-					'SELECT status FROM issues WHERE id = $1',
-					[issueId],
-				);
+			if (payload.task_id) {
+				const taskId = payload.task_id as string;
+				const prior = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
+					taskId,
+				]);
 				const oldStatus = prior.rows[0]?.status;
-				const issueUpdate = await db.query<Record<string, unknown>>(
-					`UPDATE issues SET status = $1::issue_status, updated_at = now()
+				const taskUpdate = await db.query<Record<string, unknown>>(
+					`UPDATE tasks SET status = $1::task_status, updated_at = now()
 					 WHERE id = $2 RETURNING *`,
-					[IssueStatus.Done, issueId],
+					[TaskStatus.Done, taskId],
 				);
-				if (issueUpdate.rows[0]) {
-					broadcasts.push({ table: 'issues', op: 'UPDATE', row: issueUpdate.rows[0] });
+				if (taskUpdate.rows[0]) {
+					broadcasts.push({ table: 'tasks', op: 'UPDATE', row: taskUpdate.rows[0] });
 					if (oldStatus) {
 						await recordStatusChange(
 							db,
 							teamId,
-							issueId,
+							taskId,
 							oldStatus,
-							IssueStatus.Done,
+							TaskStatus.Done,
 							actorMemberId,
 							wsManager,
 						);
@@ -242,7 +241,7 @@ export async function applyApprovalSideEffect(
 				throw new Error('team_template approval payload missing template_id');
 			}
 
-			const intakeIssueId = payload.issue_id as string | undefined;
+			const intakeTaskId = payload.task_id as string | undefined;
 			const templateName =
 				(typeof payload.template_name === 'string' && payload.template_name.trim()) ||
 				'team template';
@@ -252,15 +251,15 @@ export async function applyApprovalSideEffect(
 
 			const apply = await applyTemplateToTeam(db, teamId, templateId, { dataDir, wsManager });
 
-			if (intakeIssueId) {
+			if (intakeTaskId) {
 				const ackComment = await postOnboardingTemplateApprovedAck(
 					db,
 					teamId,
-					intakeIssueId,
+					intakeTaskId,
 					templateName,
 				);
 				if (ackComment) {
-					broadcasts.push({ table: 'issue_comments', op: 'INSERT', row: ackComment });
+					broadcasts.push({ table: 'task_comments', op: 'INSERT', row: ackComment });
 				}
 			}
 
@@ -317,36 +316,40 @@ export async function applyApprovalSideEffect(
 					.toLowerCase()
 					.replace(/[^a-z0-9]+/g, '-')
 					.replace(/^-|-$/g, '');
-				const prefixResult = await resolveProjectIssuePrefix(db, teamId, undefined, projectName);
+				const prefixResult = await resolveProjectTaskPrefix(db, teamId, undefined, projectName);
 				if (!prefixResult.ok) {
 					throw new Error(`Cannot create project on approval: ${prefixResult.message}`);
 				}
 
-				const { project, planningIssue, deferCaptainPlanningWake } =
-					await createProjectWithPlanningIssue(db, {
+				const { project, planningTask, deferCaptainPlanningWake } =
+					await createProjectWithPlanningTask(db, {
 						teamId,
 						captainMemberId,
 						name: projectName,
 						slug: projectSlug,
-						issuePrefix: prefixResult.prefix,
+						taskPrefix: prefixResult.prefix,
 						description: projectDescription,
+						createPlanningTask: true,
 					});
 
 				broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
-				broadcastRowChange(wsManager, wsRoom.team(teamId), 'issues', 'INSERT', planningIssue);
+				if (!planningTask) {
+					throw new Error('Expected planning task for approval-driven project creation');
+				}
+				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
 
 				if (!deferCaptainPlanningWake) {
 					await createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
-						issue_id: planningIssue.id as string,
+						task_id: planningTask.id as string,
 					});
 				}
 			}
 
-			if (intakeIssueId) {
+			if (intakeTaskId) {
 				const completed = await completeOnboardingIntakeAfterProvisioning(
 					db,
 					teamId,
-					intakeIssueId,
+					intakeTaskId,
 					templateName,
 					projectName,
 					apply.created_slugs,
@@ -355,13 +358,13 @@ export async function applyApprovalSideEffect(
 				);
 				if (completed.summaryComment) {
 					broadcasts.push({
-						table: 'issue_comments',
+						table: 'task_comments',
 						op: 'INSERT',
 						row: completed.summaryComment,
 					});
 				}
-				if (completed.issue) {
-					broadcasts.push({ table: 'issues', op: 'UPDATE', row: completed.issue });
+				if (completed.task) {
+					broadcasts.push({ table: 'tasks', op: 'UPDATE', row: completed.task });
 				}
 			}
 			break;

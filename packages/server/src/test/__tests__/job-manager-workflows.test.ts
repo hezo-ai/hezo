@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentRuntimeStatus,
 	HeartbeatRunStatus,
-	IssueStatus,
+	TaskStatus,
 	WakeupStatus,
 	wsRoom,
 } from '@hezo/shared';
@@ -22,7 +22,7 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let projectId: string;
-let issueId: string;
+let taskId: string;
 let agentId: string;
 
 function createMockDocker(): DockerClient {
@@ -88,17 +88,17 @@ beforeAll(async () => {
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
+	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectId,
-			title: 'Workflow Test Issue',
-			description: 'Test issue for workflow testing',
+			title: 'Workflow Test Task',
+			description: 'Test task for workflow testing',
 			assignee_id: agentId,
 		}),
 	});
-	issueId = (await issueRes.json()).data.id;
+	taskId = (await taskRes.json()).data.id;
 
 	// These tests focus on wakeup/lock lifecycle, not the designated-repo gate.
 	// Seed a designated repo on the project so the gate short-circuit is bypassed.
@@ -266,12 +266,12 @@ describe('JobManager workflow methods', () => {
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 		});
 
-		it('marks wakeup as completed when agent has no assigned issues', async () => {
+		it('marks wakeup as completed when agent has no assigned tasks', async () => {
 			const manager = createJobManager();
 
-			// Ensure agent has no open issues assigned to it
+			// Ensure agent has no open tasks assigned to it
 			await db.query(
-				"UPDATE issues SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN ('done', 'closed', 'cancelled')",
+				"UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN ('done', 'closed', 'cancelled')",
 				[agentId],
 			);
 
@@ -299,8 +299,8 @@ describe('JobManager workflow methods', () => {
 		it('marks wakeup as failed when project has no container', async () => {
 			const manager = createJobManager();
 
-			// Assign the issue to the agent (project has no container_id yet)
-			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
+			// Assign the task to the agent (project has no container_id yet)
+			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
 
 			// Ensure project has no container_id
 			await db.query('UPDATE projects SET container_id = NULL WHERE id = $1', [projectId]);
@@ -328,8 +328,8 @@ describe('JobManager workflow methods', () => {
 		it('creates an execution lock and launches a task when project has container', async () => {
 			const manager = createJobManager();
 
-			// Assign the issue to the agent
-			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
+			// Assign the task to the agent
+			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
 
 			// Give the project a container
 			await db.query(
@@ -339,8 +339,8 @@ describe('JobManager workflow methods', () => {
 
 			// Release any existing execution lock for this pair
 			await db.query(
-				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL',
-				[issueId, agentId],
+				'UPDATE execution_locks SET released_at = now() WHERE task_id = $1 AND member_id = $2 AND released_at IS NULL',
+				[taskId, agentId],
 			);
 
 			const wakeupRes = await db.query<{ id: string }>(
@@ -354,12 +354,12 @@ describe('JobManager workflow methods', () => {
 			await (manager as any).activateAgent(agentId, teamId, wakeupId);
 
 			// An execution lock should have been created
-			const lockResult = await db.query<{ issue_id: string; member_id: string }>(
-				'SELECT issue_id, member_id FROM execution_locks WHERE issue_id = $1 AND member_id = $2',
-				[issueId, agentId],
+			const lockResult = await db.query<{ task_id: string; member_id: string }>(
+				'SELECT task_id, member_id FROM execution_locks WHERE task_id = $1 AND member_id = $2',
+				[taskId, agentId],
 			);
 			expect(lockResult.rows.length).toBeGreaterThan(0);
-			expect(lockResult.rows[lockResult.rows.length - 1].issue_id).toBe(issueId);
+			expect(lockResult.rows[lockResult.rows.length - 1].task_id).toBe(taskId);
 			expect(lockResult.rows[lockResult.rows.length - 1].member_id).toBe(agentId);
 
 			// A task should have been launched for the agent
@@ -368,22 +368,22 @@ describe('JobManager workflow methods', () => {
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 			await db.query(
-				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL',
-				[issueId, agentId],
+				'UPDATE execution_locks SET released_at = now() WHERE task_id = $1 AND member_id = $2 AND released_at IS NULL',
+				[taskId, agentId],
 			);
 		});
 
-		it('serialises a second agent on the same issue: defers the wakeup back to queued and leaves only one execution lock', async () => {
+		it('serialises a second agent on the same task: defers the wakeup back to queued and leaves only one execution lock', async () => {
 			const manager = createJobManager();
 
-			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
+			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
 			await db.query(
 				"UPDATE projects SET container_id = 'test-container-id', container_status = 'running' WHERE id = $1",
 				[projectId],
 			);
 			await db.query(
-				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
-				[issueId],
+				'UPDATE execution_locks SET released_at = now() WHERE task_id = $1 AND released_at IS NULL',
+				[taskId],
 			);
 
 			const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
@@ -396,28 +396,28 @@ describe('JobManager workflow methods', () => {
 				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
 				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
 				 RETURNING id`,
-				[agentId, teamId, JSON.stringify({ issue_id: issueId })],
+				[agentId, teamId, JSON.stringify({ task_id: taskId })],
 			);
 			await (manager as any).activateAgent(agentId, teamId, firstWakeup.rows[0].id, {
-				issue_id: issueId,
+				task_id: taskId,
 			});
 
 			const secondWakeup = await db.query<{ id: string }>(
 				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
 				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
 				 RETURNING id`,
-				[secondAgentId, teamId, JSON.stringify({ issue_id: issueId })],
+				[secondAgentId, teamId, JSON.stringify({ task_id: taskId })],
 			);
 			await (manager as any).activateAgent(secondAgentId, teamId, secondWakeup.rows[0].id, {
-				issue_id: issueId,
+				task_id: taskId,
 			});
 
-			// Per-issue serialisation: only the first agent should hold an execution lock.
+			// Per-task serialisation: only the first agent should hold an execution lock.
 			const locks = await db.query<{ member_id: string }>(
 				`SELECT member_id FROM execution_locks
-				 WHERE issue_id = $1 AND released_at IS NULL
+				 WHERE task_id = $1 AND released_at IS NULL
 				 ORDER BY locked_at`,
-				[issueId],
+				[taskId],
 			);
 			const holders = locks.rows.map((r) => r.member_id);
 			expect(holders).toEqual([agentId]);
@@ -434,37 +434,37 @@ describe('JobManager workflow methods', () => {
 				[firstWakeup.rows[0].id, secondWakeup.rows[0].id],
 			]);
 			await db.query(
-				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
-				[issueId],
+				'UPDATE execution_locks SET released_at = now() WHERE task_id = $1 AND released_at IS NULL',
+				[taskId],
 			);
 		});
 
-		it('defers the wakeup when the same agent already holds a lock on the issue', async () => {
+		it('defers the wakeup when the same agent already holds a lock on the task', async () => {
 			const manager = createJobManager();
 
-			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
+			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
 			await db.query(
 				"UPDATE projects SET container_id = 'test-container-id', container_status = 'running' WHERE id = $1",
 				[projectId],
 			);
 			await db.query(
-				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
-				[issueId],
+				'UPDATE execution_locks SET released_at = now() WHERE task_id = $1 AND released_at IS NULL',
+				[taskId],
 			);
 
 			await db.query(
-				"INSERT INTO execution_locks (issue_id, member_id, lock_type) VALUES ($1, $2, 'read')",
-				[issueId, agentId],
+				"INSERT INTO execution_locks (task_id, member_id, lock_type) VALUES ($1, $2, 'read')",
+				[taskId, agentId],
 			);
 
 			const wakeupRes = await db.query<{ id: string }>(
 				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
 				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
 				 RETURNING id`,
-				[agentId, teamId, JSON.stringify({ issue_id: issueId })],
+				[agentId, teamId, JSON.stringify({ task_id: taskId })],
 			);
 			await (manager as any).activateAgent(agentId, teamId, wakeupRes.rows[0].id, {
-				issue_id: issueId,
+				task_id: taskId,
 			});
 
 			const status = await db.query<{ status: string }>(
@@ -474,37 +474,37 @@ describe('JobManager workflow methods', () => {
 			expect(status.rows[0].status).toBe(WakeupStatus.Deferred);
 
 			const locks = await db.query<{ id: string }>(
-				'SELECT id FROM execution_locks WHERE issue_id = $1 AND member_id = $2 AND released_at IS NULL',
-				[issueId, agentId],
+				'SELECT id FROM execution_locks WHERE task_id = $1 AND member_id = $2 AND released_at IS NULL',
+				[taskId, agentId],
 			);
 			expect(locks.rows.length).toBe(1);
 
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupRes.rows[0].id]);
 			await db.query(
-				'UPDATE execution_locks SET released_at = now() WHERE issue_id = $1 AND released_at IS NULL',
-				[issueId],
+				'UPDATE execution_locks SET released_at = now() WHERE task_id = $1 AND released_at IS NULL',
+				[taskId],
 			);
 		});
 
-		it('with issue_done trigger wakeup marks completed when trigger issue is not found', async () => {
+		it('with task_done trigger wakeup marks completed when trigger task is not found', async () => {
 			const manager = createJobManager();
 
-			// Unassign the issue so the agent has no open assigned issues
-			await db.query('UPDATE issues SET assignee_id = NULL WHERE id = $1', [issueId]);
+			// Unassign the task so the agent has no open assigned tasks
+			await db.query('UPDATE tasks SET assignee_id = NULL WHERE id = $1', [taskId]);
 
 			const wakeupRes = await db.query<{ id: string }>(
 				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
 				 VALUES ($1, $2, 'automation', 'claimed', now() - interval '30 seconds',
-				         '{"trigger": "issue_done", "issue_id": "00000000-0000-0000-0000-000000000099"}'::jsonb)
+				         '{"trigger": "task_done", "task_id": "00000000-0000-0000-0000-000000000099"}'::jsonb)
 				 RETURNING id`,
 				[agentId, teamId],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
 			await (manager as any).activateAgent(agentId, teamId, wakeupId, {
-				trigger: 'issue_done',
-				issue_id: '00000000-0000-0000-0000-000000000099',
+				trigger: 'task_done',
+				task_id: '00000000-0000-0000-0000-000000000099',
 			});
 
 			const result = await db.query<{ status: string; completed_at: string | null }>(
@@ -525,10 +525,10 @@ describe('JobManager workflow methods', () => {
 
 			// Create a fresh execution lock
 			await db.query(
-				`INSERT INTO execution_locks (issue_id, member_id)
+				`INSERT INTO execution_locks (task_id, member_id)
 				 VALUES ($1, $2)
 				 ON CONFLICT DO NOTHING`,
-				[issueId, agentId],
+				[taskId, agentId],
 			);
 
 			const wakeupRes = await db.query<{ id: string }>(
@@ -542,7 +542,7 @@ describe('JobManager workflow methods', () => {
 			await (manager as any).onAgentComplete(
 				agentId,
 				'test-agent',
-				issueId,
+				taskId,
 				teamId,
 				wakeupId,
 				undefined,
@@ -556,8 +556,8 @@ describe('JobManager workflow methods', () => {
 
 			// Lock should be released
 			const lockResult = await db.query<{ released_at: string | null }>(
-				'SELECT released_at FROM execution_locks WHERE issue_id = $1 AND member_id = $2 ORDER BY locked_at DESC LIMIT 1',
-				[issueId, agentId],
+				'SELECT released_at FROM execution_locks WHERE task_id = $1 AND member_id = $2 ORDER BY locked_at DESC LIMIT 1',
+				[taskId, agentId],
 			);
 			expect(lockResult.rows[0].released_at).not.toBeNull();
 
@@ -578,10 +578,10 @@ describe('JobManager workflow methods', () => {
 
 			// Create a fresh execution lock
 			await db.query(
-				`INSERT INTO execution_locks (issue_id, member_id)
+				`INSERT INTO execution_locks (task_id, member_id)
 				 VALUES ($1, $2)
 				 ON CONFLICT DO NOTHING`,
-				[issueId, agentId],
+				[taskId, agentId],
 			);
 
 			const wakeupRes = await db.query<{ id: string }>(
@@ -595,7 +595,7 @@ describe('JobManager workflow methods', () => {
 			await (manager as any).onAgentComplete(
 				agentId,
 				'test-agent',
-				issueId,
+				taskId,
 				teamId,
 				wakeupId,
 				undefined,
@@ -624,17 +624,17 @@ describe('JobManager workflow methods', () => {
 
 			// Create a fresh execution lock
 			await db.query(
-				`INSERT INTO execution_locks (issue_id, member_id)
+				`INSERT INTO execution_locks (task_id, member_id)
 				 VALUES ($1, $2)
 				 ON CONFLICT DO NOTHING`,
-				[issueId, agentId],
+				[taskId, agentId],
 			);
 
 			// Call without a wakeupId (heartbeat-triggered run scenario)
 			await (manager as any).onAgentComplete(
 				agentId,
 				'test-agent',
-				issueId,
+				taskId,
 				teamId,
 				undefined,
 				undefined,
@@ -648,8 +648,8 @@ describe('JobManager workflow methods', () => {
 
 			// Lock should still be released
 			const lockResult = await db.query<{ released_at: string | null }>(
-				'SELECT released_at FROM execution_locks WHERE issue_id = $1 AND member_id = $2 ORDER BY locked_at DESC LIMIT 1',
-				[issueId, agentId],
+				'SELECT released_at FROM execution_locks WHERE task_id = $1 AND member_id = $2 ORDER BY locked_at DESC LIMIT 1',
+				[taskId, agentId],
 			);
 			expect(lockResult.rows[0].released_at).not.toBeNull();
 
@@ -663,22 +663,21 @@ describe('JobManager workflow methods', () => {
 				startedOffsetSeconds = 0,
 			): Promise<string> {
 				const r = await db.query<{ id: string }>(
-					`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, error, started_at)
+					`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, error, started_at)
 					 VALUES ($1, $2, $3, $4::heartbeat_run_status, $5, now() - ($6 || ' seconds')::interval)
 					 RETURNING id`,
-					[agentId, teamId, issueId, status, error, String(startedOffsetSeconds)],
+					[agentId, teamId, taskId, status, error, String(startedOffsetSeconds)],
 				);
 				return r.rows[0].id;
 			}
 
 			async function clearRunsAndComments(): Promise<void> {
 				await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
-				await db.query(
-					"DELETE FROM issue_comments WHERE issue_id = $1 AND content_type = 'system'",
-					[issueId],
-				);
-				await db.query('DELETE FROM heartbeat_runs WHERE issue_id = $1 AND member_id = $2', [
-					issueId,
+				await db.query("DELETE FROM task_comments WHERE task_id = $1 AND content_type = 'system'", [
+					taskId,
+				]);
+				await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1 AND member_id = $2', [
+					taskId,
 					agentId,
 				]);
 			}
@@ -690,10 +689,10 @@ describe('JobManager workflow methods', () => {
 					content: Record<string, unknown>;
 					author_member_id: string | null;
 				}>(
-					`SELECT content, author_member_id FROM issue_comments
-					 WHERE issue_id = $1 AND content_type = 'system'
+					`SELECT content, author_member_id FROM task_comments
+					 WHERE task_id = $1 AND content_type = 'system'
 					 ORDER BY created_at ASC`,
-					[issueId],
+					[taskId],
 				);
 				return r.rows;
 			}
@@ -706,7 +705,7 @@ describe('JobManager workflow methods', () => {
 				await (manager as any).onAgentComplete(
 					agentId,
 					'researcher',
-					issueId,
+					taskId,
 					teamId,
 					undefined,
 					undefined,
@@ -737,7 +736,7 @@ describe('JobManager workflow methods', () => {
 				);
 				expect(wakeups.rows.length).toBe(1);
 				expect(wakeups.rows[0].payload).toMatchObject({
-					issue_id: issueId,
+					task_id: taskId,
 					run_id: runId,
 					reason: 'run_failed',
 				});
@@ -754,7 +753,7 @@ describe('JobManager workflow methods', () => {
 				await (manager as any).onAgentComplete(
 					agentId,
 					'researcher',
-					issueId,
+					taskId,
 					teamId,
 					undefined,
 					undefined,
@@ -786,7 +785,7 @@ describe('JobManager workflow methods', () => {
 				await (manager as any).onAgentComplete(
 					agentId,
 					'researcher',
-					issueId,
+					taskId,
 					teamId,
 					undefined,
 					undefined,
@@ -824,7 +823,7 @@ describe('JobManager workflow methods', () => {
 				await (manager as any).onAgentComplete(
 					agentId,
 					'researcher',
-					issueId,
+					taskId,
 					teamId,
 					undefined,
 					undefined,
@@ -853,7 +852,7 @@ describe('JobManager workflow methods', () => {
 				await (manager as any).onAgentComplete(
 					agentId,
 					'researcher',
-					issueId,
+					taskId,
 					teamId,
 					undefined,
 					undefined,
@@ -887,7 +886,7 @@ describe('JobManager workflow methods', () => {
 				await (manager as any).onAgentComplete(
 					agentId,
 					'researcher',
-					issueId,
+					taskId,
 					teamId,
 					undefined,
 					undefined,
@@ -908,43 +907,43 @@ describe('JobManager workflow methods', () => {
 			});
 		});
 
-		it('chains a wakeup for the next assigned non-terminal issue', async () => {
+		it('chains a wakeup for the next assigned non-terminal task', async () => {
 			const manager = createJobManager();
 
-			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
-			await db.query(`UPDATE issues SET status = $1::issue_status WHERE id = $2`, [
-				IssueStatus.Backlog,
-				issueId,
+			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
+			await db.query(`UPDATE tasks SET status = $1::task_status WHERE id = $2`, [
+				TaskStatus.Backlog,
+				taskId,
 			]);
 
-			const meta = await db.query<{ issue_prefix: string; number: number }>(
-				`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
+			const meta = await db.query<{ task_prefix: string; number: number }>(
+				`SELECT p.task_prefix, next_project_task_number(p.id) AS number
 				 FROM projects p WHERE p.id = $1`,
 				[projectId],
 			);
 			const nextNumber = meta.rows[0].number;
 			const nextInsert = await db.query<{ id: string }>(
-				`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
-				 VALUES ($1, $2, $3, $4, $5, $6, '', $7::issue_status, 'medium'::issue_priority, '[]'::jsonb)
+				`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
+				 VALUES ($1, $2, $3, $4, $5, $6, '', $7::task_status, 'medium'::task_priority, '[]'::jsonb)
 				 RETURNING id`,
 				[
 					teamId,
 					projectId,
 					agentId,
 					nextNumber,
-					`${meta.rows[0].issue_prefix}-${nextNumber}`,
+					`${meta.rows[0].task_prefix}-${nextNumber}`,
 					'Next queued ticket',
-					IssueStatus.Backlog,
+					TaskStatus.Backlog,
 				],
 			);
-			const nextIssueId = nextInsert.rows[0].id;
+			const nextTaskId = nextInsert.rows[0].id;
 
 			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
 			await (manager as any).onAgentComplete(
 				agentId,
 				'test-agent',
-				issueId,
+				taskId,
 				teamId,
 				undefined,
 				undefined,
@@ -964,30 +963,30 @@ describe('JobManager workflow methods', () => {
 			);
 			expect(chain.rows.length).toBe(1);
 			expect(chain.rows[0].source).toBe('timer');
-			expect(chain.rows[0].payload.issue_id).toBe(nextIssueId);
+			expect(chain.rows[0].payload.task_id).toBe(nextTaskId);
 			expect(chain.rows[0].payload.reason).toBe('chain_after_completion');
 
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
-			await db.query('DELETE FROM issues WHERE id = $1', [nextIssueId]);
+			await db.query('DELETE FROM tasks WHERE id = $1', [nextTaskId]);
 		});
 
-		it('does not chain a wakeup when no other assigned issues exist', async () => {
+		it('does not chain a wakeup when no other assigned tasks exist', async () => {
 			const manager = createJobManager();
 
 			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 			await db.query(
-				`UPDATE issues SET assignee_id = NULL
+				`UPDATE tasks SET assignee_id = NULL
 				 WHERE assignee_id = $1 AND id != $2
 				   AND status NOT IN ('done', 'closed', 'cancelled')`,
-				[agentId, issueId],
+				[agentId, taskId],
 			);
-			await db.query('UPDATE issues SET assignee_id = $1 WHERE id = $2', [agentId, issueId]);
+			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
 
 			await (manager as any).onAgentComplete(
 				agentId,
 				'test-agent',
-				issueId,
+				taskId,
 				teamId,
 				undefined,
 				undefined,
@@ -1012,141 +1011,141 @@ describe('JobManager workflow methods', () => {
 	});
 
 	describe('coach auto-close', () => {
-		async function setIssueDone(): Promise<void> {
-			await db.query(`UPDATE issues SET status = $1::issue_status WHERE id = $2`, [
-				IssueStatus.Done,
-				issueId,
+		async function setTaskDone(): Promise<void> {
+			await db.query(`UPDATE tasks SET status = $1::task_status WHERE id = $2`, [
+				TaskStatus.Done,
+				taskId,
 			]);
 		}
 
-		async function readIssueStatus(): Promise<string> {
+		async function readTaskStatus(): Promise<string> {
 			const r = await db.query<{ status: string }>(
-				'SELECT status::text AS status FROM issues WHERE id = $1',
-				[issueId],
+				'SELECT status::text AS status FROM tasks WHERE id = $1',
+				[taskId],
 			);
 			return r.rows[0].status;
 		}
 
-		it('closes a Done issue after a successful coach run with issue_done trigger', async () => {
+		it('closes a Done task after a successful coach run with task_done trigger', async () => {
 			const manager = createJobManager();
-			await setIssueDone();
+			await setTaskDone();
 
 			await (manager as any).onAgentComplete(
 				agentId,
 				'coach',
-				issueId,
+				taskId,
 				teamId,
 				undefined,
-				{ trigger: 'issue_done', issue_id: issueId },
+				{ trigger: 'task_done', task_id: taskId },
 				{ success: true, exitCode: 0, stdout: '', stderr: '' },
 			);
 
-			expect(await readIssueStatus()).toBe(IssueStatus.Closed);
+			expect(await readTaskStatus()).toBe(TaskStatus.Closed);
 			manager.shutdown();
 		});
 
 		it('does not close when the coach run failed', async () => {
 			const manager = createJobManager();
-			await setIssueDone();
+			await setTaskDone();
 
 			await (manager as any).onAgentComplete(
 				agentId,
 				'coach',
-				issueId,
+				taskId,
 				teamId,
 				undefined,
-				{ trigger: 'issue_done', issue_id: issueId },
+				{ trigger: 'task_done', task_id: taskId },
 				{ success: false, exitCode: 1, stdout: '', stderr: 'failed' },
 			);
 
-			expect(await readIssueStatus()).toBe(IssueStatus.Done);
+			expect(await readTaskStatus()).toBe(TaskStatus.Done);
 			manager.shutdown();
 		});
 
-		it('does not close when a non-coach agent completes on a Done issue', async () => {
+		it('does not close when a non-coach agent completes on a Done task', async () => {
 			const manager = createJobManager();
-			await setIssueDone();
+			await setTaskDone();
 
 			await (manager as any).onAgentComplete(
 				agentId,
 				'engineer',
-				issueId,
+				taskId,
 				teamId,
 				undefined,
-				{ trigger: 'issue_done', issue_id: issueId },
+				{ trigger: 'task_done', task_id: taskId },
 				{ success: true, exitCode: 0, stdout: '', stderr: '' },
 			);
 
-			expect(await readIssueStatus()).toBe(IssueStatus.Done);
+			expect(await readTaskStatus()).toBe(TaskStatus.Done);
 			manager.shutdown();
 		});
 
-		it('does not close when the issue is no longer in Done', async () => {
+		it('does not close when the task is no longer in Done', async () => {
 			const manager = createJobManager();
-			await db.query(`UPDATE issues SET status = $1::issue_status WHERE id = $2`, [
-				IssueStatus.Cancelled,
-				issueId,
+			await db.query(`UPDATE tasks SET status = $1::task_status WHERE id = $2`, [
+				TaskStatus.Cancelled,
+				taskId,
 			]);
 
 			await (manager as any).onAgentComplete(
 				agentId,
 				'coach',
-				issueId,
+				taskId,
 				teamId,
 				undefined,
-				{ trigger: 'issue_done', issue_id: issueId },
+				{ trigger: 'task_done', task_id: taskId },
 				{ success: true, exitCode: 0, stdout: '', stderr: '' },
 			);
 
-			expect(await readIssueStatus()).toBe(IssueStatus.Cancelled);
+			expect(await readTaskStatus()).toBe(TaskStatus.Cancelled);
 			manager.shutdown();
 		});
 
-		it('does not close when wakeup payload trigger is not issue_done', async () => {
+		it('does not close when wakeup payload trigger is not task_done', async () => {
 			const manager = createJobManager();
-			await setIssueDone();
+			await setTaskDone();
 
 			await (manager as any).onAgentComplete(
 				agentId,
 				'coach',
-				issueId,
+				taskId,
 				teamId,
 				undefined,
-				{ trigger: 'mention', issue_id: issueId },
+				{ trigger: 'mention', task_id: taskId },
 				{ success: true, exitCode: 0, stdout: '', stderr: '' },
 			);
 
-			expect(await readIssueStatus()).toBe(IssueStatus.Done);
+			expect(await readTaskStatus()).toBe(TaskStatus.Done);
 			manager.shutdown();
 		});
 
-		it('does not close when an open sub-issue still blocks the parent', async () => {
+		it('does not close when an open sub-task still blocks the parent', async () => {
 			const manager = createJobManager();
-			await setIssueDone();
+			await setTaskDone();
 
 			const childResult = await db.query<{ id: string }>(
-				`INSERT INTO issues (team_id, project_id, assignee_id, parent_issue_id, number, identifier,
+				`INSERT INTO tasks (team_id, project_id, assignee_id, parent_task_id, number, identifier,
 				                     title, description, status, priority)
-				 VALUES ($1, $2, $3, $4, 9999, 'TST-9999', 'Open child', '', 'in_progress'::issue_status, 'medium'::issue_priority)
+				 VALUES ($1, $2, $3, $4, 9999, 'TST-9999', 'Open child', '', 'in_progress'::task_status, 'medium'::task_priority)
 				 RETURNING id`,
-				[teamId, projectId, agentId, issueId],
+				[teamId, projectId, agentId, taskId],
 			);
 			const childId = childResult.rows[0].id;
 
 			await (manager as any).onAgentComplete(
 				agentId,
 				'coach',
-				issueId,
+				taskId,
 				teamId,
 				undefined,
-				{ trigger: 'issue_done', issue_id: issueId },
+				{ trigger: 'task_done', task_id: taskId },
 				{ success: true, exitCode: 0, stdout: '', stderr: '' },
 			);
 
-			expect(await readIssueStatus()).toBe(IssueStatus.Done);
+			expect(await readTaskStatus()).toBe(TaskStatus.Done);
 			manager.shutdown();
 
-			await db.query('DELETE FROM issues WHERE id = $1', [childId]);
+			await db.query('DELETE FROM tasks WHERE id = $1', [childId]);
 		});
 	});
 
@@ -1274,9 +1273,9 @@ describe('JobManager workflow methods', () => {
 			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
 			await db.query(
-				`INSERT INTO heartbeat_runs (team_id, member_id, issue_id, status, started_at)
+				`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at)
 				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[teamId, agentId, issueId, HeartbeatRunStatus.Running],
+				[teamId, agentId, taskId, HeartbeatRunStatus.Running],
 			);
 			await db.query(
 				'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
@@ -1325,8 +1324,8 @@ describe('JobManager workflow methods', () => {
 
 		it('releases all open execution_locks on startup', async () => {
 			await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
-			await db.query(`INSERT INTO execution_locks (issue_id, member_id) VALUES ($1, $2)`, [
-				issueId,
+			await db.query(`INSERT INTO execution_locks (task_id, member_id) VALUES ($1, $2)`, [
+				taskId,
 				agentId,
 			]);
 
@@ -1348,7 +1347,7 @@ describe('JobManager workflow methods', () => {
 			manager.registerLiveRun({
 				runId: 'run-1',
 				memberId: 'm-1',
-				issueId: 'i-1',
+				taskId: 'i-1',
 				projectId: 'p-1',
 				teamId: 'c-1',
 				taskKey: 'agent:m-1',
@@ -1356,7 +1355,7 @@ describe('JobManager workflow methods', () => {
 			manager.registerLiveRun({
 				runId: 'run-2',
 				memberId: 'm-2',
-				issueId: 'i-2',
+				taskId: 'i-2',
 				projectId: 'p-1',
 				teamId: 'c-1',
 				taskKey: 'agent:m-2',
@@ -1364,7 +1363,7 @@ describe('JobManager workflow methods', () => {
 			manager.registerLiveRun({
 				runId: 'run-3',
 				memberId: 'm-3',
-				issueId: 'i-3',
+				taskId: 'i-3',
 				projectId: 'p-2',
 				teamId: 'c-1',
 				taskKey: 'agent:m-3',
@@ -1385,11 +1384,11 @@ describe('JobManager workflow methods', () => {
 		});
 	});
 
-	describe('per-issue serialisation', () => {
-		it('leaves a wakeup queued when another agent has an active run on the same issue', async () => {
+	describe('per-task serialisation', () => {
+		it('leaves a wakeup queued when another agent has an active run on the same task', async () => {
 			const manager = createJobManager();
 
-			// Simulate an active run on the issue (from a different agent).
+			// Simulate an active run on the task (from a different agent).
 			const otherAgentRes = await app.request(`/api/teams/${teamId}/agents`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -1398,16 +1397,16 @@ describe('JobManager workflow methods', () => {
 			const otherAgentId = (await otherAgentRes.json()).data.id;
 
 			await db.query(
-				`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
 				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[otherAgentId, teamId, issueId, HeartbeatRunStatus.Running],
+				[otherAgentId, teamId, taskId, HeartbeatRunStatus.Running],
 			);
 
 			const wakeupRes = await db.query<{ id: string }>(
 				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
 				 VALUES ($1, $2, 'mention', 'queued', now() - interval '30 seconds', $3::jsonb)
 				 RETURNING id`,
-				[agentId, teamId, JSON.stringify({ issue_id: issueId })],
+				[agentId, teamId, JSON.stringify({ task_id: taskId })],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
@@ -1421,40 +1420,40 @@ describe('JobManager workflow methods', () => {
 
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
-			await db.query('DELETE FROM heartbeat_runs WHERE issue_id = $1 AND member_id = $2', [
-				issueId,
+			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1 AND member_id = $2', [
+				taskId,
 				otherAgentId,
 			]);
 		});
 
-		it('isIssueBusy is false when payload has no issue_id', async () => {
+		it('isTaskBusy is false when payload has no task_id', async () => {
 			const manager = createJobManager();
-			const busy = await (manager as any).isIssueBusy({});
+			const busy = await (manager as any).isTaskBusy({});
 			expect(busy).toBe(false);
 			manager.shutdown();
 		});
 
-		it('isIssueBusy returns true while an active run exists', async () => {
+		it('isTaskBusy returns true while an active run exists', async () => {
 			const manager = createJobManager();
 			await db.query(
-				`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
 				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[agentId, teamId, issueId, HeartbeatRunStatus.Running],
+				[agentId, teamId, taskId, HeartbeatRunStatus.Running],
 			);
 
-			const busy = await (manager as any).isIssueBusy({ issue_id: issueId });
+			const busy = await (manager as any).isTaskBusy({ task_id: taskId });
 			expect(busy).toBe(true);
 
 			await db.query(
-				"UPDATE heartbeat_runs SET status = 'succeeded', finished_at = now() WHERE issue_id = $1 AND member_id = $2",
-				[issueId, agentId],
+				"UPDATE heartbeat_runs SET status = 'succeeded', finished_at = now() WHERE task_id = $1 AND member_id = $2",
+				[taskId, agentId],
 			);
-			const busyAfter = await (manager as any).isIssueBusy({ issue_id: issueId });
+			const busyAfter = await (manager as any).isTaskBusy({ task_id: taskId });
 			expect(busyAfter).toBe(false);
 
 			manager.shutdown();
-			await db.query('DELETE FROM heartbeat_runs WHERE issue_id = $1 AND member_id = $2', [
-				issueId,
+			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1 AND member_id = $2', [
+				taskId,
 				agentId,
 			]);
 		});

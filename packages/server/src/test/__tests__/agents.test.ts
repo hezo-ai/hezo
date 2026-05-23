@@ -158,7 +158,7 @@ describe('agents CRUD', () => {
 
 		expect(prompt).toMatch(/read_project_doc/);
 		expect(prompt).toMatch(/prd\.md/);
-		expect(prompt).toMatch(/add_issue_blocker/);
+		expect(prompt).toMatch(/add_task_blocker/);
 		expect(prompt).toMatch(/PRD gate/i);
 	});
 
@@ -273,7 +273,7 @@ describe('agents CRUD', () => {
 		expect(res.status).toBe(409);
 	});
 
-	it('disabling an agent unassigns its open issues', async () => {
+	it('disabling an agent unassigns its open tasks', async () => {
 		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});

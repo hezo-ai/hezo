@@ -17,37 +17,37 @@
 | `team_template_assignments` | Many-to-many join table linking teams to the team types they were created from. | belongs to team + team_template |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to team |
 | `api_keys` | Team-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to team |
-| `projects` | Group of related work under a team. Has `issue_prefix` (2–4 uppercase chars used for issue identifiers), Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Operations) that cannot be deleted. | belongs to team |
+| `projects` | Group of related work under a team. Has `task_prefix` (2–4 uppercase chars used for task identifiers), Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Operations) that cannot be deleted. | belongs to team |
 | `repos` | Git repo (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. | belongs to project |
-| `issues` | Ticket. Must have a project. Linear-style `identifier` (e.g. `OP-42`) built from the project's `issue_prefix` + per-project number. Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to team + project, assigned to member |
-| `issue_dependencies` | Many-to-many blocking relationships between issues. | links issue ↔ issue |
-| `issue_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. Includes execution-type comments auto-created when agent runs complete. | belongs to issue |
-| `issue_attachments` | Links uploaded files to issues. | links asset ↔ issue |
+| `tasks` | Ticket. Must have a project. Linear-style `identifier` (e.g. `OP-42`) built from the project's `task_prefix` + per-project number. Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to team + project, assigned to member |
+| `task_dependencies` | Many-to-many blocking relationships between tasks. | links task ↔ task |
+| `task_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. Includes execution-type comments auto-created when agent runs complete. | belongs to task |
+| `task_attachments` | Links uploaded files to tasks. | links asset ↔ task |
 | `tool_calls` | Trace log entries. Linked to a comment (the agent message that triggered them). | belongs to comment + member_agent |
 | `secrets` | Encrypted key/value. Scoped to team or team+project. | belongs to team, optionally project |
 | `secret_grants` | Which agent has access to which secret. Revocable. | links secret ↔ member_agent |
 | `approvals` | Pending board decisions. Polymorphic payload. | belongs to team, requested by member_agent |
-| `cost_entries` | Immutable spend records per agent per issue. | belongs to team + member_agent, optionally issue/project |
+| `cost_entries` | Immutable spend records per agent per task. | belongs to team + member_agent, optionally task/project |
 | `audit_log` | Append-only. Never updated or deleted. | belongs to team |
 | `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `kb_doc` / `team_preferences` / `agent_system_prompt`). Project docs scope by `(project_id, slug)`; KB docs by `(team_id, slug)`; preferences by `(team_id)` (one per team); agent system prompts by `(member_agent_id)` (one per agent). Embeddings live on this table for KB and project docs. | belongs to team, optionally project or member_agent |
 | `document_revisions` | Snapshot of prior content created on every change. `change_summary` captures intent; `Restored to revision N` is set automatically by the rollback path. Shared by all document types — agent system prompt history lives here too. | belongs to document |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to team |
 | `team_ssh_keys` | Generated SSH key pairs per team. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to team |
-| `execution_locks` | Issue work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to issue + member_agent |
+| `execution_locks` | Task work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to task + member_agent |
 | `skills` | Reusable instruction documents (DB-backed). Tags, content, source URL, creator tracking, embeddings. | belongs to team |
 | `skill_revisions` | Version history for skills. | belongs to skill |
 | `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. Every run row points back to the wakeup that triggered it via `heartbeat_runs.wakeup_id`. | belongs to member_agent + team |
-| `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the issue being worked on via `issue_id`, and to the wakeup that triggered the run via `wakeup_id`. | belongs to member_agent + team, optionally issue, optionally wakeup |
+| `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the task being worked on via `task_id`, and to the wakeup that triggered the run via `wakeup_id`. | belongs to member_agent + team, optionally task, optionally wakeup |
 | `agent_task_sessions` | Per-task session persistence for session compaction. | belongs to member_agent, keyed by task |
 | `assets` | Uploaded files. Provider, object key, content type, SHA-256 hash. | belongs to team |
 | `plugins` | Installed plugins. Manifest, status, config. | belongs to team |
 | `plugin_state` | Scoped key-value store for plugin data. | belongs to plugin + team |
 | `plugin_jobs` | Cron job declarations for plugins. | belongs to plugin |
 | `instance_user_roles` | Instance-level admin roles for users. First user gets instance_admin. | belongs to user |
-| `project_issue_counters` | Helper for atomic issue numbering per project. | belongs to project |
+| `project_task_counters` | Helper for atomic task numbering per project. | belongs to project |
 | `notification_preferences` | Per-user notification routing (web/telegram/slack). Event types, enabled flag. | belongs to user |
 | `slack_connections` | Per-team Slack app config. Bot token encrypted in secrets. | belongs to team |
-| `ai_provider_configs` | Instance-level AI provider credentials shared across every team in the Hezo instance. The `provider` enum is `anthropic \| openai \| google \| deepseek`; each value carries its own runtime mapping, env-var contract, and (optionally) static env entries via `PROVIDER_RUNTIME_ADAPTERS` in `packages/shared/src/types/common.ts`. Multiple providers can target the same runtime (Anthropic and DeepSeek both run via `claude_code`, with DeepSeek injecting `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at DeepSeek's Anthropic-compatible gateway). Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription credential blob (DeepSeek and Anthropic do not support subscription auth). A partial unique index on `is_default` enforces one default per provider; `(provider, label)` is unique so multiple rows per provider coexist — typically one `api_key` and one `subscription` — and `getProviderCredential` / `resolveRuntimeForIssue` pick the `is_default` row at runtime. When several providers share a runtime, `resolveRuntimeForIssue` filters via `PROVIDERS_BY_RUNTIME[runtime]` then orders by `is_default DESC, created_at ASC`. `default_model` (nullable) holds the CLI `--model` value applied to every run that uses this config when the agent has no explicit override. Agent runner decrypts at execution time and either injects as env var (api keys) or materialises to a per-run mount inside the container (subscriptions). | instance-scoped |
+| `ai_provider_configs` | Instance-level AI provider credentials shared across every team in the Hezo instance. The `provider` enum is `anthropic \| openai \| google \| deepseek`; each value carries its own runtime mapping, env-var contract, and (optionally) static env entries via `PROVIDER_RUNTIME_ADAPTERS` in `packages/shared/src/types/common.ts`. Multiple providers can target the same runtime (Anthropic and DeepSeek both run via `claude_code`, with DeepSeek injecting `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at DeepSeek's Anthropic-compatible gateway). Each row inlines the encrypted credential (`encrypted_credential`). Auth method distinguishes API key vs subscription credential blob (DeepSeek and Anthropic do not support subscription auth). A partial unique index on `is_default` enforces one default per provider; `(provider, label)` is unique so multiple rows per provider coexist — typically one `api_key` and one `subscription` — and `getProviderCredential` / `resolveRuntimeForTask` pick the `is_default` row at runtime. When several providers share a runtime, `resolveRuntimeForTask` filters via `PROVIDERS_BY_RUNTIME[runtime]` then orders by `is_default DESC, created_at ASC`. `default_model` (nullable) holds the CLI `--model` value applied to every run that uses this config when the agent has no explicit override. Agent runner decrypts at execution time and either injects as env var (api keys) or materialises to a per-run mount inside the container (subscriptions). | instance-scoped |
 
 ## Key design decisions
 
@@ -83,18 +83,18 @@ key set in web UI → forced team creation.
 
 ### Polymorphic JSONB columns
 
-`issue_comments.content`, `approvals.payload`, and `audit_log.details` use JSONB
+`task_comments.content`, `approvals.payload`, and `audit_log.details` use JSONB
 rather than separate tables per type. This keeps the schema flat and avoids
-join-heavy queries for the most common operation (rendering an issue thread).
+join-heavy queries for the most common operation (rendering an task thread).
 
 The `content_type` enum discriminates the shape:
 - `text` → `{ "text": "..." }`
 - `options` → `{ "prompt": "...", "options": [{ "id", "label", "description" }] }`
 - `preview` → `{ "filename": "...", "label": "...", "description": "..." }`
 - `trace` → `{ "summary": "4 tool calls" }` (detail lives in `tool_calls` table)
-- `system` → `{ "text": "...", "kind"?: "status_change" | "issue_link" | <other>, ... }`. Auto-generated timeline entries. The renderer shows `text`; `kind` plus per-kind fields let the server dedup and tooling filter without re-parsing prose.
-  - `status_change`: `{ "kind": "status_change", "from": "<old>", "to": "<new>", "actor_id": "<member_uuid|null>", "text": "<actor> changed status from <old> to <new>" }` — written for every issue status transition.
-  - `issue_link`: `{ "kind": "issue_link", "source_issue_id": "<uuid>", "source_identifier": "<e.g. OP-42>", "actor_id": "<member_uuid|null>", "text": "Linked from <source_identifier> by <actor>" }` — written on the **target** issue the first time a given source issue mentions it; subsequent mentions from the same source are deduped via the `source_issue_id` JSONB key.
+- `system` → `{ "text": "...", "kind"?: "status_change" | "task_link" | <other>, ... }`. Auto-generated timeline entries. The renderer shows `text`; `kind` plus per-kind fields let the server dedup and tooling filter without re-parsing prose.
+  - `status_change`: `{ "kind": "status_change", "from": "<old>", "to": "<new>", "actor_id": "<member_uuid|null>", "text": "<actor> changed status from <old> to <new>" }` — written for every task status transition.
+  - `task_link`: `{ "kind": "task_link", "source_task_id": "<uuid>", "source_identifier": "<e.g. OP-42>", "actor_id": "<member_uuid|null>", "text": "Linked from <source_identifier> by <actor>" }` — written on the **target** task the first time a given source task mentions it; subsequent mentions from the same source are deduped via the `source_task_id` JSONB key.
 - `execution` → `{ "heartbeat_run_id", "agent_id", "agent_title", "status", "exit_code", "duration_ms", "stdout_preview" }` (auto-created on agent run completion)
 - `action` → `{ "kind": "setup_repo", "approval_id": "..." }` — surfaces a board-required action inline on the ticket. Resolves by setting `chosen_option` to `{ status: 'complete', result: {...} }`. Currently only `setup_repo` is defined, used by the designated-repo gate.
 
@@ -105,10 +105,10 @@ checking + debiting. This prevents two concurrent heartbeats from overspending.
 Returns FALSE if the debit would exceed the budget — the caller should then
 pause the agent and emit a system comment.
 
-### Atomic issue numbering
+### Atomic task numbering
 
-`next_project_issue_number()` uses upsert + returning to atomically assign
-per-project issue numbers. No gaps under normal operation.
+`next_project_task_number()` uses upsert + returning to atomically assign
+per-project task numbers. No gaps under normal operation.
 
 ### Master key lifecycle
 
@@ -155,7 +155,7 @@ The app layer performs a two-step validation before inserting:
    (403/404), the request fails with `REPO_ACCESS_FAILED` and includes the
    GitHub username so the board knows which account needs to be added.
 
-Short names are unique within a project and used for @-mentions in issue
+Short names are unique within a project and used for @-mentions in task
 comments (`@frontend`, `@api`).
 
 ### Designated repo immutability
@@ -174,13 +174,13 @@ repo but have no special protection.
 ### Setup-repo approval and action comment
 
 Projects start without a designated repo. When an agent with
-`member_agents.touches_code = true` is activated on an issue whose project
+`member_agents.touches_code = true` is activated on an task whose project
 still has `designated_repo_id IS NULL`, the job manager:
 
 1. Upserts a single pending `oauth_request` approval per `(team_id,
    project_id)` with `payload.reason = 'designated_repo'`. A partial unique
    index `idx_one_pending_repo_setup` dedupes concurrent runs.
-2. Inserts a comment of type `action` on the triggering issue with content
+2. Inserts a comment of type `action` on the triggering task with content
    `{ kind: 'setup_repo', approval_id }`.
 3. Marks the wakeup `Deferred` with `payload.reason = 'awaiting_repo_setup'`.
 
@@ -190,7 +190,7 @@ When the board drives the wizard to completion (via `POST /repos`):
   lock on the project row.
 - Every pending `action` comment attached to this approval gets its
   `chosen_option` set to `{ status: 'complete', result: {...} }`, and a
-  `system` comment is appended per affected issue.
+  `system` comment is appended per affected task.
 - The approval is resolved to `approved`.
 - The host workspace clone and container provisioning run post-commit.
 - Each deferred wakeup is re-enqueued as a fresh `Automation` wakeup with
@@ -211,7 +211,7 @@ token is used for API calls (repo validation, PRs, Actions).
 
 ### Audit log immutability
 
-The `audit_log` table has no `updated_at`. The app layer must never issue
+The `audit_log` table has no `updated_at`. The app layer must never task
 UPDATE or DELETE on this table. A future migration can add a Postgres rule to
 hard-block these operations:
 
@@ -227,7 +227,7 @@ job (or heartbeat check) compares this to the current month boundary and resets
 `budget_used_cents = 0` when a new month starts.
 
 When budget is exceeded mid-execution, the agent's subprocess is terminated
-immediately. A system comment is posted on the active issue. The board can
+immediately. A system comment is posted on the active task. The board can
 adjust the budget and resume the agent at any time.
 
 ### Preview files (not in DB)
@@ -240,7 +240,7 @@ visible on the host via the shared workspace volume at:
 ```
 The web app serves these via `/preview/{team_id}/{project_id}/{agent_id}/{filename}`.
 A cron job expires files older than 72 hours. The only DB reference is the
-`preview` content_type in `issue_comments` which stores the filename.
+`preview` content_type in `task_comments` which stores the filename.
 
 ### API keys for external orchestrators
 
@@ -260,7 +260,7 @@ For example, "Dev Engineer" → `dev-engineer`. Slugs are unique within a team
 (enforced via `members.team_id` + `member_agents.slug` unique index) to
 ensure unambiguous @-mentions.
 
-All inter-agent communication happens via @-mentions in issue comments — no
+All inter-agent communication happens via @-mentions in task comments — no
 side channels, no direct messaging. The server parses `@<slug>` from comment
 text and creates notifications for mentioned agents. Repo short names can also
 be @-referenced (`@frontend`, `@api`).
@@ -329,7 +329,7 @@ When a team is created via `POST /teams`, the server automatically:
    with pre-filled system prompts from built-in role templates. DevOps Engineer starts
    in `idle` status.
 3. Prompts the owner to connect platforms via OAuth (GitHub required, Gmail recommended)
-4. Creates an "Operations" project (`is_internal = true`) with an onboarding issue assigned to the Captain
+4. Creates an "Operations" project (`is_internal = true`) with an onboarding task assigned to the Captain
 5. Generates an SSH key pair for the team and registers it on the connected GitHub account
 6. Auto-generates the team AGENTS.md KB doc with default engineering rules and writes it to disk
 7. Auto-provisions a Docker container for the Operations project in the background
@@ -356,7 +356,7 @@ agents from the selected team type via the `team_template_agent_types` join tabl
 
 Project containers are provisioned when projects are created (not at team creation).
 
-NOT copied: projects, repos, issues, secrets, cost_entries, audit_log, api_keys,
+NOT copied: projects, repos, tasks, secrets, cost_entries, audit_log, api_keys,
 secret_grants, approvals, connected_platforms, SSH keys. Platform connections
 and SSH keys are generated fresh for each team.
 
@@ -400,7 +400,7 @@ description of how the team collaborates (≤20 lines).
 provisioning.
 
 **Runtime updates:** The Captain agent can regenerate descriptions at runtime by
-processing `description-update` issues (created in the Operations project).
+processing `description-update` tasks (created in the Operations project).
 Two MCP tools — `set_agent_summary` and `set_team_summary` — write the new
 text directly to the database. Only agents and board members within the
 team can set agent summaries; only the Captain agent can set the team summary.
@@ -511,55 +511,55 @@ platform's tools via MCP tool calls.
 instance, register their own OAuth apps with each provider, and point their
 Hezo app to it via `--connect-url`.
 
-### Issue identifiers (Linear-style)
+### Task identifiers (Linear-style)
 
-Each project has an `issue_prefix` column (2–4 uppercase alphanumeric chars,
+Each project has an `task_prefix` column (2–4 uppercase alphanumeric chars,
 e.g. `OP` for "Operations", `WA` for "Web App") auto-derived from the project
 name at creation time. Single-word names use the first two characters;
 multi-word names use the initials, capped at four characters. Callers may
-override via the project-creation `issue_prefix` field. On collision within a
+override via the project-creation `task_prefix` field. On collision within a
 team, a numeric suffix is appended (`OP`, `OP2`, `OP3`). Prefixes are
 unique per team, not globally.
 
-Issues have an `identifier` column computed at creation as `{project_prefix}-{number}`
-(e.g. `OP-42`), with `number` being the per-project issue counter. Identifiers
+Tasks have an `identifier` column computed at creation as `{project_prefix}-{number}`
+(e.g. `OP-42`), with `number` being the per-project task counter. Identifiers
 are unique per team. The identifier is the primary human-facing reference
-for issues — used in UI, API responses, @-mentions (`@OP-42`), and git branch
+for tasks — used in UI, API responses, @-mentions (`@OP-42`), and git branch
 names. Identifiers are frozen at creation time: renaming a project does not
-retroactively change the prefix on existing issues.
+retroactively change the prefix on existing tasks.
 
-### Issue assignees
+### Task assignees
 
-Issues have a required `assignee_id` FK pointing to `members.id`. Every issue
+Tasks have a required `assignee_id` FK pointing to `members.id`. Every task
 must have an assignee — the API enforces this on creation and prevents
 unsetting it. Both agents and human users (board members and team members)
 can be assigned tickets.
 
-When a human is assigned an issue, they can work on it outside Hezo, pass it
+When a human is assigned an task, they can work on it outside Hezo, pass it
 to another member (human or agent), or @-mention an agent in a comment to
 request specific help. When an agent is assigned, the standard agent execution
 flow applies.
 
 ### Execution locks (observational)
 
-The `execution_locks` table tracks which agents are currently running against an issue:
-- `issue_id` FK
+The `execution_locks` table tracks which agents are currently running against an task:
+- `task_id` FK
 - `member_id` FK → members.id
 - `lock_type` TEXT — retained from an earlier read/write design; every active lock is `'read'` under the current model
 - `locked_at` timestamp
 - `released_at` timestamp (soft delete)
 
-Locks are observational, not exclusive — multiple agents can run against the same issue concurrently, with one active lock row per agent. The only acquisition guard is per-agent-per-issue: a second wakeup for an agent that already holds an active lock on that issue is coalesced (deferred). This lets a comment that @-mentions several agents trigger concurrent runs while still driving the "currently running" display on the issue page.
+Locks are observational, not exclusive — multiple agents can run against the same task concurrently, with one active lock row per agent. The only acquisition guard is per-agent-per-task: a second wakeup for an agent that already holds an active lock on that task is coalesced (deferred). This lets a comment that @-mentions several agents trigger concurrent runs while still driving the "currently running" display on the task page.
 
-### Issue dependencies
+### Task dependencies
 
-The `issue_dependencies` join table enables many-to-many blocking:
-- `issue_id` FK — the issue that is blocked
-- `blocked_by_issue_id` FK — the issue that blocks it
-- `UNIQUE(issue_id, blocked_by_issue_id)` — no duplicate dependencies
-- `CHECK(issue_id != blocked_by_issue_id)` — no self-blocking
+The `task_dependencies` join table enables many-to-many blocking:
+- `task_id` FK — the task that is blocked
+- `blocked_by_task_id` FK — the task that blocks it
+- `UNIQUE(task_id, blocked_by_task_id)` — no duplicate dependencies
+- `CHECK(task_id != blocked_by_task_id)` — no self-blocking
 
-An issue's `status` can be set to `blocked` when it has unresolved dependencies.
+An task's `status` can be set to `blocked` when it has unresolved dependencies.
 
 ### Wakeup queue
 
@@ -579,13 +579,13 @@ events.
 | --- | --- |
 | `heartbeat` | Scheduled heartbeat tick (fallback for idle agents). Payload: `{ reason: 'scheduled_heartbeat' }`. |
 | `timer` | Recovery timer (orphan detector, container restart, retry of a failed run). Payload typically carries `{ reason, ... }` describing which recovery path fired it. |
-| `assignment` | Issue assigned to the agent (incl. `create_issue` tool). |
+| `assignment` | Task assigned to the agent (incl. `create_task` tool). |
 | `on_demand` | Admin/API explicit wake. Also created synthetically when `runAgent` is invoked without an explicit wakeup (e.g., direct test harness calls), so every run is anchored to a wakeup row. |
 | `mention` | A comment contains `@<agent-slug>` referencing this agent. |
 | `automation` | Server-side automation rule. |
 | `option_chosen` | Board user resolved an options comment. |
-| `comment` | Opt-in wake of the issue assignee from a plain Board comment (`wake_assignee=true`). |
-| `reply` | An agent whose run was mention-triggered posts a comment in the triggering ticket. The original mentioner (when an agent) is woken so it can pick up the response. Gated by `teams.settings.wake_mentioner_on_reply` (default `true`). Payload: `{ source, issue_id, comment_id, triggering_comment_id, responder_member_id }`. Idempotency key: `reply:<triggering_comment_id>:<reply_comment_id>`. |
+| `comment` | Opt-in wake of the task assignee from a plain Board comment (`wake_assignee=true`). |
+| `reply` | An agent whose run was mention-triggered posts a comment in the triggering ticket. The original mentioner (when an agent) is woken so it can pick up the response. Gated by `teams.settings.wake_mentioner_on_reply` (default `true`). Payload: `{ source, task_id, comment_id, triggering_comment_id, responder_member_id }`. Idempotency key: `reply:<triggering_comment_id>:<reply_comment_id>`. |
 
 ### Team settings (`teams.settings` JSONB)
 
@@ -646,13 +646,13 @@ Each row captures:
 - **Invocation**: `invocation_command` is the exact CLI that was passed to
   `docker exec` (with the agent JWT redacted to `Bearer ***`). `working_dir` is
   the container path the exec was rooted at (normally the designated repo's
-  per-issue worktree, e.g. `/worktrees/<issue-identifier>/<repo-short-name>`).
+  per-task worktree, e.g. `/worktrees/<task-identifier>/<repo-short-name>`).
 - **Logs**: `log_text` holds interleaved stdout and stderr captured from the
   streaming Docker exec, capped at 1 MB (with a `...[truncated — log capped at
   N bytes]` marker when exceeded). Stderr lines are prefixed `[stderr] ` so
   consumers can tint them without needing a second column. The same stream is
   broadcast live over the `project-runs:<projectId>` WebSocket room as each
-  chunk arrives, so a run's detail page and the associated issue page can
+  chunk arrives, so a run's detail page and the associated task page can
   render output in real time.
 - **Usage**: `input_tokens`, `output_tokens`, `cost_cents`.
 - **Retry tracking**: `retry_of_run_id`, `process_loss_retry_count`,
@@ -670,12 +670,12 @@ is bind-mounted into the container:
   The repo-add route (`POST /repos`), container provision, and the agent
   runner all call this helper, so the set of on-disk clones stays in sync
   with the `repos` rows for the project.
-- `<dataDir>/.../worktrees/` ↔ `/worktrees/` in the container. For each issue
+- `<dataDir>/.../worktrees/` ↔ `/worktrees/` in the container. For each task
   an agent works on, the runner creates `git worktree` directories under
-  `/worktrees/<issue-identifier>/<repo-short-name>/` on the branch
-  `hezo/<issue-identifier>`. Worktrees persist across runs on the same issue
+  `/worktrees/<task-identifier>/<repo-short-name>/` on the branch
+  `hezo/<task-identifier>`. Worktrees persist across runs on the same task
   so iterative work survives between invocations, and are torn down when the
-  issue transitions to a terminal status (`done`, `cancelled`, etc.) or its
+  task transitions to a terminal status (`done`, `cancelled`, etc.) or its
   repo is detached.
 - The agent's working directory resolves to the designated repo's worktree
   when repos are present, otherwise falls back to `/workspace` with a warning
@@ -719,7 +719,7 @@ member to approve or deny a request locks the decision.
 ### File attachments
 
 `assets` stores uploaded file metadata (provider, storage key, content type,
-SHA-256 hash). `issue_attachments` links assets to issues. Storage is local
+SHA-256 hash). `task_attachments` links assets to tasks. Storage is local
 filesystem for MVP (`~/.hezo/data/assets/`), with S3 support planned for V2.
 
 ### Plugins
@@ -750,7 +750,7 @@ avatars using `chat.postMessage` overrides.
 Telegram is configured per-user via `notification_preferences.telegram_chat_id`.
 A single Telegram bot serves the entire Hezo instance. Both Telegram and Slack
 function as full platform interfaces (not just notifications) — users can create
-issues, approve requests, and interact with agents through either channel.
+tasks, approve requests, and interact with agents through either channel.
 
 ### Hezo Connect OAuth link validity
 

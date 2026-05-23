@@ -51,20 +51,20 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		const { agent, issue, approval, bootstrap } = body.data;
+		const { agent, task, approval, bootstrap } = body.data;
 
 		expect(bootstrap).toBe(false);
 		expect(agent).toBeNull();
-		expect(issue).not.toBeNull();
-		expect(issue.title).toBe('Onboard new agent: Data Engineer');
-		expect(issue.labels).toContain('hire');
+		expect(task).not.toBeNull();
+		expect(task.title).toBe('Onboard new agent: Data Engineer');
+		expect(task.labels).toContain('hire');
 		expect(approval).not.toBeNull();
 		expect(approval.type).toBe('hire');
 		expect(approval.status).toBe('pending');
 		expect(approval.payload.title).toBe('Data Engineer');
 		expect(approval.payload.slug).toBe('data-engineer');
 		expect(approval.payload.system_prompt).toBe('Draft prompt');
-		expect(approval.payload.issue_id).toBe(issue.id);
+		expect(approval.payload.task_id).toBe(task.id);
 
 		// No member_agent should exist yet
 		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
@@ -86,7 +86,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 				heartbeat_interval_min: 45,
 			}),
 		});
-		const { approval, issue } = (await onboardRes.json()).data;
+		const { approval, task } = (await onboardRes.json()).data;
 
 		const resolveRes = await app.request(`/api/approvals/${approval.id}/resolve`, {
 			method: 'POST',
@@ -113,11 +113,11 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		});
 		expect((await promptRes.json()).data.content).toBe('Draft prompt');
 
-		const issueRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
+		const taskRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
 			headers: authHeader(token),
 		});
-		const updatedIssue = (await issueRes.json()).data;
-		expect(updatedIssue.status).toBe('done');
+		const updatedTask = (await taskRes.json()).data;
+		expect(updatedTask.status).toBe('done');
 	});
 
 	it('denying the hire approval leaves no agent behind', async () => {
@@ -191,10 +191,10 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 			body: JSON.stringify({ title: 'Solo Agent', role_description: 'Works independently' }),
 		});
 		expect(res.status).toBe(201);
-		const { agent, issue, approval, bootstrap } = (await res.json()).data;
+		const { agent, task, approval, bootstrap } = (await res.json()).data;
 		expect(bootstrap).toBe(true);
 		expect(agent.admin_status).toBe('enabled');
-		expect(issue).toBeNull();
+		expect(task).toBeNull();
 		expect(approval).toBeNull();
 	});
 

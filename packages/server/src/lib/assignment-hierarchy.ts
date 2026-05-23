@@ -7,7 +7,7 @@ export function assignmentHierarchyError(assigneeSlug: string): string {
 }
 
 /**
- * Enforce that an agent caller may only assign issues to its direct subordinates.
+ * Enforce that an agent caller may only assign tasks to its direct subordinates.
  * Self-assignment is always allowed. Non-agent assignees (human members) are
  * unaffected — the rule is specifically about agent-to-agent delegation.
  *

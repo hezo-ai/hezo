@@ -73,9 +73,9 @@ export async function clearAiProviders(page: Page, token: string) {
 }
 
 /**
- * Create a project and mark its auto-generated planning issue as done.
+ * Create a project and mark its auto-generated planning task as done.
  * Tests that kick off agent runs on the Captain would otherwise race the
- * Captain's planning wakeup and see runs targeted at the planning issue.
+ * Captain's planning wakeup and see runs targeted at the planning task.
  */
 export async function createProjectAndClearPlanning(
 	page: Page,
@@ -90,10 +90,10 @@ export async function createProjectAndClearPlanning(
 	});
 	const project = (
 		(await res.json()) as {
-			data: { id: string; slug: string; planning_issue_id: string };
+			data: { id: string; slug: string; planning_task_id: string };
 		}
 	).data;
-	await page.request.patch(`/api/teams/${teamId}/issues/${project.planning_issue_id}`, {
+	await page.request.patch(`/api/teams/${teamId}/tasks/${project.planning_task_id}`, {
 		headers,
 		data: { status: 'done' },
 	});
@@ -122,7 +122,7 @@ export async function waitForProjectContainer(
 }
 
 /**
- * Create a project, close its planning issue, and wait for the dev container — ready for agent runs.
+ * Create a project, close its planning task, and wait for the dev container — ready for agent runs.
  */
 export async function createProjectReadyForAgents(
 	page: Page,
@@ -156,9 +156,9 @@ export async function closeOnboardingIntakeIfOpen(
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 	const res = await page.request.get(`/api/teams/${teamSlug}/onboarding-intake`, { headers });
 	if (!res.ok()) return;
-	const { issue_id } = ((await res.json()) as { data: { issue_id: string } }).data;
-	if (!issue_id) return;
-	await page.request.patch(`/api/teams/${teamSlug}/issues/${issue_id}`, {
+	const { task_id } = ((await res.json()) as { data: { task_id: string } }).data;
+	if (!task_id) return;
+	await page.request.patch(`/api/teams/${teamSlug}/tasks/${task_id}`, {
 		headers,
 		data: { status: 'done' },
 	});

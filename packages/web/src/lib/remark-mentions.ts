@@ -23,7 +23,7 @@ export interface AgentMentionData {
 	title: string;
 }
 
-export interface IssueMentionData {
+export interface TaskMentionData {
 	title: string;
 	projectSlug: string;
 }
@@ -45,16 +45,16 @@ interface Options {
 	teamId: string;
 	projectSlug?: string;
 	agents: Map<string, AgentMentionData>;
-	issues: Map<string, IssueMentionData>;
+	tasks: Map<string, TaskMentionData>;
 	kbDocs: Map<string, KbDocMentionData>;
 	projectDocs: ProjectDocsMap;
 }
 
 const AGENT_RE_SRC = String.raw`(?<![\w@])@([a-z][\w-]*)(?![\w/])`;
-const ISSUE_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)(?![\w-])`;
+const TASK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)(?![\w-])`;
 const FILENAME_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w/.-])`;
 
-const MENTION_RE = new RegExp(`${AGENT_RE_SRC}|${ISSUE_RE_SRC}|${FILENAME_RE_SRC}`, 'g');
+const MENTION_RE = new RegExp(`${AGENT_RE_SRC}|${TASK_RE_SRC}|${FILENAME_RE_SRC}`, 'g');
 
 const SKIP_TYPES = new Set(['code', 'inlineCode', 'link']);
 
@@ -62,7 +62,7 @@ export function remarkMentions(opts: Options) {
 	return (tree: ParentNode) => {
 		if (
 			opts.agents.size === 0 &&
-			opts.issues.size === 0 &&
+			opts.tasks.size === 0 &&
 			opts.kbDocs.size === 0 &&
 			opts.projectDocs.size === 0
 		)
@@ -121,10 +121,10 @@ function splitTextNode(node: TextNode, opts: Options): MdNode[] {
 }
 
 function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
-	const { teamId, projectSlug, agents, issues, kbDocs, projectDocs } = opts;
+	const { teamId, projectSlug, agents, tasks, kbDocs, projectDocs } = opts;
 	const display = match[0];
 	const agentToken = match[1];
-	const issueToken = match[2];
+	const taskToken = match[2];
 	const filenameToken = match[3];
 
 	if (agentToken) {
@@ -144,18 +144,18 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		};
 	}
 
-	if (issueToken) {
-		const key = issueToken.toLowerCase();
-		const data = issues.get(key);
+	if (taskToken) {
+		const key = taskToken.toLowerCase();
+		const data = tasks.get(key);
 		if (!data) return null;
 		return {
 			type: 'link',
-			url: `/teams/${teamId}/projects/${data.projectSlug}/issues/${key}`,
+			url: `/teams/${teamId}/projects/${data.projectSlug}/tasks/${key}`,
 			children: [{ type: 'text', value: display }],
 			data: {
 				hProperties: {
-					'data-mention-issue-identifier': key,
-					'data-mention-issue-title': data.title,
+					'data-mention-task-identifier': key,
+					'data-mention-task-title': data.title,
 					'data-mention-project-slug': data.projectSlug,
 				},
 			},
@@ -206,9 +206,9 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 	return null;
 }
 
-export function extractIssueCandidates(value: string): string[] {
+export function extractTaskCandidates(value: string): string[] {
 	const stripped = stripCode(value);
-	const re = new RegExp(ISSUE_RE_SRC, 'g');
+	const re = new RegExp(TASK_RE_SRC, 'g');
 	const out = new Set<string>();
 	let m = re.exec(stripped);
 	while (m !== null) {

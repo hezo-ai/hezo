@@ -88,7 +88,7 @@ Agents reference secrets by **placeholder**, never by literal value. The pattern
 When you wire a new agent integration that needs a credential:
 
 - Don't put the real value in the agent's container env. Put the placeholder there. The real value lives in the `secrets` table with `allowed_hosts` constraining which upstream hosts the substitution may fire for.
-- If the agent needs to obtain a raw secret at runtime (API key, webhook secret, …), it calls `request_credential` (MCP tool) and the human pastes the value via the issue thread.
+- If the agent needs to obtain a raw secret at runtime (API key, webhook secret, …), it calls `request_credential` (MCP tool) and the human pastes the value via the task thread.
 - For GitHub repo access, the human connects a GitHub OAuth account once via device flow on the team Connections page; subsequent repos pick that connection. The OAuth token is used for REST API calls only (listing orgs/repos, creating repos). Repo clone/fetch/push runs over **SSH** (`git@github.com:owner/repo.git`) authenticated by the team Ed25519 key — the same key used for commit signing. On first OAuth connect the public key is auto-registered on the connecting user's GitHub account as both a *signing* key (commits land as Verified) and an *authentication* key (so SSH git ops work). Both host-side and in-container git ops go through the existing `SshAgentServer` — host via its Unix socket directly, container via the per-run socat bridge. Full design: `.dev/oauth.md`. ssh-agent details: `.dev/ssh-signing.md`.
 - For SaaS MCPs requiring OAuth (DatoCMS, Linear, …), the operator starts the auth-code flow from the MCP-connection form. The resulting `oauth_connection_id` is linked to the `mcp_connections` row; the injector emits a placeholder Authorization header and the egress proxy substitutes at request time.
 
@@ -99,7 +99,7 @@ The egress audit log records substitution events by **secret name** only, never 
 Every route enforces authorization — never trust URL params alone.
 
 - Routes with `:teamId` verify the authenticated user has access per request (board users can be in multiple teams; agent / API-key auth carries `teamId` and must match the route param).
-- Nested resources (`:issueId`, `:secretId`, `:commentId`, …) verify the resource belongs to the parent `:teamId` via WHERE/JOIN before any read or write.
+- Nested resources (`:taskId`, `:secretId`, `:commentId`, …) verify the resource belongs to the parent `:teamId` via WHERE/JOIN before any read or write.
 - Global endpoints (no `:teamId` in path) still verify the authenticated user has access to the resource's team.
 - WebSocket subscriptions verify team membership matches the room.
 - MCP tool handlers enforce the same authorization as their REST equivalents — pass caller identity in and validate team access.

@@ -20,7 +20,7 @@ export interface Team {
 	mcp_servers: unknown[];
 	settings: TeamSettings;
 	agent_count: number;
-	open_issue_count: number;
+	open_task_count: number;
 	created_at: string;
 }
 

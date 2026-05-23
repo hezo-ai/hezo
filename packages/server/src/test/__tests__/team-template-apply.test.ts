@@ -128,7 +128,7 @@ describe('applyTemplateToTeam', () => {
 			{ name: 'Apply Coherence Co', templateId: blankId },
 		);
 		const before = await db.query<{ count: number }>(
-			`SELECT count(*)::int AS count FROM issues
+			`SELECT count(*)::int AS count FROM tasks
 			 WHERE team_id = $1 AND labels @> '["team-coherence-review"]'::jsonb`,
 			[team.id],
 		);
@@ -137,7 +137,7 @@ describe('applyTemplateToTeam', () => {
 		await applyTemplateToTeam(db, team.id, startupId, { dataDir });
 
 		const after = await db.query<{ count: number }>(
-			`SELECT count(*)::int AS count FROM issues
+			`SELECT count(*)::int AS count FROM tasks
 			 WHERE team_id = $1 AND labels @> '["team-coherence-review"]'::jsonb`,
 			[team.id],
 		);

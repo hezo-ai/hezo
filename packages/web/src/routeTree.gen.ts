@@ -16,17 +16,17 @@ import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as TeamsTeamIdRouteRouteImport } from './routes/teams/$teamId/route'
 import { Route as TeamsTeamIdIndexRouteImport } from './routes/teams/$teamId/index'
+import { Route as TeamsTeamIdTasksIndexRouteImport } from './routes/teams/$teamId/tasks/index'
 import { Route as TeamsTeamIdProjectsIndexRouteImport } from './routes/teams/$teamId/projects/index'
 import { Route as TeamsTeamIdKbIndexRouteImport } from './routes/teams/$teamId/kb/index'
-import { Route as TeamsTeamIdIssuesIndexRouteImport } from './routes/teams/$teamId/issues/index'
 import { Route as TeamsTeamIdInboxIndexRouteImport } from './routes/teams/$teamId/inbox/index'
 import { Route as TeamsTeamIdGoalsIndexRouteImport } from './routes/teams/$teamId/goals/index'
 import { Route as TeamsTeamIdAgentsIndexRouteImport } from './routes/teams/$teamId/agents/index'
+import { Route as TeamsTeamIdTasksTaskIdRouteImport } from './routes/teams/$teamId/tasks/$taskId'
 import { Route as TeamsTeamIdSettingsGeneralRouteImport } from './routes/teams/$teamId/settings/general'
 import { Route as TeamsTeamIdSettingsCredentialsRouteImport } from './routes/teams/$teamId/settings/credentials'
 import { Route as TeamsTeamIdSettingsConnectionsRouteImport } from './routes/teams/$teamId/settings/connections'
 import { Route as TeamsTeamIdSettingsAuditLogRouteImport } from './routes/teams/$teamId/settings/audit-log'
-import { Route as TeamsTeamIdIssuesIssueIdRouteImport } from './routes/teams/$teamId/issues/$issueId'
 import { Route as TeamsTeamIdAgentsHireRouteImport } from './routes/teams/$teamId/agents/hire'
 import { Route as TeamsTeamIdProjectsProjectIdRouteRouteImport } from './routes/teams/$teamId/projects/$projectId/route'
 import { Route as TeamsTeamIdAgentsAgentIdRouteRouteImport } from './routes/teams/$teamId/agents/$agentId/route'
@@ -35,10 +35,10 @@ import { Route as TeamsTeamIdAgentsAgentIdIndexRouteImport } from './routes/team
 import { Route as TeamsTeamIdProjectsProjectIdDocumentsRouteImport } from './routes/teams/$teamId/projects/$projectId/documents'
 import { Route as TeamsTeamIdProjectsProjectIdContainerRouteImport } from './routes/teams/$teamId/projects/$projectId/container'
 import { Route as TeamsTeamIdAgentsAgentIdSettingsRouteImport } from './routes/teams/$teamId/agents/$agentId/settings'
+import { Route as TeamsTeamIdProjectsProjectIdTasksIndexRouteImport } from './routes/teams/$teamId/projects/$projectId/tasks/index'
 import { Route as TeamsTeamIdProjectsProjectIdSettingsIndexRouteImport } from './routes/teams/$teamId/projects/$projectId/settings/index'
-import { Route as TeamsTeamIdProjectsProjectIdIssuesIndexRouteImport } from './routes/teams/$teamId/projects/$projectId/issues/index'
 import { Route as TeamsTeamIdAgentsAgentIdExecutionsIndexRouteImport } from './routes/teams/$teamId/agents/$agentId/executions/index'
-import { Route as TeamsTeamIdProjectsProjectIdIssuesIssueIdRouteImport } from './routes/teams/$teamId/projects/$projectId/issues/$issueId'
+import { Route as TeamsTeamIdProjectsProjectIdTasksTaskIdRouteImport } from './routes/teams/$teamId/projects/$projectId/tasks/$taskId'
 import { Route as TeamsTeamIdAgentsAgentIdExecutionsRunIdRouteImport } from './routes/teams/$teamId/agents/$agentId/executions/$runId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -76,6 +76,11 @@ const TeamsTeamIdIndexRoute = TeamsTeamIdIndexRouteImport.update({
   path: '/',
   getParentRoute: () => TeamsTeamIdRouteRoute,
 } as any)
+const TeamsTeamIdTasksIndexRoute = TeamsTeamIdTasksIndexRouteImport.update({
+  id: '/tasks/',
+  path: '/tasks/',
+  getParentRoute: () => TeamsTeamIdRouteRoute,
+} as any)
 const TeamsTeamIdProjectsIndexRoute =
   TeamsTeamIdProjectsIndexRouteImport.update({
     id: '/projects/',
@@ -85,11 +90,6 @@ const TeamsTeamIdProjectsIndexRoute =
 const TeamsTeamIdKbIndexRoute = TeamsTeamIdKbIndexRouteImport.update({
   id: '/kb/',
   path: '/kb/',
-  getParentRoute: () => TeamsTeamIdRouteRoute,
-} as any)
-const TeamsTeamIdIssuesIndexRoute = TeamsTeamIdIssuesIndexRouteImport.update({
-  id: '/issues/',
-  path: '/issues/',
   getParentRoute: () => TeamsTeamIdRouteRoute,
 } as any)
 const TeamsTeamIdInboxIndexRoute = TeamsTeamIdInboxIndexRouteImport.update({
@@ -105,6 +105,11 @@ const TeamsTeamIdGoalsIndexRoute = TeamsTeamIdGoalsIndexRouteImport.update({
 const TeamsTeamIdAgentsIndexRoute = TeamsTeamIdAgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
+  getParentRoute: () => TeamsTeamIdRouteRoute,
+} as any)
+const TeamsTeamIdTasksTaskIdRoute = TeamsTeamIdTasksTaskIdRouteImport.update({
+  id: '/tasks/$taskId',
+  path: '/tasks/$taskId',
   getParentRoute: () => TeamsTeamIdRouteRoute,
 } as any)
 const TeamsTeamIdSettingsGeneralRoute =
@@ -129,12 +134,6 @@ const TeamsTeamIdSettingsAuditLogRoute =
   TeamsTeamIdSettingsAuditLogRouteImport.update({
     id: '/settings/audit-log',
     path: '/settings/audit-log',
-    getParentRoute: () => TeamsTeamIdRouteRoute,
-  } as any)
-const TeamsTeamIdIssuesIssueIdRoute =
-  TeamsTeamIdIssuesIssueIdRouteImport.update({
-    id: '/issues/$issueId',
-    path: '/issues/$issueId',
     getParentRoute: () => TeamsTeamIdRouteRoute,
   } as any)
 const TeamsTeamIdAgentsHireRoute = TeamsTeamIdAgentsHireRouteImport.update({
@@ -184,16 +183,16 @@ const TeamsTeamIdAgentsAgentIdSettingsRoute =
     path: '/settings',
     getParentRoute: () => TeamsTeamIdAgentsAgentIdRouteRoute,
   } as any)
+const TeamsTeamIdProjectsProjectIdTasksIndexRoute =
+  TeamsTeamIdProjectsProjectIdTasksIndexRouteImport.update({
+    id: '/tasks/',
+    path: '/tasks/',
+    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
+  } as any)
 const TeamsTeamIdProjectsProjectIdSettingsIndexRoute =
   TeamsTeamIdProjectsProjectIdSettingsIndexRouteImport.update({
     id: '/settings/',
     path: '/settings/',
-    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
-  } as any)
-const TeamsTeamIdProjectsProjectIdIssuesIndexRoute =
-  TeamsTeamIdProjectsProjectIdIssuesIndexRouteImport.update({
-    id: '/issues/',
-    path: '/issues/',
     getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
   } as any)
 const TeamsTeamIdAgentsAgentIdExecutionsIndexRoute =
@@ -202,10 +201,10 @@ const TeamsTeamIdAgentsAgentIdExecutionsIndexRoute =
     path: '/executions/',
     getParentRoute: () => TeamsTeamIdAgentsAgentIdRouteRoute,
   } as any)
-const TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute =
-  TeamsTeamIdProjectsProjectIdIssuesIssueIdRouteImport.update({
-    id: '/issues/$issueId',
-    path: '/issues/$issueId',
+const TeamsTeamIdProjectsProjectIdTasksTaskIdRoute =
+  TeamsTeamIdProjectsProjectIdTasksTaskIdRouteImport.update({
+    id: '/tasks/$taskId',
+    path: '/tasks/$taskId',
     getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
   } as any)
 const TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute =
@@ -226,27 +225,27 @@ export interface FileRoutesByFullPath {
   '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
   '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
   '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
-  '/teams/$teamId/issues/$issueId': typeof TeamsTeamIdIssuesIssueIdRoute
   '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
   '/teams/$teamId/settings/connections': typeof TeamsTeamIdSettingsConnectionsRoute
   '/teams/$teamId/settings/credentials': typeof TeamsTeamIdSettingsCredentialsRoute
   '/teams/$teamId/settings/general': typeof TeamsTeamIdSettingsGeneralRoute
+  '/teams/$teamId/tasks/$taskId': typeof TeamsTeamIdTasksTaskIdRoute
   '/teams/$teamId/agents/': typeof TeamsTeamIdAgentsIndexRoute
   '/teams/$teamId/goals/': typeof TeamsTeamIdGoalsIndexRoute
   '/teams/$teamId/inbox/': typeof TeamsTeamIdInboxIndexRoute
-  '/teams/$teamId/issues/': typeof TeamsTeamIdIssuesIndexRoute
   '/teams/$teamId/kb/': typeof TeamsTeamIdKbIndexRoute
   '/teams/$teamId/projects/': typeof TeamsTeamIdProjectsIndexRoute
+  '/teams/$teamId/tasks/': typeof TeamsTeamIdTasksIndexRoute
   '/teams/$teamId/agents/$agentId/settings': typeof TeamsTeamIdAgentsAgentIdSettingsRoute
   '/teams/$teamId/projects/$projectId/container': typeof TeamsTeamIdProjectsProjectIdContainerRoute
   '/teams/$teamId/projects/$projectId/documents': typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
   '/teams/$teamId/agents/$agentId/': typeof TeamsTeamIdAgentsAgentIdIndexRoute
   '/teams/$teamId/projects/$projectId/': typeof TeamsTeamIdProjectsProjectIdIndexRoute
   '/teams/$teamId/agents/$agentId/executions/$runId': typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute
-  '/teams/$teamId/projects/$projectId/issues/$issueId': typeof TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute
+  '/teams/$teamId/projects/$projectId/tasks/$taskId': typeof TeamsTeamIdProjectsProjectIdTasksTaskIdRoute
   '/teams/$teamId/agents/$agentId/executions/': typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRoute
-  '/teams/$teamId/projects/$projectId/issues/': typeof TeamsTeamIdProjectsProjectIdIssuesIndexRoute
   '/teams/$teamId/projects/$projectId/settings/': typeof TeamsTeamIdProjectsProjectIdSettingsIndexRoute
+  '/teams/$teamId/projects/$projectId/tasks/': typeof TeamsTeamIdProjectsProjectIdTasksIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -256,27 +255,27 @@ export interface FileRoutesByTo {
   '/teams': typeof TeamsIndexRoute
   '/teams/$teamId': typeof TeamsTeamIdIndexRoute
   '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
-  '/teams/$teamId/issues/$issueId': typeof TeamsTeamIdIssuesIssueIdRoute
   '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
   '/teams/$teamId/settings/connections': typeof TeamsTeamIdSettingsConnectionsRoute
   '/teams/$teamId/settings/credentials': typeof TeamsTeamIdSettingsCredentialsRoute
   '/teams/$teamId/settings/general': typeof TeamsTeamIdSettingsGeneralRoute
+  '/teams/$teamId/tasks/$taskId': typeof TeamsTeamIdTasksTaskIdRoute
   '/teams/$teamId/agents': typeof TeamsTeamIdAgentsIndexRoute
   '/teams/$teamId/goals': typeof TeamsTeamIdGoalsIndexRoute
   '/teams/$teamId/inbox': typeof TeamsTeamIdInboxIndexRoute
-  '/teams/$teamId/issues': typeof TeamsTeamIdIssuesIndexRoute
   '/teams/$teamId/kb': typeof TeamsTeamIdKbIndexRoute
   '/teams/$teamId/projects': typeof TeamsTeamIdProjectsIndexRoute
+  '/teams/$teamId/tasks': typeof TeamsTeamIdTasksIndexRoute
   '/teams/$teamId/agents/$agentId/settings': typeof TeamsTeamIdAgentsAgentIdSettingsRoute
   '/teams/$teamId/projects/$projectId/container': typeof TeamsTeamIdProjectsProjectIdContainerRoute
   '/teams/$teamId/projects/$projectId/documents': typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
   '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdIndexRoute
   '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdIndexRoute
   '/teams/$teamId/agents/$agentId/executions/$runId': typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute
-  '/teams/$teamId/projects/$projectId/issues/$issueId': typeof TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute
+  '/teams/$teamId/projects/$projectId/tasks/$taskId': typeof TeamsTeamIdProjectsProjectIdTasksTaskIdRoute
   '/teams/$teamId/agents/$agentId/executions': typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRoute
-  '/teams/$teamId/projects/$projectId/issues': typeof TeamsTeamIdProjectsProjectIdIssuesIndexRoute
   '/teams/$teamId/projects/$projectId/settings': typeof TeamsTeamIdProjectsProjectIdSettingsIndexRoute
+  '/teams/$teamId/projects/$projectId/tasks': typeof TeamsTeamIdProjectsProjectIdTasksIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -290,27 +289,27 @@ export interface FileRoutesById {
   '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
   '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
   '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
-  '/teams/$teamId/issues/$issueId': typeof TeamsTeamIdIssuesIssueIdRoute
   '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
   '/teams/$teamId/settings/connections': typeof TeamsTeamIdSettingsConnectionsRoute
   '/teams/$teamId/settings/credentials': typeof TeamsTeamIdSettingsCredentialsRoute
   '/teams/$teamId/settings/general': typeof TeamsTeamIdSettingsGeneralRoute
+  '/teams/$teamId/tasks/$taskId': typeof TeamsTeamIdTasksTaskIdRoute
   '/teams/$teamId/agents/': typeof TeamsTeamIdAgentsIndexRoute
   '/teams/$teamId/goals/': typeof TeamsTeamIdGoalsIndexRoute
   '/teams/$teamId/inbox/': typeof TeamsTeamIdInboxIndexRoute
-  '/teams/$teamId/issues/': typeof TeamsTeamIdIssuesIndexRoute
   '/teams/$teamId/kb/': typeof TeamsTeamIdKbIndexRoute
   '/teams/$teamId/projects/': typeof TeamsTeamIdProjectsIndexRoute
+  '/teams/$teamId/tasks/': typeof TeamsTeamIdTasksIndexRoute
   '/teams/$teamId/agents/$agentId/settings': typeof TeamsTeamIdAgentsAgentIdSettingsRoute
   '/teams/$teamId/projects/$projectId/container': typeof TeamsTeamIdProjectsProjectIdContainerRoute
   '/teams/$teamId/projects/$projectId/documents': typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
   '/teams/$teamId/agents/$agentId/': typeof TeamsTeamIdAgentsAgentIdIndexRoute
   '/teams/$teamId/projects/$projectId/': typeof TeamsTeamIdProjectsProjectIdIndexRoute
   '/teams/$teamId/agents/$agentId/executions/$runId': typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute
-  '/teams/$teamId/projects/$projectId/issues/$issueId': typeof TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute
+  '/teams/$teamId/projects/$projectId/tasks/$taskId': typeof TeamsTeamIdProjectsProjectIdTasksTaskIdRoute
   '/teams/$teamId/agents/$agentId/executions/': typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRoute
-  '/teams/$teamId/projects/$projectId/issues/': typeof TeamsTeamIdProjectsProjectIdIssuesIndexRoute
   '/teams/$teamId/projects/$projectId/settings/': typeof TeamsTeamIdProjectsProjectIdSettingsIndexRoute
+  '/teams/$teamId/projects/$projectId/tasks/': typeof TeamsTeamIdProjectsProjectIdTasksIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -325,27 +324,27 @@ export interface FileRouteTypes {
     | '/teams/$teamId/agents/$agentId'
     | '/teams/$teamId/projects/$projectId'
     | '/teams/$teamId/agents/hire'
-    | '/teams/$teamId/issues/$issueId'
     | '/teams/$teamId/settings/audit-log'
     | '/teams/$teamId/settings/connections'
     | '/teams/$teamId/settings/credentials'
     | '/teams/$teamId/settings/general'
+    | '/teams/$teamId/tasks/$taskId'
     | '/teams/$teamId/agents/'
     | '/teams/$teamId/goals/'
     | '/teams/$teamId/inbox/'
-    | '/teams/$teamId/issues/'
     | '/teams/$teamId/kb/'
     | '/teams/$teamId/projects/'
+    | '/teams/$teamId/tasks/'
     | '/teams/$teamId/agents/$agentId/settings'
     | '/teams/$teamId/projects/$projectId/container'
     | '/teams/$teamId/projects/$projectId/documents'
     | '/teams/$teamId/agents/$agentId/'
     | '/teams/$teamId/projects/$projectId/'
     | '/teams/$teamId/agents/$agentId/executions/$runId'
-    | '/teams/$teamId/projects/$projectId/issues/$issueId'
+    | '/teams/$teamId/projects/$projectId/tasks/$taskId'
     | '/teams/$teamId/agents/$agentId/executions/'
-    | '/teams/$teamId/projects/$projectId/issues/'
     | '/teams/$teamId/projects/$projectId/settings/'
+    | '/teams/$teamId/projects/$projectId/tasks/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -355,27 +354,27 @@ export interface FileRouteTypes {
     | '/teams'
     | '/teams/$teamId'
     | '/teams/$teamId/agents/hire'
-    | '/teams/$teamId/issues/$issueId'
     | '/teams/$teamId/settings/audit-log'
     | '/teams/$teamId/settings/connections'
     | '/teams/$teamId/settings/credentials'
     | '/teams/$teamId/settings/general'
+    | '/teams/$teamId/tasks/$taskId'
     | '/teams/$teamId/agents'
     | '/teams/$teamId/goals'
     | '/teams/$teamId/inbox'
-    | '/teams/$teamId/issues'
     | '/teams/$teamId/kb'
     | '/teams/$teamId/projects'
+    | '/teams/$teamId/tasks'
     | '/teams/$teamId/agents/$agentId/settings'
     | '/teams/$teamId/projects/$projectId/container'
     | '/teams/$teamId/projects/$projectId/documents'
     | '/teams/$teamId/agents/$agentId'
     | '/teams/$teamId/projects/$projectId'
     | '/teams/$teamId/agents/$agentId/executions/$runId'
-    | '/teams/$teamId/projects/$projectId/issues/$issueId'
+    | '/teams/$teamId/projects/$projectId/tasks/$taskId'
     | '/teams/$teamId/agents/$agentId/executions'
-    | '/teams/$teamId/projects/$projectId/issues'
     | '/teams/$teamId/projects/$projectId/settings'
+    | '/teams/$teamId/projects/$projectId/tasks'
   id:
     | '__root__'
     | '/'
@@ -388,27 +387,27 @@ export interface FileRouteTypes {
     | '/teams/$teamId/agents/$agentId'
     | '/teams/$teamId/projects/$projectId'
     | '/teams/$teamId/agents/hire'
-    | '/teams/$teamId/issues/$issueId'
     | '/teams/$teamId/settings/audit-log'
     | '/teams/$teamId/settings/connections'
     | '/teams/$teamId/settings/credentials'
     | '/teams/$teamId/settings/general'
+    | '/teams/$teamId/tasks/$taskId'
     | '/teams/$teamId/agents/'
     | '/teams/$teamId/goals/'
     | '/teams/$teamId/inbox/'
-    | '/teams/$teamId/issues/'
     | '/teams/$teamId/kb/'
     | '/teams/$teamId/projects/'
+    | '/teams/$teamId/tasks/'
     | '/teams/$teamId/agents/$agentId/settings'
     | '/teams/$teamId/projects/$projectId/container'
     | '/teams/$teamId/projects/$projectId/documents'
     | '/teams/$teamId/agents/$agentId/'
     | '/teams/$teamId/projects/$projectId/'
     | '/teams/$teamId/agents/$agentId/executions/$runId'
-    | '/teams/$teamId/projects/$projectId/issues/$issueId'
+    | '/teams/$teamId/projects/$projectId/tasks/$taskId'
     | '/teams/$teamId/agents/$agentId/executions/'
-    | '/teams/$teamId/projects/$projectId/issues/'
     | '/teams/$teamId/projects/$projectId/settings/'
+    | '/teams/$teamId/projects/$projectId/tasks/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -471,6 +470,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TeamsTeamIdIndexRouteImport
       parentRoute: typeof TeamsTeamIdRouteRoute
     }
+    '/teams/$teamId/tasks/': {
+      id: '/teams/$teamId/tasks/'
+      path: '/tasks'
+      fullPath: '/teams/$teamId/tasks/'
+      preLoaderRoute: typeof TeamsTeamIdTasksIndexRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
+    }
     '/teams/$teamId/projects/': {
       id: '/teams/$teamId/projects/'
       path: '/projects'
@@ -483,13 +489,6 @@ declare module '@tanstack/react-router' {
       path: '/kb'
       fullPath: '/teams/$teamId/kb/'
       preLoaderRoute: typeof TeamsTeamIdKbIndexRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/teams/$teamId/issues/': {
-      id: '/teams/$teamId/issues/'
-      path: '/issues'
-      fullPath: '/teams/$teamId/issues/'
-      preLoaderRoute: typeof TeamsTeamIdIssuesIndexRouteImport
       parentRoute: typeof TeamsTeamIdRouteRoute
     }
     '/teams/$teamId/inbox/': {
@@ -511,6 +510,13 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/teams/$teamId/agents/'
       preLoaderRoute: typeof TeamsTeamIdAgentsIndexRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
+    }
+    '/teams/$teamId/tasks/$taskId': {
+      id: '/teams/$teamId/tasks/$taskId'
+      path: '/tasks/$taskId'
+      fullPath: '/teams/$teamId/tasks/$taskId'
+      preLoaderRoute: typeof TeamsTeamIdTasksTaskIdRouteImport
       parentRoute: typeof TeamsTeamIdRouteRoute
     }
     '/teams/$teamId/settings/general': {
@@ -539,13 +545,6 @@ declare module '@tanstack/react-router' {
       path: '/settings/audit-log'
       fullPath: '/teams/$teamId/settings/audit-log'
       preLoaderRoute: typeof TeamsTeamIdSettingsAuditLogRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/teams/$teamId/issues/$issueId': {
-      id: '/teams/$teamId/issues/$issueId'
-      path: '/issues/$issueId'
-      fullPath: '/teams/$teamId/issues/$issueId'
-      preLoaderRoute: typeof TeamsTeamIdIssuesIssueIdRouteImport
       parentRoute: typeof TeamsTeamIdRouteRoute
     }
     '/teams/$teamId/agents/hire': {
@@ -604,18 +603,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TeamsTeamIdAgentsAgentIdSettingsRouteImport
       parentRoute: typeof TeamsTeamIdAgentsAgentIdRouteRoute
     }
+    '/teams/$teamId/projects/$projectId/tasks/': {
+      id: '/teams/$teamId/projects/$projectId/tasks/'
+      path: '/tasks'
+      fullPath: '/teams/$teamId/projects/$projectId/tasks/'
+      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdTasksIndexRouteImport
+      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
+    }
     '/teams/$teamId/projects/$projectId/settings/': {
       id: '/teams/$teamId/projects/$projectId/settings/'
       path: '/settings'
       fullPath: '/teams/$teamId/projects/$projectId/settings/'
       preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdSettingsIndexRouteImport
-      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
-    }
-    '/teams/$teamId/projects/$projectId/issues/': {
-      id: '/teams/$teamId/projects/$projectId/issues/'
-      path: '/issues'
-      fullPath: '/teams/$teamId/projects/$projectId/issues/'
-      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdIssuesIndexRouteImport
       parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
     }
     '/teams/$teamId/agents/$agentId/executions/': {
@@ -625,11 +624,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRouteImport
       parentRoute: typeof TeamsTeamIdAgentsAgentIdRouteRoute
     }
-    '/teams/$teamId/projects/$projectId/issues/$issueId': {
-      id: '/teams/$teamId/projects/$projectId/issues/$issueId'
-      path: '/issues/$issueId'
-      fullPath: '/teams/$teamId/projects/$projectId/issues/$issueId'
-      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdIssuesIssueIdRouteImport
+    '/teams/$teamId/projects/$projectId/tasks/$taskId': {
+      id: '/teams/$teamId/projects/$projectId/tasks/$taskId'
+      path: '/tasks/$taskId'
+      fullPath: '/teams/$teamId/projects/$projectId/tasks/$taskId'
+      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdTasksTaskIdRouteImport
       parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
     }
     '/teams/$teamId/agents/$agentId/executions/$runId': {
@@ -669,9 +668,9 @@ interface TeamsTeamIdProjectsProjectIdRouteRouteChildren {
   TeamsTeamIdProjectsProjectIdContainerRoute: typeof TeamsTeamIdProjectsProjectIdContainerRoute
   TeamsTeamIdProjectsProjectIdDocumentsRoute: typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
   TeamsTeamIdProjectsProjectIdIndexRoute: typeof TeamsTeamIdProjectsProjectIdIndexRoute
-  TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute: typeof TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute
-  TeamsTeamIdProjectsProjectIdIssuesIndexRoute: typeof TeamsTeamIdProjectsProjectIdIssuesIndexRoute
+  TeamsTeamIdProjectsProjectIdTasksTaskIdRoute: typeof TeamsTeamIdProjectsProjectIdTasksTaskIdRoute
   TeamsTeamIdProjectsProjectIdSettingsIndexRoute: typeof TeamsTeamIdProjectsProjectIdSettingsIndexRoute
+  TeamsTeamIdProjectsProjectIdTasksIndexRoute: typeof TeamsTeamIdProjectsProjectIdTasksIndexRoute
 }
 
 const TeamsTeamIdProjectsProjectIdRouteRouteChildren: TeamsTeamIdProjectsProjectIdRouteRouteChildren =
@@ -682,12 +681,12 @@ const TeamsTeamIdProjectsProjectIdRouteRouteChildren: TeamsTeamIdProjectsProject
       TeamsTeamIdProjectsProjectIdDocumentsRoute,
     TeamsTeamIdProjectsProjectIdIndexRoute:
       TeamsTeamIdProjectsProjectIdIndexRoute,
-    TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute:
-      TeamsTeamIdProjectsProjectIdIssuesIssueIdRoute,
-    TeamsTeamIdProjectsProjectIdIssuesIndexRoute:
-      TeamsTeamIdProjectsProjectIdIssuesIndexRoute,
+    TeamsTeamIdProjectsProjectIdTasksTaskIdRoute:
+      TeamsTeamIdProjectsProjectIdTasksTaskIdRoute,
     TeamsTeamIdProjectsProjectIdSettingsIndexRoute:
       TeamsTeamIdProjectsProjectIdSettingsIndexRoute,
+    TeamsTeamIdProjectsProjectIdTasksIndexRoute:
+      TeamsTeamIdProjectsProjectIdTasksIndexRoute,
   }
 
 const TeamsTeamIdProjectsProjectIdRouteRouteWithChildren =
@@ -700,17 +699,17 @@ interface TeamsTeamIdRouteRouteChildren {
   TeamsTeamIdAgentsAgentIdRouteRoute: typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
   TeamsTeamIdProjectsProjectIdRouteRoute: typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
   TeamsTeamIdAgentsHireRoute: typeof TeamsTeamIdAgentsHireRoute
-  TeamsTeamIdIssuesIssueIdRoute: typeof TeamsTeamIdIssuesIssueIdRoute
   TeamsTeamIdSettingsAuditLogRoute: typeof TeamsTeamIdSettingsAuditLogRoute
   TeamsTeamIdSettingsConnectionsRoute: typeof TeamsTeamIdSettingsConnectionsRoute
   TeamsTeamIdSettingsCredentialsRoute: typeof TeamsTeamIdSettingsCredentialsRoute
   TeamsTeamIdSettingsGeneralRoute: typeof TeamsTeamIdSettingsGeneralRoute
+  TeamsTeamIdTasksTaskIdRoute: typeof TeamsTeamIdTasksTaskIdRoute
   TeamsTeamIdAgentsIndexRoute: typeof TeamsTeamIdAgentsIndexRoute
   TeamsTeamIdGoalsIndexRoute: typeof TeamsTeamIdGoalsIndexRoute
   TeamsTeamIdInboxIndexRoute: typeof TeamsTeamIdInboxIndexRoute
-  TeamsTeamIdIssuesIndexRoute: typeof TeamsTeamIdIssuesIndexRoute
   TeamsTeamIdKbIndexRoute: typeof TeamsTeamIdKbIndexRoute
   TeamsTeamIdProjectsIndexRoute: typeof TeamsTeamIdProjectsIndexRoute
+  TeamsTeamIdTasksIndexRoute: typeof TeamsTeamIdTasksIndexRoute
 }
 
 const TeamsTeamIdRouteRouteChildren: TeamsTeamIdRouteRouteChildren = {
@@ -720,17 +719,17 @@ const TeamsTeamIdRouteRouteChildren: TeamsTeamIdRouteRouteChildren = {
   TeamsTeamIdProjectsProjectIdRouteRoute:
     TeamsTeamIdProjectsProjectIdRouteRouteWithChildren,
   TeamsTeamIdAgentsHireRoute: TeamsTeamIdAgentsHireRoute,
-  TeamsTeamIdIssuesIssueIdRoute: TeamsTeamIdIssuesIssueIdRoute,
   TeamsTeamIdSettingsAuditLogRoute: TeamsTeamIdSettingsAuditLogRoute,
   TeamsTeamIdSettingsConnectionsRoute: TeamsTeamIdSettingsConnectionsRoute,
   TeamsTeamIdSettingsCredentialsRoute: TeamsTeamIdSettingsCredentialsRoute,
   TeamsTeamIdSettingsGeneralRoute: TeamsTeamIdSettingsGeneralRoute,
+  TeamsTeamIdTasksTaskIdRoute: TeamsTeamIdTasksTaskIdRoute,
   TeamsTeamIdAgentsIndexRoute: TeamsTeamIdAgentsIndexRoute,
   TeamsTeamIdGoalsIndexRoute: TeamsTeamIdGoalsIndexRoute,
   TeamsTeamIdInboxIndexRoute: TeamsTeamIdInboxIndexRoute,
-  TeamsTeamIdIssuesIndexRoute: TeamsTeamIdIssuesIndexRoute,
   TeamsTeamIdKbIndexRoute: TeamsTeamIdKbIndexRoute,
   TeamsTeamIdProjectsIndexRoute: TeamsTeamIdProjectsIndexRoute,
+  TeamsTeamIdTasksIndexRoute: TeamsTeamIdTasksIndexRoute,
 }
 
 const TeamsTeamIdRouteRouteWithChildren =

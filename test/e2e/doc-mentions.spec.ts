@@ -33,21 +33,21 @@ test('bare kb and project-doc references render as tooltip-ed links and navigate
 	const captain = agents.find((a) => a.slug === 'captain');
 	if (!captain) throw new Error('Captain agent not found');
 
-	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers: json,
 		data: {
 			project_id: project.id,
-			title: 'Doc mention host issue',
+			title: 'Doc mention host task',
 			description: `See onboarding-guide.md and runbook.md for context.`,
 			assignee_id: captain.id,
 		},
 	});
-	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
+	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
 
 	await page.goto(
-		`/teams/${team.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
+		`/teams/${team.slug}/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`,
 	);
-	await expect(page.getByRole('heading', { name: 'Doc mention host issue' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Doc mention host task' })).toBeVisible();
 
 	const kbLink = page.getByTestId('kb-mention-link').first();
 	await expect(kbLink).toBeVisible();
@@ -88,14 +88,14 @@ test('mention picker opens on @ and inserts the selected handle', async ({ page 
 	const captain = agents.find((a) => a.slug === 'captain');
 	if (!captain) throw new Error('Captain agent not found');
 
-	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers: json,
 		data: { project_id: project.id, title: 'Picker host', assignee_id: captain.id },
 	});
-	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
+	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
 
 	await page.goto(
-		`/teams/${team.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
+		`/teams/${team.slug}/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`,
 	);
 	await expect(page.getByRole('heading', { name: 'Picker host' })).toBeVisible();
 
@@ -146,22 +146,22 @@ test('rendered markdown autolinks only real entities and leaves look-alikes as t
 	const captain = agents.find((a) => a.slug === 'captain');
 	if (!captain) throw new Error('Captain agent not found');
 
-	const targetIssueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+	const targetTaskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers: json,
 		data: { project_id: project.id, title: 'Target for mixed mentions', assignee_id: captain.id },
 	});
-	const targetIssue = (
-		(await targetIssueRes.json()) as {
+	const targetTask = (
+		(await targetTaskRes.json()) as {
 			data: { id: string; identifier: string };
 		}
 	).data;
 
 	const body = [
-		`See ${targetIssue.identifier} and spec.md and coding-standards.md with @captain.`,
-		`Look-alikes that must stay plain text: UTF-8, ${targetIssue.identifier}x, \`${targetIssue.identifier}\` and \`spec.md\`.`,
+		`See ${targetTask.identifier} and spec.md and coding-standards.md with @captain.`,
+		`Look-alikes that must stay plain text: UTF-8, ${targetTask.identifier}x, \`${targetTask.identifier}\` and \`spec.md\`.`,
 	].join('\n\n');
 
-	const hostRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+	const hostRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers: json,
 		data: {
 			project_id: project.id,
@@ -173,11 +173,11 @@ test('rendered markdown autolinks only real entities and leaves look-alikes as t
 	const host = ((await hostRes.json()) as { data: { identifier: string } }).data;
 
 	await page.goto(
-		`/teams/${team.slug}/projects/${project.slug}/issues/${host.identifier.toLowerCase()}`,
+		`/teams/${team.slug}/projects/${project.slug}/tasks/${host.identifier.toLowerCase()}`,
 	);
 	await expect(page.getByRole('heading', { name: 'Host for mixed mentions' })).toBeVisible();
 
-	await expect(page.getByTestId('issue-mention-link')).toHaveCount(1);
+	await expect(page.getByTestId('task-mention-link')).toHaveCount(1);
 	await expect(page.getByTestId('doc-mention-link')).toHaveCount(1);
 	await expect(page.getByTestId('kb-mention-link')).toHaveCount(1);
 	await expect(page.getByTestId('agent-mention-link')).toHaveCount(1);

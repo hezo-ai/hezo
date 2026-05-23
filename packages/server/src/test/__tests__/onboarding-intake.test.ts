@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { IssueStatus } from '@hezo/shared';
+import { TaskStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
@@ -31,7 +31,7 @@ afterAll(async () => {
 });
 
 describe('onboarding intake', () => {
-	it('creates an Operations issue with Captain greeting on demand', async () => {
+	it('creates an Operations task with Captain greeting on demand', async () => {
 		const blank = await db.query<{ id: string }>(
 			"SELECT id FROM team_templates WHERE name = 'Blank' LIMIT 1",
 		);
@@ -50,29 +50,29 @@ describe('onboarding intake', () => {
 		});
 		expect(intakeRes.status).toBe(200);
 		const intake = (await intakeRes.json()).data as {
-			issue_identifier: string;
+			task_identifier: string;
 			project_slug: string;
 			captain_greeting: string;
 		};
 		expect(intake.project_slug).toBe('operations');
 		expect(intake.captain_greeting).toBe(CAPTAIN_GREETING_TEXT);
-		expect(intake.issue_identifier).toMatch(/^OP-\d+$/);
+		expect(intake.task_identifier).toMatch(/^OP-\d+$/);
 
-		const issuesRes = await app.request(`/api/teams/${team.slug}/issues`, {
+		const tasksRes = await app.request(`/api/teams/${team.slug}/tasks`, {
 			headers: authHeader(token),
 		});
-		const issues = (await issuesRes.json()).data as Array<{
+		const tasks = (await tasksRes.json()).data as Array<{
 			title: string;
 			labels: string[];
 			assignee_name: string;
 		}>;
-		const intakeIssue = issues.find((i) => i.title === ONBOARDING_INTAKE_TITLE);
-		expect(intakeIssue).toBeDefined();
-		expect(intakeIssue?.labels).toContain(ONBOARDING_INTAKE_LABEL);
-		expect(intakeIssue?.assignee_name).toBe('Captain');
+		const intakeTask = tasks.find((i) => i.title === ONBOARDING_INTAKE_TITLE);
+		expect(intakeTask).toBeDefined();
+		expect(intakeTask?.labels).toContain(ONBOARDING_INTAKE_LABEL);
+		expect(intakeTask?.assignee_name).toBe('Captain');
 
 		const commentsRes = await app.request(
-			`/api/teams/${team.slug}/issues/${intake.issue_identifier}/comments`,
+			`/api/teams/${team.slug}/tasks/${intake.task_identifier}/comments`,
 			{ headers: authHeader(token) },
 		);
 		const comments = (await commentsRes.json()).data as Array<{
@@ -84,7 +84,7 @@ describe('onboarding intake', () => {
 		).toBe(true);
 	});
 
-	it('does not create duplicate intake issues', async () => {
+	it('does not create duplicate intake tasks', async () => {
 		const blank = await db.query<{ id: string }>(
 			"SELECT id FROM team_templates WHERE name = 'Blank' LIMIT 1",
 		);
@@ -101,12 +101,12 @@ describe('onboarding intake', () => {
 		const second = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
-		const a = (await first.json()).data as { issue_id: string };
-		const b = (await second.json()).data as { issue_id: string };
-		expect(a.issue_id).toBe(b.issue_id);
+		const a = (await first.json()).data as { task_id: string };
+		const b = (await second.json()).data as { task_id: string };
+		expect(a.task_id).toBe(b.task_id);
 
 		const count = await db.query<{ count: number }>(
-			`SELECT count(*)::int AS count FROM issues
+			`SELECT count(*)::int AS count FROM tasks
 			 WHERE team_id = (SELECT id FROM teams WHERE slug = $1)
 			   AND labels @> $2::jsonb`,
 			[team.slug, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
@@ -128,12 +128,12 @@ describe('onboarding intake', () => {
 		const openRes = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
-		const open = (await openRes.json()).data as { issue_id: string };
+		const open = (await openRes.json()).data as { task_id: string };
 		expect(openRes.status).toBe(200);
 
-		await db.query(`UPDATE issues SET status = $1::issue_status WHERE id = $2`, [
-			IssueStatus.Done,
-			open.issue_id,
+		await db.query(`UPDATE tasks SET status = $1::task_status WHERE id = $2`, [
+			TaskStatus.Done,
+			open.task_id,
 		]);
 
 		const closedRes = await app.request(`/api/teams/${team.slug}/onboarding-intake`, {
@@ -161,7 +161,7 @@ describe('onboarding intake', () => {
 		const ensureRes = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
-		const intake = (await ensureRes.json()).data as { issue_id: string; issue_identifier: string };
+		const intake = (await ensureRes.json()).data as { task_id: string; task_identifier: string };
 
 		const skipRes = await app.request(`/api/teams/${team.slug}/onboarding-intake/skip-questions`, {
 			method: 'POST',
@@ -170,7 +170,7 @@ describe('onboarding intake', () => {
 		expect(skipRes.status).toBe(200);
 
 		const commentsRes = await app.request(
-			`/api/teams/${team.slug}/issues/${intake.issue_identifier}/comments`,
+			`/api/teams/${team.slug}/tasks/${intake.task_identifier}/comments`,
 			{ headers: authHeader(token) },
 		);
 		const comments = (await commentsRes.json()).data as Array<{

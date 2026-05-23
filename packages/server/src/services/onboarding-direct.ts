@@ -2,8 +2,8 @@ import type { PGlite } from '@electric-sql/pglite';
 import { AgentAdminStatus, CAPTAIN_AGENT_SLUG, WakeupSource, wsRoom } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
-import { resolveProjectIssuePrefix } from '../routes/projects';
-import { createProjectWithPlanningIssue } from './project-create';
+import { resolveProjectTaskPrefix } from '../routes/projects';
+import { createProjectWithPlanningTask } from './project-create';
 import { applyTemplateToTeam } from './team-template-apply';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -17,6 +17,8 @@ export interface OnboardingDirectInput {
 	projectDescription?: string;
 	dataDir: string;
 	wsManager?: WebSocketManager;
+	/** When true, the project is created without a planning task (e.g. the "general help" exploratory project). */
+	skipPlanningTask?: boolean;
 }
 
 export type OnboardingDirectResult =
@@ -24,8 +26,8 @@ export type OnboardingDirectResult =
 			ok: true;
 			project_id: string;
 			project_slug: string;
-			planning_issue_id: string;
-			planning_issue_identifier: string;
+			planning_task_id: string | null;
+			planning_task_identifier: string | null;
 			created_agent_slugs: string[];
 	  }
 	| { ok: false; code: 'INVALID_REQUEST' | 'CONFLICT' | 'NOT_FOUND' | 'INTERNAL'; message: string };
@@ -81,7 +83,7 @@ export async function runOnboardingDirect(
 		};
 	}
 
-	const prefixResult = await resolveProjectIssuePrefix(db, input.teamId, undefined, projectName);
+	const prefixResult = await resolveProjectTaskPrefix(db, input.teamId, undefined, projectName);
 	if (!prefixResult.ok) {
 		return { ok: false, code: prefixResult.code, message: prefixResult.message };
 	}
@@ -107,32 +109,34 @@ export async function runOnboardingDirect(
 		};
 	}
 
-	const { project, planningIssue } = await createProjectWithPlanningIssue(db, {
+	const { project, planningTask } = await createProjectWithPlanningTask(db, {
 		teamId: input.teamId,
 		captainMemberId,
 		name: projectName,
 		slug: projectSlug,
-		issuePrefix: prefixResult.prefix,
+		taskPrefix: prefixResult.prefix,
 		description: input.projectDescription?.trim() ?? '',
+		createPlanningTask: !input.skipPlanningTask,
 	});
 
 	broadcastRowChange(input.wsManager, wsRoom.team(input.teamId), 'projects', 'INSERT', project);
-	broadcastRowChange(input.wsManager, wsRoom.team(input.teamId), 'issues', 'INSERT', planningIssue);
-
-	try {
-		await createWakeup(db, captainMemberId, input.teamId, WakeupSource.Assignment, {
-			issue_id: planningIssue.id as string,
-		});
-	} catch (e) {
-		log.error('Failed to wake Captain on planning issue after direct onboarding:', e);
+	if (planningTask) {
+		broadcastRowChange(input.wsManager, wsRoom.team(input.teamId), 'tasks', 'INSERT', planningTask);
+		try {
+			await createWakeup(db, captainMemberId, input.teamId, WakeupSource.Assignment, {
+				task_id: planningTask.id as string,
+			});
+		} catch (e) {
+			log.error('Failed to wake Captain on planning task after direct onboarding:', e);
+		}
 	}
 
 	return {
 		ok: true,
 		project_id: project.id as string,
 		project_slug: project.slug as string,
-		planning_issue_id: planningIssue.id as string,
-		planning_issue_identifier: planningIssue.identifier as string,
+		planning_task_id: (planningTask?.id as string | undefined) ?? null,
+		planning_task_identifier: (planningTask?.identifier as string | undefined) ?? null,
 		created_agent_slugs: apply.created_slugs,
 	};
 }

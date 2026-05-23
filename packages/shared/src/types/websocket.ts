@@ -43,7 +43,7 @@ export interface WsRunLogMessage {
 	type: WsMessageType.RunLog;
 	projectId: string;
 	runId: string;
-	issueId: string | null;
+	taskId: string | null;
 	stream: 'stdout' | 'stderr';
 	text: string;
 	replace?: boolean;

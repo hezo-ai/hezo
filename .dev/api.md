@@ -89,9 +89,9 @@ All Board API endpoints check the caller's membership role:
 | Access Level | Endpoints |
 |-------------|-----------|
 | **Board-only** (member_users with role='board') | Team settings, agent management (hire/fire/pause/resume/terminate), budget adjustments, secrets vault, API keys, connected platforms, audit log, plugin management, invites, member management |
-| **All members** (agents and users, scoped by `project_ids`) | Issues, comments, KB (read), project docs (file-based, read/write), inbox (filtered), notification preferences |
+| **All members** (agents and users, scoped by `project_ids`) | Tasks, comments, KB (read), project docs (file-based, read/write), inbox (filtered), notification preferences |
 
-Members (both agents and users) with role='member' are restricted by `project_ids` — they can only access issues, comments, and documents within their allowed projects. Requests outside their scope return 403.
+Members (both agents and users) with role='member' are restricted by `project_ids` — they can only access tasks, comments, and documents within their allowed projects. Requests outside their scope return 403.
 
 ### Teams
 
@@ -107,7 +107,7 @@ Response:
       "name": "NoteGenius AI",
       "description": "Build the #1 AI note-taking app",
       "agent_count": 6,
-      "open_issue_count": 14,
+      "open_task_count": 14,
       "total_budget_cents": 24000,
       "total_used_cents": 12700,
       "created_at": "...",
@@ -129,7 +129,7 @@ Request:
 }
 ```
 
-`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). Issue prefixes are configured per project (see `POST /teams/:teamId/projects`), not at the team level.
+`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). Task prefixes are configured per project (see `POST /teams/:teamId/projects`), not at the team level.
 
 Response: full team object. On creation, the server automatically:
 
@@ -182,9 +182,9 @@ Delete team and all associated data. Tears down the team container.
 
 Three stages drive the home welcome card and intake panels:
 
-1. **Requirements** — open `requirements-intake` Operations issue; Captain gathers goals and creates the first user-facing project via MCP/REST.
-2. **Hire team** — open `hire-team-intake` issue; Captain requests a `team_template` approval; board approves in inbox; agents provision and the hire ticket closes.
-3. **Start project** — board confirms on home; sets `execution_started_at` on the first user-facing project and wakes Captain on the planning issue.
+1. **Requirements** — open `requirements-intake` Operations task; Captain gathers goals and creates the first user-facing project via MCP/REST.
+2. **Hire team** — open `hire-team-intake` task; Captain requests a `team_template` approval; board approves in inbox; agents provision and the hire ticket closes.
+3. **Start project** — board confirms on home; sets `execution_started_at` on the first user-facing project and wakes Captain on the planning task.
 
 `show_welcome` is true until `execution_started_at` is set on the primary (oldest non-internal) project. The project list on home is hidden until stage 3 completes.
 
@@ -211,19 +211,19 @@ Response:
 Stage values: `complete` | `current` | `pending`. `primary_project` includes `execution_started_at` (null until the board starts execution).
 
 #### `GET /teams/:teamId/requirements-intake`
-Returns the open requirements intake issue for home chat, or 404 if none.
+Returns the open requirements intake task for home chat, or 404 if none.
 
-Query `?ensure=true` creates the intake issue when missing (used before any user-facing project exists).
+Query `?ensure=true` creates the intake task when missing (used before any user-facing project exists).
 
 #### `GET /teams/:teamId/hire-team-intake`
-Returns the open hire-the-team intake issue, or 404 when requirements are incomplete or hire intake is closed.
+Returns the open hire-the-team intake task, or 404 when requirements are incomplete or hire intake is closed.
 
 #### `POST /teams/:teamId/onboarding/start-project`
-Board confirms execution start. Sets `projects.execution_started_at` on the team's first user-facing project and creates a Captain assignment wakeup on the planning issue (labeled `planning`). Fails with 400 if requirements or hire intake tickets are still open.
+Board confirms execution start. Sets `projects.execution_started_at` on the team's first user-facing project and creates a Captain assignment wakeup on the planning task (labeled `planning`). Fails with 400 if requirements or hire intake tickets are still open.
 
 Response: `{ "data": { "project": { ... } } }` with updated `execution_started_at`.
 
-The first user-facing project created via `POST /teams/:teamId/projects` or MCP `create_project` does **not** wake Captain on the planning issue until this endpoint runs (or a later project is created).
+The first user-facing project created via `POST /teams/:teamId/projects` or MCP `create_project` does **not** wake Captain on the planning task until this endpoint runs (or a later project is created).
 
 ---
 
@@ -361,7 +361,7 @@ Response:
       "budget_used_cents": 1800,
       "status": "active",
       "last_heartbeat_at": "...",
-      "assigned_issue_count": 4,
+      "assigned_task_count": 4,
       "created_at": "...",
       "updated_at": "..."
     }
@@ -377,7 +377,7 @@ Request fields: `title` (required), `role_description`, `system_prompt`, `report
 Response: full agent object.
 
 #### `POST /teams/:teamId/agents/onboard`
-Starts the Captain-mediated hire workflow. The board submits a draft spec; the server creates a pending `hire` approval holding the draft in its payload, opens an onboarding issue in the Operations project assigned to the Captain, and wakes the Captain to refine the draft. **No `member_agents` row is created yet.**
+Starts the Captain-mediated hire workflow. The board submits a draft spec; the server creates a pending `hire` approval holding the draft in its payload, opens an onboarding task in the Operations project assigned to the Captain, and wakes the Captain to refine the draft. **No `member_agents` row is created yet.**
 
 The Captain revises the draft via the `update_hire_proposal` MCP tool, @-mentions the board for review, and iterates until the board resolves the pending approval. Approving the approval materialises the agent (see `POST /approvals/:approvalId/resolve`); denying leaves nothing behind.
 
@@ -401,8 +401,8 @@ Response (normal path):
 {
   "data": {
     "agent": null,
-    "issue": { "id": "uuid", "identifier": "ACME-12", "title": "Onboard new agent: Data Scientist", "labels": ["onboarding", "hire"] },
-    "approval": { "id": "uuid", "type": "hire", "status": "pending", "payload": { "title": "Data Scientist", "slug": "data-scientist", "system_prompt": "...", "issue_id": "uuid" } },
+    "task": { "id": "uuid", "identifier": "ACME-12", "title": "Onboard new agent: Data Scientist", "labels": ["onboarding", "hire"] },
+    "approval": { "id": "uuid", "type": "hire", "status": "pending", "payload": { "title": "Data Scientist", "slug": "data-scientist", "system_prompt": "...", "task_id": "uuid" } },
     "bootstrap": false
   }
 }
@@ -413,7 +413,7 @@ Response (bootstrap):
 {
   "data": {
     "agent": { "id": "uuid", "slug": "captain", "admin_status": "enabled", ... },
-    "issue": null,
+    "task": null,
     "approval": null,
     "bootstrap": true
   }
@@ -458,7 +458,7 @@ Disable an agent. Stops heartbeats, kills subprocess if running. Does not affect
 Enable a disabled agent.
 
 #### `POST /teams/:teamId/agents/:agentId/terminate`
-Terminate an agent. Kills the agent's subprocess. Unassigns all issues.
+Terminate an agent. Kills the agent's subprocess. Unassigns all tasks.
 Agent record is kept for audit trail (admin_status = `terminated`).
 
 #### `GET /teams/:teamId/agents/:agentId/heartbeat-runs`
@@ -470,7 +470,7 @@ Get agent execution history (last 50 runs). Each row includes timing
   redacted.
 - `log_text` — interleaved stdout/stderr captured from the streaming exec,
   capped at 1 MB. Stderr lines are prefixed `[stderr] `.
-- `working_dir` — the container path the exec was rooted at (per-issue worktree
+- `working_dir` — the container path the exec was rooted at (per-task worktree
   or `/workspace`).
 - `project_id` — project the run belongs to, used by the UI to subscribe to
   the corresponding `project-runs:<projectId>` WebSocket room.
@@ -485,8 +485,8 @@ Each row also includes resolved trigger fields so the UI can render a
   `heartbeat`, `timer`, `on_demand`).
 - `trigger_payload` — the wakeup's `payload` JSONB, opaque shape per source.
 - `trigger_comment_id`, `trigger_actor_member_id`, `trigger_actor_slug`,
-  `trigger_actor_title`, `trigger_comment_issue_id`,
-  `trigger_comment_issue_identifier`, `trigger_comment_project_slug` —
+  `trigger_actor_title`, `trigger_comment_task_id`,
+  `trigger_comment_task_identifier`, `trigger_comment_project_slug` —
   resolved from `payload.comment_id` for sources that reference a comment
   (`mention`, `reply`, `comment`, `option_chosen`). For `mention`, the actor
   is the agent who posted the mentioning comment; for `reply`, the actor is
@@ -494,13 +494,13 @@ Each row also includes resolved trigger fields so the UI can render a
   comment context (e.g. `assignment`, `heartbeat`, `timer`).
 
 #### `GET /teams/:teamId/agents/:agentId/heartbeat-runs/:runId`
-Get a single heartbeat run with issue metadata, the full log/usage fields
+Get a single heartbeat run with task metadata, the full log/usage fields
 listed above, and the same resolved `trigger_*` fields used to render the
 "Triggered by" line on the run-detail page.
 
-#### `GET /teams/:teamId/issues/:issueId/latest-run`
-Returns the most recent `heartbeat_run` for the issue (or `null` if none).
-Powers the minified log strip on the issue detail page so it can subscribe to
+#### `GET /teams/:teamId/tasks/:taskId/latest-run`
+Returns the most recent `heartbeat_run` for the task (or `null` if none).
+Powers the minified log strip on the task detail page so it can subscribe to
 the run's live stream and link to the full run page.
 
 ---
@@ -568,7 +568,7 @@ Response:
       "slug": "backend-api",
       "description": "Authenticated HTTP API for the main app.",
       "repo_count": 2,
-      "open_issue_count": 5,
+      "open_task_count": 5,
       "created_at": "...",
       "updated_at": "..."
     }
@@ -577,18 +577,18 @@ Response:
 ```
 
 #### `POST /teams/:teamId/projects`
-Create a project. Container is auto-provisioned asynchronously. A planning issue titled
+Create a project. Container is auto-provisioned asynchronously. A planning task titled
 `Draft execution plan for "{name}"` (labeled `planning`) is opened and assigned to the
 team's enabled Captain agent — board users are redirected there so the Captain can draft the
 execution plan. The planning ticket's body instructs the Captain to create the first
-milestone's tickets as **top-level** issues (no `parent_issue_id` pointing at the
+milestone's tickets as **top-level** tasks (no `parent_task_id` pointing at the
 planning ticket) — each delegated milestone is the assignee's own first-class
 deliverable. Fails with 500 if no enabled Captain agent exists.
 
 Request: `name` and `description` are required. `docker_base_image` and `initial_prd`
 are optional. `docker_base_image` defaults to `hezo/agent-base:latest`. When
 `initial_prd` is provided (markdown string), it is saved as the `initial-prd.md`
-project doc and the Captain's planning issue directs the Researcher and Product Lead to
+project doc and the Captain's planning task directs the Researcher and Product Lead to
 consult it as a starting point.
 ```json
 {
@@ -599,8 +599,8 @@ consult it as a starting point.
 }
 ```
 
-Response includes the created project plus `planning_issue_id`, the UUID of the
-auto-opened Captain planning issue.
+Response includes the created project plus `planning_task_id`, the UUID of the
+auto-opened Captain planning task.
 ```json
 {
   "data": {
@@ -608,7 +608,7 @@ auto-opened Captain planning issue.
     "slug": "backend-api",
     "name": "Backend API",
     "description": "Authenticated HTTP API for the main app.",
-    "planning_issue_id": "uuid",
+    "planning_task_id": "uuid",
     "...": "other project fields"
   }
 }
@@ -623,7 +623,7 @@ Response: project object + `repos` array.
 Update name or description.
 
 #### `DELETE /teams/:teamId/projects/:projectId`
-Delete project. Cannot delete internal projects (e.g. Operations). Fails if there are open issues referencing it. Tears down the container asynchronously.
+Delete project. Cannot delete internal projects (e.g. Operations). Fails if there are open tasks referencing it. Tears down the container asynchronously.
 
 #### `POST /teams/:teamId/projects/:projectId/container/start`
 Start the project container. Container must be provisioned. Wakes agents with pending work. Returns `{ container_status: "running" }`.
@@ -741,8 +741,8 @@ provision.
 
 #### `DELETE /teams/:teamId/projects/:projectId/repos/:repoId`
 Remove a repo from a project. The server also removes the repo's on-disk
-workspace directory and every per-issue worktree derived from it
-(`<workspace>/<short_name>/` and `<worktrees>/<issue>/<short_name>/`).
+workspace directory and every per-task worktree derived from it
+(`<workspace>/<short_name>/` and `<worktrees>/<task>/<short_name>/`).
 
 Returns 409 `DESIGNATED_REPO_IMMUTABLE` if `repoId` equals the project's
 `designated_repo_id`. The designated repo cannot be removed.
@@ -794,15 +794,15 @@ Response:
 
 ---
 
-### Issues
+### Tasks
 
-#### `GET /teams/:teamId/issues`
-List issues. Supports filtering and pagination.
+#### `GET /teams/:teamId/tasks`
+List tasks. Supports filtering and pagination.
 
 Query params:
 - `?project_id=uuid` — filter by project
 - `?assignee_id=uuid` — filter by assignee (references members.id)
-- `?parent_issue_id=uuid` — filter to children of a specific parent issue (used by the sub-issues panel on the issue detail page)
+- `?parent_task_id=uuid` — filter to children of a specific parent task (used by the sub-tasks panel on the task detail page)
 - `?status=backlog,in_progress` — comma-separated status filter
 - `?priority=urgent,high` — comma-separated priority filter
 - `?search=websocket` — full-text search on title + description
@@ -822,7 +822,7 @@ Response:
       "assignee_name": "Dev Engineer",
       "assignee_type": "agent",
       "has_active_run": true,
-      "parent_issue_id": null,
+      "parent_task_id": null,
       "number": 47,
       "title": "Implement WebSocket handler for real-time sync",
       "status": "in_progress",
@@ -840,10 +840,10 @@ Response:
 }
 ```
 
-`assignee_type` is `"agent"` or `"user"` depending on whether the assignee is an agent member or a human board member (matches `members.member_type`). `has_active_run` is `true` when at least one `heartbeat_runs` row exists for the issue in `running` or `queued` status — used by the UI to show a live indicator next to the assignee name.
+`assignee_type` is `"agent"` or `"user"` depending on whether the assignee is an agent member or a human board member (matches `members.member_type`). `has_active_run` is `true` when at least one `heartbeat_runs` row exists for the task in `running` or `queued` status — used by the UI to show a live indicator next to the assignee name.
 
-#### `POST /teams/:teamId/issues`
-Create an issue.
+#### `POST /teams/:teamId/tasks`
+Create an task.
 
 Request:
 ```json
@@ -852,7 +852,7 @@ Request:
   "title": "Implement WebSocket handler for real-time sync",
   "description": "We need a WebSocket handler that supports...",
   "assignee_id": "uuid",
-  "parent_issue_id": "uuid | null",
+  "parent_task_id": "uuid | null",
   "priority": "urgent",
   "labels": ["backend", "collab"],
   "runtime_type": "claude_code"
@@ -860,22 +860,22 @@ Request:
 ```
 
 `project_id` and `assignee_id` are required (enforced). `number` is auto-assigned via
-`next_project_issue_number()`, and `identifier` is composed as
-`{project.issue_prefix}-{number}` (e.g. `OP-42`). If the assignee is an agent,
+`next_project_task_number()`, and `identifier` is composed as
+`{project.task_prefix}-{number}` (e.g. `OP-42`). If the assignee is an agent,
 the agent receives an event trigger. If a board member, they are notified via
 inbox and configured messaging channels.
 
-Issues in the auto-created Operations project (`slug = 'operations'`, `is_internal = true`) must be assigned to the Captain. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Operations project issues must be assigned to the Captain`.
+Tasks in the auto-created Operations project (`slug = 'operations'`, `is_internal = true`) must be assigned to the Captain. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Operations project tasks must be assigned to the Captain`.
 
-`runtime_type` is optional. It pins this issue to a specific AI adapter
+`runtime_type` is optional. It pins this task to a specific AI adapter
 (`claude_code | codex | gemini`). When unset, the server picks the
 instance default — the single active AI provider if only one is configured,
 or the oldest/default active provider otherwise.
 
-#### `GET /teams/:teamId/issues/:issueId`
-Full issue detail including description, goal chain, cost.
+#### `GET /teams/:teamId/tasks/:taskId`
+Full task detail including description, goal chain, cost.
 
-Response: full issue object + computed fields:
+Response: full task object + computed fields:
 ```json
 {
   "data": {
@@ -890,7 +890,7 @@ Response: full issue object + computed fields:
     "assignee_id": "uuid",
     "assignee_name": "Dev Engineer",
     "assignee_type": "agent",
-    "parent_issue_id": null,
+    "parent_task_id": null,
     "status": "in_progress",
     "priority": "urgent",
     "labels": ["backend", "collab"],
@@ -902,26 +902,26 @@ Response: full issue object + computed fields:
 }
 ```
 
-#### `PATCH /teams/:teamId/issues/:issueId`
-Update issue fields: title, description, status, priority, assignee_id, labels, rules, progress_summary, runtime_type.
+#### `PATCH /teams/:teamId/tasks/:taskId`
+Update task fields: title, description, status, priority, assignee_id, labels, rules, progress_summary, runtime_type.
 
-`assignee_id` cannot be set to null — every issue must have an assignee.
+`assignee_id` cannot be set to null — every task must have an assignee.
 Changing `assignee_id` triggers an event on the newly assigned agent, or a notification to the newly assigned board member.
 Changing `status` to `done` or `closed` triggers preview cleanup.
 
 Two server-enforced guards block the `→ done` and `→ closed` transitions when the ticket is not actually finished, returning `400 INVALID_REQUEST`:
-- **Sub-issues must be closed first.** `→ done` and `→ closed` both fail if any sub-issue is in any state other than `closed`. Sub-issues only reach `closed` after the Coach completes its post-mortem.
-- **No outstanding pinged-agent activity.** `→ done` fails if another agent (not the caller) has a `heartbeat_runs` row for the issue in `queued`/`running`, or any `mention`/`comment`/`reply`-source `agent_wakeup_requests` referencing the issue is `queued`/`claimed`/`deferred`. The caller's own activity and assignment/timer/automation wakeups are excluded.
+- **Sub-tasks must be closed first.** `→ done` and `→ closed` both fail if any sub-task is in any state other than `closed`. Sub-tasks only reach `closed` after the Coach completes its post-mortem.
+- **No outstanding pinged-agent activity.** `→ done` fails if another agent (not the caller) has a `heartbeat_runs` row for the task in `queued`/`running`, or any `mention`/`comment`/`reply`-source `agent_wakeup_requests` referencing the task is `queued`/`claimed`/`deferred`. The caller's own activity and assignment/timer/automation wakeups are excluded.
 
-The error message names the blocking sub-issue or agent so the caller knows what to wait on.
+The error message names the blocking sub-task or agent so the caller knows what to wait on.
 
-For issues whose project is Operations (`slug = 'operations'`, `is_internal = true`), `assignee_id` must be the Captain; any other value returns `400 INVALID_REQUEST`.
+For tasks whose project is Operations (`slug = 'operations'`, `is_internal = true`), `assignee_id` must be the Captain; any other value returns `400 INVALID_REQUEST`.
 
-#### `DELETE /teams/:teamId/issues/:issueId`
-Delete an issue. Only allowed if status is `backlog`, and no comments exist.
+#### `DELETE /teams/:teamId/tasks/:taskId`
+Delete an task. Only allowed if status is `backlog`, and no comments exist.
 
-#### `POST /teams/:teamId/issues/:issueId/sub-issues`
-Create a sub-issue. `project_id` is inherited from the parent. When the parent belongs to the Operations project, the sub-issue's `assignee_id` must be the Captain.
+#### `POST /teams/:teamId/tasks/:taskId/sub-tasks`
+Create a sub-task. `project_id` is inherited from the parent. When the parent belongs to the Operations project, the sub-task's `assignee_id` must be the Captain.
 
 Request:
 ```json
@@ -934,28 +934,28 @@ Request:
 }
 ```
 
-#### `GET /teams/:teamId/issues/:issueId/dependencies`
-List dependencies (blocking issues) for an issue.
+#### `GET /teams/:teamId/tasks/:taskId/dependencies`
+List dependencies (blocking tasks) for an task.
 
-#### `POST /teams/:teamId/issues/:issueId/dependencies`
-Add a dependency. An issue cannot block itself, and both issues must be in the same team.
+#### `POST /teams/:teamId/tasks/:taskId/dependencies`
+Add a dependency. An task cannot block itself, and both tasks must be in the same team.
 
 Request:
 ```json
 {
-  "blocked_by_issue_id": "uuid"
+  "blocked_by_task_id": "uuid"
 }
 ```
 
-#### `DELETE /teams/:teamId/issues/:issueId/dependencies/:depId`
+#### `DELETE /teams/:teamId/tasks/:taskId/dependencies/:depId`
 Remove a dependency.
 
 ---
 
-### Issue Comments
+### Task Comments
 
-#### `GET /teams/:teamId/issues/:issueId/comments`
-List all comments for an issue, ordered by created_at asc.
+#### `GET /teams/:teamId/tasks/:taskId/comments`
+List all comments for an task, ordered by created_at asc.
 
 Query params: `?include_tool_calls=true` — inline tool_calls under each
 trace-type comment.
@@ -966,7 +966,7 @@ Response:
   "data": [
     {
       "id": "uuid",
-      "issue_id": "uuid",
+      "task_id": "uuid",
       "author_type": "agent",
       "author_agent_id": "uuid",
       "author_agent_title": "Dev Engineer",
@@ -1012,7 +1012,7 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/issues/:issueId/comments`
+#### `POST /teams/:teamId/tasks/:taskId/comments`
 Board posts a comment.
 
 Request:
@@ -1033,7 +1033,7 @@ about a tricky piece of feedback. If the comment contains no `@`-mentions,
 `effort` has no observable effect (no wakeup is fired). Invalid values are
 silently dropped. See [Reasoning effort](#reasoning-effort).
 
-#### `POST /teams/:teamId/issues/:issueId/comments/:commentId/choose`
+#### `POST /teams/:teamId/tasks/:taskId/comments/:commentId/choose`
 Board picks an option on an options-type comment.
 
 Request:
@@ -1050,34 +1050,34 @@ choice. Triggers the assigned agent.
 
 The server automatically appends `system`-typed comments for two events:
 
-- **Status change** — fires whenever an issue's status changes, regardless of
-  the path that drove it (PATCH `/teams/:teamId/issues/:issueId`, MCP
-  `update_issue`, hire-approval auto-Done, agent-runner auto-flip
+- **Status change** — fires whenever an task's status changes, regardless of
+  the path that drove it (PATCH `/teams/:teamId/tasks/:taskId`, MCP
+  `update_task`, hire-approval auto-Done, agent-runner auto-flip
   `backlog → in_progress`, Coach auto-close `done → closed`). A no-op PATCH
   (status set to its current value) records nothing.
   Body: `{ "kind": "status_change", "from": "<old>", "to": "<new>", "actor_id":
   "<member_uuid|null>", "text": "<actor> changed status from <old> to <new>" }`.
   `author_member_id` is the actor's member id (or `null` for unattributable
   automations).
-- **Issue link** — fires on the **target** issue the first time a given source
-  issue mentions it. Sources are scanned in: descriptions on POST `/issues` and
-  PATCH `/issues/:issueId`, comments on POST `/issues/:issueId/comments`, and
-  the MCP equivalents (`create_issue`, `update_issue`, `create_comment`).
+- **Task link** — fires on the **target** task the first time a given source
+  task mentions it. Sources are scanned in: descriptions on POST `/tasks` and
+  PATCH `/tasks/:taskId`, comments on POST `/tasks/:taskId/comments`, and
+  the MCP equivalents (`create_task`, `update_task`, `create_comment`).
   Subsequent mentions from the same source are silently deduped via the
-  `source_issue_id` JSONB key. Cross-team, self-, code-block, inline-code,
+  `source_task_id` JSONB key. Cross-team, self-, code-block, inline-code,
   and unknown-identifier mentions are ignored.
-  Body: `{ "kind": "issue_link", "source_issue_id": "<uuid>",
+  Body: `{ "kind": "task_link", "source_task_id": "<uuid>",
   "source_identifier": "<e.g. OP-42>", "actor_id": "<member_uuid|null>",
   "text": "Linked from <source_identifier> by <actor>" }`.
 
 Both events broadcast over the team WebSocket as `RowChange` /
-`issue_comments` / `INSERT`, so live viewers see them without a refresh.
+`task_comments` / `INSERT`, so live viewers see them without a refresh.
 
 ---
 
 ### Tool Calls
 
-#### `GET /teams/:teamId/issues/:issueId/comments/:commentId/tool-calls`
+#### `GET /teams/:teamId/tasks/:taskId/comments/:commentId/tool-calls`
 List tool calls for a specific comment.
 
 Response:
@@ -1228,20 +1228,20 @@ Response:
         "member_id": "uuid",
         "secret_name": "GITHUB_TOKEN",
         "project_id": "uuid",
-        "reason": "Need to push to feature branch for issue #47"
+        "reason": "Need to push to feature branch for task #47"
       },
       "payload_member_name": "Dev Engineer",
       "payload_member_slug": "dev-engineer",
       "payload_project_name": "Backend API",
       "payload_project_slug": "backend-api",
-      "payload_issue_identifier": null,
+      "payload_task_identifier": null,
       "created_at": "..."
     }
   ]
 }
 ```
 
-The resolved `payload_*` fields are populated by LEFT JOINing payload UUID references (`member_id`, `project_id`, `issue_id`) against their respective tables. Fields are null when the payload does not contain the corresponding UUID. `team_slug` is always present.
+The resolved `payload_*` fields are populated by LEFT JOINing payload UUID references (`member_id`, `project_id`, `task_id`) against their respective tables. Fields are null when the payload does not contain the corresponding UUID. `team_slug` is always present.
 
 #### `POST /teams/:teamId/approvals`
 Create an approval request directly. Used internally by agents and the board.
@@ -1271,7 +1271,7 @@ Request:
 When approved, side effects depend on approval type:
 - `SystemPromptUpdate` — updates the agent's system prompt and records a revision.
 - `SkillProposal` — writes the skill to the database.
-- `Hire` — materialises the draft in the payload into a new enabled `member_agents` row, transitions the linked onboarding issue to `done`, and broadcasts the new agent row so the UI/org chart update live. Failure modes: if the slug has been taken by a directly-created agent since the approval was filed, the hook raises and the resolution fails (operator must resolve the slug collision manually).
+- `Hire` — materialises the draft in the payload into a new enabled `member_agents` row, transitions the linked onboarding task to `done`, and broadcasts the new agent row so the UI/org chart update live. Failure modes: if the slug has been taken by a directly-created agent since the approval was filed, the hook raises and the resolution fails (operator must resolve the slug collision manually).
 ```
 
 ---
@@ -1284,7 +1284,7 @@ List cost entries with aggregation.
 Query params:
 - `?agent_id=uuid`
 - `?project_id=uuid`
-- `?issue_id=uuid`
+- `?task_id=uuid`
 - `?from=2026-03-01&to=2026-03-31`
 - `?group_by=agent|project|day`
 
@@ -1310,7 +1310,7 @@ Request:
 {
   "member_id": "uuid",
   "amount_cents": 100,
-  "issue_id": "uuid",
+  "task_id": "uuid",
   "project_id": "uuid",
   "description": "API call cost"
 }
@@ -1469,20 +1469,20 @@ Return the models this provider offers for the stored credential. Calls the prov
 
 ### Execution Locks
 
-#### `GET /teams/:teamId/issues/:issueId/lock`
-Get the list of agents currently running against an issue.
+#### `GET /teams/:teamId/tasks/:taskId/lock`
+Get the list of agents currently running against an task.
 
 Response:
 ```json
 {
   "data": {
-    "locks": [{ "id": "uuid", "issue_id": "uuid", "member_id": "uuid", "lock_type": "read", "locked_at": "...", "member_name": "..." }]
+    "locks": [{ "id": "uuid", "task_id": "uuid", "member_id": "uuid", "lock_type": "read", "locked_at": "...", "member_name": "..." }]
   }
 }
 ```
 
-#### `POST /teams/:teamId/issues/:issueId/lock`
-Record that a member is running against the issue. Multiple members can hold locks concurrently; returns 409 only if this specific member already holds an active lock on this issue.
+#### `POST /teams/:teamId/tasks/:taskId/lock`
+Record that a member is running against the task. Multiple members can hold locks concurrently; returns 409 only if this specific member already holds an active lock on this task.
 
 Request:
 ```json
@@ -1491,8 +1491,8 @@ Request:
 }
 ```
 
-#### `DELETE /teams/:teamId/issues/:issueId/lock`
-Release all locks for the issue.
+#### `DELETE /teams/:teamId/tasks/:taskId/lock`
+Release all locks for the task.
 
 ---
 
@@ -1503,7 +1503,7 @@ Natural language search across team content.
 
 Query params:
 - `?q=query` — search query (required)
-- `?scope=all` — `all`, `kb_docs`, `issues`, or `skills` (default `all`)
+- `?scope=all` — `all`, `kb_docs`, `tasks`, or `skills` (default `all`)
 - `?limit=10` — max results (default 10)
 
 ---
@@ -1781,8 +1781,8 @@ Request:
 
 **Not yet implemented — planned for Phase 7+.**
 
-#### `GET /teams/:teamId/issues/:issueId/attachments`
-List file attachments for an issue.
+#### `GET /teams/:teamId/tasks/:taskId/attachments`
+List file attachments for an task.
 
 Response:
 ```json
@@ -1800,7 +1800,7 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/issues/:issueId/attachments`
+#### `POST /teams/:teamId/tasks/:taskId/attachments`
 Upload a file attachment. Multipart form data.
 
 Max file size: 10MB. Allowed types: images, PDFs, text files, archezos, logs.
@@ -1819,8 +1819,8 @@ Response:
 }
 ```
 
-#### `DELETE /teams/:teamId/issues/:issueId/attachments/:attachmentId`
-Remove a file attachment from an issue. The underlying asset is deleted.
+#### `DELETE /teams/:teamId/tasks/:taskId/attachments/:attachmentId`
+Remove a file attachment from an task. The underlying asset is deleted.
 
 ---
 
@@ -1844,7 +1844,7 @@ Response:
     {
       "key": "hezo-community/linear-sync",
       "name": "Linear Sync",
-      "description": "Two-way sync between Hezo issues and Linear tickets",
+      "description": "Two-way sync between Hezo tasks and Linear tickets",
       "version": "1.2.0",
       "author": "hezo-community",
       "rating": 4.7,
@@ -1999,7 +1999,7 @@ Request:
 **Not yet implemented — planned for Phase 7+.**
 
 #### `GET /teams/:teamId/inbox`
-Aggregated notifications. Board members see all items (approvals, escalations, budget alerts, design reviews, etc.). Members see only items relevant to their assigned issues and project scope.
+Aggregated notifications. Board members see all items (approvals, escalations, budget alerts, design reviews, etc.). Members see only items relevant to their assigned tasks and project scope.
 
 Query params:
 - `?status=unread` — filter by read/unread
@@ -2091,7 +2091,7 @@ Disconnect Slack from a team. Revokes the bot token secret.
 Receives Slack Events API payloads. Handles interactive messages (approvals), slash commands, and channel messages directed at agents.
 
 #### `POST /webhooks/telegram`
-Receives Telegram Bot API webhook updates. Handles bot commands (`/issues`, `/approve`, `/comment`), inline keyboard callbacks, and text messages.
+Receives Telegram Bot API webhook updates. Handles bot commands (`/tasks`, `/approve`, `/comment`), inline keyboard callbacks, and text messages.
 
 ---
 
@@ -2169,7 +2169,7 @@ Response:
       "system_prompt": "You are the **Frontend Engineer**...",
       "budget_remaining_cents": 1200
     },
-    "assigned_issues": [
+    "assigned_tasks": [
       {
         "id": "uuid",
         "number": 47,
@@ -2186,21 +2186,21 @@ Response:
       }
     ],
     "notifications": [
-      { "type": "mention", "issue_id": "uuid", "issue_number": 45, "text": "@deveng can you review this?" }
+      { "type": "mention", "task_id": "uuid", "task_number": 45, "text": "@deveng can you review this?" }
     ]
   }
 }
 ```
 
 Updates `last_heartbeat_at`. If agent admin_status is `disabled` or `terminated`,
-response includes empty `assigned_issues` and agent should stop working.
+response includes empty `assigned_tasks` and agent should stop working.
 
 ---
 
 ### Post Comment
 
-#### `POST /issues/:issueId/comments`
-Agent posts a comment on an issue.
+#### `POST /tasks/:taskId/comments`
+Agent posts a comment on an task.
 
 Request (text):
 ```json
@@ -2240,7 +2240,7 @@ Server validates that the file exists in the agent's preview directory.
 
 #### @-mentions (agent-to-agent communication)
 
-All inter-agent communication happens via @-mentions in issue comments — same
+All inter-agent communication happens via @-mentions in task comments — same
 as GitHub. No side channels, no direct messaging. Everything is on the record.
 
 Text content can contain `@<agent-slug>` references. The slug is derived from
@@ -2255,10 +2255,10 @@ live slug list inline at compose time and don't need to call `list_agents` for
 every teammate reference — the MCP tool remains the way to fetch a specific
 peer's description or reporting structure.
 
-On `POST /teams/:teamId/issues/:issueId/comments`, the server parses
+On `POST /teams/:teamId/tasks/:taskId/comments`, the server parses
 mentions out of the comment content (ignoring fenced code blocks and self-
 mentions) and creates a `mention`-source wakeup for each distinct mentioned
-agent. The wakeup payload carries `{ source: "mention", issue_id, comment_id }`,
+agent. The wakeup payload carries `{ source: "mention", task_id, comment_id }`,
 and the mentioned agent wakes immediately — not on the next heartbeat tick.
 The ticket assignee is **not** woken by plain comments; assignees reconcile
 thread activity during their next scheduled heartbeat unless they are
@@ -2269,7 +2269,7 @@ for triage. The agent's task prompt includes a "Mention Handoff" section that
 names the mentioner, quotes an excerpt of the comment (≤ 500 chars, with code
 fences stripped), and lists the agent's own open tickets. The agent is expected
 to route the work: update one of its own open tickets, or create a new one
-(sub-issue of the triggering ticket, a sibling/peer, or top-level — the new
+(sub-task of the triggering ticket, a sibling/peer, or top-level — the new
 ticket is first-class work owned by that agent; the system records the
 triggering ticket as provenance via `created_by_run_id` automatically). Then
 the agent posts a single meaningful acknowledgement comment on the triggering
@@ -2281,7 +2281,7 @@ as the authority on the triggering ticket.
 reply comment back on the triggering ticket, the server fires a `reply`-source
 wakeup for the original mentioner if both are agents and the team has
 `settings.wake_mentioner_on_reply` enabled (default true). The wakeup payload
-carries `{ source: "reply", issue_id, comment_id, triggering_comment_id,
+carries `{ source: "reply", task_id, comment_id, triggering_comment_id,
 responder_member_id }`, idempotency key `reply:<triggering_comment_id>:<reply_comment_id>`.
 The mentioner's next run opens with a "Reply Received" prompt block that shows
 the responder's name, their reply excerpt, the original comment excerpt, and
@@ -2291,24 +2291,24 @@ by the standard 2-second window. Teams that prefer to batch replies can
 set `settings.wake_mentioner_on_reply` to false — in that case the original
 mentioner will observe the accumulated replies on its next scheduled heartbeat.
 
-**Spawned-from linkage.** Whenever an agent creates a new issue during a run,
+**Spawned-from linkage.** Whenever an agent creates a new task during a run,
 the server records `created_by_run_id = <that run's id>`. For the agent that
 later picks up the new ticket, `buildTaskPrompt` resolves
-`created_by_run_id → heartbeat_runs.issue_id` and prepends a **Spawned from:**
-line to the task block, regardless of whether the new ticket is a sub-issue
-(`parent_issue_id` set), a sibling, or top-level. If the new ticket is a sub-
-issue and its structural parent is the same as the spawning ticket, the prompt
+`created_by_run_id → heartbeat_runs.task_id` and prepends a **Spawned from:**
+line to the task block, regardless of whether the new ticket is a sub-task
+(`parent_task_id` set), a sibling, or top-level. If the new ticket is a sub-
+task and its structural parent is the same as the spawning ticket, the prompt
 collapses to a single **Parent ticket:** line.
 
 Agents can use this to: ask questions, request reviews, escalate blockers, hand
-off context, or coordinate work across teams — all visible in the issue thread,
+off context, or coordinate work across teams — all visible in the task thread,
 all traceable in the audit log.
 
 ---
 
 ### Report Tool Calls
 
-#### `POST /issues/:issueId/comments/:commentId/tool-calls`
+#### `POST /tasks/:taskId/comments/:commentId/tool-calls`
 Agent reports tool calls associated with a comment.
 
 Request:
@@ -2350,7 +2350,7 @@ Request:
 {
   "secret_name": "GITHUB_TOKEN",
   "project_id": "uuid | null",
-  "reason": "Need to push to feature branch for issue #47"
+  "reason": "Need to push to feature branch for task #47"
 }
 ```
 
@@ -2470,12 +2470,12 @@ Request:
 
 ---
 
-### Create Sub-Issue
+### Create Sub-Task
 
-#### `POST /issues/:issueId/sub-issues`
+#### `POST /tasks/:taskId/sub-tasks`
 **Not yet implemented.**
 
-Agent creates a sub-issue (delegation).
+Agent creates a sub-task (delegation).
 
 Request:
 ```json
@@ -2487,7 +2487,7 @@ Request:
 }
 ```
 
-`project_id` is inherited from the parent issue. `assignee_id` is required. If
+`project_id` is inherited from the parent task. `assignee_id` is required. If
 `assignee_id` is set to an agent outside the creating agent's delegation scope,
 the request fails. Agents can delegate to peers (same level in the org chart) or downward.
 
@@ -2519,7 +2519,7 @@ Response:
       "name": "NoteGenius AI",
       "description": "Build the #1 AI note-taking app"
     },
-    "assigned_issues": [...],
+    "assigned_tasks": [...],
     "available_secrets": ["GITHUB_TOKEN", "NPM_TOKEN"],
     "mcp_servers": [
       { "name": "slack", "url": "https://mcp.slack.com/sse", "description": "Team Slack" },
@@ -2563,7 +2563,7 @@ Request:
 ```json
 {
   "content": "## Code Architecture\n- Prefer functional patterns over class-based...",
-  "change_summary": "Observed preference for functional patterns in board feedback on issue ACME-42"
+  "change_summary": "Observed preference for functional patterns in board feedback on task ACME-42"
 }
 ```
 
@@ -2650,7 +2650,7 @@ review. Creates a `plan_review` approval.
 Request:
 ```json
 {
-  "issue_id": "uuid",
+  "task_id": "uuid",
   "plan_summary": "Implementation plan for WebSocket auth...",
   "plan_content": "## PRD\n...\n## Technical Spec\n...\n## Phases\n...",
   "reason": "Ready for Product Lead review before dev work begins"
@@ -2670,10 +2670,10 @@ Response:
 The Product Lead (or any board member) reviews the plan in the approval inbox.
 On approval, the Engineer can begin implementation.
 
-#### `POST /issues/:issueId/attachments`
+#### `POST /tasks/:taskId/attachments`
 **Not yet implemented.**
 
-Agent uploads a file attachment to an issue (screenshot, log, diagram, etc.).
+Agent uploads a file attachment to an task (screenshot, log, diagram, etc.).
 Multipart form data, same constraints as the board endpoint.
 
 ---
@@ -2712,7 +2712,7 @@ Defined in `@hezo/shared` as the `WsMessageType` enum:
 | `row_change` | Database row changed | `{ type, table, action, row }` where `action` is `INSERT`, `UPDATE`, or `DELETE` |
 | `agent_lifecycle` | Agent status change | `{ type, memberId, status }` |
 | `container_log` | Container stdout/stderr stream | `{ type, projectId, stream, text }` where `stream` is `stdout` or `stderr` |
-| `run_log` | Agent run stdout/stderr (streaming `docker exec` output plus worktree-prep steps and the invocation line) | `{ type, projectId, runId, issueId, stream, text }` |
+| `run_log` | Agent run stdout/stderr (streaming `docker exec` output plus worktree-prep steps and the invocation line) | `{ type, projectId, runId, taskId, stream, text }` |
 | `error` | Error message | `{ type, code, message }` |
 
 ### Client action types
@@ -2728,7 +2728,7 @@ Defined in `@hezo/shared` as the `WsClientAction` enum:
 
 `RowChange` messages trigger TanStack Query cache invalidation on the client. The frontend maps table names to query cache keys and calls `invalidateQueries`, causing affected queries to refetch. This provides real-time UI updates without requiring the server to push full data payloads.
 
-`heartbeat_runs` row-change broadcasts carry a minimal `{ id, issue_id, team_id, member_id, status }` payload — enough to route cache invalidation without leaking per-run logs or shell args. They are emitted on run INSERT (status transitions to `running`) and on the terminal UPDATE only; mid-run log flushes are not broadcast. The client maps `heartbeat_runs` row changes to invalidate the issues list query so the assignee running indicator updates in real time.
+`heartbeat_runs` row-change broadcasts carry a minimal `{ id, task_id, team_id, member_id, status }` payload — enough to route cache invalidation without leaking per-run logs or shell args. They are emitted on run INSERT (status transitions to `running`) and on the terminal UPDATE only; mid-run log flushes are not broadcast. The client maps `heartbeat_runs` row changes to invalidate the tasks list query so the assignee running indicator updates in real time.
 
 ### Server-side broadcasting
 
@@ -2761,12 +2761,12 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `project.deleted` | project | Board deletes project |
 | `repo.added` | repo | Board adds repo to project |
 | `repo.removed` | repo | Board removes repo |
-| `issue.created` | issue | Board or agent creates issue |
-| `issue.updated` | issue | Board or agent updates issue |
-| `issue.assigned` | issue | Issue assigned to agent or board member |
-| `issue.closed` | issue | Status changed to closed |
-| `comment.created` | issue_comment | Board or agent posts comment |
-| `option.chosen` | issue_comment | Board picks an option |
+| `task.created` | task | Board or agent creates task |
+| `task.updated` | task | Board or agent updates task |
+| `task.assigned` | task | Task assigned to agent or board member |
+| `task.closed` | task | Status changed to closed |
+| `comment.created` | task_comment | Board or agent posts comment |
+| `option.chosen` | task_comment | Board picks an option |
 | `secret.created` | secret | Board creates secret |
 | `secret.updated` | secret | Board rotates secret value |
 | `secret.deleted` | secret | Board deletes secret |
@@ -2818,16 +2818,16 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `list_teams` | List accessible teams | — |
 | `get_team` | Get team by ID | `team_id` |
 | `create_team` | Create a new team (superuser only) | `name`, `description` |
-| `list_issues` | List issues with filtering | `team_id`, `project_id?`, `status?` |
-| `get_issue` | Get issue details | `team_id`, `issue_id` |
-| `create_issue` | Create a new issue. Operations-project issues must be assigned to the Captain (slug `captain`); otherwise an error is returned. | `team_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
-| `update_issue` | Update an issue. Changing `assignee_id` on an Operations-project issue to anyone other than the Captain returns an error. | `team_id`, `issue_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
+| `list_tasks` | List tasks with filtering | `team_id`, `project_id?`, `status?` |
+| `get_task` | Get task details | `team_id`, `task_id` |
+| `create_task` | Create a new task. Operations-project tasks must be assigned to the Captain (slug `captain`); otherwise an error is returned. | `team_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
+| `update_task` | Update an task. Changing `assignee_id` on an Operations-project task to anyone other than the Captain returns an error. | `team_id`, `task_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
 | `list_agents` | List agents in a team | `team_id` |
 | `update_hire_proposal` | Revise the draft of a pending `hire` approval. **Captain-only.** Rejects non-Captain agents with `Only the Captain can revise hire proposals`. Rejects already-resolved approvals. All draft fields optional — pass only what changes. | `approval_id`, `title?`, `role_description?`, `system_prompt?`, `default_effort?`, `heartbeat_interval_min?`, `monthly_budget_cents?`, `touches_code?` |
 | `list_projects` | List projects | `team_id` |
 | `create_project` | Create a project | `team_id`, `name` |
-| `list_comments` | List issue comments | `team_id`, `issue_id` |
-| `create_comment` | Add comment to issue | `team_id`, `issue_id`, `content`, `content_type?` |
+| `list_comments` | List task comments | `team_id`, `task_id` |
+| `create_comment` | Add comment to task | `team_id`, `task_id`, `content`, `content_type?` |
 | `list_approvals` | List pending approvals | `team_id` |
 | `resolve_approval` | Resolve an approval | `team_id`, `approval_id`, `status` (`approved`/`denied`), `resolution_note?` |
 | `list_kb_docs` | List knowledge base documents | `team_id` |
@@ -2840,7 +2840,7 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `read_project_doc` | Read project doc by filename | `team_id`, `project_id`, `filename` |
 | `write_project_doc` | Write project doc | `team_id`, `project_id`, `filename`, `content` |
 | `propose_skill` | Create approval for new skill | `team_id`, `name`, `content`, `description?` |
-| `semantic_search` | Natural language search | `team_id`, `query`, `scope?` (`all`/`kb_docs`/`issues`/`skills`/`project_docs`), `limit?` |
+| `semantic_search` | Natural language search | `team_id`, `query`, `scope?` (`all`/`kb_docs`/`tasks`/`skills`/`project_docs`), `limit?` |
 | `list_skills` | List active skills | `team_id`, `tags?` |
 | `get_skill` | Get skill by slug | `team_id`, `slug` |
 | `create_skill` | Create skill directly | `team_id`, `name`, `content`, `description?` |
@@ -2849,13 +2849,13 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 
 MCP tools call the same business logic layer as REST endpoints.
 
-### Description-update issue convention
+### Description-update task convention
 
 To trigger runtime regeneration of agent and team descriptions, the system
-creates an issue with the `description-update` label in the Operations project,
-assigned to the Captain agent. The Captain processes this issue by calling
+creates an task with the `description-update` label in the Operations project,
+assigned to the Captain agent. The Captain processes this task by calling
 `set_agent_summary` for each agent and `set_team_summary` for the team,
-then marks the issue done.
+then marks the task done.
 
 ---
 
@@ -2870,7 +2870,7 @@ Returns a Markdown document that teaches external AI agents how to interact with
 The skill file is dynamically generated at startup from the registered MCP tool definitions and includes:
 - Overview of Hezo and its purpose
 - Available MCP tools with parameter schemas and descriptions
-- Common workflows (create issue → assign agent → monitor → approve)
+- Common workflows (create task → assign agent → monitor → approve)
 - REST API endpoint summary (fallback for agents without MCP support)
 - Authentication setup instructions (API key creation)
 - Example interactions

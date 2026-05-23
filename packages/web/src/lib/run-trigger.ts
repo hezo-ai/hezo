@@ -14,71 +14,71 @@ function getString(payload: Record<string, unknown> | null, key: string): string
 }
 
 function commentHref(run: HeartbeatRun, teamSlug: string): string | undefined {
-	const issueIdentifier = run.trigger_comment_issue_identifier;
+	const taskIdentifier = run.trigger_comment_task_identifier;
 	const projectSlug = run.trigger_comment_project_slug;
 	const commentId = run.trigger_comment_id;
-	if (!issueIdentifier || !projectSlug || !commentId) return undefined;
-	return `/teams/${teamSlug}/projects/${projectSlug}/issues/${issueIdentifier}#c-${commentId}`;
+	if (!taskIdentifier || !projectSlug || !commentId) return undefined;
+	return `/teams/${teamSlug}/projects/${projectSlug}/tasks/${taskIdentifier}#c-${commentId}`;
 }
 
-function issueHref(run: HeartbeatRun, teamSlug: string): string | undefined {
-	const issueIdentifier = run.trigger_comment_issue_identifier ?? run.issue_identifier;
+function taskHref(run: HeartbeatRun, teamSlug: string): string | undefined {
+	const taskIdentifier = run.trigger_comment_task_identifier ?? run.task_identifier;
 	const projectSlug = run.trigger_comment_project_slug ?? run.project_slug;
-	if (!issueIdentifier || !projectSlug) return undefined;
-	return `/teams/${teamSlug}/projects/${projectSlug}/issues/${issueIdentifier}`;
+	if (!taskIdentifier || !projectSlug) return undefined;
+	return `/teams/${teamSlug}/projects/${projectSlug}/tasks/${taskIdentifier}`;
 }
 
 export function formatTriggerReason(run: HeartbeatRun, teamSlug: string): TriggerLabel {
 	const source = run.trigger_source;
-	const issueId = run.trigger_comment_issue_identifier ?? run.issue_identifier;
+	const taskId = run.trigger_comment_task_identifier ?? run.task_identifier;
 	const actor = run.trigger_actor_slug;
 
 	switch (source) {
 		case WakeupSource.Mention: {
-			if (actor && issueId) {
+			if (actor && taskId) {
 				return {
 					source,
-					text: `Mentioned by @${actor} in ${issueId}`,
+					text: `Mentioned by @${actor} in ${taskId}`,
 					href: commentHref(run, teamSlug),
 				};
 			}
 			return { source, text: 'Mentioned in a comment', href: commentHref(run, teamSlug) };
 		}
 		case WakeupSource.Reply: {
-			if (actor && issueId) {
+			if (actor && taskId) {
 				return {
 					source,
-					text: `Reply from @${actor} in ${issueId}`,
+					text: `Reply from @${actor} in ${taskId}`,
 					href: commentHref(run, teamSlug),
 				};
 			}
 			return { source, text: 'Reply to your earlier comment', href: commentHref(run, teamSlug) };
 		}
 		case WakeupSource.Comment: {
-			if (issueId) {
+			if (taskId) {
 				return {
 					source,
-					text: `New comment on ${issueId}`,
-					href: commentHref(run, teamSlug) ?? issueHref(run, teamSlug),
+					text: `New comment on ${taskId}`,
+					href: commentHref(run, teamSlug) ?? taskHref(run, teamSlug),
 				};
 			}
-			return { source, text: 'New comment on assigned issue' };
+			return { source, text: 'New comment on assigned task' };
 		}
 		case WakeupSource.OptionChosen: {
-			if (issueId) {
+			if (taskId) {
 				return {
 					source,
-					text: `Option chosen on ${issueId}`,
-					href: issueHref(run, teamSlug),
+					text: `Option chosen on ${taskId}`,
+					href: taskHref(run, teamSlug),
 				};
 			}
-			return { source, text: 'Option chosen on assigned issue' };
+			return { source, text: 'Option chosen on assigned task' };
 		}
 		case WakeupSource.Assignment: {
-			if (issueId) {
-				return { source, text: `Assigned to ${issueId}`, href: issueHref(run, teamSlug) };
+			if (taskId) {
+				return { source, text: `Assigned to ${taskId}`, href: taskHref(run, teamSlug) };
 			}
-			return { source, text: 'Assigned to an issue' };
+			return { source, text: 'Assigned to an task' };
 		}
 		case WakeupSource.Automation: {
 			const kind =

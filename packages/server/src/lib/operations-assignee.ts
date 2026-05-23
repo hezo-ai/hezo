@@ -3,7 +3,7 @@ import { CAPTAIN_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 
 export type OperationsAssigneeCheck = { ok: true } | { ok: false; message: string };
 
-export const OPERATIONS_CAPTAIN_ERROR = 'Operations project issues must be assigned to the Captain';
+export const OPERATIONS_CAPTAIN_ERROR = 'Operations project tasks must be assigned to the Captain';
 
 export async function assertOperationsAssignee(
 	db: PGlite,

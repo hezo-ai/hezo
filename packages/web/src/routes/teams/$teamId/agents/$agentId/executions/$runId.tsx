@@ -120,37 +120,37 @@ function ExecutionDetailPage() {
 				)}
 			</div>
 
-			{run.issue_identifier &&
-				(run.issue_id ? (
+			{run.task_identifier &&
+				(run.task_id ? (
 					run.project_slug ? (
 						<Link
-							to="/teams/$teamId/projects/$projectId/issues/$issueId"
+							to="/teams/$teamId/projects/$projectId/tasks/$taskId"
 							params={{
 								teamId,
 								projectId: run.project_slug,
-								issueId: run.issue_identifier.toLowerCase(),
+								taskId: run.task_identifier.toLowerCase(),
 							}}
 							className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted hover:text-text"
 						>
-							<span>Issue:</span>
-							<span className="font-mono text-text">{run.issue_identifier}</span>
-							{run.issue_title && <span>{run.issue_title}</span>}
+							<span>Task:</span>
+							<span className="font-mono text-text">{run.task_identifier}</span>
+							{run.task_title && <span>{run.task_title}</span>}
 						</Link>
 					) : (
 						<Link
-							to="/teams/$teamId/issues/$issueId"
-							params={{ teamId, issueId: run.issue_identifier.toLowerCase() }}
+							to="/teams/$teamId/tasks/$taskId"
+							params={{ teamId, taskId: run.task_identifier.toLowerCase() }}
 							className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted hover:text-text"
 						>
-							<span>Issue:</span>
-							<span className="font-mono text-text">{run.issue_identifier}</span>
-							{run.issue_title && <span>{run.issue_title}</span>}
+							<span>Task:</span>
+							<span className="font-mono text-text">{run.task_identifier}</span>
+							{run.task_title && <span>{run.task_title}</span>}
 						</Link>
 					)
 				) : (
 					<div className="mb-4 text-xs text-text-muted">
-						Issue: <span className="font-mono text-text">{run.issue_identifier}</span>
-						{run.issue_title && <span className="ml-1">{run.issue_title}</span>}
+						Task: <span className="font-mono text-text">{run.task_identifier}</span>
+						{run.task_title && <span className="ml-1">{run.task_title}</span>}
 					</div>
 				))}
 

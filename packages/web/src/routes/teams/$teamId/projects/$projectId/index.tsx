@@ -4,7 +4,7 @@ export const Route = createFileRoute('/teams/$teamId/projects/$projectId/')({
 	component: () => {
 		const { teamId, projectId } = Route.useParams();
 		return (
-			<Navigate to="/teams/$teamId/projects/$projectId/issues" params={{ teamId, projectId }} />
+			<Navigate to="/teams/$teamId/projects/$projectId/tasks" params={{ teamId, projectId }} />
 		);
 	},
 });

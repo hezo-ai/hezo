@@ -301,7 +301,7 @@ function AgentSettingsPage() {
 				<div className="text-sm font-medium mb-1">Agent status</div>
 				<div className="text-xs text-text-muted mb-3">
 					{agent.admin_status === AgentAdminStatus.Enabled
-						? 'Disabling unassigns this agent from open issues and stops it from being scheduled.'
+						? 'Disabling unassigns this agent from open tasks and stops it from being scheduled.'
 						: 'This agent is disabled and cannot be assigned new work. Enable to resume scheduling.'}
 				</div>
 				{agent.admin_status === AgentAdminStatus.Enabled && (

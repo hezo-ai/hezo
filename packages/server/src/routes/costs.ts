@@ -15,7 +15,7 @@ costsRoutes.get('/teams/:teamId/costs', async (c) => {
 	const { teamId } = access;
 	const agentId = c.req.query('agent_id');
 	const projectId = c.req.query('project_id');
-	const issueId = c.req.query('issue_id');
+	const taskId = c.req.query('task_id');
 	const from = c.req.query('from');
 	const to = c.req.query('to');
 	const groupBy = c.req.query('group_by');
@@ -34,9 +34,9 @@ costsRoutes.get('/teams/:teamId/costs', async (c) => {
 		params.push(projectId);
 		idx++;
 	}
-	if (issueId) {
-		conditions.push(`ce.issue_id = $${idx}`);
-		params.push(issueId);
+	if (taskId) {
+		conditions.push(`ce.task_id = $${idx}`);
+		params.push(taskId);
 		idx++;
 	}
 	if (from) {
@@ -113,7 +113,7 @@ costsRoutes.post('/teams/:teamId/costs', async (c) => {
 	const body = await c.req.json<{
 		member_id: string;
 		amount_cents: number;
-		issue_id?: string;
+		task_id?: string;
 		project_id?: string;
 		description?: string;
 	}>();
@@ -132,13 +132,13 @@ costsRoutes.post('/teams/:teamId/costs', async (c) => {
 	}
 
 	const result = await db.query(
-		`INSERT INTO cost_entries (team_id, member_id, issue_id, project_id, amount_cents, description)
+		`INSERT INTO cost_entries (team_id, member_id, task_id, project_id, amount_cents, description)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
 		[
 			teamId,
 			body.member_id,
-			body.issue_id ?? null,
+			body.task_id ?? null,
 			body.project_id ?? null,
 			body.amount_cents,
 			body.description ?? '',

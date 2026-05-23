@@ -120,14 +120,14 @@ describe('signOAuthState + verifyOAuthState', () => {
 		await db.close();
 	});
 
-	it('roundtrips a payload that includes an issue_id alongside team_id', async () => {
+	it('roundtrips a payload that includes an task_id alongside team_id', async () => {
 		const db = await createTestDbWithMigrations();
 		const mkm = new MasterKeyManager();
 		await mkm.initialize(db, generateMasterKey());
 
-		const signed = await signOAuthState({ team_id: 'co-1', issue_id: 'iss-9' }, mkm);
+		const signed = await signOAuthState({ team_id: 'co-1', task_id: 'iss-9' }, mkm);
 		const result = await verifyOAuthState(signed, mkm);
-		expect(result).toEqual({ team_id: 'co-1', issue_id: 'iss-9' });
+		expect(result).toEqual({ team_id: 'co-1', task_id: 'iss-9' });
 		await db.close();
 	});
 });

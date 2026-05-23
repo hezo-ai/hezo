@@ -1,11 +1,21 @@
+import type { MasterKeyState } from '@hezo/shared';
 import { Loader2 } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useAiProviderStatus } from '../../hooks/use-ai-providers';
 import { AiProviderPicker } from '../ai-provider-picker';
-import { Stepper } from './stepper';
+import { MasterKeyForm } from '../master-key-gate';
+import { Stepper, type StepStatus } from './stepper';
 
-export type WizardStep = 'ai-provider' | 'done';
+export type WizardStep = 'master-key' | 'ai-provider' | 'done';
 
-export function SetupWizard() {
+interface WizardShellProps {
+	currentStep: 'master-key' | 'ai-provider';
+	children: ReactNode;
+}
+
+function WizardShell({ currentStep, children }: WizardShellProps) {
+	const masterKeyStatus: StepStatus = currentStep === 'master-key' ? 'current' : 'complete';
+	const aiProviderStatus: StepStatus = currentStep === 'ai-provider' ? 'current' : 'pending';
 	return (
 		<div className="min-h-screen flex flex-col items-center px-4 py-8 sm:py-16 bg-bg">
 			<div className="w-full max-w-2xl">
@@ -15,22 +25,45 @@ export function SetupWizard() {
 				</div>
 				<Stepper
 					steps={[
-						{ label: 'Master key', status: 'complete' },
-						{ label: 'AI provider', status: 'current' },
+						{ label: 'Master key', status: masterKeyStatus },
+						{ label: 'AI provider', status: aiProviderStatus },
 					]}
 				/>
 				<div className="rounded-radius-lg border border-border bg-bg-elevated p-5 sm:p-8 shadow-sm">
-					<div data-testid="setup-step-ai-provider">
-						<h2 className="text-base sm:text-lg font-semibold mb-1">Set up an AI provider</h2>
-						<p className="text-[13px] text-text-muted mb-5">
-							Configure at least one provider so your agents can run. Shared across every team on
-							this instance — you can add more later in settings.
-						</p>
-						<AiProviderPicker />
-					</div>
+					{children}
 				</div>
 			</div>
 		</div>
+	);
+}
+
+export function MasterKeyStep({ state }: { state: MasterKeyState }) {
+	return (
+		<WizardShell currentStep="master-key">
+			<div data-testid="setup-step-master-key">
+				<h2 className="text-base sm:text-lg font-semibold mb-1">Set Master Key</h2>
+				<p className="text-[13px] text-text-muted mb-5">
+					Create a master key to encrypt your data. Save it somewhere safe — you'll need it to
+					unlock Hezo on restart.
+				</p>
+				<MasterKeyForm state={state} embedded />
+			</div>
+		</WizardShell>
+	);
+}
+
+export function SetupWizard() {
+	return (
+		<WizardShell currentStep="ai-provider">
+			<div data-testid="setup-step-ai-provider">
+				<h2 className="text-base sm:text-lg font-semibold mb-1">Set up an AI provider</h2>
+				<p className="text-[13px] text-text-muted mb-5">
+					Configure at least one provider so your agents can run. Shared across every team on this
+					instance — you can add more later in settings.
+				</p>
+				<AiProviderPicker />
+			</div>
+		</WizardShell>
 	);
 }
 

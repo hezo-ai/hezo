@@ -89,7 +89,7 @@ describe('goals CRUD', () => {
 		expect(goal.status).toBe('active');
 
 		const opsId = await getOperationsProjectId(teamId);
-		const issueResult = await db.query<{
+		const taskResult = await db.query<{
 			assignee_id: string;
 			project_id: string;
 			status: string;
@@ -97,16 +97,16 @@ describe('goals CRUD', () => {
 			description: string;
 			labels: string | string[];
 		}>(
-			'SELECT assignee_id, project_id, status, priority, description, labels FROM issues WHERE team_id = $1 AND description LIKE $2',
+			'SELECT assignee_id, project_id, status, priority, description, labels FROM tasks WHERE team_id = $1 AND description LIKE $2',
 			[teamId, `%goal=${goal.id}%`],
 		);
-		expect(issueResult.rows.length).toBe(1);
-		const issue = issueResult.rows[0];
-		expect(issue.assignee_id).toBe(captainMemberId);
-		expect(issue.project_id).toBe(opsId);
-		expect(issue.status).toBe('backlog');
-		expect(issue.priority).toBe('medium');
-		const labels = typeof issue.labels === 'string' ? JSON.parse(issue.labels) : issue.labels;
+		expect(taskResult.rows.length).toBe(1);
+		const task = taskResult.rows[0];
+		expect(task.assignee_id).toBe(captainMemberId);
+		expect(task.project_id).toBe(opsId);
+		expect(task.status).toBe('backlog');
+		expect(task.priority).toBe('medium');
+		const labels = typeof task.labels === 'string' ? JSON.parse(task.labels) : task.labels;
 		expect(labels).toContain('goal-update');
 	});
 
@@ -124,11 +124,11 @@ describe('goals CRUD', () => {
 		const goal = (await res.json()).data;
 		expect(goal.project_id).toBe(projectId);
 
-		const issueResult = await db.query<{ project_id: string }>(
-			'SELECT project_id FROM issues WHERE team_id = $1 AND description LIKE $2',
+		const taskResult = await db.query<{ project_id: string }>(
+			'SELECT project_id FROM tasks WHERE team_id = $1 AND description LIKE $2',
 			[teamId, `%goal=${goal.id}%`],
 		);
-		expect(issueResult.rows[0].project_id).toBe(projectId);
+		expect(taskResult.rows[0].project_id).toBe(projectId);
 	});
 
 	it('rejects a goal with project_id from another team', async () => {
@@ -174,12 +174,12 @@ describe('goals CRUD', () => {
 		});
 		const goal = (await createRes.json()).data;
 
-		const firstIssues = await db.query<{ id: string }>(
-			'SELECT id FROM issues WHERE team_id = $1 AND description LIKE $2',
+		const firstTasks = await db.query<{ id: string }>(
+			'SELECT id FROM tasks WHERE team_id = $1 AND description LIKE $2',
 			[teamId, `%goal=${goal.id}%`],
 		);
-		expect(firstIssues.rows.length).toBe(1);
-		const ticketId = firstIssues.rows[0].id;
+		expect(firstTasks.rows.length).toBe(1);
+		const ticketId = firstTasks.rows[0].id;
 
 		const patchRes = await app.request(`/api/teams/${teamId}/goals/${goal.id}`, {
 			method: 'PATCH',
@@ -188,14 +188,14 @@ describe('goals CRUD', () => {
 		});
 		expect(patchRes.status).toBe(200);
 
-		const issuesAfter = await db.query<{ id: string }>(
-			'SELECT id FROM issues WHERE team_id = $1 AND description LIKE $2',
+		const tasksAfter = await db.query<{ id: string }>(
+			'SELECT id FROM tasks WHERE team_id = $1 AND description LIKE $2',
 			[teamId, `%goal=${goal.id}%`],
 		);
-		expect(issuesAfter.rows.length).toBe(1);
+		expect(tasksAfter.rows.length).toBe(1);
 
 		const commentsResult = await db.query<{ id: string }>(
-			'SELECT id FROM issue_comments WHERE issue_id = $1',
+			'SELECT id FROM task_comments WHERE task_id = $1',
 			[ticketId],
 		);
 		expect(commentsResult.rows.length).toBeGreaterThanOrEqual(1);
@@ -210,7 +210,7 @@ describe('goals CRUD', () => {
 		const goal = (await createRes.json()).data;
 
 		const before = await db.query<{ n: number }>(
-			`SELECT count(*)::int AS n FROM issues WHERE team_id = $1 AND description LIKE $2`,
+			`SELECT count(*)::int AS n FROM tasks WHERE team_id = $1 AND description LIKE $2`,
 			[teamId, `%goal=${goal.id}%`],
 		);
 		const beforeCount = before.rows[0].n;
@@ -223,7 +223,7 @@ describe('goals CRUD', () => {
 		expect(patchRes.status).toBe(200);
 
 		const after = await db.query<{ n: number }>(
-			`SELECT count(*)::int AS n FROM issues WHERE team_id = $1 AND description LIKE $2`,
+			`SELECT count(*)::int AS n FROM tasks WHERE team_id = $1 AND description LIKE $2`,
 			[teamId, `%goal=${goal.id}%`],
 		);
 		expect(after.rows[0].n).toBe(beforeCount);

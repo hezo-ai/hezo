@@ -22,10 +22,10 @@ export async function detectOrphans(
 		id: string;
 		member_id: string;
 		team_id: string;
-		issue_id: string | null;
+		task_id: string | null;
 		process_loss_retry_count: number;
 	}>(
-		`SELECT id, member_id, team_id, issue_id, process_loss_retry_count
+		`SELECT id, member_id, team_id, task_id, process_loss_retry_count
 		 FROM heartbeat_runs
 		 WHERE status = $1::heartbeat_run_status
 		   AND started_at < now() - ($2 || ' seconds')::interval`,
@@ -80,7 +80,7 @@ export async function detectOrphans(
 		broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
 			id: run.id,
 			member_id: run.member_id,
-			issue_id: run.issue_id,
+			task_id: run.task_id,
 			status: HeartbeatRunStatus.Failed,
 			error: 'Orphaned: process no longer running',
 		});

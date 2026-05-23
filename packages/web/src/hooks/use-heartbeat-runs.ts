@@ -7,9 +7,9 @@ export interface HeartbeatRun {
 	member_id: string;
 	team_id: string;
 	wakeup_id: string | null;
-	issue_id: string | null;
-	issue_identifier: string | null;
-	issue_title: string | null;
+	task_id: string | null;
+	task_identifier: string | null;
+	task_title: string | null;
 	project_id: string | null;
 	project_slug: string | null;
 	status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
@@ -29,10 +29,10 @@ export interface HeartbeatRun {
 	trigger_actor_member_id: string | null;
 	trigger_actor_slug: string | null;
 	trigger_actor_title: string | null;
-	trigger_comment_issue_id: string | null;
-	trigger_comment_issue_identifier: string | null;
+	trigger_comment_task_id: string | null;
+	trigger_comment_task_identifier: string | null;
 	trigger_comment_project_slug: string | null;
-	created_issues: { id: string; identifier: string; title: string; project_slug: string }[];
+	created_tasks: { id: string; identifier: string; title: string; project_slug: string }[];
 }
 
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';

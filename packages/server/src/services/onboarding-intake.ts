@@ -1,19 +1,19 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	CommentContentType,
-	IssuePriority,
-	IssueStatus,
 	ONBOARDING_INTAKE_SKIP_SIGNAL_TEXT,
+	TaskPriority,
+	TaskStatus,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
 import { recomputeDownstreamReadiness } from '../lib/dependencies';
-import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { terminalStatusParams } from '../lib/sql';
+import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
-import { recordStatusChange } from './issue-events';
-import { findOpenLabeledIssue, loadCaptainOpsContext } from './operations-intake';
+import { findOpenLabeledTask, loadCaptainOpsContext } from './operations-intake';
+import { recordStatusChange } from './task-events';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -27,7 +27,7 @@ export const CAPTAIN_GREETING_TEXT = `Hi — I'm the Captain. I'll help you set 
 
 Tell me what you're hoping to build: the problem you want to solve, who it's for, and anything you already know about scope or constraints. Once I have enough to work with I'll suggest a team template that fits and propose a project name + description for you to approve.`;
 
-function buildIssueDescription(): string {
+function buildTaskDescription(): string {
 	return `${ONBOARDING_INTAKE_MARKER}
 
 ## Set up the first project
@@ -41,14 +41,14 @@ The board is starting fresh. Use this ticket as a single conversation thread to 
    - Names the template and lists who would be on the team and why.
    - Proposes a project \`name\` and \`description\`.
    - @-mentions the board and asks them to confirm before you file an approval.
-3. **File the approval.** Once the board confirms, call \`request_team_template_approval\` with the chosen \`template_id\`, this issue's id, your rationale, AND the agreed \`project_name\` and \`project_description\`.
+3. **File the approval.** Once the board confirms, call \`request_team_template_approval\` with the chosen \`template_id\`, this task's id, your rationale, AND the agreed \`project_name\` and \`project_description\`.
 4. **Wait for the board to approve in the inbox.** When they do, the server provisions the template agents AND creates the user project automatically. You'll then be woken to run a team coherence review on the new roster.
 5. **Close.** The server posts a "Setup complete" comment on this ticket and closes it once provisioning + project creation finish. From there, you and the team can dive into the new project.`;
 }
 
-export interface OnboardingIntakeIssue {
-	issue_id: string;
-	issue_identifier: string;
+export interface OnboardingIntakeTask {
+	task_id: string;
+	task_identifier: string;
 	project_slug: string;
 	captain_greeting: string;
 	captain_member_id: string;
@@ -56,71 +56,71 @@ export interface OnboardingIntakeIssue {
 }
 
 /**
- * Creates the single onboarding-intake issue in the Operations project and
+ * Creates the single onboarding-intake task in the Operations project and
  * posts the Captain greeting comment. Idempotent — returns null if an open
- * intake issue already exists.
+ * intake task already exists.
  */
-export async function createOnboardingIntakeIssue(
+export async function createOnboardingIntakeTask(
 	db: PGlite,
 	teamId: string,
-): Promise<{ issueId: string; captainMemberId: string } | null> {
+): Promise<{ taskId: string; captainMemberId: string } | null> {
 	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) {
 		log.warn(`Cannot create onboarding intake for ${teamId}; missing Captain or Operations`);
 		return null;
 	}
 
-	const existing = await findOpenLabeledIssue(db, teamId, ONBOARDING_INTAKE_LABEL);
+	const existing = await findOpenLabeledTask(db, teamId, ONBOARDING_INTAKE_LABEL);
 	if (existing) return null;
 
-	const { number: issueNumber, identifier } = await allocateIssueIdentifier(
+	const { number: taskNumber, identifier } = await allocateTaskIdentifier(
 		db,
 		ctx.operationsProjectId,
 	);
 
-	const issueResult = await db.query<{ id: string }>(
-		`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier,
+	const taskResult = await db.query<{ id: string }>(
+		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
 		                     title, description, status, priority, labels)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb)
 		 RETURNING id`,
 		[
 			teamId,
 			ctx.operationsProjectId,
 			ctx.captainMemberId,
-			issueNumber,
+			taskNumber,
 			identifier,
 			ONBOARDING_INTAKE_TITLE,
-			buildIssueDescription(),
-			IssueStatus.InProgress,
-			IssuePriority.High,
+			buildTaskDescription(),
+			TaskStatus.InProgress,
+			TaskPriority.High,
 			JSON.stringify([ONBOARDING_INTAKE_LABEL]),
 		],
 	);
-	const issueId = issueResult.rows[0].id;
+	const taskId = taskResult.rows[0].id;
 
 	await db.query(
-		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
 		[
-			issueId,
+			taskId,
 			ctx.captainMemberId,
 			CommentContentType.Text,
 			JSON.stringify({ text: CAPTAIN_GREETING_TEXT }),
 		],
 	);
 
-	return { issueId, captainMemberId: ctx.captainMemberId };
+	return { taskId, captainMemberId: ctx.captainMemberId };
 }
 
 export async function wakeCaptainForOnboardingIntake(
 	db: PGlite,
 	teamId: string,
 	captainMemberId: string,
-	issueId: string,
+	taskId: string,
 ): Promise<void> {
 	try {
 		await createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
-			issue_id: issueId,
+			task_id: taskId,
 		});
 	} catch (e) {
 		log.error('Failed to wake Captain for onboarding intake:', e);
@@ -131,15 +131,15 @@ async function buildIntakeResponse(
 	db: PGlite,
 	ctx: { captainMemberId: string },
 	row: { id: string; identifier: string; project_slug: string },
-): Promise<OnboardingIntakeIssue> {
+): Promise<OnboardingIntakeTask> {
 	const captainTitle = await db.query<{ title: string }>(
 		'SELECT title FROM member_agents WHERE id = $1',
 		[ctx.captainMemberId],
 	);
 
 	return {
-		issue_id: row.id,
-		issue_identifier: row.identifier,
+		task_id: row.id,
+		task_identifier: row.identifier,
 		project_slug: row.project_slug,
 		captain_greeting: CAPTAIN_GREETING_TEXT,
 		captain_member_id: ctx.captainMemberId,
@@ -148,42 +148,42 @@ async function buildIntakeResponse(
 }
 
 /** Read-only — returns null when the onboarding ticket is closed or missing. */
-export async function getOpenOnboardingIntakeIssue(
+export async function getOpenOnboardingIntakeTask(
 	db: PGlite,
 	teamId: string,
-): Promise<OnboardingIntakeIssue | null> {
+): Promise<OnboardingIntakeTask | null> {
 	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) return null;
-	const row = await findOpenLabeledIssue(db, teamId, ONBOARDING_INTAKE_LABEL);
+	const row = await findOpenLabeledTask(db, teamId, ONBOARDING_INTAKE_LABEL);
 	if (!row) return null;
 	return buildIntakeResponse(db, ctx, row);
 }
 
-/** Returns the open onboarding-intake issue, creating it if missing. */
-export async function ensureOnboardingIntakeIssue(
+/** Returns the open onboarding-intake task, creating it if missing. */
+export async function ensureOnboardingIntakeTask(
 	db: PGlite,
 	teamId: string,
 	wsManager?: WebSocketManager,
-): Promise<OnboardingIntakeIssue | null> {
+): Promise<OnboardingIntakeTask | null> {
 	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) return null;
 
-	let row = await findOpenLabeledIssue(db, teamId, ONBOARDING_INTAKE_LABEL);
-	let created: { issueId: string; captainMemberId: string } | null = null;
+	let row = await findOpenLabeledTask(db, teamId, ONBOARDING_INTAKE_LABEL);
+	let created: { taskId: string; captainMemberId: string } | null = null;
 	if (!row) {
-		created = await createOnboardingIntakeIssue(db, teamId);
-		row = await findOpenLabeledIssue(db, teamId, ONBOARDING_INTAKE_LABEL);
+		created = await createOnboardingIntakeTask(db, teamId);
+		row = await findOpenLabeledTask(db, teamId, ONBOARDING_INTAKE_LABEL);
 		if (row && wsManager) {
-			const issueFull = await db.query<Record<string, unknown>>(
-				'SELECT * FROM issues WHERE id = $1',
+			const taskFull = await db.query<Record<string, unknown>>(
+				'SELECT * FROM tasks WHERE id = $1',
 				[row.id],
 			);
-			if (issueFull.rows[0]) {
-				broadcastRowChange(wsManager, wsRoom.team(teamId), 'issues', 'INSERT', issueFull.rows[0]);
+			if (taskFull.rows[0]) {
+				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', taskFull.rows[0]);
 			}
 		}
 		if (created) {
-			await wakeCaptainForOnboardingIntake(db, teamId, created.captainMemberId, created.issueId);
+			await wakeCaptainForOnboardingIntake(db, teamId, created.captainMemberId, created.taskId);
 		}
 	}
 
@@ -250,7 +250,7 @@ async function loadAgentTitlesBySlugs(
 
 export interface OnboardingProvisioningCompleteResult {
 	summaryComment: Record<string, unknown> | null;
-	issue: Record<string, unknown> | null;
+	task: Record<string, unknown> | null;
 }
 
 /**
@@ -261,7 +261,7 @@ export interface OnboardingProvisioningCompleteResult {
 export async function completeOnboardingIntakeAfterProvisioning(
 	db: PGlite,
 	teamId: string,
-	intakeIssueId: string,
+	intakeTaskId: string,
 	templateName: string,
 	projectName: string | null,
 	createdSlugs: string[],
@@ -271,30 +271,30 @@ export async function completeOnboardingIntakeAfterProvisioning(
 	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) {
 		log.warn(`Cannot complete onboarding intake for ${teamId}; missing Captain`);
-		return { summaryComment: null, issue: null };
+		return { summaryComment: null, task: null };
 	}
 
 	const ts = terminalStatusParams(4);
-	const openIssue = await db.query<{ id: string; status: string }>(
-		`SELECT id, status::text AS status FROM issues
+	const openTask = await db.query<{ id: string; status: string }>(
+		`SELECT id, status::text AS status FROM tasks
 		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
 		   AND status NOT IN (${ts.placeholders})
 		 LIMIT 1`,
-		[intakeIssueId, teamId, JSON.stringify([ONBOARDING_INTAKE_LABEL]), ...ts.values],
+		[intakeTaskId, teamId, JSON.stringify([ONBOARDING_INTAKE_LABEL]), ...ts.values],
 	);
-	if (!openIssue.rows[0]) {
-		return { summaryComment: null, issue: null };
+	if (!openTask.rows[0]) {
+		return { summaryComment: null, task: null };
 	}
 
 	const created = await loadAgentTitlesBySlugs(db, teamId, createdSlugs);
 	const skipped = await loadAgentTitlesBySlugs(db, teamId, skippedSlugs);
 
 	const summaryCommentResult = await db.query<Record<string, unknown>>(
-		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
 		 RETURNING *`,
 		[
-			intakeIssueId,
+			intakeTaskId,
 			ctx.captainMemberId,
 			CommentContentType.Text,
 			JSON.stringify({
@@ -304,59 +304,59 @@ export async function completeOnboardingIntakeAfterProvisioning(
 	);
 	const summaryComment = summaryCommentResult.rows[0] ?? null;
 
-	const oldStatus = openIssue.rows[0].status;
-	const issueUpdate = await db.query<Record<string, unknown>>(
-		`UPDATE issues SET status = $1::issue_status, updated_at = now()
+	const oldStatus = openTask.rows[0].status;
+	const taskUpdate = await db.query<Record<string, unknown>>(
+		`UPDATE tasks SET status = $1::task_status, updated_at = now()
 		 WHERE id = $2 AND team_id = $3
 		 RETURNING *`,
-		[IssueStatus.Done, intakeIssueId, teamId],
+		[TaskStatus.Done, intakeTaskId, teamId],
 	);
-	const issue = issueUpdate.rows[0] ?? null;
+	const task = taskUpdate.rows[0] ?? null;
 
-	if (issue) {
+	if (task) {
 		await recordStatusChange(
 			db,
 			teamId,
-			intakeIssueId,
+			intakeTaskId,
 			oldStatus,
-			IssueStatus.Done,
+			TaskStatus.Done,
 			ctx.captainMemberId,
 			wsManager,
 		);
 		try {
-			await recomputeDownstreamReadiness(db, teamId, intakeIssueId, ctx.captainMemberId, wsManager);
+			await recomputeDownstreamReadiness(db, teamId, intakeTaskId, ctx.captainMemberId, wsManager);
 		} catch (e) {
 			log.error('Failed to recompute downstream readiness after onboarding close:', e);
 		}
 	}
 
-	return { summaryComment, issue };
+	return { summaryComment, task };
 }
 
 /** Captain ack comment when the board approves the template in the inbox. */
 export async function postOnboardingTemplateApprovedAck(
 	db: PGlite,
 	teamId: string,
-	intakeIssueId: string,
+	intakeTaskId: string,
 	templateName: string,
 ): Promise<Record<string, unknown> | null> {
 	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) return null;
 
-	const issue = await db.query<{ id: string }>(
-		`SELECT id FROM issues
+	const task = await db.query<{ id: string }>(
+		`SELECT id FROM tasks
 		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
 		 LIMIT 1`,
-		[intakeIssueId, teamId, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
+		[intakeTaskId, teamId, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
 	);
-	if (!issue.rows[0]) return null;
+	if (!task.rows[0]) return null;
 
 	const commentResult = await db.query<Record<string, unknown>>(
-		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
 		 RETURNING *`,
 		[
-			intakeIssueId,
+			intakeTaskId,
 			ctx.captainMemberId,
 			CommentContentType.Text,
 			JSON.stringify({ text: buildOnboardingTemplateApprovedAckText(templateName) }),
@@ -369,26 +369,26 @@ export async function postOnboardingTemplateApprovedAck(
 export async function postOnboardingTemplateDeniedNote(
 	db: PGlite,
 	teamId: string,
-	intakeIssueId: string,
+	intakeTaskId: string,
 	resolutionNote: string | null,
 ): Promise<Record<string, unknown> | null> {
 	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) return null;
 
-	const issue = await db.query<{ id: string }>(
-		`SELECT id FROM issues
+	const task = await db.query<{ id: string }>(
+		`SELECT id FROM tasks
 		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
 		 LIMIT 1`,
-		[intakeIssueId, teamId, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
+		[intakeTaskId, teamId, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
 	);
-	if (!issue.rows[0]) return null;
+	if (!task.rows[0]) return null;
 
 	const commentResult = await db.query<Record<string, unknown>>(
-		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
 		 RETURNING *`,
 		[
-			intakeIssueId,
+			intakeTaskId,
 			ctx.captainMemberId,
 			CommentContentType.Text,
 			JSON.stringify({ text: buildOnboardingTemplateDeniedText(resolutionNote) }),
@@ -405,25 +405,25 @@ export async function postOnboardingTemplateDeniedNote(
 export async function postSkipQuestionsSignal(
 	db: PGlite,
 	teamId: string,
-	intakeIssueId: string,
+	intakeTaskId: string,
 ): Promise<Record<string, unknown> | null> {
 	const ctx = await loadCaptainOpsContext(db, teamId);
 	if (!ctx) return null;
 
-	const issue = await db.query<{ id: string }>(
-		`SELECT id FROM issues
+	const task = await db.query<{ id: string }>(
+		`SELECT id FROM tasks
 		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
 		 LIMIT 1`,
-		[intakeIssueId, teamId, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
+		[intakeTaskId, teamId, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
 	);
-	if (!issue.rows[0]) return null;
+	if (!task.rows[0]) return null;
 
 	const commentResult = await db.query<Record<string, unknown>>(
-		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 		 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
 		 RETURNING *`,
 		[
-			intakeIssueId,
+			intakeTaskId,
 			CommentContentType.System,
 			JSON.stringify({ text: ONBOARDING_INTAKE_SKIP_SIGNAL_TEXT }),
 		],
@@ -432,7 +432,7 @@ export async function postSkipQuestionsSignal(
 
 	try {
 		await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Reply, {
-			issue_id: intakeIssueId,
+			task_id: intakeTaskId,
 			comment_id: comment ? (comment.id as string) : undefined,
 		});
 	} catch (e) {

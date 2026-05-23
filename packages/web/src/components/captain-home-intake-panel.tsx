@@ -26,8 +26,8 @@ function commentTextEquals(content: unknown, target: string): boolean {
 }
 
 export interface CaptainHomeIntake {
-	issue_id: string;
-	issue_identifier: string;
+	task_id: string;
+	task_identifier: string;
 	project_slug: string;
 	captain_greeting: string;
 	captain_title: string;
@@ -39,14 +39,14 @@ interface CaptainHomeIntakePanelProps {
 }
 
 export function CaptainHomeIntakePanel({ teamId, intake }: CaptainHomeIntakePanelProps) {
-	const issueId = intake.issue_identifier.toLowerCase();
-	const createComment = useCreateComment(teamId, issueId);
-	const { data: comments } = useComments(teamId, issueId);
+	const taskId = intake.task_identifier.toLowerCase();
+	const createComment = useCreateComment(teamId, taskId);
+	const { data: comments } = useComments(teamId, taskId);
 	const skipQuestions = useSkipOnboardingQuestions(teamId);
 	const [message, setMessage] = useState('');
 	const [awaitingCaptainReply, setAwaitingCaptainReply] = useState(false);
 
-	const issueLinkParams = { teamId, projectId: intake.project_slug, issueId };
+	const taskLinkParams = { teamId, projectId: intake.project_slug, taskId };
 
 	const lastChatMessage = useMemo(() => {
 		const textComments = (comments ?? []).filter((c) => c.content_type === CommentContentType.Text);
@@ -100,8 +100,8 @@ export function CaptainHomeIntakePanel({ teamId, intake }: CaptainHomeIntakePane
 				<div className="flex items-center justify-between gap-2 border-b border-border pb-3">
 					<span className="text-[13px] font-medium text-text">{intake.captain_title}</span>
 					<Link
-						to="/teams/$teamId/projects/$projectId/issues/$issueId"
-						params={issueLinkParams}
+						to="/teams/$teamId/projects/$projectId/tasks/$taskId"
+						params={taskLinkParams}
 						className="text-xs text-accent-blue hover:underline shrink-0"
 					>
 						Open full thread
@@ -110,7 +110,7 @@ export function CaptainHomeIntakePanel({ teamId, intake }: CaptainHomeIntakePane
 
 				<CaptainIntakeChat
 					teamSlug={teamId}
-					issueIdentifier={issueId}
+					taskIdentifier={taskId}
 					captainTitle={intake.captain_title}
 					awaitingCaptainReply={awaitingCaptainReply}
 				/>

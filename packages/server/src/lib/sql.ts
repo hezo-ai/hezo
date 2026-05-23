@@ -1,4 +1,4 @@
-import { TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
+import { TERMINAL_TASK_STATUSES } from '@hezo/shared';
 
 export interface TerminalStatusParams {
 	placeholders: string;
@@ -6,9 +6,9 @@ export interface TerminalStatusParams {
 }
 
 export function terminalStatusParams(startIdx: number, withCast = true): TerminalStatusParams {
-	const cast = withCast ? '::issue_status' : '';
-	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${startIdx + i}${cast}`).join(', ');
-	return { placeholders, values: [...TERMINAL_ISSUE_STATUSES] };
+	const cast = withCast ? '::task_status' : '';
+	const placeholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${startIdx + i}${cast}`).join(', ');
+	return { placeholders, values: [...TERMINAL_TASK_STATUSES] };
 }
 
 export interface UpdateSet {

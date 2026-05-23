@@ -29,7 +29,7 @@ test.describe('Goals', () => {
 		await expect(main.getByText('Team-wide').first()).toBeVisible();
 
 		// The Captain ticket lives in the Operations project.
-		await page.goto(`/teams/${team.slug}/projects/operations/issues`);
+		await page.goto(`/teams/${team.slug}/projects/operations/tasks`);
 		await waitForPageLoad(page);
 		await expect(
 			page.getByRole('main').getByText('Review plans for goal: "Raise seed round"'),
@@ -60,7 +60,7 @@ test.describe('Goals', () => {
 			timeout: 15000,
 		});
 
-		await page.goto(`/teams/${team.slug}/projects/${project.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/tasks`);
 		await waitForPageLoad(page);
 		await expect(
 			page.getByRole('main').getByText('Review plans for goal: "Launch public v1"'),

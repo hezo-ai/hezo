@@ -47,7 +47,7 @@ let boardToken: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let projectId: string;
-let issueId: string;
+let taskId: string;
 let agentId: string;
 
 const originalFetch = globalThis.fetch;
@@ -98,17 +98,17 @@ beforeAll(async () => {
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
+	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectId,
-			title: 'Runner Issue',
+			title: 'Runner Task',
 			description: 'Test description',
 			assignee_id: agentId,
 		}),
 	});
-	issueId = (await issueRes.json()).data.id;
+	taskId = (await taskRes.json()).data.id;
 });
 
 afterAll(async () => {
@@ -155,11 +155,11 @@ function makeAgent() {
 	};
 }
 
-function makeIssue() {
+function makeTask() {
 	return {
-		id: issueId,
+		id: taskId,
 		identifier: 'RC-1',
-		title: 'Runner Issue',
+		title: 'Runner Task',
 		description: 'Test description',
 		status: 'backlog',
 		priority: 'medium',
@@ -210,7 +210,7 @@ describe('runAgent', () => {
 		const result = await runAgent(
 			deps,
 			makeAgent(),
-			makeIssue(),
+			makeTask(),
 			makeProject({ container_status: ContainerStatus.Stopped, container_id: 'c-1' }),
 		);
 
@@ -245,7 +245,7 @@ describe('runAgent', () => {
 		const result = await runAgent(
 			deps,
 			makeAgent(),
-			makeIssue(),
+			makeTask(),
 			makeProject({ container_id: null }),
 		);
 
@@ -277,7 +277,7 @@ describe('runAgent', () => {
 			logs: new LogStreamBroker(),
 		};
 
-		const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 		expect(result.success).toBe(true);
 		expect(result.exitCode).toBe(0);
@@ -309,7 +309,7 @@ describe('runAgent', () => {
 			logs: new LogStreamBroker(),
 		};
 
-		const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 		expect(result.success).toBe(false);
 		expect(result.exitCode).toBe(1);
@@ -338,7 +338,7 @@ describe('runAgent', () => {
 			logs: new LogStreamBroker(),
 		};
 
-		const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 		expect(result.success).toBe(false);
 		expect(result.exitCode).toBe(-1);
@@ -352,12 +352,12 @@ describe('runAgent', () => {
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
 	});
 
-	it('includes issue rules in task prompt when present', async () => {
+	it('includes task rules in task prompt when present', async () => {
 		const project = makeProject();
 		const docker = createMockDocker({
 			execCreate: async (_containerId: string, opts: any) => {
 				const prompt = readPromptFromExec(opts, '/tmp/test-data', project);
-				expect(prompt).toContain('Rules for this issue');
+				expect(prompt).toContain('Rules for this task');
 				expect(prompt).toContain('Always write tests');
 				return 'exec-rules';
 			},
@@ -374,8 +374,8 @@ describe('runAgent', () => {
 			logs: new LogStreamBroker(),
 		};
 
-		const issueWithRules = { ...makeIssue(), rules: 'Always write tests' };
-		const result = await runAgent(deps, makeAgent(), issueWithRules, project);
+		const taskWithRules = { ...makeTask(), rules: 'Always write tests' };
+		const result = await runAgent(deps, makeAgent(), taskWithRules, project);
 		expect(result.success).toBe(true);
 	});
 
@@ -401,13 +401,13 @@ describe('runAgent', () => {
 			logs: new LogStreamBroker(),
 		};
 
-		await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+		await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_API_URL='))).toBe(true);
 		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_AGENT_TOKEN='))).toBe(true);
 		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_AGENT_ID='))).toBe(true);
 		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_TEAM_ID='))).toBe(true);
-		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_ISSUE_ID='))).toBe(true);
+		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_TASK_ID='))).toBe(true);
 
 		const apiUrl = capturedEnv.find((e: string) => e.startsWith('HEZO_API_URL='));
 		expect(apiUrl).toContain('3100');
@@ -416,7 +416,7 @@ describe('runAgent', () => {
 		expect(capturedUser).toBe('node');
 	});
 
-	it('injects Run Context with team, project, and issue IDs into the system prompt', async () => {
+	it('injects Run Context with team, project, and task IDs into the system prompt', async () => {
 		const project = makeProject();
 		let capturedPrompt = '';
 		const docker = createMockDocker({
@@ -437,12 +437,12 @@ describe('runAgent', () => {
 			logs: new LogStreamBroker(),
 		};
 
-		await runAgent(deps, makeAgent(), makeIssue(), project);
+		await runAgent(deps, makeAgent(), makeTask(), project);
 
 		expect(capturedPrompt).toContain('## Run Context');
 		expect(capturedPrompt).toContain(`Team ID: ${teamId}`);
 		expect(capturedPrompt).toContain(`Project ID: ${projectId}`);
-		expect(capturedPrompt).toContain(`Issue ID: ${issueId}`);
+		expect(capturedPrompt).toContain(`Task ID: ${taskId}`);
 	});
 
 	it('handles coach review trigger', async () => {
@@ -466,8 +466,8 @@ describe('runAgent', () => {
 			logs: new LogStreamBroker(),
 		};
 
-		const result = await runAgent(deps, makeAgent(), makeIssue(), project, {
-			trigger: 'issue_done',
+		const result = await runAgent(deps, makeAgent(), makeTask(), project, {
+			trigger: 'task_done',
 		});
 
 		expect(result.success).toBe(true);
@@ -497,7 +497,7 @@ describe('runAgent', () => {
 		const result = await runAgent(
 			deps,
 			makeAgent(),
-			makeIssue(),
+			makeTask(),
 			makeProject(),
 			undefined,
 			ac.signal,
@@ -531,7 +531,7 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			await runAgent(deps, makeAgent(), makeIssue(), project, {
+			await runAgent(deps, makeAgent(), makeTask(), project, {
 				effort: AgentEffort.Max,
 			});
 
@@ -562,7 +562,7 @@ describe('runAgent', () => {
 			await runAgent(
 				deps,
 				{ ...makeAgent(), default_effort: AgentEffort.High },
-				makeIssue(),
+				makeTask(),
 				project,
 			);
 
@@ -589,7 +589,7 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			await runAgent(deps, makeAgent(), makeIssue(), makeProject(), {
+			await runAgent(deps, makeAgent(), makeTask(), makeProject(), {
 				effort: AgentEffort.Low,
 			});
 
@@ -633,7 +633,7 @@ describe('runAgent', () => {
 			await runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeIssue(), runtime_type: 'codex' as const },
+				{ ...makeTask(), runtime_type: 'codex' as const },
 				makeProject(),
 				{ effort: AgentEffort.High },
 			);
@@ -665,7 +665,7 @@ describe('runAgent', () => {
 		const result = await runAgent(
 			deps,
 			makeAgent(),
-			makeIssue(),
+			makeTask(),
 			makeProject(),
 			undefined,
 			ac.signal,
@@ -703,7 +703,7 @@ describe('runAgent', () => {
 		const result = await runAgent(
 			deps,
 			makeAgent(),
-			makeIssue(),
+			makeTask(),
 			makeProject(),
 			undefined,
 			ac.signal,
@@ -737,7 +737,7 @@ describe('runAgent', () => {
 		const result = await runAgent(
 			deps,
 			makeAgent(),
-			makeIssue(),
+			makeTask(),
 			makeProject(),
 			undefined,
 			undefined,
@@ -766,7 +766,7 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 			expect(result.heartbeatRunId).toBeDefined();
 			const row = await db.query<{ started_at: string | null }>(
@@ -796,7 +796,7 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 			expect(capturedCmd).toContain('--mcp-config');
 			expect(capturedCmd).toContain('--strict-mcp-config');
@@ -846,7 +846,7 @@ describe('runAgent', () => {
 			await runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeIssue(), runtime_type: 'codex' as const },
+				{ ...makeTask(), runtime_type: 'codex' as const },
 				makeProject(),
 			);
 
@@ -905,7 +905,7 @@ describe('runAgent', () => {
 			const result = await runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeIssue(), runtime_type: 'codex' as const },
+				{ ...makeTask(), runtime_type: 'codex' as const },
 				makeProject(),
 			);
 
@@ -994,7 +994,7 @@ describe('runAgent', () => {
 			const result = await runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeIssue(), runtime_type: 'codex' as const },
+				{ ...makeTask(), runtime_type: 'codex' as const },
 				makeProject(),
 			);
 			expect(result.success).toBe(true);
@@ -1078,7 +1078,7 @@ describe('runAgent', () => {
 			const result = await runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeIssue(), runtime_type: 'gemini' as const },
+				{ ...makeTask(), runtime_type: 'gemini' as const },
 				makeProject(),
 			);
 			expect(result.success).toBe(true);
@@ -1112,7 +1112,7 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 			const row = await db.query<{ invocation_command: string | null }>(
 				'SELECT invocation_command FROM heartbeat_runs WHERE id = $1',
@@ -1149,7 +1149,7 @@ describe('runAgent', () => {
 
 			const hugeSystemPrompt = 'X'.repeat(256 * 1024);
 			await setAgentPrompt(hugeSystemPrompt);
-			const result = await runAgent(deps, makeAgent(), makeIssue(), project);
+			const result = await runAgent(deps, makeAgent(), makeTask(), project);
 
 			expect(result.success).toBe(true);
 			expect(capturedCmd[0]).toBe('sh');
@@ -1180,7 +1180,7 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 			const row = await db.query<{ invocation_command: string | null }>(
 				'SELECT invocation_command FROM heartbeat_runs WHERE id = $1',
@@ -1229,7 +1229,7 @@ describe('runAgent', () => {
 				logs,
 			};
 
-			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 			const runLogBroadcasts = broadcasts.filter((b) => b.event.type === 'run_log');
 			expect(runLogBroadcasts.length).toBeGreaterThan(0);
@@ -1264,7 +1264,7 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+			await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 			expect(capturedCmd).toContain('--dangerously-skip-permissions');
 		});
@@ -1291,7 +1291,7 @@ describe('runAgent', () => {
 			await runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeIssue(), runtime_type: 'codex' as const },
+				{ ...makeTask(), runtime_type: 'codex' as const },
 				makeProject(),
 			);
 
@@ -1322,7 +1322,7 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+			await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 			expect(capturedCmd).toContain('--output-format');
 			const idx = capturedCmd.indexOf('--output-format');
@@ -1355,7 +1355,7 @@ describe('runAgent', () => {
 			await runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeIssue(), runtime_type: 'codex' as const },
+				{ ...makeTask(), runtime_type: 'codex' as const },
 				makeProject(),
 			);
 
@@ -1398,7 +1398,7 @@ describe('runAgent', () => {
 			await runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeIssue(), runtime_type: 'gemini' as const },
+				{ ...makeTask(), runtime_type: 'gemini' as const },
 				makeProject(),
 			);
 
@@ -1477,7 +1477,7 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			const result = await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 			const row = await db.query<{
 				log_text: string;
@@ -1521,7 +1521,7 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
-			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+			await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 			expect(capturedWorkingDir).toBe('/workspace');
 
@@ -1557,7 +1557,7 @@ describe('runAgent', () => {
 			// Clear any default_model state on all configs.
 			await db.query('UPDATE ai_provider_configs SET default_model = NULL');
 
-			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+			await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 			expect(capturedCmd).not.toContain('--model');
 		});
@@ -1586,7 +1586,7 @@ describe('runAgent', () => {
 				`UPDATE ai_provider_configs SET default_model = 'claude-opus-4-7' WHERE provider = 'anthropic'`,
 			);
 
-			await runAgent(deps, makeAgent(), makeIssue(), makeProject());
+			await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 			expect(capturedCmd).toContain('--model');
 			const idx = capturedCmd.indexOf('--model');
@@ -1624,7 +1624,7 @@ describe('runAgent', () => {
 					model_override_provider: 'anthropic',
 					model_override_model: 'claude-haiku-4-5',
 				},
-				makeIssue(),
+				makeTask(),
 				makeProject(),
 			);
 
@@ -1675,7 +1675,7 @@ describe('runAgent', () => {
 					model_override_provider: 'openai',
 					model_override_model: 'gpt-5-mini',
 				},
-				makeIssue(),
+				makeTask(),
 				makeProject(),
 			);
 
@@ -1798,7 +1798,7 @@ describe('runAgent', () => {
 			const result = await runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeIssue(), runtime_type: 'codex' as const },
+				{ ...makeTask(), runtime_type: 'codex' as const },
 				makeProject(),
 			);
 
@@ -1855,7 +1855,7 @@ describe('runAgent', () => {
 			const result = await runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeIssue(), runtime_type: 'codex' as const },
+				{ ...makeTask(), runtime_type: 'codex' as const },
 				makeProject(),
 			);
 			expect(result.success).toBe(true);
@@ -1949,7 +1949,7 @@ describe('runAgent', () => {
 			const runPromise = runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeIssue(), runtime_type: 'codex' as const },
+				{ ...makeTask(), runtime_type: 'codex' as const },
 				makeProject(),
 			);
 

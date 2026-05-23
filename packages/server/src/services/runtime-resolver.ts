@@ -13,8 +13,8 @@ export interface ResolvedRuntime {
 }
 
 /**
- * Pick the runtime + provider for an issue run. Precedence:
- *   1. The issue's explicit `runtime_type`, if set: pick the highest-priority
+ * Pick the runtime + provider for an task run. Precedence:
+ *   1. The task's explicit `runtime_type`, if set: pick the highest-priority
  *      active provider whose adapter targets that runtime (multiple providers
  *      can share a runtime, e.g. Anthropic and DeepSeek both run via Claude
  *      Code).
@@ -22,12 +22,12 @@ export interface ResolvedRuntime {
  *      then oldest) and derive its runtime from the adapter map.
  * Returns null when no suitable active provider exists.
  */
-export async function resolveRuntimeForIssue(
+export async function resolveRuntimeForTask(
 	db: PGlite,
-	issueRuntimeType: AgentRuntime | null,
+	taskRuntimeType: AgentRuntime | null,
 ): Promise<ResolvedRuntime | null> {
-	if (issueRuntimeType) {
-		const candidates = PROVIDERS_BY_RUNTIME[issueRuntimeType];
+	if (taskRuntimeType) {
+		const candidates = PROVIDERS_BY_RUNTIME[taskRuntimeType];
 		if (!candidates || candidates.length === 0) return null;
 		const placeholders = candidates.map((_, i) => `$${i + 2}::ai_provider`).join(', ');
 		const result = await db.query<{ provider: AiProvider }>(
@@ -39,7 +39,7 @@ export async function resolveRuntimeForIssue(
 		);
 		const row = result.rows[0];
 		if (!row) return null;
-		return { runtime: issueRuntimeType, provider: row.provider };
+		return { runtime: taskRuntimeType, provider: row.provider };
 	}
 
 	const providers = await db.query<{ provider: AiProvider }>(

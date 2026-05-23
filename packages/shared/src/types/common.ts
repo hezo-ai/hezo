@@ -60,7 +60,7 @@ export const ContainerStatus = {
 } as const;
 export type ContainerStatus = (typeof ContainerStatus)[keyof typeof ContainerStatus];
 
-export const IssueStatus = {
+export const TaskStatus = {
 	Backlog: 'backlog',
 	InProgress: 'in_progress',
 	Review: 'review',
@@ -69,29 +69,29 @@ export const IssueStatus = {
 	Closed: 'closed',
 	Cancelled: 'cancelled',
 } as const;
-export type IssueStatus = (typeof IssueStatus)[keyof typeof IssueStatus];
+export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
 
-export const ISSUE_STATUS_LABELS: Record<IssueStatus, string> = {
-	[IssueStatus.Backlog]: 'Backlog',
-	[IssueStatus.InProgress]: 'In Progress',
-	[IssueStatus.Review]: 'Review',
-	[IssueStatus.Blocked]: 'Blocked',
-	[IssueStatus.Done]: 'Done',
-	[IssueStatus.Closed]: 'Closed',
-	[IssueStatus.Cancelled]: 'Cancelled',
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+	[TaskStatus.Backlog]: 'Backlog',
+	[TaskStatus.InProgress]: 'In Progress',
+	[TaskStatus.Review]: 'Review',
+	[TaskStatus.Blocked]: 'Blocked',
+	[TaskStatus.Done]: 'Done',
+	[TaskStatus.Closed]: 'Closed',
+	[TaskStatus.Cancelled]: 'Cancelled',
 };
 
-export function formatIssueStatus(status: string): string {
-	return ISSUE_STATUS_LABELS[status as IssueStatus] ?? status;
+export function formatTaskStatus(status: string): string {
+	return TASK_STATUS_LABELS[status as TaskStatus] ?? status;
 }
 
-export const IssuePriority = {
+export const TaskPriority = {
 	Urgent: 'urgent',
 	High: 'high',
 	Medium: 'medium',
 	Low: 'low',
 } as const;
-export type IssuePriority = (typeof IssuePriority)[keyof typeof IssuePriority];
+export type TaskPriority = (typeof TaskPriority)[keyof typeof TaskPriority];
 
 export const CommentContentType = {
 	Text: 'text',
@@ -190,7 +190,7 @@ export const OAuthRequestReason = {
 export type OAuthRequestReason = (typeof OAuthRequestReason)[keyof typeof OAuthRequestReason];
 
 export interface BlockedTicket {
-	issue_id: string;
+	task_id: string;
 	identifier: string;
 	title: string;
 	project_slug: string;
@@ -338,7 +338,7 @@ export const AuthType = { Board: 'board', ApiKey: 'api_key', Agent: 'agent' } as
 export type AuthType = (typeof AuthType)[keyof typeof AuthType];
 
 export const AuditEntityType = {
-	Issue: 'issue',
+	Task: 'task',
 	Project: 'project',
 	Agent: 'agent',
 	Team: 'team',
@@ -427,17 +427,17 @@ export const AuditAction = {
 } as const;
 export type AuditAction = (typeof AuditAction)[keyof typeof AuditAction];
 
-export const TERMINAL_ISSUE_STATUSES = [
-	IssueStatus.Done,
-	IssueStatus.Closed,
-	IssueStatus.Cancelled,
+export const TERMINAL_TASK_STATUSES = [
+	TaskStatus.Done,
+	TaskStatus.Closed,
+	TaskStatus.Cancelled,
 ] as const;
 
-export const PRIORITY_ORDER: Record<IssuePriority, number> = {
-	[IssuePriority.Urgent]: 0,
-	[IssuePriority.High]: 1,
-	[IssuePriority.Medium]: 2,
-	[IssuePriority.Low]: 3,
+export const PRIORITY_ORDER: Record<TaskPriority, number> = {
+	[TaskPriority.Urgent]: 0,
+	[TaskPriority.High]: 1,
+	[TaskPriority.Medium]: 2,
+	[TaskPriority.Low]: 3,
 };
 
 // --- AI Provider Configuration ---

@@ -15,15 +15,15 @@ test.describe('Internal project — UI affordances', () => {
 		expect(fontStyle).toBe('italic');
 	});
 
-	test('sidebar exposes only Issues and Container for the internal project', async ({ page }) => {
+	test('sidebar exposes only Tasks and Container for the internal project', async ({ page }) => {
 		await authenticate(page);
 		const { team } = await createTeamLight(page);
 
-		await page.goto(`/teams/${team.slug}/projects/operations/issues`);
+		await page.goto(`/teams/${team.slug}/projects/operations/tasks`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
-		await expect(nav.getByRole('link', { name: 'Issues' }).first()).toBeVisible({
+		await expect(nav.getByRole('link', { name: 'Tasks' }).first()).toBeVisible({
 			timeout: 15000,
 		});
 		await expect(nav.getByRole('link', { name: 'Container' })).toBeVisible();
@@ -38,7 +38,7 @@ test.describe('Internal project — UI affordances', () => {
 		);
 	});
 
-	test('banner appears on internal-project landing pages but not on issue detail', async ({
+	test('banner appears on internal-project landing pages but not on task detail', async ({
 		page,
 	}) => {
 		await authenticate(page);
@@ -47,7 +47,7 @@ test.describe('Internal project — UI affordances', () => {
 		const bannerCopy =
 			'Internal team coordination project, used for onboarding and team-level changes.';
 
-		await page.goto(`/teams/${team.slug}/projects/operations/issues`);
+		await page.goto(`/teams/${team.slug}/projects/operations/tasks`);
 		await waitForPageLoad(page);
 		await expect(page.getByText(bannerCopy)).toBeVisible({ timeout: 15000 });
 
@@ -56,17 +56,17 @@ test.describe('Internal project — UI affordances', () => {
 		await expect(page.getByText(bannerCopy)).toBeVisible({ timeout: 15000 });
 	});
 
-	test('direct navigation to /documents and /settings redirects to /issues', async ({ page }) => {
+	test('direct navigation to /documents and /settings redirects to /tasks', async ({ page }) => {
 		await authenticate(page);
 		const { team } = await createTeamLight(page);
 
 		await page.goto(`/teams/${team.slug}/projects/operations/documents`);
-		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/operations/issues`), {
+		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/operations/tasks`), {
 			timeout: 15000,
 		});
 
 		await page.goto(`/teams/${team.slug}/projects/operations/settings`);
-		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/operations/issues`), {
+		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/operations/tasks`), {
 			timeout: 15000,
 		});
 	});

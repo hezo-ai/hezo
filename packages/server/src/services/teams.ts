@@ -48,7 +48,7 @@ export interface CreatedTeamRow {
 	slug: string;
 	description: string;
 	agent_count: number;
-	open_issue_count: number;
+	open_task_count: number;
 	[key: string]: unknown;
 }
 
@@ -106,12 +106,12 @@ export async function createTeam(
 		}
 
 		const opsProjectResult = await db.query<{ id: string }>(
-			`INSERT INTO projects (team_id, name, slug, issue_prefix, description, is_internal)
+			`INSERT INTO projects (team_id, name, slug, task_prefix, description, is_internal)
 			 VALUES ($1, '(Internal)', $2, 'OP', 'Internal team coordination project, used for onboarding and team-level changes.', true)
 			 RETURNING id`,
 			[teamId, OPERATIONS_PROJECT_SLUG],
 		);
-		await db.query('INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)', [
+		await db.query('INSERT INTO project_task_counters (project_id, next_number) VALUES ($1, 1)', [
 			opsProjectResult.rows[0].id,
 		]);
 
@@ -166,7 +166,7 @@ export async function createTeam(
 	const enriched = await db.query<CreatedTeamRow>(
 		`SELECT c.*,
 		   (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $2)::int AS agent_count,
-		   0 AS open_issue_count
+		   0 AS open_task_count
 		 FROM teams c WHERE c.id = $1`,
 		[teamId, MemberType.Agent],
 	);

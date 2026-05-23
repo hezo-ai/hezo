@@ -25,7 +25,7 @@ test.describe('AI Providers instance settings', () => {
 		page,
 	}) => {
 		await authenticate(page);
-		await page.goto(`/teams/${DEFAULT_TEAM_SLUG}/issues`);
+		await page.goto(`/teams/${DEFAULT_TEAM_SLUG}/tasks`);
 		await waitForPageLoad(page);
 
 		const settingsLink = page.locator('a[href="/settings"]');

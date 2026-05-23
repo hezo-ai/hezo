@@ -22,7 +22,7 @@ beforeAll(async () => {
 	teamId = team.rows[0].id;
 
 	const project = await db.query<{ id: string }>(
-		`INSERT INTO projects (team_id, name, slug, issue_prefix) VALUES ($1, 'P', 'p', 'P') RETURNING id`,
+		`INSERT INTO projects (team_id, name, slug, task_prefix) VALUES ($1, 'P', 'p', 'P') RETURNING id`,
 		[teamId],
 	);
 	projectId = project.rows[0].id;

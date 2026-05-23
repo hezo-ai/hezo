@@ -47,7 +47,7 @@ describe('skill file', () => {
 		const text = await res.text();
 		expect(text).toContain('# Hezo Skill File');
 		expect(text).toContain('list_teams');
-		expect(text).toContain('create_issue');
+		expect(text).toContain('create_task');
 	});
 });
 
@@ -83,7 +83,7 @@ describe('MCP endpoint', () => {
 		expect(body.result.tools.length).toBeGreaterThan(0);
 		const toolNames = body.result.tools.map((t: any) => t.name);
 		expect(toolNames).toContain('list_teams');
-		expect(toolNames).toContain('create_issue');
+		expect(toolNames).toContain('create_task');
 	});
 
 	it('calls a tool and receives auth context (not missing-auth error)', async () => {

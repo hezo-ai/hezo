@@ -152,7 +152,7 @@ reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
 	let becameDesignated = false;
 	let finalizeResult: Awaited<ReturnType<typeof finalizePendingRepoSetup>> = {
 		resolvedApprovalId: null,
-		affectedIssueIds: [],
+		affectedTaskIds: [],
 		deferredWakeups: [],
 		approvalRow: null,
 		updatedCommentRows: [],
@@ -259,10 +259,10 @@ reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
 			broadcastChange(c, wsRoom.team(teamId), 'approvals', 'UPDATE', finalizeResult.approvalRow);
 		}
 		for (const row of finalizeResult.updatedCommentRows) {
-			broadcastChange(c, wsRoom.team(teamId), 'issue_comments', 'UPDATE', row);
+			broadcastChange(c, wsRoom.team(teamId), 'task_comments', 'UPDATE', row);
 		}
 		for (const row of finalizeResult.systemCommentRows) {
-			broadcastChange(c, wsRoom.team(teamId), 'issue_comments', 'INSERT', row);
+			broadcastChange(c, wsRoom.team(teamId), 'task_comments', 'INSERT', row);
 		}
 	}
 

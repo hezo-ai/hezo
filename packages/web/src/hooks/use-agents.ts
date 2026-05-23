@@ -24,7 +24,7 @@ export interface Agent {
 	last_heartbeat_at: string | null;
 	reports_to: string | null;
 	reports_to_title: string | null;
-	assigned_issue_count: number;
+	assigned_task_count: number;
 	model_override_provider: string | null;
 	model_override_model: string | null;
 	created_at: string;
@@ -162,13 +162,13 @@ export function useOnboardAgent(teamId: string) {
 		}) =>
 			api.post<{
 				agent: Agent | null;
-				issue: { id: string; identifier: string } | null;
+				task: { id: string; identifier: string } | null;
 				approval: { id: string } | null;
 				bootstrap: boolean;
 			}>(`/api/teams/${teamId}/agents/onboard`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'agents'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'issues'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'tasks'] });
 			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'approvals'] });
 		},
 	});

@@ -92,7 +92,7 @@ test.describe('Home onboarding', () => {
 			`/api/teams/${team.slug}/onboarding-intake?ensure=true`,
 			{ headers },
 		);
-		const intake = ((await intakeRes.json()) as { data: { issue_identifier: string } }).data;
+		const intake = ((await intakeRes.json()) as { data: { task_identifier: string } }).data;
 
 		await page.goto('/home');
 		await waitForPageLoad(page);
@@ -107,7 +107,7 @@ test.describe('Home onboarding', () => {
 		await expect
 			.poll(async () => {
 				const commentsRes = await page.request.get(
-					`/api/teams/${team.slug}/issues/${intake.issue_identifier.toLowerCase()}/comments`,
+					`/api/teams/${team.slug}/tasks/${intake.task_identifier.toLowerCase()}/comments`,
 					{ headers },
 				);
 				const body = (await commentsRes.json()) as {

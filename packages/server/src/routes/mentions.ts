@@ -5,7 +5,7 @@ import { requireTeamAccess } from '../middleware/auth';
 
 export const mentionsRoutes = new Hono<Env>();
 
-type MentionKind = 'agent' | 'issue' | 'kb' | 'doc';
+type MentionKind = 'agent' | 'task' | 'kb' | 'doc';
 
 interface SearchResult {
 	kind: MentionKind;
@@ -128,7 +128,7 @@ mentionsRoutes.get('/teams/:teamId/mentions/search', async (c) => {
 	const prefix = `${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
 
 	const kinds: MentionKind[] =
-		kind === 'all' ? ['agent', 'issue', 'kb', 'doc'] : ([kind] as MentionKind[]);
+		kind === 'all' ? ['agent', 'task', 'kb', 'doc'] : ([kind] as MentionKind[]);
 
 	const results: SearchResult[] = [];
 
@@ -154,10 +154,10 @@ mentionsRoutes.get('/teams/:teamId/mentions/search', async (c) => {
 		}
 	}
 
-	if (kinds.includes('issue')) {
+	if (kinds.includes('task')) {
 		const r = await db.query<{ identifier: string; title: string; project_slug: string }>(
 			`SELECT i.identifier, i.title, p.slug AS project_slug
-			 FROM issues i
+			 FROM tasks i
 			 JOIN projects p ON p.id = i.project_id
 			 WHERE i.team_id = $1
 			   AND ($2 = '' OR LOWER(i.identifier) LIKE LOWER($4) OR i.title ILIKE $3)
@@ -167,7 +167,7 @@ mentionsRoutes.get('/teams/:teamId/mentions/search', async (c) => {
 		);
 		for (const row of r.rows) {
 			results.push({
-				kind: 'issue',
+				kind: 'task',
 				handle: row.identifier,
 				label: row.title,
 				sublabel: `${row.identifier} · ${row.project_slug}`,

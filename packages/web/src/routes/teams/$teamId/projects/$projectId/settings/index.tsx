@@ -102,7 +102,7 @@ export const Route = createFileRoute('/teams/$teamId/projects/$projectId/setting
 	beforeLoad: ({ params }) => {
 		if (params.projectId === OPERATIONS_PROJECT_SLUG) {
 			throw redirect({
-				to: '/teams/$teamId/projects/$projectId/issues',
+				to: '/teams/$teamId/projects/$projectId/tasks',
 				params,
 				replace: true,
 			});

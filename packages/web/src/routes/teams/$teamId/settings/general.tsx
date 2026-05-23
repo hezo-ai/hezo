@@ -184,10 +184,10 @@ function AutomationsSection({ teamId }: { teamId: string }) {
 			</label>
 			<div className="mt-5 pt-5 border-t border-border-subtle max-w-xl">
 				<label htmlFor="subtask-page-size" className="block text-[13px] font-medium">
-					Sub-issue page size
+					Sub-task page size
 				</label>
 				<p className="text-text-muted text-[13px] mt-0.5 mb-1.5">
-					How many sub-issues to show on an issue page before a "Show more" link is offered.
+					How many sub-tasks to show on an task page before a "Show more" link is offered.
 				</p>
 				<Input
 					id="subtask-page-size"

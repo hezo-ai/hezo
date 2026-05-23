@@ -8,7 +8,7 @@ const log = logger.child('comment-wakeups');
 
 export interface FireCommentWakeupsParams {
 	db: PGlite;
-	issueId: string;
+	taskId: string;
 	teamId: string;
 	commentId: string;
 	content: unknown;
@@ -23,7 +23,7 @@ export interface FireCommentWakeupsParams {
 export async function fireCommentWakeups(params: FireCommentWakeupsParams): Promise<void> {
 	const {
 		db,
-		issueId,
+		taskId,
 		teamId,
 		commentId,
 		content,
@@ -54,7 +54,7 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 		wakeupPromises.push(
 			createWakeup(db, mentionedId, teamId, WakeupSource.Mention, {
 				source: WakeupSource.Mention,
-				issue_id: issueId,
+				task_id: taskId,
 				comment_id: commentId,
 				...effortPayload,
 			}).catch((e) => log.error('Failed to create mention wakeup:', e)),
@@ -62,17 +62,17 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 	}
 
 	if (wakeAssignee) {
-		const issueRow = await db.query<{ assignee_id: string | null }>(
-			'SELECT assignee_id FROM issues WHERE id = $1 AND team_id = $2',
-			[issueId, teamId],
+		const taskRow = await db.query<{ assignee_id: string | null }>(
+			'SELECT assignee_id FROM tasks WHERE id = $1 AND team_id = $2',
+			[taskId, teamId],
 		);
-		const assigneeId = issueRow.rows[0]?.assignee_id ?? null;
+		const assigneeId = taskRow.rows[0]?.assignee_id ?? null;
 		if (assigneeId && assigneeId !== authorMemberId && !mentionedAgentIds.has(assigneeId)) {
 			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
 			if (isAgent.rows.length > 0) {
 				wakeupPromises.push(
 					createWakeup(db, assigneeId, teamId, WakeupSource.Comment, {
-						issue_id: issueId,
+						task_id: taskId,
 						comment_id: commentId,
 						...effortPayload,
 					}).catch((e) => log.error('Failed to create comment wakeup:', e)),
@@ -86,7 +86,7 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 	if (parentCommentId) {
 		await fireExplicitReplyWakeup({
 			db,
-			issueId,
+			taskId,
 			teamId,
 			commentId,
 			authorMemberId,
@@ -99,7 +99,7 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 
 interface ReplyWakeupCtx {
 	db: PGlite;
-	issueId: string;
+	taskId: string;
 	teamId: string;
 	commentId: string;
 	authorMemberId: string | null;
@@ -111,7 +111,7 @@ interface ReplyWakeupCtx {
 async function fireExplicitReplyWakeup(ctx: ReplyWakeupCtx): Promise<void> {
 	const {
 		db,
-		issueId,
+		taskId,
 		teamId,
 		commentId,
 		authorMemberId,
@@ -128,7 +128,7 @@ async function fireExplicitReplyWakeup(ctx: ReplyWakeupCtx): Promise<void> {
 	if (settings.rows.length === 0 || settings.rows[0].wake === false) return;
 
 	const parent = await db.query<{ author_member_id: string | null }>(
-		'SELECT author_member_id FROM issue_comments WHERE id = $1',
+		'SELECT author_member_id FROM task_comments WHERE id = $1',
 		[parentCommentId],
 	);
 	const originalAuthorId = parent.rows[0]?.author_member_id ?? null;
@@ -148,7 +148,7 @@ async function fireExplicitReplyWakeup(ctx: ReplyWakeupCtx): Promise<void> {
 			WakeupSource.Reply,
 			{
 				source: WakeupSource.Reply,
-				issue_id: issueId,
+				task_id: taskId,
 				comment_id: commentId,
 				triggering_comment_id: parentCommentId,
 				responder_member_id: authorMemberId,

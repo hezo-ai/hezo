@@ -122,7 +122,7 @@ export async function createWorktree(
 	return { success: true };
 }
 
-export async function ensureIssueWorktree(
+export async function ensureTaskWorktree(
 	repoDir: string,
 	worktreePath: string,
 	branchName: string,

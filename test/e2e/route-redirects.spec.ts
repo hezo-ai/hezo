@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures';
 
 test('invalid team slug redirects to /home', async ({ authedPage }) => {
-	await authedPage.goto('/teams/does-not-exist-abc123/issues');
+	await authedPage.goto('/teams/does-not-exist-abc123/tasks');
 	await authedPage.waitForURL('**/home', { timeout: 20000 });
 	expect(new URL(authedPage.url()).pathname).toBe('/home');
 });

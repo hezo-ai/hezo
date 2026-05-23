@@ -155,10 +155,10 @@ describe('assertSubordinateAssignee (unit)', () => {
 	});
 });
 
-describe('MCP create_issue: agent assignment hierarchy', () => {
-	it('agent can create_issue assigned to a direct subordinate', async () => {
+describe('MCP create_task: agent assignment hierarchy', () => {
+	it('agent can create_task assigned to a direct subordinate', async () => {
 		const { token: archToken } = await mintAgentToken(db, masterKeyManager, architectId, teamId);
-		const result = await callTool(archToken, 'create_issue', {
+		const result = await callTool(archToken, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Architect → Engineer (subordinate)',
@@ -168,9 +168,9 @@ describe('MCP create_issue: agent assignment hierarchy', () => {
 		expect(result.assignee_id).toBe(engineerId);
 	});
 
-	it('agent can create_issue assigned to themselves', async () => {
+	it('agent can create_task assigned to themselves', async () => {
 		const { token: engToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId);
-		const result = await callTool(engToken, 'create_issue', {
+		const result = await callTool(engToken, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Engineer self-assigning',
@@ -180,9 +180,9 @@ describe('MCP create_issue: agent assignment hierarchy', () => {
 		expect(result.assignee_id).toBe(engineerId);
 	});
 
-	it('agent cannot create_issue assigned to a peer', async () => {
+	it('agent cannot create_task assigned to a peer', async () => {
 		const { token: engToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId);
-		const result = await callTool(engToken, 'create_issue', {
+		const result = await callTool(engToken, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Engineer → QA (peer, should fail)',
@@ -192,9 +192,9 @@ describe('MCP create_issue: agent assignment hierarchy', () => {
 		expect(result.error).toContain('create_comment');
 	});
 
-	it('agent cannot create_issue assigned to their manager', async () => {
+	it('agent cannot create_task assigned to their manager', async () => {
 		const { token: archToken } = await mintAgentToken(db, masterKeyManager, architectId, teamId);
-		const result = await callTool(archToken, 'create_issue', {
+		const result = await callTool(archToken, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Architect → Captain (manager, should fail)',
@@ -203,9 +203,9 @@ describe('MCP create_issue: agent assignment hierarchy', () => {
 		expect(result.error).toContain('@captain');
 	});
 
-	it('agent cannot create_issue assigned to a grand-subordinate', async () => {
+	it('agent cannot create_task assigned to a grand-subordinate', async () => {
 		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, captainId, teamId);
-		const result = await callTool(ceoToken, 'create_issue', {
+		const result = await callTool(ceoToken, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Captain → Engineer (transitive subordinate, should fail)',
@@ -214,8 +214,8 @@ describe('MCP create_issue: agent assignment hierarchy', () => {
 		expect(result.error).toContain('@engineer');
 	});
 
-	it('board user can create_issue assigned to anyone (rule does not apply to humans)', async () => {
-		const result = await callTool(token, 'create_issue', {
+	it('board user can create_task assigned to anyone (rule does not apply to humans)', async () => {
+		const result = await callTool(token, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Board → Engineer (cross-hierarchy, allowed for humans)',
@@ -229,7 +229,7 @@ describe('MCP create_issue: agent assignment hierarchy', () => {
 		// Engineer creates a self-assigned ticket, then comments with @qa-engineer
 		// to flag work for QA — this is the documented escape hatch.
 		const { token: engToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId);
-		const ticket = await callTool(engToken, 'create_issue', {
+		const ticket = await callTool(engToken, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Engineer ticket needing QA review',
@@ -239,7 +239,7 @@ describe('MCP create_issue: agent assignment hierarchy', () => {
 
 		const comment = await callTool(engToken, 'create_comment', {
 			team_id: teamId,
-			issue_id: ticket.id,
+			task_id: ticket.id,
 			content: 'Ready for review @qa-engineer — please pick this up when you have a slot.',
 		});
 		expect(comment.error).toBeUndefined();
@@ -247,19 +247,19 @@ describe('MCP create_issue: agent assignment hierarchy', () => {
 	});
 });
 
-describe('MCP update_issue: agent assignment hierarchy', () => {
-	it('agent can reassign their own issue to a direct subordinate', async () => {
+describe('MCP update_task: agent assignment hierarchy', () => {
+	it('agent can reassign their own task to a direct subordinate', async () => {
 		const { token: archToken } = await mintAgentToken(db, masterKeyManager, architectId, teamId);
-		const issue = await callTool(archToken, 'create_issue', {
+		const task = await callTool(archToken, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Architect drafts then hands off to engineer',
 			assignee_id: architectId,
 		});
 
-		const result = await callTool(archToken, 'update_issue', {
+		const result = await callTool(archToken, 'update_task', {
 			team_id: teamId,
-			issue_id: issue.id,
+			task_id: task.id,
 			assignee_id: engineerId,
 		});
 		expect(result.error).toBeUndefined();
@@ -268,16 +268,16 @@ describe('MCP update_issue: agent assignment hierarchy', () => {
 
 	it('agent cannot reassign to a non-subordinate', async () => {
 		const { token: engToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId);
-		const issue = await callTool(engToken, 'create_issue', {
+		const task = await callTool(engToken, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Engineer self-assigned, will try to dump on QA',
 			assignee_id: engineerId,
 		});
 
-		const result = await callTool(engToken, 'update_issue', {
+		const result = await callTool(engToken, 'update_task', {
 			team_id: teamId,
-			issue_id: issue.id,
+			task_id: task.id,
 			assignee_id: qaEngineerId,
 		});
 		expect(result.error).toContain('@qa-engineer');
@@ -286,16 +286,16 @@ describe('MCP update_issue: agent assignment hierarchy', () => {
 
 	it('agent passing the same assignee_id (no-op) is not blocked', async () => {
 		const { token: engToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId);
-		const issue = await callTool(engToken, 'create_issue', {
+		const task = await callTool(engToken, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Engineer no-op reassign',
 			assignee_id: engineerId,
 		});
 
-		const result = await callTool(engToken, 'update_issue', {
+		const result = await callTool(engToken, 'update_task', {
 			team_id: teamId,
-			issue_id: issue.id,
+			task_id: task.id,
 			assignee_id: engineerId,
 			progress_summary: 'still working',
 		});
@@ -305,15 +305,15 @@ describe('MCP update_issue: agent assignment hierarchy', () => {
 	it('board user can reassign across the hierarchy', async () => {
 		// Board mints the ticket assigned to engineer, then reassigns it to
 		// product-lead even though engineer→product-lead is not a hierarchy edge.
-		const issue = await callTool(token, 'create_issue', {
+		const task = await callTool(token, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Board reassign across hierarchy',
 			assignee_id: engineerId,
 		});
-		const result = await callTool(token, 'update_issue', {
+		const result = await callTool(token, 'update_task', {
 			team_id: teamId,
-			issue_id: issue.id,
+			task_id: task.id,
 			assignee_id: productLeadId,
 		});
 		expect(result.error).toBeUndefined();

@@ -15,7 +15,7 @@ let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let agentId: string;
 let projectId: string;
-let issueId: string;
+let taskId: string;
 
 let teamBId: string;
 let agentBId: string;
@@ -57,12 +57,12 @@ beforeAll(async () => {
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
+	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ project_id: projectId, title: 'Seed Issue', assignee_id: agentId }),
+		body: JSON.stringify({ project_id: projectId, title: 'Seed Task', assignee_id: agentId }),
 	});
-	issueId = (await issueRes.json()).data.id;
+	taskId = (await taskRes.json()).data.id;
 
 	// Create Team B
 	const teamBRes = await app.request('/api/teams', {
@@ -116,10 +116,10 @@ describe('MCP endpoint: tool registration', () => {
 		expect(toolNames).toContain('list_teams');
 		expect(toolNames).toContain('get_team');
 		expect(toolNames).toContain('create_team');
-		expect(toolNames).toContain('list_issues');
-		expect(toolNames).toContain('get_issue');
-		expect(toolNames).toContain('create_issue');
-		expect(toolNames).toContain('update_issue');
+		expect(toolNames).toContain('list_tasks');
+		expect(toolNames).toContain('get_task');
+		expect(toolNames).toContain('create_task');
+		expect(toolNames).toContain('update_task');
 		expect(toolNames).toContain('list_agents');
 		expect(toolNames).toContain('list_projects');
 		expect(toolNames).toContain('create_project');
@@ -231,18 +231,18 @@ describe('MCP tool handlers: data queries via DB', () => {
 		expect((r.rows[0] as any).name).toBe('MCP Tool Test Co');
 	});
 
-	it('list_issues returns issues for team', async () => {
+	it('list_tasks returns tasks for team', async () => {
 		const r = await db.query(
-			'SELECT i.*, p.name AS project_name FROM issues i JOIN projects p ON p.id = i.project_id WHERE i.team_id = $1 ORDER BY i.created_at DESC LIMIT 50',
+			'SELECT i.*, p.name AS project_name FROM tasks i JOIN projects p ON p.id = i.project_id WHERE i.team_id = $1 ORDER BY i.created_at DESC LIMIT 50',
 			[teamId],
 		);
 		expect(r.rows.length).toBeGreaterThanOrEqual(1);
 		const titles = r.rows.map((i: any) => i.title);
-		expect(titles).toContain('Seed Issue');
+		expect(titles).toContain('Seed Task');
 	});
 
-	it('list_issues filters by project_id', async () => {
-		const r = await db.query('SELECT * FROM issues WHERE team_id = $1 AND project_id = $2', [
+	it('list_tasks filters by project_id', async () => {
+		const r = await db.query('SELECT * FROM tasks WHERE team_id = $1 AND project_id = $2', [
 			teamId,
 			projectId,
 		]);
@@ -252,33 +252,31 @@ describe('MCP tool handlers: data queries via DB', () => {
 		}
 	});
 
-	it('create_issue inserts correctly', async () => {
-		const meta = await db.query<{ issue_prefix: string; number: number }>(
-			`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
+	it('create_task inserts correctly', async () => {
+		const meta = await db.query<{ task_prefix: string; number: number }>(
+			`SELECT p.task_prefix, next_project_task_number(p.id) AS number
 			 FROM projects p WHERE p.id = $1`,
 			[projectId],
 		);
 		const num = meta.rows[0].number;
-		const identifier = `${meta.rows[0].issue_prefix}-${num}`;
+		const identifier = `${meta.rows[0].task_prefix}-${num}`;
 
 		const r = await db.query(
-			`INSERT INTO issues (team_id, project_id, number, identifier, title, description, status, priority)
-			 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::issue_status, 'high'::issue_priority) RETURNING *`,
-			[teamId, projectId, num, identifier, 'Direct DB Issue', 'Created directly'],
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title, description, status, priority)
+			 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::task_status, 'high'::task_priority) RETURNING *`,
+			[teamId, projectId, num, identifier, 'Direct DB Task', 'Created directly'],
 		);
 		expect(r.rows.length).toBe(1);
-		expect((r.rows[0] as any).title).toBe('Direct DB Issue');
+		expect((r.rows[0] as any).title).toBe('Direct DB Task');
 		expect((r.rows[0] as any).identifier).toMatch(/^TP-/);
 	});
 
-	it('update_issue changes status', async () => {
-		await db.query("UPDATE issues SET status = 'in_progress'::issue_status WHERE id = $1", [
-			issueId,
-		]);
-		const r = await db.query('SELECT status FROM issues WHERE id = $1', [issueId]);
+	it('update_task changes status', async () => {
+		await db.query("UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1", [taskId]);
+		const r = await db.query('SELECT status FROM tasks WHERE id = $1', [taskId]);
 		expect((r.rows[0] as any).status).toBe('in_progress');
 		// Reset
-		await db.query("UPDATE issues SET status = 'backlog'::issue_status WHERE id = $1", [issueId]);
+		await db.query("UPDATE tasks SET status = 'backlog'::task_status WHERE id = $1", [taskId]);
 	});
 
 	it('list_agents returns agents for team', async () => {
@@ -299,12 +297,12 @@ describe('MCP tool handlers: data queries via DB', () => {
 
 	it('create_project inserts correctly', async () => {
 		const r = await db.query(
-			"INSERT INTO projects (team_id, name, slug, issue_prefix, description) VALUES ($1, 'MCP Project', 'mcp-project', 'MCPP', 'test') RETURNING *",
+			"INSERT INTO projects (team_id, name, slug, task_prefix, description) VALUES ($1, 'MCP Project', 'mcp-project', 'MCPP', 'test') RETURNING *",
 			[teamId],
 		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).name).toBe('MCP Project');
-		expect((r.rows[0] as any).issue_prefix).toBe('MCPP');
+		expect((r.rows[0] as any).task_prefix).toBe('MCPP');
 	});
 
 	it('list_approvals returns pending approvals', async () => {
@@ -338,7 +336,7 @@ describe('MCP tool: skill file includes all tools', () => {
 		expect(res.status).toBe(200);
 		const text = await res.text();
 		expect(text).toContain('list_teams');
-		expect(text).toContain('create_issue');
+		expect(text).toContain('create_task');
 		expect(text).toContain('list_agents');
 		expect(text).toContain('resolve_approval');
 		expect(text).toContain('get_agent_system_prompt');
@@ -374,7 +372,7 @@ describe('MCP endpoint: tool call integration', () => {
 		expect(data).toBeDefined();
 	});
 
-	async function callUpdateIssueAsAgent(args: Record<string, unknown>): Promise<unknown> {
+	async function callUpdateTaskAsAgent(args: Record<string, unknown>): Promise<unknown> {
 		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 		const res = await app.request('/mcp', {
 			method: 'POST',
@@ -382,7 +380,7 @@ describe('MCP endpoint: tool call integration', () => {
 			body: JSON.stringify({
 				jsonrpc: '2.0',
 				method: 'tools/call',
-				params: { name: 'update_issue', arguments: args },
+				params: { name: 'update_task', arguments: args },
 				id: 1,
 			}),
 		});
@@ -392,64 +390,64 @@ describe('MCP endpoint: tool call integration', () => {
 		return JSON.parse(body.result.content[0].text);
 	}
 
-	it('update_issue via MCP as agent can set status=closed', async () => {
-		const created = (await callToolViaMcp('create_issue', {
+	it('update_task via MCP as agent can set status=closed', async () => {
+		const created = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Agent MCP close target',
 			assignee_id: agentId,
 		})) as { id: string };
 
-		const result = (await callUpdateIssueAsAgent({
+		const result = (await callUpdateTaskAsAgent({
 			team_id: teamId,
-			issue_id: created.id,
+			task_id: created.id,
 			status: 'closed',
 		})) as { status?: string; error?: string };
 		expect(result.error).toBeUndefined();
 		expect(result.status).toBe('closed');
 	});
 
-	it('update_issue via MCP as agent cannot re-open a closed issue', async () => {
-		const created = (await callToolViaMcp('create_issue', {
+	it('update_task via MCP as agent cannot re-open a closed task', async () => {
+		const created = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Agent MCP reopen target',
 			assignee_id: agentId,
 		})) as { id: string };
 
-		// Board closes the issue first.
-		await callToolViaMcp('update_issue', {
+		// Board closes the task first.
+		await callToolViaMcp('update_task', {
 			team_id: teamId,
-			issue_id: created.id,
+			task_id: created.id,
 			status: 'closed',
 		});
 
-		const result = (await callUpdateIssueAsAgent({
+		const result = (await callUpdateTaskAsAgent({
 			team_id: teamId,
-			issue_id: created.id,
+			task_id: created.id,
 			status: 'backlog',
 		})) as { error?: string };
 		expect(result.error).toMatch(/board/i);
 
-		const bypass = (await callUpdateIssueAsAgent({
+		const bypass = (await callUpdateTaskAsAgent({
 			team_id: teamId,
-			issue_id: created.id,
+			task_id: created.id,
 			status: 'in_progress',
 		})) as { error?: string };
 		expect(bypass.error).toMatch(/board/i);
 	});
 
-	it('update_issue via MCP as agent can still set non-terminal statuses', async () => {
-		const created = (await callToolViaMcp('create_issue', {
+	it('update_task via MCP as agent can still set non-terminal statuses', async () => {
+		const created = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Agent MCP progress target',
 			assignee_id: agentId,
 		})) as { id: string };
 
-		const result = (await callUpdateIssueAsAgent({
+		const result = (await callUpdateTaskAsAgent({
 			team_id: teamId,
-			issue_id: created.id,
+			task_id: created.id,
 			status: 'in_progress',
 		})) as { status?: string; error?: string };
 		expect(result.error).toBeUndefined();
@@ -481,19 +479,19 @@ describe('MCP endpoint: tool call integration', () => {
 });
 
 describe('MCP tool handlers: additional data queries via DB', () => {
-	it('get_issue query returns correct issue', async () => {
-		const r = await db.query('SELECT * FROM issues WHERE id = $1', [issueId]);
+	it('get_task query returns correct task', async () => {
+		const r = await db.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
 		expect(r.rows.length).toBe(1);
-		expect((r.rows[0] as any).title).toBe('Seed Issue');
+		expect((r.rows[0] as any).title).toBe('Seed Task');
 		expect((r.rows[0] as any).project_id).toBe(projectId);
 	});
 
 	it('create_comment inserts correctly', async () => {
 		const r = await db.query(
-			`INSERT INTO issue_comments (issue_id, content_type, content)
+			`INSERT INTO task_comments (task_id, content_type, content)
 			 VALUES ($1, 'text'::comment_content_type, $2::jsonb)
 			 RETURNING *`,
-			[issueId, JSON.stringify('MCP comment test')],
+			[taskId, JSON.stringify('MCP comment test')],
 		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).content).toBe('MCP comment test');
@@ -511,7 +509,7 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 					name: 'create_comment',
 					arguments: {
 						team_id: teamId,
-						issue_id: issueId,
+						task_id: taskId,
 						content: 'Authored via MCP',
 					},
 				},
@@ -529,16 +527,16 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 		expect(inserted.author_member_id).toBe(agentId);
 
 		const fetched = await db.query<{ author_member_id: string | null }>(
-			'SELECT author_member_id FROM issue_comments WHERE id = $1',
+			'SELECT author_member_id FROM task_comments WHERE id = $1',
 			[inserted.id],
 		);
 		expect(fetched.rows[0].author_member_id).toBe(agentId);
 	});
 
-	it('list_comments query returns comments for issue', async () => {
+	it('list_comments query returns comments for task', async () => {
 		const r = await db.query(
-			'SELECT * FROM issue_comments WHERE issue_id = $1 ORDER BY created_at ASC',
-			[issueId],
+			'SELECT * FROM task_comments WHERE task_id = $1 ORDER BY created_at ASC',
+			[taskId],
 		);
 		expect(r.rows.length).toBeGreaterThanOrEqual(1);
 	});
@@ -797,12 +795,12 @@ describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
 });
 
 describe('MCP tool: operations project assignee restriction', () => {
-	it('create_issue on Operations project rejects non-Captain assignee_slug', async () => {
+	it('create_task on Operations project rejects non-Captain assignee_slug', async () => {
 		const ops = await db.query<{ id: string }>(
 			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
 			[teamId],
 		);
-		const result = (await callToolViaMcp('create_issue', {
+		const result = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: ops.rows[0].id,
 			title: 'Operations via MCP with non-Captain',
@@ -811,12 +809,12 @@ describe('MCP tool: operations project assignee restriction', () => {
 		expect(result.error).toContain('Captain');
 	});
 
-	it('create_issue on Operations project accepts Captain assignee_slug', async () => {
+	it('create_task on Operations project accepts Captain assignee_slug', async () => {
 		const ops = await db.query<{ id: string }>(
 			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
 			[teamId],
 		);
-		const result = (await callToolViaMcp('create_issue', {
+		const result = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: ops.rows[0].id,
 			title: 'Operations via MCP with Captain',
@@ -826,8 +824,8 @@ describe('MCP tool: operations project assignee restriction', () => {
 		expect(result.project_id).toBe(ops.rows[0].id);
 	});
 
-	it('create_issue caps sub-issue depth at 2', async () => {
-		const root = (await callToolViaMcp('create_issue', {
+	it('create_task caps sub-task depth at 2', async () => {
+		const root = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Depth root',
@@ -835,35 +833,35 @@ describe('MCP tool: operations project assignee restriction', () => {
 		})) as { id: string; error?: string };
 		expect(root.error).toBeUndefined();
 
-		const sub = (await callToolViaMcp('create_issue', {
+		const sub = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Depth sub',
 			assignee_id: agentId,
-			parent_issue_id: root.id,
+			parent_task_id: root.id,
 		})) as { id: string; error?: string };
 		expect(sub.error).toBeUndefined();
 
-		const subSub = (await callToolViaMcp('create_issue', {
+		const subSub = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Depth sub-sub',
 			assignee_id: agentId,
-			parent_issue_id: sub.id,
+			parent_task_id: sub.id,
 		})) as { id: string; error?: string };
 		expect(subSub.error).toBeUndefined();
 
-		const tooDeep = (await callToolViaMcp('create_issue', {
+		const tooDeep = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Depth too deep',
 			assignee_id: agentId,
-			parent_issue_id: subSub.id,
+			parent_task_id: subSub.id,
 		})) as { error?: string };
 		expect(tooDeep.error).toMatch(/2 levels deep/);
 	});
 
-	it('update_issue rejects reassigning Operations issue to non-Captain', async () => {
+	it('update_task rejects reassigning Operations task to non-Captain', async () => {
 		const ops = await db.query<{ id: string }>(
 			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
 			[teamId],
@@ -874,16 +872,16 @@ describe('MCP tool: operations project assignee restriction', () => {
 			[teamId],
 		);
 
-		const created = (await callToolViaMcp('create_issue', {
+		const created = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: ops.rows[0].id,
 			title: 'Operations reassign target',
 			assignee_id: captain.rows[0].id,
 		})) as { id: string };
 
-		const result = (await callToolViaMcp('update_issue', {
+		const result = (await callToolViaMcp('update_task', {
 			team_id: teamId,
-			issue_id: created.id,
+			task_id: created.id,
 			assignee_id: agentId,
 		})) as { error?: string };
 		expect(result.error).toContain('Captain');
@@ -891,8 +889,8 @@ describe('MCP tool: operations project assignee restriction', () => {
 });
 
 describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard', () => {
-	it('list_issues never returns the embedding column', async () => {
-		const rows = (await callToolViaMcp('list_issues', {
+	it('list_tasks never returns the embedding column', async () => {
+		const rows = (await callToolViaMcp('list_tasks', {
 			team_id: teamId,
 			project_id: projectId,
 		})) as Array<Record<string, unknown>>;
@@ -905,34 +903,34 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		}
 	});
 
-	it('get_issue never returns the embedding column', async () => {
-		const issue = (await callToolViaMcp('get_issue', {
+	it('get_task never returns the embedding column', async () => {
+		const task = (await callToolViaMcp('get_task', {
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 		})) as Record<string, unknown>;
-		expect(issue).not.toHaveProperty('embedding');
-		expect(issue).toHaveProperty('description');
+		expect(task).not.toHaveProperty('embedding');
+		expect(task).toHaveProperty('description');
 	});
 
-	it('get_issue returns blockers and dependents symmetrically', async () => {
-		const upstream = (await callToolViaMcp('create_issue', {
+	it('get_task returns blockers and dependents symmetrically', async () => {
+		const upstream = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Upstream for dependents test',
 			assignee_id: agentId,
 		})) as { id: string; identifier: string };
 
-		const downstream = (await callToolViaMcp('create_issue', {
+		const downstream = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Downstream for dependents test',
 			assignee_id: agentId,
-			blocked_by_issue_ids: [upstream.identifier],
+			blocked_by_task_ids: [upstream.identifier],
 		})) as { id: string; identifier: string };
 
-		const upstreamView = (await callToolViaMcp('get_issue', {
+		const upstreamView = (await callToolViaMcp('get_task', {
 			team_id: teamId,
-			issue_id: upstream.id,
+			task_id: upstream.id,
 		})) as {
 			blockers: Array<{ identifier: string }>;
 			dependents: Array<{ id: string; identifier: string; status: string }>;
@@ -943,9 +941,9 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		expect(upstreamView.dependents[0].identifier).toBe(downstream.identifier);
 		expect(upstreamView.dependents[0].status).toBe('blocked');
 
-		const downstreamView = (await callToolViaMcp('get_issue', {
+		const downstreamView = (await callToolViaMcp('get_task', {
 			team_id: teamId,
-			issue_id: downstream.id,
+			task_id: downstream.id,
 		})) as {
 			blockers: Array<{ id: string; identifier: string }>;
 			dependents: Array<unknown>;
@@ -955,9 +953,9 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		expect(downstreamView.dependents).toEqual([]);
 	});
 
-	it('list_issues with excerpt_chars returns the excerpt/truncated/length triple', async () => {
+	it('list_tasks with excerpt_chars returns the excerpt/truncated/length triple', async () => {
 		const longBody = `Paragraph one is the headline.\n\n${'detail '.repeat(200)}`;
-		const created = (await callToolViaMcp('create_issue', {
+		const created = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Excerpt target',
@@ -965,7 +963,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			assignee_id: agentId,
 		})) as { id: string };
 
-		const rows = (await callToolViaMcp('list_issues', {
+		const rows = (await callToolViaMcp('list_tasks', {
 			team_id: teamId,
 			project_id: projectId,
 			excerpt_chars: 50,
@@ -978,9 +976,9 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		expect(target.description_length).toBe(longBody.length);
 	});
 
-	it('list_issues without excerpt_chars returns the full description', async () => {
+	it('list_tasks without excerpt_chars returns the full description', async () => {
 		const body = 'Single short body.';
-		const created = (await callToolViaMcp('create_issue', {
+		const created = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Full body target',
@@ -988,7 +986,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			assignee_id: agentId,
 		})) as { id: string };
 
-		const rows = (await callToolViaMcp('list_issues', {
+		const rows = (await callToolViaMcp('list_tasks', {
 			team_id: teamId,
 			project_id: projectId,
 		})) as Array<Record<string, unknown>>;
@@ -998,7 +996,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 	});
 
 	it('list_comments caps at 50, walks backward via `before`, and truncates with excerpt_chars', async () => {
-		const issue = (await callToolViaMcp('create_issue', {
+		const task = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
 			title: 'Comment pagination target',
@@ -1007,16 +1005,16 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 
 		for (let i = 0; i < 60; i++) {
 			await db.query(
-				`INSERT INTO issue_comments (issue_id, content_type, content, created_at)
+				`INSERT INTO task_comments (task_id, content_type, content, created_at)
 				 VALUES ($1, 'text'::comment_content_type, $2::jsonb,
 				         now() + ($3 || ' milliseconds')::interval)`,
-				[issue.id, JSON.stringify({ text: `comment ${i}` }), i],
+				[task.id, JSON.stringify({ text: `comment ${i}` }), i],
 			);
 		}
 
 		const first = (await callToolViaMcp('list_comments', {
 			team_id: teamId,
-			issue_id: issue.id,
+			task_id: task.id,
 		})) as Array<Record<string, unknown>>;
 		expect(first.length).toBe(50);
 		expect((first[0].content as { text: string }).text).toBe('comment 59');
@@ -1024,7 +1022,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		const oldest = first[first.length - 1] as { id: string };
 		const next = (await callToolViaMcp('list_comments', {
 			team_id: teamId,
-			issue_id: issue.id,
+			task_id: task.id,
 			before: oldest.id,
 		})) as Array<Record<string, unknown>>;
 		expect(next.length).toBeGreaterThan(0);
@@ -1035,14 +1033,14 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 
 		const longText = 'x'.repeat(5000);
 		await db.query(
-			`INSERT INTO issue_comments (issue_id, content_type, content, created_at)
+			`INSERT INTO task_comments (task_id, content_type, content, created_at)
 			 VALUES ($1, 'text'::comment_content_type, $2::jsonb,
 			         now() + interval '1 hour')`,
-			[issue.id, JSON.stringify({ text: longText })],
+			[task.id, JSON.stringify({ text: longText })],
 		);
 		const truncated = (await callToolViaMcp('list_comments', {
 			team_id: teamId,
-			issue_id: issue.id,
+			task_id: task.id,
 			excerpt_chars: 100,
 		})) as Array<Record<string, unknown>>;
 		const longRow = truncated[0] as {
@@ -1065,7 +1063,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 
 		const fatBody = 'lorem '.repeat(1800);
 		for (let i = 0; i < 8; i++) {
-			await callToolViaMcp('create_issue', {
+			await callToolViaMcp('create_task', {
 				team_id: teamId,
 				project_id: fatProjectId,
 				title: `Fat ticket ${i}`,
@@ -1074,7 +1072,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			});
 		}
 
-		const result = (await callToolViaMcp('list_issues', {
+		const result = (await callToolViaMcp('list_tasks', {
 			team_id: teamId,
 			project_id: fatProjectId,
 		})) as {
@@ -1085,11 +1083,11 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			hint?: string;
 		};
 		expect(result.error).toBe('result_too_large');
-		expect(result.tool).toBe('list_issues');
+		expect(result.tool).toBe('list_tasks');
 		expect(result.size_bytes).toBeGreaterThan(result.limit_bytes ?? 0);
 		expect(result.hint).toContain('excerpt_chars');
 
-		const slim = (await callToolViaMcp('list_issues', {
+		const slim = (await callToolViaMcp('list_tasks', {
 			team_id: teamId,
 			project_id: fatProjectId,
 			excerpt_chars: 200,

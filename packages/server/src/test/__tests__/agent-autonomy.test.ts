@@ -1,4 +1,4 @@
-import { ApprovalType, IssueStatus } from '@hezo/shared';
+import { ApprovalType, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader } from '../helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from '../helpers/context';
@@ -59,14 +59,14 @@ afterAll(async () => {
 	await destroyTestContext(ctx);
 });
 
-describe('issue schema', () => {
-	it('creates an issue with backlog status by default', async () => {
-		const res = await ctx.app.request(`/api/teams/${teamId}/issues`, {
+describe('task schema', () => {
+	it('creates an task with backlog status by default', async () => {
+		const res = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Test issue',
+				title: 'Test task',
 				assignee_id: engineerAgentId,
 			}),
 		});
@@ -75,9 +75,9 @@ describe('issue schema', () => {
 	});
 });
 
-describe('issue schema: branch_name', () => {
+describe('task schema: branch_name', () => {
 	it('can set and retrieve branch_name', async () => {
-		const createRes = await ctx.app.request(`/api/teams/${teamId}/issues`, {
+		const createRes = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -86,9 +86,9 @@ describe('issue schema: branch_name', () => {
 				assignee_id: engineerAgentId,
 			}),
 		});
-		const issueId = ((await createRes.json()) as any).data.id;
+		const taskId = ((await createRes.json()) as any).data.id;
 
-		const patchRes = await ctx.app.request(`/api/teams/${teamId}/issues/${issueId}`, {
+		const patchRes = await ctx.app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ branch_name: 'feat/AUT-1-test-feature' }),
@@ -99,9 +99,9 @@ describe('issue schema: branch_name', () => {
 	});
 });
 
-describe('issue automation: Coach wakeup on Done', () => {
+describe('task automation: Coach wakeup on Done', () => {
 	it('creates a wakeup for Coach when status changes to done', async () => {
-		const createRes = await ctx.app.request(`/api/teams/${teamId}/issues`, {
+		const createRes = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -110,16 +110,16 @@ describe('issue automation: Coach wakeup on Done', () => {
 				assignee_id: engineerAgentId,
 			}),
 		});
-		const issueId = ((await createRes.json()) as any).data.id;
+		const taskId = ((await createRes.json()) as any).data.id;
 
 		// Clear any existing wakeups for coach
 		await ctx.db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [coachAgentId]);
 
 		// Set status to done
-		await ctx.app.request(`/api/teams/${teamId}/issues/${issueId}`, {
+		await ctx.app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: IssueStatus.Done }),
+			body: JSON.stringify({ status: TaskStatus.Done }),
 		});
 
 		// Wait briefly for async wakeup creation
@@ -132,12 +132,12 @@ describe('issue automation: Coach wakeup on Done', () => {
 		);
 		expect(wakeups.rows.length).toBeGreaterThan(0);
 		const payload = wakeups.rows[0].payload;
-		expect(payload.trigger).toBe('issue_done');
-		expect(payload.issue_id).toBe(issueId);
+		expect(payload.trigger).toBe('task_done');
+		expect(payload.task_id).toBe(taskId);
 	});
 
 	it('does not create wakeup for non-done status changes', async () => {
-		const createRes = await ctx.app.request(`/api/teams/${teamId}/issues`, {
+		const createRes = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -146,15 +146,15 @@ describe('issue automation: Coach wakeup on Done', () => {
 				assignee_id: engineerAgentId,
 			}),
 		});
-		const issueId = ((await createRes.json()) as any).data.id;
+		const taskId = ((await createRes.json()) as any).data.id;
 
 		await ctx.db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [coachAgentId]);
 
 		// Set status to review — should NOT trigger Coach
-		await ctx.app.request(`/api/teams/${teamId}/issues/${issueId}`, {
+		await ctx.app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: IssueStatus.Review }),
+			body: JSON.stringify({ status: TaskStatus.Review }),
 		});
 
 		await new Promise((r) => setTimeout(r, 100));
@@ -167,9 +167,9 @@ describe('issue automation: Coach wakeup on Done', () => {
 	});
 });
 
-describe('issue: progress_summary and rules', () => {
+describe('task: progress_summary and rules', () => {
 	it('can update progress_summary with tracking fields', async () => {
-		const createRes = await ctx.app.request(`/api/teams/${teamId}/issues`, {
+		const createRes = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -178,9 +178,9 @@ describe('issue: progress_summary and rules', () => {
 				assignee_id: engineerAgentId,
 			}),
 		});
-		const issueId = ((await createRes.json()) as any).data.id;
+		const taskId = ((await createRes.json()) as any).data.id;
 
-		const patchRes = await ctx.app.request(`/api/teams/${teamId}/issues/${issueId}`, {
+		const patchRes = await ctx.app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: 'Completed API endpoints, working on tests' }),
@@ -192,7 +192,7 @@ describe('issue: progress_summary and rules', () => {
 	});
 
 	it('can update rules', async () => {
-		const createRes = await ctx.app.request(`/api/teams/${teamId}/issues`, {
+		const createRes = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -201,9 +201,9 @@ describe('issue: progress_summary and rules', () => {
 				assignee_id: engineerAgentId,
 			}),
 		});
-		const issueId = ((await createRes.json()) as any).data.id;
+		const taskId = ((await createRes.json()) as any).data.id;
 
-		const patchRes = await ctx.app.request(`/api/teams/${teamId}/issues/${issueId}`, {
+		const patchRes = await ctx.app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ rules: 'Must use PostgreSQL transactions for all writes' }),
@@ -215,21 +215,21 @@ describe('issue: progress_summary and rules', () => {
 	});
 });
 
-describe('issue: sub-issues with parent_issue_id', () => {
-	it('can create a sub-issue', async () => {
-		const parentRes = await ctx.app.request(`/api/teams/${teamId}/issues`, {
+describe('task: sub-tasks with parent_task_id', () => {
+	it('can create a sub-task', async () => {
+		const parentRes = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Parent issue',
+				title: 'Parent task',
 				assignee_id: engineerAgentId,
 			}),
 		});
 		const parentId = ((await parentRes.json()) as any).data.id;
 
-		// Create sub-issue via the existing sub-issues endpoint
-		const subRes = await ctx.app.request(`/api/teams/${teamId}/issues/${parentId}/sub-issues`, {
+		// Create sub-task via the existing sub-tasks endpoint
+		const subRes = await ctx.app.request(`/api/teams/${teamId}/tasks/${parentId}/sub-tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -239,8 +239,8 @@ describe('issue: sub-issues with parent_issue_id', () => {
 			}),
 		});
 		expect(subRes.status).toBe(201);
-		const subIssue = ((await subRes.json()) as any).data;
-		expect(subIssue.parent_issue_id).toBe(parentId);
+		const subTask = ((await subRes.json()) as any).data;
+		expect(subTask.parent_task_id).toBe(parentId);
 	});
 });
 
@@ -271,7 +271,7 @@ describe('agent-runner: retry context in task prompt', () => {
 	it('buildTaskPrompt includes retry context when wakeupPayload has previous_failure', async () => {
 		const { buildTaskPrompt } = await import('../../services/agent-runner');
 
-		const issue = {
+		const task = {
 			id: 'test-id',
 			identifier: 'AUT-1',
 			title: 'Fix auth bug',
@@ -294,7 +294,7 @@ describe('agent-runner: retry context in task prompt', () => {
 			},
 		};
 
-		const prompt = buildTaskPrompt('System prompt here', issue, wakeupPayload);
+		const prompt = buildTaskPrompt('System prompt here', task, wakeupPayload);
 
 		expect(prompt).toContain('## Retry Attempt 2/3');
 		expect(prompt).toContain('previous attempt FAILED');
@@ -306,7 +306,7 @@ describe('agent-runner: retry context in task prompt', () => {
 	it('buildTaskPrompt omits retry context when no previous_failure', async () => {
 		const { buildTaskPrompt } = await import('../../services/agent-runner');
 
-		const issue = {
+		const task = {
 			id: 'test-id',
 			identifier: 'AUT-2',
 			title: 'Add feature',
@@ -317,7 +317,7 @@ describe('agent-runner: retry context in task prompt', () => {
 			rules: null,
 		};
 
-		const prompt = buildTaskPrompt('System prompt', issue);
+		const prompt = buildTaskPrompt('System prompt', task);
 
 		expect(prompt).not.toContain('Retry Attempt');
 		expect(prompt).not.toContain('previous attempt FAILED');
@@ -328,7 +328,7 @@ describe('agent-runner: retry context in task prompt', () => {
 	it('buildTaskPrompt includes rules when present', async () => {
 		const { buildTaskPrompt } = await import('../../services/agent-runner');
 
-		const issue = {
+		const task = {
 			id: 'test-id',
 			identifier: 'AUT-3',
 			title: 'Constrained task',
@@ -339,16 +339,16 @@ describe('agent-runner: retry context in task prompt', () => {
 			rules: 'Must use PostgreSQL transactions\nNo raw SQL in route handlers',
 		};
 
-		const prompt = buildTaskPrompt('System prompt', issue);
+		const prompt = buildTaskPrompt('System prompt', task);
 
-		expect(prompt).toContain('### Rules for this issue');
+		expect(prompt).toContain('### Rules for this task');
 		expect(prompt).toContain('Must use PostgreSQL transactions');
 		expect(prompt).toContain('No raw SQL in route handlers');
 	});
 });
 
 describe('agent-runner: mention handoff prompt', () => {
-	const mentionIssue = {
+	const mentionTask = {
 		id: 'trig-uuid',
 		identifier: 'AUT-42',
 		title: "Captain's roadmap",
@@ -361,7 +361,7 @@ describe('agent-runner: mention handoff prompt', () => {
 
 	const mentionPayload = {
 		source: 'mention',
-		issue_id: 'trig-uuid',
+		task_id: 'trig-uuid',
 		comment_id: 'comment-uuid',
 	};
 
@@ -378,7 +378,7 @@ describe('agent-runner: mention handoff prompt', () => {
 			],
 		};
 
-		const prompt = buildTaskPrompt('System prompt', mentionIssue, mentionPayload, {
+		const prompt = buildTaskPrompt('System prompt', mentionTask, mentionPayload, {
 			mentionContext: ctx,
 		});
 
@@ -388,7 +388,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		expect(prompt).toContain('AUT-10 — Draft spec (backlog, high)');
 		expect(prompt).toContain('AUT-12 — Review PRD (in_progress, medium)');
 		expect(prompt).toContain('AUT-15 — ADR: runtime (review, low)');
-		expect(prompt).toContain('parent_issue_id = trig-uuid');
+		expect(prompt).toContain('parent_task_id = trig-uuid');
 		expect(prompt).toContain('## Handling @-mentions');
 		// Ensure the normal Current Task block still follows.
 		expect(prompt).toContain('## Current Task: AUT-42');
@@ -405,7 +405,7 @@ describe('agent-runner: mention handoff prompt', () => {
 			openTickets: [],
 		};
 
-		const prompt = buildTaskPrompt('System prompt', mentionIssue, mentionPayload, {
+		const prompt = buildTaskPrompt('System prompt', mentionTask, mentionPayload, {
 			mentionContext: ctx,
 		});
 
@@ -424,8 +424,8 @@ describe('agent-runner: mention handoff prompt', () => {
 
 		const prompt = buildTaskPrompt(
 			'System prompt',
-			mentionIssue,
-			{ source: 'assignment', issue_id: 'trig-uuid' },
+			mentionTask,
+			{ source: 'assignment', task_id: 'trig-uuid' },
 			{ mentionContext: ctx },
 		);
 
@@ -451,7 +451,7 @@ describe('agent-runner: mention handoff prompt', () => {
 			},
 		};
 
-		const prompt = buildTaskPrompt('System prompt', mentionIssue, payload, {
+		const prompt = buildTaskPrompt('System prompt', mentionTask, payload, {
 			mentionContext: ctx,
 		});
 
@@ -488,7 +488,7 @@ describe('agent-runner: mention context loader', () => {
 				project_id: 'p',
 				rules: null,
 			},
-			{ source: 'mention', comment_id: 'c', issue_id: 'i' },
+			{ source: 'mention', comment_id: 'c', task_id: 'i' },
 			{ mentionContext: ctx },
 		);
 

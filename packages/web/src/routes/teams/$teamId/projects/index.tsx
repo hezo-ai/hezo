@@ -58,7 +58,7 @@ function ProjectListPage() {
 				<EmptyState
 					icon={<FolderKanban className="w-10 h-10" />}
 					title="No projects yet"
-					description="Create a project to organize issues and repos."
+					description="Create a project to organize tasks and repos."
 				/>
 			) : (
 				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -96,7 +96,7 @@ function ProjectListPage() {
 											<p className="text-xs text-text-muted line-clamp-2">{p.description}</p>
 										)}
 										<div className="flex gap-3 text-xs text-text-muted mt-1">
-											<span>{p.open_issue_count} issues</span>
+											<span>{p.open_task_count} tasks</span>
 											<span>{p.repo_count} repos</span>
 										</div>
 									</div>

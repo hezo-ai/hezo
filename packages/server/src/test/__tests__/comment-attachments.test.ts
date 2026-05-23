@@ -19,9 +19,9 @@ let teamId: string;
 let teamSlug: string;
 let projectId: string;
 let projectSlug: string;
-let issueId: string;
+let taskId: string;
 let otherProjectId: string;
-let otherIssueId: string;
+let otherTaskId: string;
 
 function buildPng(): Uint8Array {
 	const sig = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -37,13 +37,13 @@ async function uploadAsset(
 	filename: string,
 	mime: string,
 	bytes: Uint8Array,
-	targetIssueId: string = issueId,
+	targetTaskId: string = taskId,
 ): Promise<Response> {
 	const fd = new FormData();
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
 	fd.set('file', new File([copy.buffer], filename, { type: mime }));
-	return app.request(`/api/teams/${teamId}/issues/${targetIssueId}/assets`, {
+	return app.request(`/api/teams/${teamId}/tasks/${targetTaskId}/assets`, {
 		method: 'POST',
 		headers: { ...authHeader(token) },
 		body: fd,
@@ -83,19 +83,19 @@ beforeAll(async () => {
 	});
 	const agentId = (await agentRes.json()).data.id;
 
-	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
+	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectId,
-			title: 'Attachable Issue',
+			title: 'Attachable Task',
 			assignee_id: agentId,
 		}),
 	});
-	if (issueRes.status !== 201) {
-		throw new Error(`Issue create failed: ${issueRes.status} ${await issueRes.text()}`);
+	if (taskRes.status !== 201) {
+		throw new Error(`Task create failed: ${taskRes.status} ${await taskRes.text()}`);
 	}
-	issueId = (await issueRes.json()).data.id;
+	taskId = (await taskRes.json()).data.id;
 
 	const otherProjectRes = await app.request(`/api/teams/${teamId}/projects`, {
 		method: 'POST',
@@ -104,16 +104,16 @@ beforeAll(async () => {
 	});
 	otherProjectId = (await otherProjectRes.json()).data.id;
 
-	const otherIssueRes = await app.request(`/api/teams/${teamId}/issues`, {
+	const otherTaskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: otherProjectId,
-			title: 'Other Issue',
+			title: 'Other Task',
 			assignee_id: agentId,
 		}),
 	});
-	otherIssueId = (await otherIssueRes.json()).data.id;
+	otherTaskId = (await otherTaskRes.json()).data.id;
 });
 
 afterAll(async () => {
@@ -218,7 +218,7 @@ describe('comment + attachments', () => {
 		const upload = await uploadAsset('doc.pdf', 'application/pdf', new Uint8Array([1, 2, 3, 4]));
 		const assetId = (await upload.json()).data.id;
 
-		const createRes = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
+		const createRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -235,7 +235,7 @@ describe('comment + attachments', () => {
 		expect(created.attachments[0].original_filename).toBe('doc.pdf');
 		expect(created.attachments[0].url).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 
-		const listRes = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
+		const listRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			headers: authHeader(token),
 		});
 		const list = (await listRes.json()).data;
@@ -245,10 +245,10 @@ describe('comment + attachments', () => {
 	});
 
 	it('rejects attaching an asset from another project', async () => {
-		const upload = await uploadAsset('other.png', 'image/png', buildPng(), otherIssueId);
+		const upload = await uploadAsset('other.png', 'image/png', buildPng(), otherTaskId);
 		const otherAssetId = (await upload.json()).data.id;
 
-		const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
+		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -266,7 +266,7 @@ describe('comment + attachments', () => {
 		const upload = await uploadAsset('todelete.txt', 'text/plain', new Uint8Array([42]));
 		const assetId = (await upload.json()).data.id;
 
-		const createRes = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
+		const createRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -277,7 +277,7 @@ describe('comment + attachments', () => {
 		});
 		const commentId = (await createRes.json()).data.id;
 
-		await db.query('DELETE FROM issue_comments WHERE id = $1', [commentId]);
+		await db.query('DELETE FROM task_comments WHERE id = $1', [commentId]);
 		const remaining = await db.query<{ id: string }>(
 			'SELECT id FROM comment_attachments WHERE comment_id = $1',
 			[commentId],
