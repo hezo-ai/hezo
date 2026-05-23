@@ -1,9 +1,10 @@
-import { AgentAdminStatus, DEFAULT_TEAM_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { AgentAdminStatus, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { Settings } from 'lucide-react';
 import { useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useProjects } from '../hooks/use-projects';
+import { useRouteTeamId } from '../hooks/use-route-team-id';
 import { useTeam } from '../hooks/use-teams';
 import { useUiState, useUpdateUiState } from '../hooks/use-ui-state';
 import { AgentStatusLabel } from './agent-status-label';
@@ -12,7 +13,7 @@ import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 import { ThemeSwitcher } from './ui/theme-switcher';
 
 export function TeamSidebar() {
-	const teamId = DEFAULT_TEAM_SLUG;
+	const teamId = useRouteTeamId();
 	const params = { teamId };
 	const navigate = useNavigate();
 	const { data: agents } = useAgents(teamId);

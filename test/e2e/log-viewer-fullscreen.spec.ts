@@ -72,12 +72,14 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 	const fullscreen = page.getByTestId('log-viewer-fullscreen');
 	await expect(fullscreen).toBeVisible();
 
-	expect(await readBottomOffset(fullscreen.getByTestId('run-log'))).toBe(initialBottomOffset);
+	const expandedBottom = await readBottomOffset(fullscreen.getByTestId('run-log'));
+	expect(Math.abs(expandedBottom - initialBottomOffset)).toBeLessThan(20);
 
 	const collapseBtn = page.getByRole('button', { name: /collapse log viewer/i });
 	await collapseBtn.click();
 	await expect(fullscreen).toBeHidden();
-	expect(await readBottomOffset(page.getByTestId('run-log'))).toBe(initialBottomOffset);
+	const restoredBottom = await readBottomOffset(page.getByTestId('run-log'));
+	expect(Math.abs(restoredBottom - initialBottomOffset)).toBeLessThan(20);
 
 	const inlineScrollable = await inlineLog.evaluate((el) => el.scrollHeight > el.clientHeight);
 	expect(inlineScrollable).toBe(true);

@@ -1,4 +1,3 @@
-import { DEFAULT_TEAM_SLUG } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Building2, Plus } from 'lucide-react';
 import { useState } from 'react';
@@ -9,6 +8,7 @@ import { OnboardingChoice } from '../../components/setup/onboarding-choice';
 import { Avatar, avatarColorFromString } from '../../components/ui/avatar';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
+import { useActiveTeamSlug } from '../../hooks/use-active-team-slug';
 import { type OnboardingStatus, useOnboarding } from '../../hooks/use-onboarding';
 import { useOnboardingIntake } from '../../hooks/use-onboarding-intake';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
@@ -128,7 +128,7 @@ function HomeProjectsSection({
 
 function HomePage() {
 	const { data: teams, isLoading: teamsLoading } = useTeams();
-	const primaryTeamSlug = DEFAULT_TEAM_SLUG;
+	const primaryTeamSlug = useActiveTeamSlug();
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects(teams);
 	const { data: intake } = useOnboardingIntake(primaryTeamSlug, true);
 	const { data: onboarding } = useOnboarding(primaryTeamSlug, true);

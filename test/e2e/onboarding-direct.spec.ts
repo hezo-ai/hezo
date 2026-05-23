@@ -20,7 +20,6 @@ test.describe('Onboarding direct flow', () => {
 			data: { name: `Onboard Direct E2E ${uid}`, template_id: blank?.id },
 		});
 		const team = ((await teamRes.json()) as { data: { slug: string; id: string } }).data;
-		await setActiveTeamSlug(page, team.slug);
 
 		const directRes = await page.request.post(`/api/teams/${team.slug}/onboarding/direct`, {
 			headers,
@@ -39,6 +38,7 @@ test.describe('Onboarding direct flow', () => {
 
 		await page.goto('/home');
 		await waitForPageLoad(page);
+		await setActiveTeamSlug(page, team.slug);
 		await page.reload();
 		await waitForPageLoad(page);
 

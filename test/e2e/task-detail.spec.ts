@@ -124,7 +124,7 @@ test.describe('Task detail — breadcrumbs and depth', () => {
 		const breadcrumb = page.getByTestId('breadcrumb');
 		await expect(breadcrumb).toContainText('Tasks');
 		await expect(breadcrumb).toContainText(task.identifier);
-		await expect(breadcrumb.getByRole('link')).toHaveCount(3);
+		await expect(breadcrumb.getByRole('link')).toHaveCount(2);
 	});
 
 	test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 ticket', async ({
