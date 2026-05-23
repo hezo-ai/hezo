@@ -116,6 +116,15 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 
 		const handleKeyDown = useCallback(
 			(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+				if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+					if (open) {
+						setOpen(false);
+						setTriggerStart(null);
+						setQuery('');
+					}
+					onKeyDown?.(e);
+					return;
+				}
 				if (open && results.length > 0) {
 					if (e.key === 'ArrowDown') {
 						e.preventDefault();

@@ -60,6 +60,22 @@ test.describe('Task Comments', () => {
 		await expect(page.getByText('This is a test comment')).toBeVisible({ timeout: 15000 });
 	});
 
+	test('submits comment via Cmd/Ctrl+Enter shortcut', async ({ page }) => {
+		await authenticate(page);
+		const { team, task } = await createProjectAndTask(page);
+
+		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
+		await waitForPageLoad(page);
+
+		const commentInput = page.getByPlaceholder('Add a comment...');
+		await expect(commentInput).toBeVisible({ timeout: 20000 });
+		await commentInput.fill('Submitted via keyboard');
+		await commentInput.press('ControlOrMeta+Enter');
+
+		await expect(page.getByText('Submitted via keyboard')).toBeVisible({ timeout: 15000 });
+		await expect(commentInput).toHaveValue('');
+	});
+
 	test('comments persist after page reload', async ({ page }) => {
 		await authenticate(page);
 		const { team, task, headers } = await createProjectAndTask(page);

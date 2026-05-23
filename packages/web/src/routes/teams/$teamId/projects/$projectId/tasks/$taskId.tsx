@@ -818,6 +818,16 @@ function TaskDetailPage() {
 									projectSlug={taskProjectSlug}
 									value={commentText}
 									onChange={(e) => setCommentText(e.target.value)}
+									onKeyDown={(e) => {
+										if (
+											e.key === 'Enter' &&
+											(e.metaKey || e.ctrlKey) &&
+											!e.nativeEvent.isComposing
+										) {
+											e.preventDefault();
+											commentFormRef.current?.requestSubmit();
+										}
+									}}
 									placeholder="Add a comment..."
 									className="min-h-[60px]"
 								/>
