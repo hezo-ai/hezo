@@ -7,7 +7,6 @@ import {
 	AuditActorType,
 	AuthType,
 	CAPTAIN_AGENT_SLUG,
-	COACH_AGENT_SLUG,
 	CommentContentType,
 	CredentialInputType,
 	CredentialKind,
@@ -21,6 +20,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { assertNoActiveRun } from '../lib/active-run';
+import { isCoach } from '../lib/agent-roles';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { broadcastRowChange } from '../lib/broadcast';
 import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
@@ -600,7 +600,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_task',
-		'Update an task. Agents can use this to change status (including closing), update progress, set rules, and record branch names. Re-opening a closed task is board-only — once an task is `closed` only the board can change its status again. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that wakes Coach for review, who will set the ticket to `closed` after the review passes. Agents other than Coach cannot set status to `closed` directly. Re-opening a closed task is board-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			team_id: z.string().describe('Team ID'),
 			task_id: z.string().describe('Task ID'),
@@ -610,7 +610,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'New status (backlog, in_progress, review, blocked, done, closed, cancelled). Once an task is `closed`, only board members can change its status again.',
+					'New status (backlog, in_progress, review, blocked, done, cancelled). To finish a ticket, set `done` — Coach will review and set it to `closed`. Setting `closed` directly is reserved for Coach. Once a task is `closed`, only board members can change its status again.',
 				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z.string().optional().describe('New assignee ID'),
@@ -633,11 +633,17 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			const currentStatusResult = await db.query<{ status: string }>(
-				'SELECT status FROM tasks WHERE id = $1 AND team_id = $2',
-				[args.task_id, args.team_id],
-			);
-			const currentStatus = currentStatusResult.rows[0]?.status;
+			const currentRowResult = await db.query<{
+				status: string;
+				assignee_id: string | null;
+				project_id: string;
+			}>('SELECT status, assignee_id, project_id FROM tasks WHERE id = $1 AND team_id = $2', [
+				args.task_id,
+				args.team_id,
+			]);
+			const currentRow = currentRowResult.rows[0];
+			const currentStatus = currentRow?.status;
+			const previousAssigneeId = currentRow?.assignee_id ?? null;
 
 			if (
 				args.status !== undefined &&
@@ -645,6 +651,17 @@ export function registerTools(
 				currentStatus === TaskStatus.Closed
 			) {
 				return { error: 'Only board members can re-open a closed task' };
+			}
+
+			if (
+				args.status === TaskStatus.Closed &&
+				auth.type === AuthType.Agent &&
+				!(await isCoach(db, auth))
+			) {
+				return {
+					error:
+						'Only Coach can set status to "closed". Set status to "done" and Coach will close the task after review.',
+				};
 			}
 
 			if (args.status === TaskStatus.Done || args.status === TaskStatus.Closed) {
@@ -673,36 +690,26 @@ export function registerTools(
 				);
 			}
 
-			if (args.assignee_id) {
-				const taskRow = await db.query<{
-					project_id: string;
-					assignee_id: string | null;
-				}>('SELECT project_id, assignee_id FROM tasks WHERE id = $1 AND team_id = $2', [
-					args.task_id,
-					args.team_id,
-				]);
-				const row = taskRow.rows[0];
-				if (row) {
-					if (args.assignee_id !== row.assignee_id) {
-						const activeRunCheck = await assertNoActiveRun(db, args.task_id as string);
-						if (!activeRunCheck.ok) return { error: activeRunCheck.message };
-					}
-					const opsCheck = await assertOperationsAssignee(
+			if (args.assignee_id && currentRow) {
+				if (args.assignee_id !== previousAssigneeId) {
+					const activeRunCheck = await assertNoActiveRun(db, args.task_id as string);
+					if (!activeRunCheck.ok) return { error: activeRunCheck.message };
+				}
+				const opsCheck = await assertOperationsAssignee(
+					db,
+					args.team_id as string,
+					currentRow.project_id,
+					args.assignee_id as string,
+				);
+				if (!opsCheck.ok) return { error: opsCheck.message };
+
+				if (auth.type === AuthType.Agent && args.assignee_id !== previousAssigneeId) {
+					const hierarchyCheck = await assertSubordinateAssignee(
 						db,
-						args.team_id as string,
-						row.project_id,
+						auth.memberId,
 						args.assignee_id as string,
 					);
-					if (!opsCheck.ok) return { error: opsCheck.message };
-
-					if (auth.type === AuthType.Agent && args.assignee_id !== row.assignee_id) {
-						const hierarchyCheck = await assertSubordinateAssignee(
-							db,
-							auth.memberId,
-							args.assignee_id as string,
-						);
-						if (!hierarchyCheck.ok) return { error: hierarchyCheck.message };
-					}
+					if (!hierarchyCheck.ok) return { error: hierarchyCheck.message };
 				}
 			}
 
@@ -770,8 +777,7 @@ export function registerTools(
 				).catch((e) => log.error('Failed to trigger status automations:', e));
 			}
 
-			// Wake agent if assignee changed
-			if (args.assignee_id) {
+			if (args.assignee_id && args.assignee_id !== previousAssigneeId) {
 				const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
 					args.assignee_id,
 				]);
@@ -2436,14 +2442,6 @@ export function registerTools(
 	);
 
 	return [...registeredTools];
-}
-
-async function isCoach(db: PGlite, auth: AuthInfo): Promise<boolean> {
-	if (auth.type !== AuthType.Agent) return false;
-	const r = await db.query<{ slug: string }>('SELECT slug FROM member_agents WHERE id = $1', [
-		auth.memberId,
-	]);
-	return r.rows[0]?.slug === COACH_AGENT_SLUG;
 }
 
 async function isCaptainOfTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<boolean> {

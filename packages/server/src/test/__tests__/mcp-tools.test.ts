@@ -85,6 +85,22 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
+async function insertTaskDirect(assigneeId: string, title: string): Promise<string> {
+	const meta = await db.query<{ task_prefix: string; number: number }>(
+		`SELECT p.task_prefix, next_project_task_number(p.id) AS number
+		 FROM projects p WHERE p.id = $1`,
+		[projectId],
+	);
+	const n = meta.rows[0].number;
+	const res = await db.query<{ id: string }>(
+		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
+		 RETURNING id`,
+		[teamId, projectId, assigneeId, n, `${meta.rows[0].task_prefix}-${n}`, title],
+	);
+	return res.rows[0].id;
+}
+
 // Helper: call MCP tool via /mcp endpoint with board token
 async function callToolViaMcp(toolName: string, args: Record<string, unknown>): Promise<unknown> {
 	const res = await app.request('/mcp', {
@@ -390,7 +406,7 @@ describe('MCP endpoint: tool call integration', () => {
 		return JSON.parse(body.result.content[0].text);
 	}
 
-	it('update_task via MCP as agent can set status=closed', async () => {
+	it('update_task via MCP as a non-Coach agent rejects status=closed', async () => {
 		const created = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: projectId,
@@ -403,6 +419,52 @@ describe('MCP endpoint: tool call integration', () => {
 			task_id: created.id,
 			status: 'closed',
 		})) as { status?: string; error?: string };
+		expect(result.error).toMatch(/coach/i);
+		expect(result.status).toBeUndefined();
+
+		const row = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
+			created.id,
+		]);
+		expect(row.rows[0].status).not.toBe('closed');
+	});
+
+	it('update_task via MCP as Coach can set status=closed', async () => {
+		const created = (await callToolViaMcp('create_task', {
+			team_id: teamId,
+			project_id: projectId,
+			title: 'Coach MCP close target',
+			assignee_id: agentId,
+		})) as { id: string };
+
+		const coachRow = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.slug = 'coach'`,
+			[teamId],
+		);
+		const coachId = coachRow.rows[0].id;
+		const { token: coachToken } = await mintAgentToken(db, masterKeyManager, coachId, teamId);
+
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(coachToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: {
+					name: 'update_task',
+					arguments: { team_id: teamId, task_id: created.id, status: 'closed' },
+				},
+				id: 1,
+			}),
+		});
+		const body = (await res.json()) as {
+			result: { content: Array<{ type: string; text: string }> };
+		};
+		const result = JSON.parse(body.result.content[0].text) as {
+			status?: string;
+			error?: string;
+		};
 		expect(result.error).toBeUndefined();
 		expect(result.status).toBe('closed');
 	});
@@ -452,6 +514,61 @@ describe('MCP endpoint: tool call integration', () => {
 		})) as { status?: string; error?: string };
 		expect(result.error).toBeUndefined();
 		expect(result.status).toBe('in_progress');
+	});
+
+	it('update_task does not create an assignment wakeup when assignee_id is unchanged', async () => {
+		const taskRowId = await insertTaskDirect(agentId, 'Same-assignee wakeup guard');
+
+		const result = (await callUpdateTaskAsAgent({
+			team_id: teamId,
+			task_id: taskRowId,
+			status: 'in_progress',
+			assignee_id: agentId,
+		})) as { status?: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe('in_progress');
+
+		await new Promise((resolve) => setImmediate(resolve));
+
+		const wakeups = await db.query<{ source: string; member_id: string }>(
+			`SELECT source::text AS source, member_id
+			 FROM agent_wakeup_requests
+			 WHERE payload->>'task_id' = $1`,
+			[taskRowId],
+		);
+		expect(wakeups.rows.filter((r) => r.source === 'assignment')).toEqual([]);
+	});
+
+	it('update_task creates an assignment wakeup when assignee_id changes', async () => {
+		const captainRow = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
+			[teamId],
+		);
+		const captainId = captainRow.rows[0].id;
+
+		const taskRowId = await insertTaskDirect(captainId, 'Reassignment wakeup fires');
+
+		const result = (await callToolViaMcp('update_task', {
+			team_id: teamId,
+			task_id: taskRowId,
+			assignee_id: agentId,
+		})) as { assignee_id?: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.assignee_id).toBe(agentId);
+
+		await new Promise((resolve) => setImmediate(resolve));
+
+		const wakeups = await db.query<{ source: string; member_id: string }>(
+			`SELECT source::text AS source, member_id
+			 FROM agent_wakeup_requests
+			 WHERE payload->>'task_id' = $1`,
+			[taskRowId],
+		);
+		const assignmentWakeups = wakeups.rows.filter((r) => r.source === 'assignment');
+		expect(assignmentWakeups.length).toBe(1);
+		expect(assignmentWakeups[0].member_id).toBe(agentId);
 	});
 
 	it('get_agent_system_prompt defaults to substituting placeholders without appending runtime blocks', async () => {

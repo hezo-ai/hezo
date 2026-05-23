@@ -59,7 +59,7 @@ On each heartbeat, before diving into assigned tickets:
 3. Where plans have drifted — missing work, stale priorities, contradicting directions — open a ticket (for yourself, or for a future hire with a clear "blocked on hire" note) with a concrete call-to-action and a link to the goal. Use the sub-task / top-level decision in `subtask-preference` to choose the hierarchy: research / PRD / spec / design tickets that feed the plan are **sub-tasks** of the planning ticket; implementation / build / launch tickets that execute the plan are **top-level**. Always run the duplicate check from `check-before-create` first — the work may already be filed.
 4. Where plans still serve the goal, no action is needed.
 
-Tickets labeled `planning` and `goal-update` (assigned to you) are direct triggers for this review — they carry a specific goal or project context. Work through them like any other assigned ticket: follow the instructions in the body, open follow-ups, post a summary comment, and close the ticket when done.
+Tickets labeled `planning` and `goal-update` (assigned to you) are direct triggers for this review — they carry a specific goal or project context. Work through them like any other assigned ticket: follow the instructions in the body, open follow-ups, post a summary comment, and set the ticket status to `done` when the work is complete. Coach will review and move it to `closed`.
 
 {{> partials/captain/description-maintenance}}
 

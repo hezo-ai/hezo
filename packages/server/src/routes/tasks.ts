@@ -9,6 +9,7 @@ import {
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { assertNoActiveRun } from '../lib/active-run';
+import { isCoach } from '../lib/agent-roles';
 import { broadcastChange } from '../lib/broadcast';
 import {
 	coerceTargetStatusForBlockers,
@@ -413,6 +414,19 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 		return err(c, 'FORBIDDEN', 'Only board members can re-open a closed task', 403);
 	}
 
+	if (
+		body.status === TaskStatus.Closed &&
+		auth.type === AuthType.Agent &&
+		!(await isCoach(db, auth))
+	) {
+		return err(
+			c,
+			'FORBIDDEN',
+			'Only Coach can set status to "closed". Set status to "done" and Coach will close the task after review.',
+			403,
+		);
+	}
+
 	if (body.status === TaskStatus.Done || body.status === TaskStatus.Closed) {
 		const childrenCheck = await assertChildrenAllClosed(db, teamId, taskId);
 		if (!childrenCheck.ok) {
@@ -519,7 +533,9 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 		params,
 	);
 
-	wakeAgentIfAssigned(db, body.assignee_id, teamId, taskId);
+	if (body.assignee_id && body.assignee_id !== existing.rows[0].assignee_id) {
+		wakeAgentIfAssigned(db, body.assignee_id, teamId, taskId);
+	}
 
 	const actorMemberId = await resolveActorMemberId(c, teamId);
 

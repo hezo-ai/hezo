@@ -50,6 +50,32 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
+async function insertTaskDirect(
+	assigneeId: string,
+	title: string,
+): Promise<{ id: string; identifier: string }> {
+	const meta = await db.query<{ task_prefix: string; number: number }>(
+		`SELECT p.task_prefix, next_project_task_number(p.id) AS number
+		 FROM projects p WHERE p.id = $1`,
+		[projectId],
+	);
+	const n = meta.rows[0].number;
+	const res = await db.query<{ id: string; identifier: string }>(
+		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
+		 RETURNING id, identifier`,
+		[teamId, projectId, assigneeId, n, `${meta.rows[0].task_prefix}-${n}`, title],
+	);
+	return res.rows[0];
+}
+
+// PATCH /tasks fires wakeAgentIfAssigned without awaiting (fire-and-forget).
+// Wait one microtask flush so the catch-handled createWakeup lands before we
+// read the wakeup table.
+function flushAsyncWakeups(): Promise<void> {
+	return new Promise((resolve) => setImmediate(resolve));
+}
+
 describe('tasks CRUD', () => {
 	it('creates an task with auto-generated identifier', async () => {
 		const res = await app.request(`/api/teams/${teamId}/tasks`, {
@@ -478,7 +504,7 @@ describe('tasks CRUD', () => {
 		await db.query(`DELETE FROM heartbeat_runs WHERE task_id = $1`, [oldTask.id]);
 	});
 
-	it('allows an agent to close an task via PATCH', async () => {
+	it('rejects a non-Coach agent trying to close an task via PATCH', async () => {
 		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -495,6 +521,41 @@ describe('tasks CRUD', () => {
 		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'closed' }),
+		});
+		expect(res.status).toBe(403);
+		expect((await res.json()).error.message).toMatch(/coach/i);
+
+		const row = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
+			task.id,
+		]);
+		expect(row.rows[0].status).not.toBe('closed');
+	});
+
+	it('allows Coach to close an task via PATCH', async () => {
+		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Coach-close target',
+				assignee_id: agentId,
+			}),
+		});
+		const task = (await createRes.json()).data;
+
+		const coachRow = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.slug = 'coach'`,
+			[teamId],
+		);
+		const coachId = coachRow.rows[0].id;
+		const { token: coachToken } = await mintAgentToken(db, masterKeyManager, coachId, teamId);
+
+		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(coachToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'closed' }),
 		});
 		expect(res.status).toBe(200);
@@ -588,6 +649,57 @@ describe('tasks CRUD', () => {
 		});
 		expect(res.status).toBe(200);
 		expect((await res.json()).data.status).toBe('in_progress');
+	});
+
+	it('does not create an assignment wakeup when PATCH leaves assignee unchanged', async () => {
+		const task = await insertTaskDirect(agentId, 'Wakeup guard target');
+
+		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'in_progress', assignee_id: agentId }),
+		});
+		expect(res.status).toBe(200);
+
+		await flushAsyncWakeups();
+
+		const wakeups = await db.query<{ source: string }>(
+			`SELECT source::text AS source
+			 FROM agent_wakeup_requests
+			 WHERE payload->>'task_id' = $1`,
+			[task.id],
+		);
+		expect(wakeups.rows.filter((r) => r.source === 'assignment')).toEqual([]);
+	});
+
+	it('creates an assignment wakeup when PATCH actually changes the assignee', async () => {
+		const secondAgentRes = await app.request(`/api/teams/${teamId}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Reassign Target Agent' }),
+		});
+		const secondAgentId = (await secondAgentRes.json()).data.id;
+
+		const task = await insertTaskDirect(agentId, 'Reassignment fires wakeup');
+
+		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ assignee_id: secondAgentId }),
+		});
+		expect(res.status).toBe(200);
+
+		await flushAsyncWakeups();
+
+		const wakeups = await db.query<{ source: string; member_id: string }>(
+			`SELECT source::text AS source, member_id
+			 FROM agent_wakeup_requests
+			 WHERE payload->>'task_id' = $1`,
+			[task.id],
+		);
+		const assignmentWakeups = wakeups.rows.filter((r) => r.source === 'assignment');
+		expect(assignmentWakeups.length).toBe(1);
+		expect(assignmentWakeups[0].member_id).toBe(secondAgentId);
 	});
 });
 
