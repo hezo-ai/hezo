@@ -1,7 +1,7 @@
 import { CAPTAIN_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from '@tanstack/react-router';
-import { Loader2, X } from 'lucide-react';
+import { ChevronDown, Loader2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useProjects } from '../hooks/use-projects';
@@ -29,6 +29,7 @@ export function CreateTaskDialog({
 	const [projectId, setProjectId] = useState(defaultProjectId ?? '');
 	const [assigneeId, setAssigneeId] = useState('');
 	const [priority, setPriority] = useState('medium');
+	const [moreOpen, setMoreOpen] = useState(!defaultProjectId);
 	const { data: projects } = useProjects(teamId);
 	const { data: agents } = useAgents(teamId);
 	const createTask = useCreateTask(teamId);
@@ -44,6 +45,10 @@ export function CreateTaskDialog({
 		}
 		return agents.filter((a) => a.admin_status !== 'disabled');
 	}, [agents, captainAgent, isOperationsProject]);
+
+	const priorityLabel = priority.charAt(0).toUpperCase() + priority.slice(1);
+	const projectLabel = selectedProject?.name ?? 'No project';
+	const summaryLabel = `${priorityLabel} priority · ${projectLabel}`;
 
 	function handleProjectChange(nextProjectId: string) {
 		setProjectId(nextProjectId);
@@ -119,52 +124,70 @@ export function CreateTaskDialog({
 						/>
 
 						<label className="flex flex-col gap-1.5">
-							<span className="text-sm text-text-muted">Project *</span>
+							<span className="text-sm text-text-muted">Assignee *</span>
 							<select
-								value={projectId}
-								onChange={(e) => handleProjectChange(e.target.value)}
+								value={assigneeId}
+								onChange={(e) => setAssigneeId(e.target.value)}
 								required
 								className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
 							>
-								<option value="">Select project</option>
-								{projects?.map((p) => (
-									<option key={p.id} value={p.id}>
-										{p.name}
+								<option value="">Select assignee</option>
+								{selectableAgents.map((a) => (
+									<option key={a.id} value={a.id}>
+										{a.title}
 									</option>
 								))}
 							</select>
 						</label>
 
-						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-							<label className="flex flex-col gap-1.5">
-								<span className="text-sm text-text-muted">Priority</span>
-								<select
-									value={priority}
-									onChange={(e) => setPriority(e.target.value)}
-									className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
-								>
-									<option value="low">Low</option>
-									<option value="medium">Medium</option>
-									<option value="high">High</option>
-									<option value="urgent">Urgent</option>
-								</select>
-							</label>
-							<label className="flex flex-col gap-1.5">
-								<span className="text-sm text-text-muted">Assignee *</span>
-								<select
-									value={assigneeId}
-									onChange={(e) => setAssigneeId(e.target.value)}
-									required
-									className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
-								>
-									<option value="">Select assignee</option>
-									{selectableAgents.map((a) => (
-										<option key={a.id} value={a.id}>
-											{a.title}
-										</option>
-									))}
-								</select>
-							</label>
+						<div className="flex flex-col gap-3">
+							<button
+								type="button"
+								onClick={() => setMoreOpen((o) => !o)}
+								aria-expanded={moreOpen}
+								data-testid="create-task-more-toggle"
+								className="flex items-center gap-2 self-start text-xs text-text-muted hover:text-text cursor-pointer"
+							>
+								<ChevronDown
+									className={`w-3.5 h-3.5 text-text-subtle shrink-0 transition-transform ${
+										moreOpen ? '' : '-rotate-90'
+									}`}
+								/>
+								<span className="truncate">{summaryLabel}</span>
+							</button>
+							{moreOpen && (
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+									<label className="flex flex-col gap-1.5">
+										<span className="text-sm text-text-muted">Priority</span>
+										<select
+											value={priority}
+											onChange={(e) => setPriority(e.target.value)}
+											className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
+										>
+											<option value="low">Low</option>
+											<option value="medium">Medium</option>
+											<option value="high">High</option>
+											<option value="urgent">Urgent</option>
+										</select>
+									</label>
+									<label className="flex flex-col gap-1.5">
+										<span className="text-sm text-text-muted">Project *</span>
+										<select
+											value={projectId}
+											onChange={(e) => handleProjectChange(e.target.value)}
+											required
+											className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
+										>
+											<option value="">Select project</option>
+											{projects?.map((p) => (
+												<option key={p.id} value={p.id}>
+													{p.name}
+												</option>
+											))}
+										</select>
+									</label>
+								</div>
+							)}
 						</div>
 
 						{createTask.error && (
