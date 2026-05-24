@@ -263,13 +263,186 @@ export async function dismissAiProviderModal(page: Page) {
 
 export async function waitForPageLoad(page: Page, timeout = 15000) {
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout });
+	// Also drain any explicit `data-testid$="-loading"` placeholders so callers
+	// can rely on this helper for "the page's initial queries have resolved",
+	// not just "the literal Loading... text is gone".
+	await expect(page.locator('[data-testid$="-loading"]')).toHaveCount(0, { timeout });
+}
+
+// ===========================================================================
+// Deterministic network-driven helpers
+// ===========================================================================
+//
+// Two race classes have been the source of every recurring CI flake on this
+// suite:
+//
+//   A. navigate → assert-on-data: `goto + waitForPageLoad + expect(testid)`
+//      passes locally but races React Query's initial fetch under CI load.
+//   B. save → assert-on-UI-refresh: a click fires a mutation PATCH; the UI
+//      doesn't update until the follow-up refetch GET (via React Query's
+//      `invalidateQueries` in onSuccess) lands and the component re-renders.
+//      Waiting only for the mutation is not enough.
+//
+// The helpers below close those races by waiting for *specific* API responses
+// (scoped to the test's own team/task IDs so background wakeups can't satisfy
+// the matcher). Prefer them over bare `goto`/`click` + visibility assertions.
+
+export type ResponseMatcher = (url: URL, method: string) => boolean;
+
+function escapeRegex(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
- * Click a button/locator and wait for a matching network response in the same step.
- * Avoids the race where `await locator.click()` resolves before the React mutation
- * fires its API call — under CI load, follow-up assertions can run before the save
- * has actually been persisted.
+ * Matcher for `/api/teams/<teamId>/tasks[/<taskId>[/<subResource>]]` requests.
+ * Always scope the matcher to the test's own team (and task when known) so a
+ * background wakeup PATCH on the planning task cannot satisfy the matcher.
+ */
+export function taskMatcher(opts: {
+	teamId: string;
+	taskId?: string;
+	subResource?: string;
+	method?: 'GET' | 'PATCH' | 'POST' | 'DELETE' | 'PUT';
+}): ResponseMatcher {
+	const teamSeg = escapeRegex(opts.teamId);
+	const taskSeg = opts.taskId ? escapeRegex(opts.taskId) : '[^/]+';
+	let pattern: RegExp;
+	if (opts.subResource) {
+		const sub = escapeRegex(opts.subResource);
+		pattern = new RegExp(`^/api/teams/${teamSeg}/tasks/${taskSeg}/${sub}(?:/[^/]+)*$`);
+	} else if (opts.taskId) {
+		pattern = new RegExp(`^/api/teams/${teamSeg}/tasks/${taskSeg}$`);
+	} else {
+		pattern = new RegExp(`^/api/teams/${teamSeg}/tasks(?:\\?.*)?$`);
+	}
+	return (url, m) => (!opts.method || m === opts.method) && pattern.test(url.pathname);
+}
+
+/**
+ * Matcher for `/api/teams/<teamId>[/<resource>[/...]]` requests.
+ * Use for non-task resources (projects, agents, comments, etc.).
+ */
+export function teamMatcher(opts: {
+	teamId: string;
+	resource?: string;
+	method?: 'GET' | 'PATCH' | 'POST' | 'DELETE' | 'PUT';
+}): ResponseMatcher {
+	const teamSeg = escapeRegex(opts.teamId);
+	const pattern = opts.resource
+		? new RegExp(`^/api/teams/${teamSeg}/${escapeRegex(opts.resource)}(?:/.*)?$`)
+		: new RegExp(`^/api/teams/${teamSeg}(?:/.*)?$`);
+	return (url, m) => (!opts.method || m === opts.method) && pattern.test(url.pathname);
+}
+
+/** Matcher for any GET to `/api/teams` (the global teams list). */
+export function teamsListMatcher(): ResponseMatcher {
+	return (url, m) => m === 'GET' && url.pathname === '/api/teams';
+}
+
+/** Matcher for `/api/teams/<teamId>/agents[/<agentId>]` requests. */
+export function agentMatcher(opts: {
+	teamId: string;
+	agentId?: string;
+	method?: 'GET' | 'PATCH' | 'POST' | 'DELETE' | 'PUT';
+}): ResponseMatcher {
+	const teamSeg = escapeRegex(opts.teamId);
+	const pattern = opts.agentId
+		? new RegExp(`^/api/teams/${teamSeg}/agents/${escapeRegex(opts.agentId)}$`)
+		: new RegExp(`^/api/teams/${teamSeg}/agents(?:\\?.*)?$`);
+	return (url, m) => (!opts.method || m === opts.method) && pattern.test(url.pathname);
+}
+
+/**
+ * Navigate to `url` and wait for the listed API responses to land successfully
+ * before returning. Replaces the `goto + waitForPageLoad + expect(testid)`
+ * pattern that races React Query's initial fetch under CI load.
+ *
+ * Response waiters are registered BEFORE `goto` so they catch the queries
+ * fired during initial render, not just any later activity. Matchers should be
+ * scoped to the test's own IDs to avoid matching background traffic.
+ */
+export async function gotoAndWaitForData(
+	page: Page,
+	url: string,
+	options: {
+		waitFor: ResponseMatcher[];
+		timeout?: number;
+	},
+): Promise<void> {
+	const timeout = options.timeout ?? 30_000;
+	const responsePromises = options.waitFor.map((match) =>
+		page.waitForResponse(
+			(r) => {
+				try {
+					return match(new URL(r.url()), r.request().method()) && r.ok();
+				} catch {
+					return false;
+				}
+			},
+			{ timeout },
+		),
+	);
+	await Promise.all([page.goto(url), ...responsePromises]);
+	await waitForPageLoad(page, timeout);
+}
+
+/**
+ * Click `locator` (a Save / Confirm / toggle button) and wait for both:
+ *   1. the mutation response (PATCH/POST/DELETE/PUT) — required
+ *   2. the follow-up refetch GET that React Query's onSuccess invalidation
+ *      triggers — optional but strongly recommended
+ *
+ * Returns only when the UI is guaranteed to have refreshed with the new data.
+ * Both matchers are registered before the click so the refetch waiter cannot
+ * be raced by a background GET that lands between the mutation response and
+ * the refetch.
+ */
+export async function saveAndWaitForRefetch(
+	page: Page,
+	locator: Locator,
+	options: {
+		mutation: ResponseMatcher;
+		refetch?: ResponseMatcher;
+		timeout?: number;
+	},
+): Promise<{ mutation: Response; refetch?: Response }> {
+	const timeout = options.timeout ?? 30_000;
+
+	const mutationPromise = page.waitForResponse(
+		(r) => {
+			try {
+				return options.mutation(new URL(r.url()), r.request().method()) && r.ok();
+			} catch {
+				return false;
+			}
+		},
+		{ timeout },
+	);
+
+	const refetchMatcher = options.refetch;
+	const refetchPromise = refetchMatcher
+		? page.waitForResponse(
+				(r) => {
+					try {
+						return refetchMatcher(new URL(r.url()), r.request().method()) && r.ok();
+					} catch {
+						return false;
+					}
+				},
+				{ timeout },
+			)
+		: undefined;
+
+	await locator.click();
+	const mutation = await mutationPromise;
+	const refetch = refetchPromise ? await refetchPromise : undefined;
+	return { mutation, refetch };
+}
+
+/**
+ * @deprecated Prefer `saveAndWaitForRefetch` so the assertion runs after the
+ * UI has refreshed, not just after the mutation has returned. Kept as a thin
+ * wrapper so existing call sites continue to compile during the migration.
  */
 export async function clickAndWaitForResponse(
 	page: Page,
@@ -277,21 +450,39 @@ export async function clickAndWaitForResponse(
 	match: (url: URL, method: string) => boolean,
 	options: { timeout?: number } = {},
 ): Promise<Response> {
-	const timeout = options.timeout ?? 30_000;
-	const [response] = await Promise.all([
-		page.waitForResponse(
-			(r) => {
-				try {
-					return match(new URL(r.url()), r.request().method());
-				} catch {
-					return false;
-				}
-			},
-			{ timeout },
-		),
-		locator.click(),
-	]);
-	return response;
+	const { mutation } = await saveAndWaitForRefetch(page, locator, {
+		mutation: match,
+		timeout: options.timeout,
+	});
+	return mutation;
+}
+
+/**
+ * Delete every reaction on a comment, regardless of kind. Used in spec setup
+ * to guarantee a clean slate across Playwright retries — without this, a
+ * partially-applied reaction from a previous attempt can survive into the
+ * next run because the server-side comment row is reused.
+ */
+export async function clearReactionsForComment(
+	page: Page,
+	opts: { teamId: string; taskId: string; commentId: string; token: string },
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${opts.token}` };
+	const res = await page.request.get(`/api/teams/${opts.teamId}/tasks/${opts.taskId}/comments`, {
+		headers,
+	});
+	if (!res.ok()) return;
+	const body = (await res.json()) as {
+		data: Array<{ id: string; reactions?: Array<{ kind: string }> }>;
+	};
+	const comment = body.data.find((c) => c.id === opts.commentId);
+	const kinds = new Set((comment?.reactions ?? []).map((r) => r.kind));
+	for (const kind of kinds) {
+		await page.request.delete(
+			`/api/teams/${opts.teamId}/tasks/${opts.taskId}/comments/${opts.commentId}/reactions/${kind}`,
+			{ headers },
+		);
+	}
 }
 
 export { TEST_MASTER_KEY };

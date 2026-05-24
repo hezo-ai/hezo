@@ -1,5 +1,10 @@
 import { expect, test } from './fixtures';
-import { clickAndWaitForResponse, dismissAiProviderModal, waitForPageLoad } from './helpers';
+import {
+	agentMatcher,
+	dismissAiProviderModal,
+	saveAndWaitForRefetch,
+	waitForPageLoad,
+} from './helpers';
 
 type Page = import('@playwright/test').Page;
 
@@ -100,12 +105,10 @@ for (const viewport of [
 		const runTimeoutInput = page.getByLabel('Run timeout (min)');
 		await expect(runTimeoutInput).toBeVisible({ timeout: 15000 });
 		await runTimeoutInput.fill('23');
-		const saveResponse = await clickAndWaitForResponse(
-			page,
-			page.getByRole('button', { name: 'Save Changes' }),
-			(url, method) => method === 'PATCH' && /\/agents\/[^/]+$/.test(url.pathname),
-		);
-		expect(saveResponse.ok()).toBe(true);
+		await saveAndWaitForRefetch(page, page.getByRole('button', { name: 'Save Changes' }), {
+			mutation: agentMatcher({ teamId: team.slug, agentId: agent.id, method: 'PATCH' }),
+			refetch: agentMatcher({ teamId: team.slug, agentId: agent.id, method: 'GET' }),
+		});
 
 		await page.reload();
 		await expect(page.getByLabel('Run timeout (min)')).toHaveValue('23', { timeout: 15000 });
@@ -136,12 +139,10 @@ test('agent settings tab edits the title and persists across reload', async ({
 	const titleInput = page.getByLabel('Title');
 	await expect(titleInput).toBeVisible({ timeout: 15000 });
 	await titleInput.fill(`${agent.title} Updated`);
-	const saveResponse = await clickAndWaitForResponse(
-		page,
-		page.getByRole('button', { name: 'Save Changes' }),
-		(url, method) => method === 'PATCH' && /\/agents\/[^/]+$/.test(url.pathname),
-	);
-	expect(saveResponse.ok()).toBe(true);
+	await saveAndWaitForRefetch(page, page.getByRole('button', { name: 'Save Changes' }), {
+		mutation: agentMatcher({ teamId: team.slug, agentId: agent.id, method: 'PATCH' }),
+		refetch: agentMatcher({ teamId: team.slug, agentId: agent.id, method: 'GET' }),
+	});
 
 	await expect(page.getByText(`${agent.title} Updated`).first()).toBeVisible({ timeout: 15000 });
 });

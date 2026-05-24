@@ -1,5 +1,12 @@
 import { expect, test } from './fixtures';
-import { authenticate, getToken, setActiveTeamSlug, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	getToken,
+	gotoAndWaitForData,
+	teamMatcher,
+	teamsListMatcher,
+	waitForPageLoad,
+} from './helpers';
 
 test.describe('Onboarding direct flow', () => {
 	test.use({ viewport: { width: 390, height: 844 } });
@@ -36,11 +43,16 @@ test.describe('Onboarding direct flow', () => {
 			}
 		).data;
 
-		await page.goto('/home');
-		await waitForPageLoad(page);
-		await setActiveTeamSlug(page, team.slug);
-		await page.reload();
-		await waitForPageLoad(page);
+		await page.addInitScript(
+			(slug: string) => sessionStorage.setItem('hezo:activeTeamSlug', slug),
+			team.slug,
+		);
+		await gotoAndWaitForData(page, '/home', {
+			waitFor: [
+				teamsListMatcher(),
+				teamMatcher({ teamId: team.slug, resource: 'projects', method: 'GET' }),
+			],
+		});
 
 		await expect(page.getByTestId('home-projects-list')).toBeVisible();
 		await expect(page.getByText('My First App')).toBeVisible();

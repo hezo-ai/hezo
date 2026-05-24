@@ -1,8 +1,10 @@
 import { expect, type Page, test } from '@playwright/test';
 import {
 	authenticate,
-	clickAndWaitForResponse,
+	clearReactionsForComment,
 	createTeamWithAgents,
+	saveAndWaitForRefetch,
+	taskMatcher,
 	waitForPageLoad,
 } from './helpers';
 
@@ -50,7 +52,12 @@ test.describe('Comment reactions', () => {
 
 	test('add and remove a ✓ reaction toggles the chip', async ({ page }) => {
 		await authenticate(page);
-		const { team, taskId } = await seedTaskWithComment(page);
+		const { team, taskId, commentId, token } = await seedTaskWithComment(page);
+
+		// Retries (configured at 2 above) re-run the test body but reuse the same
+		// browser context state — purge any reaction from a previous attempt so
+		// the toggle assertions start from a known-empty baseline.
+		await clearReactionsForComment(page, { teamId: team.id, taskId, commentId, token });
 
 		await page.goto(`/teams/${team.slug}/tasks/${taskId}`);
 		await waitForPageLoad(page);
@@ -61,12 +68,21 @@ test.describe('Comment reactions', () => {
 		await addButton.click();
 		const picker = page.getByTestId('reaction-picker');
 		await expect(picker).toBeVisible();
-		const addResponse = await clickAndWaitForResponse(
-			page,
-			picker.locator('[data-reaction-kind="ack"]'),
-			(url, method) => method === 'PUT' && /\/reactions\/ack$/.test(url.pathname),
-		);
-		expect(addResponse.ok()).toBe(true);
+
+		// The page is navigated with team.slug, so React Query routes mutations
+		// and refetches through the slug-scoped URLs — not the id-scoped ones.
+		const reactionPath = `/api/teams/${team.slug}/tasks/${taskId}/comments/${commentId}/reactions/ack`;
+		const commentsRefetch = taskMatcher({
+			teamId: team.slug,
+			taskId,
+			subResource: 'comments',
+			method: 'GET',
+		});
+
+		await saveAndWaitForRefetch(page, picker.locator('[data-reaction-kind="ack"]'), {
+			mutation: (url, method) => method === 'PUT' && url.pathname === reactionPath,
+			refetch: commentsRefetch,
+		});
 
 		const chip = page
 			.getByTestId('comment-reactions')
@@ -76,12 +92,11 @@ test.describe('Comment reactions', () => {
 		await expect(chip).toHaveAttribute('data-you-reacted', 'true');
 		await expect(chip).toContainText('1');
 
-		const removeResponse = await clickAndWaitForResponse(
-			page,
-			chip,
-			(url, method) => method === 'DELETE' && /\/reactions\/ack$/.test(url.pathname),
-		);
-		expect(removeResponse.ok()).toBe(true);
+		await saveAndWaitForRefetch(page, chip, {
+			mutation: (url, method) => method === 'DELETE' && url.pathname === reactionPath,
+			refetch: commentsRefetch,
+		});
+
 		await expect(
 			page.getByTestId('comment-reactions').locator('[data-reaction-kind="ack"]'),
 		).toHaveCount(0, { timeout: 25_000 });
@@ -126,12 +141,20 @@ test.describe('Comment reactions', () => {
 		expect(before.status()).toBe(200);
 
 		await addButton.click();
-		const addResponse = await clickAndWaitForResponse(
+		const reactionPath = `/api/teams/${team.slug}/tasks/${taskId}/comments/${commentId}/reactions/ack`;
+		await saveAndWaitForRefetch(
 			page,
 			page.getByTestId('reaction-picker').locator('[data-reaction-kind="ack"]'),
-			(url, method) => method === 'PUT' && /\/reactions\/ack$/.test(url.pathname),
+			{
+				mutation: (url, method) => method === 'PUT' && url.pathname === reactionPath,
+				refetch: taskMatcher({
+					teamId: team.slug,
+					taskId,
+					subResource: 'comments',
+					method: 'GET',
+				}),
+			},
 		);
-		expect(addResponse.ok()).toBe(true);
 
 		const chip = page
 			.getByTestId('comment-reactions')

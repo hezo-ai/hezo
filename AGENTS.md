@@ -37,6 +37,15 @@ GitHub OAuth/repo/SSH-key tests use the local simulator at `packages/server/src/
 
 E2E specs live in `test/e2e/` (Playwright). Root `playwright.config.ts` auto-starts server (:3100) and web (:5173). Use `authenticate(page)` to bypass the master-key gate when not testing auth itself. Every UI change ships with an e2e test for the affected flow.
 
+### E2E timing rules
+
+CI runs the suite under load (2 parallel Playwright workers + dev-mode Vite + Bun cold cache + 1Hz wakeup/heartbeat cron). Two patterns flake reliably under that load and are banned — use the deterministic helpers in `test/e2e/helpers.ts` instead:
+
+- **navigate → assert-on-data**: never `goto + waitForPageLoad + expect(testid).toBeVisible()`. `waitForPageLoad` only checks the literal "Loading…" string; it does not wait for the route's React Query subscriptions to settle. Use `gotoAndWaitForData(page, url, { waitFor: [...matchers] })`, passing matchers for every GET the route depends on (`teamsListMatcher()`, `teamMatcher(...)`, `taskMatcher(...)`, `agentMatcher(...)`).
+- **save → assert-on-UI-refresh**: never `locator.click() + expect(updatedText).toBeVisible()` after a mutation. The mutation response landing ≠ the UI rendering the new data — React Query needs to invalidate, refetch, and re-render. Use `saveAndWaitForRefetch(page, locator, { mutation, refetch })` and pass both matchers. Returns only when the refetch GET has landed.
+
+Always **scope matchers to the test's own team/task/agent IDs**. The default `/api/teams/[^/]+/tasks/[^/]+` is too loose — Captain wakeups close planning tasks via the same endpoint shape and will satisfy a loose matcher before the user's mutation has even left the browser. The `teamMatcher` / `taskMatcher` / `agentMatcher` factories accept exact IDs for this reason. **Do not fix flakes by extending timeouts** — find the missing wait.
+
 ## Type safety
 
 No `any` in source code. Use specific types, `unknown`, `Record<string, unknown>`, or generics. If a library lacks types, install them (`@types/*`) — don't fall back to `any` or `declare const` hacks. `any` is acceptable only in test files for unpredictable JSON.

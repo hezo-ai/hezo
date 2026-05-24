@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test';
 import {
 	authenticate,
-	clickAndWaitForResponse,
 	createTeamWithAgents,
+	saveAndWaitForRefetch,
+	taskMatcher,
 	waitForPageLoad,
 } from './helpers';
 
@@ -41,15 +42,18 @@ test('board member can close and re-open an task via themed modal', async ({ pag
 	await expect(dialog).toBeVisible();
 	await expect(dialog.getByText('Close this task?')).toBeVisible();
 
-	const closeMatcher = (url: URL, method: string) =>
-		method === 'PATCH' && /\/api\/teams\/[^/]+\/tasks\/[^/]+$/.test(url.pathname);
+	// Scope to this exact task: the planning-task closure that Captain wakeups
+	// fire concurrently goes through the same endpoint shape and would race a
+	// loose matcher. Wait for both the PATCH and the follow-up task GET that
+	// useUpdateTask's invalidation triggers so the UI is guaranteed to reflect
+	// the close before we assert.
+	const taskPatch = taskMatcher({ teamId: team.slug, taskId: task.id, method: 'PATCH' });
+	const taskGet = taskMatcher({ teamId: team.slug, taskId: task.id, method: 'GET' });
 
-	const closeResponse = await clickAndWaitForResponse(
-		page,
-		page.getByTestId('confirm-dialog-confirm'),
-		closeMatcher,
-	);
-	expect(closeResponse.ok()).toBe(true);
+	await saveAndWaitForRefetch(page, page.getByTestId('confirm-dialog-confirm'), {
+		mutation: taskPatch,
+		refetch: taskGet,
+	});
 	await expect(dialog).toBeHidden();
 
 	await expect(page.getByTestId('task-reopen-button')).toBeVisible({ timeout: 20000 });
@@ -59,12 +63,10 @@ test('board member can close and re-open an task via themed modal', async ({ pag
 	await expect(page.getByTestId('confirm-dialog')).toBeVisible();
 	await expect(page.getByText('Re-open this task?')).toBeVisible();
 
-	const reopenResponse = await clickAndWaitForResponse(
-		page,
-		page.getByTestId('confirm-dialog-confirm'),
-		closeMatcher,
-	);
-	expect(reopenResponse.ok()).toBe(true);
+	await saveAndWaitForRefetch(page, page.getByTestId('confirm-dialog-confirm'), {
+		mutation: taskPatch,
+		refetch: taskGet,
+	});
 	await expect(page.getByTestId('confirm-dialog')).toBeHidden();
 
 	await expect(page.getByTestId('task-close-button')).toBeVisible({ timeout: 20000 });
