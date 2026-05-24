@@ -716,7 +716,7 @@ function TaskDetailPage() {
 														teamId={teamId}
 														projectId={task?.project_id ?? undefined}
 														projectSlug={taskProjectSlug}
-														taskId={task?.id ?? undefined}
+														taskId={taskId}
 														inline
 													/>
 												</div>
@@ -774,14 +774,14 @@ function TaskDetailPage() {
 														teamId={teamId}
 														projectId={task?.project_id ?? undefined}
 														projectSlug={taskProjectSlug}
-														taskId={task?.id ?? undefined}
+														taskId={taskId}
 													/>
 													<div className="flex items-end justify-between gap-2">
 														<div className="min-w-0 flex-1">
 															<CommentReactions
 																comment={commentData}
 																teamId={teamId}
-																taskId={task?.id}
+																taskId={taskId}
 															/>
 														</div>
 														<button
