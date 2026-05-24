@@ -1062,6 +1062,7 @@ function TaskDetailPage() {
 				loading={updateTask.isPending}
 				onConfirm={async () => {
 					await updateTask.mutateAsync({ status: TaskStatus.Closed });
+					scrollToBottom();
 				}}
 			/>
 
@@ -1074,6 +1075,7 @@ function TaskDetailPage() {
 				loading={updateTask.isPending}
 				onConfirm={async () => {
 					await updateTask.mutateAsync({ status: TaskStatus.Backlog });
+					scrollToBottom();
 				}}
 			/>
 		</div>
