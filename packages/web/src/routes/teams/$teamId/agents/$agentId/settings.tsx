@@ -1,7 +1,7 @@
 import { AgentAdminStatus, AI_PROVIDER_INFO, type AiProvider } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
 import { Loader2, Power, PowerOff } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MarkdownProse } from '../../../../../components/markdown-prose';
 import { RevisionsPanel } from '../../../../../components/revisions-panel';
 import { Button } from '../../../../../components/ui/button';
@@ -49,23 +49,27 @@ function AgentSettingsPage() {
 	const [modelProvider, setModelProvider] = useState<AiProvider | ''>('');
 	const [modelId, setModelId] = useState('');
 
+	const initializedForAgentId = useRef<string | null>(null);
 	useEffect(() => {
-		if (agent) {
-			setTitle(agent.title);
-			setRoleDesc(agent.role_description ?? '');
-			setReportsTo(agent.reports_to ?? '');
-			setBudget(String(agent.monthly_budget_cents / 100));
-			setHeartbeat(String(agent.heartbeat_interval_min));
-			setRunTimeout(String(agent.run_timeout_min));
-			setTouchesCode(agent.touches_code);
-			setModelProvider((agent.model_override_provider ?? '') as AiProvider | '');
-			setModelId(agent.model_override_model ?? '');
-		}
+		if (!agent || initializedForAgentId.current === agent.id) return;
+		initializedForAgentId.current = agent.id;
+		setTitle(agent.title);
+		setRoleDesc(agent.role_description ?? '');
+		setReportsTo(agent.reports_to ?? '');
+		setBudget(String(agent.monthly_budget_cents / 100));
+		setHeartbeat(String(agent.heartbeat_interval_min));
+		setRunTimeout(String(agent.run_timeout_min));
+		setTouchesCode(agent.touches_code);
+		setModelProvider((agent.model_override_provider ?? '') as AiProvider | '');
+		setModelId(agent.model_override_model ?? '');
 	}, [agent]);
 
+	const initializedPromptForAgentId = useRef<string | null>(null);
 	useEffect(() => {
-		setSystemPrompt(promptDoc?.content ?? '');
-	}, [promptDoc?.content]);
+		if (!promptDoc || initializedPromptForAgentId.current === agentId) return;
+		initializedPromptForAgentId.current = agentId;
+		setSystemPrompt(promptDoc.content);
+	}, [promptDoc, agentId]);
 
 	if (isLoading || !agent || isPromptLoading)
 		return <div className="text-text-muted text-sm">Loading...</div>;
