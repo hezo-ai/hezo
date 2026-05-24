@@ -125,7 +125,12 @@ describe('signAgentJwt + verifyToken', () => {
 
 	it('rejects an agent JWT with no run_id claim', async () => {
 		const runId = await createAgentRun(db, agentId, teamId);
-		const token = await signAgentJwt(masterKeyManager, agentId, teamId, runId);
+		const internalProject = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
+			[teamId],
+		);
+		const projectId = internalProject.rows[0].id;
+		const token = await signAgentJwt(masterKeyManager, agentId, teamId, runId, projectId, true);
 		// Sanity: the valid token works
 		expect(await verifyToken(token, db, masterKeyManager)).not.toBeNull();
 
@@ -136,6 +141,7 @@ describe('signAgentJwt + verifyToken', () => {
 			{
 				member_id: agentId,
 				team_id: teamId,
+				project_id: projectId,
 				iat: Math.floor(Date.now() / 1000),
 				exp: Math.floor(Date.now() / 1000) + 3600,
 			},
@@ -147,7 +153,12 @@ describe('signAgentJwt + verifyToken', () => {
 
 	it('rejects an agent JWT pointing at a nonexistent run', async () => {
 		const fakeRunId = '00000000-0000-0000-0000-000000000000';
-		const token = await signAgentJwt(masterKeyManager, agentId, teamId, fakeRunId);
+		const internalProject = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
+			[teamId],
+		);
+		const projectId = internalProject.rows[0].id;
+		const token = await signAgentJwt(masterKeyManager, agentId, teamId, fakeRunId, projectId, true);
 		expect(await verifyToken(token, db, masterKeyManager)).toBeNull();
 	});
 
@@ -172,7 +183,19 @@ describe('signAgentJwt + verifyToken', () => {
 		);
 		const otherAgentId = otherAgentRes.rows[0]?.id;
 		if (!otherAgentId) return; // only one seeded agent — skip
-		const spoofed = await signAgentJwt(masterKeyManager, otherAgentId, teamId, runId);
+		const internalProject = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
+			[teamId],
+		);
+		const projectId = internalProject.rows[0].id;
+		const spoofed = await signAgentJwt(
+			masterKeyManager,
+			otherAgentId,
+			teamId,
+			runId,
+			projectId,
+			true,
+		);
 		expect(await verifyToken(spoofed, db, masterKeyManager)).toBeNull();
 	});
 });

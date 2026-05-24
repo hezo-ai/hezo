@@ -3,7 +3,7 @@ import {
 	AgentAdminStatus,
 	CAPTAIN_AGENT_SLUG,
 	CommentContentType,
-	OPERATIONS_PROJECT_SLUG,
+	INTERNAL_PROJECT_SLUG,
 	type PlatformType,
 	TaskPriority,
 	TaskStatus,
@@ -23,7 +23,7 @@ export const OAUTH_VERIFICATION_LABEL = 'oauth-verification';
 
 interface TeamContext {
 	captainMemberId: string;
-	operationsProjectId: string;
+	internalProjectId: string;
 }
 
 async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
@@ -34,16 +34,16 @@ async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext 
 		 LIMIT 1`,
 		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
-	const ops = await db.query<{ id: string }>(
+	const internalProject = await db.query<{ id: string }>(
 		`SELECT id FROM projects
 		 WHERE team_id = $1 AND is_internal = true AND slug = $2
 		 LIMIT 1`,
-		[teamId, OPERATIONS_PROJECT_SLUG],
+		[teamId, INTERNAL_PROJECT_SLUG],
 	);
-	if (!captain.rows[0] || !ops.rows[0]) return null;
+	if (!captain.rows[0] || !internalProject.rows[0]) return null;
 	return {
 		captainMemberId: captain.rows[0].id,
-		operationsProjectId: ops.rows[0].id,
+		internalProjectId: internalProject.rows[0].id,
 	};
 }
 
@@ -110,7 +110,7 @@ export async function enqueueOAuthVerificationTask(
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) {
 		log.warn(
-			`Cannot enqueue OAuth verification task; missing Captain or Operations project for ${teamId}`,
+			`Cannot enqueue OAuth verification task; missing Captain or Internal project for ${teamId}`,
 		);
 		return null;
 	}
@@ -165,7 +165,7 @@ export async function enqueueOAuthVerificationTask(
 
 	const { number: taskNumber, identifier } = await allocateTaskIdentifier(
 		db,
-		ctx.operationsProjectId,
+		ctx.internalProjectId,
 	);
 
 	const title = `Verify ${platformDisplayName(platform)} connector`;
@@ -178,7 +178,7 @@ export async function enqueueOAuthVerificationTask(
 		 RETURNING *`,
 		[
 			teamId,
-			ctx.operationsProjectId,
+			ctx.internalProjectId,
 			ctx.captainMemberId,
 			parentIdentifier ? originatingTaskId : null,
 			taskNumber,

@@ -13,7 +13,7 @@ import { auditLog } from '../lib/audit';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { hasOpenBlockers, wouldCreateCycle } from '../lib/dependencies';
-import { assertOperationsAssignee } from '../lib/operations-assignee';
+import { assertInternalAssignee } from '../lib/internal-assignee';
 import { resolveTaskId } from '../lib/resolve';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { assertChildDepthAllowed } from '../lib/task-relationships';
@@ -106,9 +106,9 @@ export async function createTask(
 		throw new CreateTaskError('INVALID_REQUEST', 'Either assignee_id or assignee_slug is required');
 	}
 
-	const opsCheck = await assertOperationsAssignee(db, teamId, input.project_id, assigneeId);
-	if (!opsCheck.ok) {
-		throw new CreateTaskError('INVALID_REQUEST', opsCheck.message);
+	const internalCheck = await assertInternalAssignee(db, teamId, input.project_id, assigneeId);
+	if (!internalCheck.ok) {
+		throw new CreateTaskError('INVALID_REQUEST', internalCheck.message);
 	}
 
 	if (caller.agentMemberId) {

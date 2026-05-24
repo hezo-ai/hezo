@@ -28,7 +28,7 @@ test.describe('Goals', () => {
 		await expect(main.getByText('Raise seed round')).toBeVisible({ timeout: 15000 });
 		await expect(main.getByText('Team-wide').first()).toBeVisible();
 
-		// The Captain ticket lives in the Operations project.
+		// The Captain ticket lives in the Internal project.
 		await page.goto(`/teams/${team.slug}/projects/operations/tasks`);
 		await waitForPageLoad(page);
 		await expect(

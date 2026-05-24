@@ -1,4 +1,4 @@
-import { GoalStatus, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { GoalStatus, INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -58,7 +58,7 @@ export function GoalDialog({ teamId, open, onOpenChange, goal }: GoalDialogProps
 		onOpenChange(false);
 	}
 
-	const nonInternalProjects = (projects ?? []).filter((p) => p.slug !== OPERATIONS_PROJECT_SLUG);
+	const nonInternalProjects = (projects ?? []).filter((p) => p.slug !== INTERNAL_PROJECT_SLUG);
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>

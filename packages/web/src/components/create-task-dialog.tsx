@@ -1,4 +1,4 @@
-import { CAPTAIN_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG, INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Loader2, X } from 'lucide-react';
@@ -36,15 +36,15 @@ export function CreateTaskDialog({
 	const navigate = useNavigate();
 
 	const selectedProject = projects?.find((p) => p.id === projectId);
-	const isOperationsProject = selectedProject?.slug === OPERATIONS_PROJECT_SLUG;
+	const isInternalProject = selectedProject?.slug === INTERNAL_PROJECT_SLUG;
 	const captainAgent = useMemo(() => agents?.find((a) => a.slug === CAPTAIN_AGENT_SLUG), [agents]);
 	const selectableAgents = useMemo(() => {
 		if (!agents) return [];
-		if (isOperationsProject) {
+		if (isInternalProject) {
 			return captainAgent ? [captainAgent] : [];
 		}
 		return agents.filter((a) => a.admin_status !== 'disabled');
-	}, [agents, captainAgent, isOperationsProject]);
+	}, [agents, captainAgent, isInternalProject]);
 
 	const priorityLabel = priority.charAt(0).toUpperCase() + priority.slice(1);
 	const projectLabel = selectedProject?.name ?? 'No project';
@@ -53,7 +53,7 @@ export function CreateTaskDialog({
 	function handleProjectChange(nextProjectId: string) {
 		setProjectId(nextProjectId);
 		const next = projects?.find((p) => p.id === nextProjectId);
-		if (next?.slug === OPERATIONS_PROJECT_SLUG) {
+		if (next?.slug === INTERNAL_PROJECT_SLUG) {
 			setAssigneeId(captainAgent?.id ?? '');
 		}
 	}

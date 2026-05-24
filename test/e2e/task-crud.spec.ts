@@ -556,7 +556,7 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 	await expect(dropdown).toBeHidden();
 });
 
-test('operations project restricts assignee dropdown to the Captain', async ({ page }) => {
+test('Internal project restricts assignee dropdown to the Captain', async ({ page }) => {
 	await page.goto('/');
 	await authenticate(page);
 
@@ -687,7 +687,7 @@ test('project badge and metadata label both link to the project page', async ({ 
 	await expect(metadataLink).toHaveAttribute('href', expectedHref);
 
 	await metadataLink.click();
-	await expect(page).toHaveURL(expectedHref + '/tasks');
+	await expect(page).toHaveURL(`${expectedHref}/tasks`);
 	await expect(page.getByTestId('breadcrumb').getByText('Linkable Project')).toBeVisible({
 		timeout: 20000,
 	});

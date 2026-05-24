@@ -3,7 +3,7 @@ import {
 	AgentRuntimeStatus,
 	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
-	OPERATIONS_PROJECT_SLUG,
+	INTERNAL_PROJECT_SLUG,
 	TaskStatus,
 } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
@@ -296,10 +296,10 @@ function TaskDetailPage() {
 		assignedAgent?.slug === CAPTAIN_AGENT_SLUG
 			? AgentEffort.Max
 			: (assignedAgent?.default_effort ?? DEFAULT_EFFORT);
-	const isOperationsProject = task?.project_slug === OPERATIONS_PROJECT_SLUG;
+	const isInternalProject = task?.project_slug === INTERNAL_PROJECT_SLUG;
 	const assigneeOptions = agents
 		?.filter((a) => a.admin_status !== 'disabled')
-		.filter((a) => !isOperationsProject || a.slug === CAPTAIN_AGENT_SLUG);
+		.filter((a) => !isInternalProject || a.slug === CAPTAIN_AGENT_SLUG);
 
 	if (isLoading || !task)
 		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;

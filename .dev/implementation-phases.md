@@ -89,7 +89,7 @@
 - Project CRUD (create, update, delete, list)
 - Task CRUD (create, update, delete, list, status transitions)
   - Atomic per-project task numbering (`next_project_task_number()`)
-  - Linear-style identifiers (`OP-42` — project prefix + number)
+  - Linear-style identifiers (`IN-42` — project prefix + number)
   - Task work ownership fields
   - Sub-tasks and `blocked_by`
 - Comment CRUD (create, list) with all content types (text, options, preview, trace, system)
@@ -378,7 +378,7 @@ UI:
 
 Backend:
 - `is_internal` boolean on `projects` table — marks auto-created projects
-- Auto-create "Operations" project (`is_internal = true`) on team creation
+- Auto-create "Internal" project (`is_internal = true`) on team creation
 - Prevent deletion of internal projects
 - `POST /teams/:teamId/agents/onboard` endpoint — creates agent in disabled state, opens onboarding task assigned to the Captain
 
@@ -715,7 +715,7 @@ Backend:
 - Summaries copied to agents and team during provisioning
 - `set_agent_summary` MCP tool — any agent or board member in the team can set an agent's summary
 - `set_team_summary` MCP tool — Captain agent only, sets the team team summary
-- `description-update` label convention: task created in Operations project, assigned to the Captain, triggers regeneration
+- `description-update` label convention: task created in Internal project, assigned to the Captain, triggers regeneration
 
 **How to test:**
 - Create a team from built-in template — agents have pre-baked summaries, team has team summary

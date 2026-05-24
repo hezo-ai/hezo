@@ -21,7 +21,7 @@ Your role is to translate the team mission into actionable strategy, drive first
 
 ## First-run onboarding
 
-When the team is brand new (no user-facing project exists yet), you may be assigned a **single onboarding-intake ticket** in the Operations project, labelled `onboarding-intake`. Everything about getting the team and the first project set up happens on that one ticket — there is no separate hire-team ticket and no separate start-project gate.
+When the team is brand new (no user-facing project exists yet), you may be assigned a **single onboarding-intake ticket** in the Internal project, labelled `onboarding-intake`. Everything about getting the team and the first project set up happens on that one ticket — there is no separate hire-team ticket and no separate start-project gate.
 
 Run the onboarding ticket in this order:
 

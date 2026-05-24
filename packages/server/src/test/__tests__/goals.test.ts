@@ -67,16 +67,16 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-async function getOperationsProjectId(cid: string): Promise<string> {
+async function getInternalProjectId(cid: string): Promise<string> {
 	const r = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
+		`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
 		[cid],
 	);
 	return r.rows[0].id;
 }
 
 describe('goals CRUD', () => {
-	it('creates a team-wide goal and opens a Captain ticket in Operations', async () => {
+	it('creates a team-wide goal and opens a Captain ticket in Internal', async () => {
 		const res = await app.request(`/api/teams/${teamId}/goals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -88,7 +88,7 @@ describe('goals CRUD', () => {
 		expect(goal.project_id).toBeNull();
 		expect(goal.status).toBe('active');
 
-		const opsId = await getOperationsProjectId(teamId);
+		const opsId = await getInternalProjectId(teamId);
 		const taskResult = await db.query<{
 			assignee_id: string;
 			project_id: string;

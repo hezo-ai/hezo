@@ -177,6 +177,7 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 		container_id: 'container-123',
 		container_status: ContainerStatus.Running,
 		designated_repo_id: null,
+		is_internal: false,
 		...overrides,
 	};
 }

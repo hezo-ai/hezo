@@ -1,4 +1,4 @@
-import { OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { useState } from 'react';
@@ -100,7 +100,7 @@ function ProjectSettingsPage() {
 
 export const Route = createFileRoute('/teams/$teamId/projects/$projectId/settings/')({
 	beforeLoad: ({ params }) => {
-		if (params.projectId === OPERATIONS_PROJECT_SLUG) {
+		if (params.projectId === INTERNAL_PROJECT_SLUG) {
 			throw redirect({
 				to: '/teams/$teamId/projects/$projectId/tasks',
 				params,

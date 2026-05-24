@@ -49,10 +49,12 @@ export async function verifyToken(
 		const payload = await verify(token, secret, 'HS256');
 
 		if (payload.member_id && payload.team_id) {
-			if (!payload.run_id) return null;
+			if (!payload.run_id || !payload.project_id) return null;
 			const memberId = payload.member_id as string;
 			const teamId = payload.team_id as string;
 			const runId = payload.run_id as string;
+			const projectId = payload.project_id as string;
+			const crossProject = payload.cross_project === true;
 			const runResult = await db.query<{ status: string }>(
 				'SELECT status FROM heartbeat_runs WHERE id = $1 AND member_id = $2 AND team_id = $3',
 				[runId, memberId, teamId],
@@ -64,6 +66,8 @@ export async function verifyToken(
 				memberId,
 				teamId,
 				runId,
+				projectId,
+				crossProject,
 			};
 		}
 		if (payload.user_id) {
@@ -146,6 +150,8 @@ export async function signAgentJwt(
 	memberId: string,
 	teamId: string,
 	runId: string,
+	projectId: string,
+	crossProject: boolean,
 ): Promise<string> {
 	const jwtKey = await masterKeyManager.getJwtKey();
 	const secret = jwtKey.toString('base64');
@@ -155,6 +161,8 @@ export async function signAgentJwt(
 			member_id: memberId,
 			team_id: teamId,
 			run_id: runId,
+			project_id: projectId,
+			cross_project: crossProject,
 			iat: now,
 			exp: now + AGENT_JWT_TTL_SECONDS,
 		},

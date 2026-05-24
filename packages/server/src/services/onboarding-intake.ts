@@ -12,7 +12,7 @@ import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { terminalStatusParams } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
-import { findOpenLabeledTask, loadCaptainOpsContext } from './operations-intake';
+import { findOpenLabeledTask, loadCaptainInternalContext } from './internal-intake';
 import { recordStatusChange } from './task-events';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -56,7 +56,7 @@ export interface OnboardingIntakeTask {
 }
 
 /**
- * Creates the single onboarding-intake task in the Operations project and
+ * Creates the single onboarding-intake task in the Internal project and
  * posts the Captain greeting comment. Idempotent — returns null if an open
  * intake task already exists.
  */
@@ -64,9 +64,9 @@ export async function createOnboardingIntakeTask(
 	db: PGlite,
 	teamId: string,
 ): Promise<{ taskId: string; captainMemberId: string } | null> {
-	const ctx = await loadCaptainOpsContext(db, teamId);
+	const ctx = await loadCaptainInternalContext(db, teamId);
 	if (!ctx) {
-		log.warn(`Cannot create onboarding intake for ${teamId}; missing Captain or Operations`);
+		log.warn(`Cannot create onboarding intake for ${teamId}; missing Captain or Internal`);
 		return null;
 	}
 
@@ -75,7 +75,7 @@ export async function createOnboardingIntakeTask(
 
 	const { number: taskNumber, identifier } = await allocateTaskIdentifier(
 		db,
-		ctx.operationsProjectId,
+		ctx.internalProjectId,
 	);
 
 	const taskResult = await db.query<{ id: string }>(
@@ -85,7 +85,7 @@ export async function createOnboardingIntakeTask(
 		 RETURNING id`,
 		[
 			teamId,
-			ctx.operationsProjectId,
+			ctx.internalProjectId,
 			ctx.captainMemberId,
 			taskNumber,
 			identifier,
@@ -152,7 +152,7 @@ export async function getOpenOnboardingIntakeTask(
 	db: PGlite,
 	teamId: string,
 ): Promise<OnboardingIntakeTask | null> {
-	const ctx = await loadCaptainOpsContext(db, teamId);
+	const ctx = await loadCaptainInternalContext(db, teamId);
 	if (!ctx) return null;
 	const row = await findOpenLabeledTask(db, teamId, ONBOARDING_INTAKE_LABEL);
 	if (!row) return null;
@@ -165,7 +165,7 @@ export async function ensureOnboardingIntakeTask(
 	teamId: string,
 	wsManager?: WebSocketManager,
 ): Promise<OnboardingIntakeTask | null> {
-	const ctx = await loadCaptainOpsContext(db, teamId);
+	const ctx = await loadCaptainInternalContext(db, teamId);
 	if (!ctx) return null;
 
 	let row = await findOpenLabeledTask(db, teamId, ONBOARDING_INTAKE_LABEL);
@@ -268,7 +268,7 @@ export async function completeOnboardingIntakeAfterProvisioning(
 	skippedSlugs: string[],
 	wsManager?: WebSocketManager,
 ): Promise<OnboardingProvisioningCompleteResult> {
-	const ctx = await loadCaptainOpsContext(db, teamId);
+	const ctx = await loadCaptainInternalContext(db, teamId);
 	if (!ctx) {
 		log.warn(`Cannot complete onboarding intake for ${teamId}; missing Captain`);
 		return { summaryComment: null, task: null };
@@ -340,7 +340,7 @@ export async function postOnboardingTemplateApprovedAck(
 	intakeTaskId: string,
 	templateName: string,
 ): Promise<Record<string, unknown> | null> {
-	const ctx = await loadCaptainOpsContext(db, teamId);
+	const ctx = await loadCaptainInternalContext(db, teamId);
 	if (!ctx) return null;
 
 	const task = await db.query<{ id: string }>(
@@ -372,7 +372,7 @@ export async function postOnboardingTemplateDeniedNote(
 	intakeTaskId: string,
 	resolutionNote: string | null,
 ): Promise<Record<string, unknown> | null> {
-	const ctx = await loadCaptainOpsContext(db, teamId);
+	const ctx = await loadCaptainInternalContext(db, teamId);
 	if (!ctx) return null;
 
 	const task = await db.query<{ id: string }>(
@@ -407,7 +407,7 @@ export async function postSkipQuestionsSignal(
 	teamId: string,
 	intakeTaskId: string,
 ): Promise<Record<string, unknown> | null> {
-	const ctx = await loadCaptainOpsContext(db, teamId);
+	const ctx = await loadCaptainInternalContext(db, teamId);
 	if (!ctx) return null;
 
 	const task = await db.query<{ id: string }>(

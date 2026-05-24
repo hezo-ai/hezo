@@ -1,6 +1,6 @@
 ## Description maintenance
 
-Tickets in the Operations project labeled `description-update` are routine internal tasks for keeping each agent's auto-generated artifacts (per-agent summary, team summary, per-agent team-relationships context) accurate. When you see one:
+Tickets in the Internal project labeled `description-update` are routine internal tasks for keeping each agent's auto-generated artifacts (per-agent summary, team summary, per-agent team-relationships context) accurate. When you see one:
 
 - Follow the steps in the task description verbatim — they tell you which agent and which artifact to update.
 - Use `get_agent_system_prompt(team_id, agent_id)` to read the current prompt.

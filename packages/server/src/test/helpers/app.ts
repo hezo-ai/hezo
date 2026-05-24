@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
+import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { generateMasterKey, MasterKeyManager } from '../../crypto/master-key';
 import { loadAgentRoles } from '../../db/agent-roles';
 import { seedBuiltins } from '../../db/seed';
@@ -97,10 +98,42 @@ export async function mintAgentToken(
 	agentId: string,
 	teamId: string,
 	taskId?: string | null,
-): Promise<{ token: string; runId: string }> {
+	opts: { projectId?: string; crossProject?: boolean } = {},
+): Promise<{ token: string; runId: string; projectId: string; crossProject: boolean }> {
 	const runId = await createAgentRun(db, agentId, teamId, taskId);
-	const token = await signAgentJwt(masterKeyManager, agentId, teamId, runId);
-	return { token, runId };
+	let projectId = opts.projectId;
+	let crossProject = opts.crossProject;
+	if (!projectId) {
+		if (taskId) {
+			const taskProject = await db.query<{ id: string; is_internal: boolean }>(
+				`SELECT p.id, p.is_internal FROM tasks t
+				 JOIN projects p ON p.id = t.project_id
+				 WHERE t.id = $1`,
+				[taskId],
+			);
+			projectId = taskProject.rows[0]?.id;
+			if (crossProject === undefined) crossProject = taskProject.rows[0]?.is_internal ?? false;
+		}
+		if (!projectId) {
+			const fallback = await db.query<{ id: string }>(
+				`SELECT id FROM projects WHERE team_id = $1 AND slug = $2 LIMIT 1`,
+				[teamId, INTERNAL_PROJECT_SLUG],
+			);
+			projectId = fallback.rows[0]?.id;
+			if (crossProject === undefined) crossProject = true;
+		}
+	}
+	if (!projectId) throw new Error('mintAgentToken: could not resolve a projectId');
+	if (crossProject === undefined) crossProject = false;
+	const token = await signAgentJwt(
+		masterKeyManager,
+		agentId,
+		teamId,
+		runId,
+		projectId,
+		crossProject,
+	);
+	return { token, runId, projectId, crossProject };
 }
 
 export async function finalizeAgentRun(

@@ -12,7 +12,14 @@ import type { WebSocketManager } from '../services/ws';
 export type AuthInfo =
 	| { type: typeof AuthType.Board; userId: string; isSuperuser: boolean }
 	| { type: typeof AuthType.ApiKey; teamId: string }
-	| { type: typeof AuthType.Agent; memberId: string; teamId: string; runId: string };
+	| {
+			type: typeof AuthType.Agent;
+			memberId: string;
+			teamId: string;
+			runId: string;
+			projectId: string;
+			crossProject: boolean;
+	  };
 
 export type Env = {
 	Variables: {

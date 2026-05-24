@@ -18,7 +18,7 @@ import {
 	wakeIfReady,
 	wouldCreateCycle,
 } from '../lib/dependencies';
-import { assertOperationsAssignee } from '../lib/operations-assignee';
+import { assertInternalAssignee } from '../lib/internal-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import {
 	getProjectLocator,
@@ -482,14 +482,14 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 				return err(c, 'CONFLICT', activeRunCheck.message, 409);
 			}
 		}
-		const opsCheck = await assertOperationsAssignee(
+		const internalCheck = await assertInternalAssignee(
 			db,
 			teamId,
 			existing.rows[0].project_id,
 			body.assignee_id,
 		);
-		if (!opsCheck.ok) {
-			return err(c, 'INVALID_REQUEST', opsCheck.message, 400);
+		if (!internalCheck.ok) {
+			return err(c, 'INVALID_REQUEST', internalCheck.message, 400);
 		}
 		sets.push(`assignee_id = $${idx}`);
 		params.push(body.assignee_id);

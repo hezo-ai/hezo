@@ -99,26 +99,26 @@ afterAll(async () => {
 
 describe('extractTaskIdentifiers', () => {
 	it('returns identifiers from plain prose', () => {
-		expect(extractTaskIdentifiers('see OP-42 for the rest')).toEqual(['OP-42']);
+		expect(extractTaskIdentifiers('see IN-42 for the rest')).toEqual(['IN-42']);
 	});
 
 	it('finds multiple unique identifiers', () => {
-		expect(extractTaskIdentifiers('see OP-1 and OP-2 — also OP-1 again').sort()).toEqual([
-			'OP-1',
-			'OP-2',
+		expect(extractTaskIdentifiers('see IN-1 and IN-2 — also IN-1 again').sort()).toEqual([
+			'IN-1',
+			'IN-2',
 		]);
 	});
 
 	it('skips identifiers in fenced code blocks', () => {
-		expect(extractTaskIdentifiers('text\n```\nOP-9\n```\nmore')).toEqual([]);
+		expect(extractTaskIdentifiers('text\n```\nIN-9\n```\nmore')).toEqual([]);
 	});
 
 	it('skips identifiers in inline code', () => {
-		expect(extractTaskIdentifiers('inline `OP-9` here')).toEqual([]);
+		expect(extractTaskIdentifiers('inline `IN-9` here')).toEqual([]);
 	});
 
 	it('skips lowercase identifiers', () => {
-		expect(extractTaskIdentifiers('check op-9 sometime')).toEqual([]);
+		expect(extractTaskIdentifiers('check in-9 sometime')).toEqual([]);
 	});
 
 	it('returns [] for null/undefined/empty', () => {

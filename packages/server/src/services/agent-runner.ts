@@ -91,6 +91,7 @@ interface ProjectInfo {
 	container_id: string;
 	container_status: string;
 	designated_repo_id: string | null;
+	is_internal: boolean;
 }
 
 export interface RunResult {
@@ -270,6 +271,8 @@ async function buildRunContext(
 		agent.id,
 		agent.team_id,
 		heartbeatRunId,
+		project.id,
+		project.is_internal,
 	);
 	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort, agent.slug);
 	const effortApplication = applyEffortToRuntime(runtimeType, effort);

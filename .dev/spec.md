@@ -452,7 +452,7 @@ New agents are not created by the board directly. When a board member submits th
 
 1. Validates the proposed title, slug uniqueness, and effort value.
 2. Inserts an `approvals` row of type `hire` whose payload holds the full draft spec (`title`, `slug`, `role_description`, `system_prompt`, `default_effort`, `heartbeat_interval_min`, `monthly_budget_cents`, `touches_code`).
-3. Opens an task in the Operations project, assigned to the Captain, titled `Onboard new agent: {title}`, labelled `onboarding,hire`, with the approval ID and the current draft in the body.
+3. Opens an task in the Internal project, assigned to the Captain, titled `Onboard new agent: {title}`, labelled `onboarding,hire`, with the approval ID and the current draft in the body.
 4. Wakes the Captain to process the ticket. **No `member_agents` row is created yet.**
 
 The Captain picks up the ticket and refines the draft via the `update_hire_proposal(approval_id, ...)` MCP tool — Captain-only. Other agents (including the Architect) are rejected with `Only the Captain can revise hire proposals`. Revisions mutate the approval payload in place and do not reset the `status`. The Captain @-mentions the board via `create_comment` when the draft is ready for review.
@@ -462,7 +462,7 @@ The board reviews the draft in the approvals inbox and either approves or denies
 - **Approved** → the `applyApprovalSideEffect` hook in `packages/server/src/routes/approvals.ts` inserts the `members` and `member_agents` rows from the latest payload, marks the agent as `enabled`, transitions the onboarding task to `done`, and broadcasts both row changes so the UI and org chart update live. Agent and team description refresh tasks are enqueued.
 - **Denied** → no agent is created; the Captain is expected to close the onboarding task as `cancelled` with a brief note.
 
-Bootstrap exception: if the team has no enabled Captain or no Operations project (e.g., the Captain itself is being hired first), the endpoint falls back to creating the agent directly as `enabled` without an approval or ticket. This is the only way to create an agent without the Captain-mediated flow and is intended solely for early setup.
+Bootstrap exception: if the team has no enabled Captain or no Internal project (e.g., the Captain itself is being hired first), the endpoint falls back to creating the agent directly as `enabled` without an approval or ticket. This is the only way to create an agent without the Captain-mediated flow and is intended solely for early setup.
 
 ### Built-in role templates
 
@@ -493,7 +493,7 @@ Current partials:
 
 ### Agent and team auto-descriptions
 
-Every agent carries a short summary (≤5 lines) describing its role and capabilities. Every team carries a team summary (≤20 lines) describing how the agents collaborate. Built-in agent types ship with pre-baked defaults from `packages/server/src/db/agent-summaries.json`, copied to each agent and team during provisioning. At runtime the Captain can regenerate descriptions via `description-update` tasks in Operations, calling the `set_agent_summary` and `set_team_summary` MCP tools.
+Every agent carries a short summary (≤5 lines) describing its role and capabilities. Every team carries a team summary (≤20 lines) describing how the agents collaborate. Built-in agent types ship with pre-baked defaults from `packages/server/src/db/agent-summaries.json`, copied to each agent and team during provisioning. At runtime the Captain can regenerate descriptions via `description-update` tasks in Internal, calling the `set_agent_summary` and `set_team_summary` MCP tools.
 
 ### Ticket workflow
 
@@ -1135,7 +1135,7 @@ GitHub-style task tracker. Tasks are the primary interaction surface for the ent
 | Labels | No | Free-form tags (JSONB array) |
 | Parent task | No | For sub-tasks / delegation |
 | Number | Auto | Per-project auto-incrementing (atomic) |
-| Identifier | Auto | Linear-style: `{project.task_prefix}-{number}` (e.g. `OP-42`). Unique per team. |
+| Identifier | Auto | Linear-style: `{project.task_prefix}-{number}` (e.g. `IN-42`). Unique per team. |
 | Blocked by | No | References to other tasks blocking this one (many-to-many via `task_dependencies` table) |
 | Progress summary | No | Concise markdown summary of requirements, what's done, and what's next. Updated by agents when they start/finish work on the task. Collapsed by default in UI. |
 | Progress summary updated at | Auto | Timestamp of last progress summary update |
@@ -1383,7 +1383,7 @@ Board members (human users) collectively act as the board of directors. All boar
 
 | Action | Requires approval? |
 |--------|-------------------|
-| Board hires an agent | Yes — Captain refines a draft via `update_hire_proposal` MCP tool, then the board approves the pending `hire` approval to materialise the agent. Bypassed only in the bootstrap case where the team has no enabled Captain or no Operations project (the agent is then created directly as enabled). |
+| Board hires an agent | Yes — Captain refines a draft via `update_hire_proposal` MCP tool, then the board approves the pending `hire` approval to materialise the agent. Bypassed only in the bootstrap case where the team has no enabled Captain or no Internal project (the agent is then created directly as enabled). |
 | Agent requests to hire | Yes — same `hire` approval type, routed through the Captain for refinement first. |
 | Board grants secret access | No — direct action |
 | Agent requests secret access | Yes — pending approval |
@@ -2146,11 +2146,11 @@ Team Rail → Team workspace (side menu)
 
 When creating a team, the user selects one or more team templates (default: "Software Development"). A template includes a team of agents with defined roles and reporting hierarchy, plus optional KB docs and preferences.
 
-Every team gets an auto-created **Operations** project (`is_internal = true`) for administrative tasks like agent onboarding. Internal projects are visible but not deletable. Every task in the Operations project must be assigned to the Captain — the server rejects any `POST /teams/:teamId/tasks`, `PATCH /teams/:teamId/tasks/:taskId`, `POST .../sub-tasks`, or MCP `create_task` / `update_task` call that would leave an Operations-project task assigned to anyone else. The create-task dialog and the task-detail assignee picker reflect this by filtering the agent list to the Captain when Operations is selected.
+Every team gets an auto-created **Internal** project (`is_internal = true`) for administrative tasks like agent onboarding. Internal projects are visible but not deletable. Every task in the Internal project must be assigned to the Captain — the server rejects any `POST /teams/:teamId/tasks`, `PATCH /teams/:teamId/tasks/:taskId`, `POST .../sub-tasks`, or MCP `create_task` / `update_task` call that would leave an Internal-project task assigned to anyone else. The create-task dialog and the task-detail assignee picker reflect this by filtering the agent list to the Captain when Internal is selected.
 
 ### Agent onboarding
 
-Hiring a new agent creates the agent in disabled state and opens an onboarding task in the Operations project, assigned to the Captain agent. The Captain reviews the new hire against the existing team, discusses reporting structure and responsibilities with the board member via task comments, and enables the agent once onboarding is complete. If no Captain agent exists, the agent is created directly in enabled state.
+Hiring a new agent creates the agent in disabled state and opens an onboarding task in the Internal project, assigned to the Captain agent. The Captain reviews the new hire against the existing team, discusses reporting structure and responsibilities with the board member via task comments, and enables the agent once onboarding is complete. If no Captain agent exists, the agent is created directly in enabled state.
 
 ---
 

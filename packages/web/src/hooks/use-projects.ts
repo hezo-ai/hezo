@@ -47,7 +47,7 @@ export function useProjects(teamId: string) {
 
 export type ProjectWithTeam = Project & { teamSlug: string; teamName: string };
 
-/** User-facing projects across all teams (excludes internal e.g. Operations). */
+/** User-facing projects across all teams (excludes internal projects). */
 export function useAllVisibleProjects(teams: Team[] | undefined) {
 	const queries = useQueries({
 		queries: (teams ?? []).map((team) => ({
