@@ -46,6 +46,29 @@ A green test run should have a quiet log. If a test produces `[error]` or `[warn
 
 When the global `app.onError` handler logs a `Route error on ...` line for an expected-failure test, the route is using a 500 where a 4xx would be honest. Catch known constraint codes locally (see `isFkViolation` in `packages/server/src/lib/sql.ts`) and return a `4xx` with `err(c, ...)` instead of letting the error propagate.
 
+### Server side effects — await vs `trackBackground`
+
+If a side effect produces state that the immediate response or the next refetch from the same client must reflect, **`await`** it inside the handler. `trackBackground(...)` is for work whose completion is decoupled from the current request — agent wakeups, container spin-up, summary/context fan-outs, audit logs.
+
+Concretely, on `PATCH /tasks` the system comments that record the change (`recordStatusChange`, `recordTitleChange`, `recordAssigneeChange` from `packages/server/src/services/task-events.ts`) MUST be awaited, because the client's onSettled invalidation triggers an immediate comments refetch that has to see the row. `recordTaskLinks` lands on a *different* task and stays fire-and-forget — the source response doesn't carry it. `createWakeup` / `wakeAgentIfAssigned` stay fire-and-forget — the agent's run is inherently async.
+
+Wrap the awaited call in `try/catch` and `log.error(...)` to keep the "log and continue" semantics — a failed side effect should not 500 the request.
+
+### E2E timing rules
+
+CI runs the suite with two parallel Playwright workers, dev-mode Vite, a cold Bun cache, and a 1 Hz agent wakeup cron. That load surfaces races that never fire locally. Five patterns flake reliably under it — use the deterministic helpers in `test/e2e/helpers.ts` instead.
+
+- **Scope every response matcher to the test's own IDs.** Use `taskMatcher` / `teamMatcher` / `agentMatcher` from `test/e2e/helpers.ts`. The bare `/api/teams/[^/]+/tasks/[^/]+/` regex is too loose: Captain's background planning-task PATCHes hit the same shape and will satisfy the matcher before the user's mutation has even left the browser. For tasks, `taskId` is the lowercase identifier (`target.identifier.toLowerCase()`), not the UUID — the route param and the mutation URL both use the identifier.
+- **For "click save → assert UI updated", wait for both the mutation AND the follow-up refetch GET.** Use `saveAndWaitForRefetch(page, locator, { mutation, refetch })`. Mutation landing ≠ UI rendering — React Query has to invalidate, refetch, and re-render before the new text is in the DOM. `clickAndWaitForResponse` is the older one-shot wrapper and is deprecated; new code uses `saveAndWaitForRefetch`.
+- **Scroll Virtuoso before asserting on a bottom-of-list item.** The comments list (and any other Virtuoso instance) only mounts items in the viewport range. A new system comment lands at the bottom of the ASC list; with the user at the top, it's in the query cache but not in the DOM and `toBeVisible` fails. Scroll the scroll container first:
+  ```ts
+  await page.locator('main').first().evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+  ```
+- **Sequence `page.request` after in-flight UI mutations.** `page.request.<method>(...)` uses a separate Playwright APIRequestContext from the page's fetch; the two requests can land in either order on the server. Before firing `page.request.post(...)` to mutate state the UI also just mutated, `await page.waitForResponse(...)` the UI mutation's HTTP response so the two serialize.
+- **`page.route()` cleanup is already wired.** `freshWorkspace`, `lightWorkspace`, and `authedPage` (in `test/e2e/fixtures.ts`) call `unrouteAll({ behavior: 'ignoreErrors' })` on teardown so in-flight `route.fetch()` calls don't reject with "Target page has been closed". Don't manually unroute inside tests that use those fixtures.
+
+**Do not raise the timeout to mask a race. Find the missing wait.** Bumping `{ timeout: 30000 }` makes the next reader assume the operation is genuinely slow — it's almost always a missing matcher scope or a missing `await`.
+
 ## Type safety
 
 No `any` in source code. Use specific types, `unknown`, `Record<string, unknown>`, or generics. If a library lacks types, install them (`@types/*`) — don't fall back to `any` or `declare const` hacks. `any` is acceptable only in test files for unpredictable JSON.
@@ -77,6 +100,7 @@ Errors-only toast: `toast.error(...)` from `packages/web/src/hooks/use-toast.ts`
 Browser URLs use slugs (e.g. `/teams/test/projects/operations`). Internal IDs (DB keys, WebSocket rooms, server broadcasts) use UUIDs.
 
 - Route params are slugs. TanStack Query keys must use the route-param slug (not a resolved UUID), so WebSocket-driven `invalidateQueries` matches.
+- When a component renders inside a route, pass the **route-param value** (`teamId` / `taskId` from `Route.useParams()`) to any child component or hook whose query key includes it — not `data?.id` from a resolved query (`<CommentReactions taskId={task?.id} />` is the antipattern). Mismatched keys cause optimistic mutations to write to a different cache entry than the query reads from, so the chip/row never appears even though the server processed the mutation correctly.
 - WebSocket rooms use UUIDs (`team:${uuid}`). `useWebSocket` takes both: UUID for subscription, slug for query invalidation.
 - Server broadcasts use UUIDs.
 
