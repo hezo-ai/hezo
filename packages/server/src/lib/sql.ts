@@ -37,3 +37,13 @@ export function buildUpdateSet(fields: UpdateFieldSpec[], startIdx = 1): UpdateS
 
 	return { clauses, params, nextIdx: idx };
 }
+
+const PG_FK_VIOLATION = '23503';
+
+export function isFkViolation(err: unknown, constraintName?: string): boolean {
+	if (!err || typeof err !== 'object') return false;
+	const e = err as { code?: unknown; constraint?: unknown };
+	if (e.code !== PG_FK_VIOLATION) return false;
+	if (constraintName && e.constraint !== constraintName) return false;
+	return true;
+}

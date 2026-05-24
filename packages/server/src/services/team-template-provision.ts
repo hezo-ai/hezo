@@ -1,5 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { MemberType } from '@hezo/shared';
+import { trackBackground } from '../lib/background';
 import { toSlug } from '../lib/slug';
 import { logger } from '../logger';
 import { enqueueTeamContextTaskForAllAgents } from './description-tasks';
@@ -223,8 +224,10 @@ export async function provisionTeamTemplate(
 	}
 
 	if (createdSlugs.length > 0) {
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added').catch((e) =>
-			log.error('Failed to fan out team_context tasks after template provision:', e),
+		trackBackground(
+			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added').catch((e) =>
+				log.error('Failed to fan out team_context tasks after template provision:', e),
+			),
 		);
 	}
 

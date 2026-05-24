@@ -8,6 +8,7 @@ import {
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
+import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { logger } from '../logger';
@@ -132,10 +133,12 @@ export async function triggerStatusAutomations(
 			[teamId, AgentAdminStatus.Enabled, COACH_AGENT_SLUG],
 		);
 		if (coach.rows.length > 0) {
-			createWakeup(db, coach.rows[0].id, teamId, WakeupSource.Automation, {
-				task_id: taskId,
-				trigger: 'task_done',
-			}).catch((e) => log.error('Failed to wake Coach:', e));
+			trackBackground(
+				createWakeup(db, coach.rows[0].id, teamId, WakeupSource.Automation, {
+					task_id: taskId,
+					trigger: 'task_done',
+				}).catch((e) => log.error('Failed to wake Coach:', e)),
+			);
 		}
 
 		try {

@@ -2,6 +2,7 @@ import { AuthType, CommentContentType, GrantScope, WakeupSource, wsRoom } from '
 import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import { signAssetUrl } from '../lib/asset-urls';
+import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
 import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
@@ -375,10 +376,12 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments/:commentId/choose', a
 	if (assigneeId) {
 		const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
 		if (isAgent.rows.length > 0) {
-			createWakeup(db, assigneeId, teamId, WakeupSource.OptionChosen, {
-				task_id: existing.rows[0].task_id,
-				chosen_id: body.chosen_id,
-			}).catch((e) => log.error('Failed to create option_chosen wakeup:', e));
+			trackBackground(
+				createWakeup(db, assigneeId, teamId, WakeupSource.OptionChosen, {
+					task_id: existing.rows[0].task_id,
+					chosen_id: body.chosen_id,
+				}).catch((e) => log.error('Failed to create option_chosen wakeup:', e)),
+			);
 		}
 	}
 

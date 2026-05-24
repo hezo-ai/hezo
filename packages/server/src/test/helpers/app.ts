@@ -10,27 +10,31 @@ import type { DockerClient } from '../../services/docker';
 import { buildApp } from '../../startup';
 import { createTestDbWithMigrations } from './db';
 
-export function createStubDocker(): DockerClient {
-	return {
-		ping: async () => true,
-		imageExists: async () => true,
-		pullImage: async () => {},
-		createContainer: async () => ({ Id: 'stub-container', Warnings: [] }),
-		startContainer: async () => {},
-		stopContainer: async () => {},
-		removeContainer: async () => {},
-		inspectContainer: async () => ({
-			Id: 'stub-container',
-			State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
-			Config: { Image: 'stub' },
-		}),
-		containerLogs: async () => new ReadableStream(),
-		execCreate: async () => {
-			throw new Error('execCreate not mocked — pass a mock docker via RunnerDeps');
-		},
-		execStart: async () => ({ stdout: '', stderr: '' }),
-		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
-	} as unknown as DockerClient;
+const STUB_DOCKER_METHODS = {
+	ping: async () => true,
+	imageExists: async () => true,
+	pullImage: async () => {},
+	createContainer: async () => ({ Id: 'stub-container', Warnings: [] }),
+	startContainer: async () => {},
+	stopContainer: async () => {},
+	removeContainer: async () => {},
+	inspectContainer: async () => ({
+		Id: 'stub-container',
+		State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+		Config: { Image: 'stub' },
+	}),
+	containerLogs: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) }),
+	execCreate: async () => {
+		throw new Error('execCreate not mocked — pass a mock docker via RunnerDeps');
+	},
+	execStart: async () => ({ stdout: '', stderr: '' }),
+	execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+};
+
+export function createStubDocker<T extends Record<string, unknown>>(
+	overrides: T = {} as T,
+): DockerClient & T {
+	return { ...STUB_DOCKER_METHODS, ...overrides } as unknown as DockerClient & T;
 }
 
 export async function createTestApp(opts: { webUrl?: string } = {}) {

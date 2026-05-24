@@ -206,7 +206,7 @@ export function buildApp(
 	logs.setWsManager(wsManager);
 
 	app.onError((err, c) => {
-		log.error(`Unhandled route error on ${c.req.method} ${c.req.path}:`, err);
+		log.error(`Route error on ${c.req.method} ${c.req.path}:`, err);
 		return c.text('Internal Server Error', 500);
 	});
 

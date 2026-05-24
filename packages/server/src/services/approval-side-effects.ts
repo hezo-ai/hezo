@@ -10,6 +10,7 @@ import {
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
+import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { resolveProjectTaskPrefix } from '../routes/projects';
@@ -169,20 +170,30 @@ export async function applyApprovalSideEffect(
 				broadcasts.push({ table: 'member_agents', op: 'INSERT', row: newAgent.rows[0] });
 			}
 
-			enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
-				log.error('Failed to enqueue agent summary task:', e),
+			trackBackground(
+				enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
+					log.error('Failed to enqueue agent summary task:', e),
+				),
 			);
-			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-				log.error('Failed to enqueue team summary task:', e),
+			trackBackground(
+				enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
+					log.error('Failed to enqueue team summary task:', e),
+				),
 			);
-			enqueueAgentTeamContextTask(db, teamId, memberId, 'initial').catch((e) =>
-				log.error('Failed to enqueue team_context task for new agent:', e),
+			trackBackground(
+				enqueueAgentTeamContextTask(db, teamId, memberId, 'initial').catch((e) =>
+					log.error('Failed to enqueue team_context task for new agent:', e),
+				),
 			);
-			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
-				log.error('Failed to fan out team_context tasks for existing agents:', e),
+			trackBackground(
+				enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
+					log.error('Failed to fan out team_context tasks for existing agents:', e),
+				),
 			);
-			enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
-				log.error('Failed to enqueue team coherence review after hire:', e),
+			trackBackground(
+				enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
+					log.error('Failed to enqueue team coherence review after hire:', e),
+				),
 			);
 			break;
 		}
@@ -272,8 +283,10 @@ export async function applyApprovalSideEffect(
 				);
 				const memberId = agentRow.rows[0]?.id;
 				if (memberId) {
-					enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
-						log.error('Failed to enqueue agent summary after template provision:', e),
+					trackBackground(
+						enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
+							log.error('Failed to enqueue agent summary after template provision:', e),
+						),
 					);
 					const newAgent = await db.query<Record<string, unknown>>(
 						`SELECT m.id, m.team_id, m.display_name, m.created_at,
@@ -295,8 +308,10 @@ export async function applyApprovalSideEffect(
 				}
 			}
 
-			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-				log.error('Failed to enqueue team summary after template provision:', e),
+			trackBackground(
+				enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
+					log.error('Failed to enqueue team summary after template provision:', e),
+				),
 			);
 
 			if (projectName) {

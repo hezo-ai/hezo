@@ -10,6 +10,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isCoach } from '../lib/agent-roles';
+import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import {
 	coerceTargetStatusForBlockers,
@@ -72,9 +73,11 @@ async function wakeAgentIfAssigned(
 	if (!assigneeId) return;
 	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
 	if (isAgent.rows.length > 0) {
-		createWakeup(db, assigneeId, teamId, WakeupSource.Assignment, {
-			task_id: taskId,
-		}).catch((e) => log.error('Failed to create wakeup for assignment:', e));
+		trackBackground(
+			createWakeup(db, assigneeId, teamId, WakeupSource.Assignment, {
+				task_id: taskId,
+			}).catch((e) => log.error('Failed to create wakeup for assignment:', e)),
+		);
 	}
 }
 
@@ -540,45 +543,58 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 	const actorMemberId = await resolveActorMemberId(c, teamId);
 
 	if (body.description !== undefined) {
-		recordTaskLinks(db, teamId, taskId, body.description, actorMemberId, c.get('wsManager')).catch(
-			(e) => log.error('Failed to record task links from description:', e),
+		trackBackground(
+			recordTaskLinks(
+				db,
+				teamId,
+				taskId,
+				body.description,
+				actorMemberId,
+				c.get('wsManager'),
+			).catch((e) => log.error('Failed to record task links from description:', e)),
 		);
 	}
 
 	if (body.title !== undefined) {
-		recordTitleChange(
-			db,
-			teamId,
-			taskId,
-			existing.rows[0].title,
-			body.title.trim(),
-			actorMemberId,
-			c.get('wsManager'),
-		).catch((e) => log.error('Failed to record title change:', e));
+		trackBackground(
+			recordTitleChange(
+				db,
+				teamId,
+				taskId,
+				existing.rows[0].title,
+				body.title.trim(),
+				actorMemberId,
+				c.get('wsManager'),
+			).catch((e) => log.error('Failed to record title change:', e)),
+		);
 	}
 
 	if (body.assignee_id !== undefined && body.assignee_id !== existing.rows[0].assignee_id) {
-		recordAssigneeChange(
-			db,
-			teamId,
-			taskId,
-			existing.rows[0].assignee_id,
-			body.assignee_id,
-			actorMemberId,
-			c.get('wsManager'),
-		).catch((e) => log.error('Failed to record assignee change:', e));
+		trackBackground(
+			recordAssigneeChange(
+				db,
+				teamId,
+				taskId,
+				existing.rows[0].assignee_id,
+				body.assignee_id,
+				actorMemberId,
+				c.get('wsManager'),
+			).catch((e) => log.error('Failed to record assignee change:', e)),
+		);
 	}
 
 	if (body.status) {
-		triggerStatusAutomations(
-			db,
-			teamId,
-			taskId,
-			existing.rows[0].status,
-			body.status,
-			actorMemberId,
-			c.get('wsManager'),
-		).catch((e) => log.error('Failed to trigger status automations:', e));
+		trackBackground(
+			triggerStatusAutomations(
+				db,
+				teamId,
+				taskId,
+				existing.rows[0].status,
+				body.status,
+				actorMemberId,
+				c.get('wsManager'),
+			).catch((e) => log.error('Failed to trigger status automations:', e)),
+		);
 
 		if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(body.status)) {
 			const dataDir = c.get('dataDir');

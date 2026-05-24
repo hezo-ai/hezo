@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { AgentAdminStatus, CAPTAIN_AGENT_SLUG, WakeupSource, wsRoom } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { resolveProjectTaskPrefix } from '../routes/projects';
@@ -149,23 +150,25 @@ export async function runOnboardingDirect(
 	]);
 	const teamSlug = teamSlugRow.rows[0]?.slug;
 	if (teamSlug) {
-		provisionContainer(
-			{
-				db,
-				docker: input.docker,
-				dataDir: input.dataDir,
-				wsManager: input.wsManager,
-				masterKeyManager: input.masterKeyManager,
-				logs: input.logs,
-				containerLogStreamer: input.containerLogStreamer,
-				sshAgentServer: input.sshAgentServer,
-				egressCAPath: input.egressCAPath ?? null,
-			},
-			project as unknown as ProjectRow,
-			teamSlug,
-		).catch((error) => {
-			log.error(`Failed to provision container for project ${project.slug}:`, error);
-		});
+		trackBackground(
+			provisionContainer(
+				{
+					db,
+					docker: input.docker,
+					dataDir: input.dataDir,
+					wsManager: input.wsManager,
+					masterKeyManager: input.masterKeyManager,
+					logs: input.logs,
+					containerLogStreamer: input.containerLogStreamer,
+					sshAgentServer: input.sshAgentServer,
+					egressCAPath: input.egressCAPath ?? null,
+				},
+				project as unknown as ProjectRow,
+				teamSlug,
+			).catch((error) => {
+				log.error(`Failed to provision container for project ${project.slug}:`, error);
+			}),
+		);
 	} else {
 		log.error(`Team ${input.teamId} not found when provisioning container after direct onboarding`);
 	}

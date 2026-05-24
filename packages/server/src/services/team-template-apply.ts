@@ -1,5 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { BUILTIN_AGENT_SLUGS, DocumentType, MemberType } from '@hezo/shared';
+import { trackBackground } from '../lib/background';
 import { logger } from '../logger';
 import {
 	enqueueTeamCoherenceReviewTask,
@@ -101,8 +102,10 @@ export async function applyTemplateToTeam(
 		provisionResult.created_slugs.length > 0 || builtinResult.updated_slugs.length > 0;
 
 	if (rosterChanged) {
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added').catch((e) =>
-			log.error('Failed to fan out team_context tasks after template apply:', e),
+		trackBackground(
+			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added').catch((e) =>
+				log.error('Failed to fan out team_context tasks after template apply:', e),
+			),
 		);
 		try {
 			await enqueueTeamCoherenceReviewTask(db, teamId, 'template_applied');

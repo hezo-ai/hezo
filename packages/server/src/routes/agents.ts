@@ -17,11 +17,12 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { resolveAgentId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
-import { buildUpdateSet, terminalStatusParams } from '../lib/sql';
+import { buildUpdateSet, isFkViolation, terminalStatusParams } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -228,22 +229,33 @@ agentsRoutes.post('/teams/:teamId/agents', async (c) => {
 			result.rows[0] as Record<string, unknown>,
 		);
 
-		enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
-			log.error('Failed to enqueue agent summary task:', e),
+		trackBackground(
+			enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
+				log.error('Failed to enqueue agent summary task:', e),
+			),
 		);
-		enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-			log.error('Failed to enqueue team summary task:', e),
+		trackBackground(
+			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
+				log.error('Failed to enqueue team summary task:', e),
+			),
 		);
-		enqueueAgentTeamContextTask(db, teamId, memberId, 'initial').catch((e) =>
-			log.error('Failed to enqueue team_context task for new agent:', e),
+		trackBackground(
+			enqueueAgentTeamContextTask(db, teamId, memberId, 'initial').catch((e) =>
+				log.error('Failed to enqueue team_context task for new agent:', e),
+			),
 		);
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
-			log.error('Failed to fan out team_context tasks for existing agents:', e),
+		trackBackground(
+			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
+				log.error('Failed to fan out team_context tasks for existing agents:', e),
+			),
 		);
 
 		return ok(c, result.rows[0], 201);
 	} catch (e) {
 		await db.query('ROLLBACK');
+		if (isFkViolation(e, 'member_agents_reports_to_fkey')) {
+			return err(c, 'INVALID_REQUEST', 'reports_to: agent does not exist', 400);
+		}
 		throw e;
 	}
 });
@@ -367,17 +379,25 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 		const agentRow = agentResult.rows[0] as Record<string, unknown>;
 
 		broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'INSERT', agentRow);
-		enqueueAgentSummaryTask(db, teamId, agentRow.id as string, 'created').catch((e) =>
-			log.error('Failed to enqueue agent summary task:', e),
+		trackBackground(
+			enqueueAgentSummaryTask(db, teamId, agentRow.id as string, 'created').catch((e) =>
+				log.error('Failed to enqueue agent summary task:', e),
+			),
 		);
-		enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-			log.error('Failed to enqueue team summary task:', e),
+		trackBackground(
+			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
+				log.error('Failed to enqueue team summary task:', e),
+			),
 		);
-		enqueueAgentTeamContextTask(db, teamId, agentRow.id as string, 'initial').catch((e) =>
-			log.error('Failed to enqueue team_context task for bootstrapped agent:', e),
+		trackBackground(
+			enqueueAgentTeamContextTask(db, teamId, agentRow.id as string, 'initial').catch((e) =>
+				log.error('Failed to enqueue team_context task for bootstrapped agent:', e),
+			),
 		);
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentRow.id as string).catch(
-			(e) => log.error('Failed to fan out team_context tasks for existing agents:', e),
+		trackBackground(
+			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentRow.id as string).catch(
+				(e) => log.error('Failed to fan out team_context tasks for existing agents:', e),
+			),
 		);
 
 		return ok(c, { agent: agentRow, task: null, approval: null, bootstrap: true }, 201);
@@ -477,8 +497,10 @@ ${teamRoster}`;
 		broadcastChange(c, wsRoom.team(teamId), 'approvals', 'INSERT', finalApproval.rows[0]);
 		broadcastChange(c, wsRoom.team(teamId), 'tasks', 'INSERT', task);
 
-		createWakeup(db, captainId, teamId, WakeupSource.Assignment, { task_id: task.id }).catch((e) =>
-			log.error('Failed to wake Captain for hire request:', e),
+		trackBackground(
+			createWakeup(db, captainId, teamId, WakeupSource.Assignment, {
+				task_id: task.id,
+			}).catch((e) => log.error('Failed to wake Captain for hire request:', e)),
 		);
 
 		return ok(c, { agent: null, task, approval: finalApproval.rows[0], bootstrap: false }, 201);
@@ -823,23 +845,33 @@ agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
 
 	if (body.system_prompt !== undefined || body.role_description !== undefined) {
 		const reason = body.system_prompt !== undefined ? 'prompt_updated' : 'role_updated';
-		enqueueAgentSummaryTask(db, teamId, agentId, reason).catch((e) =>
-			log.error('Failed to enqueue agent summary task:', e),
+		trackBackground(
+			enqueueAgentSummaryTask(db, teamId, agentId, reason).catch((e) =>
+				log.error('Failed to enqueue agent summary task:', e),
+			),
 		);
-		enqueueTeamSummaryTask(db, teamId, 'prompt_updated').catch((e) =>
-			log.error('Failed to enqueue team summary task:', e),
+		trackBackground(
+			enqueueTeamSummaryTask(db, teamId, 'prompt_updated').catch((e) =>
+				log.error('Failed to enqueue team summary task:', e),
+			),
 		);
-		enqueueAgentTeamContextTask(db, teamId, agentId, 'prompt_updated').catch((e) =>
-			log.error('Failed to enqueue team_context task on prompt change:', e),
+		trackBackground(
+			enqueueAgentTeamContextTask(db, teamId, agentId, 'prompt_updated').catch((e) =>
+				log.error('Failed to enqueue team_context task on prompt change:', e),
+			),
 		);
 	}
 
 	if (body.reports_to !== undefined && (body.reports_to ?? null) !== (priorReportsTo ?? null)) {
-		enqueueTeamSummaryTask(db, teamId, 'reports_to_changed').catch((e) =>
-			log.error('Failed to enqueue team summary task on reports_to change:', e),
+		trackBackground(
+			enqueueTeamSummaryTask(db, teamId, 'reports_to_changed').catch((e) =>
+				log.error('Failed to enqueue team summary task on reports_to change:', e),
+			),
 		);
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'reports_to_changed').catch((e) =>
-			log.error('Failed to fan out team_context tasks on reports_to change:', e),
+		trackBackground(
+			enqueueTeamContextTaskForAllAgents(db, teamId, 'reports_to_changed').catch((e) =>
+				log.error('Failed to fan out team_context tasks on reports_to change:', e),
+			),
 		);
 	}
 
@@ -879,11 +911,15 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/disable', async (c) => {
 		admin_status: AgentAdminStatus.Disabled,
 	});
 
-	enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
-		log.error('Failed to enqueue team summary task:', e),
+	trackBackground(
+		enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
+			log.error('Failed to enqueue team summary task:', e),
+		),
 	);
-	enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_removed', agentId).catch((e) =>
-		log.error('Failed to fan out team_context tasks on disable:', e),
+	trackBackground(
+		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_removed', agentId).catch((e) =>
+			log.error('Failed to fan out team_context tasks on disable:', e),
+		),
 	);
 
 	return ok(c, { admin_status: AgentAdminStatus.Disabled });
@@ -916,14 +952,20 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/enable', async (c) => {
 		admin_status: AgentAdminStatus.Enabled,
 	});
 
-	enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
-		log.error('Failed to enqueue team summary task:', e),
+	trackBackground(
+		enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
+			log.error('Failed to enqueue team summary task:', e),
+		),
 	);
-	enqueueAgentTeamContextTask(db, teamId, agentId, 'agent_added').catch((e) =>
-		log.error('Failed to enqueue team_context task for re-enabled agent:', e),
+	trackBackground(
+		enqueueAgentTeamContextTask(db, teamId, agentId, 'agent_added').catch((e) =>
+			log.error('Failed to enqueue team_context task for re-enabled agent:', e),
+		),
 	);
-	enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentId).catch((e) =>
-		log.error('Failed to fan out team_context tasks on enable:', e),
+	trackBackground(
+		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentId).catch((e) =>
+			log.error('Failed to fan out team_context tasks on enable:', e),
+		),
 	);
 
 	return ok(c, { admin_status: AgentAdminStatus.Enabled });

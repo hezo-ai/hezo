@@ -10,6 +10,7 @@ import {
 } from '@hezo/shared';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { auditLog } from '../lib/audit';
+import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { hasOpenBlockers, wouldCreateCycle } from '../lib/dependencies';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
@@ -159,27 +160,38 @@ export async function createTask(
 
 	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
 	if (isAgent.rows.length > 0) {
-		createWakeup(db, assigneeId, teamId, WakeupSource.Assignment, {
-			task_id: task.id,
-		}).catch((e) => log.error('Failed to create wakeup for assignment:', e));
+		trackBackground(
+			createWakeup(db, assigneeId, teamId, WakeupSource.Assignment, {
+				task_id: task.id,
+			}).catch((e) => log.error('Failed to create wakeup for assignment:', e)),
+		);
 	}
 
 	broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', task);
 
-	auditLog(
-		db,
-		teamId,
-		caller.actorType,
-		caller.actorMemberId,
-		AuditAction.Created,
-		AuditEntityType.Task,
-		task.id,
-		{ identifier },
-	).catch((e) => log.error('Failed to write audit log for task creation:', e));
+	trackBackground(
+		auditLog(
+			db,
+			teamId,
+			caller.actorType,
+			caller.actorMemberId,
+			AuditAction.Created,
+			AuditEntityType.Task,
+			task.id,
+			{ identifier },
+		).catch((e) => log.error('Failed to write audit log for task creation:', e)),
+	);
 
 	if (input.description) {
-		recordTaskLinks(db, teamId, task.id, input.description, caller.actorMemberId, wsManager).catch(
-			(e) => log.error('Failed to record task links from description:', e),
+		trackBackground(
+			recordTaskLinks(
+				db,
+				teamId,
+				task.id,
+				input.description,
+				caller.actorMemberId,
+				wsManager,
+			).catch((e) => log.error('Failed to record task links from description:', e)),
 		);
 	}
 

@@ -22,6 +22,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isCoach } from '../lib/agent-roles';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
+import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
 import {
@@ -754,27 +755,30 @@ export function registerTools(
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 
 			if (args.description !== undefined) {
-				recordTaskLinks(
-					db,
-					args.team_id as string,
-					args.task_id as string,
-					args.description as string,
-					actorMemberId,
-					wsManager,
-				).catch((e) => log.error('Failed to record task links from description:', e));
+				trackBackground(
+					recordTaskLinks(
+						db,
+						args.team_id as string,
+						args.task_id as string,
+						args.description as string,
+						actorMemberId,
+						wsManager,
+					).catch((e) => log.error('Failed to record task links from description:', e)),
+				);
 			}
 
-			// Trigger status automations (e.g. Coach wakeup on Done) and record the change
 			if (args.status && currentStatus) {
-				triggerStatusAutomations(
-					db,
-					args.team_id as string,
-					args.task_id as string,
-					currentStatus,
-					args.status as string,
-					actorMemberId,
-					wsManager,
-				).catch((e) => log.error('Failed to trigger status automations:', e));
+				trackBackground(
+					triggerStatusAutomations(
+						db,
+						args.team_id as string,
+						args.task_id as string,
+						currentStatus,
+						args.status as string,
+						actorMemberId,
+						wsManager,
+					).catch((e) => log.error('Failed to trigger status automations:', e)),
+				);
 			}
 
 			if (args.assignee_id && args.assignee_id !== previousAssigneeId) {
@@ -782,15 +786,17 @@ export function registerTools(
 					args.assignee_id,
 				]);
 				if (isAgent.rows.length > 0) {
-					createWakeup(
-						db,
-						args.assignee_id as string,
-						args.team_id as string,
-						WakeupSource.Assignment,
-						{
-							task_id: args.task_id,
-						},
-					).catch((e) => log.error('Failed to wake agent:', e));
+					trackBackground(
+						createWakeup(
+							db,
+							args.assignee_id as string,
+							args.team_id as string,
+							WakeupSource.Assignment,
+							{
+								task_id: args.task_id,
+							},
+						).catch((e) => log.error('Failed to wake agent:', e)),
+					);
 				}
 			}
 
@@ -1425,14 +1431,16 @@ export function registerTools(
 				authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
 				parentCommentId,
 			});
-			recordTaskLinks(
-				db,
-				args.team_id as string,
-				args.task_id as string,
-				args.content as string,
-				authorMemberId,
-				wsManager,
-			).catch((e) => log.error('Failed to record task links from comment:', e));
+			trackBackground(
+				recordTaskLinks(
+					db,
+					args.team_id as string,
+					args.task_id as string,
+					args.content as string,
+					authorMemberId,
+					wsManager,
+				).catch((e) => log.error('Failed to record task links from comment:', e)),
+			);
 			return r.rows[0];
 		},
 		db,
@@ -1902,12 +1910,14 @@ export function registerTools(
 
 			// Other agents' team_context blobs reference this agent's summary,
 			// so they need to be regenerated to pick up the new wording.
-			enqueueTeamContextTaskForAllAgents(
-				db,
-				args.team_id as string,
-				'summary_updated',
-				args.agent_id as string,
-			).catch((e) => log.error('Failed to enqueue team_context fan-out:', e));
+			trackBackground(
+				enqueueTeamContextTaskForAllAgents(
+					db,
+					args.team_id as string,
+					'summary_updated',
+					args.agent_id as string,
+				).catch((e) => log.error('Failed to enqueue team_context fan-out:', e)),
+			);
 
 			return { updated: true };
 		},

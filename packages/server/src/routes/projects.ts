@@ -7,6 +7,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
+import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
@@ -77,10 +78,12 @@ async function wakeAgentsWithPendingWork(
 		[projectId, teamId, ...values],
 	);
 	for (const row of pending.rows) {
-		createWakeup(db, row.agent_id, teamId, WakeupSource.Automation, {
-			trigger: 'container_start',
-			project_id: projectId,
-		}).catch((e) => log.error('Failed to create wakeup on container start:', e));
+		trackBackground(
+			createWakeup(db, row.agent_id, teamId, WakeupSource.Automation, {
+				trigger: 'container_start',
+				project_id: projectId,
+			}).catch((e) => log.error('Failed to create wakeup on container start:', e)),
+		);
 	}
 }
 
@@ -240,14 +243,20 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 	}
 	broadcastChange(c, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
 
-	createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
-		task_id: planningTask.id,
-	}).catch((e) => log.error('Failed to wake Captain for project planning:', e));
+	trackBackground(
+		createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
+			task_id: planningTask.id,
+		}).catch((e) => log.error('Failed to wake Captain for project planning:', e)),
+	);
 
-	provisionContainer(buildContainerDeps(c), project as unknown as ProjectRow, teamMeta.slug).catch(
-		(error) => {
+	trackBackground(
+		provisionContainer(
+			buildContainerDeps(c),
+			project as unknown as ProjectRow,
+			teamMeta.slug,
+		).catch((error) => {
 			log.error(`Failed to provision container for project ${project.slug}:`, error);
-		},
+		}),
 	);
 
 	return ok(
@@ -394,14 +403,13 @@ projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
 	const teamSlug = teamSlugResult.rows[0]?.slug;
 
 	if (teamSlug) {
-		await teardownContainer(
-			buildContainerDeps(c),
-			projectId,
-			teamSlug,
-			existing.rows[0].slug,
-		).catch((error) => {
-			log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
-		});
+		await trackBackground(
+			teardownContainer(buildContainerDeps(c), projectId, teamSlug, existing.rows[0].slug).catch(
+				(error) => {
+					log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
+				},
+			),
+		);
 	}
 
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);

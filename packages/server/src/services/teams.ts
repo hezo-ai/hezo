@@ -8,6 +8,7 @@ import {
 	OPERATIONS_PROJECT_SLUG,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { trackBackground } from '../lib/background';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { logger } from '../logger';
 import type { ContainerLogStreamer } from './container-logs';
@@ -138,8 +139,10 @@ export async function createTeam(
 		await ensureBuiltinAgents(db, teamId);
 	}
 
-	enqueueTeamContextTaskForAllAgents(db, teamId, 'initial').catch((e) =>
-		log.error('Failed to bootstrap team_context tasks for new team:', e),
+	trackBackground(
+		enqueueTeamContextTaskForAllAgents(db, teamId, 'initial').catch((e) =>
+			log.error('Failed to bootstrap team_context tasks for new team:', e),
+		),
 	);
 
 	const opsResult = await db.query<ProjectRow>(
@@ -148,22 +151,24 @@ export async function createTeam(
 		[teamId, OPERATIONS_PROJECT_SLUG],
 	);
 	if (opsResult.rows[0]) {
-		provisionContainer(
-			{
-				db,
-				docker,
-				dataDir,
-				wsManager,
-				masterKeyManager,
-				logs,
-				containerLogStreamer: deps.containerLogStreamer,
-				egressCAPath: deps.egressCAPath ?? null,
-			},
-			opsResult.rows[0],
-			slug,
-		).catch((error) => {
-			log.error(`Failed to provision container for operations project:`, error);
-		});
+		trackBackground(
+			provisionContainer(
+				{
+					db,
+					docker,
+					dataDir,
+					wsManager,
+					masterKeyManager,
+					logs,
+					containerLogStreamer: deps.containerLogStreamer,
+					egressCAPath: deps.egressCAPath ?? null,
+				},
+				opsResult.rows[0],
+				slug,
+			).catch((error) => {
+				log.error(`Failed to provision container for operations project:`, error);
+			}),
+		);
 	}
 
 	const enriched = await db.query<CreatedTeamRow>(
