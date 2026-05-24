@@ -43,14 +43,40 @@ test('status changes and cross-task mentions appear as system entries on the tim
 	const closeButton = page.getByTestId('task-close-button');
 	await expect(closeButton).toBeVisible({ timeout: 20000 });
 	await closeButton.click();
+	// Scope the matcher to *this* task — the bare `/tasks/[^/]+` regex would
+	// also satisfy any Captain planning-task PATCH that lands in the same
+	// window, returning before the user's actual close has even left the
+	// browser.
+	const targetPath = `/api/teams/${team.slug}/tasks/${target.identifier.toLowerCase()}`;
 	const closeResponse = await clickAndWaitForResponse(
 		page,
 		page.getByTestId('confirm-dialog-confirm'),
-		(url, method) => method === 'PATCH' && /\/api\/teams\/[^/]+\/tasks\/[^/]+$/.test(url.pathname),
+		(url, method) => method === 'PATCH' && url.pathname === targetPath,
 	);
 	expect(closeResponse.ok()).toBe(true);
 
 	await expect(page.getByTestId('task-reopen-button')).toBeVisible({ timeout: 20000 });
+
+	// Verify the status_change comment is actually in the DB before asserting on the
+	// rendered chip — separates "server didn't record it" failures from "client
+	// didn't render it" failures.
+	const commentsPath = `/api/teams/${team.id}/tasks/${target.id}/comments`;
+	await expect
+		.poll(
+			async () => {
+				const res = await page.request.get(commentsPath, {
+					headers: { Authorization: `Bearer ${token}` },
+				});
+				const body = (await res.json()) as {
+					data: Array<{ content_type: string; content?: { kind?: string } }>;
+				};
+				return body.data.some(
+					(c) => c.content_type === 'system' && c.content?.kind === 'status_change',
+				);
+			},
+			{ timeout: 15000, message: 'status_change system comment never appeared in API' },
+		)
+		.toBe(true);
 
 	await expect(
 		page.locator('[data-testid="comment-item"]').filter({ hasText: /changed status/i }),
