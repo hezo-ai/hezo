@@ -4,7 +4,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -48,13 +48,9 @@ afterAll(async () => {
 describe('GET /teams/:teamId/approvals enriched fields', () => {
 	it('returns team_slug and resolved payload references', async () => {
 		// Create a project so we can reference it in the payload
-		const projRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Enriched Test Project',
-				description: 'For enrichment testing',
-			}),
+		const projRes = await createTestProject(db, teamId, {
+			name: 'Enriched Test Project',
+			description: 'For enrichment testing',
 		});
 		expect(projRes.status).toBe(201);
 		const project = (await projRes.json()).data;

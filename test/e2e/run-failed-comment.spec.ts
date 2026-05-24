@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents } from './helpers';
+import { authenticate, createProjectAndClearPlanning, createTeamWithAgents } from './helpers';
 
 interface MockSetup {
 	teamId: string;
@@ -47,9 +47,9 @@ async function setupTask(page: Page): Promise<MockSetup> {
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const agent = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Run Failed Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Run Failed Project',
+		description: 'Test project.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string } }).data;
 

@@ -24,7 +24,7 @@ import {
 import type { DockerClient } from '../../services/docker';
 import { LogStreamBroker } from '../../services/log-stream-broker';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 function readPromptFromExec(
 	opts: { Env: string[] },
@@ -86,10 +86,9 @@ beforeAll(async () => {
 	// Restore real fetch for the rest of the tests
 	globalThis.fetch = originalFetch;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Runner Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Runner Project',
+		description: 'Test project.',
 	});
 	projectId = (await projectRes.json()).data.id;
 

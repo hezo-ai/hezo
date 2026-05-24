@@ -577,42 +577,47 @@ Response:
 ```
 
 #### `POST /teams/:teamId/projects`
-Create a project. Container is auto-provisioned asynchronously. A planning task titled
-`Draft execution plan for "{name}"` (labeled `planning`) is opened and assigned to the
-team's enabled Captain agent — board users are redirected there so the Captain can draft the
-execution plan. The planning ticket's body instructs the Captain to create the first
-milestone's tickets as **top-level** tasks (no `parent_task_id` pointing at the
-planning ticket) — each delegated milestone is the assignee's own first-class
-deliverable. Fails with 500 if no enabled Captain agent exists.
+Open a captain-led intake for a new project. No project is created at this step. The
+endpoint creates a pending `project_creation` approval (holding the draft `name`,
+`description`, `task_prefix`, `initial_prd`) and a `project-intake` ticket in the
+team's Internal project assigned to the Captain. The board is redirected to the
+intake ticket. The Captain Q&As with the board, may propose hires via the standard
+hire flow if the team is missing roles, refines the proposal via the
+`update_project_creation_proposal` MCP tool, and asks the board to approve the
+pending `project_creation` approval in the inbox. The actual project + planning
+task are created by the approval side-effect when the board approves; the intake
+ticket is closed automatically at that point.
 
-Request: `name` and `description` are required. `docker_base_image` and `initial_prd`
-are optional. `docker_base_image` defaults to `hezo/agent-base:latest`. When
-`initial_prd` is provided (markdown string), it is saved as the `initial-prd.md`
-project doc and the Captain's planning task directs the Researcher and Product Lead to
-consult it as a starting point.
+Request: `name` and `description` are required. `task_prefix` and `initial_prd` are
+optional. `task_prefix` is validated at submit time (uniqueness + shape); a conflict
+returns 409 before any rows are inserted.
 ```json
 {
   "name": "Backend API",
   "description": "Authenticated HTTP API for the main app.",
-  "docker_base_image": "node:20",
+  "task_prefix": "API",
   "initial_prd": "# Product Requirements\n\n## Overview\n..."
 }
 ```
 
-Response includes the created project plus `planning_task_id`, the UUID of the
-auto-opened Captain planning task.
+Response shape:
 ```json
 {
   "data": {
-    "id": "uuid",
-    "slug": "backend-api",
-    "name": "Backend API",
-    "description": "Authenticated HTTP API for the main app.",
-    "planning_task_id": "uuid",
-    "...": "other project fields"
+    "intake_task_id": "uuid",
+    "intake_task_identifier": "IN-7",
+    "project_slug": "internal",
+    "approval_id": "uuid"
   }
 }
 ```
+
+Fails with 500 if the team is missing its Captain or Internal project.
+
+#### `POST /teams/:teamId/project-intake/:taskId/skip-questions`
+Post a system "skip questions" comment on a project-intake ticket and wake the
+Captain so it finalises the proposal with what it already has. Mirrors the
+onboarding-intake skip endpoint.
 
 #### `GET /teams/:teamId/projects/:projectId`
 Get project detail including repos. Accepts project ID or slug.

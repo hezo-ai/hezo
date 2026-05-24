@@ -1116,6 +1116,19 @@ Every task carries context tracing back to the team description. Agents always k
 - Own repos (see section 6)
 - Own project-scoped secrets
 
+#### Captain-led project intake
+
+User-facing projects are not created directly. Submitting the Create Project form
+opens a pending `project_creation` approval and a `project-intake` ticket in the
+team's Internal project assigned to the Captain (mirroring first-run onboarding's
+flow, which uses a `team_template` approval). The Captain Q&As with the board on
+the intake ticket, checks the team has the right specialists for the proposed work
+(opening hire approvals through the existing hire flow when gaps exist), refines
+the proposal via `update_project_creation_proposal`, and asks the board to approve
+in the inbox. The board's approval is what actually creates the project + planning
+task and closes the intake ticket. Skipping the intake Q&A is supported via a
+"Skip questions" button on the intake ticket — same UX as onboarding.
+
 ---
 
 ## 8. Task / ticket system

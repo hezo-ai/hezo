@@ -5,6 +5,7 @@ import {
 	applyApprovalSideEffect,
 	type SideEffectBroadcast,
 } from './approval-side-effects';
+import type { ContainerDeps } from './containers';
 import type { WebSocketManager } from './ws';
 
 export type { SideEffectBroadcast } from './approval-side-effects';
@@ -17,6 +18,7 @@ export interface ResolveApprovalInput {
 	dataDir: string;
 	actorMemberId: string | null;
 	wsManager?: WebSocketManager;
+	containerDeps?: ContainerDeps;
 }
 
 export type ResolveApprovalResult =
@@ -54,8 +56,12 @@ export async function resolveApproval(
 			input.dataDir,
 			input.actorMemberId,
 			input.wsManager,
+			input.containerDeps,
 		);
-	} else if (existing.rows[0].type === ApprovalType.TeamTemplate) {
+	} else if (
+		existing.rows[0].type === ApprovalType.TeamTemplate ||
+		existing.rows[0].type === ApprovalType.ProjectCreation
+	) {
 		sideEffects = await applyApprovalDeniedSideEffect(db, row);
 	}
 

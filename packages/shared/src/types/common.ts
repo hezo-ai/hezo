@@ -226,6 +226,7 @@ export const ApprovalType = {
 	SecretAccess: 'secret_access',
 	Hire: 'hire',
 	TeamTemplate: 'team_template',
+	ProjectCreation: 'project_creation',
 	Strategy: 'strategy',
 	KbUpdate: 'kb_update',
 	PlanReview: 'plan_review',

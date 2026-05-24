@@ -81,6 +81,13 @@ export function useProject(teamId: string, projectId: string, options?: { enable
 	});
 }
 
+export interface ProjectIntakeResponse {
+	intake_task_id: string;
+	intake_task_identifier: string;
+	project_slug: string;
+	approval_id: string;
+}
+
 export function useCreateProject(teamId: string) {
 	return useMutation({
 		mutationFn: (data: {
@@ -88,8 +95,13 @@ export function useCreateProject(teamId: string) {
 			description: string;
 			initial_prd?: string;
 			task_prefix?: string;
-		}) => api.post<Project>(`/api/teams/${teamId}/projects`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] }),
+		}) => api.post<ProjectIntakeResponse>(`/api/teams/${teamId}/projects`, data),
+		onSuccess: (data) => {
+			queryClient.invalidateQueries({
+				queryKey: ['teams', teamId, 'projects', data.project_slug, 'tasks'],
+			});
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'approvals'] });
+		},
 	});
 }
 

@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	createProjectAndClearPlanning,
+	createTeamWithAgents,
+	waitForPageLoad,
+} from './helpers';
 
 test.describe('Container Management', () => {
 	test('container page renders rebuild button and is reachable from project nav', async ({
@@ -9,9 +14,9 @@ test.describe('Container Management', () => {
 		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-			headers,
-			data: { name: 'Container Project', description: 'Test container management project.' },
+		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+			name: 'Container Project',
+			description: 'Test container management project.',
 		});
 		const project = ((await projRes.json()) as { data: { slug: string } }).data;
 

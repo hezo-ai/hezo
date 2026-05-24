@@ -210,6 +210,17 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 		dataDir: c.get('dataDir'),
 		actorMemberId,
 		wsManager: c.get('wsManager'),
+		containerDeps: {
+			db,
+			docker: c.get('docker'),
+			dataDir: c.get('dataDir'),
+			wsManager: c.get('wsManager'),
+			masterKeyManager: c.get('masterKeyManager'),
+			logs: c.get('logs'),
+			containerLogStreamer: c.get('containerLogStreamer'),
+			sshAgentServer: c.get('sshAgentServer'),
+			egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
+		},
 	});
 
 	if (!resolved.ok) {

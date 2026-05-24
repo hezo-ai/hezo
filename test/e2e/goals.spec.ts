@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	createProjectAndClearPlanning,
+	createTeamWithAgents,
+	waitForPageLoad,
+} from './helpers';
 
 test.describe('Goals', () => {
 	test('creates a team-wide goal from the Goals page and opens a Captain ticket', async ({
@@ -8,9 +13,9 @@ test.describe('Goals', () => {
 		await authenticate(page);
 		const { team, token } = await createTeamWithAgents(page);
 
-		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-			headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-			data: { name: 'Goals Product', description: 'Primary product workstream for goals e2e.' },
+		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+			name: 'Goals Product',
+			description: 'Primary product workstream for goals e2e.',
 		});
 		expect(projRes.ok()).toBe(true);
 
@@ -41,9 +46,9 @@ test.describe('Goals', () => {
 		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}` };
 
-		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-			headers,
-			data: { name: 'Growth', description: 'Growth engineering workstream.' },
+		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+			name: 'Growth',
+			description: 'Growth engineering workstream.',
 		});
 		const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
 

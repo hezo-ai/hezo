@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -80,11 +80,7 @@ beforeAll(async () => {
 	});
 	otherTeamId = (await otherRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Repo Ops', description: 'ops' }),
-	});
+	const projectRes = await createTestProject(db, teamId, { name: 'Repo Ops', description: 'ops' });
 	projectId = (await projectRes.json()).data.id;
 
 	agentAId = await createAgent('Alice Agent', 'alice');

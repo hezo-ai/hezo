@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -64,17 +64,15 @@ beforeAll(async () => {
 	);
 	internalProjectId = internalProject.rows[0].id;
 
-	const projectARes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Project A', description: 'first user project' }),
+	const projectARes = await createTestProject(db, teamId, {
+		name: 'Project A',
+		description: 'first user project',
 	});
 	projectAId = (await projectARes.json()).data.id;
 
-	const projectBRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Project B', description: 'second user project' }),
+	const projectBRes = await createTestProject(db, teamId, {
+		name: 'Project B',
+		description: 'second user project',
 	});
 	projectBId = (await projectBRes.json()).data.id;
 

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents } from './helpers';
+import { authenticate, createProjectAndClearPlanning, createTeamWithAgents } from './helpers';
 
 test('run comment shows created tickets as links to their pages', async ({ page }) => {
 	await authenticate(page);
@@ -10,9 +10,9 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Spawned Tickets Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Spawned Tickets Project',
+		description: 'Test project.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
@@ -125,9 +125,9 @@ test('run comment omits created tickets section when list is empty', async ({ pa
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Empty Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Empty Project',
+		description: 'Test project.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string } }).data;
 

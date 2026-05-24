@@ -2,6 +2,7 @@ import { expect, type Page, test } from '@playwright/test';
 import {
 	authenticate,
 	clickAndWaitForResponse,
+	createProjectAndClearPlanning,
 	createTeamWithAgents,
 	getToken,
 	waitForPageLoad,
@@ -31,9 +32,9 @@ test('can create an task with required assignee', async ({ page }) => {
 	const agent = agents[0];
 
 	// Create a project via API
-	await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Test Project', description: 'Test project.' },
+	await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Test Project',
+		description: 'Test project.',
 	});
 
 	// Navigate to tasks
@@ -87,9 +88,9 @@ test('task detail shows execution lock banner when locked', async ({ page }) => 
 	});
 	const team = (await teamRes.json()).data;
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Lock Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Lock Project',
+		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
 
@@ -141,9 +142,9 @@ test('task detail lists every agent running concurrently on a ticket', async ({ 
 	});
 	const team = (await teamRes.json()).data;
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Concurrent Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Concurrent Project',
+		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
 
@@ -205,9 +206,9 @@ test('running-agents line links each name to its run comment and scrolls into vi
 	});
 	const team = (await teamRes.json()).data;
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Running Link Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Running Link Project',
+		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
 
@@ -290,9 +291,9 @@ test('can edit task rules and progress summary', async ({ page }) => {
 	const agents = (await agentsRes.json()).data as { id: string }[];
 	const agent = agents[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Rules Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Rules Project',
+		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
 
@@ -356,9 +357,9 @@ test('task rules and progress summary render markdown formatting', async ({ page
 	const agents = (await agentsRes.json()).data as { id: string }[];
 	const agent = agents[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Markdown Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Markdown Project',
+		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
 
@@ -435,9 +436,9 @@ test('task detail shows assignee with status badge', async ({ page }) => {
 	const agent = agents[0];
 
 	// Create project and task assigned to agent
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Assignee Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Assignee Project',
+		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
 
@@ -476,9 +477,9 @@ test('can change assignee via popover dropdown', async ({ page }) => {
 	const agent1 = agents[0];
 	const agent2 = agents[1];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Change Assignee Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Change Assignee Project',
+		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
 
@@ -524,9 +525,9 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
 	const agent = agents[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Outside Click Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Outside Click Project',
+		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
 
@@ -604,9 +605,9 @@ test('task description renders markdown', async ({ page }) => {
 	const agents = (await agentsRes.json()).data as { id: string }[];
 	const agent = agents[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Markdown Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Markdown Project',
+		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
 
@@ -658,9 +659,9 @@ test('project badge and metadata label both link to the project page', async ({ 
 	const agents = (await agentsRes.json()).data as { id: string }[];
 	const agent = agents[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Linkable Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Linkable Project',
+		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data as { id: string; slug: string };
 

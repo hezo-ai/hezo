@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	createProjectAndClearPlanning,
+	createTeamWithAgents,
+	waitForPageLoad,
+} from './helpers';
 
 test.describe('Comment reactions (mobile)', () => {
 	test.describe.configure({ retries: 2 });
@@ -9,9 +14,9 @@ test.describe('Comment reactions (mobile)', () => {
 		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-			headers,
-			data: { name: 'Reactions Mobile', description: 'x' },
+		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+			name: 'Reactions Mobile',
+			description: 'x',
 		});
 		const project = ((await projRes.json()) as { data: { id: string } }).data;
 

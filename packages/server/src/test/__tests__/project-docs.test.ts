@@ -11,7 +11,7 @@ import type { Env } from '../../lib/types';
 import { signBoardJwt } from '../../middleware/auth';
 import { buildApp } from '../../startup';
 import { safeClose } from '../helpers';
-import { authHeader, createStubDocker } from '../helpers/app';
+import { authHeader, createStubDocker, createTestProject } from '../helpers/app';
 import { createTestDbWithMigrations } from '../helpers/db';
 
 let app: Hono<Env>;
@@ -43,10 +43,9 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Main Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Main Project',
+		description: 'Test project.',
 	});
 	projectId = (await projectRes.json()).data.id;
 });
@@ -262,10 +261,9 @@ describe('AGENTS.md (filesystem-based)', () => {
 
 	beforeAll(async () => {
 		// Create a project with a designated repo for AGENTS.md tests
-		const projRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Repo Project', description: 'Test project.' }),
+		const projRes = await createTestProject(db, teamId, {
+			name: 'Repo Project',
+			description: 'Test project.',
 		});
 		repoProjectId = (await projRes.json()).data.id;
 
@@ -305,10 +303,9 @@ describe('AGENTS.md (filesystem-based)', () => {
 	});
 
 	it('returns 404 for AGENTS.md on project without repo', async () => {
-		const projRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No Repo', description: 'Test project.' }),
+		const projRes = await createTestProject(db, teamId, {
+			name: 'No Repo',
+			description: 'Test project.',
 		});
 		const noRepoProjId = (await projRes.json()).data.id;
 

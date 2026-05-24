@@ -1027,6 +1027,104 @@ export function registerTools(
 
 	tool(
 		server,
+		'update_project_creation_proposal',
+		'Revise the draft of a pending project_creation approval. Captain-only. Use this to refine the name, description, task_prefix, or initial_prd as the intake conversation evolves. All fields are optional — pass only what you want to change.',
+		{
+			approval_id: z.string().describe('project_creation approval ID'),
+			name: z.string().optional().describe('Updated project name'),
+			description: z.string().optional().describe('Updated project description'),
+			task_prefix: z.string().optional().describe('Updated 2-4 char task prefix'),
+			initial_prd: z
+				.string()
+				.nullable()
+				.optional()
+				.describe('Updated initial PRD markdown text. Pass null to clear.'),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent) {
+				return { error: 'update_project_creation_proposal is only callable by agents' };
+			}
+			const caller = await db.query<{ slug: string }>(
+				'SELECT slug FROM member_agents WHERE id = $1',
+				[auth.memberId],
+			);
+			if (caller.rows[0]?.slug !== CAPTAIN_AGENT_SLUG) {
+				return { error: 'Only the Captain can revise project creation proposals' };
+			}
+
+			const approval = await db.query<{
+				id: string;
+				team_id: string;
+				type: string;
+				status: string;
+				payload: Record<string, unknown>;
+			}>('SELECT id, team_id, type, status, payload FROM approvals WHERE id = $1', [
+				args.approval_id,
+			]);
+			if (approval.rows.length === 0) return { error: 'Approval not found' };
+
+			const row = approval.rows[0];
+			if (row.team_id !== auth.teamId) {
+				return { error: 'Access denied: team mismatch' };
+			}
+			if (row.type !== ApprovalType.ProjectCreation) {
+				return { error: 'Approval is not a project creation request' };
+			}
+			if (row.status !== ApprovalStatus.Pending) {
+				return { error: 'Project creation approval is already resolved' };
+			}
+
+			const patch: Record<string, unknown> = {};
+			if (args.name !== undefined) {
+				const trimmed = (args.name as string).trim();
+				if (!trimmed) return { error: 'name cannot be empty' };
+				patch.name = trimmed;
+			}
+			if (args.description !== undefined) {
+				const trimmed = (args.description as string).trim();
+				if (!trimmed) return { error: 'description cannot be empty' };
+				patch.description = trimmed;
+			}
+			if (args.task_prefix !== undefined) {
+				patch.task_prefix = (args.task_prefix as string).trim().toUpperCase();
+			}
+			if (args.initial_prd !== undefined) {
+				patch.initial_prd =
+					args.initial_prd === null ? null : (args.initial_prd as string).trim() || null;
+			}
+
+			if (Object.keys(patch).length === 0) {
+				return { error: 'no fields to update' };
+			}
+
+			if (patch.name !== undefined || patch.task_prefix !== undefined) {
+				const candidateName = (patch.name ?? row.payload.name) as string;
+				const candidatePrefix =
+					patch.task_prefix !== undefined ? (patch.task_prefix as string) : undefined;
+				const prefixResult = await resolveProjectTaskPrefix(
+					db,
+					row.team_id,
+					candidatePrefix,
+					candidateName,
+				);
+				if (!prefixResult.ok) {
+					return { error: prefixResult.message };
+				}
+				patch.task_prefix = prefixResult.prefix;
+			}
+
+			const updated = await db.query<Record<string, unknown>>(
+				`UPDATE approvals SET payload = payload || $1::jsonb
+				 WHERE id = $2 RETURNING ${APPROVAL_COLUMNS}`,
+				[JSON.stringify(patch), args.approval_id],
+			);
+			return updated.rows[0] ?? null;
+		},
+		db,
+	);
+
+	tool(
+		server,
 		'list_team_templates',
 		'List team templates (built-in Startup for software development, Blank, and custom). Use when recommending a team structure to hire.',
 		{

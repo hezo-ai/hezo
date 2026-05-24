@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { AuthInfo, Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -50,10 +50,9 @@ beforeAll(async () => {
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Test Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Test Project',
+		description: 'Test project.',
 	});
 	projectId = (await projectRes.json()).data.id;
 
@@ -1175,10 +1174,9 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 	});
 
 	it('returns a structured result_too_large error when serialised output exceeds the byte cap', async () => {
-		const fatProjectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Fat Result Project', description: 'fatness' }),
+		const fatProjectRes = await createTestProject(db, teamId, {
+			name: 'Fat Result Project',
+			description: 'fatness',
 		});
 		const fatProjectId = (await fatProjectRes.json()).data.id;
 

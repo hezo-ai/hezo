@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { waitForPageLoad } from './helpers';
+import { createProjectAndClearPlanning, waitForPageLoad } from './helpers';
 
 async function expectNoHorizontalOverflow(page: Page) {
 	const overflow = await page.evaluate(() => ({
@@ -23,9 +23,9 @@ test.describe('Responsive — mobile (390px)', () => {
 		const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-			headers,
-			data: { name: 'Mobile P', description: 'mobile' },
+		const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+			name: 'Mobile P',
+			description: 'mobile',
 		});
 		const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 

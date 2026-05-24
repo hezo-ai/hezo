@@ -10,7 +10,7 @@ import {
 } from '../../services/containers';
 import { LogStreamBroker } from '../../services/log-stream-broker';
 import { safeClose } from '../helpers';
-import { authHeader, createStubDocker, createTestApp } from '../helpers/app';
+import { authHeader, createStubDocker, createTestApp, createTestProject } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -46,10 +46,9 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Recovery Test Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Recovery Test Project',
+		description: 'Test project.',
 	});
 	projectId = (await projectRes.json()).data.id;
 

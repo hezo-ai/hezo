@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -37,18 +37,16 @@ beforeAll(async () => {
 		body: JSON.stringify({ title: 'Picker Bot' }),
 	});
 
-	const projA = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Operations Hub', description: 'Ops project.' }),
+	const projA = await createTestProject(db, teamId, {
+		name: 'Operations Hub',
+		description: 'Ops project.',
 	});
 	const projAData = (await projA.json()).data as { id: string; slug: string };
 	projectSlug = projAData.slug;
 
-	const projB = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Beta Service', description: 'Beta project.' }),
+	const projB = await createTestProject(db, teamId, {
+		name: 'Beta Service',
+		description: 'Beta project.',
 	});
 	const projBData = (await projB.json()).data as { id: string; slug: string };
 	otherProjectSlug = projBData.slug;

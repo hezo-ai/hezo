@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	createProjectAndClearPlanning,
+	createTeamWithAgents,
+	waitForPageLoad,
+} from './helpers';
 
 test('sub-tasks panel is expanded by default and collapses on click', async ({ page }) => {
 	await page.goto('/');
@@ -13,9 +18,9 @@ test('sub-tasks panel is expanded by default and collapses on click', async ({ p
 	const captain = agents.find((a) => a.slug === 'captain')!;
 	const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Sub-Tasks Project', description: 'Seeded for sub-tasks test.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Sub-Tasks Project',
+		description: 'Seeded for sub-tasks test.',
 	});
 	const project = (await projectRes.json()).data;
 
@@ -87,9 +92,9 @@ test('sub-tasks paginate to team page size with a Show more link', async ({ page
 	const agents = (await agentsRes.json()).data as { id: string; slug: string }[];
 	const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Pagination Project', description: 'Seeded for pagination test.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Pagination Project',
+		description: 'Seeded for pagination test.',
 	});
 	const project = (await projectRes.json()).data;
 
@@ -145,9 +150,9 @@ test('sub-tasks panel sits between description card and comments', async ({ page
 	const agents = (await agentsRes.json()).data as { id: string; slug: string }[];
 	const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Layout Project', description: 'Seeded for layout check.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Layout Project',
+		description: 'Seeded for layout check.',
 	});
 	const project = (await projectRes.json()).data;
 

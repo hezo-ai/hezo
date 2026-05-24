@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { waitForPageLoad } from './helpers';
+import { createProjectAndClearPlanning, waitForPageLoad } from './helpers';
 
 type Page = import('@playwright/test').Page;
 
@@ -10,9 +10,9 @@ async function createProject(
 	name: string,
 ): Promise<{ id: string; slug: string }> {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const res = await page.request.post(`/api/teams/${teamId}/projects`, {
-		headers,
-		data: { name, description: 'Assignee-status test project.' },
+	const res = await createProjectAndClearPlanning(page, teamId, token, {
+		name,
+		description: 'Assignee-status test project.',
 	});
 	return ((await res.json()) as { data: { id: string; slug: string } }).data;
 }

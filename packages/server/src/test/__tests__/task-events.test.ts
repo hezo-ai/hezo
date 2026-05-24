@@ -6,7 +6,7 @@ import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import { extractTaskIdentifiers } from '../../services/task-events';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -78,10 +78,9 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Widget', description: 'Widget project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Widget',
+		description: 'Widget project.',
 	});
 	projectId = (await projectRes.json()).data.id;
 
@@ -401,10 +400,9 @@ describe('task link system events', () => {
 			body: JSON.stringify({ name: 'Other Co' }),
 		});
 		const otherTeamId = (await otherTeamRes.json()).data.id;
-		const otherProjectRes = await app.request(`/api/teams/${otherTeamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Foreign', description: 'Other.' }),
+		const otherProjectRes = await createTestProject(db, otherTeamId, {
+			name: 'Foreign',
+			description: 'Other.',
 		});
 		const otherProjectId = (await otherProjectRes.json()).data.id;
 		const otherAgentRes = await app.request(`/api/teams/${otherTeamId}/agents`, {

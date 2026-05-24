@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
 import { detectOrphans } from '../../services/orphan-detector';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let db: PGlite;
 let app: Hono<Env>;
@@ -75,10 +75,9 @@ async function insertLock(memberId: string, taskId: string): Promise<string> {
 }
 
 async function createTask(coId: string): Promise<string> {
-	const projectRes = await app.request(`/api/teams/${coId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Orphan Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, coId, {
+		name: 'Orphan Project',
+		description: 'Test project.',
 	});
 	const projectId = (await projectRes.json()).data.id;
 

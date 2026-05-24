@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { waitForPageLoad } from './helpers';
+import { createProjectAndClearPlanning, waitForPageLoad } from './helpers';
 
 test.describe('Task blocked-by links', () => {
 	test.use({ viewport: { width: 390, height: 844 } });
@@ -9,9 +9,9 @@ test.describe('Task blocked-by links', () => {
 		const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-			headers,
-			data: { name: 'Blocking Project', description: 'Seeded for blocked-by test.' },
+		const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+			name: 'Blocking Project',
+			description: 'Seeded for blocked-by test.',
 		});
 		const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 

@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -48,10 +48,9 @@ beforeAll(async () => {
 	engineerId = bySlug('engineer')!.id;
 	captainId = bySlug(CAPTAIN_AGENT_SLUG)!.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Batch Project', description: 'For batch tests.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Batch Project',
+		description: 'For batch tests.',
 	});
 	projectId = (await projectRes.json()).data.id;
 });

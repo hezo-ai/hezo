@@ -1,6 +1,7 @@
 import { expect, type Page, test } from '@playwright/test';
 import {
 	authenticate,
+	createProjectAndClearPlanning,
 	createProjectReadyForAgents,
 	createTeamWithAgents,
 	waitForCaptainIdle,
@@ -118,9 +119,9 @@ test('task page renders completed run as a collapsed inline comment with summary
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Collapsed Run Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Collapsed Run Project',
+		description: 'Test project.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
@@ -210,9 +211,9 @@ test('task page renders completed run as a collapsed inline comment with summary
 async function mockCompletedRun(page: Page, teamId: string, agentId: string, token: string) {
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const projectRes = await page.request.post(`/api/teams/${teamId}/projects`, {
-		headers,
-		data: { name: 'Expand Run Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, teamId, token, {
+		name: 'Expand Run Project',
+		description: 'Test project.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 

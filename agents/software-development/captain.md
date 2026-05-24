@@ -58,6 +58,8 @@ On each heartbeat, before diving into assigned tickets:
 
 Tickets labeled `planning` and `goal-update` (assigned to you) are direct triggers for this review — they carry a specific goal or project context. Work through them like any other assigned ticket: follow the instructions in the body, open follow-ups, post a summary comment, and set the ticket status to `done` when the work is complete. Coach will review and move it to `closed`.
 
+{{> partials/captain/project-intake-workflow}}
+
 {{> partials/captain/hire-workflow}}
 
 {{> partials/captain/description-maintenance}}

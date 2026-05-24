@@ -1,6 +1,6 @@
 import { ApprovalType, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader } from '../helpers/app';
+import { authHeader, createTestProject } from '../helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from '../helpers/context';
 
 let ctx: ServerTestContext;
@@ -47,10 +47,9 @@ beforeAll(async () => {
 	coachAgentId = agents.find((a: any) => a.slug === 'coach').id;
 
 	// Create a project
-	const projRes = await ctx.app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Autonomy Project', description: 'Test project.' }),
+	const projRes = await createTestProject(ctx.db, teamId, {
+		name: 'Autonomy Project',
+		description: 'Test project.',
 	});
 	projectId = ((await projRes.json()) as any).data.id;
 });

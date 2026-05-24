@@ -9,7 +9,7 @@ import type { DockerClient } from '../../services/docker';
 import { JobManager, type JobManagerDeps } from '../../services/job-manager';
 import { LogStreamBroker } from '../../services/log-stream-broker';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -72,10 +72,9 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Workflow Test Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Workflow Test Project',
+		description: 'Test project.',
 	});
 	projectId = (await projectRes.json()).data.id;
 
@@ -1541,13 +1540,9 @@ describe('JobManager workflow methods', () => {
 			// Project B (sibling) with a task assigned to the same agent. We never
 			// dispatch on this one — we just need the row to exist so resolveProjectForTask
 			// returns a real project id that is distinct from project A.
-			const projectBRes = await app.request(`/api/teams/${teamId}/projects`, {
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					name: `Parallel Project ${Date.now()}`,
-					description: 'sibling project',
-				}),
+			const projectBRes = await createTestProject(db, teamId, {
+				name: `Parallel Project ${Date.now()}`,
+				description: 'sibling project',
 			});
 			const projectBId = (await projectBRes.json()).data.id;
 			const taskBRes = await app.request(`/api/teams/${teamId}/tasks`, {

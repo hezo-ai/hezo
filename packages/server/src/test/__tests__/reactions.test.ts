@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -125,10 +125,9 @@ beforeAll(async () => {
 	architectId = agents.find((a) => a.slug === 'architect')!.id;
 	productLeadId = agents.find((a) => a.slug === 'product-lead')!.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Reactions Project', description: 'x' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Reactions Project',
+		description: 'x',
 	});
 	projectId = (await projectRes.json()).data.id;
 });
@@ -294,13 +293,9 @@ describe('REST reactions endpoints', () => {
 		const otherCeo = (await otherAgents.json()).data.find(
 			(a: { slug: string }) => a.slug === 'captain',
 		);
-		const otherProjectRes = await app.request(`/api/teams/${otherTeamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Other Project',
-				description: 'Cross-team reactions isolation project.',
-			}),
+		const otherProjectRes = await createTestProject(db, otherTeamId, {
+			name: 'Other Project',
+			description: 'Cross-team reactions isolation project.',
 		});
 		expect(otherProjectRes.status).toBe(201);
 		const otherProjectId = (await otherProjectRes.json()).data.id as string;

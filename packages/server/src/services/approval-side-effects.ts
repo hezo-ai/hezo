@@ -12,8 +12,10 @@ import {
 } from '@hezo/shared';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
+import { toSlug, uniqueSlug } from '../lib/slug';
 import { logger } from '../logger';
 import { resolveProjectTaskPrefix } from '../routes/projects';
+import { type ContainerDeps, type ProjectRow, provisionContainer } from './containers';
 import {
 	enqueueAgentSummaryTask,
 	enqueueAgentTeamContextTask,
@@ -28,6 +30,11 @@ import {
 	postOnboardingTemplateDeniedNote,
 } from './onboarding-intake';
 import { createProjectWithPlanningTask } from './project-create';
+import {
+	completeProjectIntakeAfterProvisioning,
+	postProjectCreationApprovedAck,
+	postProjectCreationDeniedNote,
+} from './project-intake';
 import { recordStatusChange } from './task-events';
 import { applyTemplateToTeam } from './team-template-apply';
 import { createWakeup } from './wakeup';
@@ -45,19 +52,32 @@ export async function applyApprovalDeniedSideEffect(
 	db: PGlite,
 	approval: Record<string, unknown>,
 ): Promise<SideEffectBroadcast[]> {
-	if (approval.type !== ApprovalType.TeamTemplate) return [];
 	const payload = approval.payload as Record<string, unknown>;
 	const teamId = approval.team_id as string;
-	const intakeTaskId = payload.task_id as string | undefined;
-	if (!intakeTaskId) return [];
-	const comment = await postOnboardingTemplateDeniedNote(
-		db,
-		teamId,
-		intakeTaskId,
-		(approval.resolution_note as string | null) ?? null,
-	);
-	if (!comment) return [];
-	return [{ table: 'task_comments', op: 'INSERT', row: comment }];
+	const resolutionNote = (approval.resolution_note as string | null) ?? null;
+
+	if (approval.type === ApprovalType.TeamTemplate) {
+		const intakeTaskId = payload.task_id as string | undefined;
+		if (!intakeTaskId) return [];
+		const comment = await postOnboardingTemplateDeniedNote(
+			db,
+			teamId,
+			intakeTaskId,
+			resolutionNote,
+		);
+		if (!comment) return [];
+		return [{ table: 'task_comments', op: 'INSERT', row: comment }];
+	}
+
+	if (approval.type === ApprovalType.ProjectCreation) {
+		const intakeTaskId = payload.intake_task_id as string | undefined;
+		if (!intakeTaskId) return [];
+		const comment = await postProjectCreationDeniedNote(db, teamId, intakeTaskId, resolutionNote);
+		if (!comment) return [];
+		return [{ table: 'task_comments', op: 'INSERT', row: comment }];
+	}
+
+	return [];
 }
 
 export async function applyApprovalSideEffect(
@@ -66,6 +86,7 @@ export async function applyApprovalSideEffect(
 	dataDir: string,
 	actorMemberId: string | null,
 	wsManager?: WebSocketManager,
+	containerDeps?: ContainerDeps,
 ): Promise<SideEffectBroadcast[]> {
 	const payload = approval.payload as Record<string, unknown>;
 	const broadcasts: SideEffectBroadcast[] = [];
@@ -382,6 +403,118 @@ export async function applyApprovalSideEffect(
 					broadcasts.push({ table: 'tasks', op: 'UPDATE', row: completed.task });
 				}
 			}
+			break;
+		}
+		case ApprovalType.ProjectCreation: {
+			const teamId = approval.team_id as string;
+			const projectName = (payload.name as string | undefined)?.trim();
+			const projectDescription = (payload.description as string | undefined)?.trim() ?? '';
+			const proposedPrefix = (payload.task_prefix as string | undefined)?.trim();
+			const initialPrd = (payload.initial_prd as string | null | undefined) ?? null;
+			const intakeTaskId = payload.intake_task_id as string | undefined;
+
+			if (!projectName) {
+				throw new Error('project_creation approval payload missing name');
+			}
+			if (!intakeTaskId) {
+				throw new Error('project_creation approval payload missing intake_task_id');
+			}
+
+			const captain = await db.query<{ id: string }>(
+				`SELECT ma.id FROM member_agents ma
+				 JOIN members m ON m.id = ma.id
+				 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
+				 LIMIT 1`,
+				[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
+			);
+			const captainMemberId = captain.rows[0]?.id;
+			if (!captainMemberId) {
+				throw new Error('Cannot create project on approval: no enabled Captain on team');
+			}
+
+			const prefixResult = await resolveProjectTaskPrefix(db, teamId, proposedPrefix, projectName);
+			if (!prefixResult.ok) {
+				throw new Error(`Cannot create project on approval: ${prefixResult.message}`);
+			}
+
+			const projectSlug = await uniqueSlug(toSlug(projectName), async (s) => {
+				const r = await db.query('SELECT 1 FROM projects WHERE team_id = $1 AND slug = $2', [
+					teamId,
+					s,
+				]);
+				return r.rows.length > 0;
+			});
+
+			const { project, planningTask } = await createProjectWithPlanningTask(db, {
+				teamId,
+				captainMemberId,
+				name: projectName,
+				slug: projectSlug,
+				taskPrefix: prefixResult.prefix,
+				description: projectDescription,
+				initialPrd,
+				createPlanningTask: true,
+			});
+
+			if (wsManager) {
+				broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
+			}
+			if (!planningTask) {
+				throw new Error('Expected planning task for project_creation approval');
+			}
+			if (wsManager) {
+				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
+			}
+
+			await createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
+				task_id: planningTask.id as string,
+			});
+
+			const ackComment = await postProjectCreationApprovedAck(
+				db,
+				teamId,
+				intakeTaskId,
+				projectName,
+			);
+			if (ackComment) {
+				broadcasts.push({ table: 'task_comments', op: 'INSERT', row: ackComment });
+			}
+
+			const completed = await completeProjectIntakeAfterProvisioning(
+				db,
+				teamId,
+				intakeTaskId,
+				projectName,
+				project.slug as string,
+				wsManager,
+			);
+			if (completed.summaryComment) {
+				broadcasts.push({
+					table: 'task_comments',
+					op: 'INSERT',
+					row: completed.summaryComment,
+				});
+			}
+			if (completed.task) {
+				broadcasts.push({ table: 'tasks', op: 'UPDATE', row: completed.task });
+			}
+
+			if (containerDeps) {
+				const teamMeta = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
+					teamId,
+				]);
+				const teamSlug = teamMeta.rows[0]?.slug;
+				if (teamSlug) {
+					trackBackground(
+						provisionContainer(containerDeps, project as unknown as ProjectRow, teamSlug).catch(
+							(error) => {
+								log.error(`Failed to provision container for project ${project.slug}:`, error);
+							},
+						),
+					);
+				}
+			}
+
 			break;
 		}
 		case ApprovalType.SkillProposal: {

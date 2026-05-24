@@ -11,7 +11,7 @@ import type { Env } from '../../lib/types';
 import { signBoardJwt } from '../../middleware/auth';
 import { buildApp } from '../../startup';
 import { safeClose } from '../helpers';
-import { createStubDocker } from '../helpers/app';
+import { createStubDocker, createTestProject } from '../helpers/app';
 import { createTestDbWithMigrations } from '../helpers/db';
 
 let app: Hono<Env>;
@@ -45,10 +45,9 @@ beforeAll(async () => {
 	teamId = team.id;
 	const teamSlug = team.slug;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Preview Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Preview Project',
+		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
 	projectId = project.id;

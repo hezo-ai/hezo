@@ -56,7 +56,7 @@ export function CreateProjectDialog({ teamId, open, onOpenChange }: CreateProjec
 		e.preventDefault();
 		if (!name.trim() || !description.trim()) return;
 		const customPrefix = prefixTouched ? taskPrefix.trim().toUpperCase() : undefined;
-		const project = await createProject.mutateAsync({
+		const intake = await createProject.mutateAsync({
 			name: name.trim(),
 			description: description.trim(),
 			initial_prd: initialPrd.trim() || undefined,
@@ -69,16 +69,14 @@ export function CreateProjectDialog({ teamId, open, onOpenChange }: CreateProjec
 		setPrdFilename(null);
 		setTaskPrefix('');
 		setPrefixTouched(false);
-		if (project.planning_task_identifier) {
-			navigate({
-				to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
-				params: {
-					teamId,
-					projectId: project.slug,
-					taskId: project.planning_task_identifier.toLowerCase(),
-				},
-			});
-		}
+		navigate({
+			to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+			params: {
+				teamId,
+				projectId: intake.project_slug,
+				taskId: intake.intake_task_identifier.toLowerCase(),
+			},
+		});
 	}
 
 	const canSubmit = name.trim().length > 0 && description.trim().length > 0;
@@ -90,7 +88,8 @@ export function CreateProjectDialog({ teamId, open, onOpenChange }: CreateProjec
 				<Dialog.Content className={dialogContentClassName.lg}>
 					<Dialog.Title className="text-base font-medium mb-1">Create Project</Dialog.Title>
 					<p className="text-sm text-text-muted mb-4">
-						The Captain will draft an execution plan from your description.
+						The Captain will analyze your requirements and confirm the team has the right people
+						before opening the project.
 					</p>
 					<form onSubmit={handleSubmit} className="flex flex-col gap-4">
 						<Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />

@@ -11,10 +11,7 @@ async function createProjectViaApi(
 	description: string,
 ): Promise<{ id: string; slug: string }> {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const res = await page.request.post(`/api/teams/${teamId}/projects`, {
-		headers,
-		data: { name, description },
-	});
+	const res = await createProjectAndClearPlanning(page, teamId, token, { name, description });
 	return ((await res.json()) as { data: { id: string; slug: string } }).data;
 }
 
