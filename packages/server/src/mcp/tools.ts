@@ -768,8 +768,8 @@ export function registerTools(
 			}
 
 			if (args.status && currentStatus) {
-				trackBackground(
-					triggerStatusAutomations(
+				try {
+					await triggerStatusAutomations(
 						db,
 						args.team_id as string,
 						args.task_id as string,
@@ -777,8 +777,10 @@ export function registerTools(
 						args.status as string,
 						actorMemberId,
 						wsManager,
-					).catch((e) => log.error('Failed to trigger status automations:', e)),
-				);
+					);
+				} catch (e) {
+					log.error('Failed to trigger status automations:', e);
+				}
 			}
 
 			if (args.assignee_id && args.assignee_id !== previousAssigneeId) {

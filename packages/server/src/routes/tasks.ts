@@ -584,8 +584,8 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 	}
 
 	if (body.status) {
-		trackBackground(
-			triggerStatusAutomations(
+		try {
+			await triggerStatusAutomations(
 				db,
 				teamId,
 				taskId,
@@ -593,8 +593,10 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 				body.status,
 				actorMemberId,
 				c.get('wsManager'),
-			).catch((e) => log.error('Failed to trigger status automations:', e)),
-		);
+			);
+		} catch (e) {
+			log.error('Failed to trigger status automations:', e);
+		}
 
 		if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(body.status)) {
 			const dataDir = c.get('dataDir');
