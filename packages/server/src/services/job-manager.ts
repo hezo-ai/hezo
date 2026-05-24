@@ -22,6 +22,7 @@ import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
+import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
 import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerDeps,
@@ -1003,14 +1004,13 @@ export class JobManager {
 			[taskId, memberId],
 		);
 
-		await db.query(
-			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status, last_heartbeat_at = now() WHERE id = $2',
-			[AgentRuntimeStatus.Idle, memberId],
+		await setAgentIdleIfNoActiveRuns(
+			db,
+			memberId,
+			teamId,
+			result.heartbeatRunId,
+			this.deps.wsManager,
 		);
-		broadcastRowChange(this.deps.wsManager, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
-			id: memberId,
-			runtime_status: AgentRuntimeStatus.Idle,
-		});
 
 		if (wakeupId) {
 			await db.query(

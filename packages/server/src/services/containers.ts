@@ -1,7 +1,6 @@
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	AgentRuntimeStatus,
 	ContainerStatus,
 	HeartbeatRunStatus,
 	WakeupSource,
@@ -11,6 +10,7 @@ import {
 import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
+import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
 import type { ContainerLogStreamer } from './container-logs';
 import type { DockerClient } from './docker';
 import { ensureImage } from './ensure-image';
@@ -571,12 +571,6 @@ export async function failProjectRuns(
 	const memberIds = Array.from(new Set(failedRuns.rows.map((r) => r.member_id)));
 
 	await db.query(
-		`UPDATE member_agents SET runtime_status = $1::agent_runtime_status
-		 WHERE id = ANY($2::uuid[]) AND runtime_status = $3::agent_runtime_status`,
-		[AgentRuntimeStatus.Idle, memberIds, AgentRuntimeStatus.Active],
-	);
-
-	await db.query(
 		`UPDATE execution_locks SET released_at = now()
 		 WHERE released_at IS NULL
 		   AND task_id IN (SELECT id FROM tasks WHERE project_id = $1)`,
@@ -593,15 +587,20 @@ export async function failProjectRuns(
 		});
 	}
 
+	let idleCount = 0;
 	for (const memberId of memberIds) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
-			id: memberId,
-			runtime_status: AgentRuntimeStatus.Idle,
-		});
+		const transitioned = await setAgentIdleIfNoActiveRuns(
+			db,
+			memberId,
+			teamId,
+			undefined,
+			wsManager,
+		);
+		if (transitioned) idleCount++;
 	}
 
 	log.info(
-		`Failed ${failedRuns.rows.length} run(s) in project ${projectId} due to ${reason}; ${memberIds.length} agent(s) marked idle`,
+		`Failed ${failedRuns.rows.length} run(s) in project ${projectId} due to ${reason}; ${idleCount}/${memberIds.length} agent(s) marked idle`,
 	);
 }
 
