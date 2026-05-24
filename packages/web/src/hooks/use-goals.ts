@@ -1,7 +1,8 @@
-import type { Goal, GoalStatus } from '@hezo/shared';
+import { type Goal, GoalStatus } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface GoalWithProject extends Goal {
 	project_name: string | null;
@@ -23,23 +24,33 @@ export function useCreateGoal(teamId: string) {
 	});
 }
 
+interface UpdateGoalVars {
+	title?: string;
+	description?: string;
+	project_id?: string | null;
+	status?: GoalStatus;
+}
+
 export function useUpdateGoal(teamId: string, goalId: string) {
-	return useMutation({
-		mutationFn: (data: {
-			title?: string;
-			description?: string;
-			project_id?: string | null;
-			status?: GoalStatus;
-		}) => api.patch<Goal>(`/api/teams/${teamId}/goals/${goalId}`, data),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'goals'] });
-		},
+	return useOptimisticMutation<UpdateGoalVars, Goal, GoalWithProject[]>({
+		mutationFn: (data) => api.patch<Goal>(`/api/teams/${teamId}/goals/${goalId}`, data),
+		queryKey: ['teams', teamId, 'goals'],
+		applyOptimistic: (current, vars) =>
+			current?.map((g) => (g.id === goalId ? { ...g, ...vars } : g)),
+		mergeResponse: (current, updated) =>
+			current?.map((g) => (g.id === goalId ? { ...g, ...updated } : g)),
+		errorMessage: 'Failed to update goal',
 	});
 }
 
 export function useArchiveGoal(teamId: string) {
-	return useMutation({
-		mutationFn: (goalId: string) => api.delete<Goal>(`/api/teams/${teamId}/goals/${goalId}`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'goals'] }),
+	return useOptimisticMutation<string, Goal, GoalWithProject[]>({
+		mutationFn: (goalId) => api.delete<Goal>(`/api/teams/${teamId}/goals/${goalId}`),
+		queryKey: ['teams', teamId, 'goals'],
+		applyOptimistic: (current, goalId) =>
+			current?.map((g) => (g.id === goalId ? { ...g, status: GoalStatus.Archived } : g)),
+		mergeResponse: (current, updated) =>
+			current?.map((g) => (g.id === updated.id ? { ...g, ...updated } : g)),
+		errorMessage: 'Failed to archive goal',
 	});
 }

@@ -1,6 +1,6 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { queryClient } from '../lib/query-client';
+import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface TeamSettings {
 	wake_mentioner_on_reply?: boolean;
@@ -39,17 +39,27 @@ export function useTeam(id: string, enabled = true) {
 	});
 }
 
+interface UpdateTeamVars {
+	name?: string;
+	description?: string;
+	mcp_servers?: unknown[];
+	settings?: Partial<TeamSettings>;
+}
+
 export function useUpdateTeam(id: string) {
-	return useMutation({
-		mutationFn: (data: {
-			name?: string;
-			description?: string;
-			mcp_servers?: unknown[];
-			settings?: Partial<TeamSettings>;
-		}) => api.patch<Team>(`/api/teams/${id}`, data),
-		onSuccess: (updated) => {
-			queryClient.setQueryData(['teams', id], updated);
-			queryClient.invalidateQueries({ queryKey: ['teams'] });
+	return useOptimisticMutation<UpdateTeamVars, Team, Team>({
+		mutationFn: (data) => api.patch<Team>(`/api/teams/${id}`, data),
+		queryKey: ['teams', id],
+		applyOptimistic: (current, vars) => {
+			if (!current) return current;
+			return {
+				...current,
+				...vars,
+				settings: { ...current.settings, ...(vars.settings ?? {}) },
+			};
 		},
+		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
+		invalidateOnSettled: [['teams']],
+		errorMessage: 'Failed to update team',
 	});
 }

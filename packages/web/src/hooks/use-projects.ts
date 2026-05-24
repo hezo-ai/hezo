@@ -1,6 +1,7 @@
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { useOptimisticMutation } from './use-optimistic-mutation';
 import type { Team } from './use-teams';
 
 export interface Project {
@@ -93,13 +94,13 @@ export function useCreateProject(teamId: string) {
 }
 
 export function useUpdateProject(teamId: string, projectId: string) {
-	return useMutation({
-		mutationFn: (data: { name?: string; description?: string }) =>
-			api.patch<Project>(`/api/teams/${teamId}/projects/${projectId}`, data),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects', projectId] });
-		},
+	return useOptimisticMutation<{ name?: string; description?: string }, Project, Project>({
+		mutationFn: (data) => api.patch<Project>(`/api/teams/${teamId}/projects/${projectId}`, data),
+		queryKey: ['teams', teamId, 'projects', projectId],
+		applyOptimistic: (current, vars) => (current ? { ...current, ...vars } : current),
+		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
+		invalidateOnSettled: [['teams', teamId, 'projects']],
+		errorMessage: 'Failed to update project',
 	});
 }
 

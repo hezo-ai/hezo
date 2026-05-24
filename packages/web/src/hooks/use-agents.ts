@@ -1,7 +1,8 @@
-import type { AgentEffort } from '@hezo/shared';
+import { AgentAdminStatus, type AgentEffort } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface Agent {
 	id: string;
@@ -68,28 +69,36 @@ export function useAgent(teamId: string, agentId: string) {
 	});
 }
 
+interface UpdateAgentVars {
+	title?: string;
+	role_description?: string;
+	system_prompt?: string;
+	system_prompt_change_summary?: string;
+	reports_to?: string | null;
+	monthly_budget_cents?: number;
+	heartbeat_interval_min?: number;
+	run_timeout_min?: number;
+	touches_code?: boolean;
+	model_override_provider?: string | null;
+	model_override_model?: string | null;
+}
+
 export function useUpdateAgent(teamId: string, agentId: string) {
-	return useMutation({
-		mutationFn: (data: {
-			title?: string;
-			role_description?: string;
-			system_prompt?: string;
-			system_prompt_change_summary?: string;
-			reports_to?: string | null;
-			monthly_budget_cents?: number;
-			heartbeat_interval_min?: number;
-			run_timeout_min?: number;
-			touches_code?: boolean;
-			model_override_provider?: string | null;
-			model_override_model?: string | null;
-		}) => api.patch<Agent>(`/api/teams/${teamId}/agents/${agentId}`, data),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'agents'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'agents', agentId] });
-			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'agents', agentId, 'system-prompt'],
-			});
+	return useOptimisticMutation<UpdateAgentVars, Agent, Agent>({
+		mutationFn: (data) => api.patch<Agent>(`/api/teams/${teamId}/agents/${agentId}`, data),
+		queryKey: ['teams', teamId, 'agents', agentId],
+		applyOptimistic: (current, vars) => {
+			if (!current) return current;
+			// system_prompt/_change_summary live in a separate doc cache; don't apply here.
+			const { system_prompt: _sp, system_prompt_change_summary: _sps, ...optimistic } = vars;
+			return { ...current, ...optimistic };
 		},
+		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
+		invalidateOnSettled: [
+			['teams', teamId, 'agents'],
+			['teams', teamId, 'agents', agentId, 'system-prompt'],
+		],
+		errorMessage: 'Failed to update agent',
 	});
 }
 
@@ -137,16 +146,24 @@ export function useRestoreAgentSystemPrompt(teamId: string, agentId: string) {
 }
 
 export function useDisableAgent(teamId: string) {
-	return useMutation({
-		mutationFn: (agentId: string) => api.post(`/api/teams/${teamId}/agents/${agentId}/disable`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'agents'] }),
+	return useOptimisticMutation<string, unknown, Agent>({
+		mutationFn: (agentId) => api.post(`/api/teams/${teamId}/agents/${agentId}/disable`),
+		queryKey: (agentId) => ['teams', teamId, 'agents', agentId],
+		applyOptimistic: (current) =>
+			current ? { ...current, admin_status: AgentAdminStatus.Disabled } : current,
+		invalidateOnSettled: [['teams', teamId, 'agents']],
+		errorMessage: 'Failed to disable agent',
 	});
 }
 
 export function useEnableAgent(teamId: string) {
-	return useMutation({
-		mutationFn: (agentId: string) => api.post(`/api/teams/${teamId}/agents/${agentId}/enable`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'agents'] }),
+	return useOptimisticMutation<string, unknown, Agent>({
+		mutationFn: (agentId) => api.post(`/api/teams/${teamId}/agents/${agentId}/enable`),
+		queryKey: (agentId) => ['teams', teamId, 'agents', agentId],
+		applyOptimistic: (current) =>
+			current ? { ...current, admin_status: AgentAdminStatus.Enabled } : current,
+		invalidateOnSettled: [['teams', teamId, 'agents']],
+		errorMessage: 'Failed to enable agent',
 	});
 }
 

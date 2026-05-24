@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface Task {
 	id: string;
@@ -104,28 +105,31 @@ export function useCreateTask(teamId: string) {
 	});
 }
 
+interface UpdateTaskVars {
+	title?: string;
+	description?: string;
+	status?: string;
+	priority?: string;
+	assignee_id?: string | null;
+	labels?: string[];
+	progress_summary?: string | null;
+	rules?: string | null;
+}
+
 export function useUpdateTask(teamId: string, taskId: string) {
-	return useMutation({
-		mutationFn: (data: {
-			title?: string;
-			description?: string;
-			status?: string;
-			priority?: string;
-			assignee_id?: string | null;
-			labels?: string[];
-			progress_summary?: string | null;
-			rules?: string | null;
-		}) => api.patch<Task>(`/api/teams/${teamId}/tasks/${taskId}`, data),
-		onSuccess: (updated) => {
-			// Merge the PATCH response into the cache so the UI reflects the change
-			// immediately, without waiting for a refetch round-trip. The PATCH returns
-			// only the bare tasks row, so derived join fields (assignee_name,
-			// project_name, …) must be preserved from the existing cache entry.
-			queryClient.setQueryData<Task | undefined>(['teams', teamId, 'tasks', taskId], (current) =>
-				current ? { ...current, ...updated } : current,
-			);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'tasks'] });
+	return useOptimisticMutation<UpdateTaskVars, Task, Task>({
+		mutationFn: (data) => api.patch<Task>(`/api/teams/${teamId}/tasks/${taskId}`, data),
+		queryKey: ['teams', teamId, 'tasks', taskId],
+		applyOptimistic: (current, vars) => {
+			if (!current) return current;
+			// Status flips only after the server confirms (children-closed and outstanding-activity
+			// assertions run server-side, plus status changes trigger automations we can't predict).
+			const { status: _status, ...optimistic } = vars;
+			return { ...current, ...optimistic };
 		},
+		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
+		invalidateOnSettled: [['teams', teamId, 'tasks']],
+		errorMessage: 'Failed to update task',
 	});
 }
 

@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface KbDoc {
 	id: string;
@@ -36,14 +37,28 @@ export function useCreateKbDoc(teamId: string) {
 	});
 }
 
+interface UpdateKbDocVars {
+	title?: string;
+	content?: string;
+	change_summary?: string;
+}
+
 export function useUpdateKbDoc(teamId: string, slug: string) {
-	return useMutation({
-		mutationFn: (data: { title?: string; content?: string; change_summary?: string }) =>
-			api.patch<KbDoc>(`/api/teams/${teamId}/kb-docs/${slug}`, data),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'kb-docs'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'kb-docs', slug] });
+	return useOptimisticMutation<UpdateKbDocVars, KbDoc, KbDoc>({
+		mutationFn: (data) => api.patch<KbDoc>(`/api/teams/${teamId}/kb-docs/${slug}`, data),
+		queryKey: ['teams', teamId, 'kb-docs', slug],
+		applyOptimistic: (current, vars) => {
+			if (!current) return current;
+			// change_summary is for the revision history, not the doc body.
+			const { change_summary: _summary, ...optimistic } = vars;
+			return { ...current, ...optimistic };
 		},
+		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
+		invalidateOnSettled: [
+			['teams', teamId, 'kb-docs'],
+			['teams', teamId, 'kb-docs', slug, 'revisions'],
+		],
+		errorMessage: 'Failed to update doc',
 	});
 }
 

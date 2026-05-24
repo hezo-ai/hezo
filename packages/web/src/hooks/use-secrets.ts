@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface Secret {
 	id: string;
@@ -40,19 +41,25 @@ export function useCreateSecret(teamId: string) {
 	});
 }
 
+interface UpdateSecretVars {
+	secretId: string;
+	value?: string;
+	category?: string;
+	allowed_hosts?: string[];
+	allow_all_hosts?: boolean;
+}
+
 export function useUpdateSecret(teamId: string) {
-	return useMutation({
-		mutationFn: ({
-			secretId,
-			...data
-		}: {
-			secretId: string;
-			value?: string;
-			category?: string;
-			allowed_hosts?: string[];
-			allow_all_hosts?: boolean;
-		}) => api.patch<Secret>(`/api/teams/${teamId}/secrets/${secretId}`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'secrets'] }),
+	return useOptimisticMutation<UpdateSecretVars, Secret, Secret[]>({
+		mutationFn: ({ secretId, ...data }) =>
+			api.patch<Secret>(`/api/teams/${teamId}/secrets/${secretId}`, data),
+		queryKey: ['teams', teamId, 'secrets'],
+		applyOptimistic: (current, { secretId, value: _value, ...optimistic }) =>
+			// `value` is write-only; it isn't returned in Secret rows.
+			current?.map((s) => (s.id === secretId ? { ...s, ...optimistic } : s)),
+		mergeResponse: (current, updated) =>
+			current?.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)),
+		errorMessage: 'Failed to update secret',
 	});
 }
 
