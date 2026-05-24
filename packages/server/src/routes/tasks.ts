@@ -556,8 +556,8 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 	}
 
 	if (body.title !== undefined) {
-		trackBackground(
-			recordTitleChange(
+		try {
+			await recordTitleChange(
 				db,
 				teamId,
 				taskId,
@@ -565,13 +565,15 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 				body.title.trim(),
 				actorMemberId,
 				c.get('wsManager'),
-			).catch((e) => log.error('Failed to record title change:', e)),
-		);
+			);
+		} catch (e) {
+			log.error('Failed to record title change:', e);
+		}
 	}
 
 	if (body.assignee_id !== undefined && body.assignee_id !== existing.rows[0].assignee_id) {
-		trackBackground(
-			recordAssigneeChange(
+		try {
+			await recordAssigneeChange(
 				db,
 				teamId,
 				taskId,
@@ -579,8 +581,10 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 				body.assignee_id,
 				actorMemberId,
 				c.get('wsManager'),
-			).catch((e) => log.error('Failed to record assignee change:', e)),
-		);
+			);
+		} catch (e) {
+			log.error('Failed to record assignee change:', e);
+		}
 	}
 
 	if (body.status) {
