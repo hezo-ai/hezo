@@ -2,9 +2,17 @@ import { expect, test } from '@playwright/test';
 import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Goals', () => {
-	test('creates a team-wide goal from the Goals page and opens a CEO ticket', async ({ page }) => {
+	test('creates a team-wide goal from the Goals page and opens a Captain ticket', async ({
+		page,
+	}) => {
 		await authenticate(page);
-		const { team } = await createTeamWithAgents(page);
+		const { team, token } = await createTeamWithAgents(page);
+
+		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
+			headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+			data: { name: 'Goals Product', description: 'Primary product workstream for goals e2e.' },
+		});
+		expect(projRes.ok()).toBe(true);
 
 		await page.goto(`/teams/${team.slug}/goals`);
 		await waitForPageLoad(page);
@@ -20,15 +28,15 @@ test.describe('Goals', () => {
 		await expect(main.getByText('Raise seed round')).toBeVisible({ timeout: 15000 });
 		await expect(main.getByText('Team-wide').first()).toBeVisible();
 
-		// The CEO ticket lives in the Operations project.
-		await page.goto(`/teams/${team.slug}/projects/operations/issues`);
+		// The Captain ticket lives in the Operations project.
+		await page.goto(`/teams/${team.slug}/projects/operations/tasks`);
 		await waitForPageLoad(page);
 		await expect(
 			page.getByRole('main').getByText('Review plans for goal: "Raise seed round"'),
 		).toBeVisible({ timeout: 15000 });
 	});
 
-	test('project-scoped goal routes the CEO ticket into that project', async ({ page }) => {
+	test('project-scoped goal routes the Captain ticket into that project', async ({ page }) => {
 		await authenticate(page);
 		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}` };
@@ -52,7 +60,7 @@ test.describe('Goals', () => {
 			timeout: 15000,
 		});
 
-		await page.goto(`/teams/${team.slug}/projects/${project.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/projects/${project.slug}/tasks`);
 		await waitForPageLoad(page);
 		await expect(
 			page.getByRole('main').getByText('Review plans for goal: "Launch public v1"'),

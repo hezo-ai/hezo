@@ -38,6 +38,7 @@ if (cleared.length > 0) {
 // workspace dependency — mirrors packages/web/vite.config.ts.
 const webPort = process.env.HEZO_WEB_PORT ?? '5173';
 const serverArgs: string[] = ['--web-url', `http://localhost:${webPort}`];
+if (opts.reset) serverArgs.push('--reset');
 if (opts.open) serverArgs.push('--open');
 if (opts.port) serverArgs.push('--port', opts.port);
 if (opts.masterKey) serverArgs.push('--master-key', opts.masterKey);
@@ -55,7 +56,8 @@ if (bundle.exitCode !== 0) {
 }
 
 const procs = [
-	Bun.spawn(['bun', 'run', '--watch', 'src/index.ts', ...serverArgs], {
+	// --hot (not --watch) so import.meta.hot.dispose can close PGlite before reload.
+	Bun.spawn(['bun', 'run', '--hot', 'src/index.ts', ...serverArgs], {
 		cwd: resolve(ROOT, 'packages/server'),
 		stdout: 'inherit',
 		stderr: 'inherit',

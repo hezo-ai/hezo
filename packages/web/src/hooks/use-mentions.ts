@@ -54,7 +54,7 @@ export function useDocMentions(teamId: string, candidates: DocMentionsRequest) {
 	});
 }
 
-export type MentionKind = 'agent' | 'issue' | 'kb' | 'doc';
+export type MentionKind = 'agent' | 'task' | 'kb' | 'doc';
 
 export interface MentionSearchResult {
 	kind: MentionKind;

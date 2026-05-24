@@ -14,6 +14,7 @@ const typeColors: Record<string, string> = {
 	designated_repo_request: 'yellow',
 	secret_access: 'red',
 	hire: 'green',
+	team_template: 'green',
 	plan_review: 'blue',
 	deploy_production: 'red',
 	skill_proposal: 'blue',
@@ -92,34 +93,78 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 				</>
 			);
 		}
+		case ApprovalType.TeamTemplate: {
+			const templateName = (p.template_name as string) ?? 'Team template';
+			const rationale = p.rationale as string | undefined;
+			const roles = (p.roles as Array<{ name: string; slug: string }> | undefined) ?? [];
+			const hireTaskId = p.task_id as string | undefined;
+			const hireTaskIdentifier = approval.payload_task_identifier;
+			const hireProjectSlug = approval.payload_project_slug;
+			return (
+				<>
+					<span>
+						Approve provisioning the <span className="font-medium">{templateName}</span> team
+						template
+						{hireTaskIdentifier && hireProjectSlug && (
+							<>
+								{' '}
+								(
+								<EntityLink
+									to="/teams/$teamId/projects/$projectId/tasks/$taskId"
+									params={{
+										teamId: teamSlug,
+										projectId: hireProjectSlug,
+										taskId: hireTaskIdentifier.toLowerCase(),
+									}}
+								>
+									{hireTaskIdentifier}
+								</EntityLink>
+								)
+							</>
+						)}
+					</span>
+					{rationale && <span className="block text-xs text-text-muted mt-1">{rationale}</span>}
+					{roles.length > 0 && (
+						<span className="block text-xs text-text-muted mt-1">
+							Roles: {roles.map((r) => r.name).join(', ')}
+						</span>
+					)}
+					{hireTaskId && !hireTaskIdentifier && (
+						<span className="block text-xs text-text-subtle mt-1">
+							Linked to hire-the-team intake
+						</span>
+					)}
+				</>
+			);
+		}
 		case ApprovalType.Hire: {
 			const title = (p.title as string) ?? 'a new agent';
-			const issueId = approval.payload_issue_identifier;
-			const issueProjectSlug = approval.payload_project_slug;
+			const taskId = approval.payload_task_identifier;
+			const taskProjectSlug = approval.payload_project_slug;
 			return (
 				<span>
 					Proposing to hire <span className="font-medium">{title}</span>
-					{issueId && (
+					{taskId && (
 						<>
 							{' '}
 							(
-							{issueProjectSlug ? (
+							{taskProjectSlug ? (
 								<EntityLink
-									to="/teams/$teamId/projects/$projectId/issues/$issueId"
+									to="/teams/$teamId/projects/$projectId/tasks/$taskId"
 									params={{
 										teamId: teamSlug,
-										projectId: issueProjectSlug,
-										issueId: issueId.toLowerCase(),
+										projectId: taskProjectSlug,
+										taskId: taskId.toLowerCase(),
 									}}
 								>
-									{issueId}
+									{taskId}
 								</EntityLink>
 							) : (
 								<EntityLink
-									to="/teams/$teamId/issues/$issueId"
-									params={{ teamId: teamSlug, issueId: issueId.toLowerCase() }}
+									to="/teams/$teamId/tasks/$taskId"
+									params={{ teamId: teamSlug, taskId: taskId.toLowerCase() }}
 								>
-									{issueId}
+									{taskId}
 								</EntityLink>
 							)}
 							)
@@ -287,6 +332,7 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 						resolveApproval.mutate({
 							approvalId: approval.id,
 							status: ApprovalStatus.Approved,
+							teamSlug: approval.team_slug,
 						})
 					}
 				>
@@ -306,6 +352,7 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 						resolveApproval.mutate({
 							approvalId: approval.id,
 							status: ApprovalStatus.Denied,
+							teamSlug: approval.team_slug,
 						})
 					}
 				>

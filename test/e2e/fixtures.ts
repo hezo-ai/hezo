@@ -78,6 +78,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 			localStorage.setItem('hezo_token', t);
 		}, apiToken);
 		await use(page);
+		await page.unrouteAll({ behavior: 'ignoreErrors' }).catch(() => {});
 	},
 
 	freshWorkspace: async ({ page }, use) => {
@@ -85,12 +86,17 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 		const { team, token } = await createTeamWithAgents(page);
 		const agents = await listAgents(page.request, team.id, token);
 		await use({ team, token, agents });
+		// Drain any page.route interceptors before Playwright tears down the page,
+		// so in-flight route.fetch()/route.fulfill() calls don't reject with
+		// "Target page has been closed" and turn a clean pass into a flaky retry.
+		await page.unrouteAll({ behavior: 'ignoreErrors' }).catch(() => {});
 	},
 
 	lightWorkspace: async ({ page }, use) => {
 		await authenticate(page);
 		const { team, token } = await createTeamLight(page);
 		await use({ team, token });
+		await page.unrouteAll({ behavior: 'ignoreErrors' }).catch(() => {});
 	},
 });
 

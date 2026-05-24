@@ -1,18 +1,18 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PGlite } from '@electric-sql/pglite';
 import {
+	AgentAdminStatus,
 	ApprovalStatus,
 	ApprovalType,
 	AuditActorType,
 	AuthType,
-	CEO_AGENT_SLUG,
-	COACH_AGENT_SLUG,
+	CAPTAIN_AGENT_SLUG,
 	CommentContentType,
 	CredentialInputType,
 	CredentialKind,
 	DocumentType,
-	IssueStatus,
 	ReactionKind,
+	TaskStatus,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -20,7 +20,9 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { assertNoActiveRun } from '../lib/active-run';
+import { isCoach } from '../lib/agent-roles';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
+import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
 import {
@@ -29,18 +31,20 @@ import {
 	wakeIfReady,
 	wouldCreateCycle,
 } from '../lib/dependencies';
-import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/issue-relationships';
 import { assertOperationsAssignee } from '../lib/operations-assignee';
-import { resolveActorMemberId, resolveIssueId } from '../lib/resolve';
+import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
+import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
-import { resolveProjectIssuePrefix } from '../routes/projects';
+import { resolveProjectTaskPrefix } from '../routes/projects';
 import { loadAgentAttachmentsForComments } from '../services/agent-runner';
 import {
 	AgentSystemPromptError,
 	fetchAgentSystemPromptForBatch,
 	type SystemPromptMode,
 } from '../services/agent-system-prompts';
+import { broadcastApprovalChange } from '../services/approval-broadcast';
+import { resolveApproval } from '../services/approval-resolve';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { enqueueTeamContextTaskForAllAgents } from '../services/description-tasks';
 import {
@@ -49,20 +53,21 @@ import {
 	listDocuments,
 	upsertDocument,
 } from '../services/documents';
-import { triggerStatusAutomations } from '../services/issue-automation';
-import { recordIssueLinks } from '../services/issue-events';
-import {
-	type CreateIssueCaller,
-	CreateIssueError,
-	type CreateIssueInput,
-	createIssue,
-	ISSUE_COLUMNS_BARE,
-} from '../services/issues';
+import { createProjectWithPlanningTask } from '../services/project-create';
 import {
 	addCommentReaction,
-	loadReactionsForIssue,
+	loadReactionsForTask,
 	removeCommentReaction,
 } from '../services/reactions';
+import { triggerStatusAutomations } from '../services/task-automation';
+import { recordTaskLinks } from '../services/task-events';
+import {
+	type CreateTaskCaller,
+	CreateTaskError,
+	type CreateTaskInput,
+	createTask,
+	TASK_COLUMNS_BARE,
+} from '../services/tasks';
 import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
@@ -79,10 +84,10 @@ export interface ToolDef {
 
 const registeredTools: ToolDef[] = [];
 
-// Qualified-column variant of services/issues.ts ISSUE_COLUMNS_BARE — prefixes
-// every column with the `i.` alias for SELECT ... FROM issues i JOIN ...
+// Qualified-column variant of services/tasks.ts TASK_COLUMNS_BARE — prefixes
+// every column with the `i.` alias for SELECT ... FROM tasks i JOIN ...
 // patterns.
-const ISSUE_COLUMNS = ISSUE_COLUMNS_BARE.replace(/[A-Za-z_][A-Za-z_0-9]*/g, 'i.$&');
+const TASK_COLUMNS = TASK_COLUMNS_BARE.replace(/[A-Za-z_][A-Za-z_0-9]*/g, 'i.$&');
 
 const SKILL_COLUMNS = `id, team_id, name, slug, description, content, source_url,
 	content_hash, created_by_member_id, tags, is_active, created_at, updated_at`;
@@ -206,16 +211,16 @@ function tool(
 	});
 }
 
-const MAX_BATCH_CREATE_ISSUES = 50;
+const MAX_BATCH_CREATE_TASKS = 50;
 const MAX_BATCH_AGENT_SYSTEM_PROMPTS = 50;
 
-async function buildMcpCreateIssueCaller(
+async function buildMcpCreateTaskCaller(
 	db: PGlite,
 	auth: AuthInfo,
 	teamId: string,
-): Promise<CreateIssueCaller> {
+): Promise<CreateTaskCaller> {
 	const actorMemberId = await resolveActorMemberId(db, auth, teamId);
-	const caller: CreateIssueCaller = {
+	const caller: CreateTaskCaller = {
 		actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Board,
 		actorMemberId,
 	};
@@ -226,17 +231,17 @@ async function buildMcpCreateIssueCaller(
 	return caller;
 }
 
-function mcpArgsToCreateIssueInput(args: Record<string, unknown>): CreateIssueInput {
+function mcpArgsToCreateTaskInput(args: Record<string, unknown>): CreateTaskInput {
 	return {
 		project_id: args.project_id as string,
 		title: args.title as string,
 		description: args.description as string | undefined,
 		assignee_id: args.assignee_id as string | undefined,
 		assignee_slug: args.assignee_slug as string | undefined,
-		parent_issue_id: args.parent_issue_id as string | undefined,
+		parent_task_id: args.parent_task_id as string | undefined,
 		priority: args.priority as string | undefined,
 		runtime_type: args.runtime_type as string | undefined,
-		blocked_by_issue_ids: args.blocked_by_issue_ids as string[] | undefined,
+		blocked_by_task_ids: args.blocked_by_task_ids as string[] | undefined,
 	};
 }
 
@@ -268,7 +273,7 @@ async function verifyTeamAccess(
 export function registerTools(
 	server: McpServer,
 	db: PGlite,
-	_dataDir: string,
+	dataDir: string,
 	_masterKeyManager: MasterKeyManager,
 	wsManager?: WebSocketManager,
 ): ToolDef[] {
@@ -346,11 +351,11 @@ export function registerTools(
 		db,
 	);
 
-	// Issues
+	// Tasks
 	tool(
 		server,
-		'list_issues',
-		'List issues for a team. Returns up to 50 issues ordered by creation date (newest first). Filter by project_id to scope to one project (the common case), and optionally by status (comma-separated) or assignee_id/assignee_slug to narrow further. The Project State block in your system prompt already gives you the active tickets in the current project — only call this if you need older or terminal tickets, a different project, or a specific status filter. Pass excerpt_chars (e.g. 300) to truncate description and rules to triage-sized excerpts; omit for full content.',
+		'list_tasks',
+		'List tasks for a team. Returns up to 50 tasks ordered by creation date (newest first). Filter by project_id to scope to one project (the common case), and optionally by status (comma-separated) or assignee_id/assignee_slug to narrow further. The Project State block in your system prompt already gives you the active tickets in the current project — only call this if you need older or terminal tickets, a different project, or a specific status filter. Pass excerpt_chars (e.g. 300) to truncate description and rules to triage-sized excerpts; omit for full content.',
 		{
 			team_id: z.string().describe('Team ID'),
 			project_id: z.string().optional().describe('Filter by project ID'),
@@ -382,7 +387,7 @@ export function registerTools(
 			}
 			if (args.status) {
 				const statuses = (args.status as string).split(',');
-				const ph = statuses.map((_, i) => `$${idx + i}::issue_status`).join(', ');
+				const ph = statuses.map((_, i) => `$${idx + i}::task_status`).join(', ');
 				conditions.push(`i.status IN (${ph})`);
 				params.push(...statuses);
 				idx += statuses.length;
@@ -404,8 +409,8 @@ export function registerTools(
 				idx++;
 			}
 			const r = await db.query(
-				`SELECT ${ISSUE_COLUMNS}, p.name AS project_name
-				 FROM issues i JOIN projects p ON p.id = i.project_id
+				`SELECT ${TASK_COLUMNS}, p.name AS project_name
+				 FROM tasks i JOIN projects p ON p.id = i.project_id
 				 WHERE ${conditions.join(' AND ')}
 				 ORDER BY i.created_at DESC LIMIT 50`,
 				params,
@@ -423,39 +428,39 @@ export function registerTools(
 
 	tool(
 		server,
-		'get_issue',
-		"Get issue details, including the ticket's declared blockers (upstream — what this ticket is waiting on) and dependents (downstream — tickets that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this ticket is paused until every blocker reaches a terminal status (done, closed, cancelled). The dependents list shows which teammates' tickets will be auto-unblocked when this ticket is marked terminal — you do not need to @-mention them, the auto-wake handles it.",
+		'get_task',
+		"Get task details, including the ticket's declared blockers (upstream — what this ticket is waiting on) and dependents (downstream — tickets that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this ticket is paused until every blocker reaches a terminal status (done, closed, cancelled). The dependents list shows which teammates' tickets will be auto-unblocked when this ticket is marked terminal — you do not need to @-mention them, the auto-wake handles it.",
 		{
 			team_id: z.string().describe('Team ID'),
-			issue_id: z.string().describe('Issue ID'),
+			task_id: z.string().describe('Task ID'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const r = await db.query(
-				`SELECT ${ISSUE_COLUMNS_BARE} FROM issues i WHERE i.id = $1 AND i.team_id = $2`,
-				[args.issue_id, args.team_id],
+				`SELECT ${TASK_COLUMNS_BARE} FROM tasks i WHERE i.id = $1 AND i.team_id = $2`,
+				[args.task_id, args.team_id],
 			);
-			const issue = r.rows[0];
-			if (!issue) return null;
+			const task = r.rows[0];
+			if (!task) return null;
 			const blockers = await db.query(
 				`SELECT d.id AS dependency_id, b.id, b.identifier, b.title, b.status::text AS status
-				 FROM issue_dependencies d
-				 JOIN issues b ON b.id = d.blocked_by_issue_id
-				 WHERE d.issue_id = $1
+				 FROM task_dependencies d
+				 JOIN tasks b ON b.id = d.blocked_by_task_id
+				 WHERE d.task_id = $1
 				 ORDER BY d.created_at ASC`,
-				[args.issue_id],
+				[args.task_id],
 			);
 			const dependents = await db.query(
 				`SELECT d.id AS dependency_id, b.id, b.identifier, b.title, b.status::text AS status
-				 FROM issue_dependencies d
-				 JOIN issues b ON b.id = d.issue_id
-				 WHERE d.blocked_by_issue_id = $1
+				 FROM task_dependencies d
+				 JOIN tasks b ON b.id = d.task_id
+				 WHERE d.blocked_by_task_id = $1
 				 ORDER BY d.created_at ASC`,
-				[args.issue_id],
+				[args.task_id],
 			);
 			return {
-				...(issue as Record<string, unknown>),
+				...(task as Record<string, unknown>),
 				blockers: blockers.rows,
 				dependents: dependents.rows,
 			};
@@ -465,36 +470,36 @@ export function registerTools(
 
 	tool(
 		server,
-		'create_issue',
-		'Create a new issue. Use parent_issue_id for sub-issues — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-issues themselves can have sub-issues, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_issue_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'create_task',
+		'Create a new task. Use parent_task_id for sub-tasks — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			team_id: z.string().describe('Team ID'),
 			project_id: z.string().describe('Project ID'),
-			title: z.string().describe('Issue title'),
-			description: z.string().optional().describe('Issue description'),
+			title: z.string().describe('Task title'),
+			description: z.string().optional().describe('Task description'),
 			priority: z.string().optional().describe('Priority: low, medium, high, urgent'),
 			assignee_id: z.string().optional().describe('Assignee member ID'),
 			assignee_slug: z
 				.string()
 				.optional()
 				.describe('Assignee agent slug (alternative to assignee_id)'),
-			parent_issue_id: z
+			parent_task_id: z
 				.string()
 				.optional()
 				.describe(
-					'Parent issue ID (creates a sub-issue). Sub-issues can themselves have sub-issues, but no deeper — depth is capped at 2.',
+					'Parent task ID (creates a sub-task). Sub-tasks can themselves have sub-tasks, but no deeper — depth is capped at 2.',
 				),
 			runtime_type: z
 				.string()
 				.optional()
 				.describe(
-					'Pin this issue to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default.',
+					'Pin this task to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default.',
 				),
-			blocked_by_issue_ids: z
+			blocked_by_task_ids: z
 				.array(z.string())
 				.optional()
 				.describe(
-					'Issue identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this ticket is started. The assignee will not be woken on this ticket until every blocker is satisfied.',
+					'Task identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this ticket is started. The assignee will not be woken on this ticket until every blocker is satisfied.',
 				),
 		},
 		async (args, db, auth) => {
@@ -502,11 +507,11 @@ export function registerTools(
 			if (denied) return { error: denied };
 
 			const teamId = args.team_id as string;
-			const caller = await buildMcpCreateIssueCaller(db, auth, teamId);
+			const caller = await buildMcpCreateTaskCaller(db, auth, teamId);
 			try {
-				return await createIssue(db, teamId, mcpArgsToCreateIssueInput(args), caller, wsManager);
+				return await createTask(db, teamId, mcpArgsToCreateTaskInput(args), caller, wsManager);
 			} catch (e) {
-				if (e instanceof CreateIssueError) return { error: e.message };
+				if (e instanceof CreateTaskError) return { error: e.message };
 				throw e;
 			}
 		},
@@ -515,45 +520,45 @@ export function registerTools(
 
 	tool(
 		server,
-		'create_issues',
-		`Create multiple issues in one call (max ${MAX_BATCH_CREATE_ISSUES}). Each item has the same shape as create_issue; per-item errors are returned without aborting the rest. Use this when filing a related set of tickets in one go (planning a feature, splitting a project into sub-issues). For a single issue, use create_issue.`,
+		'create_tasks',
+		`Create multiple tasks in one call (max ${MAX_BATCH_CREATE_TASKS}). Each item has the same shape as create_task; per-item errors are returned without aborting the rest. Use this when filing a related set of tickets in one go (planning a feature, splitting a project into sub-tasks). For a single task, use create_task.`,
 		{
 			team_id: z.string().describe('Team ID'),
 			items: z
 				.array(
 					z.object({
 						project_id: z.string().describe('Project ID'),
-						title: z.string().describe('Issue title'),
-						description: z.string().optional().describe('Issue description'),
+						title: z.string().describe('Task title'),
+						description: z.string().optional().describe('Task description'),
 						priority: z.string().optional().describe('Priority: low, medium, high, urgent'),
 						assignee_id: z.string().optional().describe('Assignee member ID'),
 						assignee_slug: z
 							.string()
 							.optional()
 							.describe('Assignee agent slug (alternative to assignee_id)'),
-						parent_issue_id: z
+						parent_task_id: z
 							.string()
 							.optional()
 							.describe(
-								'Parent issue ID (creates a sub-issue). Sub-issues can themselves have sub-issues, but no deeper — depth is capped at 2.',
+								'Parent task ID (creates a sub-task). Sub-tasks can themselves have sub-tasks, but no deeper — depth is capped at 2.',
 							),
 						runtime_type: z
 							.string()
 							.optional()
 							.describe(
-								'Pin this issue to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default.',
+								'Pin this task to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default.',
 							),
-						blocked_by_issue_ids: z
+						blocked_by_task_ids: z
 							.array(z.string())
 							.optional()
 							.describe(
-								'Issue identifiers (e.g. ["BE-2"]) or UUIDs that must reach a terminal status before this ticket is started.',
+								'Task identifiers (e.g. ["BE-2"]) or UUIDs that must reach a terminal status before this ticket is started.',
 							),
 					}),
 				)
 				.min(1)
-				.max(MAX_BATCH_CREATE_ISSUES)
-				.describe(`Up to ${MAX_BATCH_CREATE_ISSUES} items.`),
+				.max(MAX_BATCH_CREATE_TASKS)
+				.describe(`Up to ${MAX_BATCH_CREATE_TASKS} items.`),
 		},
 		async (args, db, auth) => {
 			const teamId = args.team_id as string;
@@ -561,24 +566,24 @@ export function registerTools(
 			if (denied) return { error: denied };
 
 			const items = args.items as Array<Record<string, unknown>>;
-			const caller = await buildMcpCreateIssueCaller(db, auth, teamId);
+			const caller = await buildMcpCreateTaskCaller(db, auth, teamId);
 
 			const results = await Promise.all(
 				items.map(async (item, index) => {
 					try {
-						const issue = await createIssue(
+						const task = await createTask(
 							db,
 							teamId,
-							mcpArgsToCreateIssueInput(item),
+							mcpArgsToCreateTaskInput(item),
 							caller,
 							wsManager,
 						);
-						return { index, ok: true as const, issue };
+						return { index, ok: true as const, task };
 					} catch (e) {
-						if (e instanceof CreateIssueError) {
+						if (e instanceof CreateTaskError) {
 							return { index, ok: false as const, error: e.message, code: e.code };
 						}
-						log.error('Unexpected error in create_issues batch:', e);
+						log.error('Unexpected error in create_tasks batch:', e);
 						return {
 							index,
 							ok: false as const,
@@ -595,18 +600,18 @@ export function registerTools(
 
 	tool(
 		server,
-		'update_issue',
-		'Update an issue. Agents can use this to change status (including closing), update progress, set rules, and record branch names. Re-opening a closed issue is board-only — once an issue is `closed` only the board can change its status again. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'update_task',
+		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that wakes Coach for review, who will set the ticket to `closed` after the review passes. Agents other than Coach cannot set status to `closed` directly. Re-opening a closed task is board-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			team_id: z.string().describe('Team ID'),
-			issue_id: z.string().describe('Issue ID'),
+			task_id: z.string().describe('Task ID'),
 			title: z.string().optional().describe('New title'),
 			description: z.string().optional().describe('New description'),
 			status: z
 				.string()
 				.optional()
 				.describe(
-					'New status (backlog, in_progress, review, blocked, done, closed, cancelled). Once an issue is `closed`, only board members can change its status again.',
+					'New status (backlog, in_progress, review, blocked, done, cancelled). To finish a ticket, set `done` — Coach will review and set it to `closed`. Setting `closed` directly is reserved for Coach. Once a task is `closed`, only board members can change its status again.',
 				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z.string().optional().describe('New assignee ID'),
@@ -617,45 +622,62 @@ export function registerTools(
 				.describe(
 					'How-to-work-on guardrails for this ticket — approach constraints that shape execution (e.g. "run tests before committing", "consult the architect before auth changes"). Not a channel for passing project domain knowledge to other agents; put that in description instead.',
 				),
-			branch_name: z.string().optional().describe('Git branch name for this issue'),
+			branch_name: z.string().optional().describe('Git branch name for this task'),
 			runtime_type: z
 				.string()
 				.optional()
 				.describe(
-					'Override the AI runtime for this issue (claude_code, codex, gemini). Pass an empty string to clear.',
+					'Override the AI runtime for this task (claude_code, codex, gemini). Pass an empty string to clear.',
 				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			const currentStatusResult = await db.query<{ status: string }>(
-				'SELECT status FROM issues WHERE id = $1 AND team_id = $2',
-				[args.issue_id, args.team_id],
-			);
-			const currentStatus = currentStatusResult.rows[0]?.status;
+			const currentRowResult = await db.query<{
+				status: string;
+				assignee_id: string | null;
+				project_id: string;
+			}>('SELECT status, assignee_id, project_id FROM tasks WHERE id = $1 AND team_id = $2', [
+				args.task_id,
+				args.team_id,
+			]);
+			const currentRow = currentRowResult.rows[0];
+			const currentStatus = currentRow?.status;
+			const previousAssigneeId = currentRow?.assignee_id ?? null;
 
 			if (
 				args.status !== undefined &&
 				auth.type === AuthType.Agent &&
-				currentStatus === IssueStatus.Closed
+				currentStatus === TaskStatus.Closed
 			) {
-				return { error: 'Only board members can re-open a closed issue' };
+				return { error: 'Only board members can re-open a closed task' };
 			}
 
-			if (args.status === IssueStatus.Done || args.status === IssueStatus.Closed) {
+			if (
+				args.status === TaskStatus.Closed &&
+				auth.type === AuthType.Agent &&
+				!(await isCoach(db, auth))
+			) {
+				return {
+					error:
+						'Only Coach can set status to "closed". Set status to "done" and Coach will close the task after review.',
+				};
+			}
+
+			if (args.status === TaskStatus.Done || args.status === TaskStatus.Closed) {
 				const childrenCheck = await assertChildrenAllClosed(
 					db,
 					args.team_id as string,
-					args.issue_id as string,
+					args.task_id as string,
 				);
 				if (!childrenCheck.ok) return { error: childrenCheck.message };
 			}
-			if (args.status === IssueStatus.Done) {
+			if (args.status === TaskStatus.Done) {
 				const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 				const activityCheck = await assertNoOutstandingActivity(
 					db,
-					args.issue_id as string,
+					args.task_id as string,
 					callerMemberId,
 				);
 				if (!activityCheck.ok) return { error: activityCheck.message };
@@ -664,41 +686,31 @@ export function registerTools(
 			if (args.status !== undefined) {
 				args.status = await coerceTargetStatusForBlockers(
 					db,
-					args.issue_id as string,
+					args.task_id as string,
 					args.status as string,
 				);
 			}
 
-			if (args.assignee_id) {
-				const issueRow = await db.query<{
-					project_id: string;
-					assignee_id: string | null;
-				}>('SELECT project_id, assignee_id FROM issues WHERE id = $1 AND team_id = $2', [
-					args.issue_id,
-					args.team_id,
-				]);
-				const row = issueRow.rows[0];
-				if (row) {
-					if (args.assignee_id !== row.assignee_id) {
-						const activeRunCheck = await assertNoActiveRun(db, args.issue_id as string);
-						if (!activeRunCheck.ok) return { error: activeRunCheck.message };
-					}
-					const opsCheck = await assertOperationsAssignee(
+			if (args.assignee_id && currentRow) {
+				if (args.assignee_id !== previousAssigneeId) {
+					const activeRunCheck = await assertNoActiveRun(db, args.task_id as string);
+					if (!activeRunCheck.ok) return { error: activeRunCheck.message };
+				}
+				const opsCheck = await assertOperationsAssignee(
+					db,
+					args.team_id as string,
+					currentRow.project_id,
+					args.assignee_id as string,
+				);
+				if (!opsCheck.ok) return { error: opsCheck.message };
+
+				if (auth.type === AuthType.Agent && args.assignee_id !== previousAssigneeId) {
+					const hierarchyCheck = await assertSubordinateAssignee(
 						db,
-						args.team_id as string,
-						row.project_id,
+						auth.memberId,
 						args.assignee_id as string,
 					);
-					if (!opsCheck.ok) return { error: opsCheck.message };
-
-					if (auth.type === AuthType.Agent && args.assignee_id !== row.assignee_id) {
-						const hierarchyCheck = await assertSubordinateAssignee(
-							db,
-							auth.memberId,
-							args.assignee_id as string,
-						);
-						if (!hierarchyCheck.ok) return { error: hierarchyCheck.message };
-					}
+					if (!hierarchyCheck.ok) return { error: hierarchyCheck.message };
 				}
 			}
 
@@ -706,11 +718,11 @@ export function registerTools(
 			const params: unknown[] = [];
 			let idx = 1;
 			for (const [key, val] of Object.entries(args)) {
-				if (['team_id', 'issue_id'].includes(key) || val === undefined) continue;
+				if (['team_id', 'task_id'].includes(key) || val === undefined) continue;
 				if (key === 'status') {
-					sets.push(`status = $${idx}::issue_status`);
+					sets.push(`status = $${idx}::task_status`);
 				} else if (key === 'priority') {
-					sets.push(`priority = $${idx}::issue_priority`);
+					sets.push(`priority = $${idx}::task_priority`);
 				} else if (key === 'runtime_type') {
 					sets.push(`runtime_type = $${idx}::agent_runtime`);
 					params.push(val === '' ? null : val);
@@ -733,9 +745,9 @@ export function registerTools(
 				idx++;
 			}
 			if (sets.length === 0) return { unchanged: true };
-			params.push(args.issue_id, args.team_id);
+			params.push(args.task_id, args.team_id);
 			const r = await db.query(
-				`UPDATE issues SET ${sets.join(', ')} WHERE id = $${idx} AND team_id = $${idx + 1} RETURNING ${ISSUE_COLUMNS_BARE}`,
+				`UPDATE tasks SET ${sets.join(', ')} WHERE id = $${idx} AND team_id = $${idx + 1} RETURNING ${TASK_COLUMNS_BARE}`,
 				params,
 			);
 			if (!r.rows[0]) return null;
@@ -743,44 +755,50 @@ export function registerTools(
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 
 			if (args.description !== undefined) {
-				recordIssueLinks(
-					db,
-					args.team_id as string,
-					args.issue_id as string,
-					args.description as string,
-					actorMemberId,
-					wsManager,
-				).catch((e) => log.error('Failed to record issue links from description:', e));
+				trackBackground(
+					recordTaskLinks(
+						db,
+						args.team_id as string,
+						args.task_id as string,
+						args.description as string,
+						actorMemberId,
+						wsManager,
+					).catch((e) => log.error('Failed to record task links from description:', e)),
+				);
 			}
 
-			// Trigger status automations (e.g. Coach wakeup on Done) and record the change
 			if (args.status && currentStatus) {
-				triggerStatusAutomations(
-					db,
-					args.team_id as string,
-					args.issue_id as string,
-					currentStatus,
-					args.status as string,
-					actorMemberId,
-					wsManager,
-				).catch((e) => log.error('Failed to trigger status automations:', e));
+				try {
+					await triggerStatusAutomations(
+						db,
+						args.team_id as string,
+						args.task_id as string,
+						currentStatus,
+						args.status as string,
+						actorMemberId,
+						wsManager,
+					);
+				} catch (e) {
+					log.error('Failed to trigger status automations:', e);
+				}
 			}
 
-			// Wake agent if assignee changed
-			if (args.assignee_id) {
+			if (args.assignee_id && args.assignee_id !== previousAssigneeId) {
 				const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
 					args.assignee_id,
 				]);
 				if (isAgent.rows.length > 0) {
-					createWakeup(
-						db,
-						args.assignee_id as string,
-						args.team_id as string,
-						WakeupSource.Assignment,
-						{
-							issue_id: args.issue_id,
-						},
-					).catch((e) => log.error('Failed to wake agent:', e));
+					trackBackground(
+						createWakeup(
+							db,
+							args.assignee_id as string,
+							args.team_id as string,
+							WakeupSource.Assignment,
+							{
+								task_id: args.task_id,
+							},
+						).catch((e) => log.error('Failed to wake agent:', e)),
+					);
 				}
 			}
 
@@ -791,34 +809,34 @@ export function registerTools(
 
 	tool(
 		server,
-		'add_issue_blocker',
-		'Declare that one issue blocks another. The downstream ticket will not start an automatic agent run until the blocker reaches a terminal status (done, closed, cancelled). Use this when you discover that a ticket you have been woken on depends on work that has not landed yet — declare the blocker and end your turn; the system will wake you again when the blocker resolves. Cycles are rejected.',
+		'add_task_blocker',
+		'Declare that one task blocks another. The downstream ticket will not start an automatic agent run until the blocker reaches a terminal status (done, closed, cancelled). Use this when you discover that a ticket you have been woken on depends on work that has not landed yet — declare the blocker and end your turn; the system will wake you again when the blocker resolves. Cycles are rejected.',
 		{
 			team_id: z.string().describe('Team ID'),
-			issue_id: z.string().describe('Issue identifier or UUID that should be blocked'),
-			blocked_by_issue_id: z.string().describe('Issue identifier or UUID of the upstream blocker'),
+			task_id: z.string().describe('Task identifier or UUID that should be blocked'),
+			blocked_by_task_id: z.string().describe('Task identifier or UUID of the upstream blocker'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const teamId = args.team_id as string;
-			const issueId = await resolveIssueId(db, teamId, args.issue_id as string);
-			if (!issueId) return { error: 'Issue not found' };
-			const blockerId = await resolveIssueId(db, teamId, args.blocked_by_issue_id as string);
-			if (!blockerId) return { error: 'Blocking issue not found in this team' };
-			if (blockerId === issueId) return { error: 'An issue cannot block itself' };
-			if (await wouldCreateCycle(db, issueId, blockerId)) {
+			const taskId = await resolveTaskId(db, teamId, args.task_id as string);
+			if (!taskId) return { error: 'Task not found' };
+			const blockerId = await resolveTaskId(db, teamId, args.blocked_by_task_id as string);
+			if (!blockerId) return { error: 'Blocking task not found in this team' };
+			if (blockerId === taskId) return { error: 'An task cannot block itself' };
+			if (await wouldCreateCycle(db, taskId, blockerId)) {
 				return { error: 'Dependency would create a cycle' };
 			}
 			const r = await db.query(
-				`INSERT INTO issue_dependencies (issue_id, blocked_by_issue_id)
+				`INSERT INTO task_dependencies (task_id, blocked_by_task_id)
 				 VALUES ($1, $2) ON CONFLICT DO NOTHING
-				 RETURNING id, issue_id, blocked_by_issue_id, created_at`,
-				[issueId, blockerId],
+				 RETURNING id, task_id, blocked_by_task_id, created_at`,
+				[taskId, blockerId],
 			);
 			if (r.rows.length === 0) return { error: 'Dependency already exists' };
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			await reconcileBlockedStatus(db, teamId, issueId, actorMemberId, wsManager);
+			await reconcileBlockedStatus(db, teamId, taskId, actorMemberId, wsManager);
 			return r.rows[0];
 		},
 		db,
@@ -826,29 +844,29 @@ export function registerTools(
 
 	tool(
 		server,
-		'remove_issue_blocker',
-		"Remove a blocker between two issues. Call this when a dependency that was previously declared no longer applies. If removing this dependency clears the downstream ticket's last open blocker, its assignee is woken automatically.",
+		'remove_task_blocker',
+		"Remove a blocker between two tasks. Call this when a dependency that was previously declared no longer applies. If removing this dependency clears the downstream ticket's last open blocker, its assignee is woken automatically.",
 		{
 			team_id: z.string().describe('Team ID'),
-			issue_id: z.string().describe('Issue identifier or UUID that is currently blocked'),
-			blocked_by_issue_id: z.string().describe('Issue identifier or UUID of the blocker to remove'),
+			task_id: z.string().describe('Task identifier or UUID that is currently blocked'),
+			blocked_by_task_id: z.string().describe('Task identifier or UUID of the blocker to remove'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const teamId = args.team_id as string;
-			const issueId = await resolveIssueId(db, teamId, args.issue_id as string);
-			if (!issueId) return { error: 'Issue not found' };
-			const blockerId = await resolveIssueId(db, teamId, args.blocked_by_issue_id as string);
-			if (!blockerId) return { error: 'Blocking issue not found' };
+			const taskId = await resolveTaskId(db, teamId, args.task_id as string);
+			if (!taskId) return { error: 'Task not found' };
+			const blockerId = await resolveTaskId(db, teamId, args.blocked_by_task_id as string);
+			if (!blockerId) return { error: 'Blocking task not found' };
 			const r = await db.query(
-				'DELETE FROM issue_dependencies WHERE issue_id = $1 AND blocked_by_issue_id = $2 RETURNING id',
-				[issueId, blockerId],
+				'DELETE FROM task_dependencies WHERE task_id = $1 AND blocked_by_task_id = $2 RETURNING id',
+				[taskId, blockerId],
 			);
 			if (r.rows.length === 0) return { error: 'Dependency not found' };
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			await reconcileBlockedStatus(db, teamId, issueId, actorMemberId, wsManager);
-			await wakeIfReady(db, issueId);
+			await reconcileBlockedStatus(db, teamId, taskId, actorMemberId, wsManager);
+			await wakeIfReady(db, taskId);
 			return { removed: true };
 		},
 		db,
@@ -879,7 +897,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_hire_proposal',
-		'Revise the draft of a pending hire approval. CEO-only. Use this to expand or rewrite the system prompt, adjust role description, budget, heartbeat, or touches_code before board review. All fields are optional — pass only what you want to change.',
+		'Revise the draft of a pending hire approval. Captain-only. Use this to expand or rewrite the system prompt, adjust role description, budget, heartbeat, or touches_code before board review. All fields are optional — pass only what you want to change.',
 		{
 			approval_id: z.string().describe('Hire approval ID'),
 			title: z.string().optional().describe('Updated role title'),
@@ -901,8 +919,8 @@ export function registerTools(
 				'SELECT slug FROM member_agents WHERE id = $1',
 				[auth.memberId],
 			);
-			if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
-				return { error: 'Only the CEO can revise hire proposals' };
+			if (caller.rows[0]?.slug !== CAPTAIN_AGENT_SLUG) {
+				return { error: 'Only the Captain can revise hire proposals' };
 			}
 
 			const approval = await db.query<{
@@ -952,6 +970,142 @@ export function registerTools(
 		db,
 	);
 
+	tool(
+		server,
+		'list_team_templates',
+		'List team templates (built-in Startup for software development, Blank, and custom). Use when recommending a team structure to hire.',
+		{
+			team_id: z.string().describe('Team ID'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
+			if (denied) return { error: denied };
+			const r = await db.query<{
+				id: string;
+				name: string;
+				description: string;
+				is_builtin: boolean;
+				agent_types: Array<{ slug: string; name: string; role_description: string }>;
+			}>(
+				`SELECT ct.id, ct.name, ct.description, ct.is_builtin,
+				    COALESCE(
+				        json_agg(json_build_object(
+				            'slug', at.slug,
+				            'name', at.name,
+				            'role_description', at.role_description
+				        ) ORDER BY ctat.sort_order) FILTER (WHERE at.id IS NOT NULL),
+				        '[]'
+				    ) AS agent_types
+				 FROM team_templates ct
+				 LEFT JOIN team_template_agent_types ctat ON ctat.team_template_id = ct.id
+				 LEFT JOIN agent_types at ON at.id = ctat.agent_type_id
+				 GROUP BY ct.id
+				 ORDER BY ct.is_builtin DESC, ct.name ASC`,
+			);
+			return r.rows;
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'request_team_template_approval',
+		'Request board approval to provision agents from a team template onto this team AND (optionally) create the user project in one approval. Captain-only. Call after the board agrees to your recommendation. When `project_name` is set, the server creates the project automatically on approval and closes the onboarding intake ticket.',
+		{
+			team_id: z.string().describe('Team ID'),
+			template_id: z.string().describe('Team template UUID from list_team_templates'),
+			task_id: z
+				.string()
+				.optional()
+				.describe(
+					'Onboarding-intake Operations task id. The server closes this ticket once provisioning + project creation finish.',
+				),
+			rationale: z.string().describe('Why this template fits the work the board described'),
+			project_name: z
+				.string()
+				.optional()
+				.describe(
+					'When set, the user project to create on approval. Pair with project_description.',
+				),
+			project_description: z
+				.string()
+				.optional()
+				.describe('Description for the user project being created on approval'),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent) {
+				return { error: 'request_team_template_approval is only callable by agents' };
+			}
+			const caller = await db.query<{ slug: string }>(
+				'SELECT slug FROM member_agents WHERE id = $1',
+				[auth.memberId],
+			);
+			if (caller.rows[0]?.slug !== CAPTAIN_AGENT_SLUG) {
+				return { error: 'Only the Captain can request team template approval' };
+			}
+			const teamId = auth.teamId;
+			if (args.team_id !== teamId) {
+				return { error: 'Access denied: team mismatch' };
+			}
+
+			const template = await db.query<{ id: string; name: string; description: string }>(
+				'SELECT id, name, description FROM team_templates WHERE id = $1',
+				[args.template_id],
+			);
+			if (template.rows.length === 0) {
+				return { error: 'Team template not found' };
+			}
+
+			const pending = await db.query(
+				`SELECT id FROM approvals
+				 WHERE team_id = $1 AND type = $2::approval_type AND status = $3::approval_status`,
+				[teamId, ApprovalType.TeamTemplate, ApprovalStatus.Pending],
+			);
+			if (pending.rows.length > 0) {
+				return { error: 'A pending team template approval already exists for this team' };
+			}
+
+			const roles = await db.query<{ slug: string; name: string }>(
+				`SELECT at.slug, at.name
+				 FROM team_template_agent_types ctat
+				 JOIN agent_types at ON at.id = ctat.agent_type_id
+				 WHERE ctat.team_template_id = $1
+				 ORDER BY ctat.sort_order`,
+				[args.template_id],
+			);
+
+			const payload = {
+				template_id: args.template_id,
+				template_name: template.rows[0].name,
+				template_description: template.rows[0].description,
+				rationale: args.rationale,
+				roles: roles.rows,
+				task_id: args.task_id ?? null,
+				project_name: (args.project_name as string | undefined)?.trim() || null,
+				project_description: (args.project_description as string | undefined)?.trim() || null,
+			};
+
+			const inserted = await db.query<Record<string, unknown>>(
+				`INSERT INTO approvals (team_id, type, requested_by_member_id, payload, status)
+				 VALUES ($1, $2::approval_type, $3, $4::jsonb, $5::approval_status)
+				 RETURNING ${APPROVAL_COLUMNS}`,
+				[
+					teamId,
+					ApprovalType.TeamTemplate,
+					auth.memberId,
+					JSON.stringify(payload),
+					ApprovalStatus.Pending,
+				],
+			);
+			const row = inserted.rows[0];
+			if (row) {
+				broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
+			}
+			return row ?? null;
+		},
+		db,
+	);
+
 	// Projects
 	tool(
 		server,
@@ -970,7 +1124,7 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const r = await db.query<Record<string, unknown>>(
-				`SELECT id, team_id, name, slug, issue_prefix, description, created_at, updated_at
+				`SELECT id, team_id, name, slug, task_prefix, description, created_at, updated_at
 				 FROM projects WHERE team_id = $1 ORDER BY name`,
 				[args.team_id],
 			);
@@ -989,34 +1143,68 @@ export function registerTools(
 			team_id: z.string().describe('Team ID'),
 			name: z.string().describe('Project name'),
 			description: z.string().optional().describe('Project description'),
-			issue_prefix: z
+			task_prefix: z
 				.string()
 				.optional()
 				.describe('2–4 uppercase alphanumeric chars; derived from name if omitted'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
+			const teamId = args.team_id as string;
+			const denied = await verifyTeamAccess(db, auth, teamId);
 			if (denied) return { error: denied };
+
+			const captainResult = await db.query<{ id: string }>(
+				`SELECT ma.id FROM member_agents ma
+				 JOIN members m ON m.id = ma.id
+				 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
+				 LIMIT 1`,
+				[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
+			);
+			const captainMemberId = captainResult.rows[0]?.id;
+			if (!captainMemberId) {
+				return { error: 'No enabled Captain found for this team' };
+			}
+
 			const slug = (args.name as string)
 				.toLowerCase()
 				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/^-|-$/g, '');
-			const prefixResult = await resolveProjectIssuePrefix(
+			const prefixResult = await resolveProjectTaskPrefix(
 				db,
-				args.team_id as string,
-				args.issue_prefix as string | undefined,
+				teamId,
+				args.task_prefix as string | undefined,
 				args.name as string,
 			);
 			if (!prefixResult.ok) return { error: prefixResult.message };
-			const r = await db.query<{ id: string }>(
-				`INSERT INTO projects (team_id, name, slug, issue_prefix, description) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-				[args.team_id, args.name, slug, prefixResult.prefix, args.description ?? ''],
-			);
-			await db.query(
-				'INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)',
-				[r.rows[0].id],
-			);
-			return r.rows[0];
+
+			const { project, planningTask, deferCaptainPlanningWake } =
+				await createProjectWithPlanningTask(db, {
+					teamId,
+					captainMemberId,
+					name: args.name as string,
+					slug,
+					taskPrefix: prefixResult.prefix,
+					description: (args.description as string | undefined) ?? '',
+					createPlanningTask: true,
+				});
+
+			broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
+			if (!planningTask) {
+				throw new Error('Expected planning task for MCP project creation');
+			}
+			broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
+
+			if (!deferCaptainPlanningWake) {
+				await createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
+					task_id: planningTask.id,
+				});
+			}
+
+			return {
+				...project,
+				planning_task_id: planningTask.id,
+				planning_task_identifier: planningTask.identifier,
+			};
 		},
 		db,
 	);
@@ -1025,10 +1213,10 @@ export function registerTools(
 	tool(
 		server,
 		'list_comments',
-		"List comments for an issue. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/issue_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading — when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment.",
+		"List comments for an task. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading — when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment.",
 		{
 			team_id: z.string().describe('Team ID'),
-			issue_id: z.string().describe('Issue ID'),
+			task_id: z.string().describe('Task ID'),
 			before: z
 				.string()
 				.optional()
@@ -1045,24 +1233,24 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND team_id = $2', [
-				args.issue_id,
+			const taskCheck = await db.query('SELECT id FROM tasks WHERE id = $1 AND team_id = $2', [
+				args.task_id,
 				args.team_id,
 			]);
-			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this team' };
-			const conditions = ['ic.issue_id = $1'];
-			const params: unknown[] = [args.issue_id];
+			if (taskCheck.rows.length === 0) return { error: 'Task not found in this team' };
+			const conditions = ['ic.task_id = $1'];
+			const params: unknown[] = [args.task_id];
 			if (args.before) {
 				params.push(args.before);
 				conditions.push(
-					`(ic.created_at, ic.id) < (SELECT created_at, id FROM issue_comments WHERE id = $${params.length})`,
+					`(ic.created_at, ic.id) < (SELECT created_at, id FROM task_comments WHERE id = $${params.length})`,
 				);
 			}
 			const r = await db.query<Record<string, unknown>>(
-				`SELECT ic.id, ic.issue_id, ic.author_member_id, ic.parent_comment_id,
+				`SELECT ic.id, ic.task_id, ic.author_member_id, ic.parent_comment_id,
 				        ic.content_type, ic.content, ic.chosen_option, ic.created_at,
 				        COALESCE(ma.title, m.display_name, 'Board') AS author_name
-				 FROM issue_comments ic
+				 FROM task_comments ic
 				 LEFT JOIN members m ON m.id = ic.author_member_id
 				 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
 				 WHERE ${conditions.join(' AND ')}
@@ -1070,9 +1258,9 @@ export function registerTools(
 				params,
 			);
 			const viewerMemberId = await resolveActorMemberId(db, auth, args.team_id as string);
-			const reactionsByComment = await loadReactionsForIssue(
+			const reactionsByComment = await loadReactionsForTask(
 				db,
-				args.issue_id as string,
+				args.task_id as string,
 				viewerMemberId,
 			);
 			const commentIds = r.rows.map((row) => row.id as string);
@@ -1109,7 +1297,7 @@ export function registerTools(
 		'React to a comment without waking its author. Use this to acknowledge mentions or signal "seen / picked up" without forcing the original commenter to run again. Prefer this over a follow-up create_comment when you have nothing substantive to add — comments wake the author, reactions do not. Only react when the situation calls for it: a clean handoff to your own new ticket (✓ on the mention), or a brief acknowledgement that a request landed. If you need the original commenter to read something, post a comment instead.',
 		{
 			team_id: z.string().describe('Team ID'),
-			issue_id: z.string().describe('Issue ID the comment belongs to'),
+			task_id: z.string().describe('Task ID the comment belongs to'),
 			comment_id: z.string().describe('Comment ID to react to'),
 			kind: reactionKindSchema.describe(
 				`Reaction kind. v1 supports: ${Object.values(ReactionKind).join(', ')}`,
@@ -1124,7 +1312,7 @@ export function registerTools(
 			const result = await addCommentReaction({
 				db,
 				teamId,
-				issueId: args.issue_id as string,
+				taskId: args.task_id as string,
 				commentId: args.comment_id as string,
 				kind: args.kind as string,
 				memberId,
@@ -1132,7 +1320,7 @@ export function registerTools(
 			if (!result.ok) return { error: result.message };
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'comment_reactions', 'INSERT', {
 				comment_id: args.comment_id,
-				issue_id: args.issue_id,
+				task_id: args.task_id,
 				member_id: memberId,
 				kind: args.kind,
 			});
@@ -1151,7 +1339,7 @@ export function registerTools(
 		'Remove your own reaction from a comment. Removing a reaction does not wake the comment author.',
 		{
 			team_id: z.string().describe('Team ID'),
-			issue_id: z.string().describe('Issue ID the comment belongs to'),
+			task_id: z.string().describe('Task ID the comment belongs to'),
 			comment_id: z.string().describe('Comment ID to remove the reaction from'),
 			kind: reactionKindSchema.describe(
 				`Reaction kind. v1 supports: ${Object.values(ReactionKind).join(', ')}`,
@@ -1166,7 +1354,7 @@ export function registerTools(
 			const result = await removeCommentReaction({
 				db,
 				teamId,
-				issueId: args.issue_id as string,
+				taskId: args.task_id as string,
 				commentId: args.comment_id as string,
 				kind: args.kind as string,
 				memberId,
@@ -1174,7 +1362,7 @@ export function registerTools(
 			if (!result.ok) return { error: result.message };
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'comment_reactions', 'DELETE', {
 				comment_id: args.comment_id,
-				issue_id: args.issue_id,
+				task_id: args.task_id,
 				member_id: memberId,
 				kind: args.kind,
 			});
@@ -1190,10 +1378,10 @@ export function registerTools(
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to an issue. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert. When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
+		'Add a comment to an task. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert. When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
 		{
 			team_id: z.string().describe('Team ID'),
-			issue_id: z.string().describe('Issue ID'),
+			task_id: z.string().describe('Task ID'),
 			content: z.string().describe('Comment text'),
 			parent_comment_id: z
 				.string()
@@ -1205,29 +1393,29 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			// Verify issue belongs to team
-			const issueCheck = await db.query('SELECT id FROM issues WHERE id = $1 AND team_id = $2', [
-				args.issue_id,
+			// Verify task belongs to team
+			const taskCheck = await db.query('SELECT id FROM tasks WHERE id = $1 AND team_id = $2', [
+				args.task_id,
 				args.team_id,
 			]);
-			if (issueCheck.rows.length === 0) return { error: 'Issue not found in this team' };
+			if (taskCheck.rows.length === 0) return { error: 'Task not found in this team' };
 			let parentCommentId: string | null = null;
 			if (args.parent_comment_id) {
 				const parentCheck = await db.query(
-					'SELECT 1 FROM issue_comments WHERE id = $1 AND issue_id = $2',
-					[args.parent_comment_id, args.issue_id],
+					'SELECT 1 FROM task_comments WHERE id = $1 AND task_id = $2',
+					[args.parent_comment_id, args.task_id],
 				);
 				if (parentCheck.rows.length === 0) {
-					return { error: 'parent_comment_id does not belong to this issue' };
+					return { error: 'parent_comment_id does not belong to this task' };
 				}
 				parentCommentId = args.parent_comment_id as string;
 			}
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const content = { text: args.content };
 			const r = await db.query<{ id: string }>(
-				`INSERT INTO issue_comments (issue_id, author_member_id, parent_comment_id, content_type, content) VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
+				`INSERT INTO task_comments (task_id, author_member_id, parent_comment_id, content_type, content) VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
 				[
-					args.issue_id,
+					args.task_id,
 					authorMemberId,
 					parentCommentId,
 					CommentContentType.Text,
@@ -1236,7 +1424,7 @@ export function registerTools(
 			);
 			await fireCommentWakeups({
 				db,
-				issueId: args.issue_id as string,
+				taskId: args.task_id as string,
 				teamId: args.team_id as string,
 				commentId: r.rows[0].id,
 				content,
@@ -1245,14 +1433,16 @@ export function registerTools(
 				authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
 				parentCommentId,
 			});
-			recordIssueLinks(
-				db,
-				args.team_id as string,
-				args.issue_id as string,
-				args.content as string,
-				authorMemberId,
-				wsManager,
-			).catch((e) => log.error('Failed to record issue links from comment:', e));
+			trackBackground(
+				recordTaskLinks(
+					db,
+					args.team_id as string,
+					args.task_id as string,
+					args.content as string,
+					authorMemberId,
+					wsManager,
+				).catch((e) => log.error('Failed to record task links from comment:', e)),
+			);
 			return r.rows[0];
 		},
 		db,
@@ -1275,10 +1465,10 @@ export function registerTools(
 	tool(
 		server,
 		'request_credential',
-		'Ask the human assignee to provide a secret value (API key, SSH private key, OAuth token, etc.). Posts a structured comment on the issue with a paste form. The agent never sees the value; it gets a placeholder string to embed in env vars or HTTP headers, which the egress proxy later substitutes. Returns immediately with the placeholder; the agent should stop work on whatever needed the credential and wait for a credential_provided wakeup.',
+		'Ask the human assignee to provide a secret value (API key, SSH private key, OAuth token, etc.). Posts a structured comment on the task with a paste form. The agent never sees the value; it gets a placeholder string to embed in env vars or HTTP headers, which the egress proxy later substitutes. Returns immediately with the placeholder; the agent should stop work on whatever needed the credential and wait for a credential_provided wakeup.',
 		{
 			team_id: z.string().describe('Team ID'),
-			issue_id: z.string().describe('Issue ID — the request comment is posted here'),
+			task_id: z.string().describe('Task ID — the request comment is posted here'),
 			name: z
 				.string()
 				.describe(
@@ -1320,28 +1510,28 @@ export function registerTools(
 			const validation = validateSecretName(name);
 			if (!validation.valid) return { error: validation.error };
 
-			const issueId = args.issue_id as string;
+			const taskId = args.task_id as string;
 			const teamId = args.team_id as string;
 			const scope = (args.scope as string | undefined) ?? 'team';
 
-			const issueRow = await db.query<{ id: string; project_id: string | null }>(
-				'SELECT id, project_id FROM issues WHERE id = $1 AND team_id = $2',
-				[issueId, teamId],
+			const taskRow = await db.query<{ id: string; project_id: string | null }>(
+				'SELECT id, project_id FROM tasks WHERE id = $1 AND team_id = $2',
+				[taskId, teamId],
 			);
-			if (issueRow.rows.length === 0) return { error: 'Issue not found in this team' };
-			const projectId = scope === 'project' ? issueRow.rows[0].project_id : null;
+			if (taskRow.rows.length === 0) return { error: 'Task not found in this team' };
+			const projectId = scope === 'project' ? taskRow.rows[0].project_id : null;
 
 			const placeholder = credentialPlaceholder(name);
 
 			const existing = await db.query<{ id: string; content: Record<string, unknown> }>(
-				`SELECT id, content FROM issue_comments
-				 WHERE issue_id = $1
+				`SELECT id, content FROM task_comments
+				 WHERE task_id = $1
 				   AND content_type = 'credential_request'::comment_content_type
 				   AND chosen_option IS NULL
 				   AND content->>'name' = $2
 				   AND COALESCE(content->>'scope', 'team') = $3
 				 ORDER BY created_at ASC LIMIT 1`,
-				[issueId, name, scope],
+				[taskId, name, scope],
 			);
 			if (existing.rows.length > 0) {
 				return {
@@ -1368,10 +1558,10 @@ export function registerTools(
 			};
 
 			const inserted = await db.query<{ id: string }>(
-				`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 				 VALUES ($1, $2, 'credential_request'::comment_content_type, $3::jsonb)
 				 RETURNING id`,
-				[issueId, authorMemberId, JSON.stringify(content)],
+				[taskId, authorMemberId, JSON.stringify(content)],
 			);
 
 			return {
@@ -1428,7 +1618,6 @@ export function registerTools(
 			resolution_note: z.string().optional().describe('Note'),
 		},
 		async (args, db, auth) => {
-			// Look up the approval's team and verify access
 			const existing = await db.query<{ team_id: string }>(
 				'SELECT team_id FROM approvals WHERE id = $1',
 				[args.approval_id],
@@ -1436,11 +1625,29 @@ export function registerTools(
 			if (existing.rows.length === 0) return { error: 'Approval not found' };
 			const denied = await verifyTeamAccess(db, auth, existing.rows[0].team_id);
 			if (denied) return { error: denied };
-			const r = await db.query(
-				`UPDATE approvals SET status = $1::approval_status, resolution_note = $2, resolved_at = now() WHERE id = $3 RETURNING ${APPROVAL_COLUMNS}`,
-				[args.status, args.resolution_note ?? null, args.approval_id],
-			);
-			return r.rows[0] ?? null;
+
+			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const resolved = await resolveApproval(db, args.approval_id as string, {
+				status: args.status as typeof ApprovalStatus.Approved | typeof ApprovalStatus.Denied,
+				resolutionNote: typeof args.resolution_note === 'string' ? args.resolution_note : null,
+				dataDir,
+				actorMemberId,
+				wsManager,
+			});
+			if (!resolved.ok) {
+				return { error: resolved.message };
+			}
+
+			const { row, sideEffects } = resolved;
+			const teamId = existing.rows[0].team_id;
+			broadcastApprovalChange(wsManager, teamId, 'UPDATE', row);
+			if (wsManager) {
+				const room = wsRoom.team(teamId);
+				for (const effect of sideEffects) {
+					broadcastRowChange(wsManager, room, effect.table, effect.op, effect.row);
+				}
+			}
+			return row;
 		},
 		db,
 	);
@@ -1568,7 +1775,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_system_prompts',
-		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. CEO auditing how team_context renders for every agent. For a single prompt, use get_agent_system_prompt.`,
+		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. Captain auditing how team_context renders for every agent. For a single prompt, use get_agent_system_prompt.`,
 		{
 			team_id: z.string().describe('Team ID'),
 			items: z
@@ -1668,12 +1875,12 @@ export function registerTools(
 		db,
 	);
 
-	// Description maintenance — used by the CEO (and self) to write back
+	// Description maintenance — used by the Captain (and self) to write back
 	// auto-generated agent and team summaries.
 	tool(
 		server,
 		'set_agent_summary',
-		'Save a short human-readable summary for an agent (≤1000 chars, single paragraph, plain prose). Callable by any agent in the same team or any board user; the CEO is the expected caller, but agents may also self-summarise.',
+		'Save a short human-readable summary for an agent (≤1000 chars, single paragraph, plain prose). Callable by any agent in the same team or any board user; the Captain is the expected caller, but agents may also self-summarise.',
 		{
 			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -1705,12 +1912,14 @@ export function registerTools(
 
 			// Other agents' team_context blobs reference this agent's summary,
 			// so they need to be regenerated to pick up the new wording.
-			enqueueTeamContextTaskForAllAgents(
-				db,
-				args.team_id as string,
-				'summary_updated',
-				args.agent_id as string,
-			).catch((e) => log.error('Failed to enqueue team_context fan-out:', e));
+			trackBackground(
+				enqueueTeamContextTaskForAllAgents(
+					db,
+					args.team_id as string,
+					'summary_updated',
+					args.agent_id as string,
+				).catch((e) => log.error('Failed to enqueue team_context fan-out:', e)),
+			);
 
 			return { updated: true };
 		},
@@ -1720,7 +1929,7 @@ export function registerTools(
 	tool(
 		server,
 		'set_team_summary',
-		'Save the team-level collaboration summary for a team (≤4000 chars, plain prose, may span paragraphs). Only callable by the CEO of that team.',
+		'Save the team-level collaboration summary for a team (≤4000 chars, plain prose, may span paragraphs). Only callable by the Captain of that team.',
 		{
 			team_id: z.string().describe('Team ID'),
 			summary: z.string().describe('The new team summary, ≤4000 chars'),
@@ -1729,8 +1938,8 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			if (!(await isCeoOfTeam(db, auth, args.team_id as string))) {
-				return { error: 'Access denied: only the CEO can update the team summary' };
+			if (!(await isCaptainOfTeam(db, auth, args.team_id as string))) {
+				return { error: 'Access denied: only the Captain can update the team summary' };
 			}
 
 			const summary = String(args.summary ?? '').trim();
@@ -1752,7 +1961,7 @@ export function registerTools(
 	tool(
 		server,
 		'set_agent_team_context',
-		"Save the team-relationships context for an agent (≤6000 chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the CEO of the same team.",
+		"Save the team-relationships context for an agent (≤6000 chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the Captain of the same team.",
 		{
 			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -1762,8 +1971,8 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			if (!(await isCeoOfTeam(db, auth, args.team_id as string))) {
-				return { error: 'Access denied: only the CEO can update agent team contexts' };
+			if (!(await isCaptainOfTeam(db, auth, args.team_id as string))) {
+				return { error: 'Access denied: only the Captain can update agent team contexts' };
 			}
 
 			const content = String(args.content ?? '').trim();
@@ -1790,7 +1999,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_team_context',
-		"Read an agent's stored team-relationships context. Useful for the CEO when regenerating siblings' contexts. Accessible by any agent or board user in the same team.",
+		"Read an agent's stored team-relationships context. Useful for the Captain when regenerating siblings' contexts. Accessible by any agent or board user in the same team.",
 		{
 			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -1942,12 +2151,13 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const result = await db.query<{ id: string; status: string }>(
+			const teamId = args.team_id as string;
+			const result = await db.query<Record<string, unknown>>(
 				`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
 				 VALUES ($1, $2::approval_type, $3, $4::jsonb)
-				 RETURNING id, status`,
+				 RETURNING ${APPROVAL_COLUMNS}`,
 				[
-					args.team_id,
+					teamId,
 					ApprovalType.SkillProposal,
 					callerMemberId,
 					JSON.stringify({
@@ -1958,7 +2168,11 @@ export function registerTools(
 					}),
 				],
 			);
-			return { approval_id: result.rows[0].id, status: result.rows[0].status };
+			const row = result.rows[0];
+			if (row) {
+				broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
+			}
+			return { approval_id: row?.id, status: row?.status };
 		},
 		db,
 	);
@@ -1967,12 +2181,12 @@ export function registerTools(
 	tool(
 		server,
 		'semantic_search',
-		'Search across knowledge base docs, issues, and skills using natural language. Returns ranked results by relevance.',
+		'Search across knowledge base docs, tasks, and skills using natural language. Returns ranked results by relevance.',
 		{
 			team_id: z.string().describe('Team ID'),
 			query: z.string().describe('Natural language search query'),
 			scope: z
-				.enum(['all', 'kb_docs', 'issues', 'skills', 'project_docs'])
+				.enum(['all', 'kb_docs', 'tasks', 'skills', 'project_docs'])
 				.optional()
 				.describe('Limit search to specific content type (default: all)'),
 			limit: z.number().optional().describe('Max results (default: 10)'),
@@ -1990,7 +2204,7 @@ export function registerTools(
 			}
 
 			const results = await semanticSearch(db, args.team_id as string, args.query as string, {
-				scope: (args.scope as 'all' | 'kb_docs' | 'issues' | 'skills' | 'project_docs') ?? 'all',
+				scope: (args.scope as 'all' | 'kb_docs' | 'tasks' | 'skills' | 'project_docs') ?? 'all',
 				limit: (args.limit as number) ?? 10,
 			});
 
@@ -2242,15 +2456,7 @@ export function registerTools(
 	return [...registeredTools];
 }
 
-async function isCoach(db: PGlite, auth: AuthInfo): Promise<boolean> {
-	if (auth.type !== AuthType.Agent) return false;
-	const r = await db.query<{ slug: string }>('SELECT slug FROM member_agents WHERE id = $1', [
-		auth.memberId,
-	]);
-	return r.rows[0]?.slug === COACH_AGENT_SLUG;
-}
-
-async function isCeoOfTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<boolean> {
+async function isCaptainOfTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<boolean> {
 	if (auth.type !== AuthType.Agent) return false;
 	const r = await db.query<{ slug: string }>(
 		`SELECT ma.slug FROM member_agents ma
@@ -2258,5 +2464,5 @@ async function isCeoOfTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<
 		 WHERE ma.id = $1 AND m.team_id = $2`,
 		[auth.memberId, teamId],
 	);
-	return r.rows[0]?.slug === CEO_AGENT_SLUG;
+	return r.rows[0]?.slug === CAPTAIN_AGENT_SLUG;
 }

@@ -15,7 +15,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
-let ceoMemberId: string;
+let captainMemberId: string;
 let engineerMemberId: string;
 
 beforeAll(async () => {
@@ -36,13 +36,13 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const ceo = await db.query<{ id: string }>(
+	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+		 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
 		[teamId],
 	);
-	ceoMemberId = ceo.rows[0].id;
+	captainMemberId = captain.rows[0].id;
 
 	const eng = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
@@ -58,17 +58,17 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-	// Wipe any description-update issues from previous tests so dedup checks
-	// have a clean slate. We only delete issues with the description-update label.
-	await db.query(`DELETE FROM issues WHERE labels @> '["description-update"]'::jsonb`);
+	// Wipe any description-update tasks from previous tests so dedup checks
+	// have a clean slate. We only delete tasks with the description-update label.
+	await db.query(`DELETE FROM tasks WHERE labels @> '["description-update"]'::jsonb`);
 });
 
 describe('enqueueAgentSummaryTask', () => {
-	it('creates an issue in the Operations project assigned to the CEO with the correct label and priority', async () => {
-		const issueId = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'created');
-		expect(issueId).toBeTruthy();
+	it('creates an task in the Operations project assigned to the Captain with the correct label and priority', async () => {
+		const taskId = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'created');
+		expect(taskId).toBeTruthy();
 
-		const issue = await db.query<{
+		const task = await db.query<{
 			project_id: string;
 			assignee_id: string;
 			title: string;
@@ -78,11 +78,11 @@ describe('enqueueAgentSummaryTask', () => {
 			status: string;
 		}>(
 			`SELECT i.project_id, i.assignee_id, i.title, i.description, i.labels, i.priority, i.status
-			 FROM issues i WHERE i.id = $1`,
-			[issueId],
+			 FROM tasks i WHERE i.id = $1`,
+			[taskId],
 		);
-		const row = issue.rows[0];
-		expect(row.assignee_id).toBe(ceoMemberId);
+		const row = task.rows[0];
+		expect(row.assignee_id).toBe(captainMemberId);
 
 		const opsProject = await db.query<{ id: string }>(
 			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
@@ -100,24 +100,24 @@ describe('enqueueAgentSummaryTask', () => {
 		expect(row.description).toContain('set_team_summary');
 	});
 
-	it('creates a wakeup for the CEO when enqueueing', async () => {
-		const issueId = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'created');
+	it('creates a wakeup for the Captain when enqueueing', async () => {
+		const taskId = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'created');
 		const wakeups = await db.query<{ source: string; payload: Record<string, unknown> }>(
 			`SELECT source, payload FROM agent_wakeup_requests
-			 WHERE member_id = $1 AND payload->>'issue_id' = $2`,
-			[ceoMemberId, issueId],
+			 WHERE member_id = $1 AND payload->>'task_id' = $2`,
+			[captainMemberId, taskId],
 		);
 		expect(wakeups.rows.length).toBe(1);
 		expect(wakeups.rows[0].source).toBe('assignment');
 	});
 
-	it('dedupes: a second call while the first issue is open returns the same issue id and creates no new issue', async () => {
+	it('dedupes: a second call while the first task is open returns the same task id and creates no new task', async () => {
 		const first = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'created');
 		const second = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'prompt_updated');
 		expect(second).toBe(first);
 
 		const count = await db.query<{ n: number }>(
-			`SELECT count(*)::int AS n FROM issues
+			`SELECT count(*)::int AS n FROM tasks
 			 WHERE labels @> '["description-update"]'::jsonb
 			   AND description LIKE $1`,
 			[`%target=agent:${engineerMemberId}%`],
@@ -125,27 +125,27 @@ describe('enqueueAgentSummaryTask', () => {
 		expect(count.rows[0].n).toBe(1);
 	});
 
-	it('after the first issue is closed, a new call creates a new issue', async () => {
+	it('after the first task is closed, a new call creates a new task', async () => {
 		const first = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'created');
-		await db.query(`UPDATE issues SET status = 'done'::issue_status WHERE id = $1`, [first]);
+		await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [first]);
 
 		const second = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'prompt_updated');
 		expect(second).not.toBe(first);
 		expect(second).toBeTruthy();
 	});
 
-	it('returns null and does not create an issue when there is no enabled CEO', async () => {
-		// Create a fresh team with no template — only built-in CEO + Coach
-		// then disable the CEO.
+	it('returns null and does not create an task when there is no enabled Captain', async () => {
+		// Create a fresh team with no template — only built-in Captain + Coach
+		// then disable the Captain.
 		const blankRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No CEO Co' }),
+			body: JSON.stringify({ name: 'No Captain Co' }),
 		});
 		const blankTeamId = (await blankRes.json()).data.id;
 		const ceoRes = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
 			[blankTeamId],
 		);
 		const blankCeoId = ceoRes.rows[0].id;
@@ -157,16 +157,16 @@ describe('enqueueAgentSummaryTask', () => {
 		const result = await enqueueAgentSummaryTask(db, blankTeamId, blankCeoId, 'created');
 		expect(result).toBeNull();
 
-		const issues = await db.query<{ n: number }>(
-			`SELECT count(*)::int AS n FROM issues
+		const tasks = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM tasks
 			 WHERE team_id = $1
 			   AND description LIKE $2`,
 			[blankTeamId, `%target=agent:${blankCeoId}%`],
 		);
-		expect(issues.rows[0].n).toBe(0);
+		expect(tasks.rows[0].n).toBe(0);
 	});
 
-	it('returns null and does not create an issue when there is no Operations project', async () => {
+	it('returns null and does not create an task when there is no Operations project', async () => {
 		// Manually nuke the Operations project of a fresh team.
 		const blankRes = await app.request('/api/teams', {
 			method: 'POST',
@@ -179,7 +179,7 @@ describe('enqueueAgentSummaryTask', () => {
 		]);
 		const ceoRes = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'ceo'`,
+			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
 			[blankTeamId],
 		);
 		const blankCeoId = ceoRes.rows[0].id;
@@ -190,31 +190,31 @@ describe('enqueueAgentSummaryTask', () => {
 });
 
 describe('enqueueTeamSummaryTask', () => {
-	it('creates a team-targeted issue in the Operations project assigned to the CEO', async () => {
-		const issueId = await enqueueTeamSummaryTask(db, teamId, 'agent_added');
-		expect(issueId).toBeTruthy();
+	it('creates a team-targeted task in the Operations project assigned to the Captain', async () => {
+		const taskId = await enqueueTeamSummaryTask(db, teamId, 'agent_added');
+		expect(taskId).toBeTruthy();
 
-		const issue = await db.query<{
+		const task = await db.query<{
 			assignee_id: string;
 			title: string;
 			description: string;
 			labels: string[];
-		}>('SELECT assignee_id, title, description, labels FROM issues WHERE id = $1', [issueId]);
-		const row = issue.rows[0];
-		expect(row.assignee_id).toBe(ceoMemberId);
+		}>('SELECT assignee_id, title, description, labels FROM tasks WHERE id = $1', [taskId]);
+		const row = task.rows[0];
+		expect(row.assignee_id).toBe(captainMemberId);
 		expect(row.title).toContain('team');
 		expect(row.description).toContain('target=team');
 		expect(row.description).toContain('set_team_summary');
 		expect(row.labels).toEqual(expect.arrayContaining(['internal', 'description-update']));
 	});
 
-	it('dedupes: only one open team-summary issue exists at a time', async () => {
+	it('dedupes: only one open team-summary task exists at a time', async () => {
 		const first = await enqueueTeamSummaryTask(db, teamId, 'agent_added');
 		const second = await enqueueTeamSummaryTask(db, teamId, 'prompt_updated');
 		expect(second).toBe(first);
 
 		const count = await db.query<{ n: number }>(
-			`SELECT count(*)::int AS n FROM issues
+			`SELECT count(*)::int AS n FROM tasks
 			 WHERE team_id = $1
 			   AND labels @> '["description-update"]'::jsonb
 			   AND description LIKE '%target=team%'
@@ -226,21 +226,19 @@ describe('enqueueTeamSummaryTask', () => {
 });
 
 describe('enqueueAgentTeamContextTask', () => {
-	it('creates an agent-scoped team_context issue in Operations assigned to the CEO', async () => {
-		const issueId = await enqueueAgentTeamContextTask(db, teamId, engineerMemberId, 'agent_added');
-		expect(issueId).toBeTruthy();
+	it('creates an agent-scoped team_context task in Operations assigned to the Captain', async () => {
+		const taskId = await enqueueAgentTeamContextTask(db, teamId, engineerMemberId, 'agent_added');
+		expect(taskId).toBeTruthy();
 
-		const issue = await db.query<{
+		const task = await db.query<{
 			assignee_id: string;
 			title: string;
 			description: string;
 			labels: string[];
 			status: string;
-		}>('SELECT assignee_id, title, description, labels, status FROM issues WHERE id = $1', [
-			issueId,
-		]);
-		const row = issue.rows[0];
-		expect(row.assignee_id).toBe(ceoMemberId);
+		}>('SELECT assignee_id, title, description, labels, status FROM tasks WHERE id = $1', [taskId]);
+		const row = task.rows[0];
+		expect(row.assignee_id).toBe(captainMemberId);
 		expect(row.title).toContain('team relationships');
 		expect(row.description).toContain(`target=team_context:${engineerMemberId}`);
 		expect(row.description).toContain('set_agent_team_context');
@@ -248,7 +246,7 @@ describe('enqueueAgentTeamContextTask', () => {
 		expect(row.status).toBe('backlog');
 	});
 
-	it('dedupes by agent: only one open team_context issue per agent at a time', async () => {
+	it('dedupes by agent: only one open team_context task per agent at a time', async () => {
 		const first = await enqueueAgentTeamContextTask(db, teamId, engineerMemberId, 'agent_added');
 		const second = await enqueueAgentTeamContextTask(
 			db,
@@ -259,7 +257,7 @@ describe('enqueueAgentTeamContextTask', () => {
 		expect(second).toBe(first);
 
 		const count = await db.query<{ n: number }>(
-			`SELECT count(*)::int AS n FROM issues
+			`SELECT count(*)::int AS n FROM tasks
 			 WHERE labels @> '["description-update"]'::jsonb
 			   AND description LIKE $1`,
 			[`%target=team_context:${engineerMemberId}%`],
@@ -268,20 +266,20 @@ describe('enqueueAgentTeamContextTask', () => {
 	});
 
 	it('does not dedupe against the agent-summary task for the same agent', async () => {
-		const summaryIssue = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'created');
-		const contextIssue = await enqueueAgentTeamContextTask(
+		const summaryTask = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'created');
+		const contextTask = await enqueueAgentTeamContextTask(
 			db,
 			teamId,
 			engineerMemberId,
 			'agent_added',
 		);
-		expect(contextIssue).toBeTruthy();
-		expect(contextIssue).not.toBe(summaryIssue);
+		expect(contextTask).toBeTruthy();
+		expect(contextTask).not.toBe(summaryTask);
 	});
 });
 
 describe('enqueueTeamContextTaskForAllAgents', () => {
-	it('enqueues one issue per enabled agent in the team', async () => {
+	it('enqueues one task per enabled agent in the team', async () => {
 		const agents = await db.query<{ n: number }>(
 			`SELECT count(*)::int AS n FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
@@ -293,7 +291,7 @@ describe('enqueueTeamContextTaskForAllAgents', () => {
 		await enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added');
 
 		const count = await db.query<{ n: number }>(
-			`SELECT count(*)::int AS n FROM issues
+			`SELECT count(*)::int AS n FROM tasks
 			 WHERE team_id = $1
 			   AND labels @> '["description-update"]'::jsonb
 			   AND description LIKE '%target=team_context:%'`,
@@ -306,7 +304,7 @@ describe('enqueueTeamContextTaskForAllAgents', () => {
 		await enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', engineerMemberId);
 
 		const engineerTasks = await db.query<{ n: number }>(
-			`SELECT count(*)::int AS n FROM issues
+			`SELECT count(*)::int AS n FROM tasks
 			 WHERE labels @> '["description-update"]'::jsonb
 			   AND description LIKE $1`,
 			[`%target=team_context:${engineerMemberId}%`],
@@ -314,10 +312,10 @@ describe('enqueueTeamContextTaskForAllAgents', () => {
 		expect(engineerTasks.rows[0].n).toBe(0);
 
 		const ceoTasks = await db.query<{ n: number }>(
-			`SELECT count(*)::int AS n FROM issues
+			`SELECT count(*)::int AS n FROM tasks
 			 WHERE labels @> '["description-update"]'::jsonb
 			   AND description LIKE $1`,
-			[`%target=team_context:${ceoMemberId}%`],
+			[`%target=team_context:${captainMemberId}%`],
 		);
 		expect(ceoTasks.rows[0].n).toBe(1);
 	});

@@ -1,6 +1,7 @@
 import { createRouter, RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { Toaster } from './components/ui/toast';
 import { ThemeProvider } from './lib/theme';
 import { routeTree } from './routeTree.gen';
 import './index.css';
@@ -17,6 +18,7 @@ createRoot(document.getElementById('root') as HTMLElement).render(
 	<StrictMode>
 		<ThemeProvider>
 			<RouterProvider router={router} />
+			<Toaster />
 		</ThemeProvider>
 	</StrictMode>,
 );

@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CommentContentType, IssueStatus, WakeupSource } from '@hezo/shared';
+import { CommentContentType, TaskStatus, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
@@ -7,7 +7,7 @@ import {
 	buildTaskPrompt,
 	loadMentionContext,
 	loadReplyContext,
-	loadSpawnedFromIssue,
+	loadSpawnedFromTask,
 } from '../../services/agent-runner';
 import { getAgentSystemPrompt } from '../../services/documents';
 import { safeClose } from '../helpers';
@@ -19,13 +19,13 @@ let token: string;
 
 let teamId: string;
 let projectId: string;
-let ceoMemberId: string;
+let captainMemberId: string;
 let architectMemberId: string;
 
-const TRIGGERING_ISSUE: Parameters<typeof buildTaskPrompt>[1] = {
+const TRIGGERING_TASK: Parameters<typeof buildTaskPrompt>[1] = {
 	id: 'filled-below',
 	identifier: 'filled-below',
-	title: 'CEO PRD ticket',
+	title: 'Captain PRD ticket',
 	description: 'Project definition and roadmap.',
 	status: 'in_progress',
 	priority: 'high',
@@ -58,7 +58,7 @@ beforeAll(async () => {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
-	ceoMemberId = agents.find((a) => a.slug === 'ceo')!.id;
+	captainMemberId = agents.find((a) => a.slug === 'captain')!.id;
 	architectMemberId = agents.find((a) => a.slug === 'architect')!.id;
 
 	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
@@ -73,41 +73,41 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-async function createTriggeringIssueWithComment(commentText: string): Promise<{
-	triggeringIssueId: string;
+async function createTriggeringTaskWithComment(commentText: string): Promise<{
+	triggeringTaskId: string;
 	triggeringIdentifier: string;
 	commentId: string;
 }> {
-	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
+	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectId,
-			title: "CEO's PRD ticket",
-			assignee_id: ceoMemberId,
+			title: "Captain's PRD ticket",
+			assignee_id: captainMemberId,
 		}),
 	});
-	const issue = (await issueRes.json()).data as { id: string; identifier: string };
+	const task = (await taskRes.json()).data as { id: string; identifier: string };
 
 	const commentInsert = await db.query<{ id: string }>(
-		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
 		 RETURNING id`,
-		[issue.id, ceoMemberId, CommentContentType.Text, JSON.stringify({ text: commentText })],
+		[task.id, captainMemberId, CommentContentType.Text, JSON.stringify({ text: commentText })],
 	);
 
 	return {
-		triggeringIssueId: issue.id,
-		triggeringIdentifier: issue.identifier,
+		triggeringTaskId: task.id,
+		triggeringIdentifier: task.identifier,
 		commentId: commentInsert.rows[0].id,
 	};
 }
 
 async function createArchitectTicket(
 	title: string,
-	status: IssueStatus = IssueStatus.Backlog,
+	status: TaskStatus = TaskStatus.Backlog,
 ): Promise<{ id: string; identifier: string }> {
-	const res = await app.request(`/api/teams/${teamId}/issues`, {
+	const res = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -118,8 +118,8 @@ async function createArchitectTicket(
 	});
 	const data = (await res.json()).data as { id: string; identifier: string };
 
-	if (status !== IssueStatus.Backlog) {
-		await app.request(`/api/teams/${teamId}/issues/${data.id}`, {
+	if (status !== TaskStatus.Backlog) {
+		await app.request(`/api/teams/${teamId}/tasks/${data.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status }),
@@ -130,15 +130,15 @@ async function createArchitectTicket(
 
 describe('mention handoff prompt (integration)', () => {
 	it('renders the handoff block with triggering ticket + author + open tickets', async () => {
-		const { triggeringIssueId, triggeringIdentifier, commentId } =
-			await createTriggeringIssueWithComment('@architect please bring the spec up to date');
+		const { triggeringTaskId, triggeringIdentifier, commentId } =
+			await createTriggeringTaskWithComment('@architect please bring the spec up to date');
 
-		const specTicket = await createArchitectTicket('Spec draft', IssueStatus.InProgress);
+		const specTicket = await createArchitectTicket('Spec draft', TaskStatus.InProgress);
 		const prdTicket = await createArchitectTicket('Review PRD');
 
 		const wakeupPayload = {
 			source: WakeupSource.Mention,
-			issue_id: triggeringIssueId,
+			task_id: triggeringTaskId,
 			comment_id: commentId,
 		};
 
@@ -153,8 +153,8 @@ describe('mention handoff prompt (integration)', () => {
 		const prompt = buildTaskPrompt(
 			'System prompt',
 			{
-				...TRIGGERING_ISSUE,
-				id: triggeringIssueId,
+				...TRIGGERING_TASK,
+				id: triggeringTaskId,
 				identifier: triggeringIdentifier,
 				project_id: projectId,
 			},
@@ -168,7 +168,7 @@ describe('mention handoff prompt (integration)', () => {
 		expect(prompt).toContain(prdTicket.identifier);
 		expect(prompt).toContain('> @architect please bring the spec up to date');
 		expect(prompt).toContain('## Handling @-mentions');
-		expect(prompt).toContain('parent_issue_id');
+		expect(prompt).toContain('parent_task_id');
 	});
 
 	it('renders "none" when the mentioned agent has no open tickets', async () => {
@@ -190,7 +190,7 @@ describe('mention handoff prompt (integration)', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
-		const ceo = agents.find((a) => a.slug === 'ceo')!;
+		const captain = agents.find((a) => a.slug === 'captain')!;
 		const architect = agents.find((a) => a.slug === 'architect')!;
 		const projRes = await app.request(`/api/teams/${soloTeamId}/projects`, {
 			method: 'POST',
@@ -198,24 +198,24 @@ describe('mention handoff prompt (integration)', () => {
 			body: JSON.stringify({ name: 'No tickets', description: 'x' }),
 		});
 		const soloProjectId = (await projRes.json()).data.id;
-		const issueRes = await app.request(`/api/teams/${soloTeamId}/issues`, {
+		const taskRes = await app.request(`/api/teams/${soloTeamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: soloProjectId,
-				title: 'CEO ticket only',
-				assignee_id: ceo.id,
+				title: 'Captain ticket only',
+				assignee_id: captain.id,
 			}),
 		});
-		const triggering = (await issueRes.json()).data as { id: string; identifier: string };
+		const triggering = (await taskRes.json()).data as { id: string; identifier: string };
 
 		const commentInsert = await db.query<{ id: string }>(
-			`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
 			 RETURNING id`,
 			[
 				triggering.id,
-				ceo.id,
+				captain.id,
 				CommentContentType.Text,
 				JSON.stringify({ text: '@architect weigh in' }),
 			],
@@ -223,7 +223,7 @@ describe('mention handoff prompt (integration)', () => {
 
 		const payload = {
 			source: WakeupSource.Mention,
-			issue_id: triggering.id,
+			task_id: triggering.id,
 			comment_id: commentInsert.rows[0].id,
 		};
 		const ctx = await loadMentionContext(db, architect.id, soloTeamId, payload);
@@ -234,7 +234,7 @@ describe('mention handoff prompt (integration)', () => {
 			{
 				id: triggering.id,
 				identifier: triggering.identifier,
-				title: 'CEO ticket only',
+				title: 'Captain ticket only',
 				description: 'x',
 				status: 'backlog',
 				priority: 'medium',
@@ -247,12 +247,12 @@ describe('mention handoff prompt (integration)', () => {
 		expect(prompt).toContain('### Your open tickets\nnone');
 	});
 
-	it('keeps the sub-issue / peer / top-level guidance in the architect system prompt via the shared partial', async () => {
-		const { triggeringIssueId, triggeringIdentifier, commentId } =
-			await createTriggeringIssueWithComment('@architect review please');
+	it('keeps the sub-task / peer / top-level guidance in the architect system prompt via the shared partial', async () => {
+		const { triggeringTaskId, triggeringIdentifier, commentId } =
+			await createTriggeringTaskWithComment('@architect review please');
 		const wakeupPayload = {
 			source: WakeupSource.Mention,
-			issue_id: triggeringIssueId,
+			task_id: triggeringTaskId,
 			comment_id: commentId,
 		};
 		const ctx = await loadMentionContext(db, architectMemberId, teamId, wakeupPayload);
@@ -262,8 +262,8 @@ describe('mention handoff prompt (integration)', () => {
 		const prompt = buildTaskPrompt(
 			architectSystemPrompt,
 			{
-				...TRIGGERING_ISSUE,
-				id: triggeringIssueId,
+				...TRIGGERING_TASK,
+				id: triggeringTaskId,
 				identifier: triggeringIdentifier,
 				project_id: projectId,
 			},
@@ -272,7 +272,7 @@ describe('mention handoff prompt (integration)', () => {
 		);
 		expect(prompt).not.toContain('"Tracking this on {your_ticket_identifier}."');
 		expect(prompt).toContain('## Handling @-mentions');
-		expect(prompt).toContain('sub-issue');
+		expect(prompt).toContain('sub-task');
 		expect(prompt).toContain('peer');
 		expect(prompt).toContain('top-level');
 		expect(prompt).toContain('check-before-create');
@@ -280,11 +280,11 @@ describe('mention handoff prompt (integration)', () => {
 
 	it('truncates long comment excerpts and strips fenced code', async () => {
 		const longBody = `Here is a proposal:\n\`\`\`\n${'payload'.repeat(100)}\n\`\`\`\nand ${'x'.repeat(700)} tail`;
-		const { triggeringIssueId, commentId } = await createTriggeringIssueWithComment(longBody);
+		const { triggeringTaskId, commentId } = await createTriggeringTaskWithComment(longBody);
 
 		const ctx = await loadMentionContext(db, architectMemberId, teamId, {
 			source: WakeupSource.Mention,
-			issue_id: triggeringIssueId,
+			task_id: triggeringTaskId,
 			comment_id: commentId,
 		});
 		expect(ctx).not.toBeNull();
@@ -298,16 +298,16 @@ describe('mention handoff prompt (integration)', () => {
 
 describe('reply handoff prompt (integration)', () => {
 	async function seedReplyScenario(): Promise<{
-		triggeringIssueId: string;
+		triggeringTaskId: string;
 		triggeringIdentifier: string;
 		triggeringCommentId: string;
 		replyCommentId: string;
 		newTicket: { id: string; identifier: string; title: string };
 	}> {
-		const { triggeringIssueId, triggeringIdentifier, commentId } =
-			await createTriggeringIssueWithComment('@architect please take point on this');
+		const { triggeringTaskId, triggeringIdentifier, commentId } =
+			await createTriggeringTaskWithComment('@architect please take point on this');
 
-		const newTicketRes = await app.request(`/api/teams/${teamId}/issues`, {
+		const newTicketRes = await app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -323,11 +323,11 @@ describe('reply handoff prompt (integration)', () => {
 		};
 
 		const replyInsert = await db.query<{ id: string }>(
-			`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
 			 RETURNING id`,
 			[
-				triggeringIssueId,
+				triggeringTaskId,
 				architectMemberId,
 				CommentContentType.Text,
 				JSON.stringify({ text: `Got it — carrying this forward on ${newTicket.identifier}.` }),
@@ -335,7 +335,7 @@ describe('reply handoff prompt (integration)', () => {
 		);
 
 		return {
-			triggeringIssueId,
+			triggeringTaskId,
 			triggeringIdentifier,
 			triggeringCommentId: commentId,
 			replyCommentId: replyInsert.rows[0].id,
@@ -347,24 +347,24 @@ describe('reply handoff prompt (integration)', () => {
 		const { triggeringCommentId, replyCommentId, newTicket } = await seedReplyScenario();
 		const ctx = await loadReplyContext(db, {
 			source: WakeupSource.Reply,
-			issue_id: 'ignored-by-loader',
+			task_id: 'ignored-by-loader',
 			comment_id: replyCommentId,
 			triggering_comment_id: triggeringCommentId,
 		});
 		expect(ctx).not.toBeNull();
 		expect(ctx?.replyExcerpt).toContain(newTicket.identifier);
 		expect(ctx?.originalExcerpt).toContain('please take point');
-		expect(ctx?.referencedIssues.map((i) => i.identifier)).toContain(newTicket.identifier);
+		expect(ctx?.referencedTasks.map((i) => i.identifier)).toContain(newTicket.identifier);
 		expect(ctx?.responderName).toBeTruthy();
 		expect(ctx?.responderSlug).toBe('architect');
 	});
 
 	it('renders a Reply Handoff block when the wakeup source is Reply', async () => {
-		const { triggeringIssueId, triggeringIdentifier, triggeringCommentId, replyCommentId } =
+		const { triggeringTaskId, triggeringIdentifier, triggeringCommentId, replyCommentId } =
 			await seedReplyScenario();
 		const payload = {
 			source: WakeupSource.Reply,
-			issue_id: triggeringIssueId,
+			task_id: triggeringTaskId,
 			comment_id: replyCommentId,
 			triggering_comment_id: triggeringCommentId,
 		};
@@ -372,8 +372,8 @@ describe('reply handoff prompt (integration)', () => {
 		const prompt = buildTaskPrompt(
 			'System',
 			{
-				...TRIGGERING_ISSUE,
-				id: triggeringIssueId,
+				...TRIGGERING_TASK,
+				id: triggeringTaskId,
 				identifier: triggeringIdentifier,
 				project_id: projectId,
 			},
@@ -390,41 +390,41 @@ describe('reply handoff prompt (integration)', () => {
 	it('returns null when the wakeup payload is missing reply ids', async () => {
 		const ctx = await loadReplyContext(db, {
 			source: WakeupSource.Reply,
-			issue_id: 'x',
+			task_id: 'x',
 		});
 		expect(ctx).toBeNull();
 	});
 });
 
 describe('spawned-from prompt line', () => {
-	it('renders "Parent ticket" when parent_issue_id matches the spawning run', async () => {
-		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
+	it('renders "Parent ticket" when parent_task_id matches the spawning run', async () => {
+		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Parent CEO work',
-				assignee_id: ceoMemberId,
+				title: 'Parent Captain work',
+				assignee_id: captainMemberId,
 			}),
 		});
-		const parent = (await issueRes.json()).data as { id: string; identifier: string };
+		const parent = (await taskRes.json()).data as { id: string; identifier: string };
 
 		const run = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
 			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())
 			 RETURNING id`,
-			[ceoMemberId, teamId, parent.id],
+			[captainMemberId, teamId, parent.id],
 		);
 
 		const subRes = await db.query<{ id: string; identifier: string }>(
-			`INSERT INTO issues (team_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
-			 VALUES ($1, $2, $3, $4, $5, next_project_issue_number($2), 'MHP-sub', 'Sub work', '', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
+			`INSERT INTO tasks (team_id, project_id, assignee_id, parent_task_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
+			 VALUES ($1, $2, $3, $4, $5, next_project_task_number($2), 'MHP-sub', 'Sub work', '', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
 			 RETURNING id, identifier`,
 			[teamId, projectId, architectMemberId, parent.id, run.rows[0].id],
 		);
 		const sub = subRes.rows[0];
 
-		const spawn = await loadSpawnedFromIssue(db, {
+		const spawn = await loadSpawnedFromTask(db, {
 			id: sub.id,
 			identifier: sub.identifier,
 			title: 'Sub work',
@@ -433,7 +433,7 @@ describe('spawned-from prompt line', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
-			parent_issue_id: parent.id,
+			parent_task_id: parent.id,
 			created_by_run_id: run.rows[0].id,
 		});
 		expect(spawn?.parentLine).toContain(parent.identifier);
@@ -450,7 +450,7 @@ describe('spawned-from prompt line', () => {
 				priority: 'medium',
 				project_id: projectId,
 				rules: null,
-				parent_issue_id: parent.id,
+				parent_task_id: parent.id,
 				created_by_run_id: run.rows[0].id,
 			},
 			undefined,
@@ -461,33 +461,33 @@ describe('spawned-from prompt line', () => {
 	});
 
 	it('renders "Spawned from" when a sibling/top-level ticket has no structural parent', async () => {
-		const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
+		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Spawning CEO work',
-				assignee_id: ceoMemberId,
+				title: 'Spawning Captain work',
+				assignee_id: captainMemberId,
 			}),
 		});
-		const spawning = (await issueRes.json()).data as { id: string; identifier: string };
+		const spawning = (await taskRes.json()).data as { id: string; identifier: string };
 
 		const run = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
 			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())
 			 RETURNING id`,
-			[ceoMemberId, teamId, spawning.id],
+			[captainMemberId, teamId, spawning.id],
 		);
 
 		const topRes = await db.query<{ id: string; identifier: string }>(
-			`INSERT INTO issues (team_id, project_id, assignee_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
-			 VALUES ($1, $2, $3, $4, next_project_issue_number($2), 'MHP-top', 'Top-level follow-up', '', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
+			`INSERT INTO tasks (team_id, project_id, assignee_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
+			 VALUES ($1, $2, $3, $4, next_project_task_number($2), 'MHP-top', 'Top-level follow-up', '', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
 			 RETURNING id, identifier`,
 			[teamId, projectId, architectMemberId, run.rows[0].id],
 		);
 		const top = topRes.rows[0];
 
-		const spawn = await loadSpawnedFromIssue(db, {
+		const spawn = await loadSpawnedFromTask(db, {
 			id: top.id,
 			identifier: top.identifier,
 			title: 'Top-level follow-up',
@@ -496,7 +496,7 @@ describe('spawned-from prompt line', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
-			parent_issue_id: null,
+			parent_task_id: null,
 			created_by_run_id: run.rows[0].id,
 		});
 		expect(spawn?.parentLine).toBeNull();
@@ -513,7 +513,7 @@ describe('spawned-from prompt line', () => {
 				priority: 'medium',
 				project_id: projectId,
 				rules: null,
-				parent_issue_id: null,
+				parent_task_id: null,
 				created_by_run_id: run.rows[0].id,
 			},
 			undefined,
@@ -524,7 +524,7 @@ describe('spawned-from prompt line', () => {
 	});
 
 	it('returns null for an orphan ticket (no parent, no created_by_run_id)', async () => {
-		const spawn = await loadSpawnedFromIssue(db, {
+		const spawn = await loadSpawnedFromTask(db, {
 			id: '00000000-0000-0000-0000-000000000000',
 			identifier: 'MHP-orphan',
 			title: 'Orphan',
@@ -533,7 +533,7 @@ describe('spawned-from prompt line', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
-			parent_issue_id: null,
+			parent_task_id: null,
 			created_by_run_id: null,
 		});
 		expect(spawn).toBeNull();

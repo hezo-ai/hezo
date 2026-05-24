@@ -12,7 +12,7 @@ let boardToken: string;
 let agentToken: string;
 let teamId: string;
 let projectId: string;
-let issueId: string;
+let taskId: string;
 let agentId: string;
 let masterKeyManager: MasterKeyManager;
 
@@ -48,19 +48,19 @@ beforeAll(async () => {
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
+	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectId,
-			title: 'Agent Test Issue',
+			title: 'Agent Test Task',
 			assignee_id: agentId,
 		}),
 	});
-	issueId = (await issueRes.json()).data.id;
+	taskId = (await taskRes.json()).data.id;
 
 	masterKeyManager = ctx.masterKeyManager;
-	({ token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId, issueId));
+	({ token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId));
 });
 
 afterAll(async () => {
@@ -68,7 +68,7 @@ afterAll(async () => {
 });
 
 describe('agent API - heartbeat', () => {
-	it('returns agent info and assigned issues', async () => {
+	it('returns agent info and assigned tasks', async () => {
 		const res = await app.request('/agent-api/heartbeat', {
 			method: 'POST',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
@@ -80,8 +80,8 @@ describe('agent API - heartbeat', () => {
 		expect(body.data.agent.runtime_status).toBe('idle');
 		expect(body.data.agent.admin_status).toBe('enabled');
 		expect(body.data.agent.budget_remaining_cents).toBeGreaterThan(0);
-		expect(body.data.assigned_issues.length).toBe(1);
-		expect(body.data.assigned_issues[0].id).toBe(issueId);
+		expect(body.data.assigned_tasks.length).toBe(1);
+		expect(body.data.assigned_tasks[0].id).toBe(taskId);
 	});
 
 	it('rejects board token', async () => {
@@ -96,12 +96,12 @@ describe('agent API - heartbeat', () => {
 
 describe('agent API - comments', () => {
 	it('posts a text comment', async () => {
-		const res = await app.request(`/agent-api/issues/${issueId}/comments`, {
+		const res = await app.request(`/agent-api/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				content_type: 'text',
-				content: { text: 'Starting work on this issue.' },
+				content: { text: 'Starting work on this task.' },
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -111,7 +111,7 @@ describe('agent API - comments', () => {
 	});
 
 	it('posts an options comment', async () => {
-		const res = await app.request(`/agent-api/issues/${issueId}/comments`, {
+		const res = await app.request(`/agent-api/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -133,7 +133,7 @@ describe('agent API - tool calls', () => {
 	let commentId: string;
 
 	beforeAll(async () => {
-		const res = await app.request(`/agent-api/issues/${issueId}/comments`, {
+		const res = await app.request(`/agent-api/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -145,7 +145,7 @@ describe('agent API - tool calls', () => {
 	});
 
 	it('reports tool calls', async () => {
-		const res = await app.request(`/agent-api/issues/${issueId}/comments/${commentId}/tool-calls`, {
+		const res = await app.request(`/agent-api/tasks/${taskId}/comments/${commentId}/tool-calls`, {
 			method: 'POST',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -214,7 +214,7 @@ describe('agent API - heartbeat edge cases', () => {
 		expect(after.rows[0].last_heartbeat_at).not.toEqual(before.rows[0].last_heartbeat_at);
 	});
 
-	it('returns empty issues when agent is disabled', async () => {
+	it('returns empty tasks when agent is disabled', async () => {
 		await app.request(`/api/teams/${teamId}/agents/${agentId}/disable`, {
 			method: 'POST',
 			headers: authHeader(boardToken),
@@ -228,7 +228,7 @@ describe('agent API - heartbeat edge cases', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.agent.admin_status).toBe('disabled');
-		expect(body.data.assigned_issues).toEqual([]);
+		expect(body.data.assigned_tasks).toEqual([]);
 
 		await app.request(`/api/teams/${teamId}/agents/${agentId}/enable`, {
 			method: 'POST',
@@ -263,20 +263,20 @@ describe('agent API - budget enforcement', () => {
 		const cheapAgent = (await agentRes.json()).data;
 		const { token: cheapToken } = await mintAgentToken(db, masterKeyManager, cheapAgent.id, teamId);
 
-		await app.request(`/api/teams/${teamId}/issues/${issueId}`, {
+		await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: cheapAgent.id }),
 		});
 
-		const commentRes = await app.request(`/agent-api/issues/${issueId}/comments`, {
+		const commentRes = await app.request(`/agent-api/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(cheapToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content_type: 'trace', content: { text: 'Working...' } }),
 		});
 		const commentId = (await commentRes.json()).data.id;
 
-		const res = await app.request(`/agent-api/issues/${issueId}/comments/${commentId}/tool-calls`, {
+		const res = await app.request(`/agent-api/tasks/${taskId}/comments/${commentId}/tool-calls`, {
 			method: 'POST',
 			headers: { ...authHeader(cheapToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -293,7 +293,7 @@ describe('agent API - budget enforcement', () => {
 		);
 		expect(agentCheck.rows[0].runtime_status).toBe('paused');
 
-		await app.request(`/api/teams/${teamId}/issues/${issueId}`, {
+		await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: agentId }),

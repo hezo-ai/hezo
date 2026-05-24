@@ -50,7 +50,7 @@ beforeAll(async () => {
 	});
 	teamId = (await co.json()).data.id;
 	const proj = await db.query<{ id: string }>(
-		`INSERT INTO projects (team_id, name, slug, issue_prefix, docker_base_image)
+		`INSERT INTO projects (team_id, name, slug, task_prefix, docker_base_image)
 		 VALUES ($1, 'P', 'p', 'P', 'hezo/agent-base:latest') RETURNING id`,
 		[teamId],
 	);

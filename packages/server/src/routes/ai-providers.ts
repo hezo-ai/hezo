@@ -8,6 +8,7 @@ import {
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { requireSuperuser } from '../middleware/auth';
 import {
 	deleteAiProviderConfig,
@@ -19,6 +20,8 @@ import {
 	storeAiProviderKey,
 } from '../services/ai-provider-keys';
 import { validateSubscriptionBlob } from '../services/subscription-auth';
+
+const log = logger.child('routes');
 
 const VALID_PROVIDERS = new Set<string>(ALL_AI_PROVIDERS);
 

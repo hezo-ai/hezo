@@ -5,24 +5,25 @@ import {
 	ApprovalStatus,
 	ApprovalType,
 	AuthType,
-	CEO_AGENT_SLUG,
+	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DocumentType,
-	IssuePriority,
-	IssueStatus,
 	isAgentEffort,
 	MemberType,
 	OPERATIONS_PROJECT_SLUG,
+	TaskPriority,
+	TaskStatus,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
-import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { resolveAgentId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
-import { buildUpdateSet, terminalStatusParams } from '../lib/sql';
+import { buildUpdateSet, isFkViolation, terminalStatusParams } from '../lib/sql';
+import { allocateTaskIdentifier } from '../lib/task-identifier';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireTeamAccess } from '../middleware/auth';
@@ -56,7 +57,7 @@ export const agentsRoutes = new Hono<Env>();
 
 /**
  * Common projection for agent rows. JOIN against `members m` and `member_agents ma`.
- * `assigned_issue_count` requires the caller to bind terminal statuses via `terminalStatusParams`.
+ * `assigned_task_count` requires the caller to bind terminal statuses via `terminalStatusParams`.
  */
 const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary, ma.team_context,
@@ -66,12 +67,12 @@ const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 	ma.budget_reset_at, ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
 	ma.mcp_servers, ma.model_override_provider, ma.model_override_model, ma.updated_at`;
 
-const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr.issue_id,
+const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr.task_id,
 	hr.status, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
 	hr.input_tokens, hr.output_tokens, hr.cost_cents,
 	hr.invocation_command, hr.log_text, hr.working_dir,
 	hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
-	i.identifier AS issue_identifier, i.title AS issue_title,
+	i.identifier AS task_identifier, i.title AS task_title,
 	i.project_id AS project_id, p.slug AS project_slug,
 	aw.source AS trigger_source,
 	aw.payload AS trigger_payload,
@@ -79,8 +80,8 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 	tic.author_member_id AS trigger_actor_member_id,
 	tama.slug AS trigger_actor_slug,
 	tama.title AS trigger_actor_title,
-	tii.id AS trigger_comment_issue_id,
-	tii.identifier AS trigger_comment_issue_identifier,
+	tii.id AS trigger_comment_task_id,
+	tii.identifier AS trigger_comment_task_identifier,
 	tip.slug AS trigger_comment_project_slug,
 	COALESCE(
 		(SELECT jsonb_agg(
@@ -92,16 +93,16 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 			)
 			ORDER BY ci.created_at ASC
 		)
-		FROM issues ci
+		FROM tasks ci
 		JOIN projects cp ON cp.id = ci.project_id
 		WHERE ci.created_by_run_id = hr.id),
 		'[]'::jsonb
-	) AS created_issues`;
+	) AS created_tasks`;
 
 const HEARTBEAT_RUN_TRIGGER_JOINS = `LEFT JOIN agent_wakeup_requests aw ON aw.id = hr.wakeup_id
-	LEFT JOIN issue_comments tic ON tic.id = NULLIF(aw.payload->>'comment_id', '')::uuid
+	LEFT JOIN task_comments tic ON tic.id = NULLIF(aw.payload->>'comment_id', '')::uuid
 	LEFT JOIN member_agents tama ON tama.id = tic.author_member_id
-	LEFT JOIN issues tii ON tii.id = tic.issue_id
+	LEFT JOIN tasks tii ON tii.id = tic.task_id
 	LEFT JOIN projects tip ON tip.id = tii.project_id`;
 
 agentsRoutes.get('/teams/:teamId/agents', async (c) => {
@@ -116,7 +117,7 @@ agentsRoutes.get('/teams/:teamId/agents', async (c) => {
 	let query = `
 		SELECT ${AGENT_BASE_COLUMNS},
 			(SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
-			(SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts.placeholders}))::int AS assigned_issue_count
+			(SELECT count(*) FROM tasks i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts.placeholders}))::int AS assigned_task_count
 		FROM members m
 		JOIN member_agents ma ON ma.id = m.id
 		WHERE m.team_id = $1`;
@@ -228,22 +229,33 @@ agentsRoutes.post('/teams/:teamId/agents', async (c) => {
 			result.rows[0] as Record<string, unknown>,
 		);
 
-		enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
-			log.error('Failed to enqueue agent summary task:', e),
+		trackBackground(
+			enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
+				log.error('Failed to enqueue agent summary task:', e),
+			),
 		);
-		enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-			log.error('Failed to enqueue team summary task:', e),
+		trackBackground(
+			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
+				log.error('Failed to enqueue team summary task:', e),
+			),
 		);
-		enqueueAgentTeamContextTask(db, teamId, memberId, 'initial').catch((e) =>
-			log.error('Failed to enqueue team_context task for new agent:', e),
+		trackBackground(
+			enqueueAgentTeamContextTask(db, teamId, memberId, 'initial').catch((e) =>
+				log.error('Failed to enqueue team_context task for new agent:', e),
+			),
 		);
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
-			log.error('Failed to fan out team_context tasks for existing agents:', e),
+		trackBackground(
+			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
+				log.error('Failed to fan out team_context tasks for existing agents:', e),
+			),
 		);
 
 		return ok(c, result.rows[0], 201);
 	} catch (e) {
 		await db.query('ROLLBACK');
+		if (isFkViolation(e, 'member_agents_reports_to_fkey')) {
+			return err(c, 'INVALID_REQUEST', 'reports_to: agent does not exist', 400);
+		}
 		throw e;
 	}
 });
@@ -294,11 +306,11 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 		return err(c, 'CONFLICT', `A pending hire proposal for slug '${slug}' already exists`, 409);
 	}
 
-	const ceoResult = await db.query<{ id: string }>(
+	const captainResult = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status`,
-		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
 
 	const opsProject = await db.query<{ id: string }>(
@@ -306,7 +318,7 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 		[teamId, OPERATIONS_PROJECT_SLUG],
 	);
 
-	const hasCeo = ceoResult.rows.length > 0;
+	const hasCaptain = captainResult.rows.length > 0;
 	const hasOpsProject = opsProject.rows.length > 0;
 
 	const proposal = {
@@ -320,7 +332,7 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 		touches_code: body.touches_code ?? false,
 	};
 
-	if (!hasCeo || !hasOpsProject) {
+	if (!hasCaptain || !hasOpsProject) {
 		await db.query('BEGIN');
 		try {
 			const memberResult = await db.query<{ id: string }>(
@@ -367,23 +379,31 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 		const agentRow = agentResult.rows[0] as Record<string, unknown>;
 
 		broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'INSERT', agentRow);
-		enqueueAgentSummaryTask(db, teamId, agentRow.id as string, 'created').catch((e) =>
-			log.error('Failed to enqueue agent summary task:', e),
+		trackBackground(
+			enqueueAgentSummaryTask(db, teamId, agentRow.id as string, 'created').catch((e) =>
+				log.error('Failed to enqueue agent summary task:', e),
+			),
 		);
-		enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-			log.error('Failed to enqueue team summary task:', e),
+		trackBackground(
+			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
+				log.error('Failed to enqueue team summary task:', e),
+			),
 		);
-		enqueueAgentTeamContextTask(db, teamId, agentRow.id as string, 'initial').catch((e) =>
-			log.error('Failed to enqueue team_context task for bootstrapped agent:', e),
+		trackBackground(
+			enqueueAgentTeamContextTask(db, teamId, agentRow.id as string, 'initial').catch((e) =>
+				log.error('Failed to enqueue team_context task for bootstrapped agent:', e),
+			),
 		);
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentRow.id as string).catch(
-			(e) => log.error('Failed to fan out team_context tasks for existing agents:', e),
+		trackBackground(
+			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentRow.id as string).catch(
+				(e) => log.error('Failed to fan out team_context tasks for existing agents:', e),
+			),
 		);
 
-		return ok(c, { agent: agentRow, issue: null, approval: null, bootstrap: true }, 201);
+		return ok(c, { agent: agentRow, task: null, approval: null, bootstrap: true }, 201);
 	}
 
-	const ceoId = ceoResult.rows[0].id;
+	const captainId = captainResult.rows[0].id;
 	const projectId = opsProject.rows[0].id;
 
 	const auth = c.get('auth');
@@ -441,31 +461,31 @@ ${proposal.system_prompt ? `\n\`\`\`\n${proposal.system_prompt}\n\`\`\`\n` : '_(
 ### Existing team
 ${teamRoster}`;
 
-		const { number: issueNumber, identifier } = await allocateIssueIdentifier(db, projectId);
+		const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, projectId);
 
-		const issueResult = await db.query<Record<string, unknown>>(
-			`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier,
+		const taskResult = await db.query<Record<string, unknown>>(
+			`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
 			                     title, description, status, priority, labels)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb)
 			 RETURNING *`,
 			[
 				teamId,
 				projectId,
-				ceoId,
-				issueNumber,
+				captainId,
+				taskNumber,
 				identifier,
 				`Onboard new agent: ${proposal.title}`,
 				description,
-				IssueStatus.Backlog,
-				IssuePriority.High,
+				TaskStatus.Backlog,
+				TaskPriority.High,
 				JSON.stringify(['onboarding', 'hire']),
 			],
 		);
-		const issue = issueResult.rows[0];
+		const task = taskResult.rows[0];
 
 		await db.query(
-			`UPDATE approvals SET payload = payload || jsonb_build_object('issue_id', $1::text) WHERE id = $2`,
-			[issue.id, approvalId],
+			`UPDATE approvals SET payload = payload || jsonb_build_object('task_id', $1::text) WHERE id = $2`,
+			[task.id, approvalId],
 		);
 		const finalApproval = await db.query<Record<string, unknown>>(
 			'SELECT * FROM approvals WHERE id = $1',
@@ -475,13 +495,15 @@ ${teamRoster}`;
 		await db.query('COMMIT');
 
 		broadcastChange(c, wsRoom.team(teamId), 'approvals', 'INSERT', finalApproval.rows[0]);
-		broadcastChange(c, wsRoom.team(teamId), 'issues', 'INSERT', issue);
+		broadcastChange(c, wsRoom.team(teamId), 'tasks', 'INSERT', task);
 
-		createWakeup(db, ceoId, teamId, WakeupSource.Assignment, { issue_id: issue.id }).catch((e) =>
-			log.error('Failed to wake CEO for hire request:', e),
+		trackBackground(
+			createWakeup(db, captainId, teamId, WakeupSource.Assignment, {
+				task_id: task.id,
+			}).catch((e) => log.error('Failed to wake Captain for hire request:', e)),
 		);
 
-		return ok(c, { agent: null, issue, approval: finalApproval.rows[0], bootstrap: false }, 201);
+		return ok(c, { agent: null, task, approval: finalApproval.rows[0], bootstrap: false }, 201);
 	} catch (e) {
 		await db.query('ROLLBACK');
 		throw e;
@@ -501,7 +523,7 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId', async (c) => {
 	const result = await db.query(
 		`SELECT ${AGENT_BASE_COLUMNS},
 			(SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
-			(SELECT count(*) FROM issues i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts2.placeholders}))::int AS assigned_issue_count
+			(SELECT count(*) FROM tasks i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts2.placeholders}))::int AS assigned_task_count
 		 FROM members m
 		 JOIN member_agents ma ON ma.id = m.id
 		 WHERE m.id = $1 AND m.team_id = $2`,
@@ -823,23 +845,33 @@ agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
 
 	if (body.system_prompt !== undefined || body.role_description !== undefined) {
 		const reason = body.system_prompt !== undefined ? 'prompt_updated' : 'role_updated';
-		enqueueAgentSummaryTask(db, teamId, agentId, reason).catch((e) =>
-			log.error('Failed to enqueue agent summary task:', e),
+		trackBackground(
+			enqueueAgentSummaryTask(db, teamId, agentId, reason).catch((e) =>
+				log.error('Failed to enqueue agent summary task:', e),
+			),
 		);
-		enqueueTeamSummaryTask(db, teamId, 'prompt_updated').catch((e) =>
-			log.error('Failed to enqueue team summary task:', e),
+		trackBackground(
+			enqueueTeamSummaryTask(db, teamId, 'prompt_updated').catch((e) =>
+				log.error('Failed to enqueue team summary task:', e),
+			),
 		);
-		enqueueAgentTeamContextTask(db, teamId, agentId, 'prompt_updated').catch((e) =>
-			log.error('Failed to enqueue team_context task on prompt change:', e),
+		trackBackground(
+			enqueueAgentTeamContextTask(db, teamId, agentId, 'prompt_updated').catch((e) =>
+				log.error('Failed to enqueue team_context task on prompt change:', e),
+			),
 		);
 	}
 
 	if (body.reports_to !== undefined && (body.reports_to ?? null) !== (priorReportsTo ?? null)) {
-		enqueueTeamSummaryTask(db, teamId, 'reports_to_changed').catch((e) =>
-			log.error('Failed to enqueue team summary task on reports_to change:', e),
+		trackBackground(
+			enqueueTeamSummaryTask(db, teamId, 'reports_to_changed').catch((e) =>
+				log.error('Failed to enqueue team summary task on reports_to change:', e),
+			),
 		);
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'reports_to_changed').catch((e) =>
-			log.error('Failed to fan out team_context tasks on reports_to change:', e),
+		trackBackground(
+			enqueueTeamContextTaskForAllAgents(db, teamId, 'reports_to_changed').catch((e) =>
+				log.error('Failed to fan out team_context tasks on reports_to change:', e),
+			),
 		);
 	}
 
@@ -870,7 +902,7 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/disable', async (c) => {
 
 	const ts = terminalStatusParams(2, false);
 	await db.query(
-		`UPDATE issues SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN (${ts.placeholders})`,
+		`UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN (${ts.placeholders})`,
 		[agentId, ...ts.values],
 	);
 
@@ -879,11 +911,15 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/disable', async (c) => {
 		admin_status: AgentAdminStatus.Disabled,
 	});
 
-	enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
-		log.error('Failed to enqueue team summary task:', e),
+	trackBackground(
+		enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
+			log.error('Failed to enqueue team summary task:', e),
+		),
 	);
-	enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_removed', agentId).catch((e) =>
-		log.error('Failed to fan out team_context tasks on disable:', e),
+	trackBackground(
+		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_removed', agentId).catch((e) =>
+			log.error('Failed to fan out team_context tasks on disable:', e),
+		),
 	);
 
 	return ok(c, { admin_status: AgentAdminStatus.Disabled });
@@ -916,14 +952,20 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/enable', async (c) => {
 		admin_status: AgentAdminStatus.Enabled,
 	});
 
-	enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
-		log.error('Failed to enqueue team summary task:', e),
+	trackBackground(
+		enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
+			log.error('Failed to enqueue team summary task:', e),
+		),
 	);
-	enqueueAgentTeamContextTask(db, teamId, agentId, 'agent_added').catch((e) =>
-		log.error('Failed to enqueue team_context task for re-enabled agent:', e),
+	trackBackground(
+		enqueueAgentTeamContextTask(db, teamId, agentId, 'agent_added').catch((e) =>
+			log.error('Failed to enqueue team_context task for re-enabled agent:', e),
+		),
 	);
-	enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentId).catch((e) =>
-		log.error('Failed to fan out team_context tasks on enable:', e),
+	trackBackground(
+		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentId).catch((e) =>
+			log.error('Failed to fan out team_context tasks on enable:', e),
+		),
 	);
 
 	return ok(c, { admin_status: AgentAdminStatus.Enabled });
@@ -937,7 +979,7 @@ agentsRoutes.get('/teams/:teamId/org-chart', async (c) => {
 	const { teamId } = access;
 
 	const result = await db.query(
-		`SELECT m.id, ma.title, ma.slug, ma.runtime_status, ma.admin_status, ma.reports_to
+		`SELECT m.id, ma.title, ma.slug, ma.role_description, ma.runtime_status, ma.admin_status, ma.reports_to
      FROM members m
      JOIN member_agents ma ON ma.id = m.id
      WHERE m.team_id = $1`,
@@ -948,6 +990,7 @@ agentsRoutes.get('/teams/:teamId/org-chart', async (c) => {
 		id: string;
 		title: string;
 		slug: string;
+		role_description: string;
 		runtime_status: string;
 		admin_status: string;
 		reports_to: string | null;
@@ -979,7 +1022,7 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs', async (c) => {
 	const result = await db.query(
 		`SELECT ${HEARTBEAT_RUN_COLUMNS}
 		 FROM heartbeat_runs hr
-		 LEFT JOIN issues i ON i.id = hr.issue_id
+		 LEFT JOIN tasks i ON i.id = hr.task_id
 		 LEFT JOIN projects p ON p.id = i.project_id
 		 ${HEARTBEAT_RUN_TRIGGER_JOINS}
 		 WHERE hr.member_id = $1
@@ -1004,7 +1047,7 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs/:runId', async (
 	const result = await db.query(
 		`SELECT ${HEARTBEAT_RUN_COLUMNS}
 		 FROM heartbeat_runs hr
-		 LEFT JOIN issues i ON i.id = hr.issue_id
+		 LEFT JOIN tasks i ON i.id = hr.task_id
 		 LEFT JOIN projects p ON p.id = i.project_id
 		 ${HEARTBEAT_RUN_TRIGGER_JOINS}
 		 WHERE hr.id = $1 AND hr.member_id = $2`,

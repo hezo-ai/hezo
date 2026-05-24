@@ -137,14 +137,14 @@ describe('agent types CRUD', () => {
 			headers: authHeader(token),
 		});
 		const types = (await listRes.json()).data;
-		const ceoType = types.find((t: any) => t.slug === 'ceo');
+		const ceoType = types.find((t: any) => t.slug === 'captain');
 
 		const res = await app.request(`/api/agent-types/${ceoType.id}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.name).toBe('CEO');
+		expect(body.data.name).toBe('Captain');
 		expect(body.data.system_prompt_template).toBeTruthy();
 	});
 
@@ -234,7 +234,7 @@ describe('team types with agent types', () => {
 			headers: authHeader(token),
 		});
 		const allTypes = (await agentTypesRes.json()).data;
-		const ceoType = allTypes.find((t: any) => t.slug === 'ceo');
+		const ceoType = allTypes.find((t: any) => t.slug === 'captain');
 		const engType = allTypes.find((t: any) => t.slug === 'engineer');
 
 		const res = await app.request('/api/team-templates', {
@@ -242,10 +242,10 @@ describe('team types with agent types', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				name: 'Small Team',
-				description: 'Just a CEO and Engineer',
+				description: 'Just a Captain and Engineer',
 				agent_types: [
 					{ agent_type_id: ceoType.id, sort_order: 0 },
-					{ agent_type_id: engType.id, reports_to_slug: 'ceo', sort_order: 1 },
+					{ agent_type_id: engType.id, reports_to_slug: 'captain', sort_order: 1 },
 				],
 			}),
 		});

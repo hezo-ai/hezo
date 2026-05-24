@@ -2,20 +2,22 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { dirname, join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	type AgentRuntime,
+	AgentRuntime,
 	AiAuthMethod,
 	type AiProvider,
 	CommentContentType,
 	ContainerStatus,
+	claudeCodeModelArg,
 	HeartbeatRunStatus,
-	IssueStatus,
 	PROVIDER_RUNTIME_ADAPTERS,
+	providerDirectUpstreamHosts,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
 	RUNTIME_HEADLESS_PREFIX_ARGS,
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
 	RUNTIME_STREAM_ARGS,
-	TERMINAL_ISSUE_STATUSES,
+	TaskStatus,
+	TERMINAL_TASK_STATUSES,
 	WakeupSource,
 	WsMessageType,
 	wsRoom,
@@ -33,12 +35,11 @@ import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import type { EgressProxy } from './egress';
-import { ensureGithubKnownHosts, ensureIssueWorktree, fetchRepo } from './git';
-import { recordStatusChange } from './issue-events';
+import { ensureGithubKnownHosts, ensureTaskWorktree, fetchRepo } from './git';
 import type { LogStreamBroker } from './log-stream-broker';
 import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
-import { loadReactionsForIssue, type ReactionGroup } from './reactions';
+import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { ensureProjectRepos } from './repo-sync';
 import {
 	buildSubscriptionMount as buildSubscriptionMountImpl,
@@ -49,9 +50,10 @@ import {
 	SUBSCRIPTION_LAYOUTS,
 	type SubscriptionMount as SubscriptionMountImpl,
 } from './runtime-home';
-import { resolveRuntimeForIssue } from './runtime-resolver';
+import { resolveRuntimeForTask } from './runtime-resolver';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { withHostAgentSocket } from './ssh-agent/host';
+import { recordStatusChange } from './task-events';
 import { resolveSystemPrompt } from './template-resolver';
 import { getRunSocketPath, getWorkspacePath, getWorktreesPath } from './workspace';
 import type { WebSocketManager } from './ws';
@@ -66,7 +68,7 @@ export interface AgentInfo {
 	model_override_model?: string | null;
 }
 
-export interface IssueInfo {
+export interface TaskInfo {
 	id: string;
 	identifier: string;
 	title: string;
@@ -77,7 +79,7 @@ export interface IssueInfo {
 	rules: string | null;
 	assignee_id?: string | null;
 	runtime_type?: AgentRuntime | null;
-	parent_issue_id?: string | null;
+	parent_task_id?: string | null;
 	created_by_run_id?: string | null;
 }
 
@@ -228,7 +230,7 @@ interface EgressEnvDescriptor {
 async function buildRunContext(
 	deps: RunnerDeps,
 	agent: AgentInfo,
-	issue: IssueInfo,
+	task: TaskInfo,
 	project: ProjectInfo,
 	wakeupPayload: Record<string, unknown> | undefined,
 	credential: AiProviderCredential,
@@ -244,17 +246,17 @@ async function buildRunContext(
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, storedPrompt, {
 		teamId: agent.team_id,
 		projectId: project.id,
-		issueId: issue.id,
+		taskId: task.id,
 		agentId: agent.id,
 		dataDir: deps.dataDir,
 	});
 
 	if (resolvedPrompt.includes('{{requester_context}}')) {
 		const creator = await deps.db.query<{ display_name: string; member_type: string }>(
-			`SELECT m.display_name, m.member_type FROM issues i
+			`SELECT m.display_name, m.member_type FROM tasks i
 			 JOIN members m ON m.id = i.created_by_member_id
 			 WHERE i.id = $1`,
-			[issue.id],
+			[task.id],
 		);
 		const row = creator.rows[0];
 		const requesterText = row
@@ -272,7 +274,7 @@ async function buildRunContext(
 	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort, agent.slug);
 	const effortApplication = applyEffortToRuntime(runtimeType, effort);
 
-	const isCoachReview = wakeupPayload?.trigger === 'issue_done';
+	const isCoachReview = wakeupPayload?.trigger === 'task_done';
 	const mentionContext =
 		wakeupPayload?.source === WakeupSource.Mention
 			? await loadMentionContext(deps.db, agent.id, agent.team_id, wakeupPayload)
@@ -281,10 +283,10 @@ async function buildRunContext(
 		wakeupPayload?.source === WakeupSource.Reply
 			? await loadReplyContext(deps.db, wakeupPayload)
 			: null;
-	const spawnedFrom = await loadSpawnedFromIssue(deps.db, issue);
+	const spawnedFrom = await loadSpawnedFromTask(deps.db, task);
 	const basePrompt = isCoachReview
-		? await buildCoachReviewPrompt(deps.db, resolvedPrompt, issue, agent.team_id)
-		: buildTaskPrompt(resolvedPrompt, issue, wakeupPayload, {
+		? await buildCoachReviewPrompt(deps.db, resolvedPrompt, task, agent.team_id)
+		: buildTaskPrompt(resolvedPrompt, task, wakeupPayload, {
 				mentionContext,
 				replyContext,
 				spawnedFrom,
@@ -342,8 +344,8 @@ async function buildRunContext(
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
 		`HEZO_AGENT_ID=${agent.id}`,
 		`HEZO_TEAM_ID=${agent.team_id}`,
-		`HEZO_ISSUE_ID=${issue.id}`,
-		`HEZO_ISSUE_IDENTIFIER=${issue.identifier}`,
+		`HEZO_TASK_ID=${task.id}`,
+		`HEZO_TASK_IDENTIFIER=${task.identifier}`,
 		`HEZO_AGENT_EFFORT=${effort}`,
 		`HEZO_PROMPT_FILE=${promptFilePath}`,
 		...effortApplication.extraEnv,
@@ -359,7 +361,13 @@ async function buildRunContext(
 	}
 	if (egress) {
 		const proxyUrl = `http://${egress.host}:${egress.port}`;
-		const noProxy = `${egress.host},localhost,127.0.0.1`;
+		const noProxyHosts = [
+			egress.host,
+			'localhost',
+			'127.0.0.1',
+			...providerDirectUpstreamHosts(provider),
+		];
+		const noProxy = [...new Set(noProxyHosts)].join(',');
 		env.push(
 			`HTTP_PROXY=${proxyUrl}`,
 			`http_proxy=${proxyUrl}`,
@@ -367,19 +375,20 @@ async function buildRunContext(
 			`https_proxy=${proxyUrl}`,
 			`NO_PROXY=${noProxy}`,
 			`no_proxy=${noProxy}`,
+			// Rely on update-ca-certificates for curl/git; do not set SSL_CERT_FILE to
+			// the egress CA alone — that replaces the system trust store and breaks TLS.
 			`NODE_EXTRA_CA_CERTS=${egress.containerCAPath}`,
-			`SSL_CERT_FILE=${egress.containerCAPath}`,
-			`REQUESTS_CA_BUNDLE=${egress.containerCAPath}`,
 			`CURL_CA_BUNDLE=${egress.containerCAPath}`,
 			`GIT_SSL_CAINFO=${egress.containerCAPath}`,
-			`AWS_CA_BUNDLE=${egress.containerCAPath}`,
-			`PIP_CERT=${egress.containerCAPath}`,
-			`NPM_CONFIG_CAFILE=${egress.containerCAPath}`,
 		);
 	}
 
 	const cliCommand = RUNTIME_COMMANDS[runtimeType];
-	const modelArgs = modelOverride ? ['--model', modelOverride] : [];
+	const cliModel =
+		modelOverride && runtimeType === AgentRuntime.ClaudeCode
+			? claudeCodeModelArg(provider, modelOverride)
+			: modelOverride;
+	const modelArgs = cliModel ? ['--model', cliModel] : [];
 
 	const cmd = [
 		cliCommand,
@@ -434,7 +443,7 @@ async function createSyntheticOnDemandWakeup(
 export async function runAgent(
 	deps: RunnerDeps,
 	agent: AgentInfo,
-	issue: IssueInfo,
+	task: TaskInfo,
 	project: ProjectInfo,
 	wakeupPayload?: Record<string, unknown>,
 	signal?: AbortSignal,
@@ -448,7 +457,7 @@ export async function runAgent(
 	const runBroadcast: HeartbeatRunBroadcast = {
 		wsManager: deps.wsManager,
 		teamId: agent.team_id,
-		issueId: issue.id,
+		taskId: task.id,
 		memberId: agent.id,
 	};
 	const effectiveWakeupId =
@@ -456,7 +465,7 @@ export async function runAgent(
 	const heartbeatRunId = await createHeartbeatRun(
 		deps.db,
 		agent,
-		issue,
+		task,
 		runBroadcast,
 		effectiveWakeupId,
 	);
@@ -470,7 +479,7 @@ export async function runAgent(
 			type: WsMessageType.RunLog,
 			projectId: project.id,
 			runId: heartbeatRunId,
-			issueId: issue.id,
+			taskId: task.id,
 			stream: line.stream,
 			text: line.text,
 		}),
@@ -478,7 +487,7 @@ export async function runAgent(
 			type: WsMessageType.RunLog,
 			projectId: project.id,
 			runId: heartbeatRunId,
-			issueId: issue.id,
+			taskId: task.id,
 			stream: 'stdout',
 			text,
 			replace: true,
@@ -557,7 +566,7 @@ export async function runAgent(
 		provider = agent.model_override_provider;
 		runtimeType = PROVIDER_RUNTIME_ADAPTERS[provider].runtime;
 	} else {
-		const resolved = await resolveRuntimeForIssue(deps.db, issue.runtime_type ?? null);
+		const resolved = await resolveRuntimeForTask(deps.db, task.runtime_type ?? null);
 		if (!resolved) {
 			return finalizeFailure(
 				'No AI provider credentials configured at the instance level. Add one in Settings > AI Providers.',
@@ -628,7 +637,7 @@ export async function runAgent(
 	const context = await buildRunContext(
 		deps,
 		agent,
-		issue,
+		task,
 		project,
 		wakeupPayload,
 		credential,
@@ -656,7 +665,7 @@ export async function runAgent(
 		return finalizeAbort();
 	}
 
-	const prep = await prepareWorktrees(deps, project, issue, emit, signal);
+	const prep = await prepareWorktrees(deps, project, task, emit, signal);
 
 	const hostPromptPath = getHostPromptPath(
 		deps.dataDir,
@@ -813,7 +822,7 @@ export function shellQuoteArg(arg: string): string {
 async function prepareWorktrees(
 	deps: RunnerDeps,
 	project: ProjectInfo,
-	issue: IssueInfo,
+	task: TaskInfo,
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 	signal?: AbortSignal,
 ): Promise<{ workingDir: string; designatedRepo: RepoRow | null }> {
@@ -850,10 +859,10 @@ async function prepareWorktrees(
 
 	const workspaceRoot = getWorkspacePath(deps.dataDir, project.team_slug, project.slug);
 	const worktreesRoot = getWorktreesPath(deps.dataDir, project.team_slug, project.slug);
-	const issueWorktreeRoot = join(worktreesRoot, issue.identifier);
-	mkdirSync(issueWorktreeRoot, { recursive: true });
+	const taskWorktreeRoot = join(worktreesRoot, task.identifier);
+	mkdirSync(taskWorktreeRoot, { recursive: true });
 
-	const branchName = `hezo/${issue.identifier}`;
+	const branchName = `hezo/${task.identifier}`;
 	const knownHostsPath = await ensureGithubKnownHosts(deps.dataDir);
 	const reposNeedingWorktree = repos.rows.filter(
 		(r) => !signal?.aborted && existsSync(join(workspaceRoot, r.short_name, '.git')),
@@ -884,7 +893,7 @@ async function prepareWorktrees(
 	for (const repo of repos.rows) {
 		if (signal?.aborted) break;
 		const repoDir = join(workspaceRoot, repo.short_name);
-		const worktreePath = join(issueWorktreeRoot, repo.short_name);
+		const worktreePath = join(taskWorktreeRoot, repo.short_name);
 
 		if (!existsSync(join(repoDir, '.git'))) {
 			emit('stderr', `(skipping worktree for ${repo.short_name} — not cloned)\n`);
@@ -892,7 +901,7 @@ async function prepareWorktrees(
 		}
 
 		emit('stdout', `git worktree ${repo.short_name}...\n`);
-		const wt = await ensureIssueWorktree(repoDir, worktreePath, branchName);
+		const wt = await ensureTaskWorktree(repoDir, worktreePath, branchName);
 		if (!wt.success) {
 			emit('stderr', `git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}\n`);
 		} else if (wt.created) {
@@ -904,7 +913,7 @@ async function prepareWorktrees(
 		? repos.rows.find((r) => r.id === project.designated_repo_id)
 		: null;
 	const primary = designated ?? repos.rows[0];
-	const workingDir = `/worktrees/${issue.identifier}/${primary.short_name}`;
+	const workingDir = `/worktrees/${task.identifier}/${primary.short_name}`;
 
 	return { workingDir, designatedRepo: primary ?? null };
 }
@@ -940,7 +949,7 @@ export async function loadMentionContext(
 	}>(
 		`SELECT ic.content,
 		        COALESCE(ma.title, m.display_name, 'Board') AS author_name
-		 FROM issue_comments ic
+		 FROM task_comments ic
 		 LEFT JOIN members m ON m.id = ic.author_member_id
 		 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
 		 WHERE ic.id = $1`,
@@ -953,15 +962,15 @@ export async function loadMentionContext(
 
 	const tickets = await db.query<MentionOpenTicket>(
 		`SELECT identifier, title, status::text AS status, priority::text AS priority
-		 FROM issues
+		 FROM tasks
 		 WHERE assignee_id = $1
 		   AND team_id = $2
-		   AND status NOT IN (${TERMINAL_ISSUE_STATUSES.map((_, i) => `$${i + 3}::issue_status`).join(', ')})
+		   AND status NOT IN (${TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 3}::task_status`).join(', ')})
 		 ORDER BY
 		   CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
 		   updated_at DESC
 		 LIMIT 10`,
-		[agentMemberId, teamId, ...TERMINAL_ISSUE_STATUSES],
+		[agentMemberId, teamId, ...TERMINAL_TASK_STATUSES],
 	);
 
 	return {
@@ -1049,12 +1058,12 @@ function truncateExcerpt(text: string, max: number): string {
 export interface BuildTaskPromptContext {
 	mentionContext?: MentionContext | null;
 	replyContext?: ReplyContext | null;
-	spawnedFrom?: SpawnedFromIssue | null;
+	spawnedFrom?: SpawnedFromTask | null;
 }
 
 export function buildTaskPrompt(
 	systemPrompt: string,
-	issue: IssueInfo,
+	task: TaskInfo,
 	wakeupPayload?: Record<string, unknown>,
 	ctx: BuildTaskPromptContext = {},
 ): string {
@@ -1062,25 +1071,25 @@ export function buildTaskPrompt(
 	const parts = [systemPrompt, '', '---', ''];
 
 	if (replyContext && wakeupPayload?.source === WakeupSource.Reply) {
-		parts.push(...renderReplyHandoff(issue, replyContext));
+		parts.push(...renderReplyHandoff(task, replyContext));
 	} else if (mentionContext && wakeupPayload?.source === WakeupSource.Mention) {
-		parts.push(...renderMentionHandoff(issue, mentionContext));
+		parts.push(...renderMentionHandoff(task, mentionContext));
 	}
 
-	parts.push(`## Current Task: ${issue.identifier} — ${issue.title}`);
-	parts.push(`**Priority:** ${issue.priority}`);
-	parts.push(`**Status:** ${issue.status}`);
+	parts.push(`## Current Task: ${task.identifier} — ${task.title}`);
+	parts.push(`**Priority:** ${task.priority}`);
+	parts.push(`**Status:** ${task.status}`);
 	if (spawnedFrom?.parentLine) parts.push(spawnedFrom.parentLine);
 	if (spawnedFrom?.spawnLine) parts.push(spawnedFrom.spawnLine);
 	parts.push('');
 
-	if (issue.rules) {
-		parts.push('### Rules for this issue');
-		parts.push(issue.rules);
+	if (task.rules) {
+		parts.push('### Rules for this task');
+		parts.push(task.rules);
 		parts.push('');
 	}
 
-	parts.push(issue.description || 'No description provided.');
+	parts.push(task.description || 'No description provided.');
 
 	if (wakeupPayload?.previous_failure) {
 		const pf = wakeupPayload.previous_failure as Record<string, unknown>;
@@ -1099,7 +1108,7 @@ export function buildTaskPrompt(
 	return parts.join('\n');
 }
 
-function renderMentionHandoff(issue: IssueInfo, ctx: MentionContext): string[] {
+function renderMentionHandoff(task: TaskInfo, ctx: MentionContext): string[] {
 	const ticketList =
 		ctx.openTickets.length === 0
 			? 'none'
@@ -1114,7 +1123,7 @@ function renderMentionHandoff(issue: IssueInfo, ctx: MentionContext): string[] {
 		: '> (empty)';
 	return [
 		'## Mention Handoff',
-		`You were mentioned by ${ctx.authorName} in ${issue.identifier} — a comment excerpt:`,
+		`You were mentioned by ${ctx.authorName} in ${task.identifier} — a comment excerpt:`,
 		'',
 		excerptBlock,
 		'',
@@ -1122,7 +1131,7 @@ function renderMentionHandoff(issue: IssueInfo, ctx: MentionContext): string[] {
 		ticketList,
 		'',
 		'### How to handle this mention',
-		`Follow the \`## Handling @-mentions\` rules defined in your system prompt. The triggering ticket referenced in those rules is ${issue.identifier}; when creating a sub-issue, use \`parent_issue_id = ${issue.id}\`.`,
+		`Follow the \`## Handling @-mentions\` rules defined in your system prompt. The triggering ticket referenced in those rules is ${task.identifier}; when creating a sub-task, use \`parent_task_id = ${task.id}\`.`,
 		'',
 		'---',
 		'',
@@ -1134,7 +1143,7 @@ export interface ReplyContext {
 	responderSlug: string | null;
 	replyExcerpt: string;
 	originalExcerpt: string;
-	referencedIssues: Array<{ identifier: string; title: string; status: string }>;
+	referencedTasks: Array<{ identifier: string; title: string; status: string }>;
 }
 
 const REPLY_EXCERPT_MAX = 500;
@@ -1153,14 +1162,14 @@ export async function loadReplyContext(
 
 	const reply = await db.query<{
 		content: Record<string, unknown>;
-		issue_id: string;
+		task_id: string;
 		author_name: string | null;
 		author_slug: string | null;
 	}>(
-		`SELECT ic.content, ic.issue_id,
+		`SELECT ic.content, ic.task_id,
 		        COALESCE(ma.title, m.display_name, 'Board') AS author_name,
 		        ma.slug AS author_slug
-		 FROM issue_comments ic
+		 FROM task_comments ic
 		 LEFT JOIN members m ON m.id = ic.author_member_id
 		 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
 		 WHERE ic.id = $1`,
@@ -1169,7 +1178,7 @@ export async function loadReplyContext(
 	if (reply.rows.length === 0) return null;
 
 	const original = await db.query<{ content: Record<string, unknown> }>(
-		'SELECT content FROM issue_comments WHERE id = $1',
+		'SELECT content FROM task_comments WHERE id = $1',
 		[triggeringCommentId],
 	);
 	if (original.rows.length === 0) return null;
@@ -1180,15 +1189,15 @@ export async function loadReplyContext(
 	const referencedIdentifiers = Array.from(
 		new Set(replyText.match(/\b[A-Z][A-Z0-9_]*-\d+\b/g) ?? []),
 	);
-	let referencedIssues: ReplyContext['referencedIssues'] = [];
+	let referencedTasks: ReplyContext['referencedTasks'] = [];
 	if (referencedIdentifiers.length > 0) {
 		const rows = await db.query<{ identifier: string; title: string; status: string }>(
 			`SELECT identifier, title, status::text AS status
-			 FROM issues
+			 FROM tasks
 			 WHERE identifier = ANY($1::text[])`,
 			[referencedIdentifiers],
 		);
-		referencedIssues = rows.rows;
+		referencedTasks = rows.rows;
 	}
 
 	return {
@@ -1196,11 +1205,11 @@ export async function loadReplyContext(
 		responderSlug: reply.rows[0].author_slug,
 		replyExcerpt: truncateExcerpt(replyText, REPLY_EXCERPT_MAX),
 		originalExcerpt: truncateExcerpt(originalText, REPLY_EXCERPT_MAX),
-		referencedIssues,
+		referencedTasks,
 	};
 }
 
-function renderReplyHandoff(issue: IssueInfo, ctx: ReplyContext): string[] {
+function renderReplyHandoff(task: TaskInfo, ctx: ReplyContext): string[] {
 	const replyBlock = ctx.replyExcerpt
 		? ctx.replyExcerpt
 				.split('\n')
@@ -1214,15 +1223,15 @@ function renderReplyHandoff(issue: IssueInfo, ctx: ReplyContext): string[] {
 				.join('\n')
 		: '> (empty)';
 	const referenced =
-		ctx.referencedIssues.length === 0
+		ctx.referencedTasks.length === 0
 			? 'none'
-			: ctx.referencedIssues.map((t) => `- ${t.identifier} — ${t.title} (${t.status})`).join('\n');
+			: ctx.referencedTasks.map((t) => `- ${t.identifier} — ${t.title} (${t.status})`).join('\n');
 	const responderLabel = ctx.responderSlug
 		? `${ctx.responderName} (@${ctx.responderSlug})`
 		: ctx.responderName;
 	return [
 		'## Reply Received',
-		`${responderLabel} replied on ${issue.identifier} to a comment of yours. Your original comment:`,
+		`${responderLabel} replied on ${task.identifier} to a comment of yours. Your original comment:`,
 		'',
 		originalBlock,
 		'',
@@ -1235,7 +1244,7 @@ function renderReplyHandoff(issue: IssueInfo, ctx: ReplyContext): string[] {
 		'### How to handle this reply',
 		'1. Read the reply and any referenced tickets.',
 		`2. If more responses to the same original comment are still expected (you mentioned multiple agents), you may choose to wait — another reply wakeup will arrive and you'll see the latest state then.`,
-		`3. Otherwise, update your own plan or post a follow-up comment on ${issue.identifier} as appropriate. Do not re-mention the responder unless you need another round-trip.`,
+		`3. Otherwise, update your own plan or post a follow-up comment on ${task.identifier} as appropriate. Do not re-mention the responder unless you need another round-trip.`,
 		'4. End the turn.',
 		'',
 		'---',
@@ -1243,40 +1252,40 @@ function renderReplyHandoff(issue: IssueInfo, ctx: ReplyContext): string[] {
 	];
 }
 
-export interface SpawnedFromIssue {
+export interface SpawnedFromTask {
 	parentLine: string | null;
 	spawnLine: string | null;
 }
 
-export async function loadSpawnedFromIssue(
+export async function loadSpawnedFromTask(
 	db: PGlite,
-	issue: IssueInfo,
-): Promise<SpawnedFromIssue | null> {
-	let spawningIssue: { id: string; identifier: string; title: string } | null = null;
-	if (issue.created_by_run_id) {
+	task: TaskInfo,
+): Promise<SpawnedFromTask | null> {
+	let spawningTask: { id: string; identifier: string; title: string } | null = null;
+	if (task.created_by_run_id) {
 		const row = await db.query<{ id: string; identifier: string; title: string }>(
 			`SELECT i.id, i.identifier, i.title
-			 FROM heartbeat_runs r JOIN issues i ON i.id = r.issue_id
+			 FROM heartbeat_runs r JOIN tasks i ON i.id = r.task_id
 			 WHERE r.id = $1`,
-			[issue.created_by_run_id],
+			[task.created_by_run_id],
 		);
-		if (row.rows.length > 0 && row.rows[0].id !== issue.id) {
-			spawningIssue = row.rows[0];
+		if (row.rows.length > 0 && row.rows[0].id !== task.id) {
+			spawningTask = row.rows[0];
 		}
 	}
 
 	let parent: { id: string; identifier: string; title: string } | null = null;
-	if (issue.parent_issue_id) {
+	if (task.parent_task_id) {
 		const row = await db.query<{ id: string; identifier: string; title: string }>(
-			'SELECT id, identifier, title FROM issues WHERE id = $1',
-			[issue.parent_issue_id],
+			'SELECT id, identifier, title FROM tasks WHERE id = $1',
+			[task.parent_task_id],
 		);
 		if (row.rows.length > 0) parent = row.rows[0];
 	}
 
-	if (!spawningIssue && !parent) return null;
+	if (!spawningTask && !parent) return null;
 
-	if (parent && spawningIssue && parent.id === spawningIssue.id) {
+	if (parent && spawningTask && parent.id === spawningTask.id) {
 		return {
 			parentLine: `**Parent ticket:** ${parent.identifier} — ${parent.title}`,
 			spawnLine: null,
@@ -1284,8 +1293,8 @@ export async function loadSpawnedFromIssue(
 	}
 	return {
 		parentLine: parent ? `**Parent ticket:** ${parent.identifier} — ${parent.title}` : null,
-		spawnLine: spawningIssue
-			? `**Spawned from:** ${spawningIssue.identifier} — ${spawningIssue.title} (provenance only; this ticket is your own work)`
+		spawnLine: spawningTask
+			? `**Spawned from:** ${spawningTask.identifier} — ${spawningTask.title} (provenance only; this ticket is your own work)`
 			: null,
 	};
 }
@@ -1293,7 +1302,7 @@ export async function loadSpawnedFromIssue(
 export async function buildCoachReviewPrompt(
 	db: PGlite,
 	systemPrompt: string,
-	issue: IssueInfo,
+	task: TaskInfo,
 	teamId: string,
 ): Promise<string> {
 	const comments = await db.query<{
@@ -1306,15 +1315,15 @@ export async function buildCoachReviewPrompt(
 		`SELECT ic.id, ic.content_type, ic.content,
 		        COALESCE(ma.title, m.display_name, 'Unknown') AS author_name,
 		        ic.created_at::text
-		 FROM issue_comments ic
+		 FROM task_comments ic
 		 LEFT JOIN members m ON m.id = ic.author_member_id
 		 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
-		 WHERE ic.issue_id = $1
+		 WHERE ic.task_id = $1
 		 ORDER BY ic.created_at ASC`,
-		[issue.id],
+		[task.id],
 	);
 
-	const reactionsByComment = await loadReactionsForIssue(db, issue.id);
+	const reactionsByComment = await loadReactionsForTask(db, task.id);
 
 	const involvedAgents = await db.query<{
 		id: string;
@@ -1325,9 +1334,9 @@ export async function buildCoachReviewPrompt(
 		 FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1
-		   AND (ma.id = (SELECT assignee_id FROM issues WHERE id = $2)
-		        OR ma.id IN (SELECT DISTINCT author_member_id FROM issue_comments WHERE issue_id = $2 AND author_member_id IS NOT NULL))`,
-		[teamId, issue.id],
+		   AND (ma.id = (SELECT assignee_id FROM tasks WHERE id = $2)
+		        OR ma.id IN (SELECT DISTINCT author_member_id FROM task_comments WHERE task_id = $2 AND author_member_id IS NOT NULL))`,
+		[teamId, task.id],
 	);
 
 	const commentIds = comments.rows.map((c) => c.id);
@@ -1359,18 +1368,18 @@ export async function buildCoachReviewPrompt(
 		'',
 		'---',
 		'',
-		`## Review Completed Ticket: ${issue.identifier} — ${issue.title}`,
-		`**Final Status:** ${issue.status}`,
-		`**Priority:** ${issue.priority}`,
+		`## Review Completed Ticket: ${task.identifier} — ${task.title}`,
+		`**Final Status:** ${task.status}`,
+		`**Priority:** ${task.priority}`,
 		'',
 		'### Description',
-		issue.description || 'No description provided.',
+		task.description || 'No description provided.',
 		'',
 		'### Agents Involved',
 		agentList || 'No agents identified.',
 		'',
 		'### Comment History',
-		commentLog || 'No comments on this issue.',
+		commentLog || 'No comments on this task.',
 		'',
 		'### Your Task',
 		'Review this completed ticket. Analyze the comment history for patterns where agents struggled,',
@@ -1383,7 +1392,7 @@ export async function buildCoachReviewPrompt(
 		'If the ticket completed smoothly without significant rework or feedback, no changes are needed.',
 		'',
 		'### Final Step',
-		`Post the review summary comment on ${issue.identifier} now, following the format defined in your system prompt.`,
+		`Post the review summary comment on ${task.identifier} now, following the format defined in your system prompt.`,
 	];
 
 	return parts.join('\n');
@@ -1392,7 +1401,7 @@ export async function buildCoachReviewPrompt(
 export interface HeartbeatRunBroadcast {
 	wsManager?: WebSocketManager;
 	teamId: string;
-	issueId: string;
+	taskId: string;
 	memberId: string;
 }
 
@@ -1405,7 +1414,7 @@ function broadcastHeartbeatRunChange(
 	if (!ctx.wsManager) return;
 	broadcastRowChange(ctx.wsManager, wsRoom.team(ctx.teamId), 'heartbeat_runs', action, {
 		id: runId,
-		issue_id: ctx.issueId,
+		task_id: ctx.taskId,
 		team_id: ctx.teamId,
 		member_id: ctx.memberId,
 		status,
@@ -1415,7 +1424,7 @@ function broadcastHeartbeatRunChange(
 export async function createHeartbeatRun(
 	db: PGlite,
 	agent: AgentInfo,
-	issue: IssueInfo,
+	task: TaskInfo,
 	broadcast: HeartbeatRunBroadcast,
 	wakeupId: string,
 ): Promise<string> {
@@ -1424,35 +1433,35 @@ export async function createHeartbeatRun(
 	let statusFlippedToInProgress = false;
 	try {
 		const runResult = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, wakeup_id, status)
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status)
 			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status)
 			 RETURNING id`,
-			[agent.id, agent.team_id, issue.id, wakeupId, HeartbeatRunStatus.Queued],
+			[agent.id, agent.team_id, task.id, wakeupId, HeartbeatRunStatus.Queued],
 		);
 		runId = runResult.rows[0].id;
 
 		await db.query(
-			`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
 			[
-				issue.id,
+				task.id,
 				agent.id,
 				CommentContentType.Run,
 				JSON.stringify({ run_id: runId, agent_id: agent.id, agent_title: agent.title }),
 			],
 		);
 
-		if (issue.assignee_id === agent.id && issue.status === IssueStatus.Backlog) {
+		if (task.assignee_id === agent.id && task.status === TaskStatus.Backlog) {
 			const updated = await db.query<{ id: string }>(
-				`UPDATE issues
-				    SET status = $1::issue_status, updated_at = now()
-				  WHERE id = $2 AND status = $3::issue_status
+				`UPDATE tasks
+				    SET status = $1::task_status, updated_at = now()
+				  WHERE id = $2 AND status = $3::task_status
 				  RETURNING id`,
-				[IssueStatus.InProgress, issue.id, IssueStatus.Backlog],
+				[TaskStatus.InProgress, task.id, TaskStatus.Backlog],
 			);
 			if (updated.rows.length > 0) {
 				statusFlippedToInProgress = true;
-				issue.status = IssueStatus.InProgress;
+				task.status = TaskStatus.InProgress;
 			}
 		}
 
@@ -1467,17 +1476,17 @@ export async function createHeartbeatRun(
 		broadcastRowChange(
 			broadcast.wsManager,
 			wsRoom.team(broadcast.teamId),
-			'issue_comments',
+			'task_comments',
 			'INSERT',
 			{
-				issue_id: issue.id,
+				task_id: task.id,
 			},
 		);
 		if (statusFlippedToInProgress) {
-			broadcastRowChange(broadcast.wsManager, wsRoom.team(broadcast.teamId), 'issues', 'UPDATE', {
-				id: issue.id,
+			broadcastRowChange(broadcast.wsManager, wsRoom.team(broadcast.teamId), 'tasks', 'UPDATE', {
+				id: task.id,
 				team_id: broadcast.teamId,
-				status: IssueStatus.InProgress,
+				status: TaskStatus.InProgress,
 			});
 		}
 	}
@@ -1485,9 +1494,9 @@ export async function createHeartbeatRun(
 		await recordStatusChange(
 			db,
 			broadcast.teamId,
-			issue.id,
-			IssueStatus.Backlog,
-			IssueStatus.InProgress,
+			task.id,
+			TaskStatus.Backlog,
+			TaskStatus.InProgress,
 			agent.id,
 			broadcast.wsManager,
 		);

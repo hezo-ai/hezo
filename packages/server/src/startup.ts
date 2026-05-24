@@ -1,7 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
-import { vector } from '@electric-sql/pglite/vector';
 import { type Context, Hono } from 'hono';
 import type { HezoConfig } from './cli';
 import { logger } from './logger';
@@ -9,6 +8,7 @@ import { logger } from './logger';
 const log = logger.child('startup');
 
 import { MasterKeyManager } from './crypto/master-key';
+import { openPersistentDb } from './db/client';
 import { BASE_SCHEMA } from './db/schema';
 import type { Env } from './lib/types';
 import { getToolDefs, handleMcpRequest, initMcpServer } from './mcp/server';
@@ -28,7 +28,6 @@ import { costsRoutes } from './routes/costs';
 import { executionLocksRoutes } from './routes/execution-locks';
 import { goalsRoutes } from './routes/goals';
 import { healthRoutes } from './routes/health';
-import { issuesRoutes } from './routes/issues';
 import { kbDocsRoutes } from './routes/kb-docs';
 import { mcpConnectionsRoutes } from './routes/mcp-connections';
 import { mentionsRoutes } from './routes/mentions';
@@ -41,9 +40,11 @@ import { reposRoutes } from './routes/repos';
 import { searchRoutes } from './routes/search';
 import { secretsRoutes } from './routes/secrets';
 import { skillsRoutes } from './routes/skills';
+import { tasksRoutes } from './routes/tasks';
 import { teamTemplatesRoutes } from './routes/team-templates';
 import { teamsRoutes } from './routes/teams';
 import { uiStateRoutes } from './routes/ui-state';
+import { ContainerLogStreamer } from './services/container-logs';
 import { DockerClient } from './services/docker';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
 import { pruneStaleBundledImages } from './services/image-registry';
@@ -71,28 +72,15 @@ export interface StartupResult {
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
 	logs: LogStreamBroker;
+	containerLogStreamer: ContainerLogStreamer;
 	sshAgentServer: SshAgentServer;
 	egressProxy: EgressProxy;
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
-	const pgDataPath = join(config.dataDir, 'pgdata');
-
-	if (config.reset) {
-		rmSync(pgDataPath, { recursive: true, force: true });
-	}
-
 	mkdirSync(config.dataDir, { recursive: true });
 
-	const { PGlite } = await import('@electric-sql/pglite');
-	let db: InstanceType<typeof PGlite>;
-
-	try {
-		const { NodeFS } = await import('@electric-sql/pglite/nodefs');
-		db = new PGlite({ fs: new NodeFS(pgDataPath), extensions: { vector } });
-	} catch {
-		db = new PGlite({ extensions: { vector } });
-	}
+	const db = await openPersistentDb(config.dataDir, { reset: config.reset });
 
 	await db.exec(BASE_SCHEMA);
 	await runAvailableMigrations(db);
@@ -121,6 +109,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
+	const containerLogStreamer = new ContainerLogStreamer();
 	const sshAgentServer = new SshAgentServer({ db, masterKeyManager });
 	await cleanupOrphanRunSockets(db, config.dataDir);
 	const egressCA = await loadOrCreateCA(config.dataDir);
@@ -133,6 +122,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		dataDir: config.dataDir,
 		wsManager,
 		logs,
+		containerLogStreamer,
 		sshAgentServer,
 		egressProxy,
 		egressCAPath: egressCA.certPath,
@@ -146,7 +136,9 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			wsManager,
 			masterKeyManager,
 			logs,
+			containerLogStreamer,
 			dataDir: config.dataDir,
+			egressCAPath: egressCA.certPath,
 		});
 	} catch (err) {
 		log.error('Failed to seed default team:', err);
@@ -179,6 +171,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		logs,
 		sshAgentServer,
 		egressProxy,
+		containerLogStreamer,
 	);
 
 	return {
@@ -191,6 +184,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker,
 		masterKeyManager,
 		logs,
+		containerLogStreamer,
 		sshAgentServer,
 		egressProxy,
 	};
@@ -206,12 +200,13 @@ export function buildApp(
 	logs: LogStreamBroker = new LogStreamBroker(),
 	sshAgentServer: SshAgentServer | null = null,
 	egressProxy: EgressProxy | null = null,
+	containerLogStreamer: ContainerLogStreamer = new ContainerLogStreamer(),
 ): Hono<Env> {
 	const app = new Hono<Env>();
 	logs.setWsManager(wsManager);
 
 	app.onError((err, c) => {
-		log.error(`Unhandled route error on ${c.req.method} ${c.req.path}:`, err);
+		log.error(`Route error on ${c.req.method} ${c.req.path}:`, err);
 		return c.text('Internal Server Error', 500);
 	});
 
@@ -222,6 +217,7 @@ export function buildApp(
 		c.set('wsManager', wsManager);
 		if (jobManager) c.set('jobManager', jobManager);
 		c.set('logs', logs);
+		c.set('containerLogStreamer', containerLogStreamer);
 		c.set('dataDir', config.dataDir);
 		c.set('webUrl', config.webUrl);
 		c.set('sshAgentServer', sshAgentServer);
@@ -273,7 +269,7 @@ export function buildApp(
 	app.route('/api', agentsRoutes);
 	app.route('/api', projectsRoutes);
 	app.route('/api', goalsRoutes);
-	app.route('/api', issuesRoutes);
+	app.route('/api', tasksRoutes);
 	app.route('/api', commentsRoutes);
 	app.route('/api', assetsRoutes);
 	app.route('/api', secretsRoutes);

@@ -219,50 +219,50 @@ describe('template resolver', () => {
 		expect(result).toContain('### Completion Handoff');
 		expect(result).toContain('### Knowledge Maintenance');
 		expect(result).toContain('### Sub-Agents & Parallel Exploration');
-		expect(result).toContain('### Sub-Issue Delegation');
+		expect(result).toContain('### Sub-Task Delegation');
 		expect(result).toContain('### Comment Timing');
-		expect(result).toContain('update_issue');
+		expect(result).toContain('update_task');
 		expect(result).toContain('write_project_doc');
 		expect(result).toContain('upsert_kb_doc');
-		expect(result).toContain('create_issue');
+		expect(result).toContain('create_task');
 	});
 
 	it('completion handoff guidance covers mark-done, auto-wake, and no-mention rules', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('### Completion Handoff');
-		expect(result).toContain('update_issue(status: "done")');
+		expect(result).toContain('update_task(status: "done")');
 		expect(result).toContain('dependents');
 		expect(result).toContain('do not `@`-mention any agent in that comment');
 	});
 
-	it('injects Run Context with only team id when no project/issue', async () => {
+	it('injects Run Context with only team id when no project/task', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('## Run Context');
 		expect(result).toContain(`Team ID: ${teamId}`);
 		expect(result).not.toContain('Project ID:');
-		expect(result).not.toContain('Issue ID:');
+		expect(result).not.toContain('Task ID:');
 	});
 
-	it('injects Run Context with team + project ids when issue missing', async () => {
+	it('injects Run Context with team + project ids when task missing', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
 			teamId,
 			projectId,
 		});
 		expect(result).toContain(`Team ID: ${teamId}`);
 		expect(result).toContain(`Project ID: ${projectId}`);
-		expect(result).not.toContain('Issue ID:');
+		expect(result).not.toContain('Task ID:');
 	});
 
-	it('injects Run Context with all three ids when issueId supplied', async () => {
-		const fakeIssueId = '11111111-2222-3333-4444-555555555555';
+	it('injects Run Context with all three ids when taskId supplied', async () => {
+		const fakeTaskId = '11111111-2222-3333-4444-555555555555';
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
 			teamId,
 			projectId,
-			issueId: fakeIssueId,
+			taskId: fakeTaskId,
 		});
 		expect(result).toContain(`Team ID: ${teamId}`);
 		expect(result).toContain(`Project ID: ${projectId}`);
-		expect(result).toContain(`Issue ID: ${fakeIssueId}`);
+		expect(result).toContain(`Task ID: ${fakeTaskId}`);
 	});
 
 	it('preview mode substitutes placeholders, omits Run Context, keeps Teammates and Working Guidelines', async () => {
@@ -284,7 +284,7 @@ describe('template resolver', () => {
 describe('template resolver with agents', () => {
 	let agentTeamId: string;
 	let engineerAgentId: string;
-	let ceoAgentId: string;
+	let captainAgentId: string;
 
 	beforeAll(async () => {
 		// Get the builtin team type
@@ -315,9 +315,9 @@ describe('template resolver with agents', () => {
 		});
 		const agents = ((await agentsRes.json()) as any).data;
 		const engineer = agents.find((a: any) => a.slug === 'engineer');
-		const ceo = agents.find((a: any) => a.slug === 'ceo');
+		const captain = agents.find((a: any) => a.slug === 'captain');
 		engineerAgentId = engineer.id;
-		ceoAgentId = ceo.id;
+		captainAgentId = captain.id;
 	});
 
 	it('resolves {{reports_to}} with agentId to manager display name', async () => {
@@ -328,10 +328,10 @@ describe('template resolver with agents', () => {
 		expect(result).toContain('Reports to: Architect');
 	});
 
-	it('resolves {{reports_to}} for CEO (no manager) to empty string', async () => {
+	it('resolves {{reports_to}} for Captain (no manager) to empty string', async () => {
 		const result = await resolveSystemPrompt(db, 'Reports to: {{reports_to}}', {
 			teamId: agentTeamId,
-			agentId: ceoAgentId,
+			agentId: captainAgentId,
 		});
 		expect(result).toContain('Reports to: ');
 	});
@@ -400,7 +400,7 @@ Current date: {{current_date}}
 		const agents = ((await agentsRes.json()) as any).data;
 		const bySlug = new Map<string, any>(agents.map((a: any) => [a.slug, a]));
 
-		expect(await getAgentPrompt(bySlug.get('ceo').id)).toContain('You are the CEO of');
+		expect(await getAgentPrompt(bySlug.get('captain').id)).toContain('You are the Captain of');
 		expect(await getAgentPrompt(bySlug.get('architect').id)).toContain('You are the Architect at');
 		expect(await getAgentPrompt(bySlug.get('product-lead').id)).toContain(
 			'You are the Product Lead at',
@@ -423,24 +423,24 @@ Current date: {{current_date}}
 		);
 	});
 
-	it('CEO system prompt does not use {{reports_to}}', async () => {
+	it('Captain system prompt does not use {{reports_to}}', async () => {
 		const agentsRes = await app.request(`/api/teams/${agentTeamId}/agents`, {
 			method: 'GET',
 			headers: authHeader(token),
 		});
 		const agents = ((await agentsRes.json()) as any).data;
-		const ceo = agents.find((a: any) => a.slug === 'ceo');
-		expect(await getAgentPrompt(ceo.id)).not.toContain('{{reports_to}}');
+		const captain = agents.find((a: any) => a.slug === 'captain');
+		expect(await getAgentPrompt(captain.id)).not.toContain('{{reports_to}}');
 	});
 
-	it('non-CEO agents use {{reports_to}} in their system prompts', async () => {
+	it('non-Captain agents use {{reports_to}} in their system prompts', async () => {
 		const agentsRes = await app.request(`/api/teams/${agentTeamId}/agents`, {
 			method: 'GET',
 			headers: authHeader(token),
 		});
 		const agents = ((await agentsRes.json()) as any).data;
 		const nonCeo = agents.filter(
-			(a: any) => a.slug !== 'ceo' && a.slug !== 'architect' && a.slug !== 'coach',
+			(a: any) => a.slug !== 'captain' && a.slug !== 'architect' && a.slug !== 'coach',
 		);
 		for (const agent of nonCeo) {
 			expect(await getAgentPrompt(agent.id)).toContain('{{reports_to}}');
@@ -450,7 +450,7 @@ Current date: {{current_date}}
 
 describe('teammates block', () => {
 	let tbTeamId: string;
-	let tbCeoMemberId: string;
+	let tbCaptainMemberId: string;
 	let tbEngineerMemberId: string;
 
 	beforeAll(async () => {
@@ -472,7 +472,7 @@ describe('teammates block', () => {
 			headers: authHeader(token),
 		});
 		const agents = ((await agentsRes.json()) as any).data;
-		tbCeoMemberId = agents.find((a: any) => a.slug === 'ceo').id;
+		tbCaptainMemberId = agents.find((a: any) => a.slug === 'captain').id;
 		tbEngineerMemberId = agents.find((a: any) => a.slug === 'engineer').id;
 	});
 
@@ -486,7 +486,7 @@ describe('teammates block', () => {
 	it('lists every enabled peer in @<slug> — Title form, sorted by title', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId: tbTeamId });
 		expect(result).toContain('- @architect — Architect');
-		expect(result).toContain('- @ceo — CEO');
+		expect(result).toContain('- @captain — Captain');
 		expect(result).toContain('- @engineer — Engineer');
 		expect(result).toContain('- @product-lead — Product Lead');
 		expect(result).toContain('- @qa-engineer — QA Engineer');
@@ -494,20 +494,20 @@ describe('teammates block', () => {
 
 		const block = result.slice(result.indexOf('## Teammates'));
 		const archIdx = block.indexOf('- @architect');
-		const ceoIdx = block.indexOf('- @ceo');
+		const captainIdx = block.indexOf('- @captain');
 		const engIdx = block.indexOf('- @engineer');
 		expect(archIdx).toBeGreaterThan(-1);
-		expect(archIdx).toBeLessThan(ceoIdx);
-		expect(ceoIdx).toBeLessThan(engIdx);
+		expect(archIdx).toBeLessThan(captainIdx);
+		expect(captainIdx).toBeLessThan(engIdx);
 	});
 
 	it('excludes the running agent from the teammates list', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
 			teamId: tbTeamId,
-			agentId: tbCeoMemberId,
+			agentId: tbCaptainMemberId,
 		});
 		expect(result).toContain('## Teammates');
-		expect(result).not.toContain('- @ceo — CEO');
+		expect(result).not.toContain('- @captain — Captain');
 		expect(result).toContain('- @architect — Architect');
 		expect(result).toContain('- @engineer — Engineer');
 	});
@@ -539,9 +539,9 @@ describe('teammates block', () => {
 
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId: otherId });
 		expect(result).toContain('## Teammates');
-		// Builtin CEO + Coach are seeded for every team, but the startup-template-only
+		// Builtin Captain + Coach are seeded for every team, but the startup-template-only
 		// roles from the other test team must not bleed in.
-		expect(result).toContain('- @ceo — CEO');
+		expect(result).toContain('- @captain — Captain');
 		expect(result).toContain('- @coach — Coach');
 		expect(result).not.toContain('- @architect — Architect');
 		expect(result).not.toContain('- @engineer — Engineer');
@@ -560,7 +560,7 @@ describe('teammates block', () => {
 
 describe('team context block', () => {
 	let tcTeamId: string;
-	let tcCeoMemberId: string;
+	let tcCaptainMemberId: string;
 	let tcEngineerMemberId: string;
 
 	beforeAll(async () => {
@@ -582,7 +582,7 @@ describe('team context block', () => {
 			headers: authHeader(token),
 		});
 		const agents = ((await agentsRes.json()) as any).data;
-		tcCeoMemberId = agents.find((a: any) => a.slug === 'ceo').id;
+		tcCaptainMemberId = agents.find((a: any) => a.slug === 'captain').id;
 		tcEngineerMemberId = agents.find((a: any) => a.slug === 'engineer').id;
 	});
 
@@ -627,11 +627,11 @@ describe('team context block', () => {
 	it('renders Your Team before Teammates so the rich narrative leads', async () => {
 		await db.query(`UPDATE member_agents SET team_context = $1 WHERE id = $2`, [
 			'Test team_context content',
-			tcCeoMemberId,
+			tcCaptainMemberId,
 		]);
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
 			teamId: tcTeamId,
-			agentId: tcCeoMemberId,
+			agentId: tcCaptainMemberId,
 		});
 		const yourTeamIdx = result.indexOf('## Your Team');
 		const teammatesIdx = result.indexOf('## Teammates');
@@ -642,11 +642,11 @@ describe('team context block', () => {
 	it('substitutes {{team_context}} inline when the template uses it', async () => {
 		await db.query(`UPDATE member_agents SET team_context = $1 WHERE id = $2`, [
 			'INLINE TEAM CONTEXT MARKER',
-			tcCeoMemberId,
+			tcCaptainMemberId,
 		]);
 		const result = await resolveSystemPrompt(db, 'Body: {{team_context}}', {
 			teamId: tcTeamId,
-			agentId: tcCeoMemberId,
+			agentId: tcCaptainMemberId,
 		});
 		expect(result).toContain('Body: INLINE TEAM CONTEXT MARKER');
 	});
@@ -655,7 +655,7 @@ describe('team context block', () => {
 describe('project state block', () => {
 	let psTeamId: string;
 	let psProjectId: string;
-	let psCeoMemberId: string;
+	let psCaptainMemberId: string;
 	let psArchitectMemberId: string;
 
 	beforeAll(async () => {
@@ -677,7 +677,7 @@ describe('project state block', () => {
 			headers: authHeader(token),
 		});
 		const agents = ((await agentsRes.json()) as any).data;
-		psCeoMemberId = agents.find((a: any) => a.slug === 'ceo').id;
+		psCaptainMemberId = agents.find((a: any) => a.slug === 'captain').id;
 		psArchitectMemberId = agents.find((a: any) => a.slug === 'architect').id;
 
 		const projectRes = await app.request(`/api/teams/${psTeamId}/projects`, {
@@ -702,9 +702,9 @@ describe('project state block', () => {
 		});
 		expect(result).toContain('## Project State');
 		expect(result).toContain('### Active tickets');
-		// Startup-template projects auto-create a planning ticket assigned to CEO.
+		// Startup-template projects auto-create a planning ticket assigned to the Captain.
 		expect(result).toMatch(/- PP-\d+ — Draft execution plan/);
-		expect(result).toContain('assigned to CEO');
+		expect(result).toContain('assigned to Captain');
 	});
 
 	it('renders empty-state when the project has no active tickets', async () => {
@@ -716,7 +716,7 @@ describe('project state block', () => {
 		});
 		const emptyProjectId = ((await projectRes.json()) as any).data.id;
 
-		await db.query(`UPDATE issues SET status = 'cancelled'::issue_status WHERE project_id = $1`, [
+		await db.query(`UPDATE tasks SET status = 'cancelled'::task_status WHERE project_id = $1`, [
 			emptyProjectId,
 		]);
 
@@ -729,7 +729,7 @@ describe('project state block', () => {
 	});
 
 	it('lists active tickets and excludes terminal-status ones', async () => {
-		const activeRes = await app.request(`/api/teams/${psTeamId}/issues`, {
+		const activeRes = await app.request(`/api/teams/${psTeamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -740,7 +740,7 @@ describe('project state block', () => {
 		});
 		const active = ((await activeRes.json()) as any).data;
 
-		const doneRes = await app.request(`/api/teams/${psTeamId}/issues`, {
+		const doneRes = await app.request(`/api/teams/${psTeamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -750,7 +750,7 @@ describe('project state block', () => {
 			}),
 		});
 		const done = ((await doneRes.json()) as any).data;
-		await app.request(`/api/teams/${psTeamId}/issues/${done.id}`, {
+		await app.request(`/api/teams/${psTeamId}/tasks/${done.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
@@ -768,27 +768,27 @@ describe('project state block', () => {
 	});
 
 	it('shows "Tickets you created" subsection scoped to the agent\'s prior runs', async () => {
-		const planningIssueRes = await app.request(`/api/teams/${psTeamId}/issues`, {
+		const planningTaskRes = await app.request(`/api/teams/${psTeamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: psProjectId,
-				title: 'CEO planning ticket',
-				assignee_id: psCeoMemberId,
+				title: 'Captain planning ticket',
+				assignee_id: psCaptainMemberId,
 			}),
 		});
-		const planningIssue = ((await planningIssueRes.json()) as any).data;
+		const planningTask = ((await planningTaskRes.json()) as any).data;
 
 		const run = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, status, started_at)
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
 			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now())
 			 RETURNING id`,
-			[psCeoMemberId, psTeamId, planningIssue.id],
+			[psCaptainMemberId, psTeamId, planningTask.id],
 		);
 
 		const subRes = await db.query<{ identifier: string }>(
-			`INSERT INTO issues (team_id, project_id, assignee_id, parent_issue_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
-			 VALUES ($1, $2, $3, NULL, $4, next_project_issue_number($2), 'PS-CR-1', 'Delegated to architect by CEO', '', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
+			`INSERT INTO tasks (team_id, project_id, assignee_id, parent_task_id, created_by_run_id, number, identifier, title, description, status, priority, labels)
+			 VALUES ($1, $2, $3, NULL, $4, next_project_task_number($2), 'PS-CR-1', 'Delegated to architect by Captain', '', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
 			 RETURNING identifier`,
 			[psTeamId, psProjectId, psArchitectMemberId, run.rows[0].id],
 		);
@@ -796,11 +796,11 @@ describe('project state block', () => {
 		const result = await resolveSystemPrompt(db, 'X', {
 			teamId: psTeamId,
 			projectId: psProjectId,
-			agentId: psCeoMemberId,
+			agentId: psCaptainMemberId,
 		});
 		expect(result).toContain('### Tickets you created on prior runs');
 		expect(result).toContain(subRes.rows[0].identifier);
-		expect(result).toContain('Delegated to architect by CEO');
+		expect(result).toContain('Delegated to architect by Captain');
 	});
 
 	it('"Tickets you created" is empty for an agent that hasn\'t created any', async () => {

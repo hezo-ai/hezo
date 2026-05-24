@@ -4,7 +4,7 @@ export function generateSkillFile(tools: ToolDef[]): string {
 	const lines: string[] = [
 		'# Hezo Skill File',
 		'',
-		'Hezo is an AI-native team management platform. Use the MCP endpoint to manage teams, issues, projects, agents, and more.',
+		'Hezo is an AI-native team management platform. Use the MCP endpoint to manage teams, tasks, projects, agents, and more.',
 		'',
 		'## Connection',
 		'',

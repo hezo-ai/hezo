@@ -42,7 +42,7 @@ describe('team types CRUD', () => {
 		const builtin = types.find((t: Record<string, unknown>) => t.name === 'Startup');
 
 		const expectedSlugs = [
-			'ceo',
+			'captain',
 			'architect',
 			'product-lead',
 			'engineer',
@@ -61,10 +61,10 @@ describe('team types CRUD', () => {
 			expect(agent.system_prompt.length).toBeGreaterThan(100);
 		}
 
-		const ceo = builtin.agent_types.find((a: Record<string, unknown>) => a.slug === 'ceo');
-		expect(ceo.system_prompt).toContain('You are the CEO of');
-		expect(ceo.system_prompt).toContain('{{team_name}}');
-		expect(ceo.system_prompt).toMatch(/##\s+Rules\b/);
+		const captain = builtin.agent_types.find((a: Record<string, unknown>) => a.slug === 'captain');
+		expect(captain.system_prompt).toContain('You are the Captain of');
+		expect(captain.system_prompt).toContain('{{team_name}}');
+		expect(captain.system_prompt).toMatch(/##\s+Rules\b/);
 
 		const engineer = builtin.agent_types.find(
 			(a: Record<string, unknown>) => a.slug === 'engineer',
@@ -170,7 +170,7 @@ describe('team types CRUD', () => {
 			headers: authHeader(token),
 		});
 		const allTypes = (await agentTypesRes.json()).data;
-		const ceoType = allTypes.find((t: any) => t.slug === 'ceo');
+		const ceoType = allTypes.find((t: any) => t.slug === 'captain');
 
 		const createRes = await app.request('/api/team-templates', {
 			method: 'POST',
@@ -190,6 +190,6 @@ describe('team types CRUD', () => {
 		expect(patchRes.status).toBe(200);
 		const patched = (await patchRes.json()).data;
 		expect(patched.agent_types).toHaveLength(1);
-		expect(patched.agent_types[0].slug).toBe('ceo');
+		expect(patched.agent_types[0].slug).toBe('captain');
 	});
 });

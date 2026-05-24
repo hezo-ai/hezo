@@ -14,7 +14,7 @@ import {
 } from '../../services/containers';
 import { LogStreamBroker } from '../../services/log-stream-broker';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createStubDocker, createTestApp } from '../helpers/app';
 
 let db: PGlite;
 let app: Hono<Env>;
@@ -49,7 +49,7 @@ afterAll(async () => {
 describe('syncAllContainerStatuses', () => {
 	it('does nothing when no projects have containers', async () => {
 		await db.query('UPDATE projects SET container_id = NULL');
-		const mockDocker = { inspectContainer: vi.fn() } as any;
+		const mockDocker = createStubDocker({ inspectContainer: vi.fn() });
 		await syncAllContainerStatuses(db, mockDocker);
 		expect(mockDocker.inspectContainer).not.toHaveBeenCalled();
 	});
@@ -67,9 +67,9 @@ describe('syncAllContainerStatuses', () => {
 			[projectId],
 		);
 
-		const mockDocker = {
+		const mockDocker = createStubDocker({
 			inspectContainer: vi.fn().mockResolvedValue(null),
-		} as any;
+		});
 
 		await syncAllContainerStatuses(db, mockDocker);
 
@@ -95,9 +95,9 @@ describe('syncAllContainerStatuses', () => {
 			[projectId],
 		);
 
-		const mockDocker = {
+		const mockDocker = createStubDocker({
 			inspectContainer: vi.fn().mockResolvedValue(null),
-		} as any;
+		});
 
 		await syncAllContainerStatuses(db, mockDocker);
 
@@ -133,7 +133,7 @@ describe('syncAllContainerStatuses', () => {
 		frame[7] = payload.length & 0xff;
 		frame.set(payload, 8);
 
-		const mockDocker = {
+		const mockDocker = createStubDocker({
 			inspectContainer: vi.fn().mockResolvedValue({
 				Id: 'capture-1',
 				State: { Running: false, Status: 'exited', ExitCode: 137 },
@@ -141,7 +141,7 @@ describe('syncAllContainerStatuses', () => {
 			containerLogs: vi.fn().mockResolvedValue({
 				arrayBuffer: async () => frame.buffer,
 			}),
-		} as any;
+		});
 
 		await syncAllContainerStatuses(db, mockDocker);
 
@@ -177,9 +177,9 @@ describe('syncAllContainerStatuses', () => {
 			[projectId],
 		);
 
-		const mockDocker = {
+		const mockDocker = createStubDocker({
 			inspectContainer: vi.fn().mockRejectedValue(new Error('EPIPE')),
-		} as any;
+		});
 
 		await syncAllContainerStatuses(db, mockDocker);
 
@@ -204,11 +204,11 @@ describe('syncAllContainerStatuses', () => {
 			[projectId],
 		);
 
-		const mockDocker = {
+		const mockDocker = createStubDocker({
 			inspectContainer: vi.fn().mockResolvedValue({
 				State: { Running: false, Status: 'exited' },
 			}),
-		} as any;
+		});
 
 		await syncAllContainerStatuses(db, mockDocker);
 
@@ -232,11 +232,11 @@ describe('syncAllContainerStatuses', () => {
 			[projectId],
 		);
 
-		const mockDocker = {
+		const mockDocker = createStubDocker({
 			inspectContainer: vi.fn().mockResolvedValue({
 				State: { Running: true, Status: 'running' },
 			}),
-		} as any;
+		});
 
 		await syncAllContainerStatuses(db, mockDocker);
 
@@ -260,9 +260,9 @@ describe('syncAllContainerStatuses', () => {
 			[projectId],
 		);
 
-		const mockDocker = {
+		const mockDocker = createStubDocker({
 			inspectContainer: vi.fn().mockResolvedValue(null),
-		} as any;
+		});
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
 		await syncAllContainerStatuses(db, mockDocker, mockWsManager);
@@ -299,11 +299,11 @@ describe('syncAllContainerStatuses', () => {
 			[projectId],
 		);
 
-		const mockDocker = {
+		const mockDocker = createStubDocker({
 			inspectContainer: vi.fn().mockResolvedValue({
 				State: { Running: true, Status: 'running' },
 			}),
-		} as any;
+		});
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
 		await syncAllContainerStatuses(db, mockDocker, mockWsManager);
@@ -369,6 +369,38 @@ describe('provisionContainer broadcasting', () => {
 		expect(assetsBind).toContain(
 			`${dataDir}/teams/container-sync-co/projects/${project.slug}/assets`,
 		);
+	});
+
+	it('bind-mounts the egress CA when egressCAPath is provided', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
+			[projectId],
+		);
+
+		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
+		const egressCAPath = join(dataDir, 'ca.pem');
+		const mockDocker = {
+			imageExists: vi.fn().mockResolvedValue(false),
+			pullImage: vi.fn().mockResolvedValue(undefined),
+			createContainer: vi.fn().mockResolvedValue({ Id: 'egress-ca-container' }),
+			startContainer: vi.fn().mockResolvedValue(undefined),
+			execCreate: vi.fn().mockResolvedValue('exec-id'),
+			execStart: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
+		} as any;
+
+		const project = (
+			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
+		).rows[0];
+
+		await provisionContainer(
+			{ db, docker: mockDocker, dataDir, egressCAPath },
+			project,
+			'container-sync-co',
+		);
+
+		const binds = mockDocker.createContainer.mock.calls[0][1].HostConfig.Binds as string[];
+		expect(binds).toContain(`${egressCAPath}:/usr/local/share/ca-certificates/hezo-egress.crt:ro`);
+		expect(mockDocker.execCreate).toHaveBeenCalled();
 	});
 
 	it('broadcasts row_change on provisioning error', async () => {
@@ -541,7 +573,9 @@ describe('stopContainerGracefully', () => {
 			[projectId],
 		);
 
-		const mockDocker = { stopContainer: vi.fn().mockResolvedValue(undefined) } as any;
+		const mockDocker = createStubDocker({
+			stopContainer: vi.fn().mockResolvedValue(undefined),
+		});
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
 		await stopContainerGracefully(
@@ -572,9 +606,9 @@ describe('stopContainerGracefully', () => {
 			[projectId],
 		);
 
-		const mockDocker = {
+		const mockDocker = createStubDocker({
 			stopContainer: vi.fn().mockRejectedValue(new Error('Docker daemon error')),
-		} as any;
+		});
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
 		await stopContainerGracefully(
@@ -601,7 +635,9 @@ describe('stopContainerGracefully', () => {
 			[projectId],
 		);
 
-		const mockDocker = { stopContainer: vi.fn().mockResolvedValue(undefined) } as any;
+		const mockDocker = createStubDocker({
+			stopContainer: vi.fn().mockResolvedValue(undefined),
+		});
 
 		await stopContainerGracefully(
 			{ db, docker: mockDocker, dataDir: '' },
@@ -638,11 +674,11 @@ describe('syncAllContainerStatuses with stopping status', () => {
 			[projectId],
 		);
 
-		const mockDocker = {
+		const mockDocker = createStubDocker({
 			inspectContainer: vi.fn().mockResolvedValue({
 				State: { Running: false, Status: 'exited' },
 			}),
-		} as any;
+		});
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
 		await syncAllContainerStatuses(db, mockDocker, mockWsManager);

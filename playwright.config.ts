@@ -25,9 +25,18 @@ export default defineConfig({
 			workers: 1,
 		},
 		{
-			name: 'parallel',
-			testIgnore: /(?:ai-providers|\.mobile)\.spec\.ts$/,
+			name: 'agent-runs-serial',
+			testMatch: /(?:agent-run-logs|run-trigger-reason)\.spec\.ts$/,
+			fullyParallel: false,
+			workers: 1,
+			timeout: 300_000,
 			dependencies: ['ai-provider-serial'],
+		},
+		{
+			name: 'parallel',
+			testIgnore: /(?:ai-providers|\.mobile|agent-run-logs|run-trigger-reason)\.spec\.ts$/,
+			// Run after agent-runs-serial so the shared e2e job queue is not flooded first.
+			dependencies: ['ai-provider-serial', 'agent-runs-serial'],
 		},
 		{
 			name: 'mobile',
@@ -46,18 +55,20 @@ export default defineConfig({
 			// /api/status is only mounted inside startup, so polling it waits
 			// for full readiness.
 			url: `http://localhost:${SERVER_PORT}/api/status`,
-			reuseExistingServer: true,
+			reuseExistingServer: false,
 			env: {
 				SKIP_AI_KEY_VALIDATION: '1',
 				HEZO_SKIP_DOCKER: '1',
 				HEZO_WAKEUP_COALESCING_MS: '100',
+				HEZO_WAKEUP_CRON: '* * * * * *',
+				HEZO_HEARTBEAT_CRON: '* * * * * *',
 			},
 		},
 		{
 			command: 'bun run dev',
 			cwd: './packages/web',
 			port: WEB_PORT,
-			reuseExistingServer: true,
+			reuseExistingServer: false,
 			env: {
 				HEZO_WEB_PORT: String(WEB_PORT),
 				HEZO_SERVER_PORT: String(SERVER_PORT),

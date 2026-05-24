@@ -46,12 +46,12 @@ describe('WebSocketManager', () => {
 		const ws = createMockWs();
 
 		mgr.subscribe(ws, 'team:abc');
-		mgr.subscribe(ws, 'issue:xyz');
+		mgr.subscribe(ws, 'task:xyz');
 		expect(ws.data.rooms.size).toBe(2);
 
 		mgr.unsubscribeAll(ws);
 		expect(mgr.getRoomSize('team:abc')).toBe(0);
-		expect(mgr.getRoomSize('issue:xyz')).toBe(0);
+		expect(mgr.getRoomSize('task:xyz')).toBe(0);
 		expect(ws.data.rooms.size).toBe(0);
 	});
 
@@ -96,7 +96,7 @@ describe('WebSocketManager', () => {
 		const ws2 = createMockWs();
 
 		mgr.subscribe(ws1, 'team:abc');
-		mgr.subscribe(ws1, 'issue:xyz');
+		mgr.subscribe(ws1, 'task:xyz');
 		mgr.subscribe(ws2, 'team:abc');
 
 		expect(mgr.getTotalConnections()).toBe(2);

@@ -31,7 +31,7 @@ afterAll(async () => {
 });
 
 describe('projects CRUD', () => {
-	it('creates a project with description and auto-opens a planning issue for the CEO', async () => {
+	it('creates a project with description and auto-opens a planning task for the Captain', async () => {
 		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -47,16 +47,16 @@ describe('projects CRUD', () => {
 		expect(body.data.team_id).toBe(teamId);
 		expect(body.data.description).toBe(VALID_DESCRIPTION);
 
-		const ceoResult = await db.query<{ id: string }>(
+		const captainResult = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'ceo' LIMIT 1`,
+			 WHERE m.team_id = $1 AND ma.slug = 'captain' LIMIT 1`,
 			[teamId],
 		);
-		const ceoId = ceoResult.rows[0]?.id;
-		expect(ceoId).toBeDefined();
+		const captainId = captainResult.rows[0]?.id;
+		expect(captainId).toBeDefined();
 
-		const issueResult = await db.query<{
+		const taskResult = await db.query<{
 			id: string;
 			title: string;
 			description: string;
@@ -65,39 +65,61 @@ describe('projects CRUD', () => {
 			priority: string;
 			labels: string[] | string;
 		}>(
-			'SELECT id, title, description, assignee_id, status, priority, labels FROM issues WHERE project_id = $1',
+			'SELECT id, title, description, assignee_id, status, priority, labels FROM tasks WHERE project_id = $1',
 			[body.data.id],
 		);
-		expect(issueResult.rows.length).toBe(1);
-		const issue = issueResult.rows[0];
-		expect(issue.assignee_id).toBe(ceoId);
-		expect(issue.status).toBe('backlog');
-		expect(issue.priority).toBe('high');
-		expect(issue.title).toContain('Draft execution plan');
-		expect(issue.description).toContain(VALID_DESCRIPTION);
-		expect(issue.description).toMatch(/sub-issues of this planning ticket/);
-		expect(issue.description).toMatch(/Work tickets/);
-		expect(issue.description).toMatch(/top-level tickets/);
-		expect(issue.description).toMatch(/will not let it move to `done` while any sub-issue is open/);
-		const labels = typeof issue.labels === 'string' ? JSON.parse(issue.labels) : issue.labels;
+		expect(taskResult.rows.length).toBe(1);
+		const task = taskResult.rows[0];
+		expect(task.assignee_id).toBe(captainId);
+		expect(task.status).toBe('backlog');
+		expect(task.priority).toBe('high');
+		expect(task.title).toContain('Draft execution plan');
+		expect(task.description).toContain(VALID_DESCRIPTION);
+		expect(task.description).toMatch(/sub-tasks of this planning ticket/);
+		expect(task.description).toMatch(/Work tickets/);
+		expect(task.description).toMatch(/top-level tickets/);
+		expect(task.description).toMatch(/will not let it move to `done` while any sub-task is open/);
+		const labels = typeof task.labels === 'string' ? JSON.parse(task.labels) : task.labels;
 		expect(labels).toContain('planning');
 
-		expect(body.data.planning_issue_id).toBe(issue.id);
+		expect(body.data.planning_task_id).toBe(task.id);
 
-		const wakeupResult = await db.query<{
-			source: string;
-			payload: Record<string, unknown> | string;
-		}>(
-			`SELECT source, payload FROM agent_wakeup_requests
-			 WHERE member_id = $1 AND team_id = $2 AND source = 'assignment'`,
-			[ceoId, teamId],
+		const firstProjectWakeups = await db.query(
+			`SELECT 1 FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND team_id = $2 AND source = 'assignment'
+			   AND payload->>'task_id' = $3`,
+			[captainId, teamId, task.id],
 		);
-		expect(wakeupResult.rows.length).toBeGreaterThanOrEqual(1);
-		const payload =
-			typeof wakeupResult.rows[0].payload === 'string'
-				? JSON.parse(wakeupResult.rows[0].payload)
-				: wakeupResult.rows[0].payload;
-		expect(payload.issue_id).toBe(issue.id);
+		expect(firstProjectWakeups.rows.length).toBeGreaterThanOrEqual(1);
+
+		const secondRes = await app.request(`/api/teams/${teamId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Mobile App',
+				description: VALID_DESCRIPTION,
+			}),
+		});
+		expect(secondRes.status).toBe(201);
+		const secondBody = await secondRes.json();
+		const secondTaskResult = await db.query<{ id: string }>(
+			'SELECT id FROM tasks WHERE project_id = $1',
+			[secondBody.data.id],
+		);
+		const secondPlanningTaskId = secondTaskResult.rows[0].id;
+
+		const secondWakeups = await db.query<{ payload: Record<string, unknown> | string }>(
+			`SELECT payload FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND team_id = $2 AND source = 'assignment'
+			   AND payload->>'task_id' = $3`,
+			[captainId, teamId, secondPlanningTaskId],
+		);
+		expect(secondWakeups.rows.length).toBeGreaterThanOrEqual(1);
+		const secondPayload =
+			typeof secondWakeups.rows[0].payload === 'string'
+				? JSON.parse(secondWakeups.rows[0].payload)
+				: secondWakeups.rows[0].payload;
+		expect(secondPayload.task_id).toBe(secondPlanningTaskId);
 	});
 
 	it('defaults docker_base_image to the bundled agent-base image when not supplied', async () => {
@@ -155,7 +177,7 @@ describe('projects CRUD', () => {
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
 		expect(body.data[0]).toHaveProperty('repo_count');
-		expect(body.data[0]).toHaveProperty('open_issue_count');
+		expect(body.data[0]).toHaveProperty('open_task_count');
 	});
 
 	it('gets a project by id with repos', async () => {
@@ -209,7 +231,7 @@ describe('projects CRUD', () => {
 		expect(slug2).toBe('same-name-2');
 	});
 
-	it('deletes a project with no open issues', async () => {
+	it('deletes a project with no open tasks', async () => {
 		const createRes = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -217,8 +239,8 @@ describe('projects CRUD', () => {
 		});
 		const project = (await createRes.json()).data;
 
-		// The auto-created planning issue is open; cancel it so delete can proceed.
-		await db.query(`UPDATE issues SET status = 'cancelled'::issue_status WHERE project_id = $1`, [
+		// The auto-created planning task is open; cancel it so delete can proceed.
+		await db.query(`UPDATE tasks SET status = 'cancelled'::task_status WHERE project_id = $1`, [
 			project.id,
 		]);
 
@@ -231,7 +253,7 @@ describe('projects CRUD', () => {
 });
 
 describe('initial PRD upload', () => {
-	it('saves initial_prd as a project doc and references it in the planning issue', async () => {
+	it('saves initial_prd as a project doc and references it in the planning task', async () => {
 		const prdContent = '# My Product\n\n## Overview\nA tool for managing widgets.';
 		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
@@ -252,13 +274,13 @@ describe('initial PRD upload', () => {
 		expect(docResult.rows.length).toBe(1);
 		expect(docResult.rows[0].content).toBe(prdContent);
 
-		const issueResult = await db.query<{ description: string }>(
-			'SELECT description FROM issues WHERE project_id = $1',
+		const taskResult = await db.query<{ description: string }>(
+			'SELECT description FROM tasks WHERE project_id = $1',
 			[project.id],
 		);
-		expect(issueResult.rows[0].description).toContain('initial-prd.md');
-		expect(issueResult.rows[0].description).toContain('Researcher');
-		expect(issueResult.rows[0].description).toContain('Product Lead');
+		expect(taskResult.rows[0].description).toContain('initial-prd.md');
+		expect(taskResult.rows[0].description).toContain('Researcher');
+		expect(taskResult.rows[0].description).toContain('Product Lead');
 	});
 
 	it('does not create initial-prd.md when initial_prd is not provided', async () => {
@@ -279,11 +301,11 @@ describe('initial PRD upload', () => {
 		);
 		expect(docResult.rows.length).toBe(0);
 
-		const issueResult = await db.query<{ description: string }>(
-			'SELECT description FROM issues WHERE project_id = $1',
+		const taskResult = await db.query<{ description: string }>(
+			'SELECT description FROM tasks WHERE project_id = $1',
 			[project.id],
 		);
-		expect(issueResult.rows[0].description).not.toContain('initial-prd.md');
+		expect(taskResult.rows[0].description).not.toContain('initial-prd.md');
 	});
 
 	it('ignores empty/whitespace-only initial_prd', async () => {

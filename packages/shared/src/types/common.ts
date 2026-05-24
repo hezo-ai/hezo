@@ -60,7 +60,7 @@ export const ContainerStatus = {
 } as const;
 export type ContainerStatus = (typeof ContainerStatus)[keyof typeof ContainerStatus];
 
-export const IssueStatus = {
+export const TaskStatus = {
 	Backlog: 'backlog',
 	InProgress: 'in_progress',
 	Review: 'review',
@@ -69,29 +69,29 @@ export const IssueStatus = {
 	Closed: 'closed',
 	Cancelled: 'cancelled',
 } as const;
-export type IssueStatus = (typeof IssueStatus)[keyof typeof IssueStatus];
+export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
 
-export const ISSUE_STATUS_LABELS: Record<IssueStatus, string> = {
-	[IssueStatus.Backlog]: 'Backlog',
-	[IssueStatus.InProgress]: 'In Progress',
-	[IssueStatus.Review]: 'Review',
-	[IssueStatus.Blocked]: 'Blocked',
-	[IssueStatus.Done]: 'Done',
-	[IssueStatus.Closed]: 'Closed',
-	[IssueStatus.Cancelled]: 'Cancelled',
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+	[TaskStatus.Backlog]: 'Backlog',
+	[TaskStatus.InProgress]: 'In Progress',
+	[TaskStatus.Review]: 'Review',
+	[TaskStatus.Blocked]: 'Blocked',
+	[TaskStatus.Done]: 'Done',
+	[TaskStatus.Closed]: 'Closed',
+	[TaskStatus.Cancelled]: 'Cancelled',
 };
 
-export function formatIssueStatus(status: string): string {
-	return ISSUE_STATUS_LABELS[status as IssueStatus] ?? status;
+export function formatTaskStatus(status: string): string {
+	return TASK_STATUS_LABELS[status as TaskStatus] ?? status;
 }
 
-export const IssuePriority = {
+export const TaskPriority = {
 	Urgent: 'urgent',
 	High: 'high',
 	Medium: 'medium',
 	Low: 'low',
 } as const;
-export type IssuePriority = (typeof IssuePriority)[keyof typeof IssuePriority];
+export type TaskPriority = (typeof TaskPriority)[keyof typeof TaskPriority];
 
 export const CommentContentType = {
 	Text: 'text',
@@ -190,7 +190,7 @@ export const OAuthRequestReason = {
 export type OAuthRequestReason = (typeof OAuthRequestReason)[keyof typeof OAuthRequestReason];
 
 export interface BlockedTicket {
-	issue_id: string;
+	task_id: string;
 	identifier: string;
 	title: string;
 	project_slug: string;
@@ -225,6 +225,7 @@ export type GrantScope = (typeof GrantScope)[keyof typeof GrantScope];
 export const ApprovalType = {
 	SecretAccess: 'secret_access',
 	Hire: 'hire',
+	TeamTemplate: 'team_template',
 	Strategy: 'strategy',
 	KbUpdate: 'kb_update',
 	PlanReview: 'plan_review',
@@ -337,7 +338,7 @@ export const AuthType = { Board: 'board', ApiKey: 'api_key', Agent: 'agent' } as
 export type AuthType = (typeof AuthType)[keyof typeof AuthType];
 
 export const AuditEntityType = {
-	Issue: 'issue',
+	Task: 'task',
 	Project: 'project',
 	Agent: 'agent',
 	Team: 'team',
@@ -426,17 +427,17 @@ export const AuditAction = {
 } as const;
 export type AuditAction = (typeof AuditAction)[keyof typeof AuditAction];
 
-export const TERMINAL_ISSUE_STATUSES = [
-	IssueStatus.Done,
-	IssueStatus.Closed,
-	IssueStatus.Cancelled,
+export const TERMINAL_TASK_STATUSES = [
+	TaskStatus.Done,
+	TaskStatus.Closed,
+	TaskStatus.Cancelled,
 ] as const;
 
-export const PRIORITY_ORDER: Record<IssuePriority, number> = {
-	[IssuePriority.Urgent]: 0,
-	[IssuePriority.High]: 1,
-	[IssuePriority.Medium]: 2,
-	[IssuePriority.Low]: 3,
+export const PRIORITY_ORDER: Record<TaskPriority, number> = {
+	[TaskPriority.Urgent]: 0,
+	[TaskPriority.High]: 1,
+	[TaskPriority.Medium]: 2,
+	[TaskPriority.Low]: 3,
 };
 
 // --- AI Provider Configuration ---
@@ -495,6 +496,7 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		runtime: AgentRuntime.ClaudeCode,
 		staticEnv: {
 			ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
+			// Base ids only — Claude Code appends `[1m]` for 1M-context models itself.
 			ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-v4-pro',
 			ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-pro',
 			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash',
@@ -514,6 +516,45 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
 	},
 };
+
+/** Default upstream API hostnames per provider (for egress NO_PROXY). */
+const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
+	[AiProvider.Anthropic]: ['api.anthropic.com'],
+	[AiProvider.OpenAI]: ['api.openai.com'],
+	[AiProvider.Google]: ['generativelanguage.googleapis.com'],
+	[AiProvider.DeepSeek]: ['api.deepseek.com'],
+	[AiProvider.ZAi]: ['api.z.ai'],
+};
+
+/**
+ * Hostnames that should bypass the egress MITM proxy for a given provider.
+ * LLM credentials are injected via container env (not `__HEZO_SECRET_*`
+ * placeholders); MITM breaks some Anthropic-compatible APIs, so provider
+ * traffic goes direct while git/MCP placeholders still use the proxy.
+ */
+export function providerDirectUpstreamHosts(provider: AiProvider): readonly string[] {
+	const baseUrl = PROVIDER_RUNTIME_ADAPTERS[provider].staticEnv?.ANTHROPIC_BASE_URL;
+	if (baseUrl) {
+		try {
+			return [new URL(baseUrl).hostname];
+		} catch {
+			// fall through
+		}
+	}
+	return PROVIDER_UPSTREAM_HOSTS[provider];
+}
+
+/**
+ * Normalize a model id before passing it to Claude Code CLI. DeepSeek runs
+ * append `[1m]` themselves; including it in env or `--model` yields
+ * `deepseek-v4-pro[1m][1m]` and provider 400s.
+ */
+export function claudeCodeModelArg(provider: AiProvider, model: string): string {
+	if (provider === AiProvider.DeepSeek) {
+		return model.replace(/\[1m\]/gi, '');
+	}
+	return model;
+}
 
 export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = Object.freeze(
 	(Object.keys(PROVIDER_RUNTIME_ADAPTERS) as AiProvider[]).reduce(

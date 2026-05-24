@@ -13,7 +13,7 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let projectId: string;
-let issueId: string;
+let taskId: string;
 let agentId: string;
 let agentToken: string;
 
@@ -45,12 +45,12 @@ beforeAll(async () => {
 	});
 	agentId = (await agentRes.json()).data.id;
 
-	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
+	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title: 'Need creds', assignee_id: agentId }),
 	});
-	issueId = (await issueRes.json()).data.id;
+	taskId = (await taskRes.json()).data.id;
 
 	const minted = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 	agentToken = minted.token;
@@ -79,7 +79,7 @@ describe('request_credential MCP tool', () => {
 	it('rejects invalid name', async () => {
 		const result = (await callRequestCredential({
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			name: 'lowercase_name',
 			kind: 'api_key',
 			instructions: 'test',
@@ -90,7 +90,7 @@ describe('request_credential MCP tool', () => {
 	it('rejects name with hyphens or special chars', async () => {
 		const result = (await callRequestCredential({
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			name: 'GITHUB-PAT',
 			kind: 'api_key',
 			instructions: 'test',
@@ -101,7 +101,7 @@ describe('request_credential MCP tool', () => {
 	it('creates a credential_request comment and returns placeholder', async () => {
 		const result = (await callRequestCredential({
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			name: 'STRIPE_API_KEY',
 			kind: 'api_key',
 			instructions: 'I need a Stripe API key with read scope.',
@@ -116,7 +116,7 @@ describe('request_credential MCP tool', () => {
 		const row = await db.query<{
 			content_type: string;
 			content: Record<string, unknown>;
-		}>('SELECT content_type, content FROM issue_comments WHERE id = $1', [result.comment_id]);
+		}>('SELECT content_type, content FROM task_comments WHERE id = $1', [result.comment_id]);
 		expect(row.rows[0].content_type).toBe('credential_request');
 		expect(row.rows[0].content.name).toBe('STRIPE_API_KEY');
 		expect(row.rows[0].content.kind).toBe('api_key');
@@ -127,7 +127,7 @@ describe('request_credential MCP tool', () => {
 	it('returns the existing comment on duplicate request (idempotent)', async () => {
 		const first = (await callRequestCredential({
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			name: 'DUPLICATE_KEY',
 			kind: 'api_key',
 			instructions: 'test',
@@ -136,7 +136,7 @@ describe('request_credential MCP tool', () => {
 
 		const second = (await callRequestCredential({
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			name: 'DUPLICATE_KEY',
 			kind: 'api_key',
 			instructions: 'second call',
@@ -155,7 +155,7 @@ describe('request_credential MCP tool', () => {
 
 		const result = (await callRequestCredential({
 			team_id: otherTeamId,
-			issue_id: issueId,
+			task_id: taskId,
 			name: 'CROSS_TEAM',
 			kind: 'api_key',
 			instructions: 'test',
@@ -170,7 +170,7 @@ describe('fulfill-credential endpoint', () => {
 	it('creates a credential request to fulfill', async () => {
 		const result = (await callRequestCredential({
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			name: 'FULFILL_TEST_KEY',
 			kind: 'api_key',
 			instructions: 'fulfill me',
@@ -182,7 +182,7 @@ describe('fulfill-credential endpoint', () => {
 	it('stores the value encrypted and grants access to the requesting agent', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 		const res = await app.request(
-			`/api/teams/${teamId}/issues/${issueId}/comments/${credentialCommentId}/fulfill-credential`,
+			`/api/teams/${teamId}/tasks/${taskId}/comments/${credentialCommentId}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -213,7 +213,7 @@ describe('fulfill-credential endpoint', () => {
 		expect(grant.rows.length).toBe(1);
 
 		const updatedComment = await db.query<{ chosen_option: Record<string, unknown> }>(
-			'SELECT chosen_option FROM issue_comments WHERE id = $1',
+			'SELECT chosen_option FROM task_comments WHERE id = $1',
 			[credentialCommentId],
 		);
 		expect(updatedComment.rows[0].chosen_option.secret_id).toBe(body.data.secret_id);
@@ -227,12 +227,12 @@ describe('fulfill-credential endpoint', () => {
 		expect(wakeups.rows.length).toBeGreaterThanOrEqual(1);
 		const last = wakeups.rows[wakeups.rows.length - 1];
 		expect(last.payload.name).toBe('FULFILL_TEST_KEY');
-		expect(last.payload.issue_id).toBe(issueId);
+		expect(last.payload.task_id).toBe(taskId);
 	});
 
 	it('rejects fulfilling the same comment twice', async () => {
 		const res = await app.request(
-			`/api/teams/${teamId}/issues/${issueId}/comments/${credentialCommentId}/fulfill-credential`,
+			`/api/teams/${teamId}/tasks/${taskId}/comments/${credentialCommentId}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -245,7 +245,7 @@ describe('fulfill-credential endpoint', () => {
 	});
 
 	it('rejects fulfill on a non-credential-request comment', async () => {
-		const textRes = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
+		const textRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content_type: 'text', content: { text: 'not a creq' } }),
@@ -253,7 +253,7 @@ describe('fulfill-credential endpoint', () => {
 		const textComment = (await textRes.json()).data;
 
 		const res = await app.request(
-			`/api/teams/${teamId}/issues/${issueId}/comments/${textComment.id}/fulfill-credential`,
+			`/api/teams/${teamId}/tasks/${taskId}/comments/${textComment.id}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -268,14 +268,14 @@ describe('fulfill-credential endpoint', () => {
 	it('rejects bad GitHub PAT format', async () => {
 		const reqResult = (await callRequestCredential({
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			name: 'BAD_PAT_TEST',
 			kind: 'github_pat',
 			instructions: 'test',
 		})) as { comment_id: string };
 
 		const res = await app.request(
-			`/api/teams/${teamId}/issues/${issueId}/comments/${reqResult.comment_id}/fulfill-credential`,
+			`/api/teams/${teamId}/tasks/${taskId}/comments/${reqResult.comment_id}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -290,14 +290,14 @@ describe('fulfill-credential endpoint', () => {
 	it('accepts a well-formed classic GitHub PAT', async () => {
 		const reqResult = (await callRequestCredential({
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			name: 'GOOD_PAT_TEST',
 			kind: 'github_pat',
 			instructions: 'test',
 		})) as { comment_id: string };
 
 		const res = await app.request(
-			`/api/teams/${teamId}/issues/${issueId}/comments/${reqResult.comment_id}/fulfill-credential`,
+			`/api/teams/${teamId}/tasks/${taskId}/comments/${reqResult.comment_id}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -310,7 +310,7 @@ describe('fulfill-credential endpoint', () => {
 	it('fulfills a confirmation-style request with confirmed=true', async () => {
 		const reqResult = (await callRequestCredential({
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			name: 'CONFIRM_TEST',
 			kind: 'other',
 			instructions: 'Have you added the public key to GitHub?',
@@ -318,7 +318,7 @@ describe('fulfill-credential endpoint', () => {
 		})) as { comment_id: string };
 
 		const res = await app.request(
-			`/api/teams/${teamId}/issues/${issueId}/comments/${reqResult.comment_id}/fulfill-credential`,
+			`/api/teams/${teamId}/tasks/${taskId}/comments/${reqResult.comment_id}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },

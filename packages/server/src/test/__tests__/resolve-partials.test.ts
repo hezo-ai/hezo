@@ -6,9 +6,9 @@ describe('resolvePartials', () => {
 	it('inlines a top-level partial into a role doc', () => {
 		const out = resolvePartials({
 			'_partials/greet.md': 'Hello.',
-			'blank/ceo.md': 'Intro.\n{{> partials/greet}}\nOutro.',
+			'blank/captain.md': 'Intro.\n{{> partials/greet}}\nOutro.',
 		});
-		expect(out['blank/ceo.md']).toBe('Intro.\nHello.\nOutro.');
+		expect(out['blank/captain.md']).toBe('Intro.\nHello.\nOutro.');
 		expect(out['_partials/greet.md']).toBeUndefined();
 	});
 
@@ -16,31 +16,31 @@ describe('resolvePartials', () => {
 		const out = resolvePartials({
 			'_partials/inner.md': 'inner',
 			'_partials/outer.md': 'A\n{{> partials/inner}}\nB',
-			'blank/ceo.md': '{{> partials/outer}}',
+			'blank/captain.md': '{{> partials/outer}}',
 		});
-		expect(out['blank/ceo.md']).toBe('A\ninner\nB');
+		expect(out['blank/captain.md']).toBe('A\ninner\nB');
 	});
 
 	it('tolerates leading and trailing whitespace around the directive', () => {
 		const out = resolvePartials({
 			'_partials/x.md': 'BODY',
-			'blank/ceo.md': '  {{> partials/x}}  ',
+			'blank/captain.md': '  {{> partials/x}}  ',
 		});
-		expect(out['blank/ceo.md']).toBe('BODY');
+		expect(out['blank/captain.md']).toBe('BODY');
 	});
 
 	it('does not expand directives embedded mid-line (treats them as literal)', () => {
 		const out = resolvePartials({
 			'_partials/x.md': 'BODY',
-			'blank/ceo.md': 'prefix {{> partials/x}} suffix',
+			'blank/captain.md': 'prefix {{> partials/x}} suffix',
 		});
-		expect(out['blank/ceo.md']).toBe('prefix {{> partials/x}} suffix');
+		expect(out['blank/captain.md']).toBe('prefix {{> partials/x}} suffix');
 	});
 
 	it('throws on an unknown partial reference', () => {
 		expect(() =>
 			resolvePartials({
-				'blank/ceo.md': '{{> partials/missing}}',
+				'blank/captain.md': '{{> partials/missing}}',
 			}),
 		).toThrow(PartialResolutionError);
 	});
@@ -50,30 +50,30 @@ describe('resolvePartials', () => {
 			resolvePartials({
 				'_partials/a.md': '{{> partials/b}}',
 				'_partials/b.md': '{{> partials/a}}',
-				'blank/ceo.md': '{{> partials/a}}',
+				'blank/captain.md': '{{> partials/a}}',
 			}),
 		).toThrow(/cycle/);
 	});
 
 	it('leaves role docs without directives unchanged', () => {
 		const untouched = 'Plain doc with no partials.';
-		const out = resolvePartials({ 'blank/ceo.md': untouched });
-		expect(out['blank/ceo.md']).toBe(untouched);
+		const out = resolvePartials({ 'blank/captain.md': untouched });
+		expect(out['blank/captain.md']).toBe(untouched);
 	});
 });
 
 describe('loadAgentRoles integrates resolvePartials', () => {
-	it('seeds CEO prompts from both templates with the shared partials expanded', async () => {
+	it('seeds Captain prompts from both templates with the shared partials expanded', async () => {
 		const docs = await loadAgentRoles();
 
-		const sdCeo = docs['software-development/ceo.md'];
+		const sdCeo = docs['software-development/captain.md'];
 		expect(sdCeo).toBeDefined();
 		expect(sdCeo).toContain('Every run you take is at **max effort**');
 		expect(sdCeo).toContain('## Hire workflow');
 		expect(sdCeo).toContain('Ask before you write.');
 		expect(sdCeo).not.toContain('{{> partials/');
 
-		const blankCeo = docs['blank/ceo.md'];
+		const blankCeo = docs['blank/captain.md'];
 		expect(blankCeo).toBeDefined();
 		expect(blankCeo).toContain('Every run you take is at **max effort**');
 		expect(blankCeo).toContain('## Hire workflow');
@@ -130,8 +130,8 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 
 		// Every role doc picks up the subtask-preference guidance.
 		for (const key of allRoleKeys) {
-			expect(docs[key], `${key} should include the sub-issue heading`).toContain(
-				'## Sub-issues vs top-level tickets',
+			expect(docs[key], `${key} should include the sub-task heading`).toContain(
+				'## Sub-tasks vs top-level tickets',
 			);
 			expect(docs[key], `${key} should mention the depth-2 cap`).toContain(
 				'capped at two levels deep',
@@ -166,8 +166,8 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			expect(docs[key], `${key} should include the duplicate-check heading`).toContain(
 				'## Check before you create',
 			);
-			expect(docs[key], `${key} should reference list_issues for the duplicate check`).toContain(
-				'`list_issues`',
+			expect(docs[key], `${key} should reference list_tasks for the duplicate check`).toContain(
+				'`list_tasks`',
 			);
 		}
 

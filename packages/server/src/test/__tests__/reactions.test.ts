@@ -14,7 +14,7 @@ let masterKeyManager: MasterKeyManager;
 
 let teamId: string;
 let projectId: string;
-let ceoId: string;
+let captainId: string;
 let architectId: string;
 let productLeadId: string;
 let ceoSlug: string;
@@ -29,28 +29,34 @@ interface ReactionGroup {
 	members: ReactionMember[];
 }
 
-async function insertIssue(assigneeId: string, title: string): Promise<string> {
-	const meta = await db.query<{ issue_prefix: string; number: number }>(
-		`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
+async function insertTask(
+	assigneeId: string,
+	title: string,
+	opts?: { teamId?: string; projectId?: string },
+): Promise<string> {
+	const cid = opts?.teamId ?? teamId;
+	const pid = opts?.projectId ?? projectId;
+	const meta = await db.query<{ task_prefix: string; number: number }>(
+		`SELECT p.task_prefix, next_project_task_number(p.id) AS number
 		 FROM projects p WHERE p.id = $1`,
-		[projectId],
+		[pid],
 	);
 	const n = meta.rows[0].number;
 	const res = await db.query<{ id: string }>(
-		`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
-		 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
+		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
 		 RETURNING id`,
-		[teamId, projectId, assigneeId, n, `${meta.rows[0].issue_prefix}-${n}`, title],
+		[cid, pid, assigneeId, n, `${meta.rows[0].task_prefix}-${n}`, title],
 	);
 	return res.rows[0].id;
 }
 
-async function insertComment(issueId: string, authorMemberId: string | null): Promise<string> {
+async function insertComment(taskId: string, authorMemberId: string | null): Promise<string> {
 	const res = await db.query<{ id: string }>(
-		`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb)
 		 RETURNING id`,
-		[issueId, authorMemberId, JSON.stringify({ text: '@architect please review' })],
+		[taskId, authorMemberId, JSON.stringify({ text: '@architect please review' })],
 	);
 	return res.rows[0].id;
 }
@@ -113,9 +119,9 @@ beforeAll(async () => {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
-	const ceo = agents.find((a) => a.slug === 'ceo')!;
-	ceoId = ceo.id;
-	ceoSlug = ceo.slug;
+	const captain = agents.find((a) => a.slug === 'captain')!;
+	captainId = captain.id;
+	ceoSlug = captain.slug;
 	architectId = agents.find((a) => a.slug === 'architect')!.id;
 	productLeadId = agents.find((a) => a.slug === 'product-lead')!.id;
 
@@ -138,10 +144,10 @@ beforeEach(async () => {
 
 describe('REST reactions endpoints', () => {
 	it('PUT adds a reaction; idempotent on repeat', async () => {
-		const issueId = await insertIssue(ceoId, 'Reaction test');
-		const commentId = await insertComment(issueId, productLeadId);
+		const taskId = await insertTask(captainId, 'Reaction test');
+		const commentId = await insertComment(taskId, productLeadId);
 
-		const url = `/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/reactions/${ReactionKind.Ack}`;
+		const url = `/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`;
 		const first = await app.request(url, { method: 'PUT', headers: authHeader(token) });
 		expect(first.status).toBe(200);
 		const firstBody = (await first.json()).data as {
@@ -159,8 +165,8 @@ describe('REST reactions endpoints', () => {
 	});
 
 	it('DELETE removes only the caller’s reaction', async () => {
-		const issueId = await insertIssue(ceoId, 'Reaction delete test');
-		const commentId = await insertComment(issueId, productLeadId);
+		const taskId = await insertTask(captainId, 'Reaction delete test');
+		const commentId = await insertComment(taskId, productLeadId);
 
 		// Architect (an agent) reacts via MCP
 		const { token: architectToken } = await mintAgentToken(
@@ -168,11 +174,11 @@ describe('REST reactions endpoints', () => {
 			masterKeyManager,
 			architectId,
 			teamId,
-			issueId,
+			taskId,
 		);
 		const arc = await callMcp(architectToken, 'add_reaction', {
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});
@@ -180,7 +186,7 @@ describe('REST reactions endpoints', () => {
 		expect((arc.result as { error?: string }).error).toBeUndefined();
 
 		// Board user reacts via REST
-		const putUrl = `/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/reactions/${ReactionKind.Ack}`;
+		const putUrl = `/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`;
 		await app.request(putUrl, { method: 'PUT', headers: authHeader(token) });
 		expect(await reactionsRowCount(commentId)).toBe(2);
 
@@ -196,57 +202,63 @@ describe('REST reactions endpoints', () => {
 	});
 
 	it('400 on unknown reaction kind', async () => {
-		const issueId = await insertIssue(ceoId, 'Invalid kind test');
-		const commentId = await insertComment(issueId, productLeadId);
+		const taskId = await insertTask(captainId, 'Invalid kind test');
+		const commentId = await insertComment(taskId, productLeadId);
 
 		const res = await app.request(
-			`/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/reactions/nope`,
+			`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/nope`,
 			{ method: 'PUT', headers: authHeader(token) },
 		);
 		expect(res.status).toBe(400);
 	});
 
-	it('404 when comment does not belong to the issue', async () => {
-		const issueA = await insertIssue(ceoId, 'Cross-issue A');
-		const issueB = await insertIssue(ceoId, 'Cross-issue B');
-		const commentInA = await insertComment(issueA, productLeadId);
+	it('404 when comment does not belong to the task', async () => {
+		const taskA = await insertTask(captainId, 'Cross-task A');
+		const taskB = await insertTask(captainId, 'Cross-task B');
+		const commentInA = await insertComment(taskA, productLeadId);
 
 		const res = await app.request(
-			`/api/teams/${teamId}/issues/${issueB}/comments/${commentInA}/reactions/${ReactionKind.Ack}`,
+			`/api/teams/${teamId}/tasks/${taskB}/comments/${commentInA}/reactions/${ReactionKind.Ack}`,
 			{ method: 'PUT', headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
 	});
 
 	it('reacting does not create any wakeups', async () => {
-		const issueId = await insertIssue(ceoId, 'No wakeup test');
-		const commentId = await insertComment(issueId, productLeadId);
+		const taskId = await insertTask(captainId, 'No wakeup test');
+		const commentId = await insertComment(taskId, productLeadId);
 
 		const before = await wakeupCount();
 		await app.request(
-			`/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
+			`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
 			{ method: 'PUT', headers: authHeader(token) },
 		);
 		await app.request(
-			`/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
+			`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
 			{ method: 'DELETE', headers: authHeader(token) },
 		);
 		expect(await wakeupCount()).toBe(before);
 	});
 
 	it('GET /comments includes reactions inline', async () => {
-		const issueId = await insertIssue(ceoId, 'GET with reactions');
-		const commentId = await insertComment(issueId, productLeadId);
+		const taskId = await insertTask(captainId, 'GET with reactions');
+		const commentId = await insertComment(taskId, productLeadId);
 
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, teamId, issueId);
+		const { token: ceoToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captainId,
+			teamId,
+			taskId,
+		);
 		await callMcp(ceoToken, 'add_reaction', {
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});
 
-		const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
+		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -262,8 +274,8 @@ describe('REST reactions endpoints', () => {
 	});
 
 	it('cross-team access is denied', async () => {
-		const issueId = await insertIssue(ceoId, 'Cross-team test');
-		const commentId = await insertComment(issueId, productLeadId);
+		const taskId = await insertTask(captainId, 'Cross-team test');
+		const commentId = await insertComment(taskId, productLeadId);
 
 		// Build a second team; mint an api key for it.
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
@@ -280,25 +292,32 @@ describe('REST reactions endpoints', () => {
 			headers: authHeader(token),
 		});
 		const otherCeo = (await otherAgents.json()).data.find(
-			(a: { slug: string }) => a.slug === 'ceo',
+			(a: { slug: string }) => a.slug === 'captain',
 		);
-		const otherIssue = await db.query<{ id: string }>(
-			`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
-			 SELECT $1, p.id, $2, 1, 'OTH-1', 'other', 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb
-			 FROM projects p WHERE p.team_id = $1 LIMIT 1
-			 RETURNING id`,
-			[otherTeamId, otherCeo.id],
-		);
+		const otherProjectRes = await app.request(`/api/teams/${otherTeamId}/projects`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Other Project',
+				description: 'Cross-team reactions isolation project.',
+			}),
+		});
+		expect(otherProjectRes.status).toBe(201);
+		const otherProjectId = (await otherProjectRes.json()).data.id as string;
+		const otherTaskId = await insertTask(otherCeo.id, 'other', {
+			teamId: otherTeamId,
+			projectId: otherProjectId,
+		});
 		const { token: otherToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			otherCeo.id,
 			otherTeamId,
-			otherIssue.rows[0].id,
+			otherTaskId,
 		);
 
 		const res = await app.request(
-			`/api/teams/${teamId}/issues/${issueId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
+			`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
 			{ method: 'PUT', headers: authHeader(otherToken) },
 		);
 		expect(res.status).toBe(403);
@@ -307,26 +326,26 @@ describe('REST reactions endpoints', () => {
 
 describe('MCP add_reaction / remove_reaction tools', () => {
 	it('add_reaction is idempotent', async () => {
-		const issueId = await insertIssue(ceoId, 'MCP idempotent');
-		const commentId = await insertComment(issueId, productLeadId);
+		const taskId = await insertTask(captainId, 'MCP idempotent');
+		const commentId = await insertComment(taskId, productLeadId);
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
-			ceoId,
+			captainId,
 			teamId,
-			issueId,
+			taskId,
 		);
 
 		const first = await callMcp(agentToken, 'add_reaction', {
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});
 		expect((first.result as { error?: string }).error).toBeUndefined();
 		const second = await callMcp(agentToken, 'add_reaction', {
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});
@@ -335,31 +354,37 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 	});
 
 	it('remove_reaction removes only the caller’s reaction', async () => {
-		const issueId = await insertIssue(ceoId, 'MCP remove');
-		const commentId = await insertComment(issueId, productLeadId);
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, teamId, issueId);
+		const taskId = await insertTask(captainId, 'MCP remove');
+		const commentId = await insertComment(taskId, productLeadId);
+		const { token: ceoToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captainId,
+			teamId,
+			taskId,
+		);
 		const { token: archToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			architectId,
 			teamId,
-			issueId,
+			taskId,
 		);
 		await callMcp(ceoToken, 'add_reaction', {
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});
 		await callMcp(archToken, 'add_reaction', {
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});
 		await callMcp(ceoToken, 'remove_reaction', {
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});
@@ -372,24 +397,24 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 	});
 
 	it('list_comments includes reactions inline', async () => {
-		const issueId = await insertIssue(ceoId, 'MCP list_comments');
-		const commentId = await insertComment(issueId, productLeadId);
+		const taskId = await insertTask(captainId, 'MCP list_comments');
+		const commentId = await insertComment(taskId, productLeadId);
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
-			ceoId,
+			captainId,
 			teamId,
-			issueId,
+			taskId,
 		);
 		await callMcp(agentToken, 'add_reaction', {
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});
 		const list = await callMcp(agentToken, 'list_comments', {
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 		});
 		const rows = list.result as Array<{ id: string; reactions: ReactionGroup[] }>;
 		const c = rows.find((r) => r.id === commentId)!;
@@ -398,20 +423,20 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 	});
 
 	it('add_reaction does not fire any wakeups', async () => {
-		const issueId = await insertIssue(architectId, 'MCP no wakeups');
-		const commentId = await insertComment(issueId, ceoId);
+		const taskId = await insertTask(architectId, 'MCP no wakeups');
+		const commentId = await insertComment(taskId, captainId);
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			architectId,
 			teamId,
-			issueId,
+			taskId,
 		);
 
 		const before = await wakeupCount();
 		await callMcp(agentToken, 'add_reaction', {
 			team_id: teamId,
-			issue_id: issueId,
+			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});

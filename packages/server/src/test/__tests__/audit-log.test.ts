@@ -31,7 +31,7 @@ afterAll(async () => {
 
 describe('audit log', () => {
 	it('inserts an audit entry via helper', async () => {
-		await auditLog(db, teamId, 'board', null, 'created', 'issue', null, {
+		await auditLog(db, teamId, 'board', null, 'created', 'task', null, {
 			title: 'Test',
 		});
 
@@ -42,7 +42,7 @@ describe('audit log', () => {
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
 		const entry = body.data.find(
-			(e: Record<string, unknown>) => e.action === 'created' && e.entity_type === 'issue',
+			(e: Record<string, unknown>) => e.action === 'created' && e.entity_type === 'task',
 		);
 		expect(entry).toBeDefined();
 		expect(entry.details).toEqual({ title: 'Test' });
@@ -84,7 +84,7 @@ describe('audit log', () => {
 	it('supports pagination', async () => {
 		// Insert several entries
 		for (let i = 0; i < 5; i++) {
-			await auditLog(db, teamId, 'system', null, 'created', 'issue', null, { i });
+			await auditLog(db, teamId, 'system', null, 'created', 'task', null, { i });
 		}
 
 		const res = await app.request(`/api/teams/${teamId}/audit-log?page=1&per_page=2`, {

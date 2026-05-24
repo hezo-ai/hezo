@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { ContainerLogStreamer } from '../../services/container-logs';
 import { JobManager, type JobManagerDeps } from '../../services/job-manager';
 import { LogStreamBroker } from '../../services/log-stream-broker';
 
@@ -11,6 +12,7 @@ function createMockDeps(): JobManagerDeps {
 		dataDir: '',
 		wsManager: { broadcast: vi.fn() } as any,
 		logs: new LogStreamBroker(),
+		containerLogStreamer: new ContainerLogStreamer(),
 	};
 }
 
@@ -120,9 +122,9 @@ describe('JobManager', () => {
 			});
 
 			manager.launchTask(
-				'agent:ceo',
+				'agent:captain',
 				async () => {
-					running.push('ceo');
+					running.push('captain');
 					await p1;
 				},
 				LONG_TIMEOUT,
@@ -136,15 +138,15 @@ describe('JobManager', () => {
 				LONG_TIMEOUT,
 			);
 
-			expect(manager.isTaskRunning('agent:ceo')).toBe(true);
+			expect(manager.isTaskRunning('agent:captain')).toBe(true);
 			expect(manager.isTaskRunning('agent:dev')).toBe(true);
-			expect(running).toContain('ceo');
+			expect(running).toContain('captain');
 			expect(running).toContain('dev');
 
 			resolve1!();
 			resolve2!();
 			await new Promise((r) => setTimeout(r, 10));
-			expect(manager.isTaskRunning('agent:ceo')).toBe(false);
+			expect(manager.isTaskRunning('agent:captain')).toBe(false);
 			expect(manager.isTaskRunning('agent:dev')).toBe(false);
 		});
 

@@ -152,7 +152,7 @@ reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
 	let becameDesignated = false;
 	let finalizeResult: Awaited<ReturnType<typeof finalizePendingRepoSetup>> = {
 		resolvedApprovalId: null,
-		affectedIssueIds: [],
+		affectedTaskIds: [],
 		deferredWakeups: [],
 		approvalRow: null,
 		updatedCommentRows: [],
@@ -259,10 +259,10 @@ reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
 			broadcastChange(c, wsRoom.team(teamId), 'approvals', 'UPDATE', finalizeResult.approvalRow);
 		}
 		for (const row of finalizeResult.updatedCommentRows) {
-			broadcastChange(c, wsRoom.team(teamId), 'issue_comments', 'UPDATE', row);
+			broadcastChange(c, wsRoom.team(teamId), 'task_comments', 'UPDATE', row);
 		}
 		for (const row of finalizeResult.systemCommentRows) {
-			broadcastChange(c, wsRoom.team(teamId), 'issue_comments', 'INSERT', row);
+			broadcastChange(c, wsRoom.team(teamId), 'task_comments', 'INSERT', row);
 		}
 	}
 
@@ -392,6 +392,7 @@ async function ensureProjectContainerUp(c: Context<Env>, projectId: string): Pro
 	const masterKeyManager = c.get('masterKeyManager');
 	const wsManager = c.get('wsManager');
 	const logs = c.get('logs');
+	const containerLogStreamer = c.get('containerLogStreamer');
 	const sshAgentServer = c.get('sshAgentServer');
 	const egressProxy = c.get('egressProxy');
 
@@ -426,6 +427,7 @@ async function ensureProjectContainerUp(c: Context<Env>, projectId: string): Pro
 				wsManager,
 				masterKeyManager,
 				logs,
+				containerLogStreamer,
 				sshAgentServer,
 				egressCAPath: egressProxy?.caCertPath ?? null,
 			},

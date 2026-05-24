@@ -1,14 +1,16 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { createRootRoute, Outlet, useNavigate, useParams } from '@tanstack/react-router';
+import { createRootRoute, Outlet, useNavigate } from '@tanstack/react-router';
 import { ChevronsLeft, ChevronsRight, Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { AiProviderSetupModal } from '../components/ai-provider-setup-modal';
 import { MasterKeyGate } from '../components/master-key-gate';
+import { MasterKeyStep, SetupGate } from '../components/setup/setup-wizard';
 import { TeamSidebar } from '../components/team-sidebar';
 import { SocketProvider } from '../contexts/socket-context';
-import { useAiProviderStatus } from '../hooks/use-ai-providers';
+import { useRouteTeamId } from '../hooks/use-route-team-id';
 import { useStatus } from '../hooks/use-status';
+import { useTeams } from '../hooks/use-teams';
 import { useUiState, useUpdateUiState } from '../hooks/use-ui-state';
+import { useShellWebSockets } from '../hooks/use-websocket';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
@@ -29,15 +31,8 @@ function Spinner() {
 }
 
 function AppShell() {
-	const { data: status, isLoading } = useStatus();
+	const { data: status, isPending, isFetching, isError, error, refetch } = useStatus();
 	const navigate = useNavigate();
-	const params = useParams({ strict: false }) as Record<string, string>;
-	const teamId = params.teamId;
-	const unlocked = status?.masterKeyState === 'unlocked';
-
-	const { data: providerStatus, isLoading: providersLoading } = useAiProviderStatus({
-		enabled: unlocked,
-	});
 
 	useEffect(() => {
 		if (status?.masterKeyState === 'unset' && window.location.pathname !== '/') {
@@ -45,36 +40,56 @@ function AppShell() {
 		}
 	}, [status?.masterKeyState, navigate]);
 
-	if (isLoading) return <Spinner />;
+	if (isPending || isFetching) return <Spinner />;
 
-	if (status?.masterKeyState === 'unset' || status?.masterKeyState === 'locked') {
-		api.clearToken();
-		return <MasterKeyGate state={status.masterKeyState} />;
+	if (isError || !status) {
+		const message =
+			(error as { message?: string } | null)?.message ??
+			'Could not reach the server. If you just reset the database, wait a few seconds and retry.';
+		return (
+			<div className="flex flex-col items-center justify-center h-screen gap-4 px-4 text-center">
+				<p className="text-[13px] text-accent-red max-w-md">{message}</p>
+				<button
+					type="button"
+					onClick={() => refetch()}
+					className="text-[13px] font-medium text-primary hover:underline"
+				>
+					Retry
+				</button>
+			</div>
+		);
 	}
 
-	if (providersLoading || !providerStatus) return <Spinner />;
-
-	if (!providerStatus.configured) {
-		return <AiProviderSetupModal />;
+	if (status.masterKeyState !== 'unlocked') {
+		api.clearToken();
+		// Initial setup: render the master-key step inside the wizard chrome so the
+		// stepper makes the two-step flow obvious. On server restart (locked state),
+		// the modal unlock dialog is the right primitive — there's no setup to flow into.
+		if (status.masterKeyState === 'unset') {
+			return <MasterKeyStep state={status.masterKeyState} />;
+		}
+		return <MasterKeyGate state={status.masterKeyState} />;
 	}
 
 	return (
 		<SocketProvider token={api.getToken()}>
-			<ShellLayout teamId={teamId} />
+			<SetupGate>
+				<ShellLayout />
+			</SetupGate>
 		</SocketProvider>
 	);
 }
 
-function ShellLayout({ teamId }: { teamId: string | undefined }) {
+function ShellLayout() {
 	const [drawerOpen, setDrawerOpen] = useState(false);
+	const { data: teams } = useTeams();
+	useShellWebSockets(teams);
 
 	return (
 		<div className="h-screen flex flex-row overflow-hidden">
-			{teamId && (
-				<div className="hidden lg:block">
-					<TeamSidebarShell teamId={teamId} />
-				</div>
-			)}
+			<div className="hidden lg:block">
+				<TeamSidebarShell />
+			</div>
 			<main className="flex-1 overflow-auto relative">
 				<button
 					type="button"
@@ -96,11 +111,9 @@ function ShellLayout({ teamId }: { teamId: string | undefined }) {
 						className="absolute inset-0 bg-black/50 cursor-default"
 					/>
 					<div className="relative flex h-full bg-bg shadow-xl">
-						{teamId && (
-							<div className="w-[260px] h-full overflow-y-auto py-2 border-r border-border bg-bg">
-								<TeamSidebar teamId={teamId} />
-							</div>
-						)}
+						<div className="w-[260px] h-full overflow-y-auto py-2 border-r border-border bg-bg">
+							<TeamSidebar />
+						</div>
 						<button
 							type="button"
 							aria-label="Close navigation"
@@ -117,7 +130,8 @@ function ShellLayout({ teamId }: { teamId: string | undefined }) {
 	);
 }
 
-function TeamSidebarShell({ teamId }: { teamId: string }) {
+function TeamSidebarShell() {
+	const teamId = useRouteTeamId();
 	const { data: uiState } = useUiState(teamId);
 	const updateUiState = useUpdateUiState(teamId);
 	const collapsed = uiState?.sidebar?.collapsed ?? false;
@@ -133,7 +147,7 @@ function TeamSidebarShell({ teamId }: { teamId: string }) {
 					className={`w-[260px] h-full overflow-y-auto py-2 ${collapsed ? 'invisible' : ''}`}
 					aria-hidden={collapsed}
 				>
-					<TeamSidebar teamId={teamId} />
+					<TeamSidebar />
 				</div>
 			</div>
 			<button

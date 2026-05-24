@@ -16,11 +16,13 @@ function generateKey(): string {
 		.join('');
 }
 
-interface MasterKeyGateProps {
+interface MasterKeyFormProps {
 	state: MasterKeyState;
+	/** When true, omit the dialog header (caller renders its own page-level heading). */
+	embedded?: boolean;
 }
 
-export function MasterKeyGate({ state }: MasterKeyGateProps) {
+export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 	const [key, setKey] = useState('');
 	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
 	const [error, setError] = useState('');
@@ -58,65 +60,80 @@ export function MasterKeyGate({ state }: MasterKeyGateProps) {
 	}
 
 	return (
+		<>
+			{!embedded && (
+				<div className="flex flex-col items-center gap-2 mb-6">
+					<div className="p-3 rounded-full bg-accent-blue-bg">
+						{isUnset ? (
+							<KeyRound className="w-6 h-6 text-accent-blue-text" />
+						) : (
+							<ShieldCheck className="w-6 h-6 text-accent-blue-text" />
+						)}
+					</div>
+					<Dialog.Title className="text-lg font-semibold text-text">
+						{isUnset ? 'Set Master Key' : 'Unlock Hezo'}
+					</Dialog.Title>
+					<Dialog.Description className="text-sm text-text-muted text-center">
+						{isUnset
+							? "Create a master key to encrypt your data. Save it somewhere safe — you'll need it to unlock Hezo on restart."
+							: 'Enter your master key to unlock the server.'}
+					</Dialog.Description>
+				</div>
+			)}
+
+			<form onSubmit={handleSubmit} className="flex flex-col gap-4">
+				{isUnset && !generatedKey && (
+					<Button type="button" variant="secondary" onClick={handleGenerate}>
+						<KeyRound className="w-4 h-4" />
+						Generate Key
+					</Button>
+				)}
+
+				{generatedKey && (
+					<div className="flex flex-col gap-2">
+						<div className="flex items-center gap-2 rounded-md border border-border bg-bg p-2.5 font-mono text-xs break-all">
+							{generatedKey}
+						</div>
+						<Button type="button" variant="ghost" size="sm" onClick={handleCopy}>
+							{copied ? 'Copied!' : 'Copy to clipboard'}
+						</Button>
+					</div>
+				)}
+
+				{!isUnset && (
+					<Input
+						label="Master Key"
+						type="password"
+						value={key}
+						onChange={(e) => setKey(e.target.value)}
+						placeholder="Enter master key"
+						autoFocus
+					/>
+				)}
+
+				{error && <p className="text-sm text-accent-red">{error}</p>}
+
+				<Button type="submit" disabled={loading || !key.trim()}>
+					{loading && <Loader2 className="w-4 h-4 animate-spin" />}
+					{isUnset ? 'Set Key & Continue' : 'Unlock'}
+				</Button>
+			</form>
+		</>
+	);
+}
+
+interface MasterKeyGateProps {
+	state: MasterKeyState;
+}
+
+/** Modal wrapper kept for callers that still want the centered overlay variant. */
+export function MasterKeyGate({ state }: MasterKeyGateProps) {
+	return (
 		<Dialog.Root open>
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 bg-black/80 backdrop-blur-sm" />
 				<Dialog.Content className={dialogContentClassName.md}>
-					<div className="flex flex-col items-center gap-2 mb-6">
-						<div className="p-3 rounded-full bg-accent-blue-bg">
-							{isUnset ? (
-								<KeyRound className="w-6 h-6 text-accent-blue-text" />
-							) : (
-								<ShieldCheck className="w-6 h-6 text-accent-blue-text" />
-							)}
-						</div>
-						<Dialog.Title className="text-lg font-semibold text-text">
-							{isUnset ? 'Set Master Key' : 'Unlock Hezo'}
-						</Dialog.Title>
-						<Dialog.Description className="text-sm text-text-muted text-center">
-							{isUnset
-								? "Create a master key to encrypt your data. Save it somewhere safe — you'll need it to unlock Hezo on restart."
-								: 'Enter your master key to unlock the server.'}
-						</Dialog.Description>
-					</div>
-
-					<form onSubmit={handleSubmit} className="flex flex-col gap-4">
-						{isUnset && !generatedKey && (
-							<Button type="button" variant="secondary" onClick={handleGenerate}>
-								<KeyRound className="w-4 h-4" />
-								Generate Key
-							</Button>
-						)}
-
-						{generatedKey && (
-							<div className="flex flex-col gap-2">
-								<div className="flex items-center gap-2 rounded-md border border-border bg-bg p-2.5 font-mono text-xs break-all">
-									{generatedKey}
-								</div>
-								<Button type="button" variant="ghost" size="sm" onClick={handleCopy}>
-									{copied ? 'Copied!' : 'Copy to clipboard'}
-								</Button>
-							</div>
-						)}
-
-						{!isUnset && (
-							<Input
-								label="Master Key"
-								type="password"
-								value={key}
-								onChange={(e) => setKey(e.target.value)}
-								placeholder="Enter master key"
-								autoFocus
-							/>
-						)}
-
-						{error && <p className="text-sm text-accent-red">{error}</p>}
-
-						<Button type="submit" disabled={loading || !key.trim()}>
-							{loading && <Loader2 className="w-4 h-4 animate-spin" />}
-							{isUnset ? 'Set Key & Continue' : 'Unlock'}
-						</Button>
-					</form>
+					<MasterKeyForm state={state} />
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>

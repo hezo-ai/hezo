@@ -6,13 +6,13 @@ interface MockSetup {
 	teamSlug: string;
 	agentId: string;
 	agentSlug: string;
-	issueId: string;
+	taskId: string;
 }
 
 async function mockRunFailedComment(page: Page, setup: MockSetup): Promise<void> {
 	const failedComment = {
 		id: 'aaaa0000-0000-0000-0000-000000000001',
-		issue_id: setup.issueId,
+		task_id: setup.taskId,
 		content_type: 'system',
 		content: {
 			kind: 'run_failed',
@@ -29,7 +29,7 @@ async function mockRunFailedComment(page: Page, setup: MockSetup): Promise<void>
 		author_member_id: null,
 	};
 
-	await page.route('**/api/teams/*/issues/*/comments**', async (route) => {
+	await page.route('**/api/teams/*/tasks/*/comments**', async (route) => {
 		if (route.request().method() !== 'GET') return route.continue();
 		await route.fulfill({
 			status: 200,
@@ -39,13 +39,13 @@ async function mockRunFailedComment(page: Page, setup: MockSetup): Promise<void>
 	});
 }
 
-async function setupIssue(page: Page): Promise<MockSetup> {
+async function setupTask(page: Page): Promise<MockSetup> {
 	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const agent = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+	const agent = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
@@ -53,27 +53,27 @@ async function setupIssue(page: Page): Promise<MockSetup> {
 	});
 	const project = ((await projectRes.json()) as { data: { id: string } }).data;
 
-	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers,
-		data: { project_id: project.id, title: 'Run Failed Issue', assignee_id: agent.id },
+		data: { project_id: project.id, title: 'Run Failed Task', assignee_id: agent.id },
 	});
-	const issue = ((await issueRes.json()) as { data: { id: string } }).data;
+	const task = ((await taskRes.json()) as { data: { id: string } }).data;
 
 	return {
 		teamId: team.id,
 		teamSlug: team.slug,
 		agentId: agent.id,
 		agentSlug: agent.slug,
-		issueId: issue.id,
+		taskId: task.id,
 	};
 }
 
-test('issue page renders run_failed system comment with agent link and error', async ({ page }) => {
+test('task page renders run_failed system comment with agent link and error', async ({ page }) => {
 	await authenticate(page);
-	const setup = await setupIssue(page);
+	const setup = await setupTask(page);
 	await mockRunFailedComment(page, setup);
 
-	await page.goto(`/teams/${setup.teamSlug}/issues/${setup.issueId}`);
+	await page.goto(`/teams/${setup.teamSlug}/tasks/${setup.taskId}`);
 
 	const failureComment = page.getByTestId('run-failed-comment');
 	await expect(failureComment).toBeVisible({ timeout: 20_000 });
@@ -93,10 +93,10 @@ test('issue page renders run_failed system comment with agent link and error', a
 test('run_failed comment renders correctly on mobile viewport', async ({ page }) => {
 	await page.setViewportSize({ width: 375, height: 800 });
 	await authenticate(page);
-	const setup = await setupIssue(page);
+	const setup = await setupTask(page);
 	await mockRunFailedComment(page, setup);
 
-	await page.goto(`/teams/${setup.teamSlug}/issues/${setup.issueId}`);
+	await page.goto(`/teams/${setup.teamSlug}/tasks/${setup.taskId}`);
 
 	const failureComment = page.getByTestId('run-failed-comment');
 	await expect(failureComment).toBeVisible({ timeout: 20_000 });

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Project CRUD', () => {
-	test('creates a project via dialog and opens a CEO planning ticket', async ({ page }) => {
+	test('creates a project via dialog and opens a Captain planning ticket', async ({ page }) => {
 		await authenticate(page);
 		const { team } = await createTeamWithAgents(page);
 
@@ -20,15 +20,15 @@ test.describe('Project CRUD', () => {
 
 		await expect(
 			page,
-			'expected canonical project-scoped issue URL after creating a project',
-		).toHaveURL(new RegExp(`/teams/${team.slug}/projects/[a-z0-9-]+/issues/[a-z0-9-]+(?:#.*)?$`), {
+			'expected canonical project-scoped task URL after creating a project',
+		).toHaveURL(new RegExp(`/teams/${team.slug}/projects/[a-z0-9-]+/tasks/[a-z0-9-]+(?:#.*)?$`), {
 			timeout: 15000,
 		});
 		await expect(
 			page.getByRole('main').getByText('Draft execution plan for "Marketing Campaign"'),
 		).toBeVisible({ timeout: 15000 });
 
-		const description = page.getByTestId('issue-description');
+		const description = page.getByTestId('task-description');
 		await expect(description).toBeVisible({ timeout: 15000 });
 		const paragraphMarginBottom = await description
 			.locator('p')
@@ -57,7 +57,7 @@ test.describe('Project CRUD', () => {
 		await expect(page.getByRole('heading', { name: '(Internal)' })).toBeVisible({ timeout: 15000 });
 	});
 
-	test('project list shows issue and repo counts', async ({ page }) => {
+	test('project list shows task and repo counts', async ({ page }) => {
 		await authenticate(page);
 		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}` };
@@ -73,7 +73,7 @@ test.describe('Project CRUD', () => {
 
 		const card = page.getByRole('main').locator('a', { hasText: 'Count Test' });
 		await expect(card).toBeVisible({ timeout: 15000 });
-		await expect(card.getByText('1 issues')).toBeVisible();
+		await expect(card.getByText('1 tasks')).toBeVisible();
 		await expect(card.getByText('0 repos')).toBeVisible();
 	});
 

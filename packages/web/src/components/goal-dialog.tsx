@@ -70,8 +70,8 @@ export function GoalDialog({ teamId, open, onOpenChange, goal }: GoalDialogProps
 					</Dialog.Title>
 					<p className="text-sm text-text-muted mb-4">
 						{isEdit
-							? 'Changes trigger the CEO to re-review plans.'
-							: 'The CEO will review all plans against this goal.'}
+							? 'Changes trigger the Captain to re-review plans.'
+							: 'The Captain will review all plans against this goal.'}
 					</p>
 					<form onSubmit={handleSubmit} className="flex flex-col gap-4">
 						<Input

@@ -1,5 +1,12 @@
+import { DEFAULT_TEAM_SLUG } from '@hezo/shared';
 import { expect, test } from '@playwright/test';
-import { authenticate, clearAiProviders, getToken, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	clearAiProviders,
+	getToken,
+	setActiveTeamSlug,
+	waitForPageLoad,
+} from './helpers';
 
 test.describe('AI Providers instance settings', () => {
 	test('lists all three provider cards on /settings/ai-providers', async ({ page }) => {
@@ -14,12 +21,16 @@ test.describe('AI Providers instance settings', () => {
 		await expect(page.getByRole('button', { name: /OAuth/i })).toHaveCount(0);
 	});
 
-	test('rail Settings icon opens global settings with AI providers section', async ({ page }) => {
+	test('sidebar Settings link opens global settings with AI providers section', async ({
+		page,
+	}) => {
 		await authenticate(page);
-		await page.goto('/teams');
+		await page.goto(`/teams/${DEFAULT_TEAM_SLUG}/tasks`);
 		await waitForPageLoad(page);
 
-		await page.getByTitle('Settings').click();
+		const settingsLink = page.locator('a[href="/settings"]');
+		await expect(settingsLink).toBeVisible({ timeout: 15_000 });
+		await settingsLink.click();
 		await expect(page).toHaveURL(/\/settings\/?$/);
 		await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 		await expect(page.getByRole('heading', { name: 'AI providers' })).toBeVisible();
@@ -204,9 +215,13 @@ test.describe('AI provider gate (post-master-key, pre-team)', () => {
 		const token = await getToken(page);
 		await clearAiProviders(page, token);
 
-		await page.addInitScript((t: string) => {
-			localStorage.setItem('hezo_token', t);
-		}, token);
+		await page.addInitScript(
+			({ t, teamSlug }: { t: string; teamSlug: string }) => {
+				localStorage.setItem('hezo_token', t);
+				sessionStorage.setItem('hezo:activeTeamSlug', teamSlug);
+			},
+			{ t: token, teamSlug: DEFAULT_TEAM_SLUG },
+		);
 
 		await page.goto('/');
 
@@ -218,7 +233,7 @@ test.describe('AI provider gate (post-master-key, pre-team)', () => {
 		await expect(page.getByText('Google')).toBeVisible();
 		await expect(page.getByText('Moonshot')).toHaveCount(0);
 
-		await expect(page.getByRole('heading', { name: 'Welcome to Hezo' })).toBeHidden();
+		await expect(page.getByTestId('home-welcome')).toBeHidden();
 
 		const anthropicCard = page
 			.locator('div.border.border-border.rounded-radius-md.p-4', { hasText: 'Anthropic' })
@@ -230,7 +245,14 @@ test.describe('AI provider gate (post-master-key, pre-team)', () => {
 		await expect(page.getByRole('heading', { name: 'Set up an AI provider' })).toBeHidden({
 			timeout: 20000,
 		});
-		await expect(page).toHaveURL(/\/teams(\/|$)/);
+		await expect(page).toHaveURL(/\/home(\/|$)/);
+		await setActiveTeamSlug(page, DEFAULT_TEAM_SLUG);
+		await page.reload();
+		await expect(page.getByTestId('home-welcome')).toBeVisible({ timeout: 20000 });
+		await expect(page.getByTestId('onboarding-progress')).toBeVisible();
+		// Seeded default Blank team has no auto-intake — the home shows the choice card.
+		await expect(page.getByTestId('onboarding-choice')).toBeVisible({ timeout: 20000 });
+		await expect(page.getByTestId('home-captain-intake')).toHaveCount(0);
 	});
 
 	test('re-raises the gate after deleting the last provider', async ({ page }) => {

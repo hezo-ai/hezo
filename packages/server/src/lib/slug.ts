@@ -17,7 +17,7 @@ export async function uniqueSlug(
 	return `${base}-${n}`;
 }
 
-export function toProjectIssuePrefix(projectName: string): string {
+export function toProjectTaskPrefix(projectName: string): string {
 	const cleaned = projectName.trim().replace(/[^a-zA-Z0-9\s]/g, '');
 	const words = cleaned.split(/\s+/).filter(Boolean);
 	if (words.length === 0) return 'P';

@@ -17,7 +17,7 @@
 9. [Adapter System](#9-adapter-system)
 10. [Session Management & Compaction](#10-session-management--compaction)
 11. [Workspace System](#11-workspace-system)
-12. [Issue Lifecycle](#12-issue-lifecycle)
+12. [Task Lifecycle](#12-task-lifecycle)
 13. [Plugin System](#13-plugin-system)
 14. [Skills System](#14-skills-system)
 15. [Budget & Cost Tracking](#15-budget--cost-tracking)
@@ -34,18 +34,18 @@
 
 ## 1. Overview & Philosophy
 
-Paperclip is an **orchestration platform for AI agent teams**. It lets humans ("board users") organize AI agents into companies, assign them tasks via issues, and monitor their autonomous execution. Think of it as a project management tool (Linear/Jira) where the workers are LLM-powered agents.
+Paperclip is an **orchestration platform for AI agent teams**. It lets humans ("board users") organize AI agents into companies, assign them tasks via tasks, and monitor their autonomous execution. Think of it as a project management tool (Linear/Jira) where the workers are LLM-powered agents.
 
 **Core concepts:**
-- **Companies** — organizational containers for agents, projects, and issues
+- **Companies** — organizational containers for agents, projects, and tasks
 - **Agents** — AI workers powered by LLM adapters (Claude, Codex, Cursor, Gemini, etc.)
-- **Issues** — units of work assigned to agents (with full lifecycle: backlog → done)
+- **Tasks** — units of work assigned to agents (with full lifecycle: backlog → done)
 - **Heartbeats** — discrete execution windows where agents wake up and do work
 - **Board users** — humans who oversee agents via the web UI or CLI
 
 **Key design decisions:**
 - Agents don't run continuously — they execute in **discrete heartbeat windows**
-- Work is coordinated through an **issue-based system** with atomic checkout
+- Work is coordinated through an **task-based system** with atomic checkout
 - Agent execution is **adapter-based** — same orchestration layer, many LLM runtimes
 - **Multi-tenant by default** — companies provide full data isolation
 - **Plugin-extensible** via out-of-process workers with capability-gated APIs
@@ -140,8 +140,8 @@ PostgreSQL with Drizzle ORM. ~59 tables organized into domains.
 | description | text | |
 | status | text | `active`, `archezod`, `paused` |
 | pauseReason | text | `manual`, `budget`, `system` |
-| issuePrefix | text UNIQUE | Auto-derived from name (e.g., "PAP") |
-| issueCounter | integer | Auto-incrementing issue numbers |
+| taskPrefix | text UNIQUE | Auto-derived from name (e.g., "PAP") |
+| taskCounter | integer | Auto-incrementing task numbers |
 | budgetMonthlyCents | integer | Monthly budget cap |
 | spentMonthlyCents | integer | Hydrated from cost_events |
 | requireBoardApprovalForNewAgents | boolean | Default: true |
@@ -154,7 +154,7 @@ PostgreSQL with Drizzle ORM. ~59 tables organized into domains.
 | id | UUID PK | |
 | companyId | UUID FK→companies | |
 | name | text NOT NULL | |
-| role | text | `ceo`, `general`, etc. |
+| role | text | `captain`, `general`, etc. |
 | title | text | |
 | icon | text | |
 | status | text | `idle`, `active`, `paused`, `pending_approval`, `terminated` |
@@ -170,13 +170,13 @@ PostgreSQL with Drizzle ORM. ~59 tables organized into domains.
 | metadata | jsonb | |
 | Indexes | | (companyId, status), (companyId, reportsTo) |
 
-**issues**
+**tasks**
 | Column | Type | Notes |
 |--------|------|-------|
 | id | UUID PK | |
 | companyId | UUID FK→companies | |
 | projectId | UUID FK→projects | |
-| parentId | UUID FK→issues | Sub-task hierarchy |
+| parentId | UUID FK→tasks | Sub-task hierarchy |
 | title | text NOT NULL | |
 | description | text | |
 | status | text | `backlog`, `todo`, `in_progress`, `in_review`, `blocked`, `done`, `cancelled` |
@@ -187,13 +187,13 @@ PostgreSQL with Drizzle ORM. ~59 tables organized into domains.
 | executionRunId | UUID FK→heartbeat_runs | Current execution lock |
 | executionAgentNameKey | text | Agent holding execution lock |
 | executionLockedAt | timestamptz | When lock was acquired |
-| issueNumber | integer | Per-company auto-increment |
+| taskNumber | integer | Per-company auto-increment |
 | identifier | text UNIQUE | Format: `{prefix}-{number}` (e.g., "PAP-42") |
 | originKind | text | `manual`, `routine_execution`, etc. |
-| assigneeAdapterOverrides | jsonb | Per-issue adapter config overrides |
+| assigneeAdapterOverrides | jsonb | Per-task adapter config overrides |
 | executionWorkspaceId | UUID FK→execution_workspaces | |
-| executionWorkspaceSettings | jsonb | Per-issue workspace strategy |
-| requestDepth | integer | Sub-issue nesting depth |
+| executionWorkspaceSettings | jsonb | Per-task workspace strategy |
+| requestDepth | integer | Sub-task nesting depth |
 | Indexes | | 8 composite indexes for common query patterns |
 
 ### 4.2 Agent Execution
@@ -249,10 +249,10 @@ PostgreSQL with Drizzle ORM. ~59 tables organized into domains.
 | id | UUID PK | |
 | agentId, companyId | UUIDs | |
 | source | text | `timer`, `assignment`, `on_demand`, `automation` |
-| status | text | `queued`, `claimed`, `completed`, `failed`, `skipped`, `coalesced`, `deferred_issue_execution`, `cancelled` |
+| status | text | `queued`, `claimed`, `completed`, `failed`, `skipped`, `coalesced`, `deferred_task_execution`, `cancelled` |
 | idempotencyKey | text | Dedup key |
 | coalescedCount | integer | Merged wakeup counter |
-| payload | jsonb | Wakeup context (issueId, commentId, etc.) |
+| payload | jsonb | Wakeup context (taskId, commentId, etc.) |
 
 ### 4.3 Projects & Workspaces
 
@@ -262,8 +262,8 @@ PostgreSQL with Drizzle ORM. ~59 tables organized into domains.
 **project_workspaces** — managed code repositories per project
 - id, companyId, projectId, name, sourceType (`local_path`, `git_repo`, `remote`), cwd, repoUrl, repoRef, setupCommand, cleanupCommand, isPrimary
 
-**execution_workspaces** — isolated execution environments per issue
-- id, companyId, projectId, sourceIssueId, mode (`shared_workspace`, `isolated_workspace`, `operator_branch`, `adapter_managed`), strategyType (`git_worktree`, `project_primary`), cwd, branchName, providerType (`local_fs`, `ec2`, `k8s`), status, lastUsedAt
+**execution_workspaces** — isolated execution environments per task
+- id, companyId, projectId, sourceTaskId, mode (`shared_workspace`, `isolated_workspace`, `operator_branch`, `adapter_managed`), strategyType (`git_worktree`, `project_primary`), cwd, branchName, providerType (`local_fs`, `ec2`, `k8s`), status, lastUsedAt
 
 ### 4.4 Finance & Budgets
 
@@ -307,9 +307,9 @@ PostgreSQL with Drizzle ORM. ~59 tables organized into domains.
 **assets** — uploaded files
 - provider, objectKey, contentType, byteSize, sha256, originalFilename
 
-**issue_attachments** — join table linking assets to issues
+**task_attachments** — join table linking assets to tasks
 
-**issue_documents** — join table linking documents to issues with key-based access
+**task_documents** — join table linking documents to tasks with key-based access
 
 ### 4.7 Plugins
 
@@ -331,18 +331,18 @@ PostgreSQL with Drizzle ORM. ~59 tables organized into domains.
 
 - **routines, routine_triggers, routine_runs** — scheduled recurring tasks
 - **goals, project_goals** — OKR-style goal hierarchy
-- **approvals, approval_comments, issue_approvals** — approval workflows
+- **approvals, approval_comments, task_approvals** — approval workflows
 - **activity_log** — audit trail (actor, action, entity, details)
 - **company_secrets, company_secret_versions** — encrypted secrets
 - **company_skills** — skill registry per company
 - **company_logos** — branding assets
-- **issue_work_products** — external artifacts (GitHub PRs, Linear issues)
+- **task_work_products** — external artifacts (GitHub PRs, Linear tasks)
 - **workspace_operations** — workspace operation history
 - **workspace_runtime_services** — runtime service endpoints
 - **instance_settings** — deployment configuration
 - **invites, join_requests** — user onboarding
-- **labels, issue_labels** — issue categorization
-- **issue_read_states, issue_inbox_archezos** — notification tracking
+- **labels, task_labels** — task categorization
+- **task_read_states, task_inbox_archezos** — notification tracking
 - **finance_events** — financial adjustments
 
 ---
@@ -372,7 +372,7 @@ Express 5.1 REST API with JSON request/response. Base path: `/api`.
 | Companies | `/api/companies` | CRUD, export/import, stats |
 | Agents | `/api/agents` | CRUD, keys, instructions, org chart, config revisions, test-adapter-environment |
 | Projects | `/api/projects` | CRUD, workspace policy |
-| Issues | `/api/issues` | CRUD, checkout, comments, attachments, documents, work products, approvals |
+| Tasks | `/api/tasks` | CRUD, checkout, comments, attachments, documents, work products, approvals |
 | Approvals | `/api/approvals` | List, approve, reject with decision notes |
 | Routines | `/api/routines` | CRUD, triggers, manual execution |
 | Goals | `/api/goals` | CRUD, hierarchy |
@@ -392,7 +392,7 @@ Express 5.1 REST API with JSON request/response. Base path: `/api`.
 ### 5.3 Request/Response Patterns
 
 ```
-POST /api/companies/:companyId/issues
+POST /api/companies/:companyId/tasks
 Authorization: Bearer <token>
 Content-Type: application/json
 X-Paperclip-Run-Id: <run-uuid>    # Optional: links to heartbeat run
@@ -455,7 +455,7 @@ Resolution order:
 
 **Instance admin**: `instance_user_roles.role = 'instance_admin'` bypasses company access checks.
 
-**CEO agents**: automatically get elevated permissions within their company.
+**Captain agents**: automatically get elevated permissions within their company.
 
 ### 6.4 Deployment Modes
 
@@ -525,7 +525,7 @@ create → pending_approval → idle ↔ running → error
 Agents have a `reportsTo` self-referential FK, creating a management hierarchy. The system supports:
 - Org chart visualization
 - Chain of command queries (`getChainOfCommand`)
-- CEO role at the top of the hierarchy
+- Captain role at the top of the hierarchy
 
 ### 7.4 Agent Instructions
 
@@ -572,23 +572,23 @@ Agents don't run continuously. They execute in **discrete heartbeat windows**:
 - **Active tracking**: `activeRunExecutions` Set prevents duplicate starts
 - **Process tracking**: `runningProcesses` Map holds live child process handles
 
-### 8.3 Issue Execution Locking
+### 8.3 Task Execution Locking
 
-When an agent is woken for an issue, the system prevents multiple agents from working on the same issue simultaneously:
+When an agent is woken for an task, the system prevents multiple agents from working on the same task simultaneously:
 
-1. `SELECT ... FROM issues WHERE id = ? FOR UPDATE` (row-level lock)
-2. Check if `issue.executionRunId` is active:
+1. `SELECT ... FROM tasks WHERE id = ? FOR UPDATE` (row-level lock)
+2. Check if `task.executionRunId` is active:
    - **Same agent**: Merge contexts (coalesce) — prevents duplicate notifications
-   - **Different agent**: Defer with status `deferred_issue_execution`
-   - **No active run**: Create new run, set `issue.executionRunId`
-3. On run completion: `releaseIssueExecutionAndPromote()` clears the lock and promotes deferred wakeups
+   - **Different agent**: Defer with status `deferred_task_execution`
+   - **No active run**: Create new run, set `task.executionRunId`
+3. On run completion: `releaseTaskExecutionAndPromote()` clears the lock and promotes deferred wakeups
 
 ### 8.4 Wakeup Sources
 
 | Source | Trigger | When |
 |--------|---------|------|
 | `timer` | Scheduled interval | Agent's `intervalSec` elapsed since last heartbeat |
-| `assignment` | Issue assigned | Agent assigned to issue, `wakeOnAssignment` is true |
+| `assignment` | Task assigned | Agent assigned to task, `wakeOnAssignment` is true |
 | `on_demand` | Manual trigger | User clicks "wake" in UI, CLI `heartbeat-run` command |
 | `automation` | System event | @-mention in comment, plugin trigger |
 
@@ -603,18 +603,18 @@ Wakeups are **coalesced** — multiple wakeups for the same run are merged by up
 
 **Phase 2: Context Resolution**
 - Parse `contextSnapshot` from wakeup request
-- Derive `taskKey` from issueId or explicit taskKey
-- Fetch issue context if issueId provided
-- Apply assignee adapter overrides from issue
+- Derive `taskKey` from taskId or explicit taskKey
+- Fetch task context if taskId provided
+- Apply assignee adapter overrides from task
 
 **Phase 3: Session Resolution**
 - Look up previous task session from `agent_task_sessions`
-- Determine if session should be reset (`forceFreshSession`, `issue_assigned` wake reason)
+- Determine if session should be reset (`forceFreshSession`, `task_assigned` wake reason)
 - Recover previous session params or start fresh
 
 **Phase 4: Workspace Realization**
 - Resolve workspace source (project primary → task session → agent home)
-- Apply execution workspace policy (project-level or issue-level)
+- Apply execution workspace policy (project-level or task-level)
 - If `git_worktree` strategy: create isolated git worktree with rendered branch name
 - Persist execution workspace record in DB
 
@@ -633,7 +633,7 @@ Wakeups are **coalesced** — multiple wakeups for the same run are merged by up
 - Spawn services from `config.workspaceRuntime.services`
 - Allocate ports, track process lifecycle
 - Reuse existing services by `reuseKey`
-- Post workspace-ready comment to issue
+- Post workspace-ready comment to task
 
 **Phase 8: Adapter Execution**
 - Get adapter from registry
@@ -648,7 +648,7 @@ Wakeups are **coalesced** — multiple wakeups for the same run are merged by up
 - Persist: run status, usage, logs, session state
 - Update agent runtime state (cumulative tokens/cost)
 - Upsert or clear task session
-- Release issue execution lock, promote deferred wakeups
+- Release task execution lock, promote deferred wakeups
 - Finalize agent status (`idle` or `error`)
 
 ### 8.6 Orphan Detection & Retry
@@ -737,7 +737,7 @@ The `process` adapter is the foundation for most adapters:
 ```
 PAPERCLIP_AGENT_ID, PAPERCLIP_COMPANY_ID, PAPERCLIP_RUN_ID
 PAPERCLIP_WORKSPACE_CWD, PAPERCLIP_WORKSPACE_BRANCH
-PAPERCLIP_ISSUE_ID, PAPERCLIP_ISSUE_IDENTIFIER, PAPERCLIP_ISSUE_TITLE
+PAPERCLIP_TASK_ID, PAPERCLIP_TASK_IDENTIFIER, PAPERCLIP_TASK_TITLE
 PAPERCLIP_PROJECT_ID, PAPERCLIP_API_URL, PAPERCLIP_AUTH_TOKEN
 ```
 
@@ -767,7 +767,7 @@ For integrating external agent services:
 ### 10.1 Session Persistence
 
 Sessions are persisted **per task key** in `agent_task_sessions`:
-- Task key derived from: issueId, explicit taskKey, or taskId
+- Task key derived from: taskId, explicit taskKey, or taskId
 - Same task key → same session → agent can resume work across heartbeats
 - Session params stored as JSON (adapter-specific format)
 
@@ -814,18 +814,18 @@ This prevents double-counting when sessions span multiple heartbeats.
 ### 11.1 Workspace Hierarchy
 
 ```
-Project → Project Workspace (git repo) → Execution Workspace (per-issue isolation)
+Project → Project Workspace (git repo) → Execution Workspace (per-task isolation)
 ```
 
 - **Project Workspace**: the source code repository (local path, git repo, or remote)
-- **Execution Workspace**: an isolated working copy for a specific issue/task
+- **Execution Workspace**: an isolated working copy for a specific task/task
 
 ### 11.2 Execution Workspace Modes
 
 | Mode | Description |
 |------|-------------|
 | `shared_workspace` | Uses project's primary workspace directly |
-| `isolated_workspace` | Creates git worktree per issue |
+| `isolated_workspace` | Creates git worktree per task |
 | `operator_branch` | Operator-managed branch strategy |
 | `adapter_managed` | Adapter controls its own workspace |
 | `agent_default` | Falls back to agent's configured cwd |
@@ -835,7 +835,7 @@ Project → Project Workspace (git repo) → Execution Workspace (per-issue isol
 When `workspaceStrategy.type === "git_worktree"`:
 
 1. Resolve repo root: `git rev-parse --show-toplevel`
-2. Render branch name from template: `{{issue.identifier}}-{{slug}}` (sanitized, max 120 chars)
+2. Render branch name from template: `{{task.identifier}}-{{slug}}` (sanitized, max 120 chars)
 3. Create worktree: `git worktree add -b {branchName} {worktreePath} {baseRef}`
 4. Run provisioning command if configured
 5. Execute `provisionCommand` with workspace env vars
@@ -857,7 +857,7 @@ Services can be provisioned within workspaces (e.g., dev servers, databases):
 
 ---
 
-## 12. Issue Lifecycle
+## 12. Task Lifecycle
 
 ### 12.1 Status State Machine
 
@@ -869,23 +869,23 @@ backlog → todo → in_progress → in_review → done
 
 ### 12.2 Assignment & Checkout
 
-1. Issue assigned to agent via `assigneeAgentId`
+1. Task assigned to agent via `assigneeAgentId`
 2. If `wakeOnAssignment` is true, wakeup request enqueued
 3. Heartbeat picks up the wakeup, acquires execution lock
-4. Agent works on the issue during heartbeat window
+4. Agent works on the task during heartbeat window
 5. On completion, execution lock is released
 
-### 12.3 Issue Features
+### 12.3 Task Features
 
 - **Sub-tasks**: `parentId` self-referential FK, `requestDepth` tracks nesting
 - **Comments**: thread-based with @-mention detection
 - **Attachments**: file uploads via multer (max size enforced)
 - **Documents**: key-based document storage (e.g., "plan", "progress") with revision tracking
-- **Work Products**: external artifacts (GitHub PRs, Linear issues) tracked per issue
+- **Work Products**: external artifacts (GitHub PRs, Linear tasks) tracked per task
 - **Labels**: company-scoped labels with color
-- **Approvals**: approval gates that can block issue progress
+- **Approvals**: approval gates that can block task progress
 - **Read states**: per-user read tracking for inbox functionality
-- **Auto-numbering**: `{issuePrefix}-{issueCounter}` format (e.g., "PAP-42")
+- **Auto-numbering**: `{taskPrefix}-{taskCounter}` format (e.g., "PAP-42")
 
 ---
 
@@ -934,7 +934,7 @@ Plugins declare capabilities in their manifest. The host gates API access accord
 | `entities` | Entity CRUD |
 | `secrets` | Secret value access |
 | `streams` | SSE streaming |
-| Various data | Read-only access to companies, agents, issues, projects, goals |
+| Various data | Read-only access to companies, agents, tasks, projects, goals |
 
 ### 13.3 Tool System
 
@@ -943,7 +943,7 @@ Plugins expose tools to agents:
 ```typescript
 interface RegisteredTool {
   pluginId: string;           // e.g., "acme.linear"
-  namespacedName: string;     // "acme.linear:search-issues"
+  namespacedName: string;     // "acme.linear:search-tasks"
   displayName: string;
   description: string;
   parametersSchema: JSONSchema;
@@ -957,7 +957,7 @@ interface RegisteredTool {
 ### 13.4 Event Bus
 
 In-process typed event bus supporting:
-- **Domain events**: `issue.created`, `issue.updated`, `agent.created`, etc.
+- **Domain events**: `task.created`, `task.updated`, `agent.created`, etc.
 - **Plugin events**: `plugin.{pluginId}.{eventName}`
 - **Pattern matching**: exact match or wildcard suffix (`plugin.acme.*`)
 - **Filtering**: by companyId, projectId, agentId
@@ -979,7 +979,7 @@ import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 
 const plugin = definePlugin({
   async setup(ctx: PluginContext) {
-    ctx.events.on("issue.created", async (event) => { /* ... */ });
+    ctx.events.on("task.created", async (event) => { /* ... */ });
     ctx.jobs.register("sync", async (job) => { /* ... */ });
   }
 });
@@ -987,7 +987,7 @@ const plugin = definePlugin({
 runWorker(plugin, import.meta.url);
 ```
 
-Full `PluginContext` provides: config, data, state, events, jobs, entities, http, secrets, activity, projects, companies, issues, agents, goals, streams, tools, logger.
+Full `PluginContext` provides: config, data, state, events, jobs, entities, http, secrets, activity, projects, companies, tasks, agents, goals, streams, tools, logger.
 
 ---
 
@@ -1080,7 +1080,7 @@ Multiple aggregation views:
 
 - Agent status changes
 - Heartbeat run updates (started, log chunk, completed)
-- Issue updates (created, updated, status changed)
+- Task updates (created, updated, status changed)
 - Activity log events
 - Cost tracking events
 
@@ -1168,7 +1168,7 @@ Plugin HTTP fetch validates outbound URLs:
 
 Path format: `{companyId}/{namespace}/{year}/{month}/{day}/{uuid}-{sanitizedFilename}`
 
-Namespaces: `issue-attachments`, `documents`, `company-logos`, etc.
+Namespaces: `task-attachments`, `documents`, `company-logos`, etc.
 
 ### 18.3 Upload Pipeline
 
@@ -1211,12 +1211,12 @@ React 19 + Vite 6.1 + Tailwind CSS 4.0 + React Router 7.1
 
 ### 19.3 Pages (30+)
 
-Dashboard, Companies, CompanySettings, Agents, AgentDetail, Projects, ProjectDetail, Issues (list/kanban), IssueDetail, Routines, RoutineDetail, Goals, Approvals, Costs, Activity, OrgChart, PluginManager, InstanceSettings, Auth, Inbox, Skills
+Dashboard, Companies, CompanySettings, Agents, AgentDetail, Projects, ProjectDetail, Tasks (list/kanban), TaskDetail, Routines, RoutineDetail, Goals, Approvals, Costs, Activity, OrgChart, PluginManager, InstanceSettings, Auth, Inbox, Skills
 
 ### 19.4 Component Architecture
 
 - `/components/ui/` — Radix-based primitives (button, card, dialog, select, etc.)
-- `/components/` — domain components (AgentProperties, IssueDocumentsSection, etc.)
+- `/components/` — domain components (AgentProperties, TaskDocumentsSection, etc.)
 - `/adapters/` — per-adapter configuration UI
 - `/plugins/` — plugin UI slots and launchers
 
@@ -1229,7 +1229,7 @@ Dashboard, Companies, CompanySettings, Agents, AgentDetail, Projects, ProjectDet
     /:agentId
     /new
   /projects/:projectId
-  /issues/:issueId
+  /tasks/:taskId
   /approvals
   /goals
   /routines
@@ -1272,15 +1272,15 @@ Dashboard, Companies, CompanySettings, Agents, AgentDetail, Projects, ProjectDet
 | `heartbeat-run` | Manually trigger agent wakeup |
 | `agent list` | List agents in company |
 | `agent hire` | Onboard new agent |
-| `issue create` | Create issue programmatically |
-| `issue checkout` | Claim issue for agent |
+| `task create` | Create task programmatically |
+| `task checkout` | Claim task for agent |
 | `company list` | List companies |
 | `approval list` | List pending approvals |
 | `activity log` | View activity log |
 | `dashboard summary` | Show dashboard metrics |
 | `plugin list/install/uninstall` | Plugin management |
 | `worktree init/env/list` | Multi-instance worktree management |
-| `auth bootstrap-ceo` | Generate first admin invite |
+| `auth bootstrap-captain` | Generate first admin invite |
 | `allowed-hostname` | Add private hostname whitelist entry |
 | `context show` | Display loaded context |
 
@@ -1413,7 +1413,7 @@ USER node
 | Server entry | `server/src/index.ts` |
 | Heartbeat engine | `server/src/services/heartbeat.ts` (~3000 lines) |
 | Agent service | `server/src/services/agents.ts` |
-| Issue service | `server/src/services/issues.ts` |
+| Task service | `server/src/services/tasks.ts` |
 | Agent instructions | `server/src/services/agent-instructions.ts` |
 | Workspace runtime | `server/src/services/workspace-runtime.ts` |
 | Adapter registry | `server/src/adapters/registry.ts` |

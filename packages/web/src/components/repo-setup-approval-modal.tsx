@@ -26,11 +26,11 @@ export function RepoSetupApprovalModal({
 	function openTicket(ticket: { project_slug: string; identifier: string; comment_id: string }) {
 		onOpenChange(false);
 		navigate({
-			to: '/teams/$teamId/projects/$projectId/issues/$issueId',
+			to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
 			params: {
 				teamId: teamSlug,
 				projectId: ticket.project_slug,
-				issueId: ticket.identifier.toLowerCase(),
+				taskId: ticket.identifier.toLowerCase(),
 			},
 			hash: `comment-${ticket.comment_id}`,
 		});

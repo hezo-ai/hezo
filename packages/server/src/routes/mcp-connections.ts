@@ -1,5 +1,6 @@
 import { McpConnectionKind, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -109,8 +110,10 @@ mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections', async (c) => {
 	// We don't block the response — the route returns immediately and the
 	// install_status flips via broadcast on completion.
 	if (body.kind === McpConnectionKind.Local) {
-		void kickoffLocalInstall(c, teamId, body.project_id ?? null, inserted.id as string).catch((e) =>
-			log.warn('local mcp install kickoff failed', { error: (e as Error).message }),
+		trackBackground(
+			kickoffLocalInstall(c, teamId, body.project_id ?? null, inserted.id as string).catch((e) =>
+				log.warn('local mcp install kickoff failed', { error: (e as Error).message }),
+			),
 		);
 	}
 

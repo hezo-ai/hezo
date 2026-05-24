@@ -124,7 +124,7 @@ describe('GET /teams/:teamId/approvals enriched fields', () => {
 		expect(row.payload_member_slug).toBeNull();
 		expect(row.payload_project_name).toBeNull();
 		expect(row.payload_project_slug).toBeNull();
-		expect(row.payload_issue_identifier).toBeNull();
+		expect(row.payload_task_identifier).toBeNull();
 	});
 });
 

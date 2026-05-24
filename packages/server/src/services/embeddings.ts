@@ -59,7 +59,7 @@ export async function generateEmbedding(
 
 export async function embedAndStore(
 	db: PGlite,
-	table: 'documents' | 'issues' | 'skills',
+	table: 'documents' | 'tasks' | 'skills',
 	id: string,
 	text: string,
 ): Promise<void> {
@@ -71,14 +71,14 @@ export async function embedAndStore(
 }
 
 export interface SearchResult {
-	type: 'kb_doc' | 'issue' | 'skill' | 'project_doc';
+	type: 'kb_doc' | 'task' | 'skill' | 'project_doc';
 	id: string;
 	title: string;
 	snippet: string;
 	score: number;
 }
 
-export type SearchScope = 'all' | 'kb_docs' | 'issues' | 'skills' | 'project_docs';
+export type SearchScope = 'all' | 'kb_docs' | 'tasks' | 'skills' | 'project_docs';
 
 export async function semanticSearch(
 	db: PGlite,
@@ -130,8 +130,8 @@ export async function semanticSearch(
 		}
 	}
 
-	if (scope === 'all' || scope === 'issues') {
-		const issueResults = await db.query<{
+	if (scope === 'all' || scope === 'tasks') {
+		const taskResults = await db.query<{
 			id: string;
 			title: string;
 			description: string;
@@ -139,15 +139,15 @@ export async function semanticSearch(
 			score: number;
 		}>(
 			`SELECT id, title, LEFT(description, 200) AS description, identifier, 1 - (embedding <=> $1::vector) AS score
-			 FROM issues
+			 FROM tasks
 			 WHERE team_id = $2 AND embedding IS NOT NULL
 			 ORDER BY embedding <=> $1::vector
 			 LIMIT $3`,
 			[vectorStr, teamId, limit],
 		);
-		for (const r of issueResults.rows) {
+		for (const r of taskResults.rows) {
 			results.push({
-				type: 'issue',
+				type: 'task',
 				id: r.id,
 				title: `${r.identifier} — ${r.title}`,
 				snippet: r.description,
@@ -202,11 +202,11 @@ export async function processPendingEmbeddings(db: PGlite): Promise<number> {
 		processed++;
 	}
 
-	const issues = await db.query<{ id: string; title: string; description: string }>(
-		`SELECT id, title, description FROM issues WHERE embedding IS NULL LIMIT 5`,
+	const tasks = await db.query<{ id: string; title: string; description: string }>(
+		`SELECT id, title, description FROM tasks WHERE embedding IS NULL LIMIT 5`,
 	);
-	for (const issue of issues.rows) {
-		await embedAndStore(db, 'issues', issue.id, `${issue.title}\n${issue.description}`);
+	for (const task of tasks.rows) {
+		await embedAndStore(db, 'tasks', task.id, `${task.title}\n${task.description}`);
 		processed++;
 	}
 

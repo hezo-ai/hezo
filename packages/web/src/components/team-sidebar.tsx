@@ -4,6 +4,7 @@ import { Settings } from 'lucide-react';
 import { useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useProjects } from '../hooks/use-projects';
+import { useRouteTeamId } from '../hooks/use-route-team-id';
 import { useTeam } from '../hooks/use-teams';
 import { useUiState, useUpdateUiState } from '../hooks/use-ui-state';
 import { AgentStatusLabel } from './agent-status-label';
@@ -11,11 +12,8 @@ import { CreateProjectDialog } from './create-project-dialog';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 import { ThemeSwitcher } from './ui/theme-switcher';
 
-interface TeamSidebarProps {
-	teamId: string;
-}
-
-export function TeamSidebar({ teamId }: TeamSidebarProps) {
+export function TeamSidebar() {
+	const teamId = useRouteTeamId();
 	const params = { teamId };
 	const navigate = useNavigate();
 	const { data: agents } = useAgents(teamId);
@@ -46,11 +44,11 @@ export function TeamSidebar({ teamId }: TeamSidebarProps) {
 			title: 'Work',
 			items: [
 				{
-					to: '/teams/$teamId/issues',
+					to: '/teams/$teamId/tasks',
 					params,
-					label: 'Issues',
-					count: team?.open_issue_count,
-					testId: 'sidebar-link-issues',
+					label: 'Tasks',
+					count: team?.open_task_count,
+					testId: 'sidebar-link-tasks',
 				},
 				{ to: '/teams/$teamId/goals', params, label: 'Goals' },
 			],
@@ -70,11 +68,11 @@ export function TeamSidebar({ teamId }: TeamSidebarProps) {
 			children: sortedProjects.map((project) => {
 				const projectParams = { teamId, projectId: project.slug };
 				const isInternal = project.slug === OPERATIONS_PROJECT_SLUG;
-				const issuesItem = {
-					to: '/teams/$teamId/projects/$projectId/issues',
+				const tasksItem = {
+					to: '/teams/$teamId/projects/$projectId/tasks',
 					params: projectParams,
-					label: 'Issues',
-					count: project.open_issue_count,
+					label: 'Tasks',
+					count: project.open_task_count,
 				};
 				const containerItem = {
 					to: '/teams/$teamId/projects/$projectId/container',
@@ -82,9 +80,9 @@ export function TeamSidebar({ teamId }: TeamSidebarProps) {
 					label: 'Container',
 				};
 				const subItems = isInternal
-					? [issuesItem, containerItem]
+					? [tasksItem, containerItem]
 					: [
-							issuesItem,
+							tasksItem,
 							{
 								to: '/teams/$teamId/projects/$projectId/documents',
 								params: projectParams,

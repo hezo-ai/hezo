@@ -44,7 +44,7 @@ function GoalsPage() {
 				<EmptyState
 					icon={<Target className="w-10 h-10" />}
 					title="No goals yet"
-					description="Create a goal so the CEO can keep plans aligned with what the board wants."
+					description="Create a goal so the Captain can keep plans aligned with what the board wants."
 				/>
 			) : (
 				<div className="flex flex-col gap-6">

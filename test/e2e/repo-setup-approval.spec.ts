@@ -20,12 +20,12 @@ test.describe('Repo Setup Approval', () => {
 		const agentA = agents[0];
 		const agentB = agents[1] ?? agentA;
 
-		const issuesData = await Promise.all(
+		const tasksData = await Promise.all(
 			[
 				{ title: 'Migrate to vNext', assignee_id: agentA.id },
 				{ title: 'Add CI workflow', assignee_id: agentB.id },
 			].map(async (i) => {
-				const r = await page.request.post(`/api/teams/${team.id}/issues`, {
+				const r = await page.request.post(`/api/teams/${team.id}/tasks`, {
 					headers,
 					data: { project_id: project.id, ...i },
 				});
@@ -41,14 +41,14 @@ test.describe('Repo Setup Approval', () => {
 					platform: 'github',
 					reason: 'designated_repo',
 					project_id: project.id,
-					issue_id: issuesData[0].id,
+					task_id: tasksData[0].id,
 				},
 			},
 		});
 		const approval = ((await approvalRes.json()) as { data: { id: string } }).data;
 
-		for (const issue of issuesData) {
-			await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
+		for (const task of tasksData) {
+			await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
 				headers,
 				data: {
 					content_type: 'action',
@@ -57,12 +57,12 @@ test.describe('Repo Setup Approval', () => {
 			});
 		}
 
-		return { team, project, approval, issues: issuesData, agents: [agentA, agentB], token };
+		return { team, project, approval, tasks: tasksData, agents: [agentA, agentB], token };
 	}
 
 	test('inbox card opens popup listing every blocked ticket', async ({ page }) => {
 		await authenticate(page);
-		const { team, issues } = await seedBlockedProject(page);
+		const { team, tasks } = await seedBlockedProject(page);
 
 		await page.goto(`/teams/${team.slug}/inbox`);
 		await waitForPageLoad(page);
@@ -75,8 +75,8 @@ test.describe('Repo Setup Approval', () => {
 
 		const modal = page.getByTestId('repo-setup-approval-modal');
 		await expect(modal).toBeVisible({ timeout: 10000 });
-		for (const issue of issues) {
-			await expect(modal.getByTestId(`blocked-ticket-${issue.identifier}`)).toBeVisible();
+		for (const task of tasks) {
+			await expect(modal.getByTestId(`blocked-ticket-${task.identifier}`)).toBeVisible();
 		}
 	});
 
@@ -84,20 +84,20 @@ test.describe('Repo Setup Approval', () => {
 		page,
 	}) => {
 		await authenticate(page);
-		const { team, project, issues } = await seedBlockedProject(page);
+		const { team, project, tasks } = await seedBlockedProject(page);
 
 		await page.goto(`/teams/${team.slug}/inbox`);
 		await waitForPageLoad(page);
 
 		await page.getByTestId('approval-card').first().click();
 
-		const firstTicket = page.getByTestId(`blocked-ticket-${issues[0].identifier}`);
+		const firstTicket = page.getByTestId(`blocked-ticket-${tasks[0].identifier}`);
 		await expect(firstTicket).toBeVisible({ timeout: 10000 });
 		await firstTicket.click();
 
 		await expect(page).toHaveURL(
 			new RegExp(
-				`/teams/${team.slug}/projects/${project.slug}/issues/${issues[0].identifier.toLowerCase()}`,
+				`/teams/${team.slug}/projects/${project.slug}/tasks/${tasks[0].identifier.toLowerCase()}`,
 			),
 			{ timeout: 15000 },
 		);

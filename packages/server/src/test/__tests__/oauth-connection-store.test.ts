@@ -149,7 +149,7 @@ describe('oauth connection store', () => {
 
 	it('deletes a connection — also deletes its secret rows and nulls FKs from repos/mcp_connections', async () => {
 		await db.query(
-			`INSERT INTO projects (team_id, name, slug, issue_prefix) VALUES ($1, 'P', 'p', 'P')`,
+			`INSERT INTO projects (team_id, name, slug, task_prefix) VALUES ($1, 'P', 'p', 'P')`,
 			[teamId],
 		);
 		const proj = await db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = 'p'`);

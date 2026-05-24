@@ -5,6 +5,7 @@ export interface OrgNode {
 	id: string;
 	title: string;
 	slug: string;
+	role_description: string;
 	runtime_status: string;
 	admin_status: string;
 	reports_to: string | null;

@@ -17,7 +17,7 @@ let db: PGlite;
 let token: string;
 let teamId: string;
 let projectId: string;
-let issueId: string;
+let taskId: string;
 let agentId: string;
 
 function buildDeps(): ContainerDeps {
@@ -58,16 +58,16 @@ beforeAll(async () => {
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
+	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectId,
-			title: 'Recovery Test Issue',
+			title: 'Recovery Test Task',
 			assignee_id: agentId,
 		}),
 	});
-	issueId = (await issueRes.json()).data.id;
+	taskId = (await taskRes.json()).data.id;
 });
 
 afterAll(async () => {
@@ -86,9 +86,9 @@ async function clearState(): Promise<void> {
 
 async function insertRunningRun(): Promise<string> {
 	const res = await db.query<{ id: string }>(
-		`INSERT INTO heartbeat_runs (team_id, member_id, issue_id, status)
+		`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status)
 		 VALUES ($1, $2, $3, $4::heartbeat_run_status) RETURNING id`,
-		[teamId, agentId, issueId, HeartbeatRunStatus.Running],
+		[teamId, agentId, taskId, HeartbeatRunStatus.Running],
 	);
 	return res.rows[0].id;
 }
@@ -137,19 +137,19 @@ describe('failProjectRuns', () => {
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Running);
 	});
 
-	it('releases execution_locks for the project issues', async () => {
+	it('releases execution_locks for the project tasks', async () => {
 		await clearState();
 		await insertRunningRun();
-		await db.query('INSERT INTO execution_locks (issue_id, member_id) VALUES ($1, $2)', [
-			issueId,
+		await db.query('INSERT INTO execution_locks (task_id, member_id) VALUES ($1, $2)', [
+			taskId,
 			agentId,
 		]);
 
 		await failProjectRuns(buildDeps(), projectId, teamId, 'container_stopped');
 
 		const lock = await db.query<{ released_at: string | null }>(
-			'SELECT released_at FROM execution_locks WHERE issue_id = $1 AND member_id = $2',
-			[issueId, agentId],
+			'SELECT released_at FROM execution_locks WHERE task_id = $1 AND member_id = $2',
+			[taskId, agentId],
 		);
 		expect(lock.rows[0].released_at).not.toBeNull();
 	});
@@ -182,9 +182,9 @@ describe('requeueContainerKilledRuns', () => {
 	it('creates wakeups for runs failed with container_error', async () => {
 		await clearState();
 		await db.query(
-			`INSERT INTO heartbeat_runs (team_id, member_id, issue_id, status, started_at, finished_at, error)
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at, finished_at, error)
 			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '5 minutes', now() - interval '4 minutes', 'container_error')`,
-			[teamId, agentId, issueId, HeartbeatRunStatus.Failed],
+			[teamId, agentId, taskId, HeartbeatRunStatus.Failed],
 		);
 
 		const count = await requeueContainerKilledRuns(buildDeps(), projectId, teamId);
@@ -204,9 +204,9 @@ describe('requeueContainerKilledRuns', () => {
 	it('skips runs failed with container_stopped', async () => {
 		await clearState();
 		await db.query(
-			`INSERT INTO heartbeat_runs (team_id, member_id, issue_id, status, started_at, finished_at, error)
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at, finished_at, error)
 			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '5 minutes', now() - interval '4 minutes', 'container_stopped')`,
-			[teamId, agentId, issueId, HeartbeatRunStatus.Failed],
+			[teamId, agentId, taskId, HeartbeatRunStatus.Failed],
 		);
 
 		const count = await requeueContainerKilledRuns(buildDeps(), projectId, teamId);
@@ -216,14 +216,14 @@ describe('requeueContainerKilledRuns', () => {
 	it('skips runs that already had a successor run started', async () => {
 		await clearState();
 		await db.query(
-			`INSERT INTO heartbeat_runs (team_id, member_id, issue_id, status, started_at, finished_at, error)
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at, finished_at, error)
 			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '10 minutes', now() - interval '9 minutes', 'container_error')`,
-			[teamId, agentId, issueId, HeartbeatRunStatus.Failed],
+			[teamId, agentId, taskId, HeartbeatRunStatus.Failed],
 		);
 		await db.query(
-			`INSERT INTO heartbeat_runs (team_id, member_id, issue_id, status, started_at, finished_at)
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at, finished_at)
 			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '5 minutes', now() - interval '4 minutes')`,
-			[teamId, agentId, issueId, HeartbeatRunStatus.Succeeded],
+			[teamId, agentId, taskId, HeartbeatRunStatus.Succeeded],
 		);
 
 		const count = await requeueContainerKilledRuns(buildDeps(), projectId, teamId);

@@ -25,7 +25,7 @@ beforeAll(async () => {
 	teamId = (await teamRes.json()).data.id;
 
 	const projectRow = await db.query<{ id: string }>(
-		`INSERT INTO projects (team_id, name, slug, issue_prefix, docker_base_image, container_status)
+		`INSERT INTO projects (team_id, name, slug, task_prefix, docker_base_image, container_status)
 		 VALUES ($1, 'MCP Project', 'mcp-project', 'MP', 'hezo/agent-base:latest', NULL)
 		 RETURNING id`,
 		[teamId],

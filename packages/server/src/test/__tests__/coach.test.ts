@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
-import { buildCoachReviewPrompt, type IssueInfo } from '../../services/agent-runner';
+import { buildCoachReviewPrompt, type TaskInfo } from '../../services/agent-runner';
 import { safeClose } from '../helpers';
 import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
 
@@ -12,7 +12,7 @@ let db: PGlite;
 let boardToken: string;
 let teamId: string;
 let projectId: string;
-let issueId: string;
+let taskId: string;
 let coachId: string;
 let engineerId: string;
 let engineerToken: string;
@@ -65,7 +65,7 @@ beforeAll(async () => {
 
 	({ token: engineerToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId));
 
-	const issueRes = await app.request(`/api/teams/${teamId}/issues`, {
+	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -74,7 +74,7 @@ beforeAll(async () => {
 			assignee_id: engineerId,
 		}),
 	});
-	issueId = (await issueRes.json()).data.id;
+	taskId = (await taskRes.json()).data.id;
 });
 
 afterAll(async () => {
@@ -113,9 +113,9 @@ describe('Coach agent provisioning', () => {
 	});
 });
 
-describe('Coach wakeup on issue done', () => {
-	it('creates a wakeup for Coach when issue is marked done', async () => {
-		const res = await app.request(`/api/teams/${teamId}/issues/${issueId}`, {
+describe('Coach wakeup on task done', () => {
+	it('creates a wakeup for Coach when task is marked done', async () => {
+		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
@@ -129,7 +129,7 @@ describe('Coach wakeup on issue done', () => {
 			id: string;
 			member_id: string;
 			source: string;
-			payload: { issue_id: string; trigger: string };
+			payload: { task_id: string; trigger: string };
 		}>(
 			`SELECT id, member_id, source, payload FROM agent_wakeup_requests
 			 WHERE member_id = $1 AND source = 'automation'
@@ -138,45 +138,45 @@ describe('Coach wakeup on issue done', () => {
 		);
 
 		expect(wakeups.rows.length).toBe(1);
-		expect(wakeups.rows[0].payload.issue_id).toBe(issueId);
-		expect(wakeups.rows[0].payload.trigger).toBe('issue_done');
+		expect(wakeups.rows[0].payload.task_id).toBe(taskId);
+		expect(wakeups.rows[0].payload.trigger).toBe('task_done');
 	});
 });
 
 describe('Coach review prompt builder', () => {
 	it('prepends the system prompt and points the coach back to it for the final summary comment', async () => {
-		const issueRow = await db.query<IssueInfo>(
+		const taskRow = await db.query<TaskInfo>(
 			`SELECT id, identifier, title, description, status::text AS status,
 			        priority::text AS priority, project_id, rules,
-			        parent_issue_id, created_by_run_id
-			 FROM issues WHERE id = $1`,
-			[issueId],
+			        parent_task_id, created_by_run_id
+			 FROM tasks WHERE id = $1`,
+			[taskId],
 		);
-		expect(issueRow.rows.length).toBe(1);
+		expect(taskRow.rows.length).toBe(1);
 
-		const prompt = await buildCoachReviewPrompt(db, 'SYSTEM_PROMPT', issueRow.rows[0], teamId);
+		const prompt = await buildCoachReviewPrompt(db, 'SYSTEM_PROMPT', taskRow.rows[0], teamId);
 
 		expect(prompt).toContain('SYSTEM_PROMPT');
-		expect(prompt).toContain(issueRow.rows[0].identifier);
+		expect(prompt).toContain(taskRow.rows[0].identifier);
 		expect(prompt).toMatch(/### Final Step/);
 		expect(prompt).toMatch(/review summary comment/i);
 		expect(prompt).toMatch(/following the format defined in your system prompt/i);
 	});
 
 	it('includes attachment paths in the comment log so the agent can read them', async () => {
-		const issueRow = await db.query<IssueInfo>(
+		const taskRow = await db.query<TaskInfo>(
 			`SELECT id, identifier, title, description, status::text AS status,
 			        priority::text AS priority, project_id, rules,
-			        parent_issue_id, created_by_run_id
-			 FROM issues WHERE id = $1`,
-			[issueId],
+			        parent_task_id, created_by_run_id
+			 FROM tasks WHERE id = $1`,
+			[taskId],
 		);
 
 		const commentRes = await db.query<{ id: string }>(
-			`INSERT INTO issue_comments (issue_id, content_type, content)
+			`INSERT INTO task_comments (task_id, content_type, content)
 			 VALUES ($1, 'text'::comment_content_type, $2::jsonb)
 			 RETURNING id`,
-			[issueId, JSON.stringify({ text: 'logs attached' })],
+			[taskId, JSON.stringify({ text: 'logs attached' })],
 		);
 		const commentId = commentRes.rows[0].id;
 
@@ -193,7 +193,7 @@ describe('Coach review prompt builder', () => {
 			assetId,
 		]);
 
-		const prompt = await buildCoachReviewPrompt(db, 'SYS', issueRow.rows[0], teamId);
+		const prompt = await buildCoachReviewPrompt(db, 'SYS', taskRow.rows[0], teamId);
 		expect(prompt).toContain('attachment: crash.log');
 		expect(prompt).toContain(`/workspace/.hezo/assets/${assetId}`);
 	});

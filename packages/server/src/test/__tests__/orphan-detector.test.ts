@@ -66,15 +66,15 @@ async function setAgentActive(memberId: string): Promise<void> {
 	);
 }
 
-async function insertLock(memberId: string, issueId: string): Promise<string> {
+async function insertLock(memberId: string, taskId: string): Promise<string> {
 	const result = await db.query<{ id: string }>(
-		`INSERT INTO execution_locks (issue_id, member_id) VALUES ($1, $2) RETURNING id`,
-		[issueId, memberId],
+		`INSERT INTO execution_locks (task_id, member_id) VALUES ($1, $2) RETURNING id`,
+		[taskId, memberId],
 	);
 	return result.rows[0].id;
 }
 
-async function createIssue(coId: string): Promise<string> {
+async function createTask(coId: string): Promise<string> {
 	const projectRes = await app.request(`/api/teams/${coId}/projects`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -82,12 +82,12 @@ async function createIssue(coId: string): Promise<string> {
 	});
 	const projectId = (await projectRes.json()).data.id;
 
-	const issueRes = await app.request(`/api/teams/${coId}/issues`, {
+	const taskRes = await app.request(`/api/teams/${coId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ project_id: projectId, title: 'Orphan Issue', assignee_id: agentId }),
+		body: JSON.stringify({ project_id: projectId, title: 'Orphan Task', assignee_id: agentId }),
 	});
-	return (await issueRes.json()).data.id;
+	return (await taskRes.json()).data.id;
 }
 
 describe('detectOrphans', () => {
@@ -149,8 +149,8 @@ describe('detectOrphans', () => {
 	});
 
 	it('releases execution locks for orphaned agents', async () => {
-		const issueId = await createIssue(teamId);
-		const lockId = await insertLock(agentId, issueId);
+		const taskId = await createTask(teamId);
+		const lockId = await insertLock(agentId, taskId);
 		await insertOrphanRun(agentId, teamId);
 
 		await detectOrphans(db, new Set());

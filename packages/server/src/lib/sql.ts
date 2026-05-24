@@ -1,4 +1,4 @@
-import { TERMINAL_ISSUE_STATUSES } from '@hezo/shared';
+import { TERMINAL_TASK_STATUSES } from '@hezo/shared';
 
 export interface TerminalStatusParams {
 	placeholders: string;
@@ -6,9 +6,9 @@ export interface TerminalStatusParams {
 }
 
 export function terminalStatusParams(startIdx: number, withCast = true): TerminalStatusParams {
-	const cast = withCast ? '::issue_status' : '';
-	const placeholders = TERMINAL_ISSUE_STATUSES.map((_, i) => `$${startIdx + i}${cast}`).join(', ');
-	return { placeholders, values: [...TERMINAL_ISSUE_STATUSES] };
+	const cast = withCast ? '::task_status' : '';
+	const placeholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${startIdx + i}${cast}`).join(', ');
+	return { placeholders, values: [...TERMINAL_TASK_STATUSES] };
 }
 
 export interface UpdateSet {
@@ -36,4 +36,14 @@ export function buildUpdateSet(fields: UpdateFieldSpec[], startIdx = 1): UpdateS
 	}
 
 	return { clauses, params, nextIdx: idx };
+}
+
+const PG_FK_VIOLATION = '23503';
+
+export function isFkViolation(err: unknown, constraintName?: string): boolean {
+	if (!err || typeof err !== 'object') return false;
+	const e = err as { code?: unknown; constraint?: unknown };
+	if (e.code !== PG_FK_VIOLATION) return false;
+	if (constraintName && e.constraint !== constraintName) return false;
+	return true;
 }

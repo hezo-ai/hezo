@@ -4,14 +4,14 @@ import type { MentionKind, MentionSearchResult } from '../hooks/use-mentions';
 
 const KIND_ICON: Record<MentionKind, React.ComponentType<{ className?: string }>> = {
 	agent: UserRound,
-	issue: Hash,
+	task: Hash,
 	kb: FileText,
 	doc: FileText,
 };
 
 const KIND_LABEL: Record<MentionKind, string> = {
 	agent: 'Agent',
-	issue: 'Issue',
+	task: 'Task',
 	kb: 'KB doc',
 	doc: 'Project doc',
 };

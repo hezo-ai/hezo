@@ -45,11 +45,11 @@ describe('teams CRUD', () => {
 		expect(body.data.slug).toBe('notegenius-ai');
 		expect(body.data.agent_count).toBe(11);
 
-		const opsPrefix = await db.query<{ issue_prefix: string }>(
-			"SELECT issue_prefix FROM projects WHERE team_id = $1 AND slug = 'operations'",
+		const opsPrefix = await db.query<{ task_prefix: string }>(
+			"SELECT task_prefix FROM projects WHERE team_id = $1 AND slug = 'operations'",
 			[body.data.id],
 		);
-		expect(opsPrefix.rows[0].issue_prefix).toBe('OP');
+		expect(opsPrefix.rows[0].task_prefix).toBe('OP');
 
 		const kbRes = await app.request(`/api/teams/${body.data.id}/kb-docs`, {
 			headers: authHeader(token),
@@ -82,7 +82,7 @@ describe('teams CRUD', () => {
 		});
 		const agents = (await agentsRes.json()).data;
 		const slugs = agents.map((a: any) => a.slug).sort();
-		expect(slugs).toEqual(['ceo', 'coach']);
+		expect(slugs).toEqual(['captain', 'coach']);
 	});
 
 	it('lists teams with counts', async () => {
@@ -93,7 +93,7 @@ describe('teams CRUD', () => {
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(2);
 		expect(body.data[0]).toHaveProperty('agent_count');
-		expect(body.data[0]).toHaveProperty('open_issue_count');
+		expect(body.data[0]).toHaveProperty('open_task_count');
 	});
 
 	it('gets a team by id', async () => {
@@ -187,7 +187,7 @@ describe('teams CRUD', () => {
 		expect(opsProject.rows[0].container_status).not.toBeNull();
 	});
 
-	it('seeds the Operations project with an OP issue prefix', async () => {
+	it('seeds the Operations project with an OP task prefix', async () => {
 		const res = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -195,11 +195,11 @@ describe('teams CRUD', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		const opsPrefix = await db.query<{ issue_prefix: string }>(
-			"SELECT issue_prefix FROM projects WHERE team_id = $1 AND slug = 'operations'",
+		const opsPrefix = await db.query<{ task_prefix: string }>(
+			"SELECT task_prefix FROM projects WHERE team_id = $1 AND slug = 'operations'",
 			[body.data.id],
 		);
-		expect(opsPrefix.rows[0].issue_prefix).toBe('OP');
+		expect(opsPrefix.rows[0].task_prefix).toBe('OP');
 	});
 });
 
@@ -209,7 +209,7 @@ describe('template-based team creation', () => {
 			headers: authHeader(token),
 		});
 		const agentTypes = (await agentTypesRes.json()).data;
-		const ceo = agentTypes.find((a: any) => a.slug === 'ceo');
+		const captain = agentTypes.find((a: any) => a.slug === 'captain');
 		const researcher = agentTypes.find((a: any) => a.slug === 'researcher');
 
 		const typeRes = await app.request('/api/team-templates', {
@@ -219,8 +219,8 @@ describe('template-based team creation', () => {
 				name: 'Research Lab',
 				description: 'Research-focused team',
 				agent_types: [
-					{ agent_type_id: ceo.id, reports_to_slug: 'board', sort_order: 0 },
-					{ agent_type_id: researcher.id, reports_to_slug: 'ceo', sort_order: 1 },
+					{ agent_type_id: captain.id, reports_to_slug: 'board', sort_order: 0 },
+					{ agent_type_id: researcher.id, reports_to_slug: 'captain', sort_order: 1 },
 				],
 			}),
 		});
@@ -245,7 +245,7 @@ describe('template-based team creation', () => {
 		});
 		const agents = (await agentsRes.json()).data;
 		const slugs = agents.map((a: any) => a.slug).sort();
-		expect(slugs).toEqual(['ceo', 'coach', 'researcher']);
+		expect(slugs).toEqual(['captain', 'coach', 'researcher']);
 	});
 
 	it('creates only built-in agents without a template', async () => {
@@ -265,10 +265,10 @@ describe('template-based team creation', () => {
 		});
 		const agents = (await agentsRes.json()).data;
 		const slugs = agents.map((a: any) => a.slug).sort();
-		expect(slugs).toEqual(['ceo', 'coach']);
+		expect(slugs).toEqual(['captain', 'coach']);
 	});
 
-	it('creates CEO and Coach with Blank template', async () => {
+	it('creates Captain and Coach with Blank template', async () => {
 		const typesRes = await app.request('/api/team-templates', {
 			headers: authHeader(token),
 		});
@@ -292,10 +292,10 @@ describe('template-based team creation', () => {
 		});
 		const agents = (await agentsRes.json()).data;
 		const slugs = agents.map((a: any) => a.slug).sort();
-		expect(slugs).toEqual(['ceo', 'coach']);
+		expect(slugs).toEqual(['captain', 'coach']);
 	});
 
-	it('does not duplicate CEO/Coach when Startup template already includes them', async () => {
+	it('does not duplicate Captain/Coach when Startup template already includes them', async () => {
 		const res = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -313,13 +313,13 @@ describe('template-based team creation', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		const ceos = agents.filter((a: any) => a.slug === 'ceo');
+		const ceos = agents.filter((a: any) => a.slug === 'captain');
 		const coaches = agents.filter((a: any) => a.slug === 'coach');
 		expect(ceos).toHaveLength(1);
 		expect(coaches).toHaveLength(1);
 	});
 
-	it('creates CEO/Coach for custom template that omits them', async () => {
+	it('creates Captain/Coach for custom template that omits them', async () => {
 		const agentTypesRes = await app.request('/api/agent-types', {
 			headers: authHeader(token),
 		});
@@ -356,7 +356,7 @@ describe('template-based team creation', () => {
 		});
 		const agents = (await agentsRes.json()).data;
 		const slugs = agents.map((a: any) => a.slug).sort();
-		expect(slugs).toEqual(['ceo', 'coach', 'researcher']);
+		expect(slugs).toEqual(['captain', 'coach', 'researcher']);
 	});
 
 	it('populates team_template_assignments join table', async () => {

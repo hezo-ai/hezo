@@ -122,7 +122,7 @@ Hezo Connect does this once, centrally, for all users.
 12. Browser redirects to Hezo UI showing "GitHub connected"
 ```
 
-**Note:** GitHub OAuth Apps issue non-expiring access tokens (no refresh token).
+**Note:** GitHub OAuth Apps task non-expiring access tokens (no refresh token).
 Token delivery uses a browser redirect rather than a server-to-server POST,
 which avoids Hezo Connect needing to make outbound HTTP calls to the local
 Hezo instance.
@@ -155,7 +155,7 @@ must be re-generated.
 
 | Platform | OAuth Type | Scopes | What Agents Use It For |
 |----------|-----------|--------|----------------------|
-| GitHub | OAuth 2.0 | `repo`, `workflow`, `read:org` | Repo access, PRs, Actions, issues |
+| GitHub | OAuth 2.0 | `repo`, `workflow`, `read:org` | Repo access, PRs, Actions, tasks |
 | Gmail | OAuth 2.0 (Google) | `gmail.send`, `gmail.readonly` | Send/receive email, search |
 | GitLab | OAuth 2.0 | `api`, `read_repository` | Repo access, CI/CD pipelines |
 | Stripe | OAuth 2.0 (Connect) | `read_write` | Payments, subscriptions, invoices |

@@ -16,13 +16,13 @@ let teamId: string;
 let projectId: string;
 let productLeadId: string;
 let architectId: string;
-let ceoId: string;
+let captainId: string;
 
 interface WakeupRow {
 	id: string;
 	member_id: string;
 	source: string;
-	payload: { source?: string; issue_id?: string; comment_id?: string };
+	payload: { source?: string; task_id?: string; comment_id?: string };
 }
 
 async function wakeupsForComment(commentId: string): Promise<WakeupRow[]> {
@@ -36,21 +36,21 @@ async function wakeupsForComment(commentId: string): Promise<WakeupRow[]> {
 	return res.rows;
 }
 
-// Inserts an issue directly so no side-effect wakeups fire (the REST
-// create-issue path queues an assignment wakeup that would coalesce with
+// Inserts an task directly so no side-effect wakeups fire (the REST
+// create-task path queues an assignment wakeup that would coalesce with
 // the comment wakeups we're trying to observe).
-async function insertIssue(assigneeId: string, title: string): Promise<string> {
-	const meta = await db.query<{ issue_prefix: string; number: number }>(
-		`SELECT p.issue_prefix, next_project_issue_number(p.id) AS number
+async function insertTask(assigneeId: string, title: string): Promise<string> {
+	const meta = await db.query<{ task_prefix: string; number: number }>(
+		`SELECT p.task_prefix, next_project_task_number(p.id) AS number
 		 FROM projects p WHERE p.id = $1`,
 		[projectId],
 	);
 	const n = meta.rows[0].number;
 	const res = await db.query<{ id: string }>(
-		`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
-		 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::issue_status, 'medium'::issue_priority, '[]'::jsonb)
+		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
 		 RETURNING id`,
-		[teamId, projectId, assigneeId, n, `${meta.rows[0].issue_prefix}-${n}`, title],
+		[teamId, projectId, assigneeId, n, `${meta.rows[0].task_prefix}-${n}`, title],
 	);
 	return res.rows[0].id;
 }
@@ -59,21 +59,21 @@ async function setup(
 	assigneeId: string,
 	authorAgentId: string,
 	title: string,
-): Promise<{ issueId: string; agentToken: string }> {
-	const issueId = await insertIssue(assigneeId, title);
+): Promise<{ taskId: string; agentToken: string }> {
+	const taskId = await insertTask(assigneeId, title);
 	const { token: agentToken } = await mintAgentToken(
 		db,
 		masterKeyManager,
 		authorAgentId,
 		teamId,
-		issueId,
+		taskId,
 	);
-	return { issueId, agentToken };
+	return { taskId, agentToken };
 }
 
 async function postMcpComment(
 	agentToken: string,
-	issueId: string,
+	taskId: string,
 	content: string,
 ): Promise<string> {
 	const res = await app.request('/mcp', {
@@ -84,7 +84,7 @@ async function postMcpComment(
 			method: 'tools/call',
 			params: {
 				name: 'create_comment',
-				arguments: { team_id: teamId, issue_id: issueId, content },
+				arguments: { team_id: teamId, task_id: taskId, content },
 			},
 			id: 1,
 		}),
@@ -99,10 +99,10 @@ async function postMcpComment(
 
 async function postAgentApiComment(
 	agentToken: string,
-	issueId: string,
+	taskId: string,
 	text: string,
 ): Promise<string> {
-	const res = await app.request(`/agent-api/issues/${issueId}/comments`, {
+	const res = await app.request(`/agent-api/tasks/${taskId}/comments`, {
 		method: 'POST',
 		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -140,7 +140,7 @@ beforeAll(async () => {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
-	ceoId = agents.find((a) => a.slug === 'ceo')!.id;
+	captainId = agents.find((a) => a.slug === 'captain')!.id;
 	architectId = agents.find((a) => a.slug === 'architect')!.id;
 	productLeadId = agents.find((a) => a.slug === 'product-lead')!.id;
 
@@ -162,10 +162,10 @@ beforeEach(async () => {
 
 describe('MCP create_comment fires mention-only wakeups', () => {
 	it('wakes a mentioned agent who is not the author or assignee', async () => {
-		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'CEO roadmap ticket');
+		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Captain roadmap ticket');
 		const commentId = await postMcpComment(
 			agentToken,
-			issueId,
+			taskId,
 			'@architect please review the PRD when you get a chance.',
 		);
 
@@ -175,23 +175,23 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 		);
 		expect(mention).toBeDefined();
 		expect(mention?.payload.source).toBe(WakeupSource.Mention);
-		expect(mention?.payload.issue_id).toBe(issueId);
+		expect(mention?.payload.task_id).toBe(taskId);
 	});
 
 	it('does not wake the assignee when a plain (non-mentioning) comment is posted', async () => {
-		const { issueId, agentToken } = await setup(architectId, productLeadId, 'Architecture task');
-		const commentId = await postMcpComment(agentToken, issueId, 'Added context for you.');
+		const { taskId, agentToken } = await setup(architectId, productLeadId, 'Architecture task');
+		const commentId = await postMcpComment(agentToken, taskId, 'Added context for you.');
 
 		const wakeups = await wakeupsForComment(commentId);
 		expect(wakeups).toEqual([]);
 	});
 
 	it('wakes only @-mentioned agents, not the assignee, on a mention-bearing comment', async () => {
-		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'Cross-team ticket');
+		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Cross-team ticket');
 		const commentId = await postMcpComment(
 			agentToken,
-			issueId,
-			'@architect take a look — CEO please weigh in.',
+			taskId,
+			'@architect take a look — Captain please weigh in.',
 		);
 
 		const wakeups = await wakeupsForComment(commentId);
@@ -203,10 +203,10 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 	});
 
 	it('skips self-mentions', async () => {
-		const { issueId, agentToken } = await setup(architectId, architectId, 'Architect own ticket');
+		const { taskId, agentToken } = await setup(architectId, architectId, 'Architect own ticket');
 		const commentId = await postMcpComment(
 			agentToken,
-			issueId,
+			taskId,
 			'@architect reminding myself to do this.',
 		);
 
@@ -215,10 +215,10 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 	});
 
 	it('ignores @mentions inside fenced code blocks', async () => {
-		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'PRD draft');
+		const { taskId, agentToken } = await setup(captainId, productLeadId, 'PRD draft');
 		const commentId = await postMcpComment(
 			agentToken,
-			issueId,
+			taskId,
 			'Example snippet:\n```\nsend to @architect later\n```\nno real mention here.',
 		);
 
@@ -227,8 +227,8 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 	});
 
 	it('does not wake an unknown slug', async () => {
-		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'Unknown mention');
-		const commentId = await postMcpComment(agentToken, issueId, '@not-a-real-agent please help');
+		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Unknown mention');
+		const commentId = await postMcpComment(agentToken, taskId, '@not-a-real-agent please help');
 
 		const wakeups = await wakeupsForComment(commentId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Mention)).toEqual([]);
@@ -237,10 +237,14 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 
 describe('agent-api POST comments fires mention-only wakeups', () => {
 	it('wakes a mentioned agent on an agent-api-posted comment', async () => {
-		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'CEO roadmap ticket 2');
+		const { taskId, agentToken } = await setup(
+			captainId,
+			productLeadId,
+			'Captain roadmap ticket 2',
+		);
 		const commentId = await postAgentApiComment(
 			agentToken,
-			issueId,
+			taskId,
 			'@architect could you weigh in on §FR-20?',
 		);
 
@@ -252,16 +256,16 @@ describe('agent-api POST comments fires mention-only wakeups', () => {
 	});
 
 	it('does not wake the assignee on a plain agent-api comment from a different agent', async () => {
-		const { issueId, agentToken } = await setup(architectId, productLeadId, 'Architecture task 2');
-		const commentId = await postAgentApiComment(agentToken, issueId, 'More context for you here.');
+		const { taskId, agentToken } = await setup(architectId, productLeadId, 'Architecture task 2');
+		const commentId = await postAgentApiComment(agentToken, taskId, 'More context for you here.');
 
 		const wakeups = await wakeupsForComment(commentId);
 		expect(wakeups).toEqual([]);
 	});
 
 	it('skips non-text content types even when they contain @-mentions', async () => {
-		const { issueId, agentToken } = await setup(ceoId, productLeadId, 'Trace ticket');
-		const res = await app.request(`/agent-api/issues/${issueId}/comments`, {
+		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Trace ticket');
+		const res = await app.request(`/agent-api/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -278,8 +282,8 @@ describe('agent-api POST comments fires mention-only wakeups', () => {
 });
 
 describe('board POST comments honors wake_assignee opt-in', () => {
-	async function postBoardComment(issueId: string, body: Record<string, unknown>): Promise<string> {
-		const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
+	async function postBoardComment(taskId: string, body: Record<string, unknown>): Promise<string> {
+		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
@@ -289,8 +293,8 @@ describe('board POST comments honors wake_assignee opt-in', () => {
 	}
 
 	it('wakes the assignee when wake_assignee is true', async () => {
-		const issueId = await insertIssue(architectId, 'Board wake true');
-		const commentId = await postBoardComment(issueId, {
+		const taskId = await insertTask(architectId, 'Board wake true');
+		const commentId = await postBoardComment(taskId, {
 			content_type: CommentContentType.Text,
 			content: { text: 'Take a look when you can.' },
 			wake_assignee: true,
@@ -300,13 +304,13 @@ describe('board POST comments honors wake_assignee opt-in', () => {
 		expect(wakeups).toHaveLength(1);
 		expect(wakeups[0].source).toBe(WakeupSource.Comment);
 		expect(wakeups[0].member_id).toBe(architectId);
-		expect(wakeups[0].payload.issue_id).toBe(issueId);
+		expect(wakeups[0].payload.task_id).toBe(taskId);
 		expect(wakeups[0].payload.comment_id).toBe(commentId);
 	});
 
 	it('does not wake the assignee when wake_assignee is false', async () => {
-		const issueId = await insertIssue(architectId, 'Board wake false');
-		const commentId = await postBoardComment(issueId, {
+		const taskId = await insertTask(architectId, 'Board wake false');
+		const commentId = await postBoardComment(taskId, {
 			content_type: CommentContentType.Text,
 			content: { text: 'Just a note.' },
 			wake_assignee: false,
@@ -317,8 +321,8 @@ describe('board POST comments honors wake_assignee opt-in', () => {
 	});
 
 	it('does not wake the assignee when wake_assignee is omitted', async () => {
-		const issueId = await insertIssue(architectId, 'Board wake omitted');
-		const commentId = await postBoardComment(issueId, {
+		const taskId = await insertTask(architectId, 'Board wake omitted');
+		const commentId = await postBoardComment(taskId, {
 			content_type: CommentContentType.Text,
 			content: { text: 'No flag at all.' },
 		});
@@ -328,8 +332,8 @@ describe('board POST comments honors wake_assignee opt-in', () => {
 	});
 
 	it('does not double-fire when the assignee is also @-mentioned', async () => {
-		const issueId = await insertIssue(architectId, 'Board wake mention overlap');
-		const commentId = await postBoardComment(issueId, {
+		const taskId = await insertTask(architectId, 'Board wake mention overlap');
+		const commentId = await postBoardComment(taskId, {
 			content_type: CommentContentType.Text,
 			content: { text: '@architect please weigh in.' },
 			wake_assignee: true,
@@ -342,8 +346,8 @@ describe('board POST comments honors wake_assignee opt-in', () => {
 	});
 
 	it('ignores wake_assignee when posted via the agent-api', async () => {
-		const { issueId, agentToken } = await setup(architectId, productLeadId, 'Agent flag ignored');
-		const res = await app.request(`/agent-api/issues/${issueId}/comments`, {
+		const { taskId, agentToken } = await setup(architectId, productLeadId, 'Agent flag ignored');
+		const res = await app.request(`/agent-api/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -362,15 +366,15 @@ describe('board POST comments honors wake_assignee opt-in', () => {
 
 describe('explicit reply wakeups via parent_comment_id', () => {
 	async function insertCommentBy(
-		issueId: string,
+		taskId: string,
 		authorMemberId: string | null,
 		text: string,
 	): Promise<string> {
 		const res = await db.query<{ id: string }>(
-			`INSERT INTO issue_comments (issue_id, author_member_id, content_type, content)
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 			 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb)
 			 RETURNING id`,
-			[issueId, authorMemberId, JSON.stringify({ text })],
+			[taskId, authorMemberId, JSON.stringify({ text })],
 		);
 		return res.rows[0].id;
 	}
@@ -384,7 +388,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 
 	async function postMcpReply(
 		agentToken: string,
-		issueId: string,
+		taskId: string,
 		text: string,
 		parentCommentId: string,
 	): Promise<string> {
@@ -398,7 +402,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 					name: 'create_comment',
 					arguments: {
 						team_id: teamId,
-						issue_id: issueId,
+						task_id: taskId,
 						content: text,
 						parent_comment_id: parentCommentId,
 					},
@@ -416,45 +420,45 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 	beforeEach(async () => {
 		await db.query('DELETE FROM agent_wakeup_requests');
 		await db.query('DELETE FROM heartbeat_runs');
-		await db.query('DELETE FROM issue_comments');
+		await db.query('DELETE FROM task_comments');
 		await setTeamSetting('wake_mentioner_on_reply', true);
 	});
 
 	it('wakes the parent comment author when an agent replies via MCP create_comment', async () => {
-		const issueId = await insertIssue(ceoId, 'Reply basic MCP');
-		const parentId = await insertCommentBy(issueId, ceoId, 'Please proceed with the plan.');
+		const taskId = await insertTask(captainId, 'Reply basic MCP');
+		const parentId = await insertCommentBy(taskId, captainId, 'Please proceed with the plan.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			architectId,
 			teamId,
-			issueId,
+			taskId,
 		);
 
-		const replyId = await postMcpReply(architectToken, issueId, 'On it.', parentId);
+		const replyId = await postMcpReply(architectToken, taskId, 'On it.', parentId);
 
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Reply)).toHaveLength(1);
 		const reply = wakeups.find((w) => w.source === WakeupSource.Reply)!;
-		expect(reply.member_id).toBe(ceoId);
-		expect(reply.payload.issue_id).toBe(issueId);
+		expect(reply.member_id).toBe(captainId);
+		expect(reply.payload.task_id).toBe(taskId);
 		expect(reply.payload.comment_id).toBe(replyId);
 		expect((reply.payload as Record<string, unknown>).triggering_comment_id).toBe(parentId);
 		expect((reply.payload as Record<string, unknown>).responder_member_id).toBe(architectId);
 	});
 
 	it('also fires when the reply is posted via the agent-api', async () => {
-		const issueId = await insertIssue(ceoId, 'Reply agent-api');
-		const parentId = await insertCommentBy(issueId, ceoId, 'Thoughts?');
+		const taskId = await insertTask(captainId, 'Reply agent-api');
+		const parentId = await insertCommentBy(taskId, captainId, 'Thoughts?');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			architectId,
 			teamId,
-			issueId,
+			taskId,
 		);
 
-		const res = await app.request(`/agent-api/issues/${issueId}/comments`, {
+		const res = await app.request(`/agent-api/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(architectToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -467,16 +471,16 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 		const replyId = (await res.json()).data.id;
 
 		const wakeups = await wakeupsForComment(replyId);
-		expect(wakeups.some((w) => w.source === WakeupSource.Reply && w.member_id === ceoId)).toBe(
+		expect(wakeups.some((w) => w.source === WakeupSource.Reply && w.member_id === captainId)).toBe(
 			true,
 		);
 	});
 
 	it('fires when a Board (human) user posts the reply', async () => {
-		const issueId = await insertIssue(architectId, 'Board reply');
-		const parentId = await insertCommentBy(issueId, architectId, 'Update from architect.');
+		const taskId = await insertTask(architectId, 'Board reply');
+		const parentId = await insertCommentBy(taskId, architectId, 'Update from architect.');
 
-		const res = await app.request(`/api/teams/${teamId}/issues/${issueId}/comments`, {
+		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -496,88 +500,88 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 	});
 
 	it('does not wake when the parent author is a human (no member id)', async () => {
-		const issueId = await insertIssue(architectId, 'Human parent');
-		const parentId = await insertCommentBy(issueId, null, 'Board user kicked this off.');
+		const taskId = await insertTask(architectId, 'Human parent');
+		const parentId = await insertCommentBy(taskId, null, 'Board user kicked this off.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			architectId,
 			teamId,
-			issueId,
+			taskId,
 		);
 
-		const replyId = await postMcpReply(architectToken, issueId, 'Looking into it.', parentId);
+		const replyId = await postMcpReply(architectToken, taskId, 'Looking into it.', parentId);
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Reply)).toEqual([]);
 	});
 
 	it('does not wake when the agent replies to its own earlier comment', async () => {
-		const issueId = await insertIssue(architectId, 'Self reply');
-		const parentId = await insertCommentBy(issueId, architectId, 'First note.');
+		const taskId = await insertTask(architectId, 'Self reply');
+		const parentId = await insertCommentBy(taskId, architectId, 'First note.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			architectId,
 			teamId,
-			issueId,
+			taskId,
 		);
 
-		const replyId = await postMcpReply(architectToken, issueId, 'Follow-up note.', parentId);
+		const replyId = await postMcpReply(architectToken, taskId, 'Follow-up note.', parentId);
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Reply)).toEqual([]);
 	});
 
 	it('suppresses reply wakeups when wake_mentioner_on_reply is false', async () => {
 		await setTeamSetting('wake_mentioner_on_reply', false);
-		const issueId = await insertIssue(ceoId, 'Reply disabled');
-		const parentId = await insertCommentBy(issueId, ceoId, '@architect please take a look.');
+		const taskId = await insertTask(captainId, 'Reply disabled');
+		const parentId = await insertCommentBy(taskId, captainId, '@architect please take a look.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			architectId,
 			teamId,
-			issueId,
+			taskId,
 		);
 
-		const replyId = await postMcpReply(architectToken, issueId, 'Following up.', parentId);
+		const replyId = await postMcpReply(architectToken, taskId, 'Following up.', parentId);
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Reply)).toEqual([]);
 	});
 
 	it('dedupes reply wakeups with mention wakeups when the reply also @-mentions the parent author', async () => {
-		const issueId = await insertIssue(ceoId, 'Reply overlap mention');
-		const parentId = await insertCommentBy(issueId, ceoId, 'Please proceed.');
+		const taskId = await insertTask(captainId, 'Reply overlap mention');
+		const parentId = await insertCommentBy(taskId, captainId, 'Please proceed.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			architectId,
 			teamId,
-			issueId,
+			taskId,
 		);
 
 		const replyId = await postMcpReply(
 			architectToken,
-			issueId,
-			'@ceo done — follow-up in new ticket.',
+			taskId,
+			'@captain done — follow-up in new ticket.',
 			parentId,
 		);
 
 		const wakeups = await wakeupsForComment(replyId);
-		const ceoWakeups = wakeups.filter((w) => w.member_id === ceoId);
+		const ceoWakeups = wakeups.filter((w) => w.member_id === captainId);
 		expect(ceoWakeups).toHaveLength(1);
 		expect(ceoWakeups[0].source).toBe(WakeupSource.Mention);
 	});
 
-	it('rejects parent_comment_id from a different issue', async () => {
-		const issueA = await insertIssue(ceoId, 'Issue A');
-		const issueB = await insertIssue(architectId, 'Issue B');
-		const parentIdInA = await insertCommentBy(issueA, ceoId, 'Comment in A.');
+	it('rejects parent_comment_id from a different task', async () => {
+		const taskA = await insertTask(captainId, 'Task A');
+		const taskB = await insertTask(architectId, 'Task B');
+		const parentIdInA = await insertCommentBy(taskA, captainId, 'Comment in A.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			architectId,
 			teamId,
-			issueB,
+			taskB,
 		);
 
 		const res = await app.request('/mcp', {
@@ -590,8 +594,8 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 					name: 'create_comment',
 					arguments: {
 						team_id: teamId,
-						issue_id: issueB,
-						content: 'Cross-issue reply.',
+						task_id: taskB,
+						content: 'Cross-task reply.',
 						parent_comment_id: parentIdInA,
 					},
 				},
@@ -606,17 +610,17 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 	});
 
 	it('does not fire reply wakeup when parent_comment_id is omitted', async () => {
-		const issueId = await insertIssue(ceoId, 'No parent');
-		await insertCommentBy(issueId, ceoId, '@architect please take a look.');
+		const taskId = await insertTask(captainId, 'No parent');
+		await insertCommentBy(taskId, captainId, '@architect please take a look.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
 			architectId,
 			teamId,
-			issueId,
+			taskId,
 		);
 
-		const replyId = await postMcpComment(architectToken, issueId, 'Acknowledging.');
+		const replyId = await postMcpComment(architectToken, taskId, 'Acknowledging.');
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Reply)).toEqual([]);
 	});

@@ -10,27 +10,31 @@ import type { DockerClient } from '../../services/docker';
 import { buildApp } from '../../startup';
 import { createTestDbWithMigrations } from './db';
 
-export function createStubDocker(): DockerClient {
-	return {
-		ping: async () => true,
-		imageExists: async () => true,
-		pullImage: async () => {},
-		createContainer: async () => ({ Id: 'stub-container', Warnings: [] }),
-		startContainer: async () => {},
-		stopContainer: async () => {},
-		removeContainer: async () => {},
-		inspectContainer: async () => ({
-			Id: 'stub-container',
-			State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
-			Config: { Image: 'stub' },
-		}),
-		containerLogs: async () => new ReadableStream(),
-		execCreate: async () => {
-			throw new Error('execCreate not mocked — pass a mock docker via RunnerDeps');
-		},
-		execStart: async () => ({ stdout: '', stderr: '' }),
-		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
-	} as unknown as DockerClient;
+const STUB_DOCKER_METHODS = {
+	ping: async () => true,
+	imageExists: async () => true,
+	pullImage: async () => {},
+	createContainer: async () => ({ Id: 'stub-container', Warnings: [] }),
+	startContainer: async () => {},
+	stopContainer: async () => {},
+	removeContainer: async () => {},
+	inspectContainer: async () => ({
+		Id: 'stub-container',
+		State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+		Config: { Image: 'stub' },
+	}),
+	containerLogs: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) }),
+	execCreate: async () => {
+		throw new Error('execCreate not mocked — pass a mock docker via RunnerDeps');
+	},
+	execStart: async () => ({ stdout: '', stderr: '' }),
+	execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+};
+
+export function createStubDocker<T extends Record<string, unknown>>(
+	overrides: T = {} as T,
+): DockerClient & T {
+	return { ...STUB_DOCKER_METHODS, ...overrides } as unknown as DockerClient & T;
 }
 
 export async function createTestApp(opts: { webUrl?: string } = {}) {
@@ -66,7 +70,7 @@ export async function createAgentRun(
 	db: PGlite,
 	agentId: string,
 	teamId: string,
-	issueId?: string | null,
+	taskId?: string | null,
 	wakeupOpts?: { source?: string; payload?: Record<string, unknown> },
 ): Promise<string> {
 	const source = wakeupOpts?.source ?? 'on_demand';
@@ -79,10 +83,10 @@ export async function createAgentRun(
 	);
 	const wakeupId = wakeup.rows[0].id;
 	const result = await db.query<{ id: string }>(
-		`INSERT INTO heartbeat_runs (member_id, team_id, issue_id, wakeup_id, status, started_at)
+		`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status, started_at)
 		 VALUES ($1, $2, $3, $4, 'running'::heartbeat_run_status, now())
 		 RETURNING id`,
-		[agentId, teamId, issueId ?? null, wakeupId],
+		[agentId, teamId, taskId ?? null, wakeupId],
 	);
 	return result.rows[0].id;
 }
@@ -92,9 +96,9 @@ export async function mintAgentToken(
 	masterKeyManager: MasterKeyManager,
 	agentId: string,
 	teamId: string,
-	issueId?: string | null,
+	taskId?: string | null,
 ): Promise<{ token: string; runId: string }> {
-	const runId = await createAgentRun(db, agentId, teamId, issueId);
+	const runId = await createAgentRun(db, agentId, teamId, taskId);
 	const token = await signAgentJwt(masterKeyManager, agentId, teamId, runId);
 	return { token, runId };
 }

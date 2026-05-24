@@ -1,19 +1,17 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
-	CEO_AGENT_SLUG,
+	CAPTAIN_AGENT_SLUG,
 	ContainerStatus,
-	IssuePriority,
-	IssueStatus,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
+import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
-import { allocateIssueIdentifier } from '../lib/issue-identifier';
 import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
-import { toProjectIssuePrefix, toSlug, uniqueSlug } from '../lib/slug';
+import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -27,6 +25,7 @@ import {
 	teardownContainer,
 } from '../services/containers';
 import type { JobManager } from '../services/job-manager';
+import { createProjectWithPlanningTask } from '../services/project-create';
 import { createWakeup } from '../services/wakeup';
 
 function buildContainerDeps(c: Context<Env>): ContainerDeps {
@@ -37,6 +36,7 @@ function buildContainerDeps(c: Context<Env>): ContainerDeps {
 		wsManager: c.get('wsManager'),
 		masterKeyManager: c.get('masterKeyManager'),
 		logs: c.get('logs'),
+		containerLogStreamer: c.get('containerLogStreamer'),
 		sshAgentServer: c.get('sshAgentServer'),
 		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
 	};
@@ -52,8 +52,8 @@ async function cancelRunningAgentTasks(
 ): Promise<void> {
 	const running = await db.query<{ assignee_id: string }>(
 		`SELECT DISTINCT i.assignee_id
-		 FROM issues i
-		 JOIN execution_locks el ON el.issue_id = i.id AND el.released_at IS NULL
+		 FROM tasks i
+		 JOIN execution_locks el ON el.task_id = i.id AND el.released_at IS NULL
 		 WHERE i.project_id = $1 AND i.team_id = $2 AND i.assignee_id IS NOT NULL`,
 		[projectId, teamId],
 	);
@@ -70,7 +70,7 @@ async function wakeAgentsWithPendingWork(
 	const { placeholders, values } = terminalStatusParams(3);
 	const pending = await db.query<{ agent_id: string }>(
 		`SELECT DISTINCT i.assignee_id AS agent_id
-		 FROM issues i
+		 FROM tasks i
 		 JOIN member_agents ma ON ma.id = i.assignee_id
 		 WHERE i.project_id = $1 AND i.team_id = $2
 		   AND i.status NOT IN (${placeholders})
@@ -78,67 +78,68 @@ async function wakeAgentsWithPendingWork(
 		[projectId, teamId, ...values],
 	);
 	for (const row of pending.rows) {
-		createWakeup(db, row.agent_id, teamId, WakeupSource.Automation, {
-			trigger: 'container_start',
-			project_id: projectId,
-		}).catch((e) => log.error('Failed to create wakeup on container start:', e));
+		trackBackground(
+			createWakeup(db, row.agent_id, teamId, WakeupSource.Automation, {
+				trigger: 'container_start',
+				project_id: projectId,
+			}).catch((e) => log.error('Failed to create wakeup on container start:', e)),
+		);
 	}
 }
 
-export const ISSUE_PREFIX_SHAPE = /^[A-Z][A-Z0-9]{1,3}$/;
+export const TASK_PREFIX_SHAPE = /^[A-Z][A-Z0-9]{1,3}$/;
 
-export type IssuePrefixResult =
+export type TaskPrefixResult =
 	| { ok: true; prefix: string }
 	| { ok: false; code: 'INVALID_REQUEST' | 'CONFLICT'; message: string; status: 400 | 409 };
 
-export async function resolveProjectIssuePrefix(
+export async function resolveProjectTaskPrefix(
 	db: PGlite,
 	teamId: string,
 	provided: string | undefined,
 	projectName: string,
-): Promise<IssuePrefixResult> {
+): Promise<TaskPrefixResult> {
 	if (provided?.trim()) {
 		const candidate = provided.trim().toUpperCase();
-		if (!ISSUE_PREFIX_SHAPE.test(candidate)) {
+		if (!TASK_PREFIX_SHAPE.test(candidate)) {
 			return {
 				ok: false,
 				code: 'INVALID_REQUEST',
-				message:
-					'issue_prefix must be 2-4 uppercase alphanumeric characters starting with a letter',
+				message: 'task_prefix must be 2-4 uppercase alphanumeric characters starting with a letter',
 				status: 400,
 			};
 		}
 		const collision = await db.query(
-			'SELECT 1 FROM projects WHERE team_id = $1 AND issue_prefix = $2',
+			'SELECT 1 FROM projects WHERE team_id = $1 AND task_prefix = $2',
 			[teamId, candidate],
 		);
 		if (collision.rows.length > 0) {
 			return {
 				ok: false,
 				code: 'CONFLICT',
-				message: `Issue prefix '${candidate}' is already in use for this team`,
+				message: `Task prefix '${candidate}' is already in use for this team`,
 				status: 409,
 			};
 		}
 		return { ok: true, prefix: candidate };
 	}
 
-	const base = toProjectIssuePrefix(projectName);
-	const existing = await db.query<{ issue_prefix: string }>(
-		'SELECT issue_prefix FROM projects WHERE team_id = $1 AND issue_prefix LIKE $2',
+	const base = toProjectTaskPrefix(projectName);
+	const existing = await db.query<{ task_prefix: string }>(
+		'SELECT task_prefix FROM projects WHERE team_id = $1 AND task_prefix LIKE $2',
 		[teamId, `${base}%`],
 	);
-	const taken = new Set(existing.rows.map((r) => r.issue_prefix));
+	const taken = new Set(existing.rows.map((r) => r.task_prefix));
 	if (!taken.has(base)) return { ok: true, prefix: base };
 	for (let n = 2; n < 1000; n++) {
 		const candidate = `${base}${n}`;
-		if (!ISSUE_PREFIX_SHAPE.test(candidate)) break;
+		if (!TASK_PREFIX_SHAPE.test(candidate)) break;
 		if (!taken.has(candidate)) return { ok: true, prefix: candidate };
 	}
 	return {
 		ok: false,
 		code: 'CONFLICT',
-		message: `Unable to derive a unique issue_prefix from '${projectName}'; supply one explicitly`,
+		message: `Unable to derive a unique task_prefix from '${projectName}'; supply one explicitly`,
 		status: 409,
 	};
 }
@@ -156,7 +157,7 @@ projectsRoutes.get('/teams/:teamId/projects', async (c) => {
 	const result = await db.query(
 		`SELECT p.*,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
-       (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN (${ts.placeholders}))::int AS open_issue_count
+       (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count
      FROM projects p
      WHERE p.team_id = $1
      ORDER BY p.created_at DESC`,
@@ -177,7 +178,7 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 		description?: string;
 		docker_base_image?: string;
 		initial_prd?: string;
-		issue_prefix?: string;
+		task_prefix?: string;
 	}>();
 
 	if (!body.name?.trim()) {
@@ -195,23 +196,23 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 		return err(c, 'NOT_FOUND', 'Team not found', 404);
 	}
 
-	const prefixResult = await resolveProjectIssuePrefix(db, teamId, body.issue_prefix, body.name);
+	const prefixResult = await resolveProjectTaskPrefix(db, teamId, body.task_prefix, body.name);
 	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
-	const issuePrefix = prefixResult.prefix;
+	const taskPrefix = prefixResult.prefix;
 
-	const ceoResult = await db.query<{ id: string }>(
+	const captainResult = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
-	const ceoMemberId = ceoResult.rows[0]?.id;
-	if (!ceoMemberId) {
+	const captainMemberId = captainResult.rows[0]?.id;
+	if (!captainMemberId) {
 		return err(
 			c,
 			'INTERNAL',
-			'No enabled CEO found for this team. Re-enable the CEO agent before creating projects.',
+			'No enabled Captain found for this team. Re-enable the Captain agent before creating projects.',
 			500,
 		);
 	}
@@ -224,118 +225,46 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 		return r.rows.length > 0;
 	});
 
-	const projectName = body.name.trim();
-	const projectDescription = body.description.trim();
-	const initialPrd = body.initial_prd?.trim() || null;
-
-	await db.query('BEGIN');
-	let project: Record<string, unknown>;
-	let planningIssue: Record<string, unknown>;
-	try {
-		const projectResult = await db.query(
-			`INSERT INTO projects (team_id, name, slug, issue_prefix, description, docker_base_image)
-			 VALUES ($1, $2, $3, $4, $5, $6)
-			 RETURNING *`,
-			[
-				teamId,
-				projectName,
-				slug,
-				issuePrefix,
-				projectDescription,
-				body.docker_base_image ?? 'hezo/agent-base:latest',
-			],
-		);
-		project = projectResult.rows[0] as Record<string, unknown>;
-
-		await db.query('INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)', [
-			project.id,
-		]);
-
-		if (initialPrd) {
-			await db.query(
-				`INSERT INTO documents (project_id, team_id, type, slug, content)
-				 VALUES ($1, $2, 'project_doc', 'initial-prd.md', $3)`,
-				[project.id, teamId, initialPrd],
-			);
-		}
-
-		const { number: issueNumber, identifier } = await allocateIssueIdentifier(
-			db,
-			project.id as string,
-		);
-
-		const initialPrdNote = initialPrd
-			? `\n\n> **Note:** The board has provided an initial requirements document saved as \`initial-prd.md\` in this project's docs. Direct the Researcher and Product Lead to consult this document as a starting point for research and the formal PRD.`
-			: '';
-
-		const issueBody = `## Draft the execution plan for this new project
-
-A new project has just been created. Please read the description below carefully and produce an execution plan.
-
-### Project: ${projectName}
-
-**Description**
-
-${projectDescription}${initialPrdNote}
-
-### Your task
-
-1. Read the description above. If anything is ambiguous, post a clarifying comment on this issue for the board.
-2. Use \`list_agents\` / \`get_agent_system_prompt\` to recall who is on the team.
-3. Break the work into 3-8 top-level milestones. Write a short scope note for each.
-4. Post the plan as a comment on this issue. Then create the milestone tickets with \`create_issue\`, choosing the parent based on what each milestone produces:
-   - **Planning artefacts** (research, PRD, spec, design — anything the implementation team reads before building) → open as **sub-issues of this planning ticket**: set \`parent_issue_id\` to this issue's id. Their outputs are required before the plan itself can be considered complete.
-   - **Work tickets** (implementation, build, deploy, security review of built code, marketing launch — anything that *executes* the finished plan) → open as **top-level tickets**: leave \`parent_issue_id\` unset. They run on their own clock; the plan is complete once they exist.
-   For a typical 7-milestone plan: research / PRD / spec / design → sub-issues; alpha implementation / security review / marketing launch → top-level. Assign each ticket to the right agent — the assignment wakes them on their own ticket.
-5. This planning ticket is the epic for the plan itself. The server will not let it move to \`done\` while any sub-issue is open, so it stays open while research / PRD / spec / design execute. Once those sub-issues close and the top-level work tickets have been created, move this issue to \`done\` and the Coach will close it after the post-mortem. Trying to flip it to \`done\` early will fail with a "sub-issue(s) still open" error.
-
-Container provisioning for this project is in progress. Focus on planning while the environment comes up — implementation agents can start work as soon as their tickets are ready.`;
-
-		const issueResult = await db.query(
-			`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier,
-			                     title, description, status, priority, labels)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::issue_status, $9::issue_priority, $10::jsonb)
-			 RETURNING *`,
-			[
-				teamId,
-				project.id,
-				ceoMemberId,
-				issueNumber,
-				identifier,
-				`Draft execution plan for "${projectName}"`,
-				issueBody,
-				IssueStatus.Backlog,
-				IssuePriority.High,
-				JSON.stringify(['planning']),
-			],
-		);
-		planningIssue = issueResult.rows[0] as Record<string, unknown>;
-
-		await db.query('COMMIT');
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+	const { project, planningTask } = await createProjectWithPlanningTask(db, {
+		teamId,
+		captainMemberId,
+		name: body.name.trim(),
+		slug,
+		taskPrefix,
+		description: body.description.trim(),
+		dockerBaseImage: body.docker_base_image,
+		initialPrd: body.initial_prd?.trim() || null,
+		createPlanningTask: true,
+	});
 
 	broadcastChange(c, wsRoom.team(teamId), 'projects', 'INSERT', project);
-	broadcastChange(c, wsRoom.team(teamId), 'issues', 'INSERT', planningIssue);
+	if (!planningTask) {
+		throw new Error('Expected planning task for direct project creation');
+	}
+	broadcastChange(c, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
 
-	createWakeup(db, ceoMemberId, teamId, WakeupSource.Assignment, {
-		issue_id: planningIssue.id,
-	}).catch((e) => log.error('Failed to wake CEO for project planning:', e));
+	trackBackground(
+		createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
+			task_id: planningTask.id,
+		}).catch((e) => log.error('Failed to wake Captain for project planning:', e)),
+	);
 
-	provisionContainer(buildContainerDeps(c), project as unknown as ProjectRow, teamMeta.slug).catch(
-		(error) => {
+	trackBackground(
+		provisionContainer(
+			buildContainerDeps(c),
+			project as unknown as ProjectRow,
+			teamMeta.slug,
+		).catch((error) => {
 			log.error(`Failed to provision container for project ${project.slug}:`, error);
-		},
+		}),
 	);
 
 	return ok(
 		c,
 		{
 			...project,
-			planning_issue_id: planningIssue.id,
-			planning_issue_identifier: planningIssue.identifier,
+			planning_task_id: planningTask.id,
+			planning_task_identifier: planningTask.identifier,
 		},
 		201,
 	);
@@ -354,7 +283,7 @@ projectsRoutes.get('/teams/:teamId/projects/:projectId', async (c) => {
 	const result = await db.query(
 		`SELECT p.*,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
-       (SELECT count(*) FROM issues i WHERE i.project_id = p.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_issue_count
+       (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count
      FROM projects p
      WHERE p.id = $1 AND p.team_id = $2`,
 		[projectId, teamId, ...ts2.values],
@@ -460,12 +389,12 @@ projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
 	}
 
 	const ts3 = terminalStatusParams(2);
-	const openIssues = await db.query<{ count: number }>(
-		`SELECT count(*)::int AS count FROM issues WHERE project_id = $1 AND status NOT IN (${ts3.placeholders})`,
+	const openTasks = await db.query<{ count: number }>(
+		`SELECT count(*)::int AS count FROM tasks WHERE project_id = $1 AND status NOT IN (${ts3.placeholders})`,
 		[projectId, ...ts3.values],
 	);
-	if (openIssues.rows[0].count > 0) {
-		return err(c, 'CONFLICT', 'Cannot delete project with open issues', 409);
+	if (openTasks.rows[0].count > 0) {
+		return err(c, 'CONFLICT', 'Cannot delete project with open tasks', 409);
 	}
 
 	const teamSlugResult = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
@@ -474,14 +403,13 @@ projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
 	const teamSlug = teamSlugResult.rows[0]?.slug;
 
 	if (teamSlug) {
-		await teardownContainer(
-			buildContainerDeps(c),
-			projectId,
-			teamSlug,
-			existing.rows[0].slug,
-		).catch((error) => {
-			log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
-		});
+		await trackBackground(
+			teardownContainer(buildContainerDeps(c), projectId, teamSlug, existing.rows[0].slug).catch(
+				(error) => {
+					log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
+				},
+			),
+		);
 	}
 
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
@@ -506,12 +434,14 @@ projectsRoutes.post('/teams/:teamId/projects/:projectId/container/start', async 
 	if (!result.rows[0].container_id) return err(c, 'NO_CONTAINER', 'No container provisioned', 400);
 
 	const docker = c.get('docker');
+	const containerId = result.rows[0].container_id;
 	try {
-		await docker.startContainer(result.rows[0].container_id);
+		await docker.startContainer(containerId);
 		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 			ContainerStatus.Running,
 			projectId,
 		]);
+		c.get('containerLogStreamer').subscribe(projectId, containerId, c.get('logs'), docker);
 		broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', {
 			id: projectId,
 			container_status: ContainerStatus.Running,

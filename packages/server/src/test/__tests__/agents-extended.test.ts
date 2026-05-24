@@ -39,7 +39,7 @@ afterAll(async () => {
 });
 
 describe('POST /teams/:teamId/agents/onboard', () => {
-	it('creates a hire approval and CEO ticket, but no agent yet', async () => {
+	it('creates a hire approval and Captain ticket, but no agent yet', async () => {
 		const res = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -51,20 +51,20 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		const { agent, issue, approval, bootstrap } = body.data;
+		const { agent, task, approval, bootstrap } = body.data;
 
 		expect(bootstrap).toBe(false);
 		expect(agent).toBeNull();
-		expect(issue).not.toBeNull();
-		expect(issue.title).toBe('Onboard new agent: Data Engineer');
-		expect(issue.labels).toContain('hire');
+		expect(task).not.toBeNull();
+		expect(task.title).toBe('Onboard new agent: Data Engineer');
+		expect(task.labels).toContain('hire');
 		expect(approval).not.toBeNull();
 		expect(approval.type).toBe('hire');
 		expect(approval.status).toBe('pending');
 		expect(approval.payload.title).toBe('Data Engineer');
 		expect(approval.payload.slug).toBe('data-engineer');
 		expect(approval.payload.system_prompt).toBe('Draft prompt');
-		expect(approval.payload.issue_id).toBe(issue.id);
+		expect(approval.payload.task_id).toBe(task.id);
 
 		// No member_agent should exist yet
 		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
@@ -86,7 +86,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 				heartbeat_interval_min: 45,
 			}),
 		});
-		const { approval, issue } = (await onboardRes.json()).data;
+		const { approval, task } = (await onboardRes.json()).data;
 
 		const resolveRes = await app.request(`/api/approvals/${approval.id}/resolve`, {
 			method: 'POST',
@@ -113,11 +113,11 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		});
 		expect((await promptRes.json()).data.content).toBe('Draft prompt');
 
-		const issueRes = await app.request(`/api/teams/${teamId}/issues/${issue.id}`, {
+		const taskRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
 			headers: authHeader(token),
 		});
-		const updatedIssue = (await issueRes.json()).data;
-		expect(updatedIssue.status).toBe('done');
+		const updatedTask = (await taskRes.json()).data;
+		expect(updatedTask.status).toBe('done');
 	});
 
 	it('denying the hire approval leaves no agent behind', async () => {
@@ -159,7 +159,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		expect(dup.status).toBe(409);
 	});
 
-	it('bootstrap: with no CEO, creates the agent enabled without an approval', async () => {
+	it('bootstrap: with no Captain, creates the agent enabled without an approval', async () => {
 		const typesRes = await app.request('/api/team-templates', {
 			headers: authHeader(token),
 		});
@@ -170,17 +170,17 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		const bareRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No CEO Co', template_id: typeId }),
+			body: JSON.stringify({ name: 'No Captain Co', template_id: typeId }),
 		});
 		const bareTeamId = (await bareRes.json()).data.id;
 
-		// Disable the CEO so hasCeo becomes false
+		// Disable the Captain so hasCaptain becomes false
 		const agentsRes = await app.request(`/api/teams/${bareTeamId}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		const ceo = agents.find((a: Record<string, unknown>) => a.slug === 'ceo');
-		await app.request(`/api/teams/${bareTeamId}/agents/${ceo.id}/disable`, {
+		const captain = agents.find((a: Record<string, unknown>) => a.slug === 'captain');
+		await app.request(`/api/teams/${bareTeamId}/agents/${captain.id}/disable`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
@@ -191,10 +191,10 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 			body: JSON.stringify({ title: 'Solo Agent', role_description: 'Works independently' }),
 		});
 		expect(res.status).toBe(201);
-		const { agent, issue, approval, bootstrap } = (await res.json()).data;
+		const { agent, task, approval, bootstrap } = (await res.json()).data;
 		expect(bootstrap).toBe(true);
 		expect(agent.admin_status).toBe('enabled');
-		expect(issue).toBeNull();
+		expect(task).toBeNull();
 		expect(approval).toBeNull();
 	});
 
@@ -210,11 +210,11 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 	});
 
 	it('rejects onboard with duplicate slug against existing agent', async () => {
-		// CEO slug already exists from the Startup template
+		// Captain slug already exists from the Startup template
 		const res = await app.request(`/api/teams/${teamId}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: 'CEO' }),
+			body: JSON.stringify({ title: 'Captain' }),
 		});
 		expect(res.status).toBe(409);
 		const body = await res.json();
@@ -230,7 +230,7 @@ describe('seeded agent system prompts', () => {
 		const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
 
 		const seededSlugs = [
-			'ceo',
+			'captain',
 			'architect',
 			'product-lead',
 			'engineer',
@@ -258,9 +258,9 @@ describe('seeded agent system prompts', () => {
 			expect(prompt.length).toBeGreaterThan(100);
 		}
 
-		const ceo = agents.find((a) => a.slug === 'ceo')!;
-		const ceoPrompt = await getPrompt(ceo.id);
-		expect(ceoPrompt).toContain('You are the CEO of');
+		const captain = agents.find((a) => a.slug === 'captain')!;
+		const ceoPrompt = await getPrompt(captain.id);
+		expect(ceoPrompt).toContain('You are the Captain of');
 		expect(ceoPrompt).toContain('{{team_name}}');
 		expect(ceoPrompt).toMatch(/##\s+Rules\b/);
 
@@ -322,7 +322,7 @@ describe('agent listing with admin_status filter', () => {
 		for (const agent of body.data) {
 			expect(agent).toHaveProperty('reports_to');
 		}
-		// At least one agent reports to the CEO
+		// At least one agent reports to the Captain
 		const withReportsTo = body.data.filter((a: Record<string, unknown>) => a.reports_to !== null);
 		expect(withReportsTo.length).toBeGreaterThan(0);
 		// Those agents should also have reports_to_title populated
@@ -428,7 +428,7 @@ describe('PATCH /teams/:teamId/agents/:agentId (partial updates)', () => {
 	});
 
 	it('clears reports_to when patched with null', async () => {
-		// Find an agent that has a reports_to set (any non-CEO)
+		// Find an agent that has a reports_to set (any non-Captain)
 		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
 			headers: authHeader(token),
 		});

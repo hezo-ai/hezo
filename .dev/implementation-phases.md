@@ -81,17 +81,17 @@
   - Built-in "Software Development" type seeded on first run
 - Team CRUD (create from team type, update, delete, list)
   - Team email field
-  - Issue prefix and auto-derived identifiers
+  - Task prefix and auto-derived identifiers
 - Agent CRUD (create/hire, update, pause, resume, terminate, list)
   - Agents auto-created from team type on team creation
   - Custom role creation with arbitrary titles/prompts
   - Org chart with `reports_to` hierarchy
 - Project CRUD (create, update, delete, list)
-- Issue CRUD (create, update, delete, list, status transitions)
-  - Atomic per-project issue numbering (`next_project_issue_number()`)
+- Task CRUD (create, update, delete, list, status transitions)
+  - Atomic per-project task numbering (`next_project_task_number()`)
   - Linear-style identifiers (`OP-42` — project prefix + number)
-  - Issue work ownership fields
-  - Sub-issues and `blocked_by`
+  - Task work ownership fields
+  - Sub-tasks and `blocked_by`
 - Comment CRUD (create, list) with all content types (text, options, preview, trace, system)
 - Secrets vault (create, list, revoke — encrypted with master key)
 - Secret grants (create, revoke)
@@ -104,8 +104,8 @@
 **How to test:**
 - Create a team type, then create a team from it — 9 agents auto-created
 - Full CRUD cycle for every entity via curl
-- Issue status state machine enforced (invalid transitions rejected)
-- Issue identifiers auto-generated correctly (ACME-1, ACME-2, ...)
+- Task status state machine enforced (invalid transitions rejected)
+- Task identifiers auto-generated correctly (ACME-1, ACME-2, ...)
 - Budget debit works atomically
 - Secret values encrypted in DB, decrypted on read
 - Comprehensive Vitest suite covering all endpoints
@@ -160,24 +160,24 @@ Scaffolding:
 Screens:
 - Master key gate — modal when `/api/status` returns `masterKeyState: "unset"` or `"locked"`. Generate new key or enter existing key.
 - Team list — card grid, create from team type
-- Team workspace — tab layout: Issues, Agents, Projects, Org Chart, KB, Settings
-- Issue list — filterable/sortable table with identifier, project, assignee, status, priority
-- Issue detail — comments thread, status transitions, assignee/priority/project editing, sub-issues, blocked-by
+- Team workspace — tab layout: Tasks, Agents, Projects, Org Chart, KB, Settings
+- Task list — filterable/sortable table with identifier, project, assignee, status, priority
+- Task detail — comments thread, status transitions, assignee/priority/project editing, sub-tasks, blocked-by
 - Agent list — cards with title, runtime, status, budget usage
 - Agent detail / edit / hire — form with title, system prompt, reports_to, runtime, budget; pause/resume/terminate actions
 - Org chart — tree visualization from `reports_to` hierarchy with status indicators
-- Project list + detail — repos list, filtered issues, add project/repo forms
+- Project list + detail — repos list, filtered tasks, add project/repo forms
 - GitHub connection — Settings section showing connected platforms, "Connect GitHub" button triggering OAuth flow
 - KB docs — list, view with markdown rendering, create/edit
 - Settings — secrets vault (list/create/revoke), API keys (list/create/revoke), budget overview, team preferences, project docs, connected platforms
 - Board inbox — drawer accessible from any screen (nav badge), pending approvals with approve/deny actions
-- Playwright setup with basic smoke tests (master key flow, create team, create issue)
+- Playwright setup with basic smoke tests (master key flow, create team, create task)
 
 **How to test:**
 - `bun run dev` starts server (3100) and Vite (5173)
 - Open browser to `localhost:5173` — master key gate appears on first visit
 - Create a team from a team type — agents auto-created, visible in Agents tab
-- Full CRUD cycle for issues, projects, agents, KB docs, secrets, API keys from the browser
+- Full CRUD cycle for tasks, projects, agents, KB docs, secrets, API keys from the browser
 - Connect GitHub via OAuth flow in Settings
 - Board inbox shows pending approvals with working approve/deny
 - Org chart renders correct hierarchy
@@ -190,7 +190,7 @@ Screens:
 ## Phase 4: Agent Execution
 
 **Status:** Done (2026-04) — amended 2026-04-16 with in-container MCP wiring,
-per-issue worktrees on every linked repo, realtime run-log streaming, and the
+per-task worktrees on every linked repo, realtime run-log streaming, and the
 `started_at` / `invocation_command` / `log_text` / `working_dir` columns on
 `heartbeat_runs`.
 
@@ -211,11 +211,11 @@ Backend:
   `run_id` claim is the `heartbeat_runs.id` for that run. The server validates
   each request against the run row's status, so the token is automatically
   rejected once the run finalizes.
-- Git worktrees per issue on every linked repo
-  (`/worktrees/<issue-identifier>/<repo-short-name>/` on branch
-  `hezo/<issue-identifier>`). The agent's working directory resolves to the
+- Git worktrees per task on every linked repo
+  (`/worktrees/<task-identifier>/<repo-short-name>/` on branch
+  `hezo/<task-identifier>`). The agent's working directory resolves to the
   designated repo's worktree; other repos sit alongside. Worktrees persist
-  across runs on the same issue and are removed when the issue transitions to
+  across runs on the same task and are removed when the task transitions to
   a terminal status or its repo is detached.
 - Streaming run logs: Docker exec output is demuxed per-frame, broadcast over
   the `project-runs:<projectId>` WebSocket room as `run_log` messages, and
@@ -223,10 +223,10 @@ Backend:
   marker). The exact CLI is persisted as `invocation_command` with the JWT
   redacted.
 - Heartbeat engine: wakeup queue, coalescing, timer ticks
-- Issue work ownership (claim on start, release on complete/reassign/pause)
+- Task work ownership (claim on start, release on complete/reassign/pause)
 - Orphan detection and auto-retry
 - Per-agent and per-team budget enforcement with atomic debit
-- Cost tracking (per agent, per issue, per project)
+- Cost tracking (per agent, per task, per project)
 - Tool call tracing
 - Host filesystem layout (`~/.hezo/teams/{id}/projects/{id}/...`)
 - Agent JWT authentication for Agent API
@@ -234,16 +234,16 @@ Backend:
 UI:
 - Agent status indicators (polling via TanStack Query refetch intervals)
 - Container status indicators on project cards
-- Issue work ownership display — which agent is working, progress indicator
-- Cost tracking views — per-agent spend, per-issue spend, per-project spend
+- Task work ownership display — which agent is working, progress indicator
+- Cost tracking views — per-agent spend, per-task spend, per-project spend
 - Budget enforcement UI — visual warnings at 80%+ usage, budget adjustment controls
 - "Open Preview" link on project detail for dev port forwarding
 
 **How to test:**
 - Create a project — Docker container provisioned automatically
-- Assign an issue to an agent — agent subprocess starts in project container
-- Agent status changes visible in browser (Agents tab, issue detail)
-- Multiple agents work on different issues simultaneously (separate worktrees)
+- Assign an task to an agent — agent subprocess starts in project container
+- Agent status changes visible in browser (Agents tab, task detail)
+- Multiple agents work on different tasks simultaneously (separate worktrees)
 - Budget exceeded pauses agent with system comment — warning visible in UI
 - Container status visible on project cards in browser
 - Cost entries appear as agent works (via polling)
@@ -276,18 +276,18 @@ Backend:
 UI:
 - WebSocket connection from browser to server
 - WebSocket real-time migration — replace TanStack Query polling with WebSocket-triggered cache invalidation for all entity types
-- Tool call trace rendering — expandable trace blocks in issue comments
+- Tool call trace rendering — expandable trace blocks in task comments
 - HTML preview rendering — iframe or proxy route for agent-generated previews
 - Audit log viewer in Settings
 - KB document revision history view
 - Project document revision history view
-- Real-time updates across all screens — issue status changes, agent lifecycle events, new comments all update without page refresh
+- Real-time updates across all screens — task status changes, agent lifecycle events, new comments all update without page refresh
 
 **How to test:**
 - Open two browser tabs — change in one reflects instantly in the other (no refresh)
 - Create KB doc, agent proposes edit, board approves — revision history visible in browser
 - Audit log entries viewable for all significant actions
-- Tool call traces render inline in issue comments
+- Tool call traces render inline in task comments
 - WebSocket events fire on agent status changes — UI updates in real-time
 - Preview URL serves agent-generated HTML, accessible from project detail
 - Structured options render as clickable choice cards
@@ -321,7 +321,7 @@ UI + Build:
 
 **How to test:**
 - Connect an MCP client to `localhost:3100/mcp` — tools listed and callable
-- Create an issue via MCP `create_issue` tool call — verified in DB and visible in browser
+- Create an task via MCP `create_task` tool call — verified in DB and visible in browser
 - `curl localhost:3100/skill.md` returns valid Markdown listing all current tools
 - API key or JWT auth required for MCP
 - MCP servers configurable from Settings in browser
@@ -372,7 +372,7 @@ UI:
 
 **Status:** Done (2026-04)
 
-**Goal:** Simplify the UI with a team-first navigation model and add agent onboarding via CEO-managed issues.
+**Goal:** Simplify the UI with a team-first navigation model and add agent onboarding via Captain-managed tasks.
 
 **What's included:**
 
@@ -380,15 +380,15 @@ Backend:
 - `is_internal` boolean on `projects` table — marks auto-created projects
 - Auto-create "Operations" project (`is_internal = true`) on team creation
 - Prevent deletion of internal projects
-- `POST /teams/:teamId/agents/onboard` endpoint — creates agent in disabled state, opens onboarding issue assigned to CEO
+- `POST /teams/:teamId/agents/onboard` endpoint — creates agent in disabled state, opens onboarding task assigned to the Captain
 
 Frontend:
 - Team icon rail (left sidebar) with home, team avatars, theme switcher, inbox badge
-- Unified side menu grouping: Inbox, Work (Issues, Goals), Projects (header links to projects list), Team (header links to org chart), Resources (Knowledge base, Settings, Audit log)
+- Unified side menu grouping: Inbox, Work (Tasks, Goals), Projects (header links to projects list), Team (header links to org chart), Resources (Knowledge base, Settings, Audit log)
 - Removed top header with breadcrumbs
-- Tab-based project view (Issues, Agents, Container, Settings) replacing project sidebar
+- Tab-based project view (Tasks, Agents, Container, Settings) replacing project sidebar
 - Full-page Inbox route for pending approvals
-- Agent hire page calls onboard endpoint, redirects to onboarding issue
+- Agent hire page calls onboard endpoint, redirects to onboarding task
 
 **Depends on:** Phase 6.5
 
@@ -442,7 +442,7 @@ Backend:
   - Invite link with unique token, 7-day expiry
   - Recipient authenticates via GitHub or GitLab OAuth
   - Role and permissions copied to membership on accept
-- File attachments (upload, download, issue linking, local storage)
+- File attachments (upload, download, task linking, local storage)
 
 UI:
 - Member management UI in Settings (list members, roles, permissions)
@@ -452,7 +452,7 @@ UI:
 **How to test:**
 - Invite a board member — joins with full access, visible in member management UI
 - Invite a member with role_title + permissions_text + project_ids — joins with scoped access
-- Member can create issue in allowed project via browser
+- Member can create task in allowed project via browser
 - Member cannot access restricted project (403) — UI hides restricted content
 - Member cannot access team settings or agent management (403)
 - Agent respects member's permissions_text (e.g. refuses to change PRD when permissions say not to)
@@ -516,7 +516,7 @@ Backend:
 - `PATCH /api/ai-providers/:configId` — superuser only; accepts `{ default_model: string | null }`.
 - `PATCH /api/teams/:teamId/agents/:agentId` accepts `model_override_provider` + `model_override_model` alongside existing fields; clearing the provider also clears the model.
 - `getProviderCredentialAndModel` returns config + credential + default model together so the runner does it in one query.
-- Runner precedence: `agent.model_override_provider` wins over `resolveRuntimeForIssue`; `agent.model_override_model` wins over `config.default_model`; when nothing is set, no `--model` flag is added (matching prior behaviour).
+- Runner precedence: `agent.model_override_provider` wins over `resolveRuntimeForTask`; `agent.model_override_model` wins over `config.default_model`; when nothing is set, no `--model` flag is added (matching prior behaviour).
 
 UI:
 - On `/settings/ai-providers`, each config row has a "Default model" dropdown that lazy-loads the provider's catalog on focus and persists the choice.
@@ -608,7 +608,7 @@ Backend:
 - Production deployment with `deploy_production` approval gate
 - DevOps Engineer activation flow (board sets to active when ready)
 - Messaging integrations (all optional):
-  - Telegram bot — per-user setup, full platform interface (notifications, approvals, issue creation, agent interaction via commands and inline keyboards)
+  - Telegram bot — per-user setup, full platform interface (notifications, approvals, task creation, agent interaction via commands and inline keyboards)
   - Slack integration — per-team setup, single Slack app with per-agent display names/avatars, interactive messages for approvals, channel-based interaction
   - Notification preferences — per-user, per-channel event type routing
   - `notification_preferences` and `slack_connections` tables
@@ -640,23 +640,23 @@ UI:
 
 **Status:** Done (2026-04)
 
-**Goal:** Surface agent execution runs as comments on issues and restructure agent pages with Executions/Settings tabs for full run visibility.
+**Goal:** Surface agent execution runs as comments on tasks and restructure agent pages with Executions/Settings tabs for full run visibility.
 
 **What's included:**
-- `issue_id` column on `heartbeat_runs` to link runs to issues
-- `execution` content type for `issue_comments` — auto-created when agent run completes
+- `task_id` column on `heartbeat_runs` to link runs to tasks
+- `execution` content type for `task_comments` — auto-created when agent run completes
 - Execution comment shows status badge, duration, stdout preview, with link to full log
 - Agent detail page restructured into tabbed layout (Executions | Settings)
-- Executions tab lists all past runs with status, issue, timing, cost
+- Executions tab lists all past runs with status, task, timing, cost
 - Execution detail sub-page shows full stdout/stderr excerpts, tokens, timing, cost
 - Settings tab contains budget, heartbeat, and agent configuration form
 - Single-run API endpoint: `GET /teams/:teamId/agents/:agentId/heartbeat-runs/:runId`
-- Heartbeat-runs list endpoint returns issue identifier and title via JOIN
+- Heartbeat-runs list endpoint returns task identifier and title via JOIN
 - Integration tests for heartbeat-runs API and execution comments
 - E2E tests for agent tabs navigation and execution list
 
 **How to test:**
-- Create a team with agents and trigger an agent run — execution comment appears on the issue
+- Create a team with agents and trigger an agent run — execution comment appears on the task
 - Navigate to agent page — Executions tab loads by default with run list
 - Click a run — detail page shows with stdout, stderr, timing, cost
 - Navigate to Settings tab — budget, heartbeat, and edit form visible
@@ -678,7 +678,7 @@ UI:
 Backend:
 - `agent_effort` enum: `minimal | low | medium | high | max`
 - `default_effort` column on `agent_types` and `member_agents`
-- Per-role seed defaults: CEO / Architect → `max`; Product Lead / QA / Security / Researcher → `high`; implementers → `medium`
+- Per-role seed defaults: Captain / Architect → `max`; Product Lead / QA / Security / Researcher → `high`; implementers → `medium`
 - Effort resolver service with precedence: wakeup payload override → agent default → `medium`
 - Runtime translation: Claude Code (`think`/`ultrathink` prompt keyword), Codex (`-c model_reasoning_effort=<level>`), Gemini (`GEMINI_REASONING_EFFORT` env)
 - Resolved level exposed as `HEZO_AGENT_EFFORT` env var for agent-side tooling
@@ -686,7 +686,7 @@ Backend:
 - Agent CRUD routes accept and validate `default_effort`
 
 UI:
-- Effort selector dropdown on the issue comment composer (Default, Minimal, Low, Medium, High, Max ultrathink)
+- Effort selector dropdown on the task comment composer (Default, Minimal, Low, Medium, High, Max ultrathink)
 
 **How to test:**
 - Post a comment with `effort: "max"` → wakeup payload carries the override
@@ -703,7 +703,7 @@ UI:
 
 **Status:** Done (2026-04-17)
 
-**Goal:** Auto-generated descriptions for agents and teams — pre-baked defaults for built-in types, runtime regeneration via CEO-managed tickets.
+**Goal:** Auto-generated descriptions for agents and teams — pre-baked defaults for built-in types, runtime regeneration via Captain-managed tickets.
 
 **What's included:**
 
@@ -714,13 +714,13 @@ Backend:
 - `team_templates.default_summary` (TEXT) — pre-generated team defaults
 - Summaries copied to agents and team during provisioning
 - `set_agent_summary` MCP tool — any agent or board member in the team can set an agent's summary
-- `set_team_summary` MCP tool — CEO agent only, sets the team team summary
-- `description-update` label convention: issue created in Operations project, assigned to CEO, triggers regeneration
+- `set_team_summary` MCP tool — Captain agent only, sets the team team summary
+- `description-update` label convention: task created in Operations project, assigned to the Captain, triggers regeneration
 
 **How to test:**
 - Create a team from built-in template — agents have pre-baked summaries, team has team summary
-- CEO processes a `description-update` issue — calls MCP tools to update summaries
-- Non-CEO agent cannot call `set_team_summary` (rejected)
+- Captain processes a `description-update` task — calls MCP tools to update summaries
+- Non-Captain agent cannot call `set_team_summary` (rejected)
 - `bun run test --skip-e2e` passes
 
 **Depends on:** Phase 11.5
@@ -763,7 +763,7 @@ Docs:
 - All six code-touching agent role docs note the auto-pause behavior
 
 **How to test:**
-- Create a team + project with no repo, assign an engineer to an issue, see the action comment + inbox approval, drive the wizard with the GitHub simulator (integration) or a real local Connect + GitHub account (manual)
+- Create a team + project with no repo, assign an engineer to an task, see the action comment + inbox approval, drive the wizard with the GitHub simulator (integration) or a real local Connect + GitHub account (manual)
 - Verify the cloned repo appears at `/workspace/{short_name}/` inside the project container and a worktree is created on the engineer's resume
 - Verify `DELETE` on the designated repo returns 409
 - `bun run test` and `bun run test --e2e` pass
@@ -776,7 +776,7 @@ Docs:
 
 **Status:** Done — 2026-04-20
 
-In-process **live-run registry** keyed by `heartbeat_runs.id` becomes the single source of truth for "this run is alive." Three reconciliation paths converge on one outcome (run failed, agent reset to idle, locks released, broadcasts emitted, retry wakeup created): startup reconciliation (all DB `running`/`queued` rows are necessarily orphaned), the orphan-detection cron (DB rows whose id isn't in the live registry, after a 30s safety window), and container-state transitions (any project leaving `running` fans out to fail every in-flight run for that project's issues).
+In-process **live-run registry** keyed by `heartbeat_runs.id` becomes the single source of truth for "this run is alive." Three reconciliation paths converge on one outcome (run failed, agent reset to idle, locks released, broadcasts emitted, retry wakeup created): startup reconciliation (all DB `running`/`queued` rows are necessarily orphaned), the orphan-detection cron (DB rows whose id isn't in the live registry, after a 30s safety window), and container-state transitions (any project leaving `running` fans out to fail every in-flight run for that project's tasks).
 
 `syncContainerStatus` now distinguishes a real terminal signal (HTTP 404 from `docker inspect` → `error` + `container_id` cleared) from a transport error (daemon unreachable / EPIPE → status untouched, retry next tick). The container-sync cron defers its first tick until `docker.ping()` succeeds, killing the startup-race that previously soft-bricked projects on every dev-server restart. Startup reconciliation also self-heals projects already stuck in `error` whose canonical container `hezo-<teamSlug>-<projectSlug>` is alive in Docker, by re-attaching to it.
 
@@ -794,7 +794,7 @@ After successful container provisioning or rebuild, runs that died with `error='
 
 **What's included:**
 
-- **P1 — `request_credential` MCP tool** (commit `9fa5be6`). Agent posts a `credential_request` comment on an issue; human pastes the value via the issue thread; server encrypts to `secrets`; agent receives a `credential_provided` wakeup. Generic for any kind: API key, SSH key, OAuth token, database URL, webhook secret.
+- **P1 — `request_credential` MCP tool** (commit `9fa5be6`). Agent posts a `credential_request` comment on an task; human pastes the value via the task thread; server encrypts to `secrets`; agent receives a `credential_provided` wakeup. Generic for any kind: API key, SSH key, OAuth token, database URL, webhook secret.
 - **P2 — SSH signing server** (commit `9fa5be6`). Per-run `SshAgentServer` with Unix-socket + loopback-TCP listeners. Agents do `git clone` over SSH using the team's Ed25519 deploy key; private key never leaves the server. `setup_github_repo` MCP tool surfaces the public key in a credential_request comment for one-time human deploy-key onboarding.
 - **P2-followup — macOS Docker SSH socket relay** (commit `c9b9be9`). Adds a per-run `socat` bridge baked into the agent base image so the same wire-up works on macOS Docker Desktop (which does not forward `AF_UNIX` bind mounts) and Linux production. Token-authenticated TCP listener on the host; `hezo-run-with-bridge` wrapper inside the container.
 - **P3 — HTTPS MITM egress proxy** (commit `98d63de`). Per-run `http-mitm-proxy` instance allocated against a per-instance CA at `<dataDir>/ca/`. Substitutes `__HEZO_SECRET_<NAME>__` placeholders in request headers and URLs against the `secrets` table scoped to `(team_id, project_id)`. Failures (unknown secret, host not allow-listed, locked master key) return 400 / 403 / 503 to the agent. Audit log records every substitution by name; values never serialised. Falling through to direct egress is **not** an option — failure to bind aborts the run.
@@ -827,21 +827,21 @@ After successful container provisioning or rebuild, runs that died with `error='
 |-------|-------|----------------|
 | 0 | Hezo Connect | Standalone GitHub OAuth relay, independently testable |
 | 1 | Foundation | Hono + PGlite + migrations + master key + CLI |
-| 2 | Core CRUD | Teams (with types), agents (all 11), issues, projects — all via REST |
+| 2 | Core CRUD | Teams (with types), agents (all 11), tasks, projects — all via REST |
 | 3 | GitHub Integration | OAuth flow, token storage, repo validation and cloning |
 | 3.5 | UI Foundation + Core Screens | React app with all CRUD screens for Phases 0–3 APIs, master key gate, board inbox |
 | 4 | Agent Execution + UI | Docker per project, subprocesses, heartbeats, budgets + agent status UI, cost views |
 | 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack Query, real-time updates |
 | 6 | MCP + Skill File + Binary Build | MCP endpoint, skill file + `bun build --compile` single binary, Playwright E2E |
 | 6.5 | Auth + Session Compaction | Custom OAuth auth (board members only), session compaction + login page, account settings |
-| 6.6 | UI Redesign + Agent Onboarding | Team icon rail, unified side menu, tab-based project view, agent onboarding via CEO |
+| 6.6 | UI Redesign + Agent Onboarding | Team icon rail, unified side menu, tab-based project view, agent onboarding via Captain |
 | 6.7 | Job Manager + Audit Log Navigation | cron-async job manager, container sync, audit log route |
 | 7 | Multi-User Roles + Invites | Member roles, scoped permissions, email invites + member management UI |
 | 8 | Adapters + Plugins + UI | Gemini/Codex adapters, plugin system + plugin management UI, runtime selector |
 | 9 | Full Platform Integrations + UI | All OAuth platforms, centrally hosted Connect + extended connection UI |
 | 10 | Deploy + Messaging + UI | Staging/production pipeline, Slack + Telegram + deploy status, notification preferences |
-| 11 | Agent Execution Logs | Execution comments on issues, agent Executions/Settings tabs, run detail pages |
+| 11 | Agent Execution Logs | Execution comments on tasks, agent Executions/Settings tabs, run detail pages |
 | 11.5 | Per-Run Reasoning Effort | `agent_effort` enum, per-agent `default_effort`, per-comment override, runtime-native knobs (ultrathink, model_reasoning_effort) |
-| 12 | Agent & Team Auto-Descriptions | Pre-baked summaries for built-in types, runtime regeneration via CEO tickets, `set_agent_summary` / `set_team_summary` MCP tools |
+| 12 | Agent & Team Auto-Descriptions | Pre-baked summaries for built-in types, runtime regeneration via Captain tickets, `set_agent_summary` / `set_team_summary` MCP tools |
 
 Each phase produces a testable increment. Phase 0 can be built and verified in isolation. Phases 1–3 give a working API server testable entirely with curl. Phase 3.5 makes everything browser-testable. From Phase 4 onward, every phase includes UI alongside backend so new functionality is always manually testable in the browser.

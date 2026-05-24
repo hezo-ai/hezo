@@ -12,7 +12,7 @@ export interface StatePayload {
 
 export interface OAuthStatePayload {
 	team_id?: string;
-	issue_id?: string;
+	task_id?: string;
 }
 
 /**

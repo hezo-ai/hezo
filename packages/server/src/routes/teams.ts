@@ -5,6 +5,13 @@ import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { requireSuperuser, requireTeamAccess } from '../middleware/auth';
+import { getOnboardingStatus } from '../services/onboarding';
+import { runOnboardingDirect } from '../services/onboarding-direct';
+import {
+	ensureOnboardingIntakeTask,
+	getOpenOnboardingIntakeTask,
+	postSkipQuestionsSignal,
+} from '../services/onboarding-intake';
 import { createTeam } from '../services/teams';
 
 export const teamsRoutes = new Hono<Env>();
@@ -25,13 +32,13 @@ teamsRoutes.get('/teams', async (c) => {
 	if (!isBoard || isSuperuser) {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
-       (SELECT count(*) FROM issues i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_issue_count
+       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count
      FROM teams c
      ORDER BY c.created_at DESC`;
 	} else {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
-       (SELECT count(*) FROM issues i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_issue_count
+       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count
      FROM teams c
      JOIN members m2 ON m2.team_id = c.id
      JOIN member_users mu ON mu.id = m2.id
@@ -63,13 +70,14 @@ teamsRoutes.post('/teams', async (c) => {
 		{
 			db: c.get('db'),
 			docker: c.get('docker'),
+			dataDir: c.get('dataDir'),
 			wsManager: c.get('wsManager'),
 			masterKeyManager: c.get('masterKeyManager'),
 			logs: c.get('logs'),
-			dataDir: c.get('dataDir'),
+			egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
 		},
 		{
-			name: body.name,
+			name: body.name.trim(),
 			description: body.description,
 			templateId: body.template_id,
 			creatorUserId: auth.type === AuthType.Board ? auth.userId : undefined,
@@ -77,6 +85,84 @@ teamsRoutes.post('/teams', async (c) => {
 	);
 
 	return ok(c, team, 201);
+});
+
+teamsRoutes.get('/teams/:teamId/onboarding-intake', async (c) => {
+	const access = await requireTeamAccess(c);
+	if (access instanceof Response) return access;
+
+	const ensure = c.req.query('ensure') === 'true';
+	const intake = ensure
+		? await ensureOnboardingIntakeTask(c.get('db'), access.teamId, c.get('wsManager'))
+		: await getOpenOnboardingIntakeTask(c.get('db'), access.teamId);
+	if (!intake) {
+		return err(c, 'NOT_FOUND', 'Onboarding intake is not available for this team', 404);
+	}
+	return ok(c, intake);
+});
+
+teamsRoutes.post('/teams/:teamId/onboarding-intake/skip-questions', async (c) => {
+	const access = await requireTeamAccess(c);
+	if (access instanceof Response) return access;
+
+	const intake = await getOpenOnboardingIntakeTask(c.get('db'), access.teamId);
+	if (!intake) {
+		return err(c, 'NOT_FOUND', 'No open onboarding intake to skip', 404);
+	}
+
+	const comment = await postSkipQuestionsSignal(c.get('db'), access.teamId, intake.task_id);
+	if (!comment) {
+		return err(c, 'INTERNAL', 'Failed to post skip signal', 500);
+	}
+	return ok(c, { task_id: intake.task_id, comment_id: comment.id });
+});
+
+teamsRoutes.get('/teams/:teamId/onboarding', async (c) => {
+	const access = await requireTeamAccess(c);
+	if (access instanceof Response) return access;
+
+	const status = await getOnboardingStatus(c.get('db'), access.teamId);
+	return ok(c, status);
+});
+
+teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
+	const access = await requireTeamAccess(c);
+	if (access instanceof Response) return access;
+
+	const body = await c.req.json<{
+		template_id?: string;
+		project_name?: string;
+		project_description?: string;
+		skip_planning_task?: boolean;
+	}>();
+	if (!body.template_id?.trim()) {
+		return err(c, 'INVALID_REQUEST', 'template_id is required', 400);
+	}
+	if (!body.project_name?.trim()) {
+		return err(c, 'INVALID_REQUEST', 'project_name is required', 400);
+	}
+
+	const result = await runOnboardingDirect(c.get('db'), {
+		teamId: access.teamId,
+		templateId: body.template_id.trim(),
+		projectName: body.project_name.trim(),
+		projectDescription: body.project_description,
+		dataDir: c.get('dataDir'),
+		wsManager: c.get('wsManager'),
+		docker: c.get('docker'),
+		masterKeyManager: c.get('masterKeyManager'),
+		logs: c.get('logs'),
+		containerLogStreamer: c.get('containerLogStreamer'),
+		sshAgentServer: c.get('sshAgentServer'),
+		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
+		skipPlanningTask: body.skip_planning_task === true,
+	});
+
+	if (!result.ok) {
+		const status = result.code === 'NOT_FOUND' ? 404 : result.code === 'CONFLICT' ? 409 : 400;
+		return err(c, result.code, result.message, status);
+	}
+	return ok(c, result, 201);
 });
 
 teamsRoutes.get('/teams/:teamId', async (c) => {
@@ -90,7 +176,7 @@ teamsRoutes.get('/teams/:teamId', async (c) => {
 	const result = await db.query(
 		`SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $2)::int AS agent_count,
-       (SELECT count(*) FROM issues i WHERE i.team_id = c.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_issue_count
+       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count
      FROM teams c WHERE c.id = $1`,
 		[teamId, MemberType.Agent, ...ts2.values],
 	);

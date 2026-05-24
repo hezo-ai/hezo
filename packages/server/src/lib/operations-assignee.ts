@@ -1,9 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CEO_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 
 export type OperationsAssigneeCheck = { ok: true } | { ok: false; message: string };
 
-export const OPERATIONS_CEO_ERROR = 'Operations project issues must be assigned to the CEO';
+export const OPERATIONS_CAPTAIN_ERROR = 'Operations project tasks must be assigned to the Captain';
 
 export async function assertOperationsAssignee(
 	db: PGlite,
@@ -24,6 +24,6 @@ export async function assertOperationsAssignee(
 		 WHERE ma.id = $1 AND m.team_id = $2`,
 		[assigneeId, teamId],
 	);
-	if (agentResult.rows[0]?.slug === CEO_AGENT_SLUG) return { ok: true };
-	return { ok: false, message: OPERATIONS_CEO_ERROR };
+	if (agentResult.rows[0]?.slug === CAPTAIN_AGENT_SLUG) return { ok: true };
+	return { ok: false, message: OPERATIONS_CAPTAIN_ERROR };
 }

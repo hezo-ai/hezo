@@ -35,11 +35,11 @@ beforeAll(async () => {
 	teamId = teamResult.rows[0].id;
 
 	const projectResult = await db.query<{ id: string }>(
-		"INSERT INTO projects (team_id, name, slug, issue_prefix) VALUES ($1, 'Embed Project', 'embed-project', 'EP') RETURNING id",
+		"INSERT INTO projects (team_id, name, slug, task_prefix) VALUES ($1, 'Embed Project', 'embed-project', 'EP') RETURNING id",
 		[teamId],
 	);
 	projectId = projectResult.rows[0].id;
-	await db.query('INSERT INTO project_issue_counters (project_id, next_number) VALUES ($1, 1)', [
+	await db.query('INSERT INTO project_task_counters (project_id, next_number) VALUES ($1, 1)', [
 		projectId,
 	]);
 });
@@ -118,13 +118,13 @@ describe('semanticSearch with pre-populated embeddings', () => {
 		);
 
 		const numRes = await db.query<{ number: number }>(
-			'SELECT next_project_issue_number($1) AS number',
+			'SELECT next_project_task_number($1) AS number',
 			[projectId],
 		);
 		const num = numRes.rows[0].number;
 
 		await db.query(
-			`INSERT INTO issues (team_id, project_id, number, identifier, title, description, embedding)
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title, description, embedding)
 			 VALUES ($1, $2, $3, $4, 'Fix login bug', 'Users cannot log in with SSO', $5::vector)`,
 			[teamId, projectId, num, `EP-${num}`, vectorStr(vec2)],
 		);
@@ -157,11 +157,11 @@ describe('semanticSearch with pre-populated embeddings', () => {
 		expect(typeof r.rows[0].score).toBe('number');
 	});
 
-	it('issues query returns results with valid embeddings', async () => {
+	it('tasks query returns results with valid embeddings', async () => {
 		const queryVec = fakeVector(0.61);
 		const r = await db.query<{ id: string; title: string; score: number }>(
 			`SELECT id, title, 1 - (embedding <=> $1::vector) AS score
-			 FROM issues
+			 FROM tasks
 			 WHERE team_id = $2 AND embedding IS NOT NULL
 			 ORDER BY embedding <=> $1::vector
 			 LIMIT 5`,

@@ -3,17 +3,17 @@ import { useMemo } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAgents } from '../hooks/use-agents';
-import { useIssueMentions } from '../hooks/use-issues';
 import { useDocMentions } from '../hooks/use-mentions';
+import { useTaskMentions } from '../hooks/use-tasks';
 import {
 	type AgentMentionData,
 	extractDocCandidates,
-	extractIssueCandidates,
-	type IssueMentionData,
+	extractTaskCandidates,
 	type KbDocMentionData,
 	type ProjectDocMentionData,
 	type ProjectDocsMap,
 	remarkMentions,
+	type TaskMentionData,
 } from '../lib/remark-mentions';
 import { Tooltip } from './ui/tooltip';
 
@@ -40,8 +40,8 @@ export function MarkdownProse({
 	projectSlug,
 }: MarkdownProseProps) {
 	const { data: agents } = useAgents(teamId ?? '');
-	const issueCandidates = useMemo(() => extractIssueCandidates(children), [children]);
-	const { data: resolvedIssues } = useIssueMentions(teamId ?? '', issueCandidates);
+	const taskCandidates = useMemo(() => extractTaskCandidates(children), [children]);
+	const { data: resolvedTasks } = useTaskMentions(teamId ?? '', taskCandidates);
 	const docCandidates = useMemo(
 		() => extractDocCandidates(children, projectSlug),
 		[children, projectSlug],
@@ -55,14 +55,14 @@ export function MarkdownProse({
 		return m;
 	}, [agents]);
 
-	const issuesMap = useMemo<Map<string, IssueMentionData>>(() => {
-		const m = new Map<string, IssueMentionData>();
-		if (!resolvedIssues) return m;
-		for (const i of resolvedIssues) {
+	const tasksMap = useMemo<Map<string, TaskMentionData>>(() => {
+		const m = new Map<string, TaskMentionData>();
+		if (!resolvedTasks) return m;
+		for (const i of resolvedTasks) {
 			m.set(i.identifier.toLowerCase(), { title: i.title, projectSlug: i.project_slug });
 		}
 		return m;
-	}, [resolvedIssues]);
+	}, [resolvedTasks]);
 
 	const kbDocsMap = useMemo<Map<string, KbDocMentionData>>(() => {
 		const m = new Map<string, KbDocMentionData>();
@@ -92,7 +92,7 @@ export function MarkdownProse({
 		const plugins: NonNullable<RemarkPlugin> = [remarkGfm];
 		if (
 			teamId &&
-			(agentsMap.size > 0 || issuesMap.size > 0 || kbDocsMap.size > 0 || projectDocsMap.size > 0)
+			(agentsMap.size > 0 || tasksMap.size > 0 || kbDocsMap.size > 0 || projectDocsMap.size > 0)
 		) {
 			plugins.push([
 				remarkMentions,
@@ -100,14 +100,14 @@ export function MarkdownProse({
 					teamId,
 					projectSlug,
 					agents: agentsMap,
-					issues: issuesMap,
+					tasks: tasksMap,
 					kbDocs: kbDocsMap,
 					projectDocs: projectDocsMap,
 				},
 			]);
 		}
 		return plugins;
-	}, [teamId, projectSlug, agentsMap, issuesMap, kbDocsMap, projectDocsMap]);
+	}, [teamId, projectSlug, agentsMap, tasksMap, kbDocsMap, projectDocsMap]);
 
 	const components = useMemo<Components>(
 		() => ({
@@ -115,8 +115,8 @@ export function MarkdownProse({
 				const attrs = props as {
 					'data-mention-agent-slug'?: string;
 					'data-mention-agent-title'?: string;
-					'data-mention-issue-identifier'?: string;
-					'data-mention-issue-title'?: string;
+					'data-mention-task-identifier'?: string;
+					'data-mention-task-title'?: string;
 					'data-mention-project-slug'?: string;
 					'data-mention-kb-slug'?: string;
 					'data-mention-kb-title'?: string;
@@ -178,21 +178,21 @@ export function MarkdownProse({
 					);
 				}
 
-				const issueIdentifier = attrs['data-mention-issue-identifier'];
-				const issueTitle = attrs['data-mention-issue-title'];
-				const issueProjectSlug = attrs['data-mention-project-slug'];
-				if (issueIdentifier && issueTitle && issueProjectSlug && teamId) {
+				const taskIdentifier = attrs['data-mention-task-identifier'];
+				const taskTitle = attrs['data-mention-task-title'];
+				const taskProjectSlug = attrs['data-mention-project-slug'];
+				if (taskIdentifier && taskTitle && taskProjectSlug && teamId) {
 					return (
-						<Tooltip content={issueTitle}>
+						<Tooltip content={taskTitle}>
 							<Link
-								to="/teams/$teamId/projects/$projectId/issues/$issueId"
+								to="/teams/$teamId/projects/$projectId/tasks/$taskId"
 								params={{
 									teamId,
-									projectId: issueProjectSlug,
-									issueId: issueIdentifier.toLowerCase(),
+									projectId: taskProjectSlug,
+									taskId: taskIdentifier.toLowerCase(),
 								}}
 								className={MENTION_CLASSES}
-								data-testid="issue-mention-link"
+								data-testid="task-mention-link"
 							>
 								{props.children}
 							</Link>

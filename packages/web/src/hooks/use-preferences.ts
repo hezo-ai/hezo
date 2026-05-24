@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface Preferences {
 	id: string;
@@ -34,10 +35,17 @@ export function usePreferenceRevisions(teamId: string) {
 }
 
 export function useUpdatePreferences(teamId: string) {
-	return useMutation({
-		mutationFn: (data: { content: string; change_summary?: string }) =>
-			api.patch<Preferences>(`/api/teams/${teamId}/preferences`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'preferences'] }),
+	return useOptimisticMutation<
+		{ content: string; change_summary?: string },
+		Preferences,
+		Preferences | null
+	>({
+		mutationFn: (data) => api.patch<Preferences>(`/api/teams/${teamId}/preferences`, data),
+		queryKey: ['teams', teamId, 'preferences'],
+		applyOptimistic: (current, { content }) => (current ? { ...current, content } : current),
+		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : updated),
+		invalidateOnSettled: [['teams', teamId, 'preferences', 'revisions']],
+		errorMessage: 'Failed to update preferences',
 	});
 }
 

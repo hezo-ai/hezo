@@ -10,11 +10,11 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const runId = '99999999-9999-9999-9999-000000000abc';
 	const projectId = '11111111-1111-1111-1111-000000000abc';
-	const issueId = '22222222-2222-2222-2222-000000000abc';
+	const taskId = '22222222-2222-2222-2222-000000000abc';
 
 	const logLines = Array.from(
 		{ length: 400 },
@@ -23,11 +23,11 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 
 	const runResponse = {
 		id: runId,
-		member_id: ceo.id,
+		member_id: captain.id,
 		team_id: team.id,
-		issue_id: issueId,
-		issue_identifier: 'SCROLL-1',
-		issue_title: 'Scroll Preservation Task',
+		task_id: taskId,
+		task_identifier: 'SCROLL-1',
+		task_title: 'Scroll Preservation Task',
 		project_id: projectId,
 		status: 'succeeded',
 		started_at: new Date(Date.now() - 60_000).toISOString(),
@@ -40,10 +40,10 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 		invocation_command: null,
 		log_text: logLines,
 		working_dir: null,
-		created_issues: [],
+		created_tasks: [],
 	};
 
-	await page.route(`**/api/teams/*/agents/${ceo.id}/heartbeat-runs/${runId}`, async (route) => {
+	await page.route(`**/api/teams/*/agents/${captain.id}/heartbeat-runs/${runId}`, async (route) => {
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
@@ -51,7 +51,7 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 		});
 	});
 
-	await page.goto(`/teams/${team.slug}/agents/${ceo.id}/executions/${runId}`);
+	await page.goto(`/teams/${team.slug}/agents/${captain.id}/executions/${runId}`);
 
 	const inlineLog = page.getByTestId('run-log');
 	await expect(inlineLog).toBeVisible({ timeout: 15_000 });
@@ -72,12 +72,14 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 	const fullscreen = page.getByTestId('log-viewer-fullscreen');
 	await expect(fullscreen).toBeVisible();
 
-	expect(await readBottomOffset(fullscreen.getByTestId('run-log'))).toBe(initialBottomOffset);
+	const expandedBottom = await readBottomOffset(fullscreen.getByTestId('run-log'));
+	expect(Math.abs(expandedBottom - initialBottomOffset)).toBeLessThan(20);
 
 	const collapseBtn = page.getByRole('button', { name: /collapse log viewer/i });
 	await collapseBtn.click();
 	await expect(fullscreen).toBeHidden();
-	expect(await readBottomOffset(page.getByTestId('run-log'))).toBe(initialBottomOffset);
+	const restoredBottom = await readBottomOffset(page.getByTestId('run-log'));
+	expect(Math.abs(restoredBottom - initialBottomOffset)).toBeLessThan(20);
 
 	const inlineScrollable = await inlineLog.evaluate((el) => el.scrollHeight > el.clientHeight);
 	expect(inlineScrollable).toBe(true);

@@ -9,7 +9,7 @@ async function seedTeamProject(db: PGlite): Promise<{ teamId: string; projectId:
 		`INSERT INTO teams (name, slug) VALUES ('Multi Co', 'multi-co') RETURNING id`,
 	);
 	const project = await db.query<{ id: string }>(
-		`INSERT INTO projects (team_id, name, slug, issue_prefix)
+		`INSERT INTO projects (team_id, name, slug, task_prefix)
 		 VALUES ($1, 'Multi Project', 'multi-project', 'M') RETURNING id`,
 		[team.rows[0].id],
 	);
@@ -31,7 +31,7 @@ async function seedAgent(db: PGlite, teamId: string, title: string): Promise<str
 	return member.rows[0].id;
 }
 
-async function seedIssue(
+async function seedTask(
 	db: PGlite,
 	teamId: string,
 	projectId: string,
@@ -39,19 +39,19 @@ async function seedIssue(
 	title: string,
 	assigneeId: string,
 ): Promise<string> {
-	const issue = await db.query<{ id: string }>(
-		`INSERT INTO issues (team_id, project_id, assignee_id, number, identifier, title)
+	const task = await db.query<{ id: string }>(
+		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title)
 		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
 		[teamId, projectId, assigneeId, number, `M-${number}`, title],
 	);
-	return issue.rows[0].id;
+	return task.rows[0].id;
 }
 
 async function seedApprovalAndComments(
 	db: PGlite,
 	teamId: string,
 	projectId: string,
-	issueIds: string[],
+	taskIds: string[],
 ): Promise<{ approvalId: string; commentIds: string[] }> {
 	const approval = await db.query<{ id: string }>(
 		`INSERT INTO approvals (team_id, type, status, payload)
@@ -63,16 +63,16 @@ async function seedApprovalAndComments(
 				platform: 'github',
 				reason: 'designated_repo',
 				project_id: projectId,
-				issue_id: issueIds[0],
+				task_id: taskIds[0],
 			}),
 		],
 	);
 	const commentIds: string[] = [];
-	for (const issueId of issueIds) {
+	for (const taskId of taskIds) {
 		const r = await db.query<{ id: string }>(
-			`INSERT INTO issue_comments (issue_id, content_type, content)
+			`INSERT INTO task_comments (task_id, content_type, content)
 			 VALUES ($1, 'action'::comment_content_type, $2::jsonb) RETURNING id`,
-			[issueId, JSON.stringify({ kind: 'setup_repo', approval_id: approval.rows[0].id })],
+			[taskId, JSON.stringify({ kind: 'setup_repo', approval_id: approval.rows[0].id })],
 		);
 		commentIds.push(r.rows[0].id);
 	}
@@ -84,7 +84,7 @@ async function seedDeferredWakeup(
 	teamId: string,
 	memberId: string,
 	projectId: string,
-	issueId: string,
+	taskId: string,
 ): Promise<string> {
 	const r = await db.query<{ id: string }>(
 		`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload)
@@ -93,7 +93,7 @@ async function seedDeferredWakeup(
 		[
 			memberId,
 			teamId,
-			JSON.stringify({ reason: 'awaiting_repo_setup', project_id: projectId, issue_id: issueId }),
+			JSON.stringify({ reason: 'awaiting_repo_setup', project_id: projectId, task_id: taskId }),
 		],
 	);
 	return r.rows[0].id;
@@ -109,19 +109,19 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 			const bobId = await seedAgent(db, teamId, 'Bob');
 			const carolId = await seedAgent(db, teamId, 'Carol');
 
-			const issueA = await seedIssue(db, teamId, projectId, 1, 'Alice work', aliceId);
-			const issueB = await seedIssue(db, teamId, projectId, 2, 'Bob work', bobId);
-			const issueC = await seedIssue(db, teamId, projectId, 3, 'Carol work', carolId);
+			const taskA = await seedTask(db, teamId, projectId, 1, 'Alice work', aliceId);
+			const taskB = await seedTask(db, teamId, projectId, 2, 'Bob work', bobId);
+			const taskC = await seedTask(db, teamId, projectId, 3, 'Carol work', carolId);
 
 			const { approvalId, commentIds } = await seedApprovalAndComments(db, teamId, projectId, [
-				issueA,
-				issueB,
-				issueC,
+				taskA,
+				taskB,
+				taskC,
 			]);
 
-			await seedDeferredWakeup(db, teamId, aliceId, projectId, issueA);
-			await seedDeferredWakeup(db, teamId, bobId, projectId, issueB);
-			await seedDeferredWakeup(db, teamId, carolId, projectId, issueC);
+			await seedDeferredWakeup(db, teamId, aliceId, projectId, taskA);
+			await seedDeferredWakeup(db, teamId, bobId, projectId, taskB);
+			await seedDeferredWakeup(db, teamId, carolId, projectId, taskC);
 
 			const repoInsert = await db.query<{ id: string }>(
 				`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
@@ -138,7 +138,7 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 			});
 
 			expect(result.resolvedApprovalId).toBe(approvalId);
-			expect(result.affectedIssueIds.sort()).toEqual([issueA, issueB, issueC].sort());
+			expect(result.affectedTaskIds.sort()).toEqual([taskA, taskB, taskC].sort());
 			expect(result.deferredWakeups).toHaveLength(3);
 			expect(result.approvalRow?.id).toBe(approvalId);
 			expect(result.approvalRow?.status).toBe('approved');
@@ -147,16 +147,16 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 
 			for (const cId of commentIds) {
 				const cRow = await db.query<{ chosen_option: { status?: string } }>(
-					`SELECT chosen_option FROM issue_comments WHERE id = $1`,
+					`SELECT chosen_option FROM task_comments WHERE id = $1`,
 					[cId],
 				);
 				expect(cRow.rows[0].chosen_option?.status).toBe('complete');
 			}
 
-			for (const issueId of [issueA, issueB, issueC]) {
+			for (const taskId of [taskA, taskB, taskC]) {
 				const sys = await db.query<{ id: string }>(
-					`SELECT id FROM issue_comments WHERE issue_id = $1 AND content_type = 'system'::comment_content_type`,
-					[issueId],
+					`SELECT id FROM task_comments WHERE task_id = $1 AND content_type = 'system'::comment_content_type`,
+					[taskId],
 				);
 				expect(sys.rows).toHaveLength(1);
 			}
@@ -205,7 +205,7 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 			});
 
 			expect(result.resolvedApprovalId).toBeNull();
-			expect(result.affectedIssueIds).toEqual([]);
+			expect(result.affectedTaskIds).toEqual([]);
 			expect(result.deferredWakeups).toEqual([]);
 			expect(result.approvalRow).toBeNull();
 			expect(result.updatedCommentRows).toEqual([]);

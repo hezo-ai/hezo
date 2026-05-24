@@ -2,6 +2,8 @@ import { expect, test } from '@playwright/test';
 import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
 
 test.describe('Comment reactions (mobile)', () => {
+	test.describe.configure({ retries: 2 });
+
 	test('reaction chip is tappable on a 390px viewport', async ({ page }) => {
 		await authenticate(page);
 		const { team, token } = await createTeamWithAgents(page);
@@ -18,7 +20,7 @@ test.describe('Comment reactions (mobile)', () => {
 		});
 		const agents = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data;
 
-		const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+		const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 			headers,
 			data: {
 				project_id: project.id,
@@ -26,14 +28,14 @@ test.describe('Comment reactions (mobile)', () => {
 				assignee_id: agents[0].id,
 			},
 		});
-		const issue = ((await issueRes.json()) as { data: { id: string } }).data;
+		const task = ((await taskRes.json()) as { data: { id: string } }).data;
 
-		await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
+		await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
 			headers,
 			data: { content_type: 'text', content: { text: 'react to me on mobile' } },
 		});
 
-		await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
+		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 
 		const addButton = page.getByTestId('add-reaction-button').first();

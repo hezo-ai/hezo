@@ -1,15 +1,20 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	clickAndWaitForResponse,
+	createTeamWithAgents,
+	waitForPageLoad,
+} from './helpers';
 
-interface SeededIssue {
+interface SeededTask {
 	team: { id: string; slug: string };
 	token: string;
-	issueId: string;
+	taskId: string;
 	commentId: string;
 	headers: Record<string, string>;
 }
 
-async function seedIssueWithComment(page: Page): Promise<SeededIssue> {
+async function seedTaskWithComment(page: Page): Promise<SeededTask> {
 	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -24,27 +29,30 @@ async function seedIssueWithComment(page: Page): Promise<SeededIssue> {
 	});
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data;
 
-	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers,
-		data: { project_id: project.id, title: 'Reactions Issue', assignee_id: agents[0].id },
+		data: { project_id: project.id, title: 'Reactions Task', assignee_id: agents[0].id },
 	});
-	const issue = ((await issueRes.json()) as { data: { id: string } }).data;
+	const task = ((await taskRes.json()) as { data: { id: string } }).data;
 
-	const commentRes = await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
+	const commentRes = await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
 		headers,
 		data: { content_type: 'text', content: { text: 'A comment to react to.' } },
 	});
 	const comment = ((await commentRes.json()) as { data: { id: string } }).data;
 
-	return { team, token, issueId: issue.id, commentId: comment.id, headers };
+	return { team, token, taskId: task.id, commentId: comment.id, headers };
 }
 
 test.describe('Comment reactions', () => {
+	// Shared e2e server + parallel workers can delay comment thread paint; allow an extra retry.
+	test.describe.configure({ retries: 2 });
+
 	test('add and remove a ✓ reaction toggles the chip', async ({ page }) => {
 		await authenticate(page);
-		const { team, issueId } = await seedIssueWithComment(page);
+		const { team, taskId } = await seedTaskWithComment(page);
 
-		await page.goto(`/teams/${team.slug}/issues/${issueId}`);
+		await page.goto(`/teams/${team.slug}/tasks/${taskId}`);
 		await waitForPageLoad(page);
 
 		const addButton = page.getByTestId('add-reaction-button').first();
@@ -53,32 +61,42 @@ test.describe('Comment reactions', () => {
 		await addButton.click();
 		const picker = page.getByTestId('reaction-picker');
 		await expect(picker).toBeVisible();
-		await picker.locator('[data-reaction-kind="ack"]').click();
+		const addResponse = await clickAndWaitForResponse(
+			page,
+			picker.locator('[data-reaction-kind="ack"]'),
+			(url, method) => method === 'PUT' && /\/reactions\/ack$/.test(url.pathname),
+		);
+		expect(addResponse.ok()).toBe(true);
 
 		const chip = page
 			.getByTestId('comment-reactions')
 			.locator('[data-reaction-kind="ack"]')
 			.first();
-		await expect(chip).toBeVisible({ timeout: 15_000 });
+		await expect(chip).toBeVisible({ timeout: 25_000 });
 		await expect(chip).toHaveAttribute('data-you-reacted', 'true');
 		await expect(chip).toContainText('1');
 
-		await chip.click();
+		const removeResponse = await clickAndWaitForResponse(
+			page,
+			chip,
+			(url, method) => method === 'DELETE' && /\/reactions\/ack$/.test(url.pathname),
+		);
+		expect(removeResponse.ok()).toBe(true);
 		await expect(
 			page.getByTestId('comment-reactions').locator('[data-reaction-kind="ack"]'),
-		).toHaveCount(0, { timeout: 15_000 });
+		).toHaveCount(0, { timeout: 25_000 });
 	});
 
 	test('reactions seeded via API render on page load', async ({ page }) => {
 		await authenticate(page);
-		const { team, issueId, commentId, token } = await seedIssueWithComment(page);
+		const { team, taskId, commentId, token } = await seedTaskWithComment(page);
 
 		await page.request.put(
-			`/api/teams/${team.id}/issues/${issueId}/comments/${commentId}/reactions/ack`,
+			`/api/teams/${team.id}/tasks/${taskId}/comments/${commentId}/reactions/ack`,
 			{ headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } },
 		);
 
-		await page.goto(`/teams/${team.slug}/issues/${issueId}`);
+		await page.goto(`/teams/${team.slug}/tasks/${taskId}`);
 		await waitForPageLoad(page);
 
 		const chip = page
@@ -92,20 +110,28 @@ test.describe('Comment reactions', () => {
 
 	test('reacting does not fire any agent wakeups', async ({ page }) => {
 		await authenticate(page);
-		const { team, issueId, commentId, headers } = await seedIssueWithComment(page);
+		const { team, taskId, commentId, headers } = await seedTaskWithComment(page);
 
-		// Pre-snapshot
-		const before = await page.request.get(`/api/teams/${team.id}/issues/${issueId}/comments`, {
+		await page.goto(`/teams/${team.slug}/tasks/${taskId}`);
+		await waitForPageLoad(page);
+
+		const addButton = page.getByTestId('add-reaction-button').first();
+		await expect(addButton).toBeVisible({ timeout: 20_000 });
+
+		// Snapshot AFTER the page has loaded — onboarding/assignment side-effects
+		// can land as additional comments between team creation and navigation.
+		const before = await page.request.get(`/api/teams/${team.id}/tasks/${taskId}/comments`, {
 			headers,
 		});
 		expect(before.status()).toBe(200);
 
-		await page.goto(`/teams/${team.slug}/issues/${issueId}`);
-		await waitForPageLoad(page);
-
-		const addButton = page.getByTestId('add-reaction-button').first();
 		await addButton.click();
-		await page.getByTestId('reaction-picker').locator('[data-reaction-kind="ack"]').click();
+		const addResponse = await clickAndWaitForResponse(
+			page,
+			page.getByTestId('reaction-picker').locator('[data-reaction-kind="ack"]'),
+			(url, method) => method === 'PUT' && /\/reactions\/ack$/.test(url.pathname),
+		);
+		expect(addResponse.ok()).toBe(true);
 
 		const chip = page
 			.getByTestId('comment-reactions')
@@ -115,7 +141,7 @@ test.describe('Comment reactions', () => {
 
 		// No comments should have been auto-created (the reaction should not have
 		// produced a side-effect comment) and the reaction should be present.
-		const after = await page.request.get(`/api/teams/${team.id}/issues/${issueId}/comments`, {
+		const after = await page.request.get(`/api/teams/${team.id}/tasks/${taskId}/comments`, {
 			headers,
 		});
 		const beforeRows = ((await before.json()) as { data: Array<{ id: string }> }).data;

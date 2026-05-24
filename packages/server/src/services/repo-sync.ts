@@ -119,22 +119,22 @@ export function removeRepoFromWorkspace(
 	}
 }
 
-export function removeIssueWorktrees(
+export function removeTaskWorktrees(
 	dataDir: string,
 	teamSlug: string,
 	projectSlug: string,
-	issueIdentifier: string,
+	taskIdentifier: string,
 ): void {
 	if (
-		!issueIdentifier ||
-		issueIdentifier.includes('/') ||
-		issueIdentifier === '..' ||
-		issueIdentifier === '.'
+		!taskIdentifier ||
+		taskIdentifier.includes('/') ||
+		taskIdentifier === '..' ||
+		taskIdentifier === '.'
 	)
 		return;
 	const worktreesRoot = getWorktreesPath(dataDir, teamSlug, projectSlug);
-	const issueDir = join(worktreesRoot, issueIdentifier);
-	if (existsSync(issueDir)) {
-		rmSync(issueDir, { recursive: true, force: true });
+	const taskDir = join(worktreesRoot, taskIdentifier);
+	if (existsSync(taskDir)) {
+		rmSync(taskDir, { recursive: true, force: true });
 	}
 }

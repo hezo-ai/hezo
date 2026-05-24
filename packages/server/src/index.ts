@@ -6,13 +6,50 @@ import { parseArgs } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { logger } from './logger';
 import { loadAdminAuth, verifyToken } from './middleware/auth';
-import { ContainerLogStreamer } from './services/container-logs';
+import type { ContainerLogStreamer } from './services/container-logs';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
-import { startup } from './startup';
+import { type StartupResult, startup } from './startup';
 
 const log = logger.child('server');
+
+interface HezoDevRuntime {
+	shutdown: () => Promise<void>;
+}
+
+declare global {
+	var __hezoDevRuntime: HezoDevRuntime | undefined;
+}
+
+async function shutdownPreviousRuntime(): Promise<void> {
+	const prev = globalThis.__hezoDevRuntime;
+	if (!prev) return;
+	globalThis.__hezoDevRuntime = undefined;
+	try {
+		await prev.shutdown();
+	} catch (err) {
+		log.warn('Previous runtime shutdown error (continuing):', err);
+	}
+}
+
+function registerRuntime(result: StartupResult): void {
+	globalThis.__hezoDevRuntime = {
+		shutdown: async () => {
+			serverReady = false;
+			result.jobManager.shutdown();
+			await result.egressProxy.releaseAll();
+			await result.sshAgentServer.releaseAll();
+			await result.db.close();
+		},
+	};
+}
+
+if (import.meta.hot) {
+	import.meta.hot.dispose(() => {
+		void shutdownPreviousRuntime();
+	});
+}
 
 process.on('unhandledRejection', (reason) => {
 	log.error('unhandledRejection', reason);
@@ -26,6 +63,12 @@ interface WsConnectionData extends WsData {
 }
 
 const config = parseArgs();
+
+/** Bumped on each module load so stale async startup completions are ignored after HMR. */
+let startupGeneration = 0;
+const thisStartupGeneration = ++startupGeneration;
+
+let serverReady = false;
 let serveFetch: (
 	req: Request,
 	server: Bun.Server<WsConnectionData>,
@@ -35,7 +78,7 @@ let dbRef: PGlite | null = null;
 let mkmRef: MasterKeyManager | null = null;
 let dockerRef: import('./services/docker').DockerClient | null = null;
 let logsRef: LogStreamBroker | null = null;
-const containerLogStreamer = new ContainerLogStreamer();
+let containerLogStreamerRef: ContainerLogStreamer | null = null;
 
 async function validateToken(token: string): Promise<WsData['auth'] | null> {
 	if (!mkmRef || !dbRef) return null;
@@ -64,29 +107,51 @@ async function canAccessTeam(auth: WsData['auth'], teamId: string): Promise<bool
 	return false;
 }
 
-startup(config)
-	.then((result) => {
+function startingResponse(): Response {
+	return Response.json(
+		{ error: { code: 'STARTING', message: 'Server is starting — retry in a moment' } },
+		{ status: 503 },
+	);
+}
+
+void (async () => {
+	await shutdownPreviousRuntime();
+
+	try {
+		const result = await startup(config);
+		if (thisStartupGeneration !== startupGeneration) {
+			log.warn('Ignoring stale startup completion after reload');
+			await result.db.close();
+			return;
+		}
+		registerRuntime(result);
 		serveFetch = result.app.fetch as unknown as typeof serveFetch;
 		wsManager = result.wsManager;
 		dbRef = result.db;
 		mkmRef = result.masterKeyManager;
 		dockerRef = result.docker;
 		logsRef = result.logs;
+		containerLogStreamerRef = result.containerLogStreamer;
+		serverReady = true;
 		const url = `http://localhost:${result.port}`;
 		log.info(`Hezo server running at ${url} [${result.masterKeyState}]`);
 		if (config.open) {
 			Bun.spawn(['open', `http://localhost:${DEFAULT_WEB_PORT}`]);
 		}
-	})
-	.catch((err) => {
+	} catch (err) {
+		if (thisStartupGeneration !== startupGeneration) return;
 		log.error('Startup failed, serving minimal app:', err);
 		log.info(`Hezo server (minimal) starting on port ${config.port}...`);
-	});
+	}
+})();
 
 export default {
 	port: config.port,
 	fetch: (req: Request, server: Bun.Server<WsConnectionData>) => {
 		const url = new URL(req.url);
+		if (!serverReady && url.pathname !== '/health') {
+			return startingResponse();
+		}
 		if (url.pathname === '/ws') {
 			const token =
 				url.searchParams.get('token') || req.headers.get('Authorization')?.slice(7) || '';
@@ -120,8 +185,8 @@ export default {
 					const logsMatch = room.match(/^container-logs:(.+)$/);
 					if (logsMatch) {
 						wsManager.unsubscribe(ws as unknown as WsSocket, room);
-						if (wsManager.getRoomSize(room) === 0) {
-							containerLogStreamer.unsubscribe(logsMatch[1], logsRef ?? undefined);
+						if (wsManager.getRoomSize(room) === 0 && containerLogStreamerRef) {
+							containerLogStreamerRef.unsubscribe(logsMatch[1], logsRef ?? undefined);
 						}
 					}
 				}
@@ -129,7 +194,7 @@ export default {
 			}
 		},
 		async message(ws: Bun.ServerWebSocket<WsConnectionData>, msg: string | Buffer) {
-			if (!wsManager) return;
+			if (!wsManager || !containerLogStreamerRef) return;
 			try {
 				const data = JSON.parse(typeof msg === 'string' ? msg : msg.toString());
 				if (data.action === 'subscribe' && typeof data.room === 'string') {
@@ -137,7 +202,7 @@ export default {
 						db: dbRef,
 						wsManager,
 						docker: dockerRef,
-						containerLogStreamer,
+						containerLogStreamer: containerLogStreamerRef,
 						logs: logsRef,
 						canAccessTeam,
 						sendToSocket: (_s, payload) => ws.send(JSON.stringify(payload)),
@@ -145,7 +210,7 @@ export default {
 				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {
 					handleWsUnsubscribe(ws as unknown as WsSocket, data.room, {
 						wsManager,
-						containerLogStreamer,
+						containerLogStreamer: containerLogStreamerRef,
 						logs: logsRef,
 					});
 				}

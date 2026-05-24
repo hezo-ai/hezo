@@ -22,7 +22,7 @@ import { DEFAULT_PORT, AgentRuntime, type HezoConfig } from "@hezo/shared";
 
 All enums use the `as const` object pattern (not TypeScript `enum`):
 
-`MemberType`, `AgentRuntime`, `AgentStatus`, `IssueStatus`, `IssuePriority`, `CommentContentType`, `ApprovalType`, `ApprovalStatus`, `MembershipRole`, `PlatformType`, `ConnectionStatus`, and more.
+`MemberType`, `AgentRuntime`, `AgentStatus`, `TaskStatus`, `TaskPriority`, `CommentContentType`, `ApprovalType`, `ApprovalStatus`, `MembershipRole`, `PlatformType`, `ConnectionStatus`, and more.
 
 ### Constants
 

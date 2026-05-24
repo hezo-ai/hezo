@@ -29,23 +29,23 @@ export type ReactionResult = ReactionSuccess | ReactionFailure;
 export interface MutateReactionParams {
 	db: PGlite;
 	teamId: string;
-	issueId: string;
+	taskId: string;
 	commentId: string;
 	kind: string;
 	memberId: string;
 }
 
-async function verifyCommentBelongsToIssueAndTeam(
+async function verifyCommentBelongsToTaskAndTeam(
 	db: PGlite,
 	commentId: string,
-	issueId: string,
+	taskId: string,
 	teamId: string,
 ): Promise<boolean> {
 	const row = await db.query<{ id: string }>(
-		`SELECT ic.id FROM issue_comments ic
-		 JOIN issues i ON i.id = ic.issue_id
-		 WHERE ic.id = $1 AND ic.issue_id = $2 AND i.team_id = $3`,
-		[commentId, issueId, teamId],
+		`SELECT ic.id FROM task_comments ic
+		 JOIN tasks i ON i.id = ic.task_id
+		 WHERE ic.id = $1 AND ic.task_id = $2 AND i.team_id = $3`,
+		[commentId, taskId, teamId],
 	);
 	return row.rows.length > 0;
 }
@@ -84,11 +84,11 @@ async function loadReactionsForComment(
 }
 
 export async function addCommentReaction(params: MutateReactionParams): Promise<ReactionResult> {
-	const { db, teamId, issueId, commentId, kind, memberId } = params;
+	const { db, teamId, taskId, commentId, kind, memberId } = params;
 	if (!isReactionKind(kind)) {
 		return { ok: false, code: 'INVALID_KIND', message: `Unknown reaction kind: ${kind}` };
 	}
-	const exists = await verifyCommentBelongsToIssueAndTeam(db, commentId, issueId, teamId);
+	const exists = await verifyCommentBelongsToTaskAndTeam(db, commentId, taskId, teamId);
 	if (!exists) {
 		return { ok: false, code: 'NOT_FOUND', message: 'Comment not found' };
 	}
@@ -102,11 +102,11 @@ export async function addCommentReaction(params: MutateReactionParams): Promise<
 }
 
 export async function removeCommentReaction(params: MutateReactionParams): Promise<ReactionResult> {
-	const { db, teamId, issueId, commentId, kind, memberId } = params;
+	const { db, teamId, taskId, commentId, kind, memberId } = params;
 	if (!isReactionKind(kind)) {
 		return { ok: false, code: 'INVALID_KIND', message: `Unknown reaction kind: ${kind}` };
 	}
-	const exists = await verifyCommentBelongsToIssueAndTeam(db, commentId, issueId, teamId);
+	const exists = await verifyCommentBelongsToTaskAndTeam(db, commentId, taskId, teamId);
 	if (!exists) {
 		return { ok: false, code: 'NOT_FOUND', message: 'Comment not found' };
 	}
@@ -118,13 +118,13 @@ export async function removeCommentReaction(params: MutateReactionParams): Promi
 }
 
 /**
- * Loads every reaction on every comment of an issue in one query, keyed by
+ * Loads every reaction on every comment of an task in one query, keyed by
  * comment id, so a comments-list response can include reactions without an
  * N+1.
  */
-export async function loadReactionsForIssue(
+export async function loadReactionsForTask(
 	db: PGlite,
-	issueId: string,
+	taskId: string,
 	viewerMemberId: string | null = null,
 ): Promise<Map<string, ReactionGroup[]>> {
 	const rows = await db.query<{
@@ -137,12 +137,12 @@ export async function loadReactionsForIssue(
 	}>(
 		`SELECT cr.comment_id, cr.kind, cr.member_id, ma.slug, m.display_name, cr.created_at
 		 FROM comment_reactions cr
-		 JOIN issue_comments ic ON ic.id = cr.comment_id
+		 JOIN task_comments ic ON ic.id = cr.comment_id
 		 JOIN members m ON m.id = cr.member_id
 		 LEFT JOIN member_agents ma ON ma.id = cr.member_id
-		 WHERE ic.issue_id = $1
+		 WHERE ic.task_id = $1
 		 ORDER BY cr.created_at ASC`,
-		[issueId],
+		[taskId],
 	);
 	const byComment = new Map<string, Map<string, ReactionMember[]>>();
 	for (const r of rows.rows) {

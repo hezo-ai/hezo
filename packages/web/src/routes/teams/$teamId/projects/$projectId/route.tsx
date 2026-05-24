@@ -2,28 +2,25 @@ import { OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Outlet, useLocation, useParams, useSearch } from '@tanstack/react-router';
 import { Info } from 'lucide-react';
 import { Breadcrumb } from '../../../../../components/ui/breadcrumb';
-import { useIssueAncestors } from '../../../../../hooks/use-issues';
 import { useProject } from '../../../../../hooks/use-projects';
+import { useTaskAncestors } from '../../../../../hooks/use-tasks';
 
 const AGENTS_MD_KEY = '__agents_md__';
 
 function ProjectLayout() {
 	const { teamId, projectId } = Route.useParams();
 	const { data: project } = useProject(teamId, projectId);
-	const allParams = useParams({ strict: false }) as { issueId?: string };
+	const allParams = useParams({ strict: false }) as { taskId?: string };
 	const search = useSearch({ strict: false }) as { file?: string };
 	const { pathname } = useLocation();
 
 	const base = `/teams/${teamId}/projects/${projectId}`;
-	const onIssueDetail = pathname.startsWith(`${base}/issues`) && Boolean(allParams.issueId);
-	const { data: ancestors } = useIssueAncestors(
-		teamId,
-		onIssueDetail ? allParams.issueId : undefined,
-	);
+	const onTaskDetail = pathname.startsWith(`${base}/tasks`) && Boolean(allParams.taskId);
+	const { data: ancestors } = useTaskAncestors(teamId, onTaskDetail ? allParams.taskId : undefined);
 	const projectParams = { teamId, projectId };
 	const isInternal = project?.slug === OPERATIONS_PROJECT_SLUG;
 	const showBanner =
-		isInternal && (pathname === `${base}/issues` || pathname === `${base}/container`);
+		isInternal && (pathname === `${base}/tasks` || pathname === `${base}/container`);
 
 	const items: Array<{
 		label: React.ReactNode;
@@ -31,7 +28,6 @@ function ProjectLayout() {
 		params?: Record<string, string>;
 		key?: string;
 	}> = [
-		{ label: 'Projects', to: '/teams/$teamId/projects', params: { teamId } },
 		{
 			label: isInternal ? (
 				<span className="italic">{project?.name}</span>
@@ -43,22 +39,22 @@ function ProjectLayout() {
 		},
 	];
 
-	if (pathname.startsWith(`${base}/issues`)) {
+	if (pathname.startsWith(`${base}/tasks`)) {
 		items.push({
-			label: 'Issues',
-			to: '/teams/$teamId/projects/$projectId/issues',
+			label: 'Tasks',
+			to: '/teams/$teamId/projects/$projectId/tasks',
 			params: projectParams,
 		});
-		if (allParams.issueId) {
+		if (allParams.taskId) {
 			for (const ancestor of ancestors ?? []) {
 				items.push({
 					key: `ancestor-${ancestor.id}`,
 					label: ancestor.identifier.toUpperCase(),
-					to: '/teams/$teamId/projects/$projectId/issues/$issueId',
-					params: { ...projectParams, issueId: ancestor.identifier },
+					to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+					params: { ...projectParams, taskId: ancestor.identifier },
 				});
 			}
-			items.push({ label: allParams.issueId.toUpperCase() });
+			items.push({ label: allParams.taskId.toUpperCase() });
 		}
 	} else if (pathname.startsWith(`${base}/documents`)) {
 		items.push({

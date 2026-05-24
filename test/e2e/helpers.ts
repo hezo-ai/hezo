@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page, type Response } from '@playwright/test';
 
 const TEST_MASTER_KEY = 'e2e-test-master-key-0123456789abcdef0123456789abcdef';
 
@@ -73,9 +73,9 @@ export async function clearAiProviders(page: Page, token: string) {
 }
 
 /**
- * Create a project and mark its auto-generated planning issue as done.
- * Tests that kick off agent runs on the CEO would otherwise race the
- * CEO's planning wakeup and see runs targeted at the planning issue.
+ * Create a project and mark its auto-generated planning task as done.
+ * Tests that kick off agent runs on the Captain would otherwise race the
+ * Captain's planning wakeup and see runs targeted at the planning task.
  */
 export async function createProjectAndClearPlanning(
 	page: Page,
@@ -83,21 +83,119 @@ export async function createProjectAndClearPlanning(
 	token: string,
 	data: { name: string; description?: string },
 ) {
-	const headers = { Authorization: `Bearer ${token}` };
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 	const res = await page.request.post(`/api/teams/${teamId}/projects`, {
 		headers,
 		data,
 	});
 	const project = (
 		(await res.json()) as {
-			data: { id: string; slug: string; planning_issue_id: string };
+			data: { id: string; slug: string; planning_task_id: string };
 		}
 	).data;
-	await page.request.patch(`/api/teams/${teamId}/issues/${project.planning_issue_id}`, {
+	await page.request.patch(`/api/teams/${teamId}/tasks/${project.planning_task_id}`, {
 		headers,
 		data: { status: 'done' },
 	});
 	return project;
+}
+
+/** Poll until the project container is provisioned (required before agent wakeups run). */
+export async function waitForProjectContainer(
+	page: Page,
+	teamId: string,
+	projectId: string,
+	token: string,
+	timeoutMs = 90_000,
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${token}` };
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const res = await page.request.get(`/api/teams/${teamId}/projects/${projectId}`, { headers });
+		const body = (await res.json()) as {
+			data: { container_status?: string; container_id?: string | null };
+		};
+		if (body.data?.container_status === 'running' && body.data?.container_id) return;
+		await new Promise((r) => setTimeout(r, 200));
+	}
+	throw new Error(`Project container did not reach running state within ${timeoutMs}ms`);
+}
+
+/**
+ * Create a project, close its planning task, and wait for the dev container — ready for agent runs.
+ */
+export async function createProjectReadyForAgents(
+	page: Page,
+	team: { id: string; slug: string },
+	token: string,
+	data: { name: string; description?: string },
+) {
+	const project = await createProjectAndClearPlanning(page, team.id, token, data);
+	await waitForProjectContainer(page, team.id, project.id, token);
+	await waitForCaptainIdle(page, team.id, token);
+	return project;
+}
+
+/** Pin home/rail onboarding to a specific team (avoids stale sessionStorage from other tests). */
+export async function setActiveTeamSlug(page: Page, teamSlug: string) {
+	await page.evaluate((slug) => {
+		sessionStorage.setItem('hezo:activeTeamSlug', slug);
+	}, teamSlug);
+}
+
+/**
+ * Close the single onboarding-intake ticket if one is open. Safe to call when no
+ * intake exists (returns silently). In the new flow the ticket is only opened
+ * on demand from the wizard chat path, so most tests never need this.
+ */
+export async function closeOnboardingIntakeIfOpen(
+	page: Page,
+	teamSlug: string,
+	token: string,
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+	const res = await page.request.get(`/api/teams/${teamSlug}/onboarding-intake`, { headers });
+	if (!res.ok()) return;
+	const { task_id } = ((await res.json()) as { data: { task_id: string } }).data;
+	if (!task_id) return;
+	await page.request.patch(`/api/teams/${teamSlug}/tasks/${task_id}`, {
+		headers,
+		data: { status: 'done' },
+	});
+}
+
+/** Wait until a specific agent is idle (no active heartbeat run). */
+export async function waitForAgentIdle(
+	page: Page,
+	teamId: string,
+	agentId: string,
+	token: string,
+	timeoutMs = 180_000,
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${token}` };
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const res = await page.request.get(`/api/teams/${teamId}/agents/${agentId}`, { headers });
+		const agent = ((await res.json()) as { data: { runtime_status: string } }).data;
+		if (agent?.runtime_status === 'idle') return;
+		await new Promise((r) => setTimeout(r, 500));
+	}
+	throw new Error(`Agent ${agentId} did not return to idle within ${timeoutMs}ms`);
+}
+
+/** Wait until Captain is idle (e.g. after onboarding intake wakeups finish). */
+export async function waitForCaptainIdle(
+	page: Page,
+	teamId: string,
+	token: string,
+	timeoutMs = 180_000,
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${token}` };
+	const res = await page.request.get(`/api/teams/${teamId}/agents`, { headers });
+	const agents = ((await res.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const captain = agents.find((a) => a.slug === 'captain');
+	if (!captain) throw new Error('Captain agent not found');
+	await waitForAgentIdle(page, teamId, captain.id, token, timeoutMs);
 }
 
 export async function createTeamWithAgents(page: Page) {
@@ -119,6 +217,10 @@ export async function createTeamWithAgents(page: Page) {
 		},
 	});
 	const team = ((await teamRes.json()) as any).data;
+
+	// Template apply queues team_context regeneration + a coherence review for Captain;
+	// wait for Captain to drain those before tests start their own work.
+	await waitForCaptainIdle(page, team.id, token);
 
 	return { team, token };
 }
@@ -143,11 +245,11 @@ export async function createTeamLight(page: Page) {
 	return { team, token };
 }
 
-/** Dismiss the AI provider setup gate by entering a test API key via the UI. */
+/** Drive the wizard's AI-provider step by entering a test API key. */
 export async function dismissAiProviderModal(page: Page) {
-	const modal = page.getByText('Set up an AI provider');
+	const aiStep = page.getByTestId('setup-step-ai-provider');
 	try {
-		await modal.waitFor({ state: 'visible', timeout: 15000 });
+		await aiStep.waitFor({ state: 'visible', timeout: 15000 });
 	} catch {
 		return;
 	}
@@ -156,11 +258,145 @@ export async function dismissAiProviderModal(page: Page) {
 	await page.locator('input[type="password"]').first().fill('sk-ant-e2e-test-key');
 	await page.getByRole('button', { name: 'Save' }).first().click();
 
-	await expect(modal).toBeHidden({ timeout: 20000 });
+	await expect(aiStep).toBeHidden({ timeout: 20000 });
 }
 
 export async function waitForPageLoad(page: Page, timeout = 15000) {
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout });
+}
+
+export type HttpMethod = 'GET' | 'PATCH' | 'POST' | 'DELETE' | 'PUT';
+
+export type ResponseMatcher = (url: URL, method: string) => boolean;
+
+function escapeRegex(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Matcher for `/api/teams/<teamId>/tasks[/<taskId>[/<subResource>...]]`.
+ * `teamId` is the team slug, `taskId` is the lowercase task identifier
+ * (e.g. `rp-1`) — the value the route param holds, not the UUID. Captain's
+ * background planning-task PATCHes hit the same URL shape, so always pass
+ * `taskId` to keep the matcher to *this* test's task.
+ */
+export function taskMatcher(opts: {
+	teamId: string;
+	taskId?: string;
+	subResource?: string;
+	method?: HttpMethod;
+}): ResponseMatcher {
+	const teamSeg = escapeRegex(opts.teamId);
+	const taskSeg = opts.taskId ? escapeRegex(opts.taskId) : '[^/]+';
+	let pattern: RegExp;
+	if (opts.subResource) {
+		const sub = escapeRegex(opts.subResource);
+		pattern = new RegExp(`^/api/teams/${teamSeg}/tasks/${taskSeg}/${sub}(?:/[^/]+)*$`);
+	} else if (opts.taskId) {
+		pattern = new RegExp(`^/api/teams/${teamSeg}/tasks/${taskSeg}$`);
+	} else {
+		pattern = new RegExp(`^/api/teams/${teamSeg}/tasks(?:\\?.*)?$`);
+	}
+	return (url, m) => (!opts.method || m === opts.method) && pattern.test(url.pathname);
+}
+
+/**
+ * Matcher for `/api/teams/<teamId>[/<resource>[/...]]`. Use for non-task
+ * team-scoped resources (projects, comments, etc.).
+ */
+export function teamMatcher(opts: {
+	teamId: string;
+	resource?: string;
+	method?: HttpMethod;
+}): ResponseMatcher {
+	const teamSeg = escapeRegex(opts.teamId);
+	const pattern = opts.resource
+		? new RegExp(`^/api/teams/${teamSeg}/${escapeRegex(opts.resource)}(?:/.*)?$`)
+		: new RegExp(`^/api/teams/${teamSeg}(?:/.*)?$`);
+	return (url, m) => (!opts.method || m === opts.method) && pattern.test(url.pathname);
+}
+
+/**
+ * Matcher for `/api/teams/<teamId>/agents[/<agentId>]`. `agentId` is the
+ * agent UUID (the agent route doesn't slugify).
+ */
+export function agentMatcher(opts: {
+	teamId: string;
+	agentId?: string;
+	method?: HttpMethod;
+}): ResponseMatcher {
+	const teamSeg = escapeRegex(opts.teamId);
+	const pattern = opts.agentId
+		? new RegExp(`^/api/teams/${teamSeg}/agents/${escapeRegex(opts.agentId)}$`)
+		: new RegExp(`^/api/teams/${teamSeg}/agents(?:\\?.*)?$`);
+	return (url, m) => (!opts.method || m === opts.method) && pattern.test(url.pathname);
+}
+
+/**
+ * Click a save/confirm button and wait for both the mutation and the
+ * follow-up refetch GET that React Query's onSuccess invalidation triggers.
+ * Returns only when the UI is guaranteed to have refreshed with the new data
+ * — clicking and waiting only for the mutation leaves a window where the
+ * PATCH has landed but the component hasn't re-rendered yet, and the next
+ * `expect(text).toBeVisible()` races that window.
+ *
+ * Both matchers should be scoped to the test's exact slug+id+method so
+ * Captain's background traffic can't satisfy either.
+ */
+export async function saveAndWaitForRefetch(
+	page: Page,
+	locator: Locator,
+	options: {
+		mutation: ResponseMatcher;
+		refetch: ResponseMatcher;
+		timeout?: number;
+	},
+): Promise<{ mutation: Response; refetch: Response }> {
+	const timeout = options.timeout ?? 30_000;
+	const wait = (match: ResponseMatcher) =>
+		page.waitForResponse(
+			(r) => {
+				try {
+					return match(new URL(r.url()), r.request().method());
+				} catch {
+					return false;
+				}
+			},
+			{ timeout },
+		);
+	const mutationPromise = wait(options.mutation);
+	const refetchPromise = wait(options.refetch);
+	await locator.click();
+	const [mutation, refetch] = await Promise.all([mutationPromise, refetchPromise]);
+	return { mutation, refetch };
+}
+
+/**
+ * @deprecated Prefer `saveAndWaitForRefetch` with `taskMatcher` / `teamMatcher` /
+ * `agentMatcher` — the loose-regex pattern matches background traffic and
+ * the mutation-only wait races React Query's refetch.
+ */
+export async function clickAndWaitForResponse(
+	page: Page,
+	locator: Locator,
+	match: ResponseMatcher,
+	options: { timeout?: number } = {},
+): Promise<Response> {
+	const timeout = options.timeout ?? 30_000;
+	const [response] = await Promise.all([
+		page.waitForResponse(
+			(r) => {
+				try {
+					return match(new URL(r.url()), r.request().method());
+				} catch {
+					return false;
+				}
+			},
+			{ timeout },
+		),
+		locator.click(),
+	]);
+	return response;
 }
 
 export { TEST_MASTER_KEY };

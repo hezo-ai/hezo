@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { dismissAiProviderModal, waitForPageLoad } from './helpers';
+import { clickAndWaitForResponse, dismissAiProviderModal, waitForPageLoad } from './helpers';
 
 type Page = import('@playwright/test').Page;
 
@@ -100,9 +100,13 @@ for (const viewport of [
 		const runTimeoutInput = page.getByLabel('Run timeout (min)');
 		await expect(runTimeoutInput).toBeVisible({ timeout: 15000 });
 		await runTimeoutInput.fill('23');
-		await page.getByRole('button', { name: 'Save Changes' }).click();
+		const saveResponse = await clickAndWaitForResponse(
+			page,
+			page.getByRole('button', { name: 'Save Changes' }),
+			(url, method) => method === 'PATCH' && /\/agents\/[^/]+$/.test(url.pathname),
+		);
+		expect(saveResponse.ok()).toBe(true);
 
-		await page.waitForTimeout(500);
 		await page.reload();
 		await expect(page.getByLabel('Run timeout (min)')).toHaveValue('23', { timeout: 15000 });
 		await expect(page.getByLabel('Heartbeat (min)')).toHaveValue(String(originalHeartbeat), {
@@ -132,7 +136,12 @@ test('agent settings tab edits the title and persists across reload', async ({
 	const titleInput = page.getByLabel('Title');
 	await expect(titleInput).toBeVisible({ timeout: 15000 });
 	await titleInput.fill(`${agent.title} Updated`);
-	await page.getByRole('button', { name: 'Save Changes' }).click();
+	const saveResponse = await clickAndWaitForResponse(
+		page,
+		page.getByRole('button', { name: 'Save Changes' }),
+		(url, method) => method === 'PATCH' && /\/agents\/[^/]+$/.test(url.pathname),
+	);
+	expect(saveResponse.ok()).toBe(true);
 
 	await expect(page.getByText(`${agent.title} Updated`).first()).toBeVisible({ timeout: 15000 });
 });
@@ -150,17 +159,28 @@ test('agent disable and enable lifecycle reflects in detail and team views', asy
 
 	await page.getByRole('main').getByRole('link', { name: 'Settings' }).click();
 
+	const disablePromise = page.waitForResponse(
+		(r) => /\/disable$/.test(new URL(r.url()).pathname) && r.request().method() === 'POST',
+	);
 	await page.getByRole('button', { name: /Disable agent/i }).click();
+	await disablePromise;
 	await expect(page.getByText('(disabled)')).toBeVisible({ timeout: 15000 });
 
+	const enablePromise = page.waitForResponse(
+		(r) => /\/enable$/.test(new URL(r.url()).pathname) && r.request().method() === 'POST',
+	);
 	await page.getByRole('button', { name: /Enable agent/i }).click();
+	await enablePromise;
 	await expect(page.getByText('(disabled)')).not.toBeVisible({ timeout: 15000 });
 	await expect(page.getByRole('main').getByText('Idle')).toBeVisible({ timeout: 15000 });
 
 	// Disable via API and verify it shows up on the team chart and detail page.
-	await page.request.post(`/api/teams/${team.id}/agents/${enabledAgent.id}/disable`, {
-		headers: { Authorization: `Bearer ${token}` },
-	});
+	// (Wait for the body so the server has definitely committed before the next request.)
+	const apiDisable = await page.request.post(
+		`/api/teams/${team.id}/agents/${enabledAgent.id}/disable`,
+		{ headers: { Authorization: `Bearer ${token}` } },
+	);
+	expect(apiDisable.ok()).toBe(true);
 
 	await page.goto(`/teams/${team.slug}/agents`);
 	await expect(page.getByText('You (Board)')).toBeVisible({ timeout: 15000 });

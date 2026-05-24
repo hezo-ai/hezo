@@ -3,15 +3,16 @@ import {
 	AgentRuntimeStatus,
 	ApprovalType,
 	AuthType,
-	IssuePriority,
-	TERMINAL_ISSUE_STATUSES,
+	TaskPriority,
+	TERMINAL_TASK_STATUSES,
 	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
-import { resolveIssueId } from '../lib/resolve';
+import { resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
+import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 
 export const agentApiRoutes = new Hono<Env>();
@@ -62,7 +63,7 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 				admin_status: agentRow.admin_status,
 				budget_remaining_cents: budgetRemaining,
 			},
-			assigned_issues: [],
+			assigned_tasks: [],
 			notifications: [],
 		});
 	}
@@ -70,49 +71,49 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 	const ts = terminalStatusParams(3, false);
 	const terminalPlaceholders = ts.placeholders;
 
-	const issues = await db.query(
+	const tasks = await db.query(
 		`SELECT i.id, i.number, i.identifier, i.title, i.description, i.status, i.priority,
 		        p.name AS project_name, p.description AS project_description, p.id AS project_id,
 		        co.description AS team_description,
-		        (SELECT count(*)::int FROM issue_comments ic
-		         WHERE ic.issue_id = i.id AND ic.created_at > COALESCE(
-		           (SELECT MAX(ic2.created_at) FROM issue_comments ic2
-		            WHERE ic2.issue_id = i.id AND ic2.author_member_id = $1), '1970-01-01'
+		        (SELECT count(*)::int FROM task_comments ic
+		         WHERE ic.task_id = i.id AND ic.created_at > COALESCE(
+		           (SELECT MAX(ic2.created_at) FROM task_comments ic2
+		            WHERE ic2.task_id = i.id AND ic2.author_member_id = $1), '1970-01-01'
 		         ) AND ic.author_member_id != $1) AS unread_comments
-		 FROM issues i
+		 FROM tasks i
 		 JOIN projects p ON p.id = i.project_id
 		 JOIN teams co ON co.id = i.team_id
 		 WHERE i.assignee_id = $1 AND i.team_id = $2
 		   AND i.status NOT IN (${terminalPlaceholders})
 		 ORDER BY
 		   CASE i.priority
-		     WHEN ${`$${TERMINAL_ISSUE_STATUSES.length + 3}`} THEN 0
-		     WHEN ${`$${TERMINAL_ISSUE_STATUSES.length + 4}`} THEN 1
-		     WHEN ${`$${TERMINAL_ISSUE_STATUSES.length + 5}`} THEN 2
-		     WHEN ${`$${TERMINAL_ISSUE_STATUSES.length + 6}`} THEN 3
+		     WHEN ${`$${TERMINAL_TASK_STATUSES.length + 3}`} THEN 0
+		     WHEN ${`$${TERMINAL_TASK_STATUSES.length + 4}`} THEN 1
+		     WHEN ${`$${TERMINAL_TASK_STATUSES.length + 5}`} THEN 2
+		     WHEN ${`$${TERMINAL_TASK_STATUSES.length + 6}`} THEN 3
 		   END,
 		   i.created_at ASC`,
 		[
 			memberId,
 			teamId,
-			...TERMINAL_ISSUE_STATUSES,
-			IssuePriority.Urgent,
-			IssuePriority.High,
-			IssuePriority.Medium,
-			IssuePriority.Low,
+			...TERMINAL_TASK_STATUSES,
+			TaskPriority.Urgent,
+			TaskPriority.High,
+			TaskPriority.Medium,
+			TaskPriority.Low,
 		],
 	);
 
 	const notifications = await db.query<{
 		id: string;
-		issue_id: string;
-		issue_number: number;
-		issue_identifier: string;
+		task_id: string;
+		task_number: number;
+		task_identifier: string;
 	}>(
-		`SELECT ic.id, ic.issue_id, i.number AS issue_number, i.identifier AS issue_identifier,
+		`SELECT ic.id, ic.task_id, i.number AS task_number, i.identifier AS task_identifier,
 		        ic.content, ic.author_member_id
-		 FROM issue_comments ic
-		 JOIN issues i ON i.id = ic.issue_id
+		 FROM task_comments ic
+		 JOIN tasks i ON i.id = ic.task_id
 		 WHERE ic.content::text LIKE $1
 		   AND i.team_id = $2
 		   AND ic.created_at > COALESCE(
@@ -134,18 +135,18 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 			admin_status: agentRow.admin_status,
 			budget_remaining_cents: budgetRemaining,
 		},
-		assigned_issues: issues.rows,
+		assigned_tasks: tasks.rows,
 		notifications: notifications.rows.map((n) => ({
 			type: 'mention',
-			issue_id: n.issue_id,
-			issue_number: n.issue_number,
-			issue_identifier: n.issue_identifier,
+			task_id: n.task_id,
+			task_number: n.task_number,
+			task_identifier: n.task_identifier,
 			comment_id: n.id,
 		})),
 	});
 });
 
-agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
+agentApiRoutes.post('/tasks/:taskId/comments', async (c) => {
 	const db = c.get('db');
 	const auth = c.get('auth');
 
@@ -153,8 +154,8 @@ agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
-	const issueId = await resolveIssueId(db, auth.teamId, c.req.param('issueId'));
-	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	const taskId = await resolveTaskId(db, auth.teamId, c.req.param('taskId'));
+	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
 	const body = await c.req.json<{
 		content_type: string;
@@ -169,25 +170,25 @@ agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
 	let parentCommentId: string | null = null;
 	if (body.parent_comment_id) {
 		const parentCheck = await db.query(
-			'SELECT 1 FROM issue_comments WHERE id = $1 AND issue_id = $2',
-			[body.parent_comment_id, issueId],
+			'SELECT 1 FROM task_comments WHERE id = $1 AND task_id = $2',
+			[body.parent_comment_id, taskId],
 		);
 		if (parentCheck.rows.length === 0) {
-			return err(c, 'INVALID_REQUEST', 'parent_comment_id does not belong to this issue', 400);
+			return err(c, 'INVALID_REQUEST', 'parent_comment_id does not belong to this task', 400);
 		}
 		parentCommentId = body.parent_comment_id;
 	}
 
 	const result = await db.query<{ id: string }>(
-		`INSERT INTO issue_comments (issue_id, author_member_id, parent_comment_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, parent_comment_id, content_type, content)
 		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
 		 RETURNING *`,
-		[issueId, auth.memberId, parentCommentId, body.content_type, JSON.stringify(body.content)],
+		[taskId, auth.memberId, parentCommentId, body.content_type, JSON.stringify(body.content)],
 	);
 
 	await fireCommentWakeups({
 		db,
-		issueId,
+		taskId,
 		teamId: auth.teamId,
 		commentId: result.rows[0].id,
 		content: body.content,
@@ -200,7 +201,7 @@ agentApiRoutes.post('/issues/:issueId/comments', async (c) => {
 	return ok(c, result.rows[0], 201);
 });
 
-agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c) => {
+agentApiRoutes.post('/tasks/:taskId/comments/:commentId/tool-calls', async (c) => {
 	const db = c.get('db');
 	const auth = c.get('auth');
 
@@ -208,13 +209,13 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
-	const issueId = await resolveIssueId(db, auth.teamId, c.req.param('issueId'));
-	if (!issueId) return err(c, 'NOT_FOUND', 'Issue not found', 404);
+	const taskId = await resolveTaskId(db, auth.teamId, c.req.param('taskId'));
+	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 	const commentId = c.req.param('commentId');
 
 	const commentCheck = await db.query(
-		'SELECT id FROM issue_comments WHERE id = $1 AND issue_id = $2',
-		[commentId, issueId],
+		'SELECT id FROM task_comments WHERE id = $1 AND task_id = $2',
+		[commentId, taskId],
 	);
 	if (commentCheck.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Comment not found', 404);
@@ -255,9 +256,9 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 		results.push(result.rows[0]);
 
 		if (tc.cost_cents && tc.cost_cents > 0) {
-			const issue = await db.query<{ project_id: string }>(
-				'SELECT project_id FROM issues WHERE id = $1',
-				[issueId],
+			const task = await db.query<{ project_id: string }>(
+				'SELECT project_id FROM tasks WHERE id = $1',
+				[taskId],
 			);
 
 			const debitResult = await db.query<{ debit_agent_budget: boolean }>(
@@ -266,13 +267,13 @@ agentApiRoutes.post('/issues/:issueId/comments/:commentId/tool-calls', async (c)
 			);
 
 			await db.query(
-				`INSERT INTO cost_entries (team_id, member_id, issue_id, project_id, amount_cents, description)
+				`INSERT INTO cost_entries (team_id, member_id, task_id, project_id, amount_cents, description)
 				 VALUES ($1, $2, $3, $4, $5, $6)`,
 				[
 					auth.teamId,
 					auth.memberId,
-					issueId,
-					issue.rows[0]?.project_id,
+					taskId,
+					task.rows[0]?.project_id,
 					tc.cost_cents,
 					`Tool call: ${tc.tool_name}`,
 				],
@@ -324,10 +325,10 @@ agentApiRoutes.post('/secrets/request', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'secret_name and reason are required', 400);
 	}
 
-	const result = await db.query<{ id: string; status: string }>(
+	const result = await db.query<Record<string, unknown>>(
 		`INSERT INTO approvals (team_id, type, payload)
 		 VALUES ($1, $2::approval_type, $3::jsonb)
-		 RETURNING id, status`,
+		 RETURNING *`,
 		[
 			auth.teamId,
 			ApprovalType.SecretAccess,
@@ -339,8 +340,12 @@ agentApiRoutes.post('/secrets/request', async (c) => {
 			}),
 		],
 	);
+	const row = result.rows[0];
+	if (row) {
+		broadcastApprovalChange(c.get('wsManager'), auth.teamId, 'INSERT', row);
+	}
 
-	return ok(c, { approval_id: result.rows[0].id, status: result.rows[0].status }, 201);
+	return ok(c, { approval_id: row?.id, status: row?.status }, 201);
 });
 
 agentApiRoutes.get('/secrets/mine', async (c) => {

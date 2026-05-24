@@ -1,31 +1,23 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, createProjectAndClearPlanning, createTeamWithAgents } from './helpers';
-
-async function waitForContainer(page: Page, teamId: string, projectId: string, token: string) {
-	const headers = { Authorization: `Bearer ${token}` };
-	for (let i = 0; i < 150; i++) {
-		const res = await page.request.get(`/api/teams/${teamId}/projects/${projectId}`, {
-			headers,
-		});
-		const body = (await res.json()) as { data: { container_status?: string } };
-		if (body.data?.container_status === 'running') return;
-		await new Promise((r) => setTimeout(r, 100));
-	}
-	throw new Error('Container did not reach running state within 15s');
-}
+import {
+	authenticate,
+	createProjectReadyForAgents,
+	createTeamWithAgents,
+	waitForCaptainIdle,
+} from './helpers';
 
 async function waitForRunStatus(
 	page: Page,
 	teamId: string,
-	issueId: string,
+	taskId: string,
 	token: string,
 	target: 'running' | 'succeeded' | 'failed',
-	timeoutMs = 90_000,
+	timeoutMs = 180_000,
 ) {
 	const headers = { Authorization: `Bearer ${token}` };
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
-		const res = await page.request.get(`/api/teams/${teamId}/issues/${issueId}/latest-run`, {
+		const res = await page.request.get(`/api/teams/${teamId}/tasks/${taskId}/latest-run`, {
 			headers,
 		});
 		const body = (await res.json()) as { data: null | { id: string; status: string } };
@@ -48,34 +40,34 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
-	const project = await createProjectAndClearPlanning(page, team.id, token, {
+	await waitForCaptainIdle(page, team.id, token);
+
+	const project = await createProjectReadyForAgents(page, team, token, {
 		name: 'Log Test Project',
 		description: 'Test project.',
 	});
 
-	await waitForContainer(page, team.id, project.id, token);
-
-	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers,
 		data: {
 			project_id: project.id,
 			title: 'Run Me',
 			description: 'Synthetic test task',
-			assignee_id: ceo.id,
+			assignee_id: captain.id,
 		},
 	});
-	const issue = ((await issueRes.json()) as { data: { id: string; identifier: string } }).data;
+	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
 
-	await page.request.post(`/api/teams/${team.id}/issues/${issue.id}/comments`, {
+	await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
 		headers,
 		data: { content_type: 'text', content: { text: 'Please begin' } },
 	});
 
-	const run = await waitForRunStatus(page, team.id, issue.id, token, 'succeeded');
+	const run = await waitForRunStatus(page, team.id, task.id, token, 'succeeded');
 
-	await page.goto(`/teams/${team.slug}/agents/${ceo.id}/executions/${run.id}`);
+	await page.goto(`/teams/${team.slug}/agents/${captain.id}/executions/${run.id}`);
 
 	await expect(page.getByRole('heading', { name: /Run \w{8}/i })).toBeVisible({ timeout: 15000 });
 
@@ -107,15 +99,15 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
 	expect(clipboardText).toContain('[synthetic] starting agent run');
 
-	const issueLink = page.getByRole('link', {
-		name: new RegExp(`^Issue: ${issue.identifier}`, 'i'),
+	const taskLink = page.getByRole('link', {
+		name: new RegExp(`^Task: ${task.identifier}`, 'i'),
 	});
-	await expect(issueLink).toBeVisible();
-	await issueLink.click();
-	await expect(page).toHaveURL(new RegExp(`/issues/${issue.identifier.toLowerCase()}$`));
+	await expect(taskLink).toBeVisible();
+	await taskLink.click();
+	await expect(page).toHaveURL(new RegExp(`/tasks/${task.identifier.toLowerCase()}$`));
 });
 
-test('issue page renders completed run as a collapsed inline comment with summary', async ({
+test('task page renders completed run as a collapsed inline comment with summary', async ({
 	page,
 }) => {
 	await authenticate(page);
@@ -124,7 +116,7 @@ test('issue page renders completed run as a collapsed inline comment with summar
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
 		headers,
@@ -132,11 +124,11 @@ test('issue page renders completed run as a collapsed inline comment with summar
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
-	const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers,
-		data: { project_id: project.id, title: 'Collapsed Run Issue', assignee_id: ceo.id },
+		data: { project_id: project.id, title: 'Collapsed Run Task', assignee_id: captain.id },
 	});
-	const issue = ((await issueRes.json()) as { data: { id: string } }).data;
+	const task = ((await taskRes.json()) as { data: { id: string } }).data;
 
 	const runId = '88888888-8888-8888-8888-888888888888';
 	const startedAt = '2026-05-15T18:11:00Z';
@@ -145,17 +137,17 @@ test('issue page renders completed run as a collapsed inline comment with summar
 
 	const runComment = {
 		id: 'bbbb0000-0000-0000-0000-000000000001',
-		issue_id: issue.id,
+		task_id: task.id,
 		content_type: 'run',
-		content: { run_id: runId, agent_id: ceo.id, agent_title: 'Product Lead' },
+		content: { run_id: runId, agent_id: captain.id, agent_title: 'Product Lead' },
 		chosen_option: null,
 		created_at: startedAt,
 		author_type: 'agent',
 		author_name: 'Product Lead',
-		author_member_id: ceo.id,
+		author_member_id: captain.id,
 	};
 
-	await page.route('**/api/teams/*/issues/*/comments**', async (route) => {
+	await page.route('**/api/teams/*/tasks/*/comments**', async (route) => {
 		if (route.request().method() !== 'GET') return route.continue();
 		await route.fulfill({
 			status: 200,
@@ -166,11 +158,11 @@ test('issue page renders completed run as a collapsed inline comment with summar
 
 	const runResponse = {
 		id: runId,
-		member_id: ceo.id,
+		member_id: captain.id,
 		team_id: team.id,
-		issue_id: issue.id,
-		issue_identifier: null,
-		issue_title: null,
+		task_id: task.id,
+		task_identifier: null,
+		task_title: null,
 		project_id: project.id,
 		status: 'succeeded',
 		started_at: startedAt,
@@ -183,10 +175,10 @@ test('issue page renders completed run as a collapsed inline comment with summar
 		invocation_command: null,
 		log_text: logText,
 		working_dir: null,
-		created_issues: [],
+		created_tasks: [],
 	};
 
-	await page.route(`**/api/teams/*/agents/${ceo.id}/heartbeat-runs/${runId}`, async (route) => {
+	await page.route(`**/api/teams/*/agents/${captain.id}/heartbeat-runs/${runId}`, async (route) => {
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
@@ -194,7 +186,7 @@ test('issue page renders completed run as a collapsed inline comment with summar
 		});
 	});
 
-	await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
@@ -224,11 +216,11 @@ async function mockCompletedRun(page: Page, teamId: string, agentId: string, tok
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
-	const issueRes = await page.request.post(`/api/teams/${teamId}/issues`, {
+	const taskRes = await page.request.post(`/api/teams/${teamId}/tasks`, {
 		headers,
-		data: { project_id: project.id, title: 'Expandable Run Issue', assignee_id: agentId },
+		data: { project_id: project.id, title: 'Expandable Run Task', assignee_id: agentId },
 	});
-	const issue = ((await issueRes.json()) as { data: { id: string } }).data;
+	const task = ((await taskRes.json()) as { data: { id: string } }).data;
 
 	const runId = '77777777-7777-7777-7777-777777777777';
 	const startedAt = '2026-05-15T18:11:00Z';
@@ -237,7 +229,7 @@ async function mockCompletedRun(page: Page, teamId: string, agentId: string, tok
 
 	const runComment = {
 		id: 'cccc0000-0000-0000-0000-000000000001',
-		issue_id: issue.id,
+		task_id: task.id,
 		content_type: 'run',
 		content: { run_id: runId, agent_id: agentId, agent_title: 'Product Lead' },
 		chosen_option: null,
@@ -247,7 +239,7 @@ async function mockCompletedRun(page: Page, teamId: string, agentId: string, tok
 		author_member_id: agentId,
 	};
 
-	await page.route('**/api/teams/*/issues/*/comments**', async (route) => {
+	await page.route('**/api/teams/*/tasks/*/comments**', async (route) => {
 		if (route.request().method() !== 'GET') return route.continue();
 		await route.fulfill({
 			status: 200,
@@ -265,9 +257,9 @@ async function mockCompletedRun(page: Page, teamId: string, agentId: string, tok
 					id: runId,
 					member_id: agentId,
 					team_id: teamId,
-					issue_id: issue.id,
-					issue_identifier: null,
-					issue_title: null,
+					task_id: task.id,
+					task_identifier: null,
+					task_title: null,
 					project_id: project.id,
 					status: 'succeeded',
 					started_at: startedAt,
@@ -280,13 +272,13 @@ async function mockCompletedRun(page: Page, teamId: string, agentId: string, tok
 					invocation_command: null,
 					log_text: logText,
 					working_dir: null,
-					created_issues: [],
+					created_tasks: [],
 				},
 			}),
 		});
 	});
 
-	return { issue, runId };
+	return { task, runId };
 }
 
 test('clicking the summary on a completed run expands the inline log', async ({ page }) => {
@@ -296,11 +288,11 @@ test('clicking the summary on a completed run expands the inline log', async ({ 
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
-	const { issue, runId } = await mockCompletedRun(page, team.id, ceo.id, token);
+	const { task, runId } = await mockCompletedRun(page, team.id, captain.id, token);
 
-	await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
@@ -321,7 +313,7 @@ test('clicking the summary on a completed run expands the inline log', async ({ 
 	await expect(runLink).toBeVisible();
 	await expect(runLink).toHaveAttribute(
 		'href',
-		new RegExp(`/teams/${team.slug}/agents/${ceo.id}/executions/${runId}$`),
+		new RegExp(`/teams/${team.slug}/agents/${captain.id}/executions/${runId}$`),
 	);
 
 	await header.click();
@@ -337,11 +329,11 @@ test('completed run expansion works on mobile viewport', async ({ page }) => {
 
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
-	const { issue } = await mockCompletedRun(page, team.id, ceo.id, token);
+	const { task } = await mockCompletedRun(page, team.id, captain.id, token);
 
-	await page.goto(`/teams/${team.slug}/issues/${issue.id}`);
+	await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });

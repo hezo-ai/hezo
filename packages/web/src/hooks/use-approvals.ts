@@ -1,6 +1,10 @@
 import { ApprovalStatus, type BlockedTicket } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import {
+	invalidateAllTeamAgentCaches,
+	invalidateTeamAgentCaches,
+} from '../lib/invalidate-team-caches';
 import { queryClient } from '../lib/query-client';
 
 export interface Approval {
@@ -20,7 +24,7 @@ export interface Approval {
 	payload_member_slug: string | null;
 	payload_project_name: string | null;
 	payload_project_slug: string | null;
-	payload_issue_identifier: string | null;
+	payload_task_identifier: string | null;
 }
 
 export function useApprovals(
@@ -35,20 +39,22 @@ export function useApprovals(
 	});
 }
 
-export function useAllPendingApprovals(teamIds: string[]) {
+export function useAllPendingApprovals(teamSlugs: string[]) {
+	const teamKey = [...teamSlugs].sort().join(',');
 	return useQuery({
-		queryKey: ['approvals', 'pending', teamIds],
+		queryKey: ['approvals', 'pending', teamKey],
 		queryFn: async () => {
 			const results = await Promise.all(
-				teamIds.map((id) =>
-					api.get<Approval[]>(`/api/teams/${id}/approvals`, {
+				teamSlugs.map((slug) =>
+					api.get<Approval[]>(`/api/teams/${slug}/approvals`, {
 						status: ApprovalStatus.Pending,
 					}),
 				),
 			);
 			return results.flat();
 		},
-		enabled: teamIds.length > 0,
+		enabled: teamSlugs.length > 0,
+		staleTime: 0,
 	});
 }
 
@@ -75,7 +81,15 @@ export function useResolveApproval() {
 			approvalId: string;
 			status: typeof ApprovalStatus.Approved | typeof ApprovalStatus.Denied;
 			resolution_note?: string;
+			teamSlug?: string;
 		}) => api.post(`/api/approvals/${approvalId}/resolve`, { status, resolution_note }),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['approvals'] }),
+		onSuccess: (_data, variables) => {
+			queryClient.invalidateQueries({ queryKey: ['approvals'] });
+			if (variables.teamSlug) {
+				invalidateTeamAgentCaches(queryClient, variables.teamSlug);
+			} else {
+				invalidateAllTeamAgentCaches(queryClient);
+			}
+		},
 	});
 }

@@ -12,8 +12,8 @@ let teamId: string;
 let otherTeamId: string;
 let projectId: string;
 let approvalId: string;
-let issueAId: string;
-let issueBId: string;
+let taskAId: string;
+let taskBId: string;
 let agentAId: string;
 let agentBId: string;
 let commentAId: string;
@@ -28,8 +28,8 @@ async function createAgent(name: string, slug: string): Promise<string> {
 	return (await r.json()).data.id;
 }
 
-async function createIssue(title: string, assigneeId: string): Promise<string> {
-	const r = await app.request(`/api/teams/${teamId}/issues`, {
+async function createTask(title: string, assigneeId: string): Promise<string> {
+	const r = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title, assignee_id: assigneeId }),
@@ -37,21 +37,21 @@ async function createIssue(title: string, assigneeId: string): Promise<string> {
 	return (await r.json()).data.id;
 }
 
-async function insertActionComment(issueId: string, approvalRef: string): Promise<string> {
+async function insertActionComment(taskId: string, approvalRef: string): Promise<string> {
 	const r = await db.query<{ id: string }>(
-		`INSERT INTO issue_comments (issue_id, content_type, content)
+		`INSERT INTO task_comments (task_id, content_type, content)
 		 VALUES ($1, 'action'::comment_content_type, $2::jsonb)
 		 RETURNING id`,
-		[issueId, JSON.stringify({ kind: 'setup_repo', approval_id: approvalRef })],
+		[taskId, JSON.stringify({ kind: 'setup_repo', approval_id: approvalRef })],
 	);
 	return r.rows[0].id;
 }
 
-async function insertTextComment(issueId: string, text: string): Promise<void> {
+async function insertTextComment(taskId: string, text: string): Promise<void> {
 	await db.query(
-		`INSERT INTO issue_comments (issue_id, content_type, content, created_at)
+		`INSERT INTO task_comments (task_id, content_type, content, created_at)
 		 VALUES ($1, 'text'::comment_content_type, $2::jsonb, now() - INTERVAL '1 minute')`,
-		[issueId, JSON.stringify({ text })],
+		[taskId, JSON.stringify({ text })],
 	);
 }
 
@@ -90,8 +90,8 @@ beforeAll(async () => {
 	agentAId = await createAgent('Alice Agent', 'alice');
 	agentBId = await createAgent('Bob Agent', 'bob');
 
-	issueAId = await createIssue('Migrate to vNext', agentAId);
-	issueBId = await createIssue('Add CI workflow', agentBId);
+	taskAId = await createTask('Migrate to vNext', agentAId);
+	taskBId = await createTask('Add CI workflow', agentBId);
 
 	const approval = await db.query<{ id: string }>(
 		`INSERT INTO approvals (team_id, type, status, payload)
@@ -103,15 +103,15 @@ beforeAll(async () => {
 				platform: 'github',
 				reason: 'designated_repo',
 				project_id: projectId,
-				issue_id: issueAId,
+				task_id: taskAId,
 			}),
 		],
 	);
 	approvalId = approval.rows[0].id;
 
-	await insertTextComment(issueAId, 'I tried to push the new migration but there is no repo yet.');
-	commentAId = await insertActionComment(issueAId, approvalId);
-	commentBId = await insertActionComment(issueBId, approvalId);
+	await insertTextComment(taskAId, 'I tried to push the new migration but there is no repo yet.');
+	commentAId = await insertActionComment(taskAId, approvalId);
+	commentBId = await insertActionComment(taskBId, approvalId);
 });
 
 afterAll(async () => {
@@ -126,7 +126,7 @@ describe('GET /api/teams/:teamId/approvals/:approvalId/blocked-tickets', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			data: Array<{
-				issue_id: string;
+				task_id: string;
 				identifier: string;
 				title: string;
 				project_slug: string;
@@ -138,9 +138,9 @@ describe('GET /api/teams/:teamId/approvals/:approvalId/blocked-tickets', () => {
 		};
 		expect(body.data).toHaveLength(2);
 
-		const byIssue = new Map(body.data.map((r) => [r.issue_id, r]));
-		const a = byIssue.get(issueAId);
-		const b = byIssue.get(issueBId);
+		const byTask = new Map(body.data.map((r) => [r.task_id, r]));
+		const a = byTask.get(taskAId);
+		const b = byTask.get(taskBId);
 		expect(a?.title).toBe('Migrate to vNext');
 		expect(a?.agent_name).toBe('Alice Agent');
 		expect(a?.agent_slug).toBe('alice-agent');
@@ -156,7 +156,7 @@ describe('GET /api/teams/:teamId/approvals/:approvalId/blocked-tickets', () => {
 	});
 
 	it('skips comments whose chosen_option is set (i.e. resolved)', async () => {
-		await db.query(`UPDATE issue_comments SET chosen_option = $1::jsonb WHERE id = $2`, [
+		await db.query(`UPDATE task_comments SET chosen_option = $1::jsonb WHERE id = $2`, [
 			JSON.stringify({ status: 'complete' }),
 			commentBId,
 		]);
@@ -164,11 +164,11 @@ describe('GET /api/teams/:teamId/approvals/:approvalId/blocked-tickets', () => {
 		const res = await app.request(`/api/teams/${teamId}/approvals/${approvalId}/blocked-tickets`, {
 			headers: authHeader(token),
 		});
-		const body = (await res.json()) as { data: Array<{ issue_id: string }> };
+		const body = (await res.json()) as { data: Array<{ task_id: string }> };
 		expect(body.data).toHaveLength(1);
-		expect(body.data[0].issue_id).toBe(issueAId);
+		expect(body.data[0].task_id).toBe(taskAId);
 
-		await db.query(`UPDATE issue_comments SET chosen_option = NULL WHERE id = $1`, [commentBId]);
+		await db.query(`UPDATE task_comments SET chosen_option = NULL WHERE id = $1`, [commentBId]);
 	});
 
 	it('returns 404 if the approval does not belong to the team', async () => {

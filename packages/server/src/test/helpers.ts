@@ -1,4 +1,7 @@
+import { waitForBackground } from '../lib/background';
+
 export async function safeClose(db: { close: () => Promise<void> }) {
+	await waitForBackground();
 	try {
 		await db.close();
 	} catch {

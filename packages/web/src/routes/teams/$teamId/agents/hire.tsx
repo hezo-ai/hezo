@@ -37,13 +37,13 @@ function HireAgentPage() {
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
 			touches_code: touchesCode,
 		});
-		if (result.issue) {
+		if (result.task) {
 			navigate({
-				to: '/teams/$teamId/projects/$projectId/issues/$issueId',
+				to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
 				params: {
 					teamId,
 					projectId: OPERATIONS_PROJECT_SLUG,
-					issueId: result.issue.identifier.toLowerCase(),
+					taskId: result.task.identifier.toLowerCase(),
 				},
 			});
 		} else if (result.agent) {

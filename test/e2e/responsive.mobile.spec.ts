@@ -18,9 +18,9 @@ test.describe('Responsive — mobile (390px)', () => {
 		await expectNoHorizontalOverflow(page);
 	});
 
-	test('issue detail metadata stacks above content', async ({ page, freshWorkspace }) => {
+	test('task detail metadata stacks above content', async ({ page, freshWorkspace }) => {
 		const { team, token, agents } = freshWorkspace;
-		const ceo = agents.find((a) => a.slug === 'ceo') ?? agents[0];
+		const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
 		const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
@@ -29,27 +29,27 @@ test.describe('Responsive — mobile (390px)', () => {
 		});
 		const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
-		const issueRes = await page.request.post(`/api/teams/${team.id}/issues`, {
+		const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 			headers,
 			data: {
 				project_id: project.id,
-				title: 'Mobile issue',
-				assignee_id: ceo.id,
+				title: 'Mobile task',
+				assignee_id: captain.id,
 				description: 'mobile description',
 			},
 		});
-		const issue = ((await issueRes.json()) as { data: { identifier: string } }).data;
+		const task = ((await taskRes.json()) as { data: { identifier: string } }).data;
 
 		await page.goto(
-			`/teams/${team.slug}/projects/${project.slug}/issues/${issue.identifier.toLowerCase()}`,
+			`/teams/${team.slug}/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`,
 		);
 		await waitForPageLoad(page);
-		await expect(page.getByRole('heading', { name: 'Mobile issue' })).toBeVisible({
+		await expect(page.getByRole('heading', { name: 'Mobile task' })).toBeVisible({
 			timeout: 20000,
 		});
 		await expectNoHorizontalOverflow(page);
 
-		const description = page.getByTestId('issue-description-card');
+		const description = page.getByTestId('task-description-card');
 		const descBox = await description.boundingBox();
 		expect(descBox).not.toBeNull();
 		if (descBox) {
@@ -57,12 +57,12 @@ test.describe('Responsive — mobile (390px)', () => {
 		}
 	});
 
-	test('create-issue dialog goes near full-screen', async ({ page, freshWorkspace }) => {
+	test('create-task dialog goes near full-screen', async ({ page, freshWorkspace }) => {
 		const { team } = freshWorkspace;
-		await page.goto(`/teams/${team.slug}/issues`);
+		await page.goto(`/teams/${team.slug}/tasks`);
 		await waitForPageLoad(page);
 
-		await page.getByTestId('issue-list-new-issue').click();
+		await page.getByTestId('task-list-new-task').click();
 		const dialog = page.getByRole('dialog');
 		await expect(dialog).toBeVisible();
 

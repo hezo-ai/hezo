@@ -35,18 +35,13 @@ Per-run, the agent runner sets these container env vars:
 ```
 HTTP_PROXY  / http_proxy   = http://host.docker.internal:<runProxyPort>
 HTTPS_PROXY / https_proxy  = http://host.docker.internal:<runProxyPort>
-NO_PROXY    / no_proxy     = host.docker.internal,localhost,127.0.0.1
+NO_PROXY    / no_proxy     = host.docker.internal,localhost,127.0.0.1,<provider-api-hosts>
 NODE_EXTRA_CA_CERTS        = /usr/local/share/ca-certificates/hezo-egress.crt
-SSL_CERT_FILE              = /usr/local/share/ca-certificates/hezo-egress.crt
-REQUESTS_CA_BUNDLE         = /usr/local/share/ca-certificates/hezo-egress.crt
 CURL_CA_BUNDLE             = /usr/local/share/ca-certificates/hezo-egress.crt
 GIT_SSL_CAINFO             = /usr/local/share/ca-certificates/hezo-egress.crt
-AWS_CA_BUNDLE              = /usr/local/share/ca-certificates/hezo-egress.crt
-PIP_CERT                   = /usr/local/share/ca-certificates/hezo-egress.crt
-NPM_CONFIG_CAFILE          = /usr/local/share/ca-certificates/hezo-egress.crt
 ```
 
-`NO_PROXY` carves out the path back to Hezo (`host.docker.internal:3100/agent-api`, `host.docker.internal:3100/mcp`) so the agent's calls into the backend bypass the proxy entirely.
+`NO_PROXY` carves out Hezo (`host.docker.internal` covers `:3100/agent-api` and `/mcp`) and the configured LLM provider API host (e.g. `api.deepseek.com`). Provider credentials are injected via env, not egress placeholders, and MITM breaks some Anthropic-compatible APIs — so LLM traffic goes direct. Do **not** set `SSL_CERT_FILE` to the egress CA alone; that replaces the system trust store. Provision runs `update-ca-certificates` so the system bundle already includes the Hezo CA for git/curl through the proxy.
 
 ## Substitution
 

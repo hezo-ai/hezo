@@ -46,7 +46,7 @@ async function seedTeamWithProject(
 	]);
 
 	const project = await db.query<{ id: string }>(
-		`INSERT INTO projects (team_id, name, slug, issue_prefix, container_id, container_status)
+		`INSERT INTO projects (team_id, name, slug, task_prefix, container_id, container_status)
 		 VALUES ($1, 'P', 'p', 'P', $2, $3::container_status) RETURNING id`,
 		[teamId, opts.container_id ?? null, opts.container_status ?? null],
 	);
@@ -227,7 +227,7 @@ describe('handleWsSubscribe', () => {
 				type: WsMessageType.RunLog,
 				projectId,
 				runId,
-				issueId: null,
+				taskId: null,
 				stream: line.stream,
 				text: line.text,
 			}),
@@ -235,7 +235,7 @@ describe('handleWsSubscribe', () => {
 				type: WsMessageType.RunLog,
 				projectId,
 				runId,
-				issueId: null,
+				taskId: null,
 				stream: 'stdout',
 				text,
 				replace: true,
@@ -253,7 +253,7 @@ describe('handleWsSubscribe', () => {
 			type: WsMessageType.RunLog,
 			projectId,
 			runId,
-			issueId: null,
+			taskId: null,
 			stream: 'stdout',
 			text: 'first\nsecond\n',
 			replace: true,

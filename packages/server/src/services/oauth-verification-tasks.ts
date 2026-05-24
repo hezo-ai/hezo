@@ -1,18 +1,18 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
-	CEO_AGENT_SLUG,
+	CAPTAIN_AGENT_SLUG,
 	CommentContentType,
-	IssuePriority,
-	IssueStatus,
 	OPERATIONS_PROJECT_SLUG,
 	type PlatformType,
-	TERMINAL_ISSUE_STATUSES,
+	TaskPriority,
+	TaskStatus,
+	TERMINAL_TASK_STATUSES,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
-import { allocateIssueIdentifier } from '../lib/issue-identifier';
+import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -22,17 +22,17 @@ const log = logger.child('oauth-verification-tasks');
 export const OAUTH_VERIFICATION_LABEL = 'oauth-verification';
 
 interface TeamContext {
-	ceoMemberId: string;
+	captainMemberId: string;
 	operationsProjectId: string;
 }
 
 async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
-	const ceo = await db.query<{ id: string }>(
+	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CEO_AGENT_SLUG],
+		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
 	const ops = await db.query<{ id: string }>(
 		`SELECT id FROM projects
@@ -40,9 +40,9 @@ async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext 
 		 LIMIT 1`,
 		[teamId, OPERATIONS_PROJECT_SLUG],
 	);
-	if (!ceo.rows[0] || !ops.rows[0]) return null;
+	if (!captain.rows[0] || !ops.rows[0]) return null;
 	return {
-		ceoMemberId: ceo.rows[0].id,
+		captainMemberId: captain.rows[0].id,
 		operationsProjectId: ops.rows[0].id,
 	};
 }
@@ -68,15 +68,15 @@ function platformDisplayName(platform: PlatformType): string {
 function buildVerificationBody(
 	platform: PlatformType,
 	metadata: Record<string, unknown>,
-	originatingIssueIdentifier: string | null,
+	originatingTaskIdentifier: string | null,
 ): string {
 	const name = platformDisplayName(platform);
 	const metadataBlock =
 		Object.keys(metadata).length > 0
 			? `\n**Connector metadata**\n\n\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\`\n`
 			: '';
-	const parentRef = originatingIssueIdentifier
-		? `\nThis ticket was created because ${originatingIssueIdentifier} requested ${name} access. When you move this ticket to **done**, the system will post a confirmation comment on ${originatingIssueIdentifier} automatically.\n`
+	const parentRef = originatingTaskIdentifier
+		? `\nThis ticket was created because ${originatingTaskIdentifier} requested ${name} access. When you move this ticket to **done**, the system will post a confirmation comment on ${originatingTaskIdentifier} automatically.\n`
 		: `\nThis ticket was opened because a human connected a ${name} account from team settings. There is no originating ticket to notify.\n`;
 
 	return `<!-- oauth-verify platform=${platform} -->
@@ -94,7 +94,7 @@ ${parentRef}${metadataBlock}
 }
 
 export interface EnqueueResult {
-	issueId: string;
+	taskId: string;
 	identifier: string;
 	created: boolean;
 }
@@ -103,36 +103,36 @@ export async function enqueueOAuthVerificationTask(
 	db: PGlite,
 	teamId: string,
 	platform: PlatformType,
-	originatingIssueId: string | null,
+	originatingTaskId: string | null,
 	metadata: Record<string, unknown>,
 	wsManager?: WebSocketManager,
 ): Promise<EnqueueResult | null> {
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) {
 		log.warn(
-			`Cannot enqueue OAuth verification task; missing CEO or Operations project for ${teamId}`,
+			`Cannot enqueue OAuth verification task; missing Captain or Operations project for ${teamId}`,
 		);
 		return null;
 	}
 
-	const terminalPlaceholders = TERMINAL_ISSUE_STATUSES.map(
-		(_, i) => `$${i + 3}::issue_status`,
-	).join(', ');
+	const terminalPlaceholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 3}::task_status`).join(
+		', ',
+	);
 	const marker = `oauth-verify platform=${platform}`;
 	const existing = await db.query<{ id: string; identifier: string }>(
-		`SELECT id, identifier FROM issues
+		`SELECT id, identifier FROM tasks
 		 WHERE team_id = $1
 		   AND labels @> $2::jsonb
 		   AND status NOT IN (${terminalPlaceholders})
 		   AND description LIKE '%${marker}%'
 		 LIMIT 1`,
-		[teamId, JSON.stringify([OAUTH_VERIFICATION_LABEL]), ...TERMINAL_ISSUE_STATUSES],
+		[teamId, JSON.stringify([OAUTH_VERIFICATION_LABEL]), ...TERMINAL_TASK_STATUSES],
 	);
 
 	if (existing.rows[0]) {
 		const existingId = existing.rows[0].id;
 		await db.query(
-			`INSERT INTO issue_comments (issue_id, content_type, content)
+			`INSERT INTO task_comments (task_id, content_type, content)
 			 VALUES ($1, $2::comment_content_type, $3::jsonb)`,
 			[
 				existingId,
@@ -143,27 +143,27 @@ export async function enqueueOAuthVerificationTask(
 			],
 		);
 		try {
-			await createWakeup(db, ctx.ceoMemberId, teamId, WakeupSource.Comment, {
-				issue_id: existingId,
+			await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Comment, {
+				task_id: existingId,
 			});
 		} catch (e) {
-			log.error('Failed to wake CEO for repeat OAuth verification:', e);
+			log.error('Failed to wake Captain for repeat OAuth verification:', e);
 		}
-		return { issueId: existingId, identifier: existing.rows[0].identifier, created: false };
+		return { taskId: existingId, identifier: existing.rows[0].identifier, created: false };
 	}
 
 	let parentIdentifier: string | null = null;
-	if (originatingIssueId) {
+	if (originatingTaskId) {
 		const parent = await db.query<{ identifier: string; team_id: string }>(
-			'SELECT identifier, team_id FROM issues WHERE id = $1',
-			[originatingIssueId],
+			'SELECT identifier, team_id FROM tasks WHERE id = $1',
+			[originatingTaskId],
 		);
 		if (parent.rows[0] && parent.rows[0].team_id === teamId) {
 			parentIdentifier = parent.rows[0].identifier;
 		}
 	}
 
-	const { number: issueNumber, identifier } = await allocateIssueIdentifier(
+	const { number: taskNumber, identifier } = await allocateTaskIdentifier(
 		db,
 		ctx.operationsProjectId,
 	);
@@ -172,38 +172,38 @@ export async function enqueueOAuthVerificationTask(
 	const description = buildVerificationBody(platform, metadata, parentIdentifier);
 
 	const insertResult = await db.query<Record<string, unknown>>(
-		`INSERT INTO issues (team_id, project_id, assignee_id, parent_issue_id, number, identifier,
+		`INSERT INTO tasks (team_id, project_id, assignee_id, parent_task_id, number, identifier,
 		                     title, description, status, priority, labels)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::issue_status, $10::issue_priority, $11::jsonb)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::task_status, $10::task_priority, $11::jsonb)
 		 RETURNING *`,
 		[
 			teamId,
 			ctx.operationsProjectId,
-			ctx.ceoMemberId,
-			parentIdentifier ? originatingIssueId : null,
-			issueNumber,
+			ctx.captainMemberId,
+			parentIdentifier ? originatingTaskId : null,
+			taskNumber,
 			identifier,
 			title,
 			description,
-			IssueStatus.Backlog,
-			IssuePriority.High,
+			TaskStatus.Backlog,
+			TaskPriority.High,
 			JSON.stringify(['internal', OAUTH_VERIFICATION_LABEL]),
 		],
 	);
-	const issue = insertResult.rows[0];
-	const issueId = issue.id as string;
+	const task = insertResult.rows[0];
+	const taskId = task.id as string;
 
 	if (wsManager) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'issues', 'INSERT', issue);
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', task);
 	}
 
 	try {
-		await createWakeup(db, ctx.ceoMemberId, teamId, WakeupSource.Assignment, {
-			issue_id: issueId,
+		await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Assignment, {
+			task_id: taskId,
 		});
 	} catch (e) {
-		log.error('Failed to wake CEO for OAuth verification task:', e);
+		log.error('Failed to wake Captain for OAuth verification task:', e);
 	}
 
-	return { issueId, identifier, created: true };
+	return { taskId, identifier, created: true };
 }

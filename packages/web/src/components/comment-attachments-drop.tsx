@@ -18,7 +18,7 @@ import { InfoTooltip } from './ui/info-tooltip';
 
 interface Props {
 	teamId: string;
-	issueId: string;
+	taskId: string;
 	value: string[];
 	onChange: (ids: string[]) => void;
 	children: ReactNode;
@@ -45,13 +45,13 @@ function iconFor(contentType: string, className = 'h-3.5 w-3.5') {
 	return <FileIcon className={className} />;
 }
 
-export function CommentAttachmentsDrop({ teamId, issueId, value, onChange, children }: Props) {
+export function CommentAttachmentsDrop({ teamId, taskId, value, onChange, children }: Props) {
 	const [isDragActive, setIsDragActive] = useState(false);
 	const dragDepth = useRef(0);
 	const [metaById, setMetaById] = useState<Map<string, CommentAttachment>>(new Map());
 	const [uploading, setUploading] = useState<UploadingFile[]>([]);
 	const [errors, setErrors] = useState<ErrorChip[]>([]);
-	const upload = useUploadAttachment(teamId, issueId);
+	const upload = useUploadAttachment(teamId, taskId);
 
 	const visibleAttachments = useMemo(
 		() => value.map((id) => metaById.get(id)).filter((a): a is CommentAttachment => Boolean(a)),
