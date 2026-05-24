@@ -78,6 +78,17 @@ test('status changes and cross-task mentions appear as system entries on the tim
 		)
 		.toBe(true);
 
+	// The status_change row is at the end of the chronological list. The page's
+	// Virtuoso instance only mounts items in the viewport range, so scroll the
+	// scroll container down before asserting — otherwise the entry is in the
+	// query cache but never hits the DOM and toBeVisible fails.
+	await page
+		.locator('main')
+		.first()
+		.evaluate((el) => {
+			el.scrollTo({ top: el.scrollHeight });
+		});
+
 	await expect(
 		page.locator('[data-testid="comment-item"]').filter({ hasText: /changed status/i }),
 	).toBeVisible({ timeout: 15000 });
