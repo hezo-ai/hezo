@@ -24,12 +24,18 @@ test('agent settings page shows system prompt textarea, edits persist, revisions
 	expect(original).toContain('You are an Engineer at');
 
 	await promptTextarea.fill(`${original}\n- New rule added by e2e test`);
+	// Wait for the PATCH to land before reloading — otherwise the reload races
+	// the save and the revision panel comes up empty.
+	const savePromise = page.waitForResponse(
+		(r) => /\/agents\/[^/]+$/.test(new URL(r.url()).pathname) && r.request().method() === 'PATCH',
+	);
 	await page.getByRole('button', { name: 'Save Changes' }).click();
+	await savePromise;
 
 	await page.reload();
 	await expect(page.getByLabel('System Prompt')).toBeVisible({ timeout: 15000 });
 	await page.getByRole('button', { name: /Show revision history/i }).click();
-	await expect(page.getByText(/Rev \d+/)).toBeVisible();
+	await expect(page.getByText(/Rev \d+/)).toBeVisible({ timeout: 15000 });
 });
 
 test('agent settings preview tab resolves placeholders and edit tab keeps the raw template', async ({

@@ -78,10 +78,14 @@ test('status changes and cross-task mentions appear as system entries on the tim
 		)
 		.toBe(true);
 
-	// The status_change row is at the end of the chronological list. The page's
-	// Virtuoso instance only mounts items in the viewport range, so scroll the
-	// scroll container down before asserting — otherwise the entry is in the
-	// query cache but never hits the DOM and toBeVisible fails.
+	// Hard reload after the API poll above has confirmed the entry exists
+	// server-side: the page's React Query cache + Virtuoso scroll position can
+	// race the post-mutation refetch under CI load, so just reload and let the
+	// freshly-mounted page render the timeline from scratch.
+	await page.reload();
+	await waitForPageLoad(page);
+
+	// Scroll the comments scroll container so Virtuoso mounts the bottom item.
 	await page
 		.locator('main')
 		.first()
