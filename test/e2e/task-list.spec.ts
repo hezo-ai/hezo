@@ -201,6 +201,13 @@ test.describe('Task list — filtering', () => {
 });
 
 test.describe('Task list — running indicator', () => {
+	test.afterEach(async ({ page }) => {
+		// Background re-fetches can still be in flight when the test ends. Unroute
+		// with ignoreErrors so a closing page doesn't surface as a route.fetch
+		// failure.
+		await page.unrouteAll({ behavior: 'ignoreErrors' });
+	});
+
 	test('running dot is hidden by default and shown when has_active_run is true', async ({
 		page,
 		freshWorkspace,

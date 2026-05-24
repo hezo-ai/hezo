@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	clickAndWaitForResponse,
+	createTeamWithAgents,
+	waitForPageLoad,
+} from './helpers';
 
 test('board member can close and re-open an task via themed modal', async ({ page }) => {
 	await authenticate(page);
@@ -21,7 +26,7 @@ test('board member can close and re-open an task via themed modal', async ({ pag
 		headers,
 		data: { project_id: project.id, title: 'Closable Task', assignee_id: agent.id },
 	});
-	const task = ((await taskRes.json()) as { data: { identifier: string } }).data;
+	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
 
 	await page.goto(
 		`/teams/${team.slug}/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`,
@@ -36,7 +41,15 @@ test('board member can close and re-open an task via themed modal', async ({ pag
 	await expect(dialog).toBeVisible();
 	await expect(dialog.getByText('Close this task?')).toBeVisible();
 
-	await page.getByTestId('confirm-dialog-confirm').click();
+	const closeMatcher = (url: URL, method: string) =>
+		method === 'PATCH' && /\/api\/teams\/[^/]+\/tasks\/[^/]+$/.test(url.pathname);
+
+	const closeResponse = await clickAndWaitForResponse(
+		page,
+		page.getByTestId('confirm-dialog-confirm'),
+		closeMatcher,
+	);
+	expect(closeResponse.ok()).toBe(true);
 	await expect(dialog).toBeHidden();
 
 	await expect(page.getByTestId('task-reopen-button')).toBeVisible({ timeout: 20000 });
@@ -46,7 +59,12 @@ test('board member can close and re-open an task via themed modal', async ({ pag
 	await expect(page.getByTestId('confirm-dialog')).toBeVisible();
 	await expect(page.getByText('Re-open this task?')).toBeVisible();
 
-	await page.getByTestId('confirm-dialog-confirm').click();
+	const reopenResponse = await clickAndWaitForResponse(
+		page,
+		page.getByTestId('confirm-dialog-confirm'),
+		closeMatcher,
+	);
+	expect(reopenResponse.ok()).toBe(true);
 	await expect(page.getByTestId('confirm-dialog')).toBeHidden();
 
 	await expect(page.getByTestId('task-close-button')).toBeVisible({ timeout: 20000 });

@@ -1,5 +1,10 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	clickAndWaitForResponse,
+	createTeamWithAgents,
+	waitForPageLoad,
+} from './helpers';
 
 interface SeededTask {
 	team: { id: string; slug: string };
@@ -56,7 +61,12 @@ test.describe('Comment reactions', () => {
 		await addButton.click();
 		const picker = page.getByTestId('reaction-picker');
 		await expect(picker).toBeVisible();
-		await picker.locator('[data-reaction-kind="ack"]').click();
+		const addResponse = await clickAndWaitForResponse(
+			page,
+			picker.locator('[data-reaction-kind="ack"]'),
+			(url, method) => method === 'PUT' && /\/reactions\/ack$/.test(url.pathname),
+		);
+		expect(addResponse.ok()).toBe(true);
 
 		const chip = page
 			.getByTestId('comment-reactions')
@@ -66,7 +76,12 @@ test.describe('Comment reactions', () => {
 		await expect(chip).toHaveAttribute('data-you-reacted', 'true');
 		await expect(chip).toContainText('1');
 
-		await chip.click();
+		const removeResponse = await clickAndWaitForResponse(
+			page,
+			chip,
+			(url, method) => method === 'DELETE' && /\/reactions\/ack$/.test(url.pathname),
+		);
+		expect(removeResponse.ok()).toBe(true);
 		await expect(
 			page.getByTestId('comment-reactions').locator('[data-reaction-kind="ack"]'),
 		).toHaveCount(0, { timeout: 25_000 });
@@ -97,18 +112,26 @@ test.describe('Comment reactions', () => {
 		await authenticate(page);
 		const { team, taskId, commentId, headers } = await seedTaskWithComment(page);
 
-		// Pre-snapshot
+		await page.goto(`/teams/${team.slug}/tasks/${taskId}`);
+		await waitForPageLoad(page);
+
+		const addButton = page.getByTestId('add-reaction-button').first();
+		await expect(addButton).toBeVisible({ timeout: 20_000 });
+
+		// Snapshot AFTER the page has loaded — onboarding/assignment side-effects
+		// can land as additional comments between team creation and navigation.
 		const before = await page.request.get(`/api/teams/${team.id}/tasks/${taskId}/comments`, {
 			headers,
 		});
 		expect(before.status()).toBe(200);
 
-		await page.goto(`/teams/${team.slug}/tasks/${taskId}`);
-		await waitForPageLoad(page);
-
-		const addButton = page.getByTestId('add-reaction-button').first();
 		await addButton.click();
-		await page.getByTestId('reaction-picker').locator('[data-reaction-kind="ack"]').click();
+		const addResponse = await clickAndWaitForResponse(
+			page,
+			page.getByTestId('reaction-picker').locator('[data-reaction-kind="ack"]'),
+			(url, method) => method === 'PUT' && /\/reactions\/ack$/.test(url.pathname),
+		);
+		expect(addResponse.ok()).toBe(true);
 
 		const chip = page
 			.getByTestId('comment-reactions')

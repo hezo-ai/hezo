@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { dismissAiProviderModal, waitForPageLoad } from './helpers';
+import { clickAndWaitForResponse, dismissAiProviderModal, waitForPageLoad } from './helpers';
 
 type Page = import('@playwright/test').Page;
 
@@ -100,9 +100,13 @@ for (const viewport of [
 		const runTimeoutInput = page.getByLabel('Run timeout (min)');
 		await expect(runTimeoutInput).toBeVisible({ timeout: 15000 });
 		await runTimeoutInput.fill('23');
-		await page.getByRole('button', { name: 'Save Changes' }).click();
+		const saveResponse = await clickAndWaitForResponse(
+			page,
+			page.getByRole('button', { name: 'Save Changes' }),
+			(url, method) => method === 'PATCH' && /\/agents\/[^/]+$/.test(url.pathname),
+		);
+		expect(saveResponse.ok()).toBe(true);
 
-		await page.waitForTimeout(500);
 		await page.reload();
 		await expect(page.getByLabel('Run timeout (min)')).toHaveValue('23', { timeout: 15000 });
 		await expect(page.getByLabel('Heartbeat (min)')).toHaveValue(String(originalHeartbeat), {
@@ -132,7 +136,12 @@ test('agent settings tab edits the title and persists across reload', async ({
 	const titleInput = page.getByLabel('Title');
 	await expect(titleInput).toBeVisible({ timeout: 15000 });
 	await titleInput.fill(`${agent.title} Updated`);
-	await page.getByRole('button', { name: 'Save Changes' }).click();
+	const saveResponse = await clickAndWaitForResponse(
+		page,
+		page.getByRole('button', { name: 'Save Changes' }),
+		(url, method) => method === 'PATCH' && /\/agents\/[^/]+$/.test(url.pathname),
+	);
+	expect(saveResponse.ok()).toBe(true);
 
 	await expect(page.getByText(`${agent.title} Updated`).first()).toBeVisible({ timeout: 15000 });
 });

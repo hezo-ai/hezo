@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	clickAndWaitForResponse,
+	createTeamWithAgents,
+	waitForPageLoad,
+} from './helpers';
 
 test('status changes and cross-task mentions appear as system entries on the timeline', async ({
 	page,
@@ -38,7 +43,12 @@ test('status changes and cross-task mentions appear as system entries on the tim
 	const closeButton = page.getByTestId('task-close-button');
 	await expect(closeButton).toBeVisible({ timeout: 20000 });
 	await closeButton.click();
-	await page.getByTestId('confirm-dialog-confirm').click();
+	const closeResponse = await clickAndWaitForResponse(
+		page,
+		page.getByTestId('confirm-dialog-confirm'),
+		(url, method) => method === 'PATCH' && /\/api\/teams\/[^/]+\/tasks\/[^/]+$/.test(url.pathname),
+	);
+	expect(closeResponse.ok()).toBe(true);
 
 	await expect(page.getByTestId('task-reopen-button')).toBeVisible({ timeout: 20000 });
 

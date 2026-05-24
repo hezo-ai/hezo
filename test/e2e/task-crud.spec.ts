@@ -1,5 +1,11 @@
 import { expect, type Page, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents, getToken, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	clickAndWaitForResponse,
+	createTeamWithAgents,
+	getToken,
+	waitForPageLoad,
+} from './helpers';
 
 async function suppressAiModal(page: Page) {
 	await page.route('**/ai-providers/status', (route) =>
@@ -302,18 +308,29 @@ test('can edit task rules and progress summary', async ({ page }) => {
 		timeout: 20000,
 	});
 
-	// Edit rules
+	const taskPatchMatcher = (url: URL, method: string) =>
+		method === 'PATCH' && /\/api\/teams\/[^/]+\/tasks\/[^/]+$/.test(url.pathname);
+
 	const rulesSection = page.getByTestId('pinned-rules');
 	await rulesSection.getByText('Edit').click();
 	await rulesSection.locator('textarea').fill('Consult architect before changes');
-	await rulesSection.getByRole('button', { name: 'Save' }).click();
+	const rulesResponse = await clickAndWaitForResponse(
+		page,
+		rulesSection.getByRole('button', { name: 'Save' }),
+		taskPatchMatcher,
+	);
+	expect(rulesResponse.ok()).toBe(true);
 	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 15000 });
 
-	// Edit progress summary
 	const summarySection = page.getByTestId('pinned-progress-summary');
 	await summarySection.getByText('Edit').click();
 	await summarySection.locator('textarea').fill('Implementation started');
-	await summarySection.getByRole('button', { name: 'Save' }).click();
+	const summaryResponse = await clickAndWaitForResponse(
+		page,
+		summarySection.getByRole('button', { name: 'Save' }),
+		taskPatchMatcher,
+	);
+	expect(summaryResponse.ok()).toBe(true);
 	await expect(page.getByText('Implementation started')).toBeVisible({ timeout: 15000 });
 
 	// Verify persistence after reload
@@ -357,6 +374,9 @@ test('task rules and progress summary render markdown formatting', async ({ page
 		timeout: 20000,
 	});
 
+	const taskPatchMatcher = (url: URL, method: string) =>
+		method === 'PATCH' && /\/api\/teams\/[^/]+\/tasks\/[^/]+$/.test(url.pathname);
+
 	const pinnedRules = page.getByTestId('pinned-rules');
 	await pinnedRules.getByText('Edit').click();
 	await pinnedRules
@@ -364,7 +384,12 @@ test('task rules and progress summary render markdown formatting', async ({ page
 		.fill(
 			'Use **bold** guidance.\n\n- first bullet\n- second bullet\n\nRun `bun test` before merge.',
 		);
-	await pinnedRules.getByRole('button', { name: 'Save' }).click();
+	const rulesResponse = await clickAndWaitForResponse(
+		page,
+		pinnedRules.getByRole('button', { name: 'Save' }),
+		taskPatchMatcher,
+	);
+	expect(rulesResponse.ok()).toBe(true);
 
 	await expect(pinnedRules.locator('strong', { hasText: 'bold' })).toBeVisible({ timeout: 15000 });
 	await expect(pinnedRules.locator('ul li', { hasText: 'first bullet' })).toBeVisible();
@@ -376,7 +401,12 @@ test('task rules and progress summary render markdown formatting', async ({ page
 	await summarySection
 		.locator('textarea')
 		.fill('1. Scaffolded routes\n2. Wired up DB\n3. Added tests');
-	await summarySection.getByRole('button', { name: 'Save' }).click();
+	const summaryResponse = await clickAndWaitForResponse(
+		page,
+		summarySection.getByRole('button', { name: 'Save' }),
+		taskPatchMatcher,
+	);
+	expect(summaryResponse.ok()).toBe(true);
 
 	const pinnedSummary = page.getByTestId('pinned-progress-summary');
 	await expect(pinnedSummary.locator('ol li', { hasText: 'Scaffolded routes' })).toBeVisible({
@@ -472,10 +502,13 @@ test('can change assignee via popover dropdown', async ({ page }) => {
 	await expect(dropdown).toBeVisible();
 	await expect(dropdown.getByText(agent2.title)).toBeVisible();
 
-	// Select a different agent
-	await dropdown.locator('button', { hasText: agent2.title }).click();
+	const assigneeResponse = await clickAndWaitForResponse(
+		page,
+		dropdown.locator('button', { hasText: agent2.title }),
+		(url, method) => method === 'PATCH' && /\/api\/teams\/[^/]+\/tasks\/[^/]+$/.test(url.pathname),
+	);
+	expect(assigneeResponse.ok()).toBe(true);
 
-	// Dropdown should close and new assignee should be shown
 	await expect(dropdown).toBeHidden();
 	await expect(sidebar.getByText(agent2.title)).toBeVisible({ timeout: 20000 });
 });

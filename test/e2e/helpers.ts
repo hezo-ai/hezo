@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page, type Response } from '@playwright/test';
 
 const TEST_MASTER_KEY = 'e2e-test-master-key-0123456789abcdef0123456789abcdef';
 
@@ -263,6 +263,35 @@ export async function dismissAiProviderModal(page: Page) {
 
 export async function waitForPageLoad(page: Page, timeout = 15000) {
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout });
+}
+
+/**
+ * Click a button/locator and wait for a matching network response in the same step.
+ * Avoids the race where `await locator.click()` resolves before the React mutation
+ * fires its API call — under CI load, follow-up assertions can run before the save
+ * has actually been persisted.
+ */
+export async function clickAndWaitForResponse(
+	page: Page,
+	locator: Locator,
+	match: (url: URL, method: string) => boolean,
+	options: { timeout?: number } = {},
+): Promise<Response> {
+	const timeout = options.timeout ?? 30_000;
+	const [response] = await Promise.all([
+		page.waitForResponse(
+			(r) => {
+				try {
+					return match(new URL(r.url()), r.request().method());
+				} catch {
+					return false;
+				}
+			},
+			{ timeout },
+		),
+		locator.click(),
+	]);
+	return response;
 }
 
 export { TEST_MASTER_KEY };
