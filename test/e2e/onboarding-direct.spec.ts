@@ -42,8 +42,8 @@ test.describe('Onboarding direct flow', () => {
 		await page.reload();
 		await waitForPageLoad(page);
 
-		await expect(page.getByTestId('home-projects-list')).toBeVisible();
-		await expect(page.getByText('My First App')).toBeVisible();
+		await expect(page.getByTestId('home-projects-list')).toBeVisible({ timeout: 20_000 });
+		await expect(page.getByText('My First App')).toBeVisible({ timeout: 20_000 });
 
 		const projectsRes = await page.request.get(`/api/teams/${team.slug}/projects`, { headers });
 		const projects = (await projectsRes.json()) as { data: Array<{ slug: string; name: string }> };

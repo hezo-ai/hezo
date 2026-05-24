@@ -92,6 +92,20 @@ export interface ReactionMutationResponse {
 	reactions: ReactionGroup[];
 }
 
+function applyReactionResponse(teamId: string, taskId: string, updated: ReactionMutationResponse) {
+	const key = ['teams', teamId, 'tasks', taskId, 'comments'];
+	queryClient.setQueryData<Comment[] | undefined>(key, (current) => {
+		if (!current) return current;
+		let changed = false;
+		const next = current.map((c) => {
+			if (c.id !== updated.comment_id) return c;
+			changed = true;
+			return { ...c, reactions: updated.reactions };
+		});
+		return changed ? next : current;
+	});
+}
+
 export function useAddReaction(teamId: string, taskId: string) {
 	return useMutation({
 		mutationFn: ({ commentId, kind }: { commentId: string; kind: string }) =>
@@ -99,10 +113,7 @@ export function useAddReaction(teamId: string, taskId: string) {
 				`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${kind}`,
 				{},
 			),
-		onSuccess: () =>
-			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
-			}),
+		onSuccess: (updated) => applyReactionResponse(teamId, taskId, updated),
 	});
 }
 
@@ -112,10 +123,7 @@ export function useRemoveReaction(teamId: string, taskId: string) {
 			api.delete<ReactionMutationResponse>(
 				`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${kind}`,
 			),
-		onSuccess: () =>
-			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
-			}),
+		onSuccess: (updated) => applyReactionResponse(teamId, taskId, updated),
 	});
 }
 

@@ -116,9 +116,15 @@ export function useUpdateTask(teamId: string, taskId: string) {
 			progress_summary?: string | null;
 			rules?: string | null;
 		}) => api.patch<Task>(`/api/teams/${teamId}/tasks/${taskId}`, data),
-		onSuccess: () => {
+		onSuccess: (updated) => {
+			// Merge the PATCH response into the cache so the UI reflects the change
+			// immediately, without waiting for a refetch round-trip. The PATCH returns
+			// only the bare tasks row, so derived join fields (assignee_name,
+			// project_name, …) must be preserved from the existing cache entry.
+			queryClient.setQueryData<Task | undefined>(['teams', teamId, 'tasks', taskId], (current) =>
+				current ? { ...current, ...updated } : current,
+			);
 			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'tasks'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'tasks', taskId] });
 		},
 	});
 }
