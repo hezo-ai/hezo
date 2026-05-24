@@ -265,16 +265,121 @@ export async function waitForPageLoad(page: Page, timeout = 15000) {
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout });
 }
 
+export type HttpMethod = 'GET' | 'PATCH' | 'POST' | 'DELETE' | 'PUT';
+
+export type ResponseMatcher = (url: URL, method: string) => boolean;
+
+function escapeRegex(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
- * Click a button/locator and wait for a matching network response in the same step.
- * Avoids the race where `await locator.click()` resolves before the React mutation
- * fires its API call — under CI load, follow-up assertions can run before the save
- * has actually been persisted.
+ * Matcher for `/api/teams/<teamId>/tasks[/<taskId>[/<subResource>...]]`.
+ * `teamId` is the team slug, `taskId` is the lowercase task identifier
+ * (e.g. `rp-1`) — the value the route param holds, not the UUID. Captain's
+ * background planning-task PATCHes hit the same URL shape, so always pass
+ * `taskId` to keep the matcher to *this* test's task.
+ */
+export function taskMatcher(opts: {
+	teamId: string;
+	taskId?: string;
+	subResource?: string;
+	method?: HttpMethod;
+}): ResponseMatcher {
+	const teamSeg = escapeRegex(opts.teamId);
+	const taskSeg = opts.taskId ? escapeRegex(opts.taskId) : '[^/]+';
+	let pattern: RegExp;
+	if (opts.subResource) {
+		const sub = escapeRegex(opts.subResource);
+		pattern = new RegExp(`^/api/teams/${teamSeg}/tasks/${taskSeg}/${sub}(?:/[^/]+)*$`);
+	} else if (opts.taskId) {
+		pattern = new RegExp(`^/api/teams/${teamSeg}/tasks/${taskSeg}$`);
+	} else {
+		pattern = new RegExp(`^/api/teams/${teamSeg}/tasks(?:\\?.*)?$`);
+	}
+	return (url, m) => (!opts.method || m === opts.method) && pattern.test(url.pathname);
+}
+
+/**
+ * Matcher for `/api/teams/<teamId>[/<resource>[/...]]`. Use for non-task
+ * team-scoped resources (projects, comments, etc.).
+ */
+export function teamMatcher(opts: {
+	teamId: string;
+	resource?: string;
+	method?: HttpMethod;
+}): ResponseMatcher {
+	const teamSeg = escapeRegex(opts.teamId);
+	const pattern = opts.resource
+		? new RegExp(`^/api/teams/${teamSeg}/${escapeRegex(opts.resource)}(?:/.*)?$`)
+		: new RegExp(`^/api/teams/${teamSeg}(?:/.*)?$`);
+	return (url, m) => (!opts.method || m === opts.method) && pattern.test(url.pathname);
+}
+
+/**
+ * Matcher for `/api/teams/<teamId>/agents[/<agentId>]`. `agentId` is the
+ * agent UUID (the agent route doesn't slugify).
+ */
+export function agentMatcher(opts: {
+	teamId: string;
+	agentId?: string;
+	method?: HttpMethod;
+}): ResponseMatcher {
+	const teamSeg = escapeRegex(opts.teamId);
+	const pattern = opts.agentId
+		? new RegExp(`^/api/teams/${teamSeg}/agents/${escapeRegex(opts.agentId)}$`)
+		: new RegExp(`^/api/teams/${teamSeg}/agents(?:\\?.*)?$`);
+	return (url, m) => (!opts.method || m === opts.method) && pattern.test(url.pathname);
+}
+
+/**
+ * Click a save/confirm button and wait for both the mutation and the
+ * follow-up refetch GET that React Query's onSuccess invalidation triggers.
+ * Returns only when the UI is guaranteed to have refreshed with the new data
+ * — clicking and waiting only for the mutation leaves a window where the
+ * PATCH has landed but the component hasn't re-rendered yet, and the next
+ * `expect(text).toBeVisible()` races that window.
+ *
+ * Both matchers should be scoped to the test's exact slug+id+method so
+ * Captain's background traffic can't satisfy either.
+ */
+export async function saveAndWaitForRefetch(
+	page: Page,
+	locator: Locator,
+	options: {
+		mutation: ResponseMatcher;
+		refetch: ResponseMatcher;
+		timeout?: number;
+	},
+): Promise<{ mutation: Response; refetch: Response }> {
+	const timeout = options.timeout ?? 30_000;
+	const wait = (match: ResponseMatcher) =>
+		page.waitForResponse(
+			(r) => {
+				try {
+					return match(new URL(r.url()), r.request().method());
+				} catch {
+					return false;
+				}
+			},
+			{ timeout },
+		);
+	const mutationPromise = wait(options.mutation);
+	const refetchPromise = wait(options.refetch);
+	await locator.click();
+	const [mutation, refetch] = await Promise.all([mutationPromise, refetchPromise]);
+	return { mutation, refetch };
+}
+
+/**
+ * @deprecated Prefer `saveAndWaitForRefetch` with `taskMatcher` / `teamMatcher` /
+ * `agentMatcher` — the loose-regex pattern matches background traffic and
+ * the mutation-only wait races React Query's refetch.
  */
 export async function clickAndWaitForResponse(
 	page: Page,
 	locator: Locator,
-	match: (url: URL, method: string) => boolean,
+	match: ResponseMatcher,
 	options: { timeout?: number } = {},
 ): Promise<Response> {
 	const timeout = options.timeout ?? 30_000;
