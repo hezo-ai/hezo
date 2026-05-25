@@ -22,6 +22,7 @@ export interface OnboardingDirectInput {
 	templateId: string;
 	projectName: string;
 	projectDescription?: string;
+	initialPrd?: string;
 	dataDir: string;
 	wsManager?: WebSocketManager;
 	docker: DockerClient;
@@ -128,6 +129,7 @@ export async function runOnboardingDirect(
 		slug: projectSlug,
 		taskPrefix: prefixResult.prefix,
 		description: input.projectDescription?.trim() ?? '',
+		initialPrd: input.initialPrd?.trim() || null,
 	});
 
 	broadcastRowChange(input.wsManager, wsRoom.team(input.teamId), 'projects', 'INSERT', project);

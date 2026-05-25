@@ -2,6 +2,7 @@ import { ArrowLeft, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useOnboardingDirect } from '../../hooks/use-onboarding-direct';
 import { type TeamTemplate, useTeamTemplates } from '../../hooks/use-team-templates';
+import { PrdUpload } from '../prd-upload';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { Input } from '../ui/input';
@@ -18,6 +19,8 @@ export function DirectFlow({ teamId, onCancel, onDone }: DirectFlowProps) {
 	const [selected, setSelected] = useState<TeamTemplate | null>(null);
 	const [projectName, setProjectName] = useState('');
 	const [projectDescription, setProjectDescription] = useState('');
+	const [initialPrd, setInitialPrd] = useState('');
+	const [prdFilename, setPrdFilename] = useState<string | null>(null);
 	const directOnboarding = useOnboardingDirect(teamId);
 
 	async function handleConfirm(e: React.FormEvent) {
@@ -27,6 +30,7 @@ export function DirectFlow({ teamId, onCancel, onDone }: DirectFlowProps) {
 			template_id: selected.id,
 			project_name: projectName.trim(),
 			project_description: projectDescription.trim() || undefined,
+			initial_prd: initialPrd.trim() || undefined,
 		});
 		onDone();
 	}
@@ -113,7 +117,7 @@ export function DirectFlow({ teamId, onCancel, onDone }: DirectFlowProps) {
 				)}
 			</Card>
 
-			<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+			<div className="flex flex-col gap-3">
 				<Input
 					label="Project name"
 					value={projectName}
@@ -127,6 +131,14 @@ export function DirectFlow({ teamId, onCancel, onDone }: DirectFlowProps) {
 					onChange={(e) => setProjectDescription(e.target.value)}
 					placeholder="A short description for the team to work from"
 					rows={3}
+				/>
+				<PrdUpload
+					value={initialPrd}
+					filename={prdFilename}
+					onChange={(value, filename) => {
+						setInitialPrd(value);
+						setPrdFilename(filename);
+					}}
 				/>
 			</div>
 
