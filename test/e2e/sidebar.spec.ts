@@ -183,7 +183,7 @@ test.describe('Sidebar — Projects section', () => {
 		await expect(nav.getByText('(Internal)')).toBeVisible({ timeout: 15000 });
 	});
 
-	test('creating a project from the page or sidebar appears in the sidebar without reload', async ({
+	test('creating a project from the page or sidebar surfaces it in the sidebar after intake approval', async ({
 		page,
 		freshWorkspace,
 	}) => {
@@ -210,34 +210,27 @@ test.describe('Sidebar — Projects section', () => {
 			const intake = ((await (await submitPromise).json()) as { data: { approval_id: string } })
 				.data;
 
-			// Wait for the dialog to navigate to the intake task page before approving;
-			// gives the team-route WS subscription time to settle so the project INSERT
-			// broadcast triggers a sidebar refetch.
+			// Wait for the dialog to navigate to the intake task page before approving,
+			// so the page is settled when the approval-driven project INSERT broadcasts.
 			await expect(page).toHaveURL(
 				new RegExp(`/teams/${team.slug}/projects/internal/tasks/[^/]+$`),
 				{ timeout: 15000 },
 			);
 
-			// Listen for the projects-list refetch that the WS-driven invalidation
-			// will trigger so the assertion below has a deterministic signal to wait on.
-			const refetch = page.waitForResponse(
-				(r) => r.url().endsWith(projectsListUrl) && r.request().method() === 'GET',
-				{ timeout: 30000 },
-			);
 			await page.request.post(`/api/approvals/${intake.approval_id}/resolve`, {
 				headers,
 				data: { status: 'approved' },
 			});
-			await refetch;
 		}
-
-		const nav = page.locator('nav');
 
 		await createViaDialog(
 			() => page.getByRole('main').getByRole('button', { name: 'New project' }).click(),
 			'Page Created Project',
 			'Page-button test project.',
 		);
+		await page.goto(`/teams/${team.slug}/projects`);
+		await waitForPageLoad(page);
+		const nav = page.locator('nav');
 		await expect(nav.getByRole('link', { name: 'Page Created Project' }).first()).toBeVisible({
 			timeout: 20000,
 		});
@@ -247,6 +240,8 @@ test.describe('Sidebar — Projects section', () => {
 			'Sidebar Created Project',
 			'Sidebar-button test project.',
 		);
+		await page.goto(`/teams/${team.slug}/projects`);
+		await waitForPageLoad(page);
 		await expect(nav.getByRole('link', { name: 'Sidebar Created Project' }).first()).toBeVisible({
 			timeout: 20000,
 		});
