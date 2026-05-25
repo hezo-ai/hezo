@@ -47,7 +47,7 @@ export function useProjects(teamId: string) {
 
 export type ProjectWithTeam = Project & { teamSlug: string; teamName: string };
 
-/** User-facing projects across all teams (excludes internal e.g. Operations). */
+/** User-facing projects across all teams (excludes internal projects). */
 export function useAllVisibleProjects(teams: Team[] | undefined) {
 	const queries = useQueries({
 		queries: (teams ?? []).map((team) => ({
@@ -81,6 +81,13 @@ export function useProject(teamId: string, projectId: string, options?: { enable
 	});
 }
 
+export interface ProjectIntakeResponse {
+	intake_task_id: string;
+	intake_task_identifier: string;
+	project_slug: string;
+	approval_id: string;
+}
+
 export function useCreateProject(teamId: string) {
 	return useMutation({
 		mutationFn: (data: {
@@ -88,8 +95,13 @@ export function useCreateProject(teamId: string) {
 			description: string;
 			initial_prd?: string;
 			task_prefix?: string;
-		}) => api.post<Project>(`/api/teams/${teamId}/projects`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] }),
+		}) => api.post<ProjectIntakeResponse>(`/api/teams/${teamId}/projects`, data),
+		onSuccess: (data) => {
+			queryClient.invalidateQueries({
+				queryKey: ['teams', teamId, 'projects', data.project_slug, 'tasks'],
+			});
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'approvals'] });
+		},
 	});
 }
 

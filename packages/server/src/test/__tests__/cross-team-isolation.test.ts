@@ -5,7 +5,7 @@ import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import { signBoardJwt } from '../../middleware/auth';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -70,10 +70,9 @@ beforeAll(async () => {
 	({ token: agentBToken } = await mintAgentToken(db, masterKeyManager, agentBId, teamBId));
 
 	// Create project in Team A
-	const projectRes = await app.request(`/api/teams/${teamAId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Alpha Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, teamAId, {
+		name: 'Alpha Project',
+		description: 'Test project.',
 	});
 	projectAId = (await projectRes.json()).data.id;
 

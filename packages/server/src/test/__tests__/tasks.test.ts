@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -29,10 +29,9 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Main Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Main Project',
+		description: 'Test project.',
 	});
 	const projectBody = (await projectRes.json()).data;
 	projectId = projectBody.id;
@@ -812,16 +811,16 @@ describe('sub-task depth + ancestors', () => {
 	});
 });
 
-describe('operations project assignee restriction', () => {
-	let operationsProjectId: string;
+describe('Internal project assignee restriction', () => {
+	let internalProjectId: string;
 	let captainAgentId: string;
 
 	beforeAll(async () => {
 		const opsResult = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
 			[teamId],
 		);
-		operationsProjectId = opsResult.rows[0].id;
+		internalProjectId = opsResult.rows[0].id;
 
 		const captainResult = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
@@ -832,13 +831,13 @@ describe('operations project assignee restriction', () => {
 		captainAgentId = captainResult.rows[0].id;
 	});
 
-	it('rejects creating an Operations task assigned to a non-Captain agent', async () => {
+	it('rejects creating an Internal task assigned to a non-Captain agent', async () => {
 		const res = await app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				project_id: operationsProjectId,
-				title: 'Non-Captain on Operations',
+				project_id: internalProjectId,
+				title: 'Non-Captain on Internal',
 				assignee_id: agentId,
 			}),
 		});
@@ -846,13 +845,13 @@ describe('operations project assignee restriction', () => {
 		expect((await res.json()).error.message).toContain('Captain');
 	});
 
-	it('accepts creating an Operations task assigned to the Captain', async () => {
+	it('accepts creating an Internal task assigned to the Captain', async () => {
 		const res = await app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				project_id: operationsProjectId,
-				title: 'Captain on Operations',
+				project_id: internalProjectId,
+				title: 'Captain on Internal',
 				assignee_id: captainAgentId,
 			}),
 		});
@@ -860,7 +859,7 @@ describe('operations project assignee restriction', () => {
 		expect((await res.json()).data.assignee_id).toBe(captainAgentId);
 	});
 
-	it('allows non-Captain assignees on non-Operations projects', async () => {
+	it('allows non-Captain assignees on non-Internal projects', async () => {
 		const res = await app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -873,13 +872,13 @@ describe('operations project assignee restriction', () => {
 		expect(res.status).toBe(201);
 	});
 
-	it('rejects reassigning an Operations task to a non-Captain agent', async () => {
+	it('rejects reassigning an Internal task to a non-Captain agent', async () => {
 		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				project_id: operationsProjectId,
-				title: 'Reassignable Operations task',
+				project_id: internalProjectId,
+				title: 'Reassignable Internal task',
 				assignee_id: captainAgentId,
 			}),
 		});
@@ -894,13 +893,13 @@ describe('operations project assignee restriction', () => {
 		expect((await res.json()).error.message).toContain('Captain');
 	});
 
-	it('allows reassigning an Operations task back to the Captain', async () => {
+	it('allows reassigning an Internal task back to the Captain', async () => {
 		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				project_id: operationsProjectId,
-				title: 'Operations keep-Captain task',
+				project_id: internalProjectId,
+				title: 'Internal keep-Captain task',
 				assignee_id: captainAgentId,
 			}),
 		});
@@ -914,13 +913,13 @@ describe('operations project assignee restriction', () => {
 		expect(res.status).toBe(200);
 	});
 
-	it('rejects sub-task of an Operations parent assigned to a non-Captain agent', async () => {
+	it('rejects sub-task of an Internal parent assigned to a non-Captain agent', async () => {
 		const parentRes = await app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				project_id: operationsProjectId,
-				title: 'Operations parent',
+				project_id: internalProjectId,
+				title: 'Internal parent',
 				assignee_id: captainAgentId,
 			}),
 		});
@@ -940,8 +939,8 @@ describe('operations project assignee restriction', () => {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				project_id: operationsProjectId,
-				title: 'Operations detail check',
+				project_id: internalProjectId,
+				title: 'Internal detail check',
 				assignee_id: captainAgentId,
 			}),
 		});
@@ -951,7 +950,7 @@ describe('operations project assignee restriction', () => {
 			headers: authHeader(token),
 		});
 		const detail = (await detailRes.json()).data;
-		expect(detail.project_slug).toBe('operations');
+		expect(detail.project_slug).toBe('internal');
 	});
 });
 

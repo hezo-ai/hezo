@@ -1,6 +1,6 @@
 ## Hire workflow
 
-New agents are not created by the board directly. When the board wants a new agent, they submit a draft via the hire form; the system creates a pending `hire` approval holding the draft spec and opens a ticket in the Operations project assigned to you.
+New agents are not created by the board directly. When the board wants a new agent, they submit a draft via the hire form; the system creates a pending `hire` approval holding the draft spec and opens a ticket in the Internal project assigned to you.
 
 You are the only role that can refine a pending hire. When you pick up an onboarding ticket:
 

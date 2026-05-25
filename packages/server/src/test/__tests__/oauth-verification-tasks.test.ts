@@ -41,7 +41,7 @@ beforeAll(async () => {
 	captainMemberId = captain.rows[0].id;
 
 	const ops = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
+		`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
 		[teamId],
 	);
 	parentProjectId = ops.rows[0].id;
@@ -56,7 +56,7 @@ beforeEach(async () => {
 });
 
 describe('enqueueOAuthVerificationTask', () => {
-	it('creates an Operations task assigned to the Captain with high priority and the label', async () => {
+	it('creates an Internal task assigned to the Captain with high priority and the label', async () => {
 		const result = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, null, {
 			username: 'octocat',
 		});
@@ -82,7 +82,7 @@ describe('enqueueOAuthVerificationTask', () => {
 		expect(task.parent_task_id).toBeNull();
 
 		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
 			[teamId],
 		);
 		expect(task.project_id).toBe(ops.rows[0].id);

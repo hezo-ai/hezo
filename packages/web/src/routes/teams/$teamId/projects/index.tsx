@@ -1,4 +1,4 @@
-import { OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { FolderKanban, Plus } from 'lucide-react';
 import { useState } from 'react';
@@ -25,8 +25,8 @@ function ProjectListPage() {
 	const [createOpen, setCreateOpen] = useState(create ?? false);
 
 	const sortedProjects = [...(projects ?? [])].sort((a, b) => {
-		if (a.slug === OPERATIONS_PROJECT_SLUG) return 1;
-		if (b.slug === OPERATIONS_PROJECT_SLUG) return -1;
+		if (a.slug === INTERNAL_PROJECT_SLUG) return 1;
+		if (b.slug === INTERNAL_PROJECT_SLUG) return -1;
 		return a.name.localeCompare(b.name);
 	});
 
@@ -71,14 +71,14 @@ function ProjectListPage() {
 							<Card className="cursor-pointer">
 								<div className="flex items-start gap-3">
 									<Avatar
-										initials={p.slug === OPERATIONS_PROJECT_SLUG ? 'IN' : getInitials(p.name)}
+										initials={p.slug === INTERNAL_PROJECT_SLUG ? 'IN' : getInitials(p.name)}
 										color={avatarColorFromString(p.name)}
 									/>
 									<div className="flex flex-col gap-1 min-w-0 flex-1">
 										<div className="flex items-center justify-between gap-2">
 											<h2
 												className={`text-[15px] font-medium text-text truncate ${
-													p.slug === OPERATIONS_PROJECT_SLUG ? 'italic' : ''
+													p.slug === INTERNAL_PROJECT_SLUG ? 'italic' : ''
 												}`}
 											>
 												{p.name}

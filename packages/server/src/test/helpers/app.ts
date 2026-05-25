@@ -2,11 +2,15 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
+import { AgentAdminStatus, CAPTAIN_AGENT_SLUG, INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { generateMasterKey, MasterKeyManager } from '../../crypto/master-key';
 import { loadAgentRoles } from '../../db/agent-roles';
 import { seedBuiltins } from '../../db/seed';
+import { toSlug, uniqueSlug } from '../../lib/slug';
 import { signAgentJwt, signBoardJwt } from '../../middleware/auth';
+import { resolveProjectTaskPrefix } from '../../routes/projects';
 import type { DockerClient } from '../../services/docker';
+import { createProjectWithPlanningTask } from '../../services/project-create';
 import { buildApp } from '../../startup';
 import { createTestDbWithMigrations } from './db';
 
@@ -97,10 +101,140 @@ export async function mintAgentToken(
 	agentId: string,
 	teamId: string,
 	taskId?: string | null,
-): Promise<{ token: string; runId: string }> {
+	opts: { projectId?: string; crossProject?: boolean } = {},
+): Promise<{ token: string; runId: string; projectId: string; crossProject: boolean }> {
 	const runId = await createAgentRun(db, agentId, teamId, taskId);
-	const token = await signAgentJwt(masterKeyManager, agentId, teamId, runId);
-	return { token, runId };
+	let projectId = opts.projectId;
+	let crossProject = opts.crossProject;
+	if (!projectId) {
+		if (taskId) {
+			const taskProject = await db.query<{ id: string; is_internal: boolean }>(
+				`SELECT p.id, p.is_internal FROM tasks t
+				 JOIN projects p ON p.id = t.project_id
+				 WHERE t.id = $1`,
+				[taskId],
+			);
+			projectId = taskProject.rows[0]?.id;
+			if (crossProject === undefined) crossProject = taskProject.rows[0]?.is_internal ?? false;
+		}
+		if (!projectId) {
+			const fallback = await db.query<{ id: string }>(
+				`SELECT id FROM projects WHERE team_id = $1 AND slug = $2 LIMIT 1`,
+				[teamId, INTERNAL_PROJECT_SLUG],
+			);
+			projectId = fallback.rows[0]?.id;
+			if (crossProject === undefined) crossProject = true;
+		}
+	}
+	if (!projectId) throw new Error('mintAgentToken: could not resolve a projectId');
+	if (crossProject === undefined) crossProject = false;
+	const token = await signAgentJwt(
+		masterKeyManager,
+		agentId,
+		teamId,
+		runId,
+		projectId,
+		crossProject,
+	);
+	return { token, runId, projectId, crossProject };
+}
+
+export interface CreatedTestProject {
+	id: string;
+	slug: string;
+	task_prefix: string;
+	name: string;
+	description: string;
+	team_id: string;
+	is_internal: boolean;
+	docker_base_image: string;
+	container_id: string | null;
+	container_status: string | null;
+	planning_task_id: string | null;
+	planning_task_identifier: string | null;
+}
+
+/**
+ * Test-only helper: creates a user-facing project plus its planning task by
+ * calling the project service directly. Bypasses the captain intake flow that
+ * `POST /api/teams/:teamId/projects` now triggers (which opens an intake ticket
+ * and a pending approval). Use in tests that need a ready-to-use project.
+ *
+ * The return value is shaped like a `fetch` Response so existing tests that
+ * call `.json()` followed by `.data.id` extraction keep working unchanged
+ * after swapping the `app.request(...)` block for `createTestProject(...)`.
+ */
+export async function createTestProject(
+	db: PGlite,
+	teamId: string,
+	input: {
+		name: string;
+		description?: string;
+		task_prefix?: string;
+		initial_prd?: string | null;
+		docker_base_image?: string;
+		createPlanningTask?: boolean;
+	},
+): Promise<{
+	status: 201;
+	json: () => Promise<{ data: CreatedTestProject }>;
+}> {
+	const captain = await db.query<{ id: string }>(
+		`SELECT ma.id FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
+		 LIMIT 1`,
+		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
+	);
+	const captainMemberId = captain.rows[0]?.id;
+	if (!captainMemberId) {
+		throw new Error('createTestProject: team has no enabled Captain');
+	}
+
+	const prefixResult = await resolveProjectTaskPrefix(db, teamId, input.task_prefix, input.name);
+	if (!prefixResult.ok) {
+		throw new Error(`createTestProject: ${prefixResult.message}`);
+	}
+
+	const slug = await uniqueSlug(toSlug(input.name), async (s) => {
+		const r = await db.query('SELECT 1 FROM projects WHERE team_id = $1 AND slug = $2', [
+			teamId,
+			s,
+		]);
+		return r.rows.length > 0;
+	});
+
+	const { project, planningTask } = await createProjectWithPlanningTask(db, {
+		teamId,
+		captainMemberId,
+		name: input.name,
+		slug,
+		taskPrefix: prefixResult.prefix,
+		description: input.description ?? '',
+		dockerBaseImage: input.docker_base_image,
+		initialPrd: input.initial_prd ?? null,
+		createPlanningTask: input.createPlanningTask ?? true,
+	});
+
+	const data: CreatedTestProject = {
+		id: project.id as string,
+		slug: project.slug as string,
+		task_prefix: project.task_prefix as string,
+		name: project.name as string,
+		description: (project.description as string) ?? '',
+		team_id: project.team_id as string,
+		is_internal: (project.is_internal as boolean) ?? false,
+		docker_base_image: (project.docker_base_image as string) ?? 'hezo/agent-base:latest',
+		container_id: (project.container_id as string | null) ?? null,
+		container_status: (project.container_status as string | null) ?? null,
+		planning_task_id: (planningTask?.id as string) ?? null,
+		planning_task_identifier: (planningTask?.identifier as string) ?? null,
+	};
+
+	return {
+		status: 201,
+		json: async () => ({ data }),
+	};
 }
 
 export async function finalizeAgentRun(

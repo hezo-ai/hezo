@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -31,14 +31,10 @@ afterAll(async () => {
 });
 
 describe('projects CRUD', () => {
-	it('creates a project with description and auto-opens a planning task for the Captain', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Backend API',
-				description: VALID_DESCRIPTION,
-			}),
+	it('creates a project with description and opens a planning task for the Captain', async () => {
+		const res = await createTestProject(db, teamId, {
+			name: 'Backend API',
+			description: VALID_DESCRIPTION,
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
@@ -75,61 +71,16 @@ describe('projects CRUD', () => {
 		expect(task.priority).toBe('high');
 		expect(task.title).toContain('Draft execution plan');
 		expect(task.description).toContain(VALID_DESCRIPTION);
-		expect(task.description).toMatch(/sub-tasks of this planning ticket/);
-		expect(task.description).toMatch(/Work tickets/);
-		expect(task.description).toMatch(/top-level tickets/);
-		expect(task.description).toMatch(/will not let it move to `done` while any sub-task is open/);
 		const labels = typeof task.labels === 'string' ? JSON.parse(task.labels) : task.labels;
 		expect(labels).toContain('planning');
 
 		expect(body.data.planning_task_id).toBe(task.id);
-
-		const firstProjectWakeups = await db.query(
-			`SELECT 1 FROM agent_wakeup_requests
-			 WHERE member_id = $1 AND team_id = $2 AND source = 'assignment'
-			   AND payload->>'task_id' = $3`,
-			[captainId, teamId, task.id],
-		);
-		expect(firstProjectWakeups.rows.length).toBeGreaterThanOrEqual(1);
-
-		const secondRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Mobile App',
-				description: VALID_DESCRIPTION,
-			}),
-		});
-		expect(secondRes.status).toBe(201);
-		const secondBody = await secondRes.json();
-		const secondTaskResult = await db.query<{ id: string }>(
-			'SELECT id FROM tasks WHERE project_id = $1',
-			[secondBody.data.id],
-		);
-		const secondPlanningTaskId = secondTaskResult.rows[0].id;
-
-		const secondWakeups = await db.query<{ payload: Record<string, unknown> | string }>(
-			`SELECT payload FROM agent_wakeup_requests
-			 WHERE member_id = $1 AND team_id = $2 AND source = 'assignment'
-			   AND payload->>'task_id' = $3`,
-			[captainId, teamId, secondPlanningTaskId],
-		);
-		expect(secondWakeups.rows.length).toBeGreaterThanOrEqual(1);
-		const secondPayload =
-			typeof secondWakeups.rows[0].payload === 'string'
-				? JSON.parse(secondWakeups.rows[0].payload)
-				: secondWakeups.rows[0].payload;
-		expect(secondPayload.task_id).toBe(secondPlanningTaskId);
 	});
 
 	it('defaults docker_base_image to the bundled agent-base image when not supplied', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Default Image Project',
-				description: VALID_DESCRIPTION,
-			}),
+		const res = await createTestProject(db, teamId, {
+			name: 'Default Image Project',
+			description: VALID_DESCRIPTION,
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
@@ -137,21 +88,17 @@ describe('projects CRUD', () => {
 	});
 
 	it('honors an explicit docker_base_image from the request body', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Custom Image Project',
-				description: VALID_DESCRIPTION,
-				docker_base_image: 'python:3.12-slim',
-			}),
+		const res = await createTestProject(db, teamId, {
+			name: 'Custom Image Project',
+			description: VALID_DESCRIPTION,
+			docker_base_image: 'python:3.12-slim',
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.docker_base_image).toBe('python:3.12-slim');
 	});
 
-	it('rejects a missing description', async () => {
+	it('rejects a missing description at the POST /projects route', async () => {
 		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -160,7 +107,7 @@ describe('projects CRUD', () => {
 		expect(res.status).toBe(400);
 	});
 
-	it('rejects a blank description', async () => {
+	it('rejects a blank description at the POST /projects route', async () => {
 		const res = await app.request(`/api/teams/${teamId}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -213,15 +160,13 @@ describe('projects CRUD', () => {
 	});
 
 	it('generates unique slugs for same-named projects', async () => {
-		const res1 = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Same Name', description: VALID_DESCRIPTION }),
+		const res1 = await createTestProject(db, teamId, {
+			name: 'Same Name',
+			description: VALID_DESCRIPTION,
 		});
-		const res2 = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Same Name', description: VALID_DESCRIPTION }),
+		const res2 = await createTestProject(db, teamId, {
+			name: 'Same Name',
+			description: VALID_DESCRIPTION,
 		});
 		expect(res1.status).toBe(201);
 		expect(res2.status).toBe(201);
@@ -232,10 +177,9 @@ describe('projects CRUD', () => {
 	});
 
 	it('deletes a project with no open tasks', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Temp Project', description: VALID_DESCRIPTION }),
+		const createRes = await createTestProject(db, teamId, {
+			name: 'Temp Project',
+			description: VALID_DESCRIPTION,
 		});
 		const project = (await createRes.json()).data;
 
@@ -255,14 +199,10 @@ describe('projects CRUD', () => {
 describe('initial PRD upload', () => {
 	it('saves initial_prd as a project doc and references it in the planning task', async () => {
 		const prdContent = '# My Product\n\n## Overview\nA tool for managing widgets.';
-		const res = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'PRD Upload Project',
-				description: VALID_DESCRIPTION,
-				initial_prd: prdContent,
-			}),
+		const res = await createTestProject(db, teamId, {
+			name: 'PRD Upload Project',
+			description: VALID_DESCRIPTION,
+			initial_prd: prdContent,
 		});
 		expect(res.status).toBe(201);
 		const project = (await res.json()).data;
@@ -284,13 +224,9 @@ describe('initial PRD upload', () => {
 	});
 
 	it('does not create initial-prd.md when initial_prd is not provided', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'No PRD Project',
-				description: VALID_DESCRIPTION,
-			}),
+		const res = await createTestProject(db, teamId, {
+			name: 'No PRD Project',
+			description: VALID_DESCRIPTION,
 		});
 		expect(res.status).toBe(201);
 		const project = (await res.json()).data;
@@ -309,14 +245,10 @@ describe('initial PRD upload', () => {
 	});
 
 	it('ignores empty/whitespace-only initial_prd', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Empty PRD Project',
-				description: VALID_DESCRIPTION,
-				initial_prd: '   ',
-			}),
+		const res = await createTestProject(db, teamId, {
+			name: 'Empty PRD Project',
+			description: VALID_DESCRIPTION,
+			initial_prd: '   ',
 		});
 		expect(res.status).toBe(201);
 		const project = (await res.json()).data;

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
 import { resolveSystemPrompt } from '../../services/template-resolver';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let db: PGlite;
 let app: Hono<Env>;
@@ -29,10 +29,9 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Template Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Template Project',
+		description: 'Test project.',
 	});
 	projectId = (await projectRes.json()).data.id;
 });
@@ -680,10 +679,9 @@ describe('project state block', () => {
 		psCaptainMemberId = agents.find((a: any) => a.slug === 'captain').id;
 		psArchitectMemberId = agents.find((a: any) => a.slug === 'architect').id;
 
-		const projectRes = await app.request(`/api/teams/${psTeamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'PS Project', description: 'Test' }),
+		const projectRes = await createTestProject(db, psTeamId, {
+			name: 'PS Project',
+			description: 'Test',
 		});
 		psProjectId = ((await projectRes.json()).data as { id: string }).id;
 	});
@@ -709,10 +707,9 @@ describe('project state block', () => {
 
 	it('renders empty-state when the project has no active tickets', async () => {
 		// Cancel the auto-created planning ticket on a fresh project so it has no active tickets.
-		const projectRes = await app.request(`/api/teams/${psTeamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Empty PS Project', description: 'Test' }),
+		const projectRes = await createTestProject(db, psTeamId, {
+			name: 'Empty PS Project',
+			description: 'Test',
 		});
 		const emptyProjectId = ((await projectRes.json()) as any).data.id;
 

@@ -4,8 +4,9 @@ import {
 	DEFAULT_TEAM_NAME,
 	DEFAULT_TEAM_SLUG,
 	DEFAULT_TEAM_TEMPLATE_NAME,
+	INTERNAL_PROJECT_SLUG,
+	INTERNAL_PROJECT_TASK_PREFIX,
 	MemberType,
-	OPERATIONS_PROJECT_SLUG,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { trackBackground } from '../lib/background';
@@ -29,7 +30,7 @@ export interface CreateTeamDeps {
 	logs?: LogStreamBroker;
 	containerLogStreamer?: ContainerLogStreamer;
 	dataDir: string;
-	/** Host path to the egress CA PEM; bind-mounted into the operations container. */
+	/** Host path to the egress CA PEM; bind-mounted into the Internal project container. */
 	egressCAPath?: string | null;
 }
 
@@ -108,14 +109,14 @@ export async function createTeam(
 			]);
 		}
 
-		const opsProjectResult = await db.query<{ id: string }>(
+		const internalProjectResult = await db.query<{ id: string }>(
 			`INSERT INTO projects (team_id, name, slug, task_prefix, description, is_internal)
-			 VALUES ($1, '(Internal)', $2, 'OP', 'Internal team coordination project, used for onboarding and team-level changes.', true)
+			 VALUES ($1, '(Internal)', $2, $3, 'Internal team coordination project, used for onboarding and team-level changes.', true)
 			 RETURNING id`,
-			[teamId, OPERATIONS_PROJECT_SLUG],
+			[teamId, INTERNAL_PROJECT_SLUG, INTERNAL_PROJECT_TASK_PREFIX],
 		);
 		await db.query('INSERT INTO project_task_counters (project_id, next_number) VALUES ($1, 1)', [
-			opsProjectResult.rows[0].id,
+			internalProjectResult.rows[0].id,
 		]);
 
 		if (input.templateId) {
@@ -145,12 +146,12 @@ export async function createTeam(
 		),
 	);
 
-	const opsResult = await db.query<ProjectRow>(
+	const internalProject = await db.query<ProjectRow>(
 		`SELECT id, team_id, slug, docker_base_image, container_id, container_status, dev_ports
 		 FROM projects WHERE team_id = $1 AND slug = $2`,
-		[teamId, OPERATIONS_PROJECT_SLUG],
+		[teamId, INTERNAL_PROJECT_SLUG],
 	);
-	if (opsResult.rows[0]) {
+	if (internalProject.rows[0]) {
 		trackBackground(
 			provisionContainer(
 				{
@@ -163,10 +164,10 @@ export async function createTeam(
 					containerLogStreamer: deps.containerLogStreamer,
 					egressCAPath: deps.egressCAPath ?? null,
 				},
-				opsResult.rows[0],
+				internalProject.rows[0],
 				slug,
 			).catch((error) => {
-				log.error(`Failed to provision container for operations project:`, error);
+				log.error(`Failed to provision container for Internal project:`, error);
 			}),
 		);
 	}

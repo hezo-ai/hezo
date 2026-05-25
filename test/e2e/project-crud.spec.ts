@@ -1,8 +1,15 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	createProjectAndClearPlanning,
+	createTeamWithAgents,
+	waitForPageLoad,
+} from './helpers';
 
 test.describe('Project CRUD', () => {
-	test('creates a project via dialog and opens a Captain planning ticket', async ({ page }) => {
+	test('creates a project via dialog and opens a Captain intake ticket in Internal', async ({
+		page,
+	}) => {
 		await authenticate(page);
 		const { team } = await createTeamWithAgents(page);
 
@@ -20,31 +27,15 @@ test.describe('Project CRUD', () => {
 
 		await expect(
 			page,
-			'expected canonical project-scoped task URL after creating a project',
-		).toHaveURL(new RegExp(`/teams/${team.slug}/projects/[a-z0-9-]+/tasks/[a-z0-9-]+(?:#.*)?$`), {
+			'expected navigation to the Internal-project intake task after submitting Create Project',
+		).toHaveURL(new RegExp(`/teams/${team.slug}/projects/internal/tasks/[a-z0-9-]+(?:#.*)?$`), {
 			timeout: 15000,
 		});
 		await expect(
-			page.getByRole('main').getByText('Draft execution plan for "Marketing Campaign"'),
+			page.getByRole('main').getByText('Open new project: Marketing Campaign'),
 		).toBeVisible({ timeout: 15000 });
-
-		const description = page.getByTestId('task-description');
-		await expect(description).toBeVisible({ timeout: 15000 });
-		const paragraphMarginBottom = await description
-			.locator('p')
-			.first()
-			.evaluate((el) => Number.parseFloat(getComputedStyle(el).marginBottom));
-		expect(paragraphMarginBottom).toBeGreaterThan(0);
-		const headingFontWeight = await description
-			.locator('h2')
-			.first()
-			.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontWeight));
-		expect(headingFontWeight).toBeGreaterThanOrEqual(600);
-		const listStyle = await description
-			.locator('ol')
-			.first()
-			.evaluate((el) => getComputedStyle(el).listStyleType);
-		expect(listStyle).not.toBe('none');
+		await expect(page.getByText("I'm the Captain")).toBeVisible({ timeout: 15000 });
+		await expect(page.getByTestId('project-intake-skip')).toBeVisible({ timeout: 15000 });
 	});
 
 	test('project list shows default (Internal) project', async ({ page }) => {
@@ -60,12 +51,10 @@ test.describe('Project CRUD', () => {
 	test('project list shows task and repo counts', async ({ page }) => {
 		await authenticate(page);
 		const { team, token } = await createTeamWithAgents(page);
-		const headers = { Authorization: `Bearer ${token}` };
 
-		// Create a project via API
-		await page.request.post(`/api/teams/${team.id}/projects`, {
-			headers,
-			data: { name: 'Count Test', description: 'Count test project.' },
+		await createProjectAndClearPlanning(page, team.id, token, {
+			name: 'Count Test',
+			description: 'Count test project.',
 		});
 
 		await page.goto(`/teams/${team.slug}/projects`);
@@ -73,27 +62,24 @@ test.describe('Project CRUD', () => {
 
 		const card = page.getByRole('main').locator('a', { hasText: 'Count Test' });
 		await expect(card).toBeVisible({ timeout: 15000 });
-		await expect(card.getByText('1 tasks')).toBeVisible();
+		await expect(card.getByText('0 tasks')).toBeVisible();
 		await expect(card.getByText('0 repos')).toBeVisible();
 	});
 
 	test('project card links to project detail', async ({ page }) => {
 		await authenticate(page);
 		const { team, token } = await createTeamWithAgents(page);
-		const headers = { Authorization: `Bearer ${token}` };
 
-		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-			headers,
-			data: { name: 'Linkable Project', description: 'Linkable project description.' },
+		const project = await createProjectAndClearPlanning(page, team.id, token, {
+			name: 'Linkable Project',
+			description: 'Linkable project description.',
 		});
-		const project = ((await projRes.json()) as any).data;
 
 		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
 		await page.getByRole('main').getByRole('heading', { name: 'Linkable Project' }).click();
 
-		// Should navigate to project detail page
 		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/${project.slug}`), {
 			timeout: 15000,
 		});
@@ -106,16 +92,11 @@ test.describe('Project CRUD', () => {
 
 		const prdContent = '# Widget App\n\nA tool for managing widgets efficiently.';
 
-		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-			headers,
-			data: {
-				name: 'PRD Test Project',
-				description: 'Testing initial PRD upload.',
-				initial_prd: prdContent,
-			},
+		const project = await createProjectAndClearPlanning(page, team.id, token, {
+			name: 'PRD Test Project',
+			description: 'Testing initial PRD upload.',
+			initial_prd: prdContent,
 		});
-		expect(projRes.ok()).toBe(true);
-		const project = ((await projRes.json()) as any).data;
 
 		const docRes = await page.request.get(
 			`/api/teams/${team.id}/projects/${project.id}/docs/initial-prd.md`,
@@ -136,15 +117,12 @@ test.describe('Project CRUD', () => {
 
 		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
 
-		// Create button should be disabled when name or description is empty
 		const createBtn = page.getByRole('button', { name: 'Create' });
 		await expect(createBtn).toBeDisabled();
 
-		// Fill name alone — still disabled because description is required
 		await page.getByLabel('Name').fill('My Project');
 		await expect(createBtn).toBeDisabled();
 
-		// Fill description — now it should be enabled
 		await page.getByLabel('Description').fill('A short project description.');
 		await expect(createBtn).toBeEnabled();
 	});

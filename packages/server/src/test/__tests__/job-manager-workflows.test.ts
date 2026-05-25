@@ -1,11 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	AgentRuntimeStatus,
-	HeartbeatRunStatus,
-	TaskStatus,
-	WakeupStatus,
-	wsRoom,
-} from '@hezo/shared';
+import { AgentRuntimeStatus, HeartbeatRunStatus, TaskStatus, WakeupStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
@@ -15,7 +9,7 @@ import type { DockerClient } from '../../services/docker';
 import { JobManager, type JobManagerDeps } from '../../services/job-manager';
 import { LogStreamBroker } from '../../services/log-stream-broker';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -78,10 +72,9 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Workflow Test Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Workflow Test Project',
+		description: 'Test project.',
 	});
 	projectId = (await projectRes.json()).data.id;
 
@@ -182,9 +175,9 @@ describe('JobManager workflow methods', () => {
 		it('skips agents that already have a running task', async () => {
 			const manager = createJobManager();
 
-			// Simulate a running task for this agent
+			// Simulate a running task for this agent (project-scoped key matches activateAgent)
 			manager.launchTask(
-				wsRoom.agent(agentId),
+				`${agentId}:${projectId}`,
 				async () => {
 					await new Promise((r) => setTimeout(r, 5000));
 				},
@@ -365,7 +358,7 @@ describe('JobManager workflow methods', () => {
 			expect(lockResult.rows[lockResult.rows.length - 1].member_id).toBe(agentId);
 
 			// A task should have been launched for the agent
-			expect(manager.isTaskRunning(wsRoom.agent(agentId))).toBe(true);
+			expect(manager.isMemberRunning(agentId)).toBe(true);
 
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
@@ -1164,7 +1157,7 @@ describe('JobManager workflow methods', () => {
 			await (manager as any).processScheduledHeartbeats();
 
 			// Task should NOT be launched for a paused agent
-			expect(manager.isTaskRunning(wsRoom.agent(agentId))).toBe(false);
+			expect(manager.isMemberRunning(agentId)).toBe(false);
 
 			// Restore runtime status
 			await db.query("UPDATE member_agents SET runtime_status = 'idle' WHERE id = $1", [agentId]);
@@ -1244,9 +1237,9 @@ describe('JobManager workflow methods', () => {
 		it('skips agents with null last_heartbeat_at that already have running tasks', async () => {
 			const manager = createJobManager();
 
-			// Simulate a running task already
+			// Simulate a running task already (project-scoped key matches activateAgent)
 			manager.launchTask(
-				wsRoom.agent(agentId),
+				`${agentId}:${projectId}`,
 				async () => {
 					await new Promise((r) => setTimeout(r, 5000));
 				},
@@ -1257,13 +1250,13 @@ describe('JobManager workflow methods', () => {
 			await db.query('UPDATE member_agents SET last_heartbeat_at = NULL WHERE id = $1', [agentId]);
 
 			// Count launches before
-			const taskWasRunning = manager.isTaskRunning(wsRoom.agent(agentId));
+			const taskWasRunning = manager.isMemberRunning(agentId);
 			expect(taskWasRunning).toBe(true);
 
 			await (manager as any).processScheduledHeartbeats();
 
 			// Task still running (was not restarted — the existing task was skipped)
-			expect(manager.isTaskRunning(wsRoom.agent(agentId))).toBe(true);
+			expect(manager.isMemberRunning(agentId)).toBe(true);
 
 			manager.shutdown();
 		});
@@ -1458,6 +1451,133 @@ describe('JobManager workflow methods', () => {
 				taskId,
 				agentId,
 			]);
+		});
+	});
+
+	describe('per-project serialisation and cross-project parallelism', () => {
+		it('isProjectBusy returns true while another task in the same project is running', async () => {
+			const manager = createJobManager();
+
+			const otherTaskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					project_id: projectId,
+					title: 'Sibling task in same project',
+					assignee_id: agentId,
+				}),
+			});
+			const otherTaskId = (await otherTaskRes.json()).data.id;
+
+			await db.query(
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
+				[agentId, teamId, otherTaskId, HeartbeatRunStatus.Running],
+			);
+
+			const busy = await (manager as any).isProjectBusy(projectId);
+			expect(busy).toBe(true);
+
+			await db.query(
+				"UPDATE heartbeat_runs SET status = 'succeeded', finished_at = now() WHERE task_id = $1",
+				[otherTaskId],
+			);
+			const busyAfter = await (manager as any).isProjectBusy(projectId);
+			expect(busyAfter).toBe(false);
+
+			manager.shutdown();
+			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [otherTaskId]);
+			await db.query('DELETE FROM tasks WHERE id = $1', [otherTaskId]);
+		});
+
+		it('re-queues a wakeup when its project already has a different active run', async () => {
+			const manager = createJobManager();
+
+			// Stand up a sibling project + task for this team so an unrelated active
+			// run in project A blocks a wakeup targeting another task in project A.
+			const sibTaskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					project_id: projectId,
+					title: 'Second task in project A',
+					assignee_id: agentId,
+				}),
+			});
+			const sibTaskId = (await sibTaskRes.json()).data.id;
+
+			await db.query(
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
+				[agentId, teamId, taskId, HeartbeatRunStatus.Running],
+			);
+
+			const wakeupRes = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
+				 VALUES ($1, $2, 'mention', 'queued', now() - interval '30 seconds', $3::jsonb)
+				 RETURNING id`,
+				[agentId, teamId, JSON.stringify({ task_id: sibTaskId })],
+			);
+			const wakeupId = wakeupRes.rows[0].id;
+
+			await (manager as any).processWakeups();
+
+			const status = await db.query<{ status: string }>(
+				'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+				[wakeupId],
+			);
+			expect(status.rows[0].status).toBe(WakeupStatus.Queued);
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [taskId]);
+			await db.query('DELETE FROM tasks WHERE id = $1', [sibTaskId]);
+		});
+
+		it('the per-agent lock is gone: agent busy in project A does not block a wakeup for project B', async () => {
+			const manager = createJobManager();
+
+			// Project B (sibling) with a task assigned to the same agent. We never
+			// dispatch on this one — we just need the row to exist so resolveProjectForTask
+			// returns a real project id that is distinct from project A.
+			const projectBRes = await createTestProject(db, teamId, {
+				name: `Parallel Project ${Date.now()}`,
+				description: 'sibling project',
+			});
+			const projectBId = (await projectBRes.json()).data.id;
+			const taskBRes = await app.request(`/api/teams/${teamId}/tasks`, {
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					project_id: projectBId,
+					title: 'Task in sibling project',
+					assignee_id: agentId,
+				}),
+			});
+			const taskBId = (await taskBRes.json()).data.id;
+
+			// Pretend the agent is mid-run in project A by pre-populating the
+			// in-memory project lock. This is what activateAgent does synchronously
+			// before launchTask; using it directly here avoids spinning up a real
+			// runAgent that would then race with cleanup.
+			(manager as any).activeProjectRuns.add(projectId);
+			(manager as any).runningTasks.set(`${agentId}:${projectId}`, {
+				key: `${agentId}:${projectId}`,
+				abortController: new AbortController(),
+				promise: Promise.resolve(),
+				startedAt: Date.now(),
+				timeoutId: setTimeout(() => {}, 0),
+			});
+
+			// The legacy per-agent check would have skipped this wakeup. The
+			// per-project check should not: project B has no active run.
+			expect(manager.isMemberRunning(agentId)).toBe(true);
+			expect(await (manager as any).isProjectBusy(projectId)).toBe(true);
+			expect(await (manager as any).isProjectBusy(projectBId)).toBe(false);
+
+			manager.shutdown();
+			await db.query('DELETE FROM tasks WHERE id = $1', [taskBId]);
+			await db.query('DELETE FROM projects WHERE id = $1', [projectBId]);
 		});
 	});
 });

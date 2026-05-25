@@ -1,12 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	AgentRuntimeStatus,
-	ApprovalType,
-	HeartbeatRunStatus,
-	WakeupSource,
-	wsRoom,
-} from '@hezo/shared';
+import { ApprovalType, HeartbeatRunStatus, WakeupSource, wsRoom } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
+import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -54,28 +49,7 @@ export async function detectOrphans(
 			[run.member_id],
 		);
 
-		const remaining = await db.query<{ id: string }>(
-			`SELECT id FROM heartbeat_runs
-			 WHERE member_id = $1 AND status = $2::heartbeat_run_status AND id != $3
-			 LIMIT 1`,
-			[run.member_id, HeartbeatRunStatus.Running, run.id],
-		);
-
-		if (remaining.rows.length === 0) {
-			const reset = await db.query<{ id: string }>(
-				`UPDATE member_agents
-				 SET runtime_status = $1::agent_runtime_status
-				 WHERE id = $2 AND runtime_status = $3::agent_runtime_status
-				 RETURNING id`,
-				[AgentRuntimeStatus.Idle, run.member_id, AgentRuntimeStatus.Active],
-			);
-			if (reset.rows.length > 0) {
-				broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'member_agents', 'UPDATE', {
-					id: run.member_id,
-					runtime_status: AgentRuntimeStatus.Idle,
-				});
-			}
-		}
+		await setAgentIdleIfNoActiveRuns(db, run.member_id, run.team_id, run.id, wsManager);
 
 		broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
 			id: run.id,

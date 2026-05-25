@@ -1,4 +1,4 @@
-import { OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -222,7 +222,7 @@ export const Route = createFileRoute('/teams/$teamId/projects/$projectId/documen
 		file: typeof search.file === 'string' ? search.file : undefined,
 	}),
 	beforeLoad: ({ params }) => {
-		if (params.projectId === OPERATIONS_PROJECT_SLUG) {
+		if (params.projectId === INTERNAL_PROJECT_SLUG) {
 			throw redirect({
 				to: '/teams/$teamId/projects/$projectId/tasks',
 				params,

@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
 import { ONBOARDING_INTAKE_TITLE } from '../../services/onboarding-intake';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -86,10 +86,9 @@ describe('onboarding status', () => {
 		});
 		const intake = (await intakeRes.json()).data as { task_id: string };
 
-		const projectRes = await app.request(`/api/teams/${team.slug}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'First Product', description: 'Build the thing' }),
+		const projectRes = await createTestProject(db, team.id, {
+			name: 'First Product',
+			description: 'Build the thing',
 		});
 		expect(projectRes.status).toBe(201);
 

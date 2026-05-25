@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import {
 	authenticate,
 	clickAndWaitForResponse,
+	createProjectAndClearPlanning,
 	createTeamWithAgents,
 	waitForPageLoad,
 } from './helpers';
@@ -16,9 +17,9 @@ test('board member can close and re-open an task via themed modal', async ({ pag
 	});
 	const agent = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Close Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Close Project',
+		description: 'Test project.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
@@ -80,9 +81,9 @@ test('task detail no longer shows a delete button or status pill row', async ({ 
 	});
 	const agent = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'No Delete Project', description: 'Test project.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'No Delete Project',
+		description: 'Test project.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 

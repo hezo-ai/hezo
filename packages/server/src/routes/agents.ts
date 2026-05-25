@@ -8,9 +8,9 @@ import {
 	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DocumentType,
+	INTERNAL_PROJECT_SLUG,
 	isAgentEffort,
 	MemberType,
-	OPERATIONS_PROJECT_SLUG,
 	TaskPriority,
 	TaskStatus,
 	WakeupSource,
@@ -315,7 +315,7 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 
 	const opsProject = await db.query<{ id: string }>(
 		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true AND slug = $2`,
-		[teamId, OPERATIONS_PROJECT_SLUG],
+		[teamId, INTERNAL_PROJECT_SLUG],
 	);
 
 	const hasCaptain = captainResult.rows.length > 0;

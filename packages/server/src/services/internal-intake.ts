@@ -1,16 +1,16 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentAdminStatus, CAPTAIN_AGENT_SLUG, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { AgentAdminStatus, CAPTAIN_AGENT_SLUG, INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { terminalStatusParams } from '../lib/sql';
 
-export interface CaptainOpsContext {
+export interface CaptainInternalContext {
 	captainMemberId: string;
-	operationsProjectId: string;
+	internalProjectId: string;
 }
 
-export async function loadCaptainOpsContext(
+export async function loadCaptainInternalContext(
 	db: PGlite,
 	teamId: string,
-): Promise<CaptainOpsContext | null> {
+): Promise<CaptainInternalContext | null> {
 	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
@@ -18,16 +18,16 @@ export async function loadCaptainOpsContext(
 		 LIMIT 1`,
 		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
-	const ops = await db.query<{ id: string }>(
+	const internalProject = await db.query<{ id: string }>(
 		`SELECT id FROM projects
 		 WHERE team_id = $1 AND is_internal = true AND slug = $2
 		 LIMIT 1`,
-		[teamId, OPERATIONS_PROJECT_SLUG],
+		[teamId, INTERNAL_PROJECT_SLUG],
 	);
-	if (!captain.rows[0] || !ops.rows[0]) return null;
+	if (!captain.rows[0] || !internalProject.rows[0]) return null;
 	return {
 		captainMemberId: captain.rows[0].id,
-		operationsProjectId: ops.rows[0].id,
+		internalProjectId: internalProject.rows[0].id,
 	};
 }
 

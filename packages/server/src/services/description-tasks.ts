@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	CAPTAIN_AGENT_SLUG,
-	OPERATIONS_PROJECT_SLUG,
+	INTERNAL_PROJECT_SLUG,
 	TaskPriority,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -44,7 +44,7 @@ const TEAM_CONTEXT_TARGET_PREFIX = 'team_context:';
 
 interface TeamContext {
 	captainMemberId: string | null;
-	operationsProjectId: string | null;
+	internalProjectId: string | null;
 }
 
 async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
@@ -56,11 +56,11 @@ async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext 
 		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
 
-	const ops = await db.query<{ id: string }>(
+	const internalProject = await db.query<{ id: string }>(
 		`SELECT id FROM projects
 		 WHERE team_id = $1 AND is_internal = true AND slug = $2
 		 LIMIT 1`,
-		[teamId, OPERATIONS_PROJECT_SLUG],
+		[teamId, INTERNAL_PROJECT_SLUG],
 	);
 
 	const teamExists = await db.query('SELECT 1 FROM teams WHERE id = $1', [teamId]);
@@ -68,7 +68,7 @@ async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext 
 
 	return {
 		captainMemberId: captain.rows[0]?.id ?? null,
-		operationsProjectId: ops.rows[0]?.id ?? null,
+		internalProjectId: internalProject.rows[0]?.id ?? null,
 	};
 }
 
@@ -99,7 +99,7 @@ async function findOpenDescriptionTask(
 	return findOpenLabeledTaskByTarget(db, teamId, DESCRIPTION_LABEL, target);
 }
 
-async function createLabeledOperationsTask(
+async function createLabeledInternalTask(
 	db: PGlite,
 	teamId: string,
 	ctx: TeamContext,
@@ -109,11 +109,11 @@ async function createLabeledOperationsTask(
 	label: string,
 	priority: TaskPriority,
 ): Promise<string | null> {
-	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
+	if (!ctx.captainMemberId || !ctx.internalProjectId) return null;
 
 	const { number: taskNumber, identifier } = await allocateTaskIdentifier(
 		db,
-		ctx.operationsProjectId,
+		ctx.internalProjectId,
 	);
 
 	const description = `<!-- target=${target} -->\n\n${body}`;
@@ -125,7 +125,7 @@ async function createLabeledOperationsTask(
 		 RETURNING id`,
 		[
 			teamId,
-			ctx.operationsProjectId,
+			ctx.internalProjectId,
 			ctx.captainMemberId,
 			taskNumber,
 			identifier,
@@ -158,7 +158,7 @@ async function createDescriptionTask(
 	title: string,
 	body: string,
 ): Promise<string | null> {
-	return createLabeledOperationsTask(
+	return createLabeledInternalTask(
 		db,
 		teamId,
 		ctx,
@@ -210,7 +210,7 @@ export async function enqueueAgentSummaryTask(
 ): Promise<string | null> {
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
-	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
+	if (!ctx.captainMemberId || !ctx.internalProjectId) return null;
 
 	const target = wsRoom.agent(agentId);
 	const existing = await findOpenDescriptionTask(db, teamId, target);
@@ -243,7 +243,7 @@ export async function enqueueTeamSummaryTask(
 ): Promise<string | null> {
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
-	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
+	if (!ctx.captainMemberId || !ctx.internalProjectId) return null;
 
 	const target = TEAM_TARGET;
 	const existing = await findOpenDescriptionTask(db, teamId, target);
@@ -290,7 +290,7 @@ export async function enqueueAgentTeamContextTask(
 ): Promise<string | null> {
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
-	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
+	if (!ctx.captainMemberId || !ctx.internalProjectId) return null;
 
 	const target = `${TEAM_CONTEXT_TARGET_PREFIX}${agentId}`;
 	const existing = await findOpenDescriptionTask(db, teamId, target);
@@ -346,7 +346,7 @@ export async function enqueueTeamCoherenceReviewTask(
 ): Promise<string | null> {
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
-	if (!ctx.captainMemberId || !ctx.operationsProjectId) return null;
+	if (!ctx.captainMemberId || !ctx.internalProjectId) return null;
 
 	const existing = await findOpenLabeledTaskByTarget(
 		db,
@@ -360,7 +360,7 @@ export async function enqueueTeamCoherenceReviewTask(
 	}
 
 	const body = buildTeamCoherenceReviewBody(reason);
-	return createLabeledOperationsTask(
+	return createLabeledInternalTask(
 		db,
 		teamId,
 		ctx,

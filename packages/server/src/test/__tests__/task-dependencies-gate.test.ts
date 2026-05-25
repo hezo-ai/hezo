@@ -10,7 +10,7 @@ import {
 } from '../../lib/dependencies';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let db: PGlite;
 let app: Hono<Env>;
@@ -39,10 +39,9 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Gate Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Gate Project',
+		description: 'Test project.',
 	});
 	projectId = (await projectRes.json()).data.id;
 

@@ -73,7 +73,11 @@ export async function clearAiProviders(page: Page, token: string) {
 }
 
 /**
- * Create a project and mark its auto-generated planning task as done.
+ * Drive a project through the captain intake flow end-to-end:
+ *   1. POST /projects to open the intake (creates pending approval + intake task).
+ *   2. Resolve the approval as approved so the side-effect creates the project + planning task.
+ *   3. Mark the auto-created planning task as done so it doesn't race agent runs.
+ *
  * Tests that kick off agent runs on the Captain would otherwise race the
  * Captain's planning wakeup and see runs targeted at the planning task.
  */
@@ -81,23 +85,58 @@ export async function createProjectAndClearPlanning(
 	page: Page,
 	teamId: string,
 	token: string,
-	data: { name: string; description?: string },
+	data: { name: string; description?: string; initial_prd?: string; task_prefix?: string },
 ) {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const res = await page.request.post(`/api/teams/${teamId}/projects`, {
+	const intakeRes = await page.request.post(`/api/teams/${teamId}/projects`, {
 		headers,
-		data,
+		data: { description: 'Created via e2e helper.', ...data },
 	});
-	const project = (
-		(await res.json()) as {
-			data: { id: string; slug: string; planning_task_id: string };
+	const intake = (
+		(await intakeRes.json()) as {
+			data: { approval_id: string };
 		}
 	).data;
-	await page.request.patch(`/api/teams/${teamId}/tasks/${project.planning_task_id}`, {
+
+	await page.request.post(`/api/approvals/${intake.approval_id}/resolve`, {
+		headers,
+		data: { status: 'approved' },
+	});
+
+	const projectsRes = await page.request.get(`/api/teams/${teamId}/projects`, { headers });
+	const allProjects = (
+		(await projectsRes.json()) as {
+			data: Array<{ id: string; slug: string; name: string }>;
+		}
+	).data;
+	const project = allProjects.find((p) => p.name === data.name);
+	if (!project) {
+		throw new Error(
+			`createProjectAndClearPlanning: project '${data.name}' not found after approval`,
+		);
+	}
+
+	const tasksRes = await page.request.get(`/api/teams/${teamId}/tasks?project_id=${project.id}`, {
+		headers,
+	});
+	const tasks = ((await tasksRes.json()) as { data: Array<{ id: string; labels: string[] }> }).data;
+	const planningTask = tasks.find((t) => (t.labels ?? []).includes('planning'));
+	if (!planningTask) {
+		throw new Error('createProjectAndClearPlanning: planning task not found after approval');
+	}
+	await page.request.patch(`/api/teams/${teamId}/tasks/${planningTask.id}`, {
 		headers,
 		data: { status: 'done' },
 	});
-	return project;
+	const merged = { ...project, planning_task_id: planningTask.id };
+	// Also expose a Response-like .json() / .ok() / .status so callers that hold
+	// the result as `projRes` can still do `(await projRes.json()).data` without
+	// changing every call site.
+	return Object.assign(merged, {
+		ok: () => true,
+		status: () => 201,
+		json: async () => ({ data: merged }),
+	});
 }
 
 /** Poll until the project container is provisioned (required before agent wakeups run). */

@@ -20,9 +20,9 @@ async function createProject(
 	name: string,
 ): Promise<{ id: string; slug: string; name: string }> {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const res = await page.request.post(`/api/teams/${teamId}/projects`, {
-		headers,
-		data: { name, description: 'Test project.' },
+	const res = await createProjectAndClearPlanning(page, teamId, token, {
+		name,
+		description: 'Test project.',
 	});
 	return ((await res.json()) as { data: { id: string; slug: string; name: string } }).data;
 }
@@ -183,30 +183,65 @@ test.describe('Sidebar — Projects section', () => {
 		await expect(nav.getByText('(Internal)')).toBeVisible({ timeout: 15000 });
 	});
 
-	test('creating a project from the page or sidebar appears in the sidebar without reload', async ({
+	test('creating a project from the page or sidebar surfaces it in the sidebar after intake approval', async ({
 		page,
 		freshWorkspace,
 	}) => {
-		const { team } = freshWorkspace;
+		const { team, token } = freshWorkspace;
+		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 		await suppressAiModal(page);
 		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
-		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
-		await page.getByLabel('Name').fill('Page Created Project');
-		await page.getByLabel('Description').fill('Page-button test project.');
-		await page.getByRole('button', { name: 'Create' }).click();
+		const projectsListUrl = `/api/teams/${team.slug}/projects`;
 
+		async function createViaDialog(
+			openDialog: () => Promise<void>,
+			projectName: string,
+			description: string,
+		): Promise<void> {
+			const submitPromise = page.waitForResponse(
+				(r) => r.url().endsWith(projectsListUrl) && r.request().method() === 'POST',
+			);
+			await openDialog();
+			await page.getByLabel('Name').fill(projectName);
+			await page.getByLabel('Description').fill(description);
+			await page.getByRole('button', { name: 'Create' }).click();
+			const intake = ((await (await submitPromise).json()) as { data: { approval_id: string } })
+				.data;
+
+			// Wait for the dialog to navigate to the intake task page before approving,
+			// so the page is settled when the approval-driven project INSERT broadcasts.
+			await expect(page).toHaveURL(
+				new RegExp(`/teams/${team.slug}/projects/internal/tasks/[^/]+$`),
+				{ timeout: 15000 },
+			);
+
+			await page.request.post(`/api/approvals/${intake.approval_id}/resolve`, {
+				headers,
+				data: { status: 'approved' },
+			});
+		}
+
+		await createViaDialog(
+			() => page.getByRole('main').getByRole('button', { name: 'New project' }).click(),
+			'Page Created Project',
+			'Page-button test project.',
+		);
+		await page.goto(`/teams/${team.slug}/projects`);
+		await waitForPageLoad(page);
 		const nav = page.locator('nav');
 		await expect(nav.getByRole('link', { name: 'Page Created Project' }).first()).toBeVisible({
 			timeout: 20000,
 		});
 
-		await nav.getByRole('button', { name: 'New project' }).click();
-		await page.getByLabel('Name').fill('Sidebar Created Project');
-		await page.getByLabel('Description').fill('Sidebar-button test project.');
-		await page.getByRole('button', { name: 'Create' }).click();
-
+		await createViaDialog(
+			() => nav.getByRole('button', { name: 'New project' }).click(),
+			'Sidebar Created Project',
+			'Sidebar-button test project.',
+		);
+		await page.goto(`/teams/${team.slug}/projects`);
+		await waitForPageLoad(page);
 		await expect(nav.getByRole('link', { name: 'Sidebar Created Project' }).first()).toBeVisible({
 			timeout: 20000,
 		});

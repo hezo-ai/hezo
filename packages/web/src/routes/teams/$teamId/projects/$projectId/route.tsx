@@ -1,4 +1,4 @@
-import { OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Outlet, useLocation, useParams, useSearch } from '@tanstack/react-router';
 import { Info } from 'lucide-react';
 import { Breadcrumb } from '../../../../../components/ui/breadcrumb';
@@ -18,7 +18,7 @@ function ProjectLayout() {
 	const onTaskDetail = pathname.startsWith(`${base}/tasks`) && Boolean(allParams.taskId);
 	const { data: ancestors } = useTaskAncestors(teamId, onTaskDetail ? allParams.taskId : undefined);
 	const projectParams = { teamId, projectId };
-	const isInternal = project?.slug === OPERATIONS_PROJECT_SLUG;
+	const isInternal = project?.slug === INTERNAL_PROJECT_SLUG;
 	const showBanner =
 		isInternal && (pathname === `${base}/tasks` || pathname === `${base}/container`);
 

@@ -99,7 +99,7 @@ test('run page shows trigger reason linking back to the source mention', async (
 
 	const triggerLink = page.getByTestId('run-trigger-link');
 	await expect(triggerLink).toBeVisible();
-	// Label varies with whether the mentioner is an agent ("Mentioned by @x in OP-12")
+	// Label varies with whether the mentioner is an agent ("Mentioned by @x in IN-12")
 	// or a board user ("Mentioned in a comment"); both are acceptable.
 	await expect(triggerLink).toContainText(/Mentioned/);
 

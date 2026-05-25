@@ -31,7 +31,7 @@ afterAll(async () => {
 });
 
 describe('onboarding intake', () => {
-	it('creates an Operations task with Captain greeting on demand', async () => {
+	it('creates an Internal task with Captain greeting on demand', async () => {
 		const blank = await db.query<{ id: string }>(
 			"SELECT id FROM team_templates WHERE name = 'Blank' LIMIT 1",
 		);
@@ -54,9 +54,9 @@ describe('onboarding intake', () => {
 			project_slug: string;
 			captain_greeting: string;
 		};
-		expect(intake.project_slug).toBe('operations');
+		expect(intake.project_slug).toBe('internal');
 		expect(intake.captain_greeting).toBe(CAPTAIN_GREETING_TEXT);
-		expect(intake.task_identifier).toMatch(/^OP-\d+$/);
+		expect(intake.task_identifier).toMatch(/^IN-\d+$/);
 
 		const tasksRes = await app.request(`/api/teams/${team.slug}/tasks`, {
 			headers: authHeader(token),

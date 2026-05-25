@@ -2,6 +2,7 @@ import { expect, type Page, test } from '@playwright/test';
 import {
 	authenticate,
 	clickAndWaitForResponse,
+	createProjectAndClearPlanning,
 	createTeamWithAgents,
 	waitForPageLoad,
 } from './helpers';
@@ -18,9 +19,9 @@ async function seedTaskWithComment(page: Page): Promise<SeededTask> {
 	const { team, token } = await createTeamWithAgents(page);
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Reactions Project', description: 'x' },
+	const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Reactions Project',
+		description: 'x',
 	});
 	const project = ((await projRes.json()) as { data: { id: string } }).data;
 

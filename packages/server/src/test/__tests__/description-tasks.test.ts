@@ -64,7 +64,7 @@ beforeEach(async () => {
 });
 
 describe('enqueueAgentSummaryTask', () => {
-	it('creates an task in the Operations project assigned to the Captain with the correct label and priority', async () => {
+	it('creates an task in the Internal project assigned to the Captain with the correct label and priority', async () => {
 		const taskId = await enqueueAgentSummaryTask(db, teamId, engineerMemberId, 'created');
 		expect(taskId).toBeTruthy();
 
@@ -85,7 +85,7 @@ describe('enqueueAgentSummaryTask', () => {
 		expect(row.assignee_id).toBe(captainMemberId);
 
 		const opsProject = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
 			[teamId],
 		);
 		expect(row.project_id).toBe(opsProject.rows[0].id);
@@ -166,17 +166,15 @@ describe('enqueueAgentSummaryTask', () => {
 		expect(tasks.rows[0].n).toBe(0);
 	});
 
-	it('returns null and does not create an task when there is no Operations project', async () => {
-		// Manually nuke the Operations project of a fresh team.
+	it('returns null and does not create an task when there is no Internal project', async () => {
+		// Manually nuke the Internal project of a fresh team.
 		const blankRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'No Ops Co' }),
 		});
 		const blankTeamId = (await blankRes.json()).data.id;
-		await db.query(`DELETE FROM projects WHERE team_id = $1 AND slug = 'operations'`, [
-			blankTeamId,
-		]);
+		await db.query(`DELETE FROM projects WHERE team_id = $1 AND slug = 'internal'`, [blankTeamId]);
 		const ceoRes = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
 			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
@@ -190,7 +188,7 @@ describe('enqueueAgentSummaryTask', () => {
 });
 
 describe('enqueueTeamSummaryTask', () => {
-	it('creates a team-targeted task in the Operations project assigned to the Captain', async () => {
+	it('creates a team-targeted task in the Internal project assigned to the Captain', async () => {
 		const taskId = await enqueueTeamSummaryTask(db, teamId, 'agent_added');
 		expect(taskId).toBeTruthy();
 
@@ -226,7 +224,7 @@ describe('enqueueTeamSummaryTask', () => {
 });
 
 describe('enqueueAgentTeamContextTask', () => {
-	it('creates an agent-scoped team_context task in Operations assigned to the Captain', async () => {
+	it('creates an agent-scoped team_context task in Internal assigned to the Captain', async () => {
 		const taskId = await enqueueAgentTeamContextTask(db, teamId, engineerMemberId, 'agent_added');
 		expect(taskId).toBeTruthy();
 

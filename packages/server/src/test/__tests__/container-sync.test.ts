@@ -14,7 +14,7 @@ import {
 } from '../../services/containers';
 import { LogStreamBroker } from '../../services/log-stream-broker';
 import { safeClose } from '../helpers';
-import { authHeader, createStubDocker, createTestApp } from '../helpers/app';
+import { authHeader, createStubDocker, createTestApp, createTestProject } from '../helpers/app';
 
 let db: PGlite;
 let app: Hono<Env>;
@@ -55,10 +55,9 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('sets status to error when container does not exist in Docker', async () => {
-		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Ghost Container Project', description: 'Test project.' }),
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Ghost Container Project',
+			description: 'Test project.',
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -82,10 +81,9 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('sets container_error with a helpful message when container is removed', async () => {
-		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Removed Container Project', description: 'Test project.' }),
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Removed Container Project',
+			description: 'Test project.',
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -109,10 +107,9 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('captures container_last_logs and records container_error when transitioning from running to stopped', async () => {
-		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Exit Capture Project', description: 'Test project.' }),
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Exit Capture Project',
+			description: 'Test project.',
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -160,13 +157,9 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('leaves container_status untouched on transport errors', async () => {
-		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Transport Err Project',
-				description: 'Test project.',
-			}),
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Transport Err Project',
+			description: 'Test project.',
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -192,10 +185,9 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('updates status to stopped when container exists but is not running', async () => {
-		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Stopped Container Project', description: 'Test project.' }),
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Stopped Container Project',
+			description: 'Test project.',
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -220,10 +212,9 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('keeps status as running when container is actually running', async () => {
-		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Running Container Project', description: 'Test project.' }),
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Running Container Project',
+			description: 'Test project.',
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -248,10 +239,9 @@ describe('syncAllContainerStatuses', () => {
 	});
 
 	it('broadcasts changes when status changes', async () => {
-		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Broadcast Test Project', description: 'Test project.' }),
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Broadcast Test Project',
+			description: 'Test project.',
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -284,10 +274,9 @@ describe('syncAllContainerStatuses', () => {
 			[teamId],
 		);
 
-		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No Broadcast Project', description: 'Test project.' }),
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'No Broadcast Project',
+			description: 'Test project.',
 		});
 		const projectId = (await projectRes.json()).data.id;
 
@@ -316,10 +305,9 @@ describe('provisionContainer broadcasting', () => {
 	let projectId: string;
 
 	beforeAll(async () => {
-		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Provision Broadcast Project', description: 'Test project.' }),
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Provision Broadcast Project',
+			description: 'Test project.',
 		});
 		projectId = (await projectRes.json()).data.id;
 
@@ -558,10 +546,9 @@ describe('stopContainerGracefully', () => {
 	let projectId: string;
 
 	beforeAll(async () => {
-		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Stop Test Project', description: 'Test project.' }),
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Stop Test Project',
+			description: 'Test project.',
 		});
 		projectId = (await projectRes.json()).data.id;
 		await new Promise((r) => setTimeout(r, 100));
@@ -661,10 +648,9 @@ describe('syncAllContainerStatuses with stopping status', () => {
 			[teamId],
 		);
 
-		const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Stopping Sync Project', description: 'Test project.' }),
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Stopping Sync Project',
+			description: 'Test project.',
 		});
 		const projectId = (await projectRes.json()).data.id;
 		await new Promise((r) => setTimeout(r, 100));

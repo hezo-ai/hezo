@@ -12,6 +12,7 @@ import {
 	getOpenOnboardingIntakeTask,
 	postSkipQuestionsSignal,
 } from '../services/onboarding-intake';
+import { postSkipQuestionsSignalForProjectIntake } from '../services/project-intake';
 import { createTeam } from '../services/teams';
 
 export const teamsRoutes = new Hono<Env>();
@@ -115,6 +116,18 @@ teamsRoutes.post('/teams/:teamId/onboarding-intake/skip-questions', async (c) =>
 		return err(c, 'INTERNAL', 'Failed to post skip signal', 500);
 	}
 	return ok(c, { task_id: intake.task_id, comment_id: comment.id });
+});
+
+teamsRoutes.post('/teams/:teamId/project-intake/:taskId/skip-questions', async (c) => {
+	const access = await requireTeamAccess(c);
+	if (access instanceof Response) return access;
+
+	const taskId = c.req.param('taskId');
+	const comment = await postSkipQuestionsSignalForProjectIntake(c.get('db'), access.teamId, taskId);
+	if (!comment) {
+		return err(c, 'NOT_FOUND', 'No open project intake found for this task', 404);
+	}
+	return ok(c, { task_id: taskId, comment_id: comment.id });
 });
 
 teamsRoutes.get('/teams/:teamId/onboarding', async (c) => {

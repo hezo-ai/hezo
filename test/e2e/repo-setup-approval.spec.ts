@@ -1,14 +1,19 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	createProjectAndClearPlanning,
+	createTeamWithAgents,
+	waitForPageLoad,
+} from './helpers';
 
 test.describe('Repo Setup Approval', () => {
 	async function seedBlockedProject(page: import('@playwright/test').Page) {
 		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-			headers,
-			data: { name: 'Blocked Project', description: 'Project waiting on repo' },
+		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+			name: 'Blocked Project',
+			description: 'Project waiting on repo',
 		});
 		const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
 

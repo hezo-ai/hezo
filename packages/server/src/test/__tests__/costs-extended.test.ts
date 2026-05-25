@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -46,17 +46,15 @@ beforeAll(async () => {
 	agent2Id = agents.find((a: Record<string, unknown>) => a.slug === 'ui-designer').id;
 
 	// Create two projects
-	const proj1Res = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Project Alpha', description: 'Test project.' }),
+	const proj1Res = await createTestProject(db, teamId, {
+		name: 'Project Alpha',
+		description: 'Test project.',
 	});
 	projectId = (await proj1Res.json()).data.id;
 
-	const proj2Res = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Project Beta', description: 'Test project.' }),
+	const proj2Res = await createTestProject(db, teamId, {
+		name: 'Project Beta',
+		description: 'Test project.',
 	});
 	project2Id = (await proj2Res.json()).data.id;
 

@@ -135,9 +135,9 @@ Response: full team object. On creation, the server automatically:
 
 1. Creates `~/.hezo/teams/{slug}/` folder structure with auto-generated AGENTS.md.
 2. Creates agent team from the selected template. The UI defaults to "Software Development" pre-selected.
-3. Creates an **"Operations" project** and auto-provisions its container.
+3. Creates an **"Internal" project** and auto-provisions its container.
 
-Docker container provisioning for the Operations project happens at team creation. Other project containers are provisioned when those projects are created.
+Docker container provisioning for the Internal project happens at team creation. Other project containers are provisioned when those projects are created.
 
 The board lands on a team with 11 agents.
 
@@ -182,7 +182,7 @@ Delete team and all associated data. Tears down the team container.
 
 Three stages drive the home welcome card and intake panels:
 
-1. **Requirements** — open `requirements-intake` Operations task; Captain gathers goals and creates the first user-facing project via MCP/REST.
+1. **Requirements** — open `requirements-intake` Internal task; Captain gathers goals and creates the first user-facing project via MCP/REST.
 2. **Hire team** — open `hire-team-intake` task; Captain requests a `team_template` approval; board approves in inbox; agents provision and the hire ticket closes.
 3. **Start project** — board confirms on home; sets `execution_started_at` on the first user-facing project and wakes Captain on the planning task.
 
@@ -377,11 +377,11 @@ Request fields: `title` (required), `role_description`, `system_prompt`, `report
 Response: full agent object.
 
 #### `POST /teams/:teamId/agents/onboard`
-Starts the Captain-mediated hire workflow. The board submits a draft spec; the server creates a pending `hire` approval holding the draft in its payload, opens an onboarding task in the Operations project assigned to the Captain, and wakes the Captain to refine the draft. **No `member_agents` row is created yet.**
+Starts the Captain-mediated hire workflow. The board submits a draft spec; the server creates a pending `hire` approval holding the draft in its payload, opens an onboarding task in the Internal project assigned to the Captain, and wakes the Captain to refine the draft. **No `member_agents` row is created yet.**
 
 The Captain revises the draft via the `update_hire_proposal` MCP tool, @-mentions the board for review, and iterates until the board resolves the pending approval. Approving the approval materialises the agent (see `POST /approvals/:approvalId/resolve`); denying leaves nothing behind.
 
-If the team has no enabled Captain or no Operations project (bootstrap case), the endpoint creates the agent directly as `enabled` and returns it with `bootstrap: true`. No approval or ticket is created in that case.
+If the team has no enabled Captain or no Internal project (bootstrap case), the endpoint creates the agent directly as `enabled` and returns it with `bootstrap: true`. No approval or ticket is created in that case.
 
 Request:
 ```json
@@ -577,42 +577,47 @@ Response:
 ```
 
 #### `POST /teams/:teamId/projects`
-Create a project. Container is auto-provisioned asynchronously. A planning task titled
-`Draft execution plan for "{name}"` (labeled `planning`) is opened and assigned to the
-team's enabled Captain agent — board users are redirected there so the Captain can draft the
-execution plan. The planning ticket's body instructs the Captain to create the first
-milestone's tickets as **top-level** tasks (no `parent_task_id` pointing at the
-planning ticket) — each delegated milestone is the assignee's own first-class
-deliverable. Fails with 500 if no enabled Captain agent exists.
+Open a captain-led intake for a new project. No project is created at this step. The
+endpoint creates a pending `project_creation` approval (holding the draft `name`,
+`description`, `task_prefix`, `initial_prd`) and a `project-intake` ticket in the
+team's Internal project assigned to the Captain. The board is redirected to the
+intake ticket. The Captain Q&As with the board, may propose hires via the standard
+hire flow if the team is missing roles, refines the proposal via the
+`update_project_creation_proposal` MCP tool, and asks the board to approve the
+pending `project_creation` approval in the inbox. The actual project + planning
+task are created by the approval side-effect when the board approves; the intake
+ticket is closed automatically at that point.
 
-Request: `name` and `description` are required. `docker_base_image` and `initial_prd`
-are optional. `docker_base_image` defaults to `hezo/agent-base:latest`. When
-`initial_prd` is provided (markdown string), it is saved as the `initial-prd.md`
-project doc and the Captain's planning task directs the Researcher and Product Lead to
-consult it as a starting point.
+Request: `name` and `description` are required. `task_prefix` and `initial_prd` are
+optional. `task_prefix` is validated at submit time (uniqueness + shape); a conflict
+returns 409 before any rows are inserted.
 ```json
 {
   "name": "Backend API",
   "description": "Authenticated HTTP API for the main app.",
-  "docker_base_image": "node:20",
+  "task_prefix": "API",
   "initial_prd": "# Product Requirements\n\n## Overview\n..."
 }
 ```
 
-Response includes the created project plus `planning_task_id`, the UUID of the
-auto-opened Captain planning task.
+Response shape:
 ```json
 {
   "data": {
-    "id": "uuid",
-    "slug": "backend-api",
-    "name": "Backend API",
-    "description": "Authenticated HTTP API for the main app.",
-    "planning_task_id": "uuid",
-    "...": "other project fields"
+    "intake_task_id": "uuid",
+    "intake_task_identifier": "IN-7",
+    "project_slug": "internal",
+    "approval_id": "uuid"
   }
 }
 ```
+
+Fails with 500 if the team is missing its Captain or Internal project.
+
+#### `POST /teams/:teamId/project-intake/:taskId/skip-questions`
+Post a system "skip questions" comment on a project-intake ticket and wake the
+Captain so it finalises the proposal with what it already has. Mirrors the
+onboarding-intake skip endpoint.
 
 #### `GET /teams/:teamId/projects/:projectId`
 Get project detail including repos. Accepts project ID or slug.
@@ -623,7 +628,7 @@ Response: project object + `repos` array.
 Update name or description.
 
 #### `DELETE /teams/:teamId/projects/:projectId`
-Delete project. Cannot delete internal projects (e.g. Operations). Fails if there are open tasks referencing it. Tears down the container asynchronously.
+Delete project. Cannot delete internal projects (e.g. Internal). Fails if there are open tasks referencing it. Tears down the container asynchronously.
 
 #### `POST /teams/:teamId/projects/:projectId/container/start`
 Start the project container. Container must be provisioned. Wakes agents with pending work. Returns `{ container_status: "running" }`.
@@ -861,11 +866,11 @@ Request:
 
 `project_id` and `assignee_id` are required (enforced). `number` is auto-assigned via
 `next_project_task_number()`, and `identifier` is composed as
-`{project.task_prefix}-{number}` (e.g. `OP-42`). If the assignee is an agent,
+`{project.task_prefix}-{number}` (e.g. `IN-42`). If the assignee is an agent,
 the agent receives an event trigger. If a board member, they are notified via
 inbox and configured messaging channels.
 
-Tasks in the auto-created Operations project (`slug = 'operations'`, `is_internal = true`) must be assigned to the Captain. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Operations project tasks must be assigned to the Captain`.
+Tasks in the auto-created Internal project (`slug = 'internal'`, `is_internal = true`) must be assigned to the Captain. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Internal project tasks must be assigned to the Captain`.
 
 `runtime_type` is optional. It pins this task to a specific AI adapter
 (`claude_code | codex | gemini`). When unset, the server picks the
@@ -915,13 +920,13 @@ Two server-enforced guards block the `→ done` and `→ closed` transitions whe
 
 The error message names the blocking sub-task or agent so the caller knows what to wait on.
 
-For tasks whose project is Operations (`slug = 'operations'`, `is_internal = true`), `assignee_id` must be the Captain; any other value returns `400 INVALID_REQUEST`.
+For tasks whose project is Internal (`slug = 'internal'`, `is_internal = true`), `assignee_id` must be the Captain; any other value returns `400 INVALID_REQUEST`.
 
 #### `DELETE /teams/:teamId/tasks/:taskId`
 Delete an task. Only allowed if status is `backlog`, and no comments exist.
 
 #### `POST /teams/:teamId/tasks/:taskId/sub-tasks`
-Create a sub-task. `project_id` is inherited from the parent. When the parent belongs to the Operations project, the sub-task's `assignee_id` must be the Captain.
+Create a sub-task. `project_id` is inherited from the parent. When the parent belongs to the Internal project, the sub-task's `assignee_id` must be the Captain.
 
 Request:
 ```json
@@ -1067,7 +1072,7 @@ The server automatically appends `system`-typed comments for two events:
   `source_task_id` JSONB key. Cross-team, self-, code-block, inline-code,
   and unknown-identifier mentions are ignored.
   Body: `{ "kind": "task_link", "source_task_id": "<uuid>",
-  "source_identifier": "<e.g. OP-42>", "actor_id": "<member_uuid|null>",
+  "source_identifier": "<e.g. IN-42>", "actor_id": "<member_uuid|null>",
   "text": "Linked from <source_identifier> by <actor>" }`.
 
 Both events broadcast over the team WebSocket as `RowChange` /
@@ -2820,8 +2825,8 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `create_team` | Create a new team (superuser only) | `name`, `description` |
 | `list_tasks` | List tasks with filtering | `team_id`, `project_id?`, `status?` |
 | `get_task` | Get task details | `team_id`, `task_id` |
-| `create_task` | Create a new task. Operations-project tasks must be assigned to the Captain (slug `captain`); otherwise an error is returned. | `team_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
-| `update_task` | Update an task. Changing `assignee_id` on an Operations-project task to anyone other than the Captain returns an error. | `team_id`, `task_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
+| `create_task` | Create a new task. Internal-project tasks must be assigned to the Captain (slug `captain`); otherwise an error is returned. | `team_id`, `project_id`, `title`, `assignee_id` or `assignee_slug`, `description?`, `priority?` |
+| `update_task` | Update an task. Changing `assignee_id` on an Internal-project task to anyone other than the Captain returns an error. | `team_id`, `task_id`, `status?`, `priority?`, `assignee_id?`, `progress_summary?`, `rules?`, `branch_name?` |
 | `list_agents` | List agents in a team | `team_id` |
 | `update_hire_proposal` | Revise the draft of a pending `hire` approval. **Captain-only.** Rejects non-Captain agents with `Only the Captain can revise hire proposals`. Rejects already-resolved approvals. All draft fields optional — pass only what changes. | `approval_id`, `title?`, `role_description?`, `system_prompt?`, `default_effort?`, `heartbeat_interval_min?`, `monthly_budget_cents?`, `touches_code?` |
 | `list_projects` | List projects | `team_id` |
@@ -2852,7 +2857,7 @@ MCP tools call the same business logic layer as REST endpoints.
 ### Description-update task convention
 
 To trigger runtime regeneration of agent and team descriptions, the system
-creates an task with the `description-update` label in the Operations project,
+creates an task with the `description-update` label in the Internal project,
 assigned to the Captain agent. The Captain processes this task by calling
 `set_agent_summary` for each agent and `set_team_summary` for the team,
 then marks the task done.

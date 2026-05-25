@@ -17,9 +17,9 @@
 | `team_template_assignments` | Many-to-many join table linking teams to the team types they were created from. | belongs to team + team_template |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to team |
 | `api_keys` | Team-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to team |
-| `projects` | Group of related work under a team. Has `task_prefix` (2–4 uppercase chars used for task identifiers), Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Operations) that cannot be deleted. | belongs to team |
+| `projects` | Group of related work under a team. Has `task_prefix` (2–4 uppercase chars used for task identifiers), Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Internal) that cannot be deleted. | belongs to team |
 | `repos` | Git repo (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. | belongs to project |
-| `tasks` | Ticket. Must have a project. Linear-style `identifier` (e.g. `OP-42`) built from the project's `task_prefix` + per-project number. Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to team + project, assigned to member |
+| `tasks` | Ticket. Must have a project. Linear-style `identifier` (e.g. `IN-42`) built from the project's `task_prefix` + per-project number. Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to team + project, assigned to member |
 | `task_dependencies` | Many-to-many blocking relationships between tasks. | links task ↔ task |
 | `task_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. Includes execution-type comments auto-created when agent runs complete. | belongs to task |
 | `task_attachments` | Links uploaded files to tasks. | links asset ↔ task |
@@ -94,7 +94,7 @@ The `content_type` enum discriminates the shape:
 - `trace` → `{ "summary": "4 tool calls" }` (detail lives in `tool_calls` table)
 - `system` → `{ "text": "...", "kind"?: "status_change" | "task_link" | <other>, ... }`. Auto-generated timeline entries. The renderer shows `text`; `kind` plus per-kind fields let the server dedup and tooling filter without re-parsing prose.
   - `status_change`: `{ "kind": "status_change", "from": "<old>", "to": "<new>", "actor_id": "<member_uuid|null>", "text": "<actor> changed status from <old> to <new>" }` — written for every task status transition.
-  - `task_link`: `{ "kind": "task_link", "source_task_id": "<uuid>", "source_identifier": "<e.g. OP-42>", "actor_id": "<member_uuid|null>", "text": "Linked from <source_identifier> by <actor>" }` — written on the **target** task the first time a given source task mentions it; subsequent mentions from the same source are deduped via the `source_task_id` JSONB key.
+  - `task_link`: `{ "kind": "task_link", "source_task_id": "<uuid>", "source_identifier": "<e.g. IN-42>", "actor_id": "<member_uuid|null>", "text": "Linked from <source_identifier> by <actor>" }` — written on the **target** task the first time a given source task mentions it; subsequent mentions from the same source are deduped via the `source_task_id` JSONB key.
 - `execution` → `{ "heartbeat_run_id", "agent_id", "agent_title", "status", "exit_code", "duration_ms", "stdout_preview" }` (auto-created on agent run completion)
 - `action` → `{ "kind": "setup_repo", "approval_id": "..." }` — surfaces a board-required action inline on the ticket. Resolves by setting `chosen_option` to `{ status: 'complete', result: {...} }`. Currently only `setup_repo` is defined, used by the designated-repo gate.
 
@@ -329,10 +329,10 @@ When a team is created via `POST /teams`, the server automatically:
    with pre-filled system prompts from built-in role templates. DevOps Engineer starts
    in `idle` status.
 3. Prompts the owner to connect platforms via OAuth (GitHub required, Gmail recommended)
-4. Creates an "Operations" project (`is_internal = true`) with an onboarding task assigned to the Captain
+4. Creates an "Internal" project (`is_internal = true`) with an onboarding task assigned to the Captain
 5. Generates an SSH key pair for the team and registers it on the connected GitHub account
 6. Auto-generates the team AGENTS.md KB doc with default engineering rules and writes it to disk
-7. Auto-provisions a Docker container for the Operations project in the background
+7. Auto-provisions a Docker container for the Internal project in the background
 
 This ensures the user never lands on an empty team.
 
@@ -400,7 +400,7 @@ description of how the team collaborates (≤20 lines).
 provisioning.
 
 **Runtime updates:** The Captain agent can regenerate descriptions at runtime by
-processing `description-update` tasks (created in the Operations project).
+processing `description-update` tasks (created in the Internal project).
 Two MCP tools — `set_agent_summary` and `set_team_summary` — write the new
 text directly to the database. Only agents and board members within the
 team can set agent summaries; only the Captain agent can set the team summary.
@@ -514,7 +514,7 @@ Hezo app to it via `--connect-url`.
 ### Task identifiers (Linear-style)
 
 Each project has an `task_prefix` column (2–4 uppercase alphanumeric chars,
-e.g. `OP` for "Operations", `WA` for "Web App") auto-derived from the project
+e.g. `OP` for "Internal", `WA` for "Web App") auto-derived from the project
 name at creation time. Single-word names use the first two characters;
 multi-word names use the initials, capped at four characters. Callers may
 override via the project-creation `task_prefix` field. On collision within a
@@ -522,9 +522,9 @@ team, a numeric suffix is appended (`OP`, `OP2`, `OP3`). Prefixes are
 unique per team, not globally.
 
 Tasks have an `identifier` column computed at creation as `{project_prefix}-{number}`
-(e.g. `OP-42`), with `number` being the per-project task counter. Identifiers
+(e.g. `IN-42`), with `number` being the per-project task counter. Identifiers
 are unique per team. The identifier is the primary human-facing reference
-for tasks — used in UI, API responses, @-mentions (`@OP-42`), and git branch
+for tasks — used in UI, API responses, @-mentions (`@IN-42`), and git branch
 names. Identifiers are frozen at creation time: renaming a project does not
 retroactively change the prefix on existing tasks.
 

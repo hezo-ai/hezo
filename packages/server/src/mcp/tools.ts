@@ -31,7 +31,7 @@ import {
 	wakeIfReady,
 	wouldCreateCycle,
 } from '../lib/dependencies';
-import { assertOperationsAssignee } from '../lib/operations-assignee';
+import { assertInternalAssignee } from '../lib/internal-assignee';
 import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
 import type { AuthInfo } from '../lib/types';
@@ -270,6 +270,37 @@ async function verifyTeamAccess(
 	return 'Access denied';
 }
 
+/**
+ * For Agent auth without cross-project privilege, the run is scoped to a single
+ * project. Reject any tool call referencing a different project's data. Board
+ * and ApiKey auth pass through — their team-level checks already cover them.
+ */
+function assertProjectAccess(auth: AuthInfo, projectId: string): string | null {
+	if (auth.type !== AuthType.Agent) return null;
+	if (auth.crossProject) return null;
+	if (auth.projectId !== projectId) return 'Access denied: run is not scoped to this project';
+	return null;
+}
+
+/**
+ * Resolve the task's project and assert scoped access. Used by tools whose
+ * input is a task_id rather than a project_id directly.
+ */
+async function assertProjectAccessForTask(
+	db: PGlite,
+	auth: AuthInfo,
+	taskId: string,
+): Promise<string | null> {
+	if (auth.type !== AuthType.Agent || auth.crossProject) return null;
+	const r = await db.query<{ project_id: string }>('SELECT project_id FROM tasks WHERE id = $1', [
+		taskId,
+	]);
+	const projectId = r.rows[0]?.project_id;
+	if (!projectId) return 'Access denied: task not found';
+	if (projectId !== auth.projectId) return 'Access denied: run is not scoped to this project';
+	return null;
+}
+
 export function registerTools(
 	server: McpServer,
 	db: PGlite,
@@ -381,8 +412,14 @@ export function registerTools(
 			const params: unknown[] = [args.team_id];
 			let idx = 2;
 			if (args.project_id) {
+				const pDenied = assertProjectAccess(auth, args.project_id as string);
+				if (pDenied) return { error: pDenied };
 				conditions.push(`i.project_id = $${idx}`);
 				params.push(args.project_id);
+				idx++;
+			} else if (auth.type === AuthType.Agent && !auth.crossProject) {
+				conditions.push(`i.project_id = $${idx}`);
+				params.push(auth.projectId);
 				idx++;
 			}
 			if (args.status) {
@@ -437,12 +474,14 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const r = await db.query(
+			const r = await db.query<Record<string, unknown> & { project_id: string }>(
 				`SELECT ${TASK_COLUMNS_BARE} FROM tasks i WHERE i.id = $1 AND i.team_id = $2`,
 				[args.task_id, args.team_id],
 			);
 			const task = r.rows[0];
 			if (!task) return null;
+			const pDenied = assertProjectAccess(auth, task.project_id);
+			if (pDenied) return { error: pDenied };
 			const blockers = await db.query(
 				`SELECT d.id AS dependency_id, b.id, b.identifier, b.title, b.status::text AS status
 				 FROM task_dependencies d
@@ -471,7 +510,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_task',
-		'Create a new task. Use parent_task_id for sub-tasks — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Create a new task. Use parent_task_id for sub-tasks — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. IN-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			team_id: z.string().describe('Team ID'),
 			project_id: z.string().describe('Project ID'),
@@ -505,6 +544,8 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
+			const pDenied = assertProjectAccess(auth, args.project_id as string);
+			if (pDenied) return { error: pDenied };
 
 			const teamId = args.team_id as string;
 			const caller = await buildMcpCreateTaskCaller(db, auth, teamId);
@@ -570,6 +611,10 @@ export function registerTools(
 
 			const results = await Promise.all(
 				items.map(async (item, index) => {
+					const pDenied = assertProjectAccess(auth, item.project_id as string);
+					if (pDenied) {
+						return { index, ok: false as const, error: pDenied, code: 'FORBIDDEN' as const };
+					}
 					try {
 						const task = await createTask(
 							db,
@@ -601,7 +646,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_task',
-		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that wakes Coach for review, who will set the ticket to `closed` after the review passes. Agents other than Coach cannot set status to `closed` directly. Re-opening a closed task is board-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that wakes Coach for review, who will set the ticket to `closed` after the review passes. Agents other than Coach cannot set status to `closed` directly. Re-opening a closed task is board-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. IN-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			team_id: z.string().describe('Team ID'),
 			task_id: z.string().describe('Task ID'),
@@ -643,6 +688,10 @@ export function registerTools(
 				args.team_id,
 			]);
 			const currentRow = currentRowResult.rows[0];
+			if (currentRow) {
+				const pDenied = assertProjectAccess(auth, currentRow.project_id);
+				if (pDenied) return { error: pDenied };
+			}
 			const currentStatus = currentRow?.status;
 			const previousAssigneeId = currentRow?.assignee_id ?? null;
 
@@ -696,13 +745,13 @@ export function registerTools(
 					const activeRunCheck = await assertNoActiveRun(db, args.task_id as string);
 					if (!activeRunCheck.ok) return { error: activeRunCheck.message };
 				}
-				const opsCheck = await assertOperationsAssignee(
+				const internalCheck = await assertInternalAssignee(
 					db,
 					args.team_id as string,
 					currentRow.project_id,
 					args.assignee_id as string,
 				);
-				if (!opsCheck.ok) return { error: opsCheck.message };
+				if (!internalCheck.ok) return { error: internalCheck.message };
 
 				if (auth.type === AuthType.Agent && args.assignee_id !== previousAssigneeId) {
 					const hierarchyCheck = await assertSubordinateAssignee(
@@ -822,8 +871,12 @@ export function registerTools(
 			const teamId = args.team_id as string;
 			const taskId = await resolveTaskId(db, teamId, args.task_id as string);
 			if (!taskId) return { error: 'Task not found' };
+			const taskScope = await assertProjectAccessForTask(db, auth, taskId);
+			if (taskScope) return { error: taskScope };
 			const blockerId = await resolveTaskId(db, teamId, args.blocked_by_task_id as string);
 			if (!blockerId) return { error: 'Blocking task not found in this team' };
+			const blockerScope = await assertProjectAccessForTask(db, auth, blockerId);
+			if (blockerScope) return { error: blockerScope };
 			if (blockerId === taskId) return { error: 'An task cannot block itself' };
 			if (await wouldCreateCycle(db, taskId, blockerId)) {
 				return { error: 'Dependency would create a cycle' };
@@ -857,6 +910,8 @@ export function registerTools(
 			const teamId = args.team_id as string;
 			const taskId = await resolveTaskId(db, teamId, args.task_id as string);
 			if (!taskId) return { error: 'Task not found' };
+			const taskScope = await assertProjectAccessForTask(db, auth, taskId);
+			if (taskScope) return { error: taskScope };
 			const blockerId = await resolveTaskId(db, teamId, args.blocked_by_task_id as string);
 			if (!blockerId) return { error: 'Blocking task not found' };
 			const r = await db.query(
@@ -972,6 +1027,104 @@ export function registerTools(
 
 	tool(
 		server,
+		'update_project_creation_proposal',
+		'Revise the draft of a pending project_creation approval. Captain-only. Use this to refine the name, description, task_prefix, or initial_prd as the intake conversation evolves. All fields are optional — pass only what you want to change.',
+		{
+			approval_id: z.string().describe('project_creation approval ID'),
+			name: z.string().optional().describe('Updated project name'),
+			description: z.string().optional().describe('Updated project description'),
+			task_prefix: z.string().optional().describe('Updated 2-4 char task prefix'),
+			initial_prd: z
+				.string()
+				.nullable()
+				.optional()
+				.describe('Updated initial PRD markdown text. Pass null to clear.'),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent) {
+				return { error: 'update_project_creation_proposal is only callable by agents' };
+			}
+			const caller = await db.query<{ slug: string }>(
+				'SELECT slug FROM member_agents WHERE id = $1',
+				[auth.memberId],
+			);
+			if (caller.rows[0]?.slug !== CAPTAIN_AGENT_SLUG) {
+				return { error: 'Only the Captain can revise project creation proposals' };
+			}
+
+			const approval = await db.query<{
+				id: string;
+				team_id: string;
+				type: string;
+				status: string;
+				payload: Record<string, unknown>;
+			}>('SELECT id, team_id, type, status, payload FROM approvals WHERE id = $1', [
+				args.approval_id,
+			]);
+			if (approval.rows.length === 0) return { error: 'Approval not found' };
+
+			const row = approval.rows[0];
+			if (row.team_id !== auth.teamId) {
+				return { error: 'Access denied: team mismatch' };
+			}
+			if (row.type !== ApprovalType.ProjectCreation) {
+				return { error: 'Approval is not a project creation request' };
+			}
+			if (row.status !== ApprovalStatus.Pending) {
+				return { error: 'Project creation approval is already resolved' };
+			}
+
+			const patch: Record<string, unknown> = {};
+			if (args.name !== undefined) {
+				const trimmed = (args.name as string).trim();
+				if (!trimmed) return { error: 'name cannot be empty' };
+				patch.name = trimmed;
+			}
+			if (args.description !== undefined) {
+				const trimmed = (args.description as string).trim();
+				if (!trimmed) return { error: 'description cannot be empty' };
+				patch.description = trimmed;
+			}
+			if (args.task_prefix !== undefined) {
+				patch.task_prefix = (args.task_prefix as string).trim().toUpperCase();
+			}
+			if (args.initial_prd !== undefined) {
+				patch.initial_prd =
+					args.initial_prd === null ? null : (args.initial_prd as string).trim() || null;
+			}
+
+			if (Object.keys(patch).length === 0) {
+				return { error: 'no fields to update' };
+			}
+
+			if (patch.name !== undefined || patch.task_prefix !== undefined) {
+				const candidateName = (patch.name ?? row.payload.name) as string;
+				const candidatePrefix =
+					patch.task_prefix !== undefined ? (patch.task_prefix as string) : undefined;
+				const prefixResult = await resolveProjectTaskPrefix(
+					db,
+					row.team_id,
+					candidatePrefix,
+					candidateName,
+				);
+				if (!prefixResult.ok) {
+					return { error: prefixResult.message };
+				}
+				patch.task_prefix = prefixResult.prefix;
+			}
+
+			const updated = await db.query<Record<string, unknown>>(
+				`UPDATE approvals SET payload = payload || $1::jsonb
+				 WHERE id = $2 RETURNING ${APPROVAL_COLUMNS}`,
+				[JSON.stringify(patch), args.approval_id],
+			);
+			return updated.rows[0] ?? null;
+		},
+		db,
+	);
+
+	tool(
+		server,
 		'list_team_templates',
 		'List team templates (built-in Startup for software development, Blank, and custom). Use when recommending a team structure to hire.',
 		{
@@ -1018,7 +1171,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'Onboarding-intake Operations task id. The server closes this ticket once provisioning + project creation finish.',
+					'Onboarding-intake Internal task id. The server closes this ticket once provisioning + project creation finish.',
 				),
 			rationale: z.string().describe('Why this template fits the work the board described'),
 			project_name: z
@@ -1123,10 +1276,14 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
+			const scoped = auth.type === AuthType.Agent && !auth.crossProject;
 			const r = await db.query<Record<string, unknown>>(
-				`SELECT id, team_id, name, slug, task_prefix, description, created_at, updated_at
-				 FROM projects WHERE team_id = $1 ORDER BY name`,
-				[args.team_id],
+				scoped
+					? `SELECT id, team_id, name, slug, task_prefix, description, created_at, updated_at
+					 FROM projects WHERE team_id = $1 AND id = $2`
+					: `SELECT id, team_id, name, slug, task_prefix, description, created_at, updated_at
+					 FROM projects WHERE team_id = $1 ORDER BY name`,
+				scoped ? [args.team_id, auth.projectId] : [args.team_id],
 			);
 			const max = args.excerpt_chars as number | undefined;
 			if (max == null) return r.rows;
@@ -1152,6 +1309,9 @@ export function registerTools(
 			const teamId = args.team_id as string;
 			const denied = await verifyTeamAccess(db, auth, teamId);
 			if (denied) return { error: denied };
+			if (auth.type === AuthType.Agent && !auth.crossProject) {
+				return { error: 'Access denied: run is not scoped to create projects' };
+			}
 
 			const captainResult = await db.query<{ id: string }>(
 				`SELECT ma.id FROM member_agents ma
@@ -1233,11 +1393,13 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const taskCheck = await db.query('SELECT id FROM tasks WHERE id = $1 AND team_id = $2', [
-				args.task_id,
-				args.team_id,
-			]);
+			const taskCheck = await db.query<{ project_id: string }>(
+				'SELECT project_id FROM tasks WHERE id = $1 AND team_id = $2',
+				[args.task_id, args.team_id],
+			);
 			if (taskCheck.rows.length === 0) return { error: 'Task not found in this team' };
+			const pDenied = assertProjectAccess(auth, taskCheck.rows[0].project_id);
+			if (pDenied) return { error: pDenied };
 			const conditions = ['ic.task_id = $1'];
 			const params: unknown[] = [args.task_id];
 			if (args.before) {
@@ -1307,6 +1469,8 @@ export function registerTools(
 			const teamId = args.team_id as string;
 			const denied = await verifyTeamAccess(db, auth, teamId);
 			if (denied) return { error: denied };
+			const taskScope = await assertProjectAccessForTask(db, auth, args.task_id as string);
+			if (taskScope) return { error: taskScope };
 			const memberId = await resolveActorMemberId(db, auth, teamId);
 			if (!memberId) return { error: 'No member identity for caller' };
 			const result = await addCommentReaction({
@@ -1349,6 +1513,8 @@ export function registerTools(
 			const teamId = args.team_id as string;
 			const denied = await verifyTeamAccess(db, auth, teamId);
 			if (denied) return { error: denied };
+			const taskScope = await assertProjectAccessForTask(db, auth, args.task_id as string);
+			if (taskScope) return { error: taskScope };
 			const memberId = await resolveActorMemberId(db, auth, teamId);
 			if (!memberId) return { error: 'No member identity for caller' };
 			const result = await removeCommentReaction({
@@ -1378,7 +1544,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to an task. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert. When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
+		'Add a comment to an task. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. IN-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert. When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
 		{
 			team_id: z.string().describe('Team ID'),
 			task_id: z.string().describe('Task ID'),
@@ -1394,11 +1560,13 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			// Verify task belongs to team
-			const taskCheck = await db.query('SELECT id FROM tasks WHERE id = $1 AND team_id = $2', [
-				args.task_id,
-				args.team_id,
-			]);
+			const taskCheck = await db.query<{ project_id: string }>(
+				'SELECT project_id FROM tasks WHERE id = $1 AND team_id = $2',
+				[args.task_id, args.team_id],
+			);
 			if (taskCheck.rows.length === 0) return { error: 'Task not found in this team' };
+			const pDenied = assertProjectAccess(auth, taskCheck.rows[0].project_id);
+			if (pDenied) return { error: pDenied };
 			let parentCommentId: string | null = null;
 			if (args.parent_comment_id) {
 				const parentCheck = await db.query(
@@ -1519,6 +1687,10 @@ export function registerTools(
 				[taskId, teamId],
 			);
 			if (taskRow.rows.length === 0) return { error: 'Task not found in this team' };
+			if (taskRow.rows[0].project_id) {
+				const pDenied = assertProjectAccess(auth, taskRow.rows[0].project_id);
+				if (pDenied) return { error: pDenied };
+			}
 			const projectId = scope === 'project' ? taskRow.rows[0].project_id : null;
 
 			const placeholder = credentialPlaceholder(name);
@@ -1593,11 +1765,19 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
+			const scoped = auth.type === AuthType.Agent && !auth.crossProject;
 			const r = await db.query<Record<string, unknown>>(
-				`SELECT ${APPROVAL_COLUMNS} FROM approvals
-				 WHERE team_id = $1 AND status = $2::approval_status
-				 ORDER BY created_at DESC`,
-				[args.team_id, ApprovalStatus.Pending],
+				scoped
+					? `SELECT ${APPROVAL_COLUMNS} FROM approvals
+					 WHERE team_id = $1 AND status = $2::approval_status
+					   AND payload->>'project_id' = $3
+					 ORDER BY created_at DESC`
+					: `SELECT ${APPROVAL_COLUMNS} FROM approvals
+					 WHERE team_id = $1 AND status = $2::approval_status
+					 ORDER BY created_at DESC`,
+				scoped
+					? [args.team_id, ApprovalStatus.Pending, auth.projectId]
+					: [args.team_id, ApprovalStatus.Pending],
 			);
 			const max = args.excerpt_chars as number | undefined;
 			if (max == null) return r.rows;
@@ -1618,13 +1798,20 @@ export function registerTools(
 			resolution_note: z.string().optional().describe('Note'),
 		},
 		async (args, db, auth) => {
-			const existing = await db.query<{ team_id: string }>(
-				'SELECT team_id FROM approvals WHERE id = $1',
+			const existing = await db.query<{ team_id: string; payload: Record<string, unknown> }>(
+				'SELECT team_id, payload FROM approvals WHERE id = $1',
 				[args.approval_id],
 			);
 			if (existing.rows.length === 0) return { error: 'Approval not found' };
 			const denied = await verifyTeamAccess(db, auth, existing.rows[0].team_id);
 			if (denied) return { error: denied };
+			const approvalProjectId = existing.rows[0].payload?.project_id;
+			if (typeof approvalProjectId === 'string') {
+				const pDenied = assertProjectAccess(auth, approvalProjectId);
+				if (pDenied) return { error: pDenied };
+			} else if (auth.type === AuthType.Agent && !auth.crossProject) {
+				return { error: 'Access denied: run is not scoped to resolve this approval' };
+			}
 
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const resolved = await resolveApproval(db, args.approval_id as string, {
@@ -2029,7 +2216,7 @@ export function registerTools(
 	tool(
 		server,
 		'upsert_kb_doc',
-		'Create or update a knowledge base document. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Create or update a knowledge base document. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. IN-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			team_id: z.string().describe('Team ID'),
 			title: z.string().describe('Document title'),
@@ -2066,6 +2253,8 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
+			const pDenied = assertProjectAccess(auth, args.project_id as string);
+			if (pDenied) return { error: pDenied };
 			const docs = await listDocuments(db, {
 				type: DocumentType.ProjectDoc,
 				teamId: args.team_id as string,
@@ -2094,6 +2283,8 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
+			const pDenied = assertProjectAccess(auth, args.project_id as string);
+			if (pDenied) return { error: pDenied };
 			const doc = await getDocument(db, {
 				type: DocumentType.ProjectDoc,
 				teamId: args.team_id as string,
@@ -2109,7 +2300,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_doc',
-		'Write a project documentation file. For high-level project context: PRD, spec, implementation plan, research. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. OP-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Write a project documentation file. For high-level project context: PRD, spec, implementation plan, research. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. IN-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			team_id: z.string().describe('Team ID'),
 			project_id: z.string().describe('Project ID'),
@@ -2119,6 +2310,8 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
+			const pDenied = assertProjectAccess(auth, args.project_id as string);
+			if (pDenied) return { error: pDenied };
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const doc = await upsertDocument(db, wsManager, {
 				scope: {

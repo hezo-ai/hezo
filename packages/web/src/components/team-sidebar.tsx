@@ -1,4 +1,4 @@
-import { AgentAdminStatus, OPERATIONS_PROJECT_SLUG } from '@hezo/shared';
+import { AgentAdminStatus, INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { Settings } from 'lucide-react';
 import { useState } from 'react';
@@ -28,8 +28,8 @@ export function TeamSidebar() {
 		.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
 	const sortedProjects = [...(projects ?? [])].sort((a, b) => {
-		if (a.slug === OPERATIONS_PROJECT_SLUG) return 1;
-		if (b.slug === OPERATIONS_PROJECT_SLUG) return -1;
+		if (a.slug === INTERNAL_PROJECT_SLUG) return 1;
+		if (b.slug === INTERNAL_PROJECT_SLUG) return -1;
 		return a.name.localeCompare(b.name);
 	});
 
@@ -67,7 +67,7 @@ export function TeamSidebar() {
 			items: [],
 			children: sortedProjects.map((project) => {
 				const projectParams = { teamId, projectId: project.slug };
-				const isInternal = project.slug === OPERATIONS_PROJECT_SLUG;
+				const isInternal = project.slug === INTERNAL_PROJECT_SLUG;
 				const tasksItem = {
 					to: '/teams/$teamId/projects/$projectId/tasks',
 					params: projectParams,

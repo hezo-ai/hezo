@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { AuthInfo, Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -50,10 +50,9 @@ beforeAll(async () => {
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Test Project', description: 'Test project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Test Project',
+		description: 'Test project.',
 	});
 	projectId = (await projectRes.json()).data.id;
 
@@ -187,6 +186,8 @@ describe('MCP tool: verifyTeamAccess (direct DB tests)', () => {
 			memberId: agentId,
 			teamId,
 			runId: '00000000-0000-0000-0000-000000000001',
+			projectId: '00000000-0000-0000-0000-000000000010',
+			crossProject: true,
 		};
 		expect(agentAuth.teamId).toBe(teamId);
 	});
@@ -197,6 +198,8 @@ describe('MCP tool: verifyTeamAccess (direct DB tests)', () => {
 			memberId: agentBId,
 			teamId: teamBId,
 			runId: '00000000-0000-0000-0000-000000000002',
+			projectId: '00000000-0000-0000-0000-000000000011',
+			crossProject: true,
 		};
 		expect(agentAuth.teamId).not.toBe(teamId);
 	});
@@ -911,30 +914,30 @@ describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
 	});
 });
 
-describe('MCP tool: operations project assignee restriction', () => {
-	it('create_task on Operations project rejects non-Captain assignee_slug', async () => {
+describe('MCP tool: Internal project assignee restriction', () => {
+	it('create_task on Internal project rejects non-Captain assignee_slug', async () => {
 		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
 			[teamId],
 		);
 		const result = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: ops.rows[0].id,
-			title: 'Operations via MCP with non-Captain',
+			title: 'Internal via MCP with non-Captain',
 			assignee_slug: 'engineer',
 		})) as { error?: string };
 		expect(result.error).toContain('Captain');
 	});
 
-	it('create_task on Operations project accepts Captain assignee_slug', async () => {
+	it('create_task on Internal project accepts Captain assignee_slug', async () => {
 		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
 			[teamId],
 		);
 		const result = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: ops.rows[0].id,
-			title: 'Operations via MCP with Captain',
+			title: 'Internal via MCP with Captain',
 			assignee_slug: 'captain',
 		})) as { error?: string; id?: string; project_id?: string };
 		expect(result.error).toBeUndefined();
@@ -978,9 +981,9 @@ describe('MCP tool: operations project assignee restriction', () => {
 		expect(tooDeep.error).toMatch(/2 levels deep/);
 	});
 
-	it('update_task rejects reassigning Operations task to non-Captain', async () => {
+	it('update_task rejects reassigning Internal task to non-Captain', async () => {
 		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'operations'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
 			[teamId],
 		);
 		const captain = await db.query<{ id: string }>(
@@ -992,7 +995,7 @@ describe('MCP tool: operations project assignee restriction', () => {
 		const created = (await callToolViaMcp('create_task', {
 			team_id: teamId,
 			project_id: ops.rows[0].id,
-			title: 'Operations reassign target',
+			title: 'Internal reassign target',
 			assignee_id: captain.rows[0].id,
 		})) as { id: string };
 
@@ -1171,10 +1174,9 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 	});
 
 	it('returns a structured result_too_large error when serialised output exceeds the byte cap', async () => {
-		const fatProjectRes = await app.request(`/api/teams/${teamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Fat Result Project', description: 'fatness' }),
+		const fatProjectRes = await createTestProject(db, teamId, {
+			name: 'Fat Result Project',
+			description: 'fatness',
 		});
 		const fatProjectId = (await fatProjectRes.json()).data.id;
 

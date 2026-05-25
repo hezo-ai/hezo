@@ -1,11 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	AgentAdminStatus,
-	CAPTAIN_AGENT_SLUG,
-	ContainerStatus,
-	WakeupSource,
-	wsRoom,
-} from '@hezo/shared';
+import { ContainerStatus, WakeupSource, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
@@ -25,7 +19,7 @@ import {
 	teardownContainer,
 } from '../services/containers';
 import type { JobManager } from '../services/job-manager';
-import { createProjectWithPlanningTask } from '../services/project-create';
+import { createProjectIntake } from '../services/project-intake';
 import { createWakeup } from '../services/wakeup';
 
 function buildContainerDeps(c: Context<Env>): ContainerDeps {
@@ -176,7 +170,6 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 	const body = await c.req.json<{
 		name: string;
 		description?: string;
-		docker_base_image?: string;
 		initial_prd?: string;
 		task_prefix?: string;
 	}>();
@@ -188,83 +181,37 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'description is required', 400);
 	}
 
-	const teamMetaResult = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
-		teamId,
-	]);
-	const teamMeta = teamMetaResult.rows[0];
-	if (!teamMeta) {
-		return err(c, 'NOT_FOUND', 'Team not found', 404);
-	}
-
 	const prefixResult = await resolveProjectTaskPrefix(db, teamId, body.task_prefix, body.name);
 	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
-	const taskPrefix = prefixResult.prefix;
 
-	const captainResult = await db.query<{ id: string }>(
-		`SELECT ma.id FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
-		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
+	const wsManager = c.get('wsManager');
+	const intake = await createProjectIntake(
+		db,
+		teamId,
+		{
+			name: body.name.trim(),
+			description: body.description.trim(),
+			taskPrefix: prefixResult.prefix,
+			initialPrd: body.initial_prd?.trim() || null,
+		},
+		wsManager,
 	);
-	const captainMemberId = captainResult.rows[0]?.id;
-	if (!captainMemberId) {
+	if (!intake) {
 		return err(
 			c,
 			'INTERNAL',
-			'No enabled Captain found for this team. Re-enable the Captain agent before creating projects.',
+			'Cannot open project intake — the team is missing its Captain or Internal project.',
 			500,
 		);
 	}
 
-	const slug = await uniqueSlug(toSlug(body.name), async (s) => {
-		const r = await db.query('SELECT 1 FROM projects WHERE team_id = $1 AND slug = $2', [
-			teamId,
-			s,
-		]);
-		return r.rows.length > 0;
-	});
-
-	const { project, planningTask } = await createProjectWithPlanningTask(db, {
-		teamId,
-		captainMemberId,
-		name: body.name.trim(),
-		slug,
-		taskPrefix,
-		description: body.description.trim(),
-		dockerBaseImage: body.docker_base_image,
-		initialPrd: body.initial_prd?.trim() || null,
-		createPlanningTask: true,
-	});
-
-	broadcastChange(c, wsRoom.team(teamId), 'projects', 'INSERT', project);
-	if (!planningTask) {
-		throw new Error('Expected planning task for direct project creation');
-	}
-	broadcastChange(c, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
-
-	trackBackground(
-		createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
-			task_id: planningTask.id,
-		}).catch((e) => log.error('Failed to wake Captain for project planning:', e)),
-	);
-
-	trackBackground(
-		provisionContainer(
-			buildContainerDeps(c),
-			project as unknown as ProjectRow,
-			teamMeta.slug,
-		).catch((error) => {
-			log.error(`Failed to provision container for project ${project.slug}:`, error);
-		}),
-	);
-
 	return ok(
 		c,
 		{
-			...project,
-			planning_task_id: planningTask.id,
-			planning_task_identifier: planningTask.identifier,
+			intake_task_id: intake.intakeTaskId,
+			intake_task_identifier: intake.intakeTaskIdentifier,
+			project_slug: intake.projectSlug,
+			approval_id: intake.approvalId,
 		},
 		201,
 	);

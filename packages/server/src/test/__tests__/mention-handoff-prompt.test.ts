@@ -11,7 +11,7 @@ import {
 } from '../../services/agent-runner';
 import { getAgentSystemPrompt } from '../../services/documents';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -61,10 +61,9 @@ beforeAll(async () => {
 	captainMemberId = agents.find((a) => a.slug === 'captain')!.id;
 	architectMemberId = agents.find((a) => a.slug === 'architect')!.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Handoff project', description: 'Test' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Handoff project',
+		description: 'Test',
 	});
 	projectId = (await projectRes.json()).data.id;
 });
@@ -192,10 +191,9 @@ describe('mention handoff prompt (integration)', () => {
 		const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
 		const captain = agents.find((a) => a.slug === 'captain')!;
 		const architect = agents.find((a) => a.slug === 'architect')!;
-		const projRes = await app.request(`/api/teams/${soloTeamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No tickets', description: 'x' }),
+		const projRes = await createTestProject(db, soloTeamId, {
+			name: 'No tickets',
+			description: 'x',
 		});
 		const soloProjectId = (await projRes.json()).data.id;
 		const taskRes = await app.request(`/api/teams/${soloTeamId}/tasks`, {

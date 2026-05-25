@@ -45,11 +45,11 @@ describe('teams CRUD', () => {
 		expect(body.data.slug).toBe('notegenius-ai');
 		expect(body.data.agent_count).toBe(11);
 
-		const opsPrefix = await db.query<{ task_prefix: string }>(
-			"SELECT task_prefix FROM projects WHERE team_id = $1 AND slug = 'operations'",
+		const internalPrefix = await db.query<{ task_prefix: string }>(
+			"SELECT task_prefix FROM projects WHERE team_id = $1 AND slug = 'internal'",
 			[body.data.id],
 		);
-		expect(opsPrefix.rows[0].task_prefix).toBe('OP');
+		expect(internalPrefix.rows[0].task_prefix).toBe('IN');
 
 		const kbRes = await app.request(`/api/teams/${body.data.id}/kb-docs`, {
 			headers: authHeader(token),
@@ -167,7 +167,7 @@ describe('teams CRUD', () => {
 		expect(slug2).toBe('duplicate-name-2');
 	});
 
-	it('auto-provisions a container for the operations project', async () => {
+	it('auto-provisions a container for the Internal project', async () => {
 		const res = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -179,15 +179,15 @@ describe('teams CRUD', () => {
 		// Wait for async provisionContainer to attempt
 		await new Promise((r) => setTimeout(r, 200));
 
-		const opsProject = await db.query<{ container_status: string | null }>(
-			"SELECT container_status FROM projects WHERE team_id = $1 AND slug = 'operations'",
+		const internalProject = await db.query<{ container_status: string | null }>(
+			"SELECT container_status FROM projects WHERE team_id = $1 AND slug = 'internal'",
 			[teamId],
 		);
-		expect(opsProject.rows.length).toBe(1);
-		expect(opsProject.rows[0].container_status).not.toBeNull();
+		expect(internalProject.rows.length).toBe(1);
+		expect(internalProject.rows[0].container_status).not.toBeNull();
 	});
 
-	it('seeds the Operations project with an OP task prefix', async () => {
+	it('seeds the Internal project with an IN task prefix', async () => {
 		const res = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -195,11 +195,11 @@ describe('teams CRUD', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		const opsPrefix = await db.query<{ task_prefix: string }>(
-			"SELECT task_prefix FROM projects WHERE team_id = $1 AND slug = 'operations'",
+		const internalPrefix = await db.query<{ task_prefix: string }>(
+			"SELECT task_prefix FROM projects WHERE team_id = $1 AND slug = 'internal'",
 			[body.data.id],
 		);
-		expect(opsPrefix.rows[0].task_prefix).toBe('OP');
+		expect(internalPrefix.rows[0].task_prefix).toBe('IN');
 	});
 });
 

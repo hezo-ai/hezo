@@ -4,8 +4,8 @@ import { broadcastRowChange } from '../lib/broadcast';
 import { terminalStatusParams } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
+import { loadCaptainInternalContext } from './internal-intake';
 import { isTeamExecutionStarted } from './onboarding';
-import { loadCaptainOpsContext } from './operations-intake';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -54,9 +54,9 @@ export async function enqueueGoalReviewTask(
 		return null;
 	}
 
-	const ctx = await loadCaptainOpsContext(db, teamId);
+	const ctx = await loadCaptainInternalContext(db, teamId);
 	if (!ctx) {
-		log.warn(`Cannot enqueue goal review for ${goalId}; missing Captain or Operations project`);
+		log.warn(`Cannot enqueue goal review for ${goalId}; missing Captain or Internal project`);
 		return null;
 	}
 
@@ -78,7 +78,7 @@ export async function enqueueGoalReviewTask(
 		return null;
 	}
 
-	const targetProjectId = goal.project_id ?? ctx.operationsProjectId;
+	const targetProjectId = goal.project_id ?? ctx.internalProjectId;
 	const scopeLabel = goal.project_name ? `Project: ${goal.project_name}` : 'Team-wide';
 
 	const ts = terminalStatusParams(2);

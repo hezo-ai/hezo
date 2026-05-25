@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import {
 	authenticate,
 	clickAndWaitForResponse,
+	createProjectAndClearPlanning,
 	createTeamWithAgents,
 	waitForPageLoad,
 } from './helpers';
@@ -18,9 +19,9 @@ test('status changes and cross-task mentions appear as system entries on the tim
 	});
 	const agent = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'History Project', description: 'Project for history events.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'History Project',
+		description: 'Project for history events.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
@@ -134,9 +135,9 @@ test('title renames appear as system entries on the timeline', async ({ page }) 
 	});
 	const agent = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data[0];
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Rename Project', description: 'Project for rename events.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Rename Project',
+		description: 'Project for rename events.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
@@ -172,9 +173,9 @@ test('reassignments appear as system entries on the timeline', async ({ page }) 
 	expect(agents.length).toBeGreaterThanOrEqual(2);
 	const [first, second] = agents;
 
-	const projectRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-		headers,
-		data: { name: 'Reassign Project', description: 'Project for reassignment events.' },
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Reassign Project',
+		description: 'Project for reassignment events.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 

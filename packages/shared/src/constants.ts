@@ -5,7 +5,8 @@ export const CANARY_PLAINTEXT = 'CANARY';
 export const CAPTAIN_AGENT_SLUG = 'captain';
 export const COACH_AGENT_SLUG = 'coach';
 export const BUILTIN_AGENT_SLUGS = [CAPTAIN_AGENT_SLUG, COACH_AGENT_SLUG] as const;
-export const OPERATIONS_PROJECT_SLUG = 'operations';
+export const INTERNAL_PROJECT_SLUG = 'internal';
+export const INTERNAL_PROJECT_TASK_PREFIX = 'IN';
 
 export const DEFAULT_TEAM_ID = '00000000-0000-0000-0000-000000000001';
 export const DEFAULT_TEAM_SLUG = 'default';
@@ -14,6 +15,10 @@ export const DEFAULT_TEAM_TEMPLATE_NAME = 'Blank';
 
 export const ONBOARDING_INTAKE_SKIP_SIGNAL_TEXT =
 	'Board chose to skip further questions — propose a template and a project based on what we have so far.';
+
+export const PROJECT_INTAKE_LABEL = 'project-intake';
+export const PROJECT_INTAKE_SKIP_SIGNAL_TEXT =
+	'Board chose to skip further questions — finalise the project proposal with what we have so far.';
 
 export const wsRoom = {
 	team: (id: string) => `team:${id}`,

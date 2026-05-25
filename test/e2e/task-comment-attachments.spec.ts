@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	createProjectAndClearPlanning,
+	createTeamWithAgents,
+	waitForPageLoad,
+} from './helpers';
 
 const PNG_BYTES = Uint8Array.from([
 	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -14,9 +19,9 @@ test.describe('Task Comment Attachments', () => {
 		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await page.request.post(`/api/teams/${team.id}/projects`, {
-			headers,
-			data: { name: 'Attachments Project', description: 'Test project.' },
+		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+			name: 'Attachments Project',
+			description: 'Test project.',
 		});
 		const project = ((await projRes.json()) as { data: { id: string } }).data;
 

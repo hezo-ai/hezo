@@ -8,7 +8,7 @@ import type { MasterKeyManager } from '../../crypto/master-key';
 import { signAssetUrl } from '../../lib/asset-urls';
 import type { Env } from '../../lib/types';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -67,10 +67,9 @@ beforeAll(async () => {
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Main', description: 'Attachments project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Main',
+		description: 'Attachments project.',
 	});
 	const projectData = (await projectRes.json()).data;
 	projectId = projectData.id;
@@ -97,10 +96,9 @@ beforeAll(async () => {
 	}
 	taskId = (await taskRes.json()).data.id;
 
-	const otherProjectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Other', description: 'Isolation test.' }),
+	const otherProjectRes = await createTestProject(db, teamId, {
+		name: 'Other',
+		description: 'Isolation test.',
 	});
 	otherProjectId = (await otherProjectRes.json()).data.id;
 

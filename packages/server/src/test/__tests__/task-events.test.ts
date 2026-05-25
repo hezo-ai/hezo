@@ -6,7 +6,7 @@ import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Env } from '../../lib/types';
 import { extractTaskIdentifiers } from '../../services/task-events';
 import { safeClose } from '../helpers';
-import { authHeader, createTestApp, mintAgentToken } from '../helpers/app';
+import { authHeader, createTestApp, createTestProject, mintAgentToken } from '../helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -78,10 +78,9 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const projectRes = await app.request(`/api/teams/${teamId}/projects`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Widget', description: 'Widget project.' }),
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Widget',
+		description: 'Widget project.',
 	});
 	projectId = (await projectRes.json()).data.id;
 
@@ -99,26 +98,26 @@ afterAll(async () => {
 
 describe('extractTaskIdentifiers', () => {
 	it('returns identifiers from plain prose', () => {
-		expect(extractTaskIdentifiers('see OP-42 for the rest')).toEqual(['OP-42']);
+		expect(extractTaskIdentifiers('see IN-42 for the rest')).toEqual(['IN-42']);
 	});
 
 	it('finds multiple unique identifiers', () => {
-		expect(extractTaskIdentifiers('see OP-1 and OP-2 — also OP-1 again').sort()).toEqual([
-			'OP-1',
-			'OP-2',
+		expect(extractTaskIdentifiers('see IN-1 and IN-2 — also IN-1 again').sort()).toEqual([
+			'IN-1',
+			'IN-2',
 		]);
 	});
 
 	it('skips identifiers in fenced code blocks', () => {
-		expect(extractTaskIdentifiers('text\n```\nOP-9\n```\nmore')).toEqual([]);
+		expect(extractTaskIdentifiers('text\n```\nIN-9\n```\nmore')).toEqual([]);
 	});
 
 	it('skips identifiers in inline code', () => {
-		expect(extractTaskIdentifiers('inline `OP-9` here')).toEqual([]);
+		expect(extractTaskIdentifiers('inline `IN-9` here')).toEqual([]);
 	});
 
 	it('skips lowercase identifiers', () => {
-		expect(extractTaskIdentifiers('check op-9 sometime')).toEqual([]);
+		expect(extractTaskIdentifiers('check in-9 sometime')).toEqual([]);
 	});
 
 	it('returns [] for null/undefined/empty', () => {
@@ -401,10 +400,9 @@ describe('task link system events', () => {
 			body: JSON.stringify({ name: 'Other Co' }),
 		});
 		const otherTeamId = (await otherTeamRes.json()).data.id;
-		const otherProjectRes = await app.request(`/api/teams/${otherTeamId}/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Foreign', description: 'Other.' }),
+		const otherProjectRes = await createTestProject(db, otherTeamId, {
+			name: 'Foreign',
+			description: 'Other.',
 		});
 		const otherProjectId = (await otherProjectRes.json()).data.id;
 		const otherAgentRes = await app.request(`/api/teams/${otherTeamId}/agents`, {

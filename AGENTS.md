@@ -156,4 +156,4 @@ When you complete a phase, mark it done with a completion date at the top of the
 ## Pre-v1 notes
 
 - No backwards-compatibility concerns. Change things cleanly.
-- No rate limiting yet — will be a unified middleware before v1.0.0; highest-priority targets are `POST /api/auth/token` and `POST /mcp`. Don't add rate limiting piecemeal.
+- No rate limiting yet.

@@ -22,6 +22,7 @@ import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
+import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
 import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerDeps,
@@ -101,6 +102,11 @@ export class JobManager {
 	// before launchTask, cleared in the launchTask finally. Closes the race window between
 	// dispatch and createHeartbeatRun where the DB-backed check is not yet authoritative.
 	private activeTaskRuns = new Set<string>();
+	// Projects whose container/workspace is currently held by a dispatched run.
+	// Same in-memory guard as activeTaskRuns, scoped at the project level so a
+	// second run cannot enter the project's shared workspace until the first
+	// releases. Tracked in parallel with activeTaskRuns in activateAgent.
+	private activeProjectRuns = new Set<string>();
 	private deps: JobManagerDeps;
 	private started = false;
 
@@ -220,6 +226,20 @@ export class JobManager {
 
 	isTaskRunning(key: string): boolean {
 		return this.runningTasks.has(key);
+	}
+
+	/**
+	 * True when this agent already holds a dispatched run for any project. Used
+	 * by the heartbeat scheduler to skip redundant idle pings while a task-driven
+	 * run is in flight (heartbeats don't carry a project so we can't fall back to
+	 * the per-project guard).
+	 */
+	isMemberRunning(memberId: string): boolean {
+		const prefix = `${memberId}:`;
+		for (const key of this.runningTasks.keys()) {
+			if (key.startsWith(prefix)) return true;
+		}
+		return false;
 	}
 
 	getRunningTasks(): Map<string, RunningTask> {
@@ -450,6 +470,28 @@ export class JobManager {
 		return active.rows.length > 0;
 	}
 
+	private async isProjectBusy(projectId: string): Promise<boolean> {
+		if (this.activeProjectRuns.has(projectId)) return true;
+		const { db } = this.deps;
+		const active = await db.query(
+			`SELECT 1 FROM heartbeat_runs r
+			 JOIN tasks t ON t.id = r.task_id
+			 WHERE t.project_id = $1
+			   AND r.status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)
+			 LIMIT 1`,
+			[projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
+		);
+		return active.rows.length > 0;
+	}
+
+	private async resolveProjectForTask(taskId: string): Promise<string | null> {
+		const { db } = this.deps;
+		const r = await db.query<{ project_id: string }>('SELECT project_id FROM tasks WHERE id = $1', [
+			taskId,
+		]);
+		return r.rows[0]?.project_id ?? null;
+	}
+
 	private async processWakeups(): Promise<void> {
 		const { db } = this.deps;
 		const coalescingCutoff = new Date(Date.now() - COALESCING_WINDOW_MS).toISOString();
@@ -475,13 +517,25 @@ export class JobManager {
 		}
 
 		for (const wakeup of wakeups.rows) {
-			if (this.isTaskRunning(wsRoom.agent(wakeup.member_id))) {
+			const wakeupTaskId =
+				typeof wakeup.payload?.task_id === 'string' ? wakeup.payload.task_id : null;
+			if (wakeupTaskId) {
+				if (await this.isTaskBusy(wakeup.payload)) {
+					log.debug(`Skipping wakeup ${wakeup.id} — target task already has an active run`);
+					continue;
+				}
+				const projectId = await this.resolveProjectForTask(wakeupTaskId);
+				if (projectId && (await this.isProjectBusy(projectId))) {
+					log.debug(
+						`Skipping wakeup ${wakeup.id} — project ${projectId} already has an active run`,
+					);
+					continue;
+				}
+			} else if (this.isMemberRunning(wakeup.member_id)) {
+				// Task-less wakeup (e.g. queued heartbeat) — picks a task inside
+				// activateAgent, so we can't pre-check a project lock. Fall back to
+				// per-agent dedup to avoid stacking idle pings.
 				log.debug(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
-				continue;
-			}
-
-			if (await this.isTaskBusy(wakeup.payload)) {
-				log.debug(`Skipping wakeup ${wakeup.id} — target task already has an active run`);
 				continue;
 			}
 
@@ -547,7 +601,7 @@ export class JobManager {
 		}
 
 		for (const agent of dueAgents.rows) {
-			if (this.isTaskRunning(wsRoom.agent(agent.id))) {
+			if (this.isMemberRunning(agent.id)) {
 				continue;
 			}
 			const payload = { reason: 'scheduled_heartbeat' };
@@ -681,14 +735,28 @@ export class JobManager {
 			task = tasks.rows[0];
 		}
 
-		// Per-task serialisation: only one agent runs on a given task at a time. Most
-		// blocked wakeups are filtered earlier by processWakeups via isTaskBusy; this
-		// guard catches heartbeat-style wakeups (no payload.task_id) where the chosen
-		// task is determined here, plus any race where the task became busy between
-		// the dispatcher check and now.
+		// Per-task and per-project serialisation: only one agent runs on a given
+		// task at a time, and only one run is allowed per project at a time (the
+		// container/workspace is shared at the project level). Most blocked
+		// wakeups are filtered earlier by processWakeups; this guard catches
+		// heartbeat-style wakeups (no payload.task_id) where the chosen task is
+		// determined here, plus any race where the task or project became busy
+		// between the dispatcher check and now.
 		if (await this.isTaskBusy({ task_id: task.id })) {
 			log.debug(
 				`Task ${task.identifier} already has an active run — re-queuing wakeup for ${memberId}`,
+			);
+			if (wakeupId) {
+				await db.query(
+					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = NULL WHERE id = $2',
+					[WakeupStatus.Queued, wakeupId],
+				);
+			}
+			return;
+		}
+		if (await this.isProjectBusy(task.project_id)) {
+			log.debug(
+				`Project ${task.project_id} already has an active run — re-queuing wakeup for ${memberId}`,
 			);
 			if (wakeupId) {
 				await db.query(
@@ -707,9 +775,10 @@ export class JobManager {
 			container_id: string;
 			container_status: string;
 			designated_repo_id: string | null;
+			is_internal: boolean;
 		}>(
 			`SELECT p.id, p.slug, p.team_id, c.slug AS team_slug,
-			        p.container_id, p.container_status, p.designated_repo_id
+			        p.container_id, p.container_status, p.designated_repo_id, p.is_internal
 			 FROM projects p
 			 JOIN teams c ON c.id = p.team_id
 			 WHERE p.id = $1`,
@@ -849,9 +918,10 @@ export class JobManager {
 		const timeoutMs = agent.rows[0].run_timeout_min * 60 * 1000;
 
 		const projectId = project.rows[0].id;
-		const taskKey = wsRoom.agent(memberId);
+		const taskKey = `${memberId}:${projectId}`;
 		const lockedTaskId = task.id;
 		this.activeTaskRuns.add(lockedTaskId);
+		this.activeProjectRuns.add(projectId);
 
 		this.launchTask(
 			taskKey,
@@ -907,6 +977,7 @@ export class JobManager {
 					return null;
 				} finally {
 					this.activeTaskRuns.delete(lockedTaskId);
+					this.activeProjectRuns.delete(projectId);
 				}
 			},
 			timeoutMs,
@@ -933,14 +1004,13 @@ export class JobManager {
 			[taskId, memberId],
 		);
 
-		await db.query(
-			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status, last_heartbeat_at = now() WHERE id = $2',
-			[AgentRuntimeStatus.Idle, memberId],
+		await setAgentIdleIfNoActiveRuns(
+			db,
+			memberId,
+			teamId,
+			result.heartbeatRunId,
+			this.deps.wsManager,
 		);
-		broadcastRowChange(this.deps.wsManager, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
-			id: memberId,
-			runtime_status: AgentRuntimeStatus.Idle,
-		});
 
 		if (wakeupId) {
 			await db.query(
