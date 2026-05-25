@@ -365,13 +365,9 @@ export async function applyApprovalSideEffect(
 						slug: projectSlug,
 						taskPrefix: prefixResult.prefix,
 						description: projectDescription,
-						createPlanningTask: true,
 					});
 
 				broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
-				if (!planningTask) {
-					throw new Error('Expected planning task for approval-driven project creation');
-				}
 				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
 
 				if (!deferCaptainPlanningWake) {
@@ -453,16 +449,10 @@ export async function applyApprovalSideEffect(
 				taskPrefix: prefixResult.prefix,
 				description: projectDescription,
 				initialPrd,
-				createPlanningTask: true,
 			});
 
 			if (wsManager) {
 				broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
-			}
-			if (!planningTask) {
-				throw new Error('Expected planning task for project_creation approval');
-			}
-			if (wsManager) {
 				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
 			}
 

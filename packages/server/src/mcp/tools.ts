@@ -1345,13 +1345,9 @@ export function registerTools(
 					slug,
 					taskPrefix: prefixResult.prefix,
 					description: (args.description as string | undefined) ?? '',
-					createPlanningTask: true,
 				});
 
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
-			if (!planningTask) {
-				throw new Error('Expected planning task for MCP project creation');
-			}
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
 
 			if (!deferCaptainPlanningWake) {

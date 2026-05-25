@@ -146,7 +146,6 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 		template_id?: string;
 		project_name?: string;
 		project_description?: string;
-		skip_planning_task?: boolean;
 	}>();
 	if (!body.template_id?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'template_id is required', 400);
@@ -168,7 +167,6 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 		containerLogStreamer: c.get('containerLogStreamer'),
 		sshAgentServer: c.get('sshAgentServer'),
 		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
-		skipPlanningTask: body.skip_planning_task === true,
 	});
 
 	if (!result.ok) {

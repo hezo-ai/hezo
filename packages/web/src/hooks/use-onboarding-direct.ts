@@ -6,14 +6,13 @@ export interface OnboardingDirectInput {
 	template_id: string;
 	project_name: string;
 	project_description?: string;
-	skip_planning_task?: boolean;
 }
 
 export interface OnboardingDirectResult {
 	project_id: string;
 	project_slug: string;
-	planning_task_id: string | null;
-	planning_task_identifier: string | null;
+	planning_task_id: string;
+	planning_task_identifier: string;
 	created_agent_slugs: string[];
 }
 

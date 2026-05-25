@@ -1,9 +1,6 @@
-import { useNavigate } from '@tanstack/react-router';
 import { MessagesSquare, Sparkles } from 'lucide-react';
 import { useState } from 'react';
-import { useOnboardingDirect } from '../../hooks/use-onboarding-direct';
 import { useStartOnboardingIntake } from '../../hooks/use-onboarding-intake';
-import { useTeamTemplates } from '../../hooks/use-team-templates';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { DirectFlow } from './direct-flow';
@@ -19,30 +16,10 @@ interface OnboardingChoiceProps {
 export function OnboardingChoice({ teamId, onChosen }: OnboardingChoiceProps) {
 	const [mode, setMode] = useState<Mode>('choose');
 	const startIntake = useStartOnboardingIntake(teamId);
-	const directOnboarding = useOnboardingDirect(teamId);
-	const { data: templates } = useTeamTemplates();
-	const navigate = useNavigate();
-
-	const blankTemplate = templates?.find((t) => t.name === 'Blank');
 
 	async function handleStartChat() {
 		await startIntake.mutateAsync();
 		onChosen();
-	}
-
-	async function handleGeneralHelp() {
-		if (!blankTemplate) return;
-		const result = await directOnboarding.mutateAsync({
-			template_id: blankTemplate.id,
-			project_name: 'General',
-			project_description: 'Catch-all for ad-hoc help and one-off tasks.',
-			skip_planning_task: true,
-		});
-		onChosen();
-		navigate({
-			to: '/teams/$teamId/projects/$projectId/tasks',
-			params: { teamId, projectId: result.project_slug },
-		});
 	}
 
 	if (mode === 'direct') {
@@ -87,25 +64,6 @@ export function OnboardingChoice({ teamId, onChosen }: OnboardingChoiceProps) {
 						Browse templates
 					</Button>
 				</Card>
-			</div>
-
-			<div className="text-center">
-				<button
-					type="button"
-					onClick={handleGeneralHelp}
-					disabled={!blankTemplate || directOnboarding.isPending}
-					data-testid="choice-general"
-					className="text-[13px] text-text-muted hover:text-text underline disabled:opacity-50"
-				>
-					{directOnboarding.isPending
-						? 'Setting up your General project…'
-						: 'Just exploring? Set me up with general help →'}
-				</button>
-				{directOnboarding.error && (
-					<p className="mt-2 text-[12px] text-accent-red">
-						{(directOnboarding.error as { message?: string }).message || 'Something went wrong'}
-					</p>
-				)}
 			</div>
 		</div>
 	);

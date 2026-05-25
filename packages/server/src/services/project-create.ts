@@ -11,13 +11,11 @@ export interface CreateProjectWithPlanningInput {
 	description: string;
 	dockerBaseImage?: string;
 	initialPrd?: string | null;
-	/** When false, the project is created without a planning task. Caller must pass this explicitly. */
-	createPlanningTask: boolean;
 }
 
 export interface CreateProjectWithPlanningResult {
 	project: Record<string, unknown>;
-	planningTask: Record<string, unknown> | null;
+	planningTask: Record<string, unknown>;
 	/** True when this was the first user-facing project at insert time (defer Captain planning wakeup). */
 	deferCaptainPlanningWake: boolean;
 }
@@ -65,11 +63,6 @@ export async function createProjectWithPlanningTask(
 				 VALUES ($1, $2, 'project_doc', 'initial-prd.md', $3)`,
 				[project.id, input.teamId, initialPrd],
 			);
-		}
-
-		if (!input.createPlanningTask) {
-			await db.query('COMMIT');
-			return { project, planningTask: null, deferCaptainPlanningWake };
 		}
 
 		const { number: taskNumber, identifier } = await allocateTaskIdentifier(

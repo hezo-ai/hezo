@@ -173,7 +173,6 @@ export async function createTestProject(
 		task_prefix?: string;
 		initial_prd?: string | null;
 		docker_base_image?: string;
-		createPlanningTask?: boolean;
 	},
 ): Promise<{
 	status: 201;
@@ -213,7 +212,6 @@ export async function createTestProject(
 		description: input.description ?? '',
 		dockerBaseImage: input.docker_base_image,
 		initialPrd: input.initial_prd ?? null,
-		createPlanningTask: input.createPlanningTask ?? true,
 	});
 
 	const data: CreatedTestProject = {
@@ -227,8 +225,8 @@ export async function createTestProject(
 		docker_base_image: (project.docker_base_image as string) ?? 'hezo/agent-base:latest',
 		container_id: (project.container_id as string | null) ?? null,
 		container_status: (project.container_status as string | null) ?? null,
-		planning_task_id: (planningTask?.id as string) ?? null,
-		planning_task_identifier: (planningTask?.identifier as string) ?? null,
+		planning_task_id: planningTask.id as string,
+		planning_task_identifier: planningTask.identifier as string,
 	};
 
 	return {
