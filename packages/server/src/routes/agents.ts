@@ -19,7 +19,7 @@ import {
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
-import { resolveAgentId } from '../lib/resolve';
+import { resolveActorMemberId, resolveAgentId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import { buildUpdateSet, isFkViolation, terminalStatusParams } from '../lib/sql';
@@ -45,6 +45,7 @@ import {
 	restoreRevision,
 	upsertDocument,
 } from '../services/documents';
+import { terminateHeartbeatRun } from '../services/run-termination';
 import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
 
@@ -1056,4 +1057,45 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs/:runId', async (
 
 	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Run not found', 404);
 	return ok(c, result.rows[0]);
+});
+
+agentsRoutes.post('/teams/:teamId/agents/:agentId/heartbeat-runs/:runId/terminate', async (c) => {
+	const access = await requireTeamAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { teamId } = access;
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	const runId = c.req.param('runId');
+
+	const existing = await db.query<{ status: string }>(
+		'SELECT status FROM heartbeat_runs WHERE id = $1 AND team_id = $2 AND member_id = $3',
+		[runId, teamId, agentId],
+	);
+	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Run not found', 404);
+	const currentStatus = existing.rows[0].status;
+	if (currentStatus !== 'queued' && currentStatus !== 'running') {
+		return err(c, 'CONFLICT', `Run is already ${currentStatus} and cannot be terminated`, 409);
+	}
+
+	const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
+	const result = await terminateHeartbeatRun(
+		{ db, wsManager: c.get('wsManager'), jobManager: c.get('jobManager') },
+		runId,
+		'Terminated by user',
+		actorMemberId,
+	);
+
+	const refreshed = await db.query<Record<string, unknown>>(
+		`SELECT ${HEARTBEAT_RUN_COLUMNS}
+		 FROM heartbeat_runs hr
+		 LEFT JOIN tasks i ON i.id = hr.task_id
+		 LEFT JOIN projects p ON p.id = i.project_id
+		 ${HEARTBEAT_RUN_TRIGGER_JOINS}
+		 WHERE hr.id = $1 AND hr.member_id = $2`,
+		[runId, agentId],
+	);
+	const row = refreshed.rows[0] ?? {};
+	return ok(c, { ...row, terminated: result.terminated });
 });

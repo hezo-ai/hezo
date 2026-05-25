@@ -32,6 +32,7 @@ import type { AuthInfo, Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireTeamAccess } from '../middleware/auth';
 import { removeTaskWorktrees } from '../services/repo-sync';
+import { terminateRunsForTask } from '../services/run-termination';
 import { triggerStatusAutomations } from '../services/task-automation';
 import { recordAssigneeChange, recordTaskLinks, recordTitleChange } from '../services/task-events';
 import {
@@ -600,6 +601,22 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 			);
 		} catch (e) {
 			log.error('Failed to trigger status automations:', e);
+		}
+
+		if (body.status === TaskStatus.Closed || body.status === TaskStatus.Cancelled) {
+			const terminateReason = `Task ${body.status}`;
+			trackBackground(
+				terminateRunsForTask(
+					{
+						db,
+						wsManager: c.get('wsManager'),
+						jobManager: c.get('jobManager'),
+					},
+					taskId,
+					terminateReason,
+					actorMemberId,
+				).catch((e) => log.error('Failed to terminate runs on task close:', e)),
+			);
 		}
 
 		if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(body.status)) {

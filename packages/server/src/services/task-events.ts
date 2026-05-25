@@ -88,6 +88,39 @@ export async function recordStatusChange(
 	}
 }
 
+export async function recordRunTerminated(
+	db: PGlite,
+	teamId: string,
+	taskId: string,
+	runId: string,
+	reason: string,
+	actorMemberId: string | null,
+	wsManager: WebSocketManager | undefined,
+): Promise<void> {
+	const actorName = await resolveActorName(db, actorMemberId);
+	const text = `${actorName} terminated agent run — ${reason}`;
+	const r = await db.query<Record<string, unknown>>(
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb) RETURNING *`,
+		[
+			taskId,
+			actorMemberId,
+			CommentContentType.System,
+			JSON.stringify({
+				kind: 'run_terminated',
+				run_id: runId,
+				reason,
+				actor_id: actorMemberId,
+				actor_name: actorName,
+				text,
+			}),
+		],
+	);
+	if (r.rows[0] && wsManager) {
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
+	}
+}
+
 export async function recordTitleChange(
 	db: PGlite,
 	teamId: string,

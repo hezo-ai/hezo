@@ -9,8 +9,12 @@ import { seedBuiltins } from '../../db/seed';
 import { toSlug, uniqueSlug } from '../../lib/slug';
 import { signAgentJwt, signBoardJwt } from '../../middleware/auth';
 import { resolveProjectTaskPrefix } from '../../routes/projects';
+import { ContainerLogStreamer } from '../../services/container-logs';
 import type { DockerClient } from '../../services/docker';
+import { JobManager } from '../../services/job-manager';
+import { LogStreamBroker } from '../../services/log-stream-broker';
 import { createProjectWithPlanningTask } from '../../services/project-create';
+import { WebSocketManager } from '../../services/ws';
 import { buildApp } from '../../startup';
 import { createTestDbWithMigrations } from './db';
 
@@ -49,6 +53,21 @@ export async function createTestApp(opts: { webUrl?: string } = {}) {
 	const roleDocs = await loadAgentRoles();
 	await seedBuiltins(db, roleDocs);
 	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
+	const docker = createStubDocker();
+	const wsManager = new WebSocketManager();
+	const logs = new LogStreamBroker();
+	logs.setWsManager(wsManager);
+	const containerLogStreamer = new ContainerLogStreamer();
+	const jobManager = new JobManager({
+		db,
+		docker,
+		masterKeyManager,
+		serverPort: 0,
+		dataDir,
+		wsManager,
+		logs,
+		containerLogStreamer,
+	});
 	const app = buildApp(
 		db,
 		masterKeyManager,
@@ -56,7 +75,13 @@ export async function createTestApp(opts: { webUrl?: string } = {}) {
 			dataDir,
 			webUrl: opts.webUrl ?? '',
 		},
-		createStubDocker(),
+		docker,
+		wsManager,
+		jobManager,
+		logs,
+		null,
+		null,
+		containerLogStreamer,
 	);
 	const userResult = await db.query<{ id: string }>(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('Test Admin', true) RETURNING id",
