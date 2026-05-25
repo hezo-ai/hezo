@@ -31,8 +31,6 @@ export interface OnboardingDirectInput {
 	sshAgentServer?: SshAgentServer | null;
 	/** Host path to the egress CA PEM; bind-mounted into the project container. */
 	egressCAPath?: string | null;
-	/** When true, the project is created without a planning task (e.g. the "general help" exploratory project). */
-	skipPlanningTask?: boolean;
 }
 
 export type OnboardingDirectResult =
@@ -40,8 +38,8 @@ export type OnboardingDirectResult =
 			ok: true;
 			project_id: string;
 			project_slug: string;
-			planning_task_id: string | null;
-			planning_task_identifier: string | null;
+			planning_task_id: string;
+			planning_task_identifier: string;
 			created_agent_slugs: string[];
 	  }
 	| { ok: false; code: 'INVALID_REQUEST' | 'CONFLICT' | 'NOT_FOUND' | 'INTERNAL'; message: string };
@@ -130,19 +128,16 @@ export async function runOnboardingDirect(
 		slug: projectSlug,
 		taskPrefix: prefixResult.prefix,
 		description: input.projectDescription?.trim() ?? '',
-		createPlanningTask: !input.skipPlanningTask,
 	});
 
 	broadcastRowChange(input.wsManager, wsRoom.team(input.teamId), 'projects', 'INSERT', project);
-	if (planningTask) {
-		broadcastRowChange(input.wsManager, wsRoom.team(input.teamId), 'tasks', 'INSERT', planningTask);
-		try {
-			await createWakeup(db, captainMemberId, input.teamId, WakeupSource.Assignment, {
-				task_id: planningTask.id as string,
-			});
-		} catch (e) {
-			log.error('Failed to wake Captain on planning task after direct onboarding:', e);
-		}
+	broadcastRowChange(input.wsManager, wsRoom.team(input.teamId), 'tasks', 'INSERT', planningTask);
+	try {
+		await createWakeup(db, captainMemberId, input.teamId, WakeupSource.Assignment, {
+			task_id: planningTask.id as string,
+		});
+	} catch (e) {
+		log.error('Failed to wake Captain on planning task after direct onboarding:', e);
 	}
 
 	const teamSlugRow = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
@@ -177,8 +172,8 @@ export async function runOnboardingDirect(
 		ok: true,
 		project_id: project.id as string,
 		project_slug: project.slug as string,
-		planning_task_id: (planningTask?.id as string | undefined) ?? null,
-		planning_task_identifier: (planningTask?.identifier as string | undefined) ?? null,
+		planning_task_id: planningTask.id as string,
+		planning_task_identifier: planningTask.identifier as string,
 		created_agent_slugs: apply.created_slugs,
 	};
 }
