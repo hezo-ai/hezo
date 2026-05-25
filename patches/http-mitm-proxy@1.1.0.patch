@@ -1,0 +1,13 @@
+diff --git a/dist/lib/proxy.js b/dist/lib/proxy.js
+index e89659568c500de1dcd1c3611e353353d7158714..48409cf036918dc41352e6319fa089b2ce5ecec5 100644
+--- a/dist/lib/proxy.js
++++ b/dist/lib/proxy.js
+@@ -361,7 +361,7 @@ class Proxy {
+         function makeConnection(port) {
+             const conn = net_1.default.connect({
+                 port,
+-                host: "0.0.0.0",
++                host: self.httpHost,
+                 allowHalfOpen: true,
+             }, () => {
+                 const connectKey = `${conn.localPort}:${conn.remotePort}`;

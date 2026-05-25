@@ -480,6 +480,22 @@ export interface ProviderRuntimeAdapter {
 	credentialEnvByAuthMethod: Partial<Record<AiAuthMethod, string>>;
 }
 
+/**
+ * Claude Code emits background traffic (Statsig feature-flag polling, OTel,
+ * auto-update checks, Sentry) to api.anthropic.com regardless of
+ * ANTHROPIC_BASE_URL. When a non-Anthropic provider is driving the runtime
+ * those calls are pure noise — they hammer the egress proxy with traffic to
+ * a host nobody is paying for. Stamp these into staticEnv for every
+ * non-Anthropic Claude Code provider.
+ */
+const CLAUDE_CODE_QUIET_ENV = {
+	DISABLE_TELEMETRY: '1',
+	DISABLE_ERROR_REPORTING: '1',
+	DISABLE_AUTOUPDATER: '1',
+	DISABLE_NON_ESSENTIAL_MODEL_CALLS: '1',
+	DISABLE_BUG_COMMAND: '1',
+} as const;
+
 export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapter> = {
 	[AiProvider.Anthropic]: {
 		runtime: AgentRuntime.ClaudeCode,
@@ -502,6 +518,7 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 			ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-pro',
 			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash',
 			CLAUDE_CODE_SUBAGENT_MODEL: 'deepseek-v4-flash',
+			...CLAUDE_CODE_QUIET_ENV,
 		},
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
 	},
@@ -513,6 +530,7 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 			ANTHROPIC_DEFAULT_SONNET_MODEL: 'GLM-4.7',
 			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'GLM-4.5-Air',
 			CLAUDE_CODE_SUBAGENT_MODEL: 'GLM-4.5-Air',
+			...CLAUDE_CODE_QUIET_ENV,
 		},
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
 	},

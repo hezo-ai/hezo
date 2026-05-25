@@ -24,5 +24,8 @@
 		"test": "bun run scripts/test.ts",
 		"typecheck": "turbo typecheck",
 		"prepare": "husky"
+	},
+	"patchedDependencies": {
+		"http-mitm-proxy@1.1.0": "patches/http-mitm-proxy@1.1.0.patch"
 	}
 }

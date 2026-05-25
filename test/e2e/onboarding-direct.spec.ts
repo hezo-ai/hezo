@@ -1,5 +1,11 @@
 import { expect, test } from './fixtures';
-import { authenticate, getToken, setActiveTeamSlug, waitForPageLoad } from './helpers';
+import {
+	authenticate,
+	createTeamLight,
+	getToken,
+	setActiveTeamSlug,
+	waitForPageLoad,
+} from './helpers';
 
 test.describe('Onboarding direct flow', () => {
 	test.use({ viewport: { width: 390, height: 844 } });
@@ -49,6 +55,41 @@ test.describe('Onboarding direct flow', () => {
 		const projects = (await projectsRes.json()) as { data: Array<{ slug: string; name: string }> };
 		const created = projects.data.find((p) => p.slug === direct.project_slug);
 		expect(created?.name).toBe('My First App');
+	});
+
+	test("the wizard navigates straight to Captain's planning task after creation", async ({
+		page,
+	}) => {
+		await authenticate(page);
+		const { team } = await createTeamLight(page);
+		await page.goto('/home');
+		await waitForPageLoad(page);
+		await setActiveTeamSlug(page, team.slug);
+		await page.reload();
+		await waitForPageLoad(page);
+
+		await page
+			.getByTestId('choice-direct')
+			.getByRole('button', { name: 'Browse templates' })
+			.click();
+		await expect(page.getByTestId('direct-flow-pick')).toBeVisible();
+		await page.getByTestId('template-card-Blank').click();
+		await expect(page.getByTestId('direct-flow-confirm')).toBeVisible();
+
+		const projectName = `Direct UI ${Date.now()}`;
+		await page.getByLabel('Project name').fill(projectName);
+
+		await Promise.all([
+			page.waitForURL(
+				new RegExp(`/teams/${team.slug}/projects/direct-ui-[0-9]+/tasks/[a-z0-9-]+(?:\\?.*)?$`),
+				{ timeout: 30_000 },
+			),
+			page.getByRole('button', { name: /Add these agents and create project/ }).click(),
+		]);
+
+		expect(page.url()).toMatch(
+			new RegExp(`/teams/${team.slug}/projects/direct-ui-[0-9]+/tasks/[a-z0-9-]+`),
+		);
 	});
 
 	test('the first-time choice screen no longer exposes a "general help" escape hatch', async ({

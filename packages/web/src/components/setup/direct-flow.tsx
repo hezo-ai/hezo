@@ -1,3 +1,4 @@
+import { useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useOnboardingDirect } from '../../hooks/use-onboarding-direct';
@@ -22,17 +23,26 @@ export function DirectFlow({ teamId, onCancel, onDone }: DirectFlowProps) {
 	const [initialPrd, setInitialPrd] = useState('');
 	const [prdFilename, setPrdFilename] = useState<string | null>(null);
 	const directOnboarding = useOnboardingDirect(teamId);
+	const navigate = useNavigate();
 
 	async function handleConfirm(e: React.FormEvent) {
 		e.preventDefault();
 		if (!selected) return;
-		await directOnboarding.mutateAsync({
+		const result = await directOnboarding.mutateAsync({
 			template_id: selected.id,
 			project_name: projectName.trim(),
 			project_description: projectDescription.trim() || undefined,
 			initial_prd: initialPrd.trim() || undefined,
 		});
 		onDone();
+		navigate({
+			to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+			params: {
+				teamId,
+				projectId: result.project_slug,
+				taskId: result.planning_task_identifier.toLowerCase(),
+			},
+		});
 	}
 
 	if (isLoading) {
