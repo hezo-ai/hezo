@@ -19,7 +19,7 @@ test.describe('Internal project — UI affordances', () => {
 		await authenticate(page);
 		const { team } = await createTeamLight(page);
 
-		await page.goto(`/teams/${team.slug}/projects/operations/tasks`);
+		await page.goto(`/teams/${team.slug}/projects/internal/tasks`);
 		await waitForPageLoad(page);
 
 		const nav = page.locator('nav');
@@ -33,9 +33,7 @@ test.describe('Internal project — UI affordances', () => {
 		const settingsHrefs = await settingsLinks.evaluateAll((els) =>
 			els.map((el) => (el as HTMLAnchorElement).getAttribute('href') ?? ''),
 		);
-		expect(settingsHrefs.some((href) => href.includes('/projects/operations/settings'))).toBe(
-			false,
-		);
+		expect(settingsHrefs.some((href) => href.includes('/projects/internal/settings'))).toBe(false);
 	});
 
 	test('banner appears on internal-project landing pages but not on task detail', async ({
@@ -47,11 +45,11 @@ test.describe('Internal project — UI affordances', () => {
 		const bannerCopy =
 			'Internal team coordination project, used for onboarding and team-level changes.';
 
-		await page.goto(`/teams/${team.slug}/projects/operations/tasks`);
+		await page.goto(`/teams/${team.slug}/projects/internal/tasks`);
 		await waitForPageLoad(page);
 		await expect(page.getByText(bannerCopy)).toBeVisible({ timeout: 15000 });
 
-		await page.goto(`/teams/${team.slug}/projects/operations/container`);
+		await page.goto(`/teams/${team.slug}/projects/internal/container`);
 		await waitForPageLoad(page);
 		await expect(page.getByText(bannerCopy)).toBeVisible({ timeout: 15000 });
 	});
@@ -60,13 +58,13 @@ test.describe('Internal project — UI affordances', () => {
 		await authenticate(page);
 		const { team } = await createTeamLight(page);
 
-		await page.goto(`/teams/${team.slug}/projects/operations/documents`);
-		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/operations/tasks`), {
+		await page.goto(`/teams/${team.slug}/projects/internal/documents`);
+		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/internal/tasks`), {
 			timeout: 15000,
 		});
 
-		await page.goto(`/teams/${team.slug}/projects/operations/settings`);
-		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/operations/tasks`), {
+		await page.goto(`/teams/${team.slug}/projects/internal/settings`);
+		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/internal/tasks`), {
 			timeout: 15000,
 		});
 	});

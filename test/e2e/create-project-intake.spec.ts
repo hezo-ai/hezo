@@ -19,7 +19,8 @@ test.describe('Create Project intake', () => {
 			.fill('Self-serve portal for customers to manage subscriptions.');
 
 		const submitPromise = page.waitForResponse(
-			(r) => r.url().endsWith(`/api/teams/${team.id}/projects`) && r.request().method() === 'POST',
+			(r) =>
+				r.url().endsWith(`/api/teams/${team.slug}/projects`) && r.request().method() === 'POST',
 		);
 		await page.getByRole('button', { name: 'Create' }).click();
 		const submitRes = await submitPromise;

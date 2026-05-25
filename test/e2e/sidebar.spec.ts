@@ -187,25 +187,47 @@ test.describe('Sidebar — Projects section', () => {
 		page,
 		freshWorkspace,
 	}) => {
-		const { team } = freshWorkspace;
+		const { team, token } = freshWorkspace;
+		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 		await suppressAiModal(page);
 		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
+		const submitFromPage = page.waitForResponse(
+			(r) =>
+				r.url().endsWith(`/api/teams/${team.slug}/projects`) && r.request().method() === 'POST',
+		);
 		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
 		await page.getByLabel('Name').fill('Page Created Project');
 		await page.getByLabel('Description').fill('Page-button test project.');
 		await page.getByRole('button', { name: 'Create' }).click();
+		const pageIntake = ((await (await submitFromPage).json()) as { data: { approval_id: string } })
+			.data;
+		await page.request.post(`/api/approvals/${pageIntake.approval_id}/resolve`, {
+			headers,
+			data: { status: 'approved' },
+		});
 
 		const nav = page.locator('nav');
 		await expect(nav.getByRole('link', { name: 'Page Created Project' }).first()).toBeVisible({
 			timeout: 20000,
 		});
 
+		const submitFromSidebar = page.waitForResponse(
+			(r) =>
+				r.url().endsWith(`/api/teams/${team.slug}/projects`) && r.request().method() === 'POST',
+		);
 		await nav.getByRole('button', { name: 'New project' }).click();
 		await page.getByLabel('Name').fill('Sidebar Created Project');
 		await page.getByLabel('Description').fill('Sidebar-button test project.');
 		await page.getByRole('button', { name: 'Create' }).click();
+		const sidebarIntake = (
+			(await (await submitFromSidebar).json()) as { data: { approval_id: string } }
+		).data;
+		await page.request.post(`/api/approvals/${sidebarIntake.approval_id}/resolve`, {
+			headers,
+			data: { status: 'approved' },
+		});
 
 		await expect(nav.getByRole('link', { name: 'Sidebar Created Project' }).first()).toBeVisible({
 			timeout: 20000,
