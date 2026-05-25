@@ -5,6 +5,7 @@ import {
 	AgentRuntime,
 	AiAuthMethod,
 	type AiProvider,
+	CLAUDE_CODE_QUIET_ENV,
 	CommentContentType,
 	ContainerStatus,
 	claudeCodeModelArg,
@@ -135,6 +136,11 @@ interface RepoRow {
 export function buildProviderEnv(provider: AiProvider, credential: AiProviderCredential): string[] {
 	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
 	const out: string[] = [];
+	if (adapter.runtime === AgentRuntime.ClaudeCode) {
+		for (const [key, value] of Object.entries(CLAUDE_CODE_QUIET_ENV)) {
+			out.push(`${key}=${value}`);
+		}
+	}
 	if (adapter.staticEnv) {
 		for (const [key, value] of Object.entries(adapter.staticEnv)) {
 			out.push(`${key}=${value}`);

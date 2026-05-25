@@ -353,25 +353,25 @@ function RunCommentBody({
 							</span>
 						}
 						emptyState={getRunWaitingMessage(status)}
+						headerActionLeading={
+							<TerminateRunButton
+								teamId={teamId}
+								agentId={agentId}
+								runId={runId}
+								status={status}
+								taskId={run?.task_id ?? null}
+							/>
+						}
 						headerAction={
-							<div className="flex items-center gap-0.5">
-								<TerminateRunButton
-									teamId={teamId}
-									agentId={agentId}
-									runId={runId}
-									status={status}
-									taskId={run?.task_id ?? null}
-								/>
-								<Link
-									to="/teams/$teamId/agents/$agentId/executions/$runId"
-									params={{ teamId, agentId, runId }}
-									title="View full run"
-									aria-label="View full run"
-									className="inline-flex items-center justify-center h-6 px-2 text-xs text-text-muted hover:text-text hover:bg-bg-muted rounded-radius-md transition-colors"
-								>
-									<DoorOpen className="w-3 h-3" />
-								</Link>
-							</div>
+							<Link
+								to="/teams/$teamId/agents/$agentId/executions/$runId"
+								params={{ teamId, agentId, runId }}
+								title="View full run"
+								aria-label="View full run"
+								className="inline-flex items-center justify-center h-6 px-2 text-xs text-text-muted hover:text-text hover:bg-bg-muted rounded-radius-md transition-colors"
+							>
+								<DoorOpen className="w-3 h-3" />
+							</Link>
 						}
 					/>
 				</div>

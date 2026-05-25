@@ -1983,8 +1983,30 @@ describe('runAgent', () => {
 	});
 });
 
+const CLAUDE_CODE_QUIET_ENTRIES = [
+	'DISABLE_TELEMETRY=1',
+	'DISABLE_ERROR_REPORTING=1',
+	'DISABLE_AUTOUPDATER=1',
+	'DISABLE_NON_ESSENTIAL_MODEL_CALLS=1',
+	'DISABLE_BUG_COMMAND=1',
+];
+
+describe('buildProviderEnv (Anthropic)', () => {
+	it('stamps the Claude Code quiet env and ANTHROPIC_API_KEY for an api-key credential', () => {
+		const env = buildProviderEnv(AiProvider.Anthropic, {
+			value: 'sk-ant-secret',
+			authMethod: AiAuthMethod.ApiKey,
+		});
+		for (const entry of CLAUDE_CODE_QUIET_ENTRIES) {
+			expect(env).toContain(entry);
+		}
+		expect(env).toContain('ANTHROPIC_API_KEY=sk-ant-secret');
+		expect(env.some((e) => e.startsWith('ANTHROPIC_BASE_URL='))).toBe(false);
+	});
+});
+
 describe('buildProviderEnv (DeepSeek)', () => {
-	it('emits ANTHROPIC_BASE_URL, model defaults, and ANTHROPIC_AUTH_TOKEN for an api-key credential', () => {
+	it('emits ANTHROPIC_BASE_URL, model defaults, quiet env, and ANTHROPIC_AUTH_TOKEN for an api-key credential', () => {
 		const env = buildProviderEnv(AiProvider.DeepSeek, {
 			value: 'sk-deepseek-secret',
 			authMethod: AiAuthMethod.ApiKey,
@@ -1995,6 +2017,9 @@ describe('buildProviderEnv (DeepSeek)', () => {
 		expect(env).toContain('ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash');
 		expect(env).toContain('CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash');
 		expect(env).toContain('ANTHROPIC_AUTH_TOKEN=sk-deepseek-secret');
+		for (const entry of CLAUDE_CODE_QUIET_ENTRIES) {
+			expect(env).toContain(entry);
+		}
 		// must not leak Anthropic's primary env name — Claude Code would read it first
 		expect(env.some((e) => e.startsWith('ANTHROPIC_API_KEY='))).toBe(false);
 	});
@@ -2006,6 +2031,34 @@ describe('buildProviderEnv (DeepSeek)', () => {
 		});
 		expect(env).toContain('ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic');
 		expect(env.some((e) => e.startsWith('ANTHROPIC_AUTH_TOKEN='))).toBe(false);
+	});
+});
+
+describe('buildProviderEnv (ZAi)', () => {
+	it('emits ANTHROPIC_BASE_URL, model defaults, quiet env, and ANTHROPIC_AUTH_TOKEN for an api-key credential', () => {
+		const env = buildProviderEnv(AiProvider.ZAi, {
+			value: 'zai-secret',
+			authMethod: AiAuthMethod.ApiKey,
+		});
+		expect(env).toContain('ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic');
+		expect(env).toContain('ANTHROPIC_DEFAULT_OPUS_MODEL=GLM-4.7');
+		expect(env).toContain('ANTHROPIC_DEFAULT_SONNET_MODEL=GLM-4.7');
+		expect(env).toContain('ANTHROPIC_DEFAULT_HAIKU_MODEL=GLM-4.5-Air');
+		expect(env).toContain('CLAUDE_CODE_SUBAGENT_MODEL=GLM-4.5-Air');
+		expect(env).toContain('ANTHROPIC_AUTH_TOKEN=zai-secret');
+		for (const entry of CLAUDE_CODE_QUIET_ENTRIES) {
+			expect(env).toContain(entry);
+		}
+	});
+});
+
+describe('buildProviderEnv (Codex runtimes do not inherit Claude Code quiet env)', () => {
+	it('omits the DISABLE_* flags for OpenAI api-key credentials', () => {
+		const env = buildProviderEnv(AiProvider.OpenAI, {
+			value: 'sk-openai-test',
+			authMethod: AiAuthMethod.ApiKey,
+		});
+		expect(env).toEqual(['OPENAI_API_KEY=sk-openai-test']);
 	});
 });
 

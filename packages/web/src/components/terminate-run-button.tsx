@@ -28,7 +28,7 @@ export function TerminateRunButton({
 
 	const triggerClass =
 		variant === 'compact'
-			? 'inline-flex items-center justify-center h-6 px-2 text-xs text-text-muted hover:text-accent-red hover:bg-bg-muted rounded-radius-md transition-colors'
+			? 'inline-flex items-center justify-center h-6 px-2 text-xs text-accent-red hover:bg-accent-red/10 rounded-radius-md transition-colors'
 			: 'inline-flex items-center justify-center gap-1.5 px-2.5 py-1 text-xs font-medium text-text-muted hover:text-accent-red border border-border hover:border-accent-red bg-bg-subtle hover:bg-bg-muted rounded-radius-md transition-colors';
 
 	return (
