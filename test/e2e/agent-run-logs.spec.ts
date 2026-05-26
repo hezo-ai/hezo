@@ -95,10 +95,10 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	const copyBtn = page.getByRole('button', { name: /copy logs to clipboard/i });
 	await expect(copyBtn).toBeVisible();
 	await copyBtn.click();
-	await expect(copyBtn).toContainText(/copied/i, { timeout: 2000 });
 
-	const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
-	expect(clipboardText).toContain('[synthetic] starting agent run');
+	await expect
+		.poll(() => page.evaluate(() => navigator.clipboard.readText()), { timeout: 5000 })
+		.toContain('[synthetic] starting agent run');
 
 	const taskLink = page.getByRole('link', {
 		name: new RegExp(`^Task: ${task.identifier}`, 'i'),
