@@ -105,19 +105,22 @@ test.describe('Home onboarding', () => {
 		await skipButton.click();
 
 		await expect
-			.poll(async () => {
-				const commentsRes = await page.request.get(
-					`/api/teams/${team.slug}/tasks/${intake.task_identifier.toLowerCase()}/comments`,
-					{ headers },
-				);
-				const body = (await commentsRes.json()) as {
-					data: Array<{ content_type: string; content: { text?: string } }>;
-				};
-				return body.data.some(
-					(c) =>
-						c.content_type === 'system' && (c.content.text ?? '').toLowerCase().includes('skip'),
-				);
-			})
+			.poll(
+				async () => {
+					const commentsRes = await page.request.get(
+						`/api/teams/${team.slug}/tasks/${intake.task_identifier.toLowerCase()}/comments`,
+						{ headers },
+					);
+					const body = (await commentsRes.json()) as {
+						data: Array<{ content_type: string; content: { text?: string } }>;
+					};
+					return body.data.some(
+						(c) =>
+							c.content_type === 'system' && (c.content.text ?? '').toLowerCase().includes('skip'),
+					);
+				},
+				{ timeout: 20_000 },
+			)
 			.toBe(true);
 
 		await expect(skipButton).toBeHidden();

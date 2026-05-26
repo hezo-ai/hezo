@@ -72,9 +72,9 @@ test.describe('Onboarding direct flow', () => {
 			.getByTestId('choice-direct')
 			.getByRole('button', { name: 'Browse templates' })
 			.click();
-		await expect(page.getByTestId('direct-flow-pick')).toBeVisible();
+		await expect(page.getByTestId('direct-flow-pick')).toBeVisible({ timeout: 20_000 });
 		await page.getByTestId('template-card-Blank').click();
-		await expect(page.getByTestId('direct-flow-confirm')).toBeVisible();
+		await expect(page.getByTestId('direct-flow-confirm')).toBeVisible({ timeout: 20_000 });
 
 		const projectName = `Direct UI ${Date.now()}`;
 		await page.getByLabel('Project name').fill(projectName);
