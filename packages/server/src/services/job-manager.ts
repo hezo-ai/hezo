@@ -18,6 +18,7 @@ import {
 } from '@hezo/shared';
 import { Cron } from 'cron-async';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
@@ -211,10 +212,12 @@ export class JobManager {
 			ac.abort();
 		}, timeoutMs);
 
-		const promise = fn(ac.signal).finally(() => {
-			clearTimeout(timeoutId);
-			this.runningTasks.delete(key);
-		});
+		const promise = trackBackground(
+			fn(ac.signal).finally(() => {
+				clearTimeout(timeoutId);
+				this.runningTasks.delete(key);
+			}),
+		);
 
 		this.runningTasks.set(key, {
 			key,
@@ -1082,7 +1085,7 @@ export class JobManager {
 				} finally {
 					this.activeTaskRuns.delete(lockedTaskId);
 					this.activeProjectRuns.delete(projectId);
-					void this.guarded('wakeups', () => this.processWakeups());
+					void trackBackground(this.guarded('wakeups', () => this.processWakeups()));
 				}
 			},
 			timeoutMs,

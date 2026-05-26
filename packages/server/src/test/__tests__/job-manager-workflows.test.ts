@@ -1,8 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { AgentRuntimeStatus, HeartbeatRunStatus, TaskStatus, WakeupStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../../crypto/master-key';
+import { waitForBackground } from '../../lib/background';
 import type { Env } from '../../lib/types';
 import { ContainerLogStreamer } from '../../services/container-logs';
 import type { DockerClient } from '../../services/docker';
@@ -107,6 +108,16 @@ beforeAll(async () => {
 		repoRes.rows[0].id,
 		projectId,
 	]);
+});
+
+afterEach(async () => {
+	// Drain any in-flight launchTask promises from this test (background
+	// runAgent invocations) before the next test runs. Without this, those
+	// promises issue queries on the shared PGlite connection concurrently
+	// with the next test's setup — and because PGlite is single-connection,
+	// a BEGIN started by the background task captures the next test's
+	// queries, so a downstream FK violation aborts the wrong transaction.
+	await waitForBackground();
 });
 
 afterAll(async () => {
@@ -1418,6 +1429,10 @@ describe('JobManager workflow methods', () => {
 				[agentId],
 			);
 			await db.query('DELETE FROM agent_wakeup_requests');
+			// Prior tests' background runAgent may have written a recent
+			// heartbeat_runs row, which puts this agent into the post-run
+			// cooldown window and excludes it from processScheduledHeartbeats.
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
 
 			const dueCheck = await db.query<{ id: string }>(
 				`SELECT ma.id
@@ -1487,11 +1502,6 @@ describe('JobManager workflow methods', () => {
 
 		it('honours the interval floor when heartbeat_interval_min is misconfigured low', async () => {
 			const manager = createJobManager();
-
-			// Close any transaction left dangling by a prior test's background
-			// runAgent — its BEGIN can still be open when this test starts under
-			// CI load, and our DELETEs below would inherit the aborted state.
-			await db.query('ROLLBACK').catch(() => {});
 
 			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
 			await db.query('DELETE FROM agent_wakeup_requests');
