@@ -1082,6 +1082,7 @@ export class JobManager {
 				} finally {
 					this.activeTaskRuns.delete(lockedTaskId);
 					this.activeProjectRuns.delete(projectId);
+					void this.guarded('wakeups', () => this.processWakeups());
 				}
 			},
 			timeoutMs,
@@ -1254,6 +1255,13 @@ export class JobManager {
 		teamId: string,
 	): Promise<void> {
 		const { db } = this.deps;
+		// Pick the next non-terminal task for this agent that we aren't already
+		// covering: skip the just-completed task, anything the agent has an active
+		// run on (concurrent parallel runs), and anything that already has a
+		// queued/claimed wakeup for this agent. Without this dedupe, an agent with
+		// multiple concurrent runs creates a redundant chain wakeup for each
+		// sibling — those wakeups then cycle in the busy-skip queue and starve
+		// `Automation` wakeups (Coach) targeting the same project.
 		const next = await db.query<{ id: string }>(
 			`SELECT i.id FROM tasks i
 			 WHERE i.assignee_id = $1 AND i.team_id = $2 AND i.id != $3
@@ -1263,6 +1271,17 @@ export class JobManager {
 			     JOIN tasks b ON b.id = d.blocked_by_task_id
 			     WHERE d.task_id = i.id
 			       AND b.status NOT IN ($4::task_status, $5::task_status, $6::task_status)
+			   )
+			   AND NOT EXISTS (
+			     SELECT 1 FROM heartbeat_runs hr
+			     WHERE hr.task_id = i.id AND hr.member_id = $1
+			       AND hr.status IN ($11::heartbeat_run_status, $12::heartbeat_run_status)
+			   )
+			   AND NOT EXISTS (
+			     SELECT 1 FROM agent_wakeup_requests w
+			     WHERE w.member_id = $1
+			       AND w.status IN ($13::wakeup_status, $14::wakeup_status)
+			       AND w.payload->>'task_id' = i.id::text
 			   )
 			 ORDER BY
 			   CASE i.priority WHEN $7 THEN 0 WHEN $8 THEN 1 WHEN $9 THEN 2 WHEN $10 THEN 3 END,
@@ -1277,6 +1296,10 @@ export class JobManager {
 				TaskPriority.High,
 				TaskPriority.Medium,
 				TaskPriority.Low,
+				HeartbeatRunStatus.Queued,
+				HeartbeatRunStatus.Running,
+				WakeupStatus.Queued,
+				WakeupStatus.Claimed,
 			],
 		);
 		if (next.rows.length === 0) return;

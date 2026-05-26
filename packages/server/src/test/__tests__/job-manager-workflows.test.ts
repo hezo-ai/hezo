@@ -1092,6 +1092,128 @@ describe('JobManager workflow methods', () => {
 
 			manager.shutdown();
 		});
+
+		it('does not chain to a task the agent is concurrently running on', async () => {
+			const manager = createJobManager();
+
+			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
+			await db.query(`UPDATE tasks SET status = $1::task_status WHERE id = $2`, [
+				TaskStatus.Backlog,
+				taskId,
+			]);
+
+			const meta = await db.query<{ task_prefix: string; number: number }>(
+				`SELECT p.task_prefix, next_project_task_number(p.id) AS number
+				 FROM projects p WHERE p.id = $1`,
+				[projectId],
+			);
+			const siblingInsert = await db.query<{ id: string }>(
+				`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
+				 VALUES ($1, $2, $3, $4, $5, $6, '', $7::task_status, 'medium'::task_priority, '[]'::jsonb)
+				 RETURNING id`,
+				[
+					teamId,
+					projectId,
+					agentId,
+					meta.rows[0].number,
+					`${meta.rows[0].task_prefix}-${meta.rows[0].number}`,
+					'Sibling ticket already in flight',
+					TaskStatus.InProgress,
+				],
+			);
+			const siblingTaskId = siblingInsert.rows[0].id;
+
+			// Active concurrent run on the sibling — this is the case where the
+			// pre-fix chain logic would queue a redundant wakeup targeting it.
+			await db.query(
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
+				[agentId, teamId, siblingTaskId, HeartbeatRunStatus.Running],
+			);
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'test-agent',
+				taskId,
+				teamId,
+				undefined,
+				undefined,
+				{ success: true, exitCode: 0, stdout: '', stderr: '' },
+			);
+
+			const chain = await db.query<{ id: string }>(
+				`SELECT id FROM agent_wakeup_requests
+				 WHERE member_id = $1 AND source = 'timer'`,
+				[agentId],
+			);
+			expect(chain.rows.length).toBe(0);
+
+			manager.shutdown();
+			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [siblingTaskId]);
+			await db.query('DELETE FROM tasks WHERE id = $1', [siblingTaskId]);
+		});
+
+		it('does not chain to a task that already has a queued wakeup for the agent', async () => {
+			const manager = createJobManager();
+
+			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
+			await db.query(`UPDATE tasks SET status = $1::task_status WHERE id = $2`, [
+				TaskStatus.Backlog,
+				taskId,
+			]);
+
+			const meta = await db.query<{ task_prefix: string; number: number }>(
+				`SELECT p.task_prefix, next_project_task_number(p.id) AS number
+				 FROM projects p WHERE p.id = $1`,
+				[projectId],
+			);
+			const siblingInsert = await db.query<{ id: string }>(
+				`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
+				 VALUES ($1, $2, $3, $4, $5, $6, '', $7::task_status, 'medium'::task_priority, '[]'::jsonb)
+				 RETURNING id`,
+				[
+					teamId,
+					projectId,
+					agentId,
+					meta.rows[0].number,
+					`${meta.rows[0].task_prefix}-${meta.rows[0].number}`,
+					'Sibling ticket with pending wakeup',
+					TaskStatus.Backlog,
+				],
+			);
+			const siblingTaskId = siblingInsert.rows[0].id;
+
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			// Pre-existing queued wakeup for the sibling — the assignee assignment
+			// just enqueued one and it hasn't been picked up yet.
+			await db.query(
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload)
+				 VALUES ($1, $2, 'assignment'::wakeup_source, 'queued'::wakeup_status, $3::jsonb)`,
+				[agentId, teamId, JSON.stringify({ task_id: siblingTaskId })],
+			);
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'test-agent',
+				taskId,
+				teamId,
+				undefined,
+				undefined,
+				{ success: true, exitCode: 0, stdout: '', stderr: '' },
+			);
+
+			const chain = await db.query<{ id: string }>(
+				`SELECT id FROM agent_wakeup_requests
+				 WHERE member_id = $1 AND source = 'timer'`,
+				[agentId],
+			);
+			expect(chain.rows.length).toBe(0);
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM tasks WHERE id = $1', [siblingTaskId]);
+		});
 	});
 
 	describe('coach auto-close', () => {
