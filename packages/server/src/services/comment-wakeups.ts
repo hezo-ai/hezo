@@ -51,13 +51,21 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 		const mentionedId = mentioned.rows[0].id;
 		if (mentionedId === authorMemberId) continue;
 		mentionedAgentIds.add(mentionedId);
+		const idempotencyKey = `mention:${taskId}:${mentionedId}:${authorMemberId ?? 'board'}`;
 		wakeupPromises.push(
-			createWakeup(db, mentionedId, teamId, WakeupSource.Mention, {
-				source: WakeupSource.Mention,
-				task_id: taskId,
-				comment_id: commentId,
-				...effortPayload,
-			}).catch((e) => log.error('Failed to create mention wakeup:', e)),
+			createWakeup(
+				db,
+				mentionedId,
+				teamId,
+				WakeupSource.Mention,
+				{
+					source: WakeupSource.Mention,
+					task_id: taskId,
+					comment_id: commentId,
+					...effortPayload,
+				},
+				idempotencyKey,
+			).catch((e) => log.error('Failed to create mention wakeup:', e)),
 		);
 	}
 

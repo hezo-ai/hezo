@@ -17,6 +17,7 @@ let projectId: string;
 let productLeadId: string;
 let architectId: string;
 let captainId: string;
+let engineerId: string;
 
 interface WakeupRow {
 	id: string;
@@ -143,6 +144,7 @@ beforeAll(async () => {
 	captainId = agents.find((a) => a.slug === 'captain')!.id;
 	architectId = agents.find((a) => a.slug === 'architect')!.id;
 	productLeadId = agents.find((a) => a.slug === 'product-lead')!.id;
+	engineerId = agents.find((a) => a.slug === 'engineer')!.id;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Test Project',
@@ -650,5 +652,144 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 		const replyId = await postMcpComment(architectToken, taskId, 'Acknowledging.');
 		const wakeups = await wakeupsForComment(replyId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Reply)).toEqual([]);
+	});
+});
+
+describe('mention wakeup idempotency by (task, mentioned, author)', () => {
+	async function backdateWakeup(wakeupId: string, seconds = 5): Promise<void> {
+		await db.query(
+			`UPDATE agent_wakeup_requests
+			 SET created_at = now() - ($1 || ' seconds')::interval
+			 WHERE id = $2`,
+			[String(seconds), wakeupId],
+		);
+	}
+
+	async function queuedMentionsFor(taskId: string, mentionedId: string): Promise<WakeupRow[]> {
+		const res = await db.query<WakeupRow>(
+			`SELECT id, member_id, source::text AS source, payload
+			 FROM agent_wakeup_requests
+			 WHERE source = 'mention'::wakeup_source
+			   AND status = 'queued'::wakeup_status
+			   AND member_id = $1
+			   AND payload->>'task_id' = $2
+			 ORDER BY created_at ASC`,
+			[mentionedId, taskId],
+		);
+		return res.rows;
+	}
+
+	it('collapses repeated @-mentions by the same author of the same agent on the same task', async () => {
+		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Idempotent retry');
+
+		const firstCommentId = await postAgentApiComment(
+			agentToken,
+			taskId,
+			'@architect please confirm scope.',
+		);
+		const firstWakeups = await queuedMentionsFor(taskId, architectId);
+		expect(firstWakeups).toHaveLength(1);
+		expect(firstWakeups[0].payload.comment_id).toBe(firstCommentId);
+
+		await backdateWakeup(firstWakeups[0].id);
+
+		const secondCommentId = await postAgentApiComment(
+			agentToken,
+			taskId,
+			'@architect bumping this — still need a confirm.',
+		);
+		expect(secondCommentId).not.toBe(firstCommentId);
+
+		const afterSecond = await queuedMentionsFor(taskId, architectId);
+		expect(afterSecond).toHaveLength(1);
+		expect(afterSecond[0].id).toBe(firstWakeups[0].id);
+		expect(afterSecond[0].payload.comment_id).toBe(firstCommentId);
+	});
+
+	it('keeps separate queued wakeups when different authors mention the same agent on the same task', async () => {
+		const taskId = await insertTask(captainId, 'Two authors, one target');
+		const { token: productLeadToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			productLeadId,
+			teamId,
+			taskId,
+		);
+		const { token: engineerToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			engineerId,
+			teamId,
+			taskId,
+		);
+
+		await postAgentApiComment(productLeadToken, taskId, '@architect spec ready for review.');
+		const afterFirst = await queuedMentionsFor(taskId, architectId);
+		expect(afterFirst).toHaveLength(1);
+		await backdateWakeup(afterFirst[0].id);
+
+		await postAgentApiComment(engineerToken, taskId, '@architect peer-review note from engineer.');
+		const afterSecond = await queuedMentionsFor(taskId, architectId);
+		expect(afterSecond).toHaveLength(2);
+	});
+
+	it('lets a new wakeup be created once the queued one transitions out of queued', async () => {
+		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Drain and re-mention');
+
+		await postAgentApiComment(agentToken, taskId, '@architect please weigh in.');
+		const queued = await queuedMentionsFor(taskId, architectId);
+		expect(queued).toHaveLength(1);
+
+		await db.query(
+			`UPDATE agent_wakeup_requests SET status = 'completed'::wakeup_status WHERE id = $1`,
+			[queued[0].id],
+		);
+
+		await postAgentApiComment(agentToken, taskId, '@architect new ask after drain.');
+		const afterDrain = await queuedMentionsFor(taskId, architectId);
+		expect(afterDrain).toHaveLength(1);
+		expect(afterDrain[0].id).not.toBe(queued[0].id);
+	});
+
+	it('collapses repeated board-authored @-mentions but keeps board and agent scopes separate', async () => {
+		const taskId = await insertTask(captainId, 'Board scoping');
+
+		const firstBoard = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: CommentContentType.Text,
+				content: { text: '@architect please respond.' },
+			}),
+		});
+		expect(firstBoard.status).toBe(201);
+		const afterFirstBoard = await queuedMentionsFor(taskId, architectId);
+		expect(afterFirstBoard).toHaveLength(1);
+		await backdateWakeup(afterFirstBoard[0].id);
+
+		const secondBoard = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: CommentContentType.Text,
+				content: { text: '@architect bumping again from the board.' },
+			}),
+		});
+		expect(secondBoard.status).toBe(201);
+		const afterSecondBoard = await queuedMentionsFor(taskId, architectId);
+		expect(afterSecondBoard).toHaveLength(1);
+		expect(afterSecondBoard[0].id).toBe(afterFirstBoard[0].id);
+
+		await backdateWakeup(afterSecondBoard[0].id);
+		const { token: productLeadToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			productLeadId,
+			teamId,
+			taskId,
+		);
+		await postAgentApiComment(productLeadToken, taskId, '@architect agent-side ping.');
+		const afterAgent = await queuedMentionsFor(taskId, architectId);
+		expect(afterAgent).toHaveLength(2);
 	});
 });
