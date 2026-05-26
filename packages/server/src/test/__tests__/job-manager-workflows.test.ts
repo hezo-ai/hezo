@@ -1448,12 +1448,25 @@ describe('JobManager workflow methods', () => {
 		it('skips agents with null last_heartbeat_at that already have running tasks', async () => {
 			const manager = createJobManager();
 
-			// Simulate a running task already (project-scoped key matches activateAgent)
+			// Simulate a running task already (project-scoped key matches activateAgent).
+			// Body listens to the abort signal so `manager.shutdown()` actually unwinds
+			// the launched promise instead of leaving a setTimeout running into the
+			// next test's window.
 			manager.launchTask(
 				`${agentId}:${projectId}`,
-				async () => {
-					await new Promise((r) => setTimeout(r, 5000));
-				},
+				(signal) =>
+					new Promise<void>((resolve) => {
+						if (signal.aborted) return resolve();
+						const timer = setTimeout(resolve, 5000);
+						signal.addEventListener(
+							'abort',
+							() => {
+								clearTimeout(timer);
+								resolve();
+							},
+							{ once: true },
+						);
+					}),
 				10_000,
 			);
 
