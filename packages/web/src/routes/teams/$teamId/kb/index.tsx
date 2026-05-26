@@ -74,6 +74,7 @@ function KbPage() {
 			onSelect={selectSlug}
 			docContent={selectedSlug ? (doc?.content ?? null) : null}
 			isLoadingDoc={isLoadingDoc}
+			docTitle={selectedSlug ? doc?.title : undefined}
 			onSave={handleSave}
 			isSaving={updateDoc.isPending}
 			onDelete={handleDelete}

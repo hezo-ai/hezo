@@ -4,6 +4,7 @@ import {
 	clickAndWaitForResponse,
 	createProjectAndClearPlanning,
 	createTeamWithAgents,
+	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
 
@@ -29,10 +30,11 @@ async function seedTaskWithComment(page: Page): Promise<SeededTask> {
 		headers: { Authorization: `Bearer ${token}` },
 	});
 	const agents = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data;
+	const assigneeId = agents[0].id;
 
 	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers,
-		data: { project_id: project.id, title: 'Reactions Task', assignee_id: agents[0].id },
+		data: { project_id: project.id, title: 'Reactions Task', assignee_id: assigneeId },
 	});
 	const task = ((await taskRes.json()) as { data: { id: string } }).data;
 
@@ -41,6 +43,10 @@ async function seedTaskWithComment(page: Page): Promise<SeededTask> {
 		data: { content_type: 'text', content: { text: 'A comment to react to.' } },
 	});
 	const comment = ((await commentRes.json()) as { data: { id: string } }).data;
+
+	// Drain the assignment-driven wakeup so the comment thread isn't re-rendering
+	// under the test's click on the reaction picker.
+	await waitForAgentIdle(page, team.id, assigneeId, token);
 
 	return { team, token, taskId: task.id, commentId: comment.id, headers };
 }

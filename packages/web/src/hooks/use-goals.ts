@@ -20,7 +20,13 @@ export function useCreateGoal(teamId: string) {
 	return useMutation({
 		mutationFn: (data: { title: string; description?: string; project_id?: string | null }) =>
 			api.post<Goal>(`/api/teams/${teamId}/goals`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'goals'] }),
+		onSuccess: (created) => {
+			queryClient.setQueryData<GoalWithProject[]>(['teams', teamId, 'goals'], (prev) => {
+				const row = created as GoalWithProject;
+				return prev ? [row, ...prev.filter((g) => g.id !== row.id)] : [row];
+			});
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'goals'] });
+		},
 	});
 }
 

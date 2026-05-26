@@ -40,12 +40,27 @@ export function useUpdateProjectDoc(teamId: string, projectId: string) {
 			api.put<ProjectDoc>(`/api/teams/${teamId}/projects/${projectId}/docs/${filename}`, {
 				content,
 			}),
-		onSuccess: (_data, { filename }) => {
+		onSuccess: (saved, { filename }) => {
+			queryClient.setQueryData<ProjectDoc>(
+				['teams', teamId, 'projects', projectId, 'docs', filename],
+				saved,
+			);
+			queryClient.setQueryData<ProjectDoc[]>(
+				['teams', teamId, 'projects', projectId, 'docs'],
+				(prev) => {
+					if (!prev) return [saved];
+					const idx = prev.findIndex((d) => d.filename === filename);
+					if (idx === -1) return [...prev, saved];
+					const next = [...prev];
+					next[idx] = saved;
+					return next;
+				},
+			);
 			queryClient.invalidateQueries({
 				queryKey: ['teams', teamId, 'projects', projectId, 'docs'],
 			});
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'projects', projectId, 'docs', filename],
+				queryKey: ['teams', teamId, 'projects', projectId, 'docs', filename, 'revisions'],
 			});
 		},
 	});
@@ -55,10 +70,15 @@ export function useDeleteProjectDoc(teamId: string, projectId: string) {
 	return useMutation({
 		mutationFn: (filename: string) =>
 			api.delete(`/api/teams/${teamId}/projects/${projectId}/docs/${filename}`),
-		onSuccess: () =>
+		onSuccess: (_data, filename) => {
+			queryClient.setQueryData<ProjectDoc[]>(
+				['teams', teamId, 'projects', projectId, 'docs'],
+				(prev) => (prev ? prev.filter((d) => d.filename !== filename) : prev),
+			);
 			queryClient.invalidateQueries({
 				queryKey: ['teams', teamId, 'projects', projectId, 'docs'],
-			}),
+			});
+		},
 	});
 }
 
@@ -96,7 +116,11 @@ export function useRestoreProjectDocRevision(teamId: string, projectId: string, 
 			api.post<ProjectDoc>(`/api/teams/${teamId}/projects/${projectId}/docs/${filename}/restore`, {
 				revision_number: revisionNumber,
 			}),
-		onSuccess: () => {
+		onSuccess: (restored) => {
+			queryClient.setQueryData<ProjectDoc>(
+				['teams', teamId, 'projects', projectId, 'docs', filename],
+				restored,
+			);
 			queryClient.invalidateQueries({
 				queryKey: ['teams', teamId, 'projects', projectId, 'docs'],
 			});

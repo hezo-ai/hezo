@@ -1,5 +1,10 @@
 import { expect, test } from './fixtures';
-import { clickAndWaitForResponse, dismissAiProviderModal, waitForPageLoad } from './helpers';
+import {
+	agentMatcher,
+	clickAndWaitForResponse,
+	dismissAiProviderModal,
+	waitForPageLoad,
+} from './helpers';
 
 type Page = import('@playwright/test').Page;
 
@@ -139,7 +144,7 @@ test('agent settings tab edits the title and persists across reload', async ({
 	const saveResponse = await clickAndWaitForResponse(
 		page,
 		page.getByRole('button', { name: 'Save Changes' }),
-		(url, method) => method === 'PATCH' && /\/agents\/[^/]+$/.test(url.pathname),
+		agentMatcher({ teamId: team.slug, agentId: agent.id, method: 'PATCH' }),
 	);
 	expect(saveResponse.ok()).toBe(true);
 

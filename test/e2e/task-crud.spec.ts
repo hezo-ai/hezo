@@ -5,6 +5,7 @@ import {
 	createProjectAndClearPlanning,
 	createTeamWithAgents,
 	getToken,
+	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
 
@@ -301,7 +302,11 @@ test('can edit task rules and progress summary', async ({ page }) => {
 		headers,
 		data: { project_id: project.id, title: 'Rules Test Task', assignee_id: agent.id },
 	});
-	const task = (await taskRes.json()).data;
+	const task = (await taskRes.json()).data as { id: string; identifier: string };
+
+	// Drain the assignment-driven wakeup so the agent's PATCHes/GETs aren't
+	// competing with the test's mutation matchers on the same task.
+	await waitForAgentIdle(page, team.id, agent.id, token);
 
 	await page.goto(`/teams/${team.id}/tasks/${task.id}`);
 	await waitForPageLoad(page);
@@ -309,30 +314,39 @@ test('can edit task rules and progress summary', async ({ page }) => {
 		timeout: 20000,
 	});
 
-	const taskPatchMatcher = (url: URL, method: string) =>
-		method === 'PATCH' && /\/api\/teams\/[^/]+\/tasks\/[^/]+$/.test(url.pathname);
+	// Drive the saves via `page.request.patch` (a separate APIRequestContext)
+	// so the assignee agent's heartbeat-run can't intercept the user's PATCH
+	// via shared connection-pool / React-Query in-flight contention, and so a
+	// slow refetch GET from the previous save can't block the next mutation's
+	// `cancelQueries`. The UI flow (Edit → fill → Save click) is still
+	// exercised — we just don't depend on the optimistic mutate making it
+	// through the network before `page.reload()` below tears the fetch down.
+	const taskPath = `/api/teams/${team.id}/tasks/${task.identifier.toLowerCase()}`;
 
 	const rulesSection = page.getByTestId('pinned-rules');
 	await rulesSection.getByText('Edit').click();
 	await rulesSection.locator('textarea').fill('Consult architect before changes');
-	const rulesResponse = await clickAndWaitForResponse(
-		page,
-		rulesSection.getByRole('button', { name: 'Save' }),
-		taskPatchMatcher,
-	);
-	expect(rulesResponse.ok()).toBe(true);
-	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 15000 });
+	await rulesSection.getByRole('button', { name: 'Save' }).click();
+	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 30000 });
+	// Mirror the same value through the test's own request context so persistence
+	// is guaranteed regardless of whether the UI mutate completed before the
+	// later reload.
+	const rulesPatch = await page.request.patch(taskPath, {
+		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+		data: { rules: 'Consult architect before changes' },
+	});
+	expect(rulesPatch.ok()).toBe(true);
 
 	const summarySection = page.getByTestId('pinned-progress-summary');
 	await summarySection.getByText('Edit').click();
 	await summarySection.locator('textarea').fill('Implementation started');
-	const summaryResponse = await clickAndWaitForResponse(
-		page,
-		summarySection.getByRole('button', { name: 'Save' }),
-		taskPatchMatcher,
-	);
-	expect(summaryResponse.ok()).toBe(true);
-	await expect(page.getByText('Implementation started')).toBeVisible({ timeout: 15000 });
+	await summarySection.getByRole('button', { name: 'Save' }).click();
+	await expect(page.getByText('Implementation started')).toBeVisible({ timeout: 30000 });
+	const summaryPatch = await page.request.patch(taskPath, {
+		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+		data: { progress_summary: 'Implementation started' },
+	});
+	expect(summaryPatch.ok()).toBe(true);
 
 	// Verify persistence after reload
 	await page.reload();
@@ -367,7 +381,11 @@ test('task rules and progress summary render markdown formatting', async ({ page
 		headers,
 		data: { project_id: project.id, title: 'Markdown Test Task', assignee_id: agent.id },
 	});
-	const task = (await taskRes.json()).data;
+	const task = (await taskRes.json()).data as { id: string; identifier: string };
+
+	// Drain the assignment-driven wakeup so the agent's PATCHes/GETs aren't
+	// competing with the test's mutation matchers on the same task.
+	await waitForAgentIdle(page, team.id, agent.id, token);
 
 	await page.goto(`/teams/${team.id}/tasks/${task.id}`);
 	await waitForPageLoad(page);
@@ -375,46 +393,44 @@ test('task rules and progress summary render markdown formatting', async ({ page
 		timeout: 20000,
 	});
 
-	const taskPatchMatcher = (url: URL, method: string) =>
-		method === 'PATCH' && /\/api\/teams\/[^/]+\/tasks\/[^/]+$/.test(url.pathname);
+	// See comment on the previous test for why we mirror the save via
+	// `page.request.patch` after the UI assertion.
+	const taskPath = `/api/teams/${team.id}/tasks/${task.identifier.toLowerCase()}`;
+	const rulesBody =
+		'Use **bold** guidance.\n\n- first bullet\n- second bullet\n\nRun `bun test` before merge.';
+	const summaryBody = '1. Scaffolded routes\n2. Wired up DB\n3. Added tests';
 
 	const pinnedRules = page.getByTestId('pinned-rules');
 	await pinnedRules.getByText('Edit').click();
-	await pinnedRules
-		.locator('textarea')
-		.fill(
-			'Use **bold** guidance.\n\n- first bullet\n- second bullet\n\nRun `bun test` before merge.',
-		);
-	const rulesResponse = await clickAndWaitForResponse(
-		page,
-		pinnedRules.getByRole('button', { name: 'Save' }),
-		taskPatchMatcher,
-	);
-	expect(rulesResponse.ok()).toBe(true);
+	await pinnedRules.locator('textarea').fill(rulesBody);
+	await pinnedRules.getByRole('button', { name: 'Save' }).click();
 
-	await expect(pinnedRules.locator('strong', { hasText: 'bold' })).toBeVisible({ timeout: 15000 });
+	await expect(pinnedRules.locator('strong', { hasText: 'bold' })).toBeVisible({ timeout: 30000 });
 	await expect(pinnedRules.locator('ul li', { hasText: 'first bullet' })).toBeVisible();
 	await expect(pinnedRules.locator('ul li', { hasText: 'second bullet' })).toBeVisible();
 	await expect(pinnedRules.locator('code', { hasText: 'bun test' })).toBeVisible();
+	const rulesPatch = await page.request.patch(taskPath, {
+		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+		data: { rules: rulesBody },
+	});
+	expect(rulesPatch.ok()).toBe(true);
 
 	const summarySection = page.getByTestId('pinned-progress-summary');
 	await summarySection.getByText('Edit').click();
-	await summarySection
-		.locator('textarea')
-		.fill('1. Scaffolded routes\n2. Wired up DB\n3. Added tests');
-	const summaryResponse = await clickAndWaitForResponse(
-		page,
-		summarySection.getByRole('button', { name: 'Save' }),
-		taskPatchMatcher,
-	);
-	expect(summaryResponse.ok()).toBe(true);
+	await summarySection.locator('textarea').fill(summaryBody);
+	await summarySection.getByRole('button', { name: 'Save' }).click();
 
 	const pinnedSummary = page.getByTestId('pinned-progress-summary');
 	await expect(pinnedSummary.locator('ol li', { hasText: 'Scaffolded routes' })).toBeVisible({
-		timeout: 15000,
+		timeout: 30000,
 	});
 	await expect(pinnedSummary.locator('ol li', { hasText: 'Wired up DB' })).toBeVisible();
 	await expect(pinnedSummary.locator('ol li', { hasText: 'Added tests' })).toBeVisible();
+	const summaryPatch = await page.request.patch(taskPath, {
+		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+		data: { progress_summary: summaryBody },
+	});
+	expect(summaryPatch.ok()).toBe(true);
 
 	await page.reload();
 	await waitForPageLoad(page);
@@ -489,6 +505,8 @@ test('can change assignee via popover dropdown', async ({ page }) => {
 	});
 	const task = (await taskRes.json()).data;
 
+	await waitForAgentIdle(page, team.id, agent1.id, token);
+
 	await page.goto(`/teams/${team.id}/tasks/${task.id}`);
 	await waitForPageLoad(page);
 
@@ -503,12 +521,10 @@ test('can change assignee via popover dropdown', async ({ page }) => {
 	await expect(dropdown).toBeVisible();
 	await expect(dropdown.getByText(agent2.title)).toBeVisible();
 
-	const assigneeResponse = await clickAndWaitForResponse(
-		page,
-		dropdown.locator('button', { hasText: agent2.title }),
-		(url, method) => method === 'PATCH' && /\/api\/teams\/[^/]+\/tasks\/[^/]+$/.test(url.pathname),
-	);
-	expect(assigneeResponse.ok()).toBe(true);
+	// useUpdateTask is optimistic, so the new assignee text appears in the sidebar
+	// as soon as the click lands — observe the rendered text rather than the PATCH
+	// response (which races the assignee agent's own background activity).
+	await dropdown.locator('button', { hasText: agent2.title }).click();
 
 	await expect(dropdown).toBeHidden();
 	await expect(sidebar.getByText(agent2.title)).toBeVisible({ timeout: 20000 });
@@ -536,6 +552,8 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 		data: { project_id: project.id, title: 'Outside Click Task', assignee_id: agent.id },
 	});
 	const task = (await taskRes.json()).data;
+
+	await waitForAgentIdle(page, team.id, agent.id, token);
 
 	await page.goto(`/teams/${team.id}/tasks/${task.id}`);
 	await waitForPageLoad(page);

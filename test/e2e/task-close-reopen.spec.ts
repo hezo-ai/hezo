@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test';
 import {
 	authenticate,
-	clickAndWaitForResponse,
 	createProjectAndClearPlanning,
 	createTeamWithAgents,
+	saveAndWaitForRefetch,
+	taskMatcher,
+	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
 
@@ -29,6 +31,10 @@ test('board member can close and re-open an task via themed modal', async ({ pag
 	});
 	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
 
+	// Drain the assignment-driven wakeup so close/reopen PATCHes aren't racing
+	// the agent's own status-change activity on this same task.
+	await waitForAgentIdle(page, team.id, agent.id, token);
+
 	await page.goto(
 		`/teams/${team.slug}/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`,
 	);
@@ -42,13 +48,14 @@ test('board member can close and re-open an task via themed modal', async ({ pag
 	await expect(dialog).toBeVisible();
 	await expect(dialog.getByText('Close this task?')).toBeVisible();
 
-	const closeMatcher = (url: URL, method: string) =>
-		method === 'PATCH' && /\/api\/teams\/[^/]+\/tasks\/[^/]+$/.test(url.pathname);
+	const taskIdLower = task.identifier.toLowerCase();
+	const taskPatch = taskMatcher({ teamId: team.slug, taskId: taskIdLower, method: 'PATCH' });
+	const taskGet = taskMatcher({ teamId: team.slug, taskId: taskIdLower, method: 'GET' });
 
-	const closeResponse = await clickAndWaitForResponse(
+	const { mutation: closeResponse } = await saveAndWaitForRefetch(
 		page,
 		page.getByTestId('confirm-dialog-confirm'),
-		closeMatcher,
+		{ mutation: taskPatch, refetch: taskGet },
 	);
 	expect(closeResponse.ok()).toBe(true);
 	await expect(dialog).toBeHidden();
@@ -60,10 +67,10 @@ test('board member can close and re-open an task via themed modal', async ({ pag
 	await expect(page.getByTestId('confirm-dialog')).toBeVisible();
 	await expect(page.getByText('Re-open this task?')).toBeVisible();
 
-	const reopenResponse = await clickAndWaitForResponse(
+	const { mutation: reopenResponse } = await saveAndWaitForRefetch(
 		page,
 		page.getByTestId('confirm-dialog-confirm'),
-		closeMatcher,
+		{ mutation: taskPatch, refetch: taskGet },
 	);
 	expect(reopenResponse.ok()).toBe(true);
 	await expect(page.getByTestId('confirm-dialog')).toBeHidden();

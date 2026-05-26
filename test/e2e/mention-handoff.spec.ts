@@ -3,6 +3,7 @@ import {
 	authenticate,
 	createProjectAndClearPlanning,
 	createTeamWithAgents,
+	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
 
@@ -48,6 +49,13 @@ test.describe('Mention handoff', () => {
 			},
 		});
 		const architectTask = ((await archTaskRes.json()) as any).data;
+
+		// Drain assignment-driven wakeups so test interactions aren't racing
+		// agent runs posting system comments onto the same threads.
+		await Promise.all([
+			waitForAgentIdle(page, team.id, captain.id, token),
+			waitForAgentIdle(page, team.id, architect.id, token),
+		]);
 
 		return { team, token, headers, captain, architect, ceoTask, architectTask };
 	}

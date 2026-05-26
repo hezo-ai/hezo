@@ -97,6 +97,7 @@ function ProjectDocumentsPage() {
 			onSelect={selectFile}
 			docContent={docContent}
 			isLoadingDoc={isLoadingDoc}
+			docTitle={isAgentsMd ? 'AGENTS.md' : (file ?? undefined)}
 			onSave={handleSave}
 			isSaving={updateDoc.isPending || updateAgentsMd.isPending}
 			onDelete={handleDelete}

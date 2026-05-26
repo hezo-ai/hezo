@@ -95,7 +95,12 @@ test('shows revision history and restores a previous version', async ({ page }) 
 	await expect(page.getByText(/Rev 1/)).toBeVisible({ timeout: 15000 });
 
 	await page.getByRole('button', { name: 'Restore', exact: true }).click();
+	const kbDocRefetched = page.waitForResponse(
+		(r) => r.request().method() === 'GET' && r.url().endsWith(`/kb-docs/${doc.slug}`),
+		{ timeout: 30000 },
+	);
 	await page.getByTestId('confirm-dialog-confirm').click();
+	await kbDocRefetched;
 	await expect(page.getByText('Original kb body')).toBeVisible({ timeout: 15000 });
 });
 

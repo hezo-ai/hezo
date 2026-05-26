@@ -46,18 +46,19 @@ test('shows revision history and restores a previous version', async ({ page }) 
 		description: 'Project for testing project doc revisions.',
 	});
 
-	await page.goto(`/teams/${team.slug}/projects/${project.slug}/documents`);
+	// Seed the doc + a revision through the API so the test isn't racing the
+	// UI's fire-and-forget mutation against background agent activity. The UI
+	// path is already covered by the "create, view, edit, and delete" test
+	// above; this test focuses on the revision-history viewer + restore flow.
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+	const docPath = `/api/teams/${team.id}/projects/${project.slug}/docs/plan.md`;
+	const create = await page.request.put(docPath, { headers, data: { content: 'Original plan' } });
+	expect(create.ok()).toBe(true);
+	const update = await page.request.put(docPath, { headers, data: { content: 'Second draft' } });
+	expect(update.ok()).toBe(true);
+
+	await page.goto(`/teams/${team.slug}/projects/${project.slug}/documents?file=plan.md`);
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 15000 });
-
-	await page.getByRole('button', { name: 'New document' }).click();
-	await page.getByLabel('Filename').fill('plan.md');
-	await page.locator('textarea').fill('Original plan');
-	await page.getByRole('button', { name: 'Create', exact: true }).click();
-	await expect(page.getByRole('heading', { name: 'plan.md' })).toBeVisible({ timeout: 15000 });
-
-	await page.getByRole('button', { name: 'Edit' }).click();
-	await page.locator('textarea').fill('Second draft');
-	await page.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Second draft')).toBeVisible({ timeout: 15000 });
 
 	await page.getByRole('button', { name: /show revision history/i }).click();
@@ -67,7 +68,13 @@ test('shows revision history and restores a previous version', async ({ page }) 
 		.getByRole('button', { name: /restore/i })
 		.first()
 		.click();
+	const docRefetched = page.waitForResponse(
+		(r) =>
+			r.request().method() === 'GET' && r.url().endsWith(`/projects/${project.slug}/docs/plan.md`),
+		{ timeout: 30000 },
+	);
 	await page.getByTestId('confirm-dialog-confirm').click();
+	await docRefetched;
 	await expect(page.getByText('Original plan')).toBeVisible({ timeout: 15000 });
 });
 

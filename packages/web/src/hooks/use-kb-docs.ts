@@ -33,7 +33,13 @@ export function useCreateKbDoc(teamId: string) {
 	return useMutation({
 		mutationFn: (data: { title: string; content?: string; slug?: string }) =>
 			api.post<KbDoc>(`/api/teams/${teamId}/kb-docs`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'kb-docs'] }),
+		onSuccess: (created) => {
+			queryClient.setQueryData<KbDoc[]>(['teams', teamId, 'kb-docs'], (prev) =>
+				prev ? [...prev.filter((d) => d.id !== created.id), created] : [created],
+			);
+			queryClient.setQueryData<KbDoc>(['teams', teamId, 'kb-docs', created.slug], created);
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'kb-docs'] });
+		},
 	});
 }
 
@@ -87,7 +93,8 @@ export function useRestoreKbDocRevision(teamId: string, slug: string) {
 			api.post<KbDoc>(`/api/teams/${teamId}/kb-docs/${slug}/restore`, {
 				revision_number: revisionNumber,
 			}),
-		onSuccess: () => {
+		onSuccess: (restored) => {
+			queryClient.setQueryData<KbDoc>(['teams', teamId, 'kb-docs', slug], restored);
 			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'kb-docs'] });
 			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'kb-docs', slug] });
 			queryClient.invalidateQueries({
@@ -100,6 +107,11 @@ export function useRestoreKbDocRevision(teamId: string, slug: string) {
 export function useDeleteKbDoc(teamId: string) {
 	return useMutation({
 		mutationFn: (slug: string) => api.delete(`/api/teams/${teamId}/kb-docs/${slug}`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'kb-docs'] }),
+		onSuccess: (_, slug) => {
+			queryClient.setQueryData<KbDoc[]>(['teams', teamId, 'kb-docs'], (prev) =>
+				prev ? prev.filter((d) => d.slug !== slug) : prev,
+			);
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'kb-docs'] });
+		},
 	});
 }

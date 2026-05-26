@@ -3,6 +3,7 @@ import {
 	authenticate,
 	createProjectAndClearPlanning,
 	createTeamWithAgents,
+	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
 
@@ -35,6 +36,10 @@ test.describe('Task Comment Attachments', () => {
 			data: { project_id: project.id, title: 'Attach me', assignee_id: agents[0].id },
 		});
 		const task = ((await taskRes.json()) as { data: { id: string } }).data;
+
+		// Drain assignment-driven wakeup so the comment thread isn't churning while
+		// the test drags files and asserts on attachment chips.
+		await waitForAgentIdle(page, team.id, agents[0].id, token);
 
 		return { team, token, task, headers };
 	}

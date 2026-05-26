@@ -3,6 +3,7 @@ import {
 	authenticate,
 	createProjectAndClearPlanning,
 	createTeamWithAgents,
+	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
 
@@ -31,6 +32,10 @@ test.describe('Task Comments', () => {
 			data: { project_id: project.id, title: 'Comment Test Task', assignee_id: agent.id },
 		});
 		const task = ((await taskRes.json()) as any).data;
+
+		// Drain assignment-driven wakeup so the comment thread isn't churning
+		// while the test types into the composer.
+		await waitForAgentIdle(page, team.id, agent.id, token);
 
 		return { team, token, project, task, agent, headers };
 	}
@@ -285,7 +290,14 @@ test.describe('Task Comments', () => {
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 
-		const item = page.getByTestId('comment-item').first();
+		// Scope to the user comment we just posted; inline event comments from
+		// the assignee agent's run share the `comment-item` testid but use a
+		// different (icon + flex-1) layout that the bordered-card assertions
+		// below don't apply to.
+		const item = page
+			.getByTestId('comment-item')
+			.filter({ has: page.getByText('A boxed comment.') })
+			.first();
 		await expect(item).toBeVisible({ timeout: 15000 });
 
 		const card = item.locator('> div').nth(1);

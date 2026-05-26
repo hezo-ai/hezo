@@ -254,7 +254,13 @@ export async function closeOnboardingIntakeIfOpen(
 	});
 }
 
-/** Wait until a specific agent is idle (no active heartbeat run). */
+/**
+ * Wait until a specific agent is idle (no active heartbeat run). Gives the
+ * fire-and-forget `trackBackground(createWakeup(...))` from the task POST or
+ * comment POST a brief grace period to land in the wakeup table before the
+ * first check, so we don't observe a stale idle state right before the cron
+ * fires the next run.
+ */
 export async function waitForAgentIdle(
 	page: Page,
 	teamId: string,
@@ -262,6 +268,9 @@ export async function waitForAgentIdle(
 	token: string,
 	timeoutMs = 180_000,
 ): Promise<void> {
+	// Let any background wakeup-create promise from a preceding task/comment
+	// POST settle into the queue before we start polling.
+	await new Promise((r) => setTimeout(r, 1200));
 	const headers = { Authorization: `Bearer ${token}` };
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {

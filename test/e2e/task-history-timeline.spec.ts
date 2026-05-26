@@ -4,6 +4,7 @@ import {
 	clickAndWaitForResponse,
 	createProjectAndClearPlanning,
 	createTeamWithAgents,
+	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
 
@@ -36,6 +37,10 @@ test('status changes and cross-task mentions appear as system entries on the tim
 		data: { project_id: project.id, title: 'Source ticket', assignee_id: agent.id },
 	});
 	const source = ((await sourceRes.json()) as { data: { id: string; identifier: string } }).data;
+
+	// Drain the assignment-driven wakeups so the agent's own status/system
+	// comments aren't competing with the close/reopen PATCH matchers below.
+	await waitForAgentIdle(page, team.id, agent.id, token);
 
 	const targetUrl = `/teams/${team.slug}/projects/${project.slug}/tasks/${target.identifier.toLowerCase()}`;
 	await page.goto(targetUrl);
@@ -146,6 +151,11 @@ test('title renames appear as system entries on the timeline', async ({ page }) 
 		data: { project_id: project.id, title: 'Original ticket', assignee_id: agent.id },
 	});
 	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
+
+	// Wait for assignment-wakeup-driven activity to drain so the rename PATCH
+	// (and its system-comment side-effect) doesn't race the agent's own
+	// status-change comments on the same task.
+	await waitForAgentIdle(page, team.id, agent.id, token);
 
 	await page.request.patch(`/api/teams/${team.id}/tasks/${task.id}`, {
 		headers,

@@ -318,16 +318,42 @@ test.describe('Sidebar — Tasks count and mobile drawer', () => {
 
 		const sidebarTasks = page.getByTestId('sidebar-link-tasks');
 		await expect(sidebarTasks).toContainText('Tasks');
-		const openAfterCreate = await readOpenCount();
-		await expect(sidebarTasks).toContainText(String(openAfterCreate), { timeout: 15000 });
+
+		// The sidebar mirrors the server-computed open_task_count. Background agent
+		// activity (Captain coherence-review etc.) may also create tasks, so compare
+		// snapshot-to-snapshot rather than against a frozen value.
+		await expect
+			.poll(
+				async () => {
+					const count = await readOpenCount();
+					const text = (await sidebarTasks.textContent()) ?? '';
+					return text.endsWith(String(count)) ? count : null;
+				},
+				{ timeout: 60000 },
+			)
+			.not.toBeNull();
+
+		const before = await readOpenCount();
 
 		await page.request.patch(`/api/teams/${team.id}/tasks/${taskIds[0]}`, {
 			headers,
 			data: { status: 'closed' },
 		});
 
-		await expect.poll(readOpenCount, { timeout: 15000 }).toBe(openAfterCreate - 1);
-		await expect(sidebarTasks).toContainText(String(openAfterCreate - 1), { timeout: 15000 });
+		// Wait for the API to reflect the close (i.e. the count went down by at least one).
+		await expect.poll(readOpenCount, { timeout: 15000 }).toBeLessThan(before);
+
+		// Then the sidebar should match whatever current server count is.
+		await expect
+			.poll(
+				async () => {
+					const count = await readOpenCount();
+					const text = (await sidebarTasks.textContent()) ?? '';
+					return text.endsWith(String(count)) ? count : null;
+				},
+				{ timeout: 60000 },
+			)
+			.not.toBeNull();
 	});
 
 	test('mobile viewport opens navigation via hamburger drawer', async ({
