@@ -65,27 +65,34 @@ export function DirectFlow({ teamId, onCancel, onDone }: DirectFlowProps) {
 					<h2 className="text-base font-semibold">Choose a team template</h2>
 				</div>
 				<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-					{(templates ?? []).map((tpl) => (
-						<button
-							key={tpl.id}
-							type="button"
-							onClick={() => setSelected(tpl)}
-							className="text-left"
-							data-testid={`template-card-${tpl.name}`}
-						>
-							<Card className="p-4 h-full hover:border-primary transition-colors">
-								<h3 className="text-[14px] font-medium mb-1">{tpl.name}</h3>
-								<p className="text-[12px] text-text-muted mb-2 line-clamp-2">
-									{tpl.description ?? ''}
-								</p>
-								<p className="text-[11px] text-text-muted">
-									{tpl.agent_types.length === 0
-										? 'Just Captain + Coach'
-										: `${tpl.agent_types.length} agent role${tpl.agent_types.length === 1 ? '' : 's'}`}
-								</p>
-							</Card>
-						</button>
-					))}
+					{(templates ?? []).map((tpl) => {
+						const isBlank = tpl.name === 'Blank';
+						return (
+							<button
+								key={tpl.id}
+								type="button"
+								onClick={() => setSelected(tpl)}
+								className="text-left"
+								data-testid={`template-card-${tpl.name}`}
+							>
+								<Card
+									className={`p-4 h-full hover:border-primary transition-colors ${
+										isBlank ? 'opacity-60 border-dashed' : ''
+									}`}
+								>
+									<h3 className="text-[14px] font-medium mb-1">{tpl.name}</h3>
+									<p className="text-[12px] text-text-muted mb-2 line-clamp-2">
+										{tpl.description ?? ''}
+									</p>
+									<p className="text-[11px] text-text-muted">
+										{tpl.agent_types.length === 0
+											? 'Just Captain + Coach'
+											: `${tpl.agent_types.length} agent role${tpl.agent_types.length === 1 ? '' : 's'}`}
+									</p>
+								</Card>
+							</button>
+						);
+					})}
 				</div>
 			</div>
 		);

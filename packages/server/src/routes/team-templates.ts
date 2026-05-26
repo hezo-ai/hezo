@@ -30,7 +30,7 @@ teamTemplatesRoutes.get('/team-templates', async (c) => {
 		 LEFT JOIN team_template_agent_types ctat ON ctat.team_template_id = ct.id
 		 LEFT JOIN agent_types at ON at.id = ctat.agent_type_id
 		 GROUP BY ct.id
-		 ORDER BY ct.is_builtin DESC, ct.name ASC`,
+		 ORDER BY (ct.name = 'Blank') ASC, ct.is_builtin DESC, ct.name ASC`,
 	);
 	return ok(c, result.rows);
 });
