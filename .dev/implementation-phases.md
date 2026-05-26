@@ -715,11 +715,12 @@ Backend:
 - Summaries copied to agents and team during provisioning
 - `set_agent_summary` MCP tool — any agent or board member in the team can set an agent's summary
 - `set_team_summary` MCP tool — Captain agent only, sets the team team summary
-- `description-update` label convention: task created in Internal project, assigned to the Captain, triggers regeneration
+- `set_agent_team_context` MCP tool — Captain only, sets an agent's per-agent team-relationships blob injected into its system prompt
+- `team-coherence-review` label convention: a single task created in Internal project per roster/prompt/summary change, assigned to the Captain. Covers org-chart audit plus all three descriptive-blob rewrites.
 
 **How to test:**
 - Create a team from built-in template — agents have pre-baked summaries, team has team summary
-- Captain processes a `description-update` task — calls MCP tools to update summaries
+- Captain processes a `team-coherence-review` task — audits the org chart and calls all three MCP tools to refresh summaries and per-agent team contexts
 - Non-Captain agent cannot call `set_team_summary` (rejected)
 - `bun run test --skip-e2e` passes
 

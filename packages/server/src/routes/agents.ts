@@ -32,12 +32,7 @@ import {
 	fetchAgentSystemPromptForBatch,
 	type SystemPromptMode,
 } from '../services/agent-system-prompts';
-import {
-	enqueueAgentSummaryTask,
-	enqueueAgentTeamContextTask,
-	enqueueTeamContextTaskForAllAgents,
-	enqueueTeamSummaryTask,
-} from '../services/description-tasks';
+import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
 	getDocument,
 	initAgentSystemPrompt,
@@ -231,23 +226,8 @@ agentsRoutes.post('/teams/:teamId/agents', async (c) => {
 		);
 
 		trackBackground(
-			enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
-				log.error('Failed to enqueue agent summary task:', e),
-			),
-		);
-		trackBackground(
-			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-				log.error('Failed to enqueue team summary task:', e),
-			),
-		);
-		trackBackground(
-			enqueueAgentTeamContextTask(db, teamId, memberId, 'initial').catch((e) =>
-				log.error('Failed to enqueue team_context task for new agent:', e),
-			),
-		);
-		trackBackground(
-			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
-				log.error('Failed to fan out team_context tasks for existing agents:', e),
+			enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
+				log.error('Failed to enqueue team coherence review after agent create:', e),
 			),
 		);
 
@@ -381,23 +361,8 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 
 		broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'INSERT', agentRow);
 		trackBackground(
-			enqueueAgentSummaryTask(db, teamId, agentRow.id as string, 'created').catch((e) =>
-				log.error('Failed to enqueue agent summary task:', e),
-			),
-		);
-		trackBackground(
-			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-				log.error('Failed to enqueue team summary task:', e),
-			),
-		);
-		trackBackground(
-			enqueueAgentTeamContextTask(db, teamId, agentRow.id as string, 'initial').catch((e) =>
-				log.error('Failed to enqueue team_context task for bootstrapped agent:', e),
-			),
-		);
-		trackBackground(
-			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentRow.id as string).catch(
-				(e) => log.error('Failed to fan out team_context tasks for existing agents:', e),
+			enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
+				log.error('Failed to enqueue team coherence review after onboard:', e),
 			),
 		);
 
@@ -847,31 +812,16 @@ agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
 	if (body.system_prompt !== undefined || body.role_description !== undefined) {
 		const reason = body.system_prompt !== undefined ? 'prompt_updated' : 'role_updated';
 		trackBackground(
-			enqueueAgentSummaryTask(db, teamId, agentId, reason).catch((e) =>
-				log.error('Failed to enqueue agent summary task:', e),
-			),
-		);
-		trackBackground(
-			enqueueTeamSummaryTask(db, teamId, 'prompt_updated').catch((e) =>
-				log.error('Failed to enqueue team summary task:', e),
-			),
-		);
-		trackBackground(
-			enqueueAgentTeamContextTask(db, teamId, agentId, 'prompt_updated').catch((e) =>
-				log.error('Failed to enqueue team_context task on prompt change:', e),
+			enqueueTeamCoherenceReviewTask(db, teamId, reason).catch((e) =>
+				log.error('Failed to enqueue team coherence review on prompt/role change:', e),
 			),
 		);
 	}
 
 	if (body.reports_to !== undefined && (body.reports_to ?? null) !== (priorReportsTo ?? null)) {
 		trackBackground(
-			enqueueTeamSummaryTask(db, teamId, 'reports_to_changed').catch((e) =>
-				log.error('Failed to enqueue team summary task on reports_to change:', e),
-			),
-		);
-		trackBackground(
-			enqueueTeamContextTaskForAllAgents(db, teamId, 'reports_to_changed').catch((e) =>
-				log.error('Failed to fan out team_context tasks on reports_to change:', e),
+			enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed').catch((e) =>
+				log.error('Failed to enqueue team coherence review on reports_to change:', e),
 			),
 		);
 	}
@@ -913,13 +863,8 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/disable', async (c) => {
 	});
 
 	trackBackground(
-		enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
-			log.error('Failed to enqueue team summary task:', e),
-		),
-	);
-	trackBackground(
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_removed', agentId).catch((e) =>
-			log.error('Failed to fan out team_context tasks on disable:', e),
+		enqueueTeamCoherenceReviewTask(db, teamId, 'agent_removed').catch((e) =>
+			log.error('Failed to enqueue team coherence review on disable:', e),
 		),
 	);
 
@@ -954,18 +899,8 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/enable', async (c) => {
 	});
 
 	trackBackground(
-		enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
-			log.error('Failed to enqueue team summary task:', e),
-		),
-	);
-	trackBackground(
-		enqueueAgentTeamContextTask(db, teamId, agentId, 'agent_added').catch((e) =>
-			log.error('Failed to enqueue team_context task for re-enabled agent:', e),
-		),
-	);
-	trackBackground(
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentId).catch((e) =>
-			log.error('Failed to fan out team_context tasks on enable:', e),
+		enqueueTeamCoherenceReviewTask(db, teamId, 'enabled_changed').catch((e) =>
+			log.error('Failed to enqueue team coherence review on enable:', e),
 		),
 	);
 

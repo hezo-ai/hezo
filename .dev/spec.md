@@ -493,7 +493,7 @@ Current partials:
 
 ### Agent and team auto-descriptions
 
-Every agent carries a short summary (≤5 lines) describing its role and capabilities. Every team carries a team summary (≤20 lines) describing how the agents collaborate. Built-in agent types ship with pre-baked defaults from `packages/server/src/db/agent-summaries.json`, copied to each agent and team during provisioning. At runtime the Captain can regenerate descriptions via `description-update` tasks in Internal, calling the `set_agent_summary` and `set_team_summary` MCP tools.
+Every agent carries a short summary (≤5 lines) describing its role and capabilities, plus a per-agent team-relationships blob (≤30 lines, second-person, injected into the agent's system prompt at run start). Every team carries a team summary (≤20 lines) describing how the agents collaborate. Built-in agent types ship with pre-baked defaults from `packages/server/src/db/agent-summaries.json`, copied to each agent and team during provisioning. At runtime the system enqueues a single `team-coherence-review` task in Internal on every roster/prompt/summary change; the Captain audits the org chart and rewrites all three artefact types via the `set_agent_summary`, `set_agent_team_context`, and `set_team_summary` MCP tools in one pass.
 
 ### Ticket workflow
 

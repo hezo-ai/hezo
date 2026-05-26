@@ -2854,13 +2854,19 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 
 MCP tools call the same business logic layer as REST endpoints.
 
-### Description-update task convention
+### Team-coherence-review task convention
 
-To trigger runtime regeneration of agent and team descriptions, the system
-creates an task with the `description-update` label in the Internal project,
-assigned to the Captain agent. The Captain processes this task by calling
-`set_agent_summary` for each agent and `set_team_summary` for the team,
-then marks the task done.
+Whenever the roster, an agent's prompt, or an agent's summary changes, the
+system creates a single task with the `team-coherence-review` label in the
+Internal project, assigned to the Captain agent. One task covers everything:
+audit the org chart (orphans, cycles, stale prompts, coverage gaps,
+conflicts), reconcile what's reconcilable via `update_agent_system_prompt`,
+then rewrite the descriptive blobs every other agent reads by calling
+`set_agent_summary` and `set_agent_team_context` for every affected agent
+and `set_team_summary` once. Concurrent change events while one ticket is
+open are coalesced into the same ticket — dedup is keyed on the
+`team-coherence-review` label and open status (any non-terminal task with
+that label satisfies it).
 
 ---
 

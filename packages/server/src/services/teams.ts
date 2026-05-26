@@ -14,7 +14,6 @@ import { toSlug, uniqueSlug } from '../lib/slug';
 import { logger } from '../logger';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ProjectRow, provisionContainer } from './containers';
-import { enqueueTeamContextTaskForAllAgents } from './description-tasks';
 import type { DockerClient } from './docker';
 import type { LogStreamBroker } from './log-stream-broker';
 import { applyTemplateToTeam, ensureBuiltinAgents } from './team-template-apply';
@@ -139,12 +138,6 @@ export async function createTeam(
 	} else {
 		await ensureBuiltinAgents(db, teamId);
 	}
-
-	trackBackground(
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'initial').catch((e) =>
-			log.error('Failed to bootstrap team_context tasks for new team:', e),
-		),
-	);
 
 	const internalProject = await db.query<ProjectRow>(
 		`SELECT id, team_id, slug, docker_base_image, container_id, container_status, dev_ports

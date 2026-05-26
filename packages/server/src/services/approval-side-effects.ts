@@ -16,13 +16,7 @@ import { toSlug, uniqueSlug } from '../lib/slug';
 import { logger } from '../logger';
 import { resolveProjectTaskPrefix } from '../routes/projects';
 import { type ContainerDeps, type ProjectRow, provisionContainer } from './containers';
-import {
-	enqueueAgentSummaryTask,
-	enqueueAgentTeamContextTask,
-	enqueueTeamCoherenceReviewTask,
-	enqueueTeamContextTaskForAllAgents,
-	enqueueTeamSummaryTask,
-} from './description-tasks';
+import { enqueueTeamCoherenceReviewTask } from './description-tasks';
 import { upsertDocument } from './documents';
 import {
 	completeOnboardingIntakeAfterProvisioning,
@@ -192,26 +186,6 @@ export async function applyApprovalSideEffect(
 			}
 
 			trackBackground(
-				enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
-					log.error('Failed to enqueue agent summary task:', e),
-				),
-			);
-			trackBackground(
-				enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-					log.error('Failed to enqueue team summary task:', e),
-				),
-			);
-			trackBackground(
-				enqueueAgentTeamContextTask(db, teamId, memberId, 'initial').catch((e) =>
-					log.error('Failed to enqueue team_context task for new agent:', e),
-				),
-			);
-			trackBackground(
-				enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
-					log.error('Failed to fan out team_context tasks for existing agents:', e),
-				),
-			);
-			trackBackground(
 				enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
 					log.error('Failed to enqueue team coherence review after hire:', e),
 				),
@@ -304,11 +278,6 @@ export async function applyApprovalSideEffect(
 				);
 				const memberId = agentRow.rows[0]?.id;
 				if (memberId) {
-					trackBackground(
-						enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
-							log.error('Failed to enqueue agent summary after template provision:', e),
-						),
-					);
 					const newAgent = await db.query<Record<string, unknown>>(
 						`SELECT m.id, m.team_id, m.display_name, m.created_at,
 						        ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
@@ -328,12 +297,6 @@ export async function applyApprovalSideEffect(
 					}
 				}
 			}
-
-			trackBackground(
-				enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-					log.error('Failed to enqueue team summary after template provision:', e),
-				),
-			);
 
 			if (projectName) {
 				const captain = await db.query<{ id: string }>(
