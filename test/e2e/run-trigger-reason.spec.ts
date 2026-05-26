@@ -124,12 +124,19 @@ test('task link on run detail page scrolls to the run comment', async ({ page })
 		description: 'Test project.',
 	});
 
+	// Pad the description so the comment list sits well below the fold — the
+	// scroll has to actually move for the run comment to be visible.
+	const longDescription = Array.from(
+		{ length: 40 },
+		(_, i) => `Line ${i + 1}: synthetic padding so the task header pushes the comments off-screen.`,
+	).join('\n\n');
+
 	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers,
 		data: {
 			project_id: project.id,
 			title: 'Run comment deep link test',
-			description: 'Synthetic test task',
+			description: longDescription,
 			assignee_id: architect.id,
 		},
 	});
@@ -161,6 +168,13 @@ test('task link on run detail page scrolls to the run comment', async ({ page })
 	const commentEl = page.locator(`[id="comment-${commentId}"][data-comment-highlighted="true"]`);
 	await expect(commentEl).toBeVisible({ timeout: 15000 });
 	await expect(commentEl).toBeInViewport();
+
+	// The padded description makes the comment off-screen at the natural
+	// scroll-top, so a non-zero scrollTop is what proves the page actually
+	// moved to land on the comment (vs. the highlight being set on a row
+	// that happens to still be off-screen).
+	const scrollTop = await page.evaluate(() => document.querySelector('main')?.scrollTop ?? 0);
+	expect(scrollTop).toBeGreaterThan(100);
 });
 
 test('run list row shows the trigger reason summary', async ({ page }) => {
@@ -198,10 +212,11 @@ test('run list row shows the trigger reason summary', async ({ page }) => {
 
 	const firstRow = page.locator('a[href*="/executions/"]').first();
 	await expect(firstRow).toBeVisible({ timeout: 15000 });
-	// Any of the rendered sources should appear; the assignment wakeup
-	// is the most reliable since it fires synchronously on task creation.
+	// Any of the rendered trigger sources is acceptable here — assignment
+	// fires synchronously on task creation, but chain-after-completion
+	// recovery timers can land in the top row too once Captain's flow finishes.
 	await expect(firstRow).toContainText(
-		/Assigned to|Mentioned by|Scheduled heartbeat|Manually started/,
+		/Assigned to|Mentioned by|Scheduled heartbeat|Manually started|Recovery timer|Automation/,
 	);
 	expect((task as { identifier: string }).identifier).toBeTruthy();
 });

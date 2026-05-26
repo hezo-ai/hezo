@@ -284,10 +284,20 @@ function TaskDetailPage() {
 			}
 			if (idx < 0) return [] as ReturnType<typeof setTimeout>[];
 			const out: ReturnType<typeof setTimeout>[] = [];
-			for (const delay of [16, 200, 600, 1500]) {
+			// Each tick: first ask Virtuoso to mount the target row, then read
+			// the rendered element's real position and scroll precisely to it.
+			// Virtuoso's scrollToIndex alone underscrolls when the row's height
+			// grows after mount (LazyMount in run comments, async log body),
+			// because the offset is computed from stale estimates. The extra
+			// 3000ms tick absorbs the post-fetch height jump.
+			for (const delay of [16, 200, 600, 1500, 3000]) {
 				out.push(
 					setTimeout(() => {
 						virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center' });
+						if (highlightId) {
+							const el = document.getElementById(`comment-${highlightId}`);
+							el?.scrollIntoView({ block: 'center', behavior: 'auto' });
+						}
 					}, delay),
 				);
 			}
