@@ -4,6 +4,14 @@ import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { useOptimisticMutation } from './use-optimistic-mutation';
 
+export interface QueuedWakeup {
+	reason: 'task_busy' | 'project_busy' | 'agent_running';
+	since: string;
+	blocker_task_id: string | null;
+	blocker_identifier: string | null;
+	blocker_project_slug: string | null;
+}
+
 export interface Task {
 	id: string;
 	team_id: string;
@@ -18,6 +26,7 @@ export interface Task {
 	assignee_name: string | null;
 	assignee_type: 'agent' | 'user' | null;
 	has_active_run: boolean;
+	queued_wakeup: QueuedWakeup | null;
 	parent_task_id: string | null;
 	labels: string[];
 	progress_summary: string | null;

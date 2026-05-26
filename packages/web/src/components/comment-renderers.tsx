@@ -446,9 +446,44 @@ function SystemComment({ comment, teamId }: { comment: CommentData; teamId?: str
 	}
 
 	if (content?.kind === 'status_change') {
-		const actorName = comment.author_name ?? 'Board';
 		const from = typeof content.from === 'string' ? content.from : '';
 		const to = typeof content.to === 'string' ? content.to : '';
+		const cascade = typeof content.cascade === 'string' ? content.cascade : null;
+		if (cascade === 'auto_unblock' && teamId) {
+			const triggeredIdentifier =
+				typeof content.triggered_by_identifier === 'string' ? content.triggered_by_identifier : '';
+			const triggeredProjectSlug =
+				typeof content.triggered_by_project_slug === 'string'
+					? content.triggered_by_project_slug
+					: '';
+			const triggerNode =
+				triggeredIdentifier && triggeredProjectSlug ? (
+					<Link
+						to="/teams/$teamId/projects/$projectId/tasks/$taskId"
+						params={{
+							teamId,
+							projectId: triggeredProjectSlug,
+							taskId: triggeredIdentifier.toLowerCase(),
+						}}
+						className="text-xs text-accent-blue-text hover:underline"
+						data-testid="cascade-trigger-task"
+					>
+						{triggeredIdentifier}
+					</Link>
+				) : (
+					<span className="text-xs text-text-muted">{triggeredIdentifier || 'a blocker'}</span>
+				);
+			return (
+				<div
+					className="flex items-baseline gap-2 leading-[26px]"
+					data-testid="status-change-cascade"
+				>
+					<span className="text-xs text-text-muted">Auto-unblocked — {triggerNode} closed</span>
+					{timestamp}
+				</div>
+			);
+		}
+		const actorName = comment.author_name ?? 'Board';
 		return (
 			<div className="flex items-baseline gap-2 leading-[26px]">
 				<span className="text-xs text-text-muted">

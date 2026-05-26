@@ -11,6 +11,7 @@ import {
 	TaskPriority,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
+	WakeupSkipReason,
 	WakeupSource,
 	WakeupStatus,
 	wsRoom,
@@ -492,6 +493,47 @@ export class JobManager {
 		return active.rows.length > 0;
 	}
 
+	private async findBusyTaskOnProject(projectId: string): Promise<string | null> {
+		const { db } = this.deps;
+		const active = await db.query<{ task_id: string }>(
+			`SELECT r.task_id FROM heartbeat_runs r
+			 JOIN tasks t ON t.id = r.task_id
+			 WHERE t.project_id = $1
+			   AND r.status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)
+			 ORDER BY r.created_at ASC
+			 LIMIT 1`,
+			[projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
+		);
+		return active.rows[0]?.task_id ?? null;
+	}
+
+	private async markWakeupSkipped(
+		wakeupId: string,
+		reason: WakeupSkipReason,
+		taskId: string | null,
+		teamId: string,
+		blockerTaskId: string | null,
+	): Promise<void> {
+		const { db, wsManager } = this.deps;
+		await db.query(
+			`UPDATE agent_wakeup_requests
+			 SET last_skipped_at = now(),
+			     last_skipped_reason = $2,
+			     last_skipped_blocker_task_id = $3
+			 WHERE id = $1`,
+			[wakeupId, reason, blockerTaskId],
+		);
+		if (taskId) {
+			const refreshed = await db.query<Record<string, unknown>>(
+				'SELECT * FROM tasks WHERE id = $1',
+				[taskId],
+			);
+			if (refreshed.rows[0]) {
+				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'UPDATE', refreshed.rows[0]);
+			}
+		}
+	}
+
 	private async resolveProjectForTask(taskId: string): Promise<string | null> {
 		const { db } = this.deps;
 		const r = await db.query<{ project_id: string }>('SELECT project_id FROM tasks WHERE id = $1', [
@@ -530,12 +572,27 @@ export class JobManager {
 			if (wakeupTaskId) {
 				if (await this.isTaskBusy(wakeup.payload)) {
 					log.debug(`Skipping wakeup ${wakeup.id} — target task already has an active run`);
+					await this.markWakeupSkipped(
+						wakeup.id,
+						WakeupSkipReason.TaskBusy,
+						wakeupTaskId,
+						wakeup.team_id,
+						wakeupTaskId,
+					);
 					continue;
 				}
 				const projectId = await this.resolveProjectForTask(wakeupTaskId);
 				if (projectId && (await this.isProjectBusy(projectId))) {
 					log.debug(
 						`Skipping wakeup ${wakeup.id} — project ${projectId} already has an active run`,
+					);
+					const busyTaskId = await this.findBusyTaskOnProject(projectId);
+					await this.markWakeupSkipped(
+						wakeup.id,
+						WakeupSkipReason.ProjectBusy,
+						wakeupTaskId,
+						wakeup.team_id,
+						busyTaskId,
 					);
 					continue;
 				}
@@ -544,6 +601,13 @@ export class JobManager {
 				// activateAgent, so we can't pre-check a project lock. Fall back to
 				// per-agent dedup to avoid stacking idle pings.
 				log.debug(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
+				await this.markWakeupSkipped(
+					wakeup.id,
+					WakeupSkipReason.AgentRunning,
+					null,
+					wakeup.team_id,
+					null,
+				);
 				continue;
 			}
 
@@ -561,9 +625,30 @@ export class JobManager {
 			}
 
 			await db.query(
-				'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = now() WHERE id = $2',
+				`UPDATE agent_wakeup_requests
+				 SET status = $1::wakeup_status,
+				     claimed_at = now(),
+				     last_skipped_at = NULL,
+				     last_skipped_reason = NULL,
+				     last_skipped_blocker_task_id = NULL
+				 WHERE id = $2`,
 				[WakeupStatus.Claimed, wakeup.id],
 			);
+			if (wakeupTaskId) {
+				const refreshed = await db.query<Record<string, unknown>>(
+					'SELECT * FROM tasks WHERE id = $1',
+					[wakeupTaskId],
+				);
+				if (refreshed.rows[0]) {
+					broadcastRowChange(
+						this.deps.wsManager,
+						wsRoom.team(wakeup.team_id),
+						'tasks',
+						'UPDATE',
+						refreshed.rows[0],
+					);
+				}
+			}
 
 			try {
 				await this.activateAgent(

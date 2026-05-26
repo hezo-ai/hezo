@@ -285,6 +285,60 @@ describe('dependency gate — wakeup deferral and reverse trigger', () => {
 		expect(after?.status).toBe(WakeupStatus.Queued);
 	});
 
+	it('cascade unblock records a system comment attributed to the system, linking back to the closed blocker', async () => {
+		const r = await createTask('attr-r', researcherId);
+		const p = await createTask('attr-p', productLeadId, [r.identifier]);
+
+		await setStatus(r.id, TaskStatus.Done);
+		await new Promise((res) => setTimeout(res, 100));
+
+		const comments = await db.query<{
+			author_member_id: string | null;
+			content: Record<string, unknown>;
+		}>(
+			`SELECT author_member_id, content FROM task_comments
+			 WHERE task_id = $1 AND content_type = 'system'
+			   AND content->>'kind' = 'status_change'
+			 ORDER BY created_at DESC LIMIT 1`,
+			[p.id],
+		);
+		const row = comments.rows[0];
+		expect(row).toBeDefined();
+		expect(row.author_member_id).toBeNull();
+		expect(row.content.cascade).toBe('auto_unblock');
+		expect(row.content.triggered_by_task_id).toBe(r.id);
+		expect(row.content.triggered_by_identifier).toBe(r.identifier);
+		expect(typeof row.content.triggered_by_project_slug).toBe('string');
+		expect(row.content.from).toBe(TaskStatus.Blocked);
+		expect(row.content.to).toBe(TaskStatus.Backlog);
+	});
+
+	it('manual Blocked→Backlog (dependency edge removed) is attributed to the actor — no cascade marker', async () => {
+		const r = await createTask('manual-attr-r', researcherId);
+		const p = await createTask('manual-attr-p', productLeadId, [r.identifier]);
+		const depsRes = await app.request(`/api/teams/${teamId}/tasks/${p.id}/dependencies`, {
+			headers: authHeader(token),
+		});
+		const dep = (await depsRes.json()).data[0] as { id: string };
+		await deleteDependency(p.id, dep.id);
+
+		const comments = await db.query<{
+			author_member_id: string | null;
+			content: Record<string, unknown>;
+		}>(
+			`SELECT author_member_id, content FROM task_comments
+			 WHERE task_id = $1 AND content_type = 'system'
+			   AND content->>'kind' = 'status_change'
+			 ORDER BY created_at DESC LIMIT 1`,
+			[p.id],
+		);
+		const row = comments.rows[0];
+		expect(row).toBeDefined();
+		expect(row.content.cascade).toBeUndefined();
+		expect(row.content.from).toBe(TaskStatus.Blocked);
+		expect(row.content.to).toBe(TaskStatus.Backlog);
+	});
+
 	it('wakeIfReady is a no-op when blockers remain', async () => {
 		const r1 = await createTask('twoblock-r1', researcherId);
 		const r2 = await createTask('twoblock-r2', researcherId);

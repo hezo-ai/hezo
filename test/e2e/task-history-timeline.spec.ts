@@ -161,6 +161,66 @@ test('title renames appear as system entries on the timeline', async ({ page }) 
 	).toBeVisible({ timeout: 15000 });
 });
 
+test('auto-unblock cascade renders as system attribution, not the patcher', async ({ page }) => {
+	await authenticate(page);
+	const { team, token } = await createTeamWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; title: string }> }).data;
+	expect(agents.length).toBeGreaterThanOrEqual(2);
+	const [closer, owner] = agents;
+
+	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: 'Cascade Project',
+		description: 'Project for cascade attribution.',
+	});
+	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
+
+	const blockerRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
+		headers,
+		data: { project_id: project.id, title: 'Blocker ticket', assignee_id: closer.id },
+	});
+	const blocker = ((await blockerRes.json()) as { data: { id: string; identifier: string } }).data;
+
+	const downstreamRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
+		headers,
+		data: {
+			project_id: project.id,
+			title: 'Downstream ticket',
+			assignee_id: owner.id,
+			blocked_by_task_ids: [blocker.identifier],
+		},
+	});
+	const downstream = ((await downstreamRes.json()) as { data: { id: string; identifier: string } })
+		.data;
+
+	const closeRes = await page.request.patch(`/api/teams/${team.id}/tasks/${blocker.id}`, {
+		headers,
+		data: { status: 'done' },
+	});
+	expect(closeRes.ok()).toBe(true);
+
+	const downstreamUrl = `/teams/${team.slug}/projects/${project.slug}/tasks/${downstream.identifier.toLowerCase()}`;
+	await page.goto(downstreamUrl);
+	await waitForPageLoad(page);
+	await page
+		.locator('main')
+		.first()
+		.evaluate((el) => {
+			el.scrollTo({ top: el.scrollHeight });
+		});
+
+	const cascadeEntry = page.locator('[data-testid="status-change-cascade"]');
+	await expect(cascadeEntry).toBeVisible({ timeout: 15000 });
+	await expect(cascadeEntry).toContainText('Auto-unblocked');
+	await expect(cascadeEntry).toContainText(blocker.identifier);
+	await expect(cascadeEntry).not.toContainText(closer.title);
+	await expect(cascadeEntry).not.toContainText(/changed status/i);
+});
+
 test('reassignments appear as system entries on the timeline', async ({ page }) => {
 	await authenticate(page);
 	const { team, token } = await createTeamWithAgents(page);

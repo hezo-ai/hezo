@@ -181,11 +181,32 @@ tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
             EXISTS (
               SELECT 1 FROM heartbeat_runs hr
               WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
-            ) AS has_active_run
+            ) AS has_active_run,
+            CASE WHEN qw.last_skipped_reason IS NOT NULL THEN json_build_object(
+              'reason', qw.last_skipped_reason,
+              'since', qw.last_skipped_at,
+              'blocker_task_id', qw.last_skipped_blocker_task_id,
+              'blocker_identifier', qw.blocker_identifier,
+              'blocker_project_slug', qw.blocker_project_slug
+            ) ELSE NULL END AS queued_wakeup
      FROM tasks i
      JOIN projects p ON p.id = i.project_id
      LEFT JOIN members m ON m.id = i.assignee_id
      LEFT JOIN member_agents ma ON ma.id = i.assignee_id
+     LEFT JOIN LATERAL (
+       SELECT w.last_skipped_reason, w.last_skipped_at, w.last_skipped_blocker_task_id,
+              b.identifier AS blocker_identifier,
+              bp.slug AS blocker_project_slug
+       FROM agent_wakeup_requests w
+       LEFT JOIN tasks b ON b.id = w.last_skipped_blocker_task_id
+       LEFT JOIN projects bp ON bp.id = b.project_id
+       WHERE w.member_id = i.assignee_id
+         AND w.payload->>'task_id' = i.id::text
+         AND w.status = 'queued'
+         AND w.last_skipped_at IS NOT NULL
+       ORDER BY w.last_skipped_at DESC
+       LIMIT 1
+     ) qw ON true
      WHERE ${where}
      ORDER BY EXISTS (
                 SELECT 1 FROM heartbeat_runs hr
@@ -287,7 +308,14 @@ tasksRoutes.get('/teams/:teamId/tasks/:taskId', async (c) => {
             EXISTS (
               SELECT 1 FROM heartbeat_runs hr
               WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
-            ) AS has_active_run
+            ) AS has_active_run,
+            CASE WHEN qw.last_skipped_reason IS NOT NULL THEN json_build_object(
+              'reason', qw.last_skipped_reason,
+              'since', qw.last_skipped_at,
+              'blocker_task_id', qw.last_skipped_blocker_task_id,
+              'blocker_identifier', qw.blocker_identifier,
+              'blocker_project_slug', qw.blocker_project_slug
+            ) ELSE NULL END AS queued_wakeup
      FROM tasks i
      JOIN projects p ON p.id = i.project_id
      JOIN teams co ON co.id = i.team_id
@@ -295,6 +323,20 @@ tasksRoutes.get('/teams/:teamId/tasks/:taskId', async (c) => {
      LEFT JOIN member_agents ma ON ma.id = i.assignee_id
      LEFT JOIN members m_ps ON m_ps.id = i.progress_summary_updated_by
      LEFT JOIN member_agents ma_ps ON ma_ps.id = i.progress_summary_updated_by
+     LEFT JOIN LATERAL (
+       SELECT w.last_skipped_reason, w.last_skipped_at, w.last_skipped_blocker_task_id,
+              b.identifier AS blocker_identifier,
+              bp.slug AS blocker_project_slug
+       FROM agent_wakeup_requests w
+       LEFT JOIN tasks b ON b.id = w.last_skipped_blocker_task_id
+       LEFT JOIN projects bp ON bp.id = b.project_id
+       WHERE w.member_id = i.assignee_id
+         AND w.payload->>'task_id' = i.id::text
+         AND w.status = 'queued'
+         AND w.last_skipped_at IS NOT NULL
+       ORDER BY w.last_skipped_at DESC
+       LIMIT 1
+     ) qw ON true
      WHERE i.id = $1 AND i.team_id = $2`,
 		[taskId, teamId],
 	);

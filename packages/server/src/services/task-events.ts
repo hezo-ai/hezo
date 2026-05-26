@@ -58,6 +58,13 @@ async function resolveActor(db: PGlite, actorMemberId: string | null): Promise<A
 	return { name: row.name ?? 'Board', kind: 'user', slug: null };
 }
 
+export interface CascadeContext {
+	kind: 'auto_unblock';
+	triggeredByTaskId: string;
+	triggeredByIdentifier: string;
+	triggeredByProjectSlug: string;
+}
+
 export async function recordStatusChange(
 	db: PGlite,
 	teamId: string,
@@ -66,22 +73,28 @@ export async function recordStatusChange(
 	newStatus: string,
 	actorMemberId: string | null,
 	wsManager: WebSocketManager | undefined,
+	cascade?: CascadeContext,
 ): Promise<void> {
 	if (oldStatus === newStatus) return;
+	const isCascade = cascade !== undefined;
+	const authorId = isCascade ? null : actorMemberId;
+	const content: Record<string, unknown> = {
+		kind: 'status_change',
+		from: oldStatus,
+		to: newStatus,
+		actor_id: authorId,
+	};
+	if (cascade) {
+		content.cascade = cascade.kind;
+		content.triggered_by_task_id = cascade.triggeredByTaskId;
+		content.triggered_by_identifier = cascade.triggeredByIdentifier;
+		content.triggered_by_project_slug = cascade.triggeredByProjectSlug;
+		content.triggered_by_actor_id = actorMemberId;
+	}
 	const r = await db.query<Record<string, unknown>>(
 		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb) RETURNING *`,
-		[
-			taskId,
-			actorMemberId,
-			CommentContentType.System,
-			JSON.stringify({
-				kind: 'status_change',
-				from: oldStatus,
-				to: newStatus,
-				actor_id: actorMemberId,
-			}),
-		],
+		[taskId, authorId, CommentContentType.System, JSON.stringify(content)],
 	);
 	if (r.rows[0] && wsManager) {
 		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);

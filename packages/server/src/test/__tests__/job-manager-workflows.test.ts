@@ -172,6 +172,95 @@ describe('JobManager workflow methods', () => {
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 		});
 
+		it('records project_busy on a task wakeup when another task in the project is running', async () => {
+			const manager = createJobManager();
+
+			const otherTaskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					project_id: projectId,
+					title: 'Sibling busy task',
+					assignee_id: agentId,
+				}),
+			});
+			const otherTask = (await otherTaskRes.json()).data as { id: string; identifier: string };
+
+			await db.query(
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
+				[agentId, teamId, otherTask.id, HeartbeatRunStatus.Running],
+			);
+
+			const wakeupRes = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests
+				   (member_id, team_id, source, status, payload, created_at)
+				 VALUES ($1, $2, 'assignment', 'queued', $3::jsonb, now() - interval '30 seconds')
+				 RETURNING id`,
+				[agentId, teamId, JSON.stringify({ task_id: taskId, reason: 'unblocked' })],
+			);
+			const wakeupId = wakeupRes.rows[0].id;
+
+			await (manager as any).processWakeups();
+
+			const wakeup = await db.query<{
+				status: string;
+				last_skipped_reason: string | null;
+				last_skipped_blocker_task_id: string | null;
+			}>(
+				`SELECT status, last_skipped_reason, last_skipped_blocker_task_id
+				 FROM agent_wakeup_requests WHERE id = $1`,
+				[wakeupId],
+			);
+			expect(wakeup.rows[0].status).toBe(WakeupStatus.Queued);
+			expect(wakeup.rows[0].last_skipped_reason).toBe('project_busy');
+			expect(wakeup.rows[0].last_skipped_blocker_task_id).toBe(otherTask.id);
+
+			const taskRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+				headers: authHeader(token),
+			});
+			const task = (await taskRes.json()).data as {
+				queued_wakeup: {
+					reason: string;
+					blocker_identifier: string | null;
+				} | null;
+			};
+			expect(task.queued_wakeup).not.toBeNull();
+			expect(task.queued_wakeup?.reason).toBe('project_busy');
+			expect(task.queued_wakeup?.blocker_identifier).toBe(otherTask.identifier);
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [otherTask.id]);
+		});
+
+		it('clears last_skipped_* state when a wakeup is finally claimed', async () => {
+			const manager = createJobManager();
+
+			const wakeupRes = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests
+				   (member_id, team_id, source, status, payload, last_skipped_at,
+				    last_skipped_reason, created_at)
+				 VALUES ($1, $2, 'assignment', 'queued', $3::jsonb, now(),
+				         'project_busy', now() - interval '30 seconds')
+				 RETURNING id`,
+				[agentId, teamId, JSON.stringify({ task_id: taskId, reason: 'unblocked' })],
+			);
+			const wakeupId = wakeupRes.rows[0].id;
+
+			await (manager as any).processWakeups();
+
+			const wakeup = await db.query<{
+				status: string;
+				last_skipped_reason: string | null;
+			}>(`SELECT status, last_skipped_reason FROM agent_wakeup_requests WHERE id = $1`, [wakeupId]);
+			expect(wakeup.rows[0].status).not.toBe(WakeupStatus.Queued);
+			expect(wakeup.rows[0].last_skipped_reason).toBeNull();
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
+		});
+
 		it('skips agents that already have a running task', async () => {
 			const manager = createJobManager();
 

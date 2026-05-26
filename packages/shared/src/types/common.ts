@@ -303,6 +303,13 @@ export const WakeupStatus = {
 } as const;
 export type WakeupStatus = (typeof WakeupStatus)[keyof typeof WakeupStatus];
 
+export const WakeupSkipReason = {
+	TaskBusy: 'task_busy',
+	ProjectBusy: 'project_busy',
+	AgentRunning: 'agent_running',
+} as const;
+export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];
+
 export const HeartbeatRunStatus = {
 	Queued: 'queued',
 	Running: 'running',
