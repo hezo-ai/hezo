@@ -105,7 +105,62 @@ test('run page shows trigger reason linking back to the source mention', async (
 
 	const href = await triggerLink.getAttribute('href');
 	expect(href?.toLowerCase()).toContain(`/tasks/${task.identifier.toLowerCase()}`);
-	expect(href).toContain('#c-');
+	expect(href).toContain('#comment-');
+});
+
+test('task link on run detail page scrolls to the run comment', async ({ page }) => {
+	await authenticate(page);
+	const { team, token } = await createTeamWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const architect = agents.find((a) => a.slug === 'architect') ?? agents[1];
+
+	await waitForCaptainIdle(page, team.id, token);
+
+	const project = await createProjectReadyForAgents(page, team, token, {
+		name: 'Run Comment Deep Link Project',
+		description: 'Test project.',
+	});
+
+	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
+		headers,
+		data: {
+			project_id: project.id,
+			title: 'Run comment deep link test',
+			description: 'Synthetic test task',
+			assignee_id: architect.id,
+		},
+	});
+	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
+
+	const taskIdLower = task.identifier.toLowerCase();
+	const assignmentRun = await waitForRunWithTrigger(
+		page,
+		team.id,
+		architect.id,
+		token,
+		(r) => r.trigger_source === 'assignment',
+	);
+
+	await page.goto(`/teams/${team.slug}/agents/${architect.id}/executions/${assignmentRun.id}`);
+
+	const taskLink = page.locator(`a[href*="/tasks/${taskIdLower}"]`).first();
+	await expect(taskLink).toBeVisible({ timeout: 15000 });
+
+	const href = await taskLink.getAttribute('href');
+	expect(href).toMatch(/#comment-[0-9a-f-]{36}$/);
+	const commentId = href!.split('#comment-')[1];
+
+	await taskLink.click();
+
+	// The task page strips the hash after scrolling, but flags the resolved
+	// comment via `data-comment-highlighted="true"` for 2s — that's the
+	// signal the deep-link actually landed on the right row.
+	const commentEl = page.locator(`[id="comment-${commentId}"][data-comment-highlighted="true"]`);
+	await expect(commentEl).toBeVisible({ timeout: 15000 });
+	await expect(commentEl).toBeInViewport();
 });
 
 test('run list row shows the trigger reason summary', async ({ page }) => {

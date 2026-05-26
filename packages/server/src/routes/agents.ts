@@ -79,6 +79,7 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 	tii.id AS trigger_comment_task_id,
 	tii.identifier AS trigger_comment_task_identifier,
 	tip.slug AS trigger_comment_project_slug,
+	hrc.id AS run_comment_id,
 	COALESCE(
 		(SELECT jsonb_agg(
 			jsonb_build_object(
@@ -99,7 +100,10 @@ const HEARTBEAT_RUN_TRIGGER_JOINS = `LEFT JOIN agent_wakeup_requests aw ON aw.id
 	LEFT JOIN task_comments tic ON tic.id = NULLIF(aw.payload->>'comment_id', '')::uuid
 	LEFT JOIN member_agents tama ON tama.id = tic.author_member_id
 	LEFT JOIN tasks tii ON tii.id = tic.task_id
-	LEFT JOIN projects tip ON tip.id = tii.project_id`;
+	LEFT JOIN projects tip ON tip.id = tii.project_id
+	LEFT JOIN task_comments hrc ON hrc.task_id = hr.task_id
+		AND hrc.content_type = 'run'
+		AND hrc.content->>'run_id' = hr.id::text`;
 
 agentsRoutes.get('/teams/:teamId/agents', async (c) => {
 	const access = await requireTeamAccess(c);
