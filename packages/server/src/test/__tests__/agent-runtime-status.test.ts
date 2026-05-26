@@ -215,4 +215,63 @@ describe('setAgentIdleIfNoActiveRuns', () => {
 			new Date(before.rows[0].last_heartbeat_at).getTime(),
 		);
 	});
+
+	it('advances last_heartbeat_at even when runtime_status is not active', async () => {
+		await db.query(
+			`UPDATE member_agents
+			 SET runtime_status = $1::agent_runtime_status,
+			     last_heartbeat_at = now() - interval '2 hours'
+			 WHERE id = $2`,
+			[AgentRuntimeStatus.Idle, agentId],
+		);
+
+		const before = await db.query<{ last_heartbeat_at: string }>(
+			'SELECT last_heartbeat_at FROM member_agents WHERE id = $1',
+			[agentId],
+		);
+
+		const transitioned = await setAgentIdleIfNoActiveRuns(
+			db,
+			agentId,
+			teamId,
+			undefined,
+			undefined,
+		);
+
+		const after = await db.query<{ last_heartbeat_at: string }>(
+			'SELECT last_heartbeat_at FROM member_agents WHERE id = $1',
+			[agentId],
+		);
+
+		expect(transitioned).toBe(false);
+		expect(new Date(after.rows[0].last_heartbeat_at).getTime()).toBeGreaterThan(
+			new Date(before.rows[0].last_heartbeat_at).getTime(),
+		);
+	});
+
+	it('does not advance last_heartbeat_at when other runs are still in-flight', async () => {
+		await db.query(
+			`UPDATE member_agents SET last_heartbeat_at = now() - interval '2 hours' WHERE id = $1`,
+			[agentId],
+		);
+		const otherRunId = await insertRun(HeartbeatRunStatus.Running);
+
+		const before = await db.query<{ last_heartbeat_at: string }>(
+			'SELECT last_heartbeat_at FROM member_agents WHERE id = $1',
+			[agentId],
+		);
+
+		await setAgentIdleIfNoActiveRuns(db, agentId, teamId, undefined, undefined);
+
+		const after = await db.query<{ last_heartbeat_at: string }>(
+			'SELECT last_heartbeat_at FROM member_agents WHERE id = $1',
+			[agentId],
+		);
+
+		expect(new Date(after.rows[0].last_heartbeat_at).getTime()).toBe(
+			new Date(before.rows[0].last_heartbeat_at).getTime(),
+		);
+
+		await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [otherRunId]);
+	});
 });

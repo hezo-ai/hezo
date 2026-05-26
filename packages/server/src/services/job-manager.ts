@@ -92,6 +92,14 @@ export interface JobManagerDeps {
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
 const WAKEUP_CRON = process.env.HEZO_WAKEUP_CRON ?? '*/5 * * * * *';
 const HEARTBEAT_CRON = process.env.HEZO_HEARTBEAT_CRON ?? '*/5 * * * * *';
+// Lower bound on how often a heartbeat can fire, regardless of an agent's
+// configured `heartbeat_interval_min`. Defends against misconfigured low/zero
+// intervals producing a tight 5-second-cron loop on the same agent.
+const HEARTBEAT_INTERVAL_FLOOR_MIN = Number(process.env.HEZO_HEARTBEAT_FLOOR_MIN ?? 5);
+// Quiet window after a run completes before that agent is eligible for another
+// heartbeat. Prevents back-to-back runs when the configured interval is shorter
+// than the run itself.
+const HEARTBEAT_POST_RUN_COOLDOWN_SEC = Number(process.env.HEZO_HEARTBEAT_COOLDOWN_SEC ?? 60);
 
 export class JobManager {
 	private cron: Cron;
@@ -591,9 +599,20 @@ export class JobManager {
 			 WHERE ma.admin_status = $1
 			   AND ma.runtime_status != $2
 			   AND (ma.last_heartbeat_at IS NULL
-			        OR ma.last_heartbeat_at + (ma.heartbeat_interval_min || ' minutes')::interval < now())
+			        OR ma.last_heartbeat_at + (GREATEST(ma.heartbeat_interval_min, $3::int) || ' minutes')::interval < now())
+			   AND NOT EXISTS (
+			        SELECT 1 FROM heartbeat_runs hr
+			        WHERE hr.member_id = ma.id
+			          AND hr.finished_at IS NOT NULL
+			          AND hr.finished_at > now() - ($4::int || ' seconds')::interval
+			   )
 			 LIMIT 5`,
-			[AgentAdminStatus.Enabled, AgentRuntimeStatus.Paused],
+			[
+				AgentAdminStatus.Enabled,
+				AgentRuntimeStatus.Paused,
+				HEARTBEAT_INTERVAL_FLOOR_MIN,
+				HEARTBEAT_POST_RUN_COOLDOWN_SEC,
+			],
 		);
 
 		if (dueAgents.rows.length > 0) {

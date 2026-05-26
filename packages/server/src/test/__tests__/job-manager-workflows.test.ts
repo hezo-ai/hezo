@@ -1260,6 +1260,62 @@ describe('JobManager workflow methods', () => {
 
 			manager.shutdown();
 		});
+
+		it('honours the interval floor when heartbeat_interval_min is misconfigured low', async () => {
+			const manager = createJobManager();
+
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+			await db.query('DELETE FROM agent_wakeup_requests');
+			await db.query(
+				"UPDATE member_agents SET admin_status = 'enabled', runtime_status = 'idle', last_heartbeat_at = now() - interval '1 minute', heartbeat_interval_min = 0 WHERE id = $1",
+				[agentId],
+			);
+			// Park every other seeded agent so they don't compete for the LIMIT.
+			await db.query(
+				'UPDATE member_agents SET last_heartbeat_at = now(), heartbeat_interval_min = 60 WHERE id != $1',
+				[agentId],
+			);
+
+			await (manager as any).processScheduledHeartbeats();
+
+			const wakeups = await db.query<{ id: string }>(
+				`SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'heartbeat'`,
+				[agentId],
+			);
+			expect(wakeups.rows.length).toBe(0);
+
+			manager.shutdown();
+		});
+
+		it('defers heartbeats while another run for the same agent ended within the cooldown window', async () => {
+			const manager = createJobManager();
+
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+			await db.query('DELETE FROM agent_wakeup_requests');
+			await db.query(
+				"UPDATE member_agents SET admin_status = 'enabled', runtime_status = 'idle', last_heartbeat_at = now() - interval '2 hours', heartbeat_interval_min = 60 WHERE id = $1",
+				[agentId],
+			);
+			await db.query(
+				'UPDATE member_agents SET last_heartbeat_at = now(), heartbeat_interval_min = 60 WHERE id != $1',
+				[agentId],
+			);
+			await db.query(
+				`INSERT INTO heartbeat_runs (team_id, member_id, status, started_at, finished_at)
+				 VALUES ($1, $2, $3::heartbeat_run_status, now() - interval '5 seconds', now() - interval '2 seconds')`,
+				[teamId, agentId, HeartbeatRunStatus.Succeeded],
+			);
+
+			await (manager as any).processScheduledHeartbeats();
+
+			const wakeups = await db.query<{ id: string }>(
+				`SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'heartbeat'`,
+				[agentId],
+			);
+			expect(wakeups.rows.length).toBe(0);
+
+			manager.shutdown();
+		});
 	});
 
 	describe('reconcileOnStartup', () => {

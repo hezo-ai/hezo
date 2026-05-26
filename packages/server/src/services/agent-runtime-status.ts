@@ -9,8 +9,12 @@ import type { WebSocketManager } from './ws';
  * completion path that unconditionally sets idle will lie about state while
  * other runs are still in flight.
  *
- * Guarded on `runtime_status = active` so a `paused` row (budget hit) is not
- * cleared. Broadcasts `member_agents` UPDATE only on a real transition.
+ * The `runtime_status` transition is guarded on `active` so a `paused` row
+ * (budget hit) is not cleared. The `last_heartbeat_at` advance is unconditional
+ * once we know no other runs remain — the heartbeat scheduler relies on it to
+ * throttle the next wakeup, and gating it on a status that may have already
+ * moved (orphan detector, container cleanup, etc.) leaves the agent eligible
+ * on the very next cron tick.
  *
  * Returns true if the agent transitioned to idle, false otherwise.
  */
@@ -31,9 +35,11 @@ export async function setAgentIdleIfNoActiveRuns(
 	);
 	if (remaining.rows.length > 0) return false;
 
+	await db.query('UPDATE member_agents SET last_heartbeat_at = now() WHERE id = $1', [memberId]);
+
 	const reset = await db.query<{ id: string }>(
 		`UPDATE member_agents
-		 SET runtime_status = $1::agent_runtime_status, last_heartbeat_at = now()
+		 SET runtime_status = $1::agent_runtime_status
 		 WHERE id = $2 AND runtime_status = $3::agent_runtime_status
 		 RETURNING id`,
 		[AgentRuntimeStatus.Idle, memberId, AgentRuntimeStatus.Active],
