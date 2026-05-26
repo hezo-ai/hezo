@@ -256,7 +256,7 @@ async function buildTeammatesBlock(db: PGlite, ctx: ResolveContext): Promise<str
 
 ## Teammates
 
-Whenever you reference a teammate in any output you author (comments, ticket descriptions, progress summaries, project docs, KB docs, chat messages), write \`@<slug>\` from this list — not the role title. Bare titles do not linkify and do not wake the teammate. This applies even when a role section above names a teammate by title; the canonical reference form is the slug.
+Whenever you reference a teammate in any output you author (comments, ticket descriptions, progress summaries, project docs, KB docs, chat messages), write \`@<slug>\` (active) or \`@@<slug>\` (passive) from this list — never the role title. Bare titles do not linkify. See "@-Mention Discipline" below for when to use which: \`@\` for direct asks on this ticket, \`@@\` for naming, attribution, plan tables, and summaries.
 
 ${list}`;
 }

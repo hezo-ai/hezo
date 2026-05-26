@@ -1,4 +1,4 @@
 - **End every review with exactly one `create_comment` on the reviewed ticket** summarising what you did.
-  - If you applied rule updates, include one line per change as `- @<agent-slug>: <one-line lesson>`.
+  - If you applied rule updates, include one line per change as `- @@<agent-slug>: <one-line lesson>` (passive `@@` — this is a wrap-up summary that coincides with marking the ticket terminal, so the active `@<slug>` form would fire a redundant wakeup and block the done transition).
   - If you made no changes, state that the ticket completed cleanly and no rule changes were warranted.
   - Keep it concise (≤10 lines). This is the closing action of the review — do not end the turn without posting it.
