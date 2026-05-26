@@ -11,8 +11,12 @@ export default defineConfig({
 	testDir: './test/e2e',
 	timeout: 180_000,
 	retries: 1,
-	workers: 1,
+	workers: 2,
 	fullyParallel: true,
+	// `list` prints one line per test as it finishes, so a mid-suite hang
+	// is visible in CI logs immediately rather than hidden behind the
+	// dot reporter's line-buffered batches.
+	reporter: 'list',
 	use: {
 		baseURL: `http://localhost:${WEB_PORT}`,
 		headless: true,
