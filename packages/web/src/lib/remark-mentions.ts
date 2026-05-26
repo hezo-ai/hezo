@@ -50,11 +50,15 @@ interface Options {
 	projectDocs: ProjectDocsMap;
 }
 
+const PASSIVE_AGENT_RE_SRC = String.raw`(?<![\w@])@@([a-z][\w-]*)(?![\w/])`;
 const AGENT_RE_SRC = String.raw`(?<![\w@])@([a-z][\w-]*)(?![\w/])`;
 const TASK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)(?![\w-])`;
 const FILENAME_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w/.-])`;
 
-const MENTION_RE = new RegExp(`${AGENT_RE_SRC}|${TASK_RE_SRC}|${FILENAME_RE_SRC}`, 'g');
+const MENTION_RE = new RegExp(
+	`${PASSIVE_AGENT_RE_SRC}|${AGENT_RE_SRC}|${TASK_RE_SRC}|${FILENAME_RE_SRC}`,
+	'g',
+);
 
 const SKIP_TYPES = new Set(['code', 'inlineCode', 'link']);
 
@@ -123,9 +127,28 @@ function splitTextNode(node: TextNode, opts: Options): MdNode[] {
 function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 	const { teamId, projectSlug, agents, tasks, kbDocs, projectDocs } = opts;
 	const display = match[0];
-	const agentToken = match[1];
-	const taskToken = match[2];
-	const filenameToken = match[3];
+	const passiveAgentToken = match[1];
+	const agentToken = match[2];
+	const taskToken = match[3];
+	const filenameToken = match[4];
+
+	if (passiveAgentToken) {
+		const slug = passiveAgentToken.toLowerCase();
+		const data = agents.get(slug);
+		if (!data) return null;
+		return {
+			type: 'link',
+			url: `/teams/${teamId}/agents/${slug}`,
+			children: [{ type: 'text', value: `@${passiveAgentToken}` }],
+			data: {
+				hProperties: {
+					'data-mention-agent-slug': slug,
+					'data-mention-agent-title': data.title,
+					'data-mention-passive': 'true',
+				},
+			},
+		};
+	}
 
 	if (agentToken) {
 		const slug = agentToken.toLowerCase();

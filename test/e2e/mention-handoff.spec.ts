@@ -151,4 +151,33 @@ test.describe('Mention handoff', () => {
 			timeout: 15000,
 		});
 	});
+
+	test('passive @@<slug> renders a clickable chip but creates no mention wakeup', async ({
+		page,
+	}) => {
+		await authenticate(page);
+		const { team, architect, captain, ceoTask, headers } = await setup(page);
+
+		await page.request.post(`/api/teams/${team.id}/tasks/${ceoTask.id}/comments`, {
+			headers,
+			data: {
+				content: { text: `Plan: BE-2 → @@${architect.slug}, BE-3 → @@${captain.slug}.` },
+			},
+		});
+
+		await page.goto(`/teams/${team.slug}/tasks/${ceoTask.id}`);
+		await waitForPageLoad(page);
+
+		const comment = page.getByTestId('text-comment-body').filter({ hasText: 'Plan:' }).first();
+		await expect(comment).toBeVisible({ timeout: 15000 });
+
+		const archChip = comment.locator(`a[href*="/agents/${architect.slug}"]`);
+		await expect(archChip).toHaveCount(1, { timeout: 15000 });
+		await expect(archChip).toHaveAttribute('data-mention-passive', 'true');
+		await expect(archChip).toHaveText(`@${architect.slug}`);
+
+		const captChip = comment.locator(`a[href*="/agents/${captain.slug}"]`);
+		await expect(captChip).toHaveCount(1);
+		await expect(captChip).toHaveAttribute('data-mention-passive', 'true');
+	});
 });

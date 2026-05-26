@@ -232,6 +232,34 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 		const wakeups = await wakeupsForComment(commentId);
 		expect(wakeups.filter((w) => w.source === WakeupSource.Mention)).toEqual([]);
 	});
+
+	it('does not wake on the passive @@<slug> form', async () => {
+		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Passive plan table');
+		const commentId = await postMcpComment(
+			agentToken,
+			taskId,
+			'Planning chain: BE-2 → @@architect, BE-3 → @@product-lead.',
+		);
+
+		const wakeups = await wakeupsForComment(commentId);
+		expect(wakeups).toEqual([]);
+	});
+
+	it('wakes only the @-mentioned agent when @@ and @ are mixed in the same comment', async () => {
+		const { taskId, agentToken } = await setup(captainId, captainId, 'Mixed passive + active');
+		const commentId = await postMcpComment(
+			agentToken,
+			taskId,
+			'Plan: BE-2 → @@product-lead (already routed). @architect please confirm scope here.',
+		);
+
+		const wakeups = await wakeupsForComment(commentId);
+		const mentionTargets = wakeups
+			.filter((w) => w.source === WakeupSource.Mention)
+			.map((w) => w.member_id);
+		expect(mentionTargets).toEqual([architectId]);
+		expect(wakeups.some((w) => w.member_id === productLeadId)).toBe(false);
+	});
 });
 
 describe('agent-api POST comments fires mention-only wakeups', () => {
