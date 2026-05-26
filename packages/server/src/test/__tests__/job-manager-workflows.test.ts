@@ -1488,6 +1488,11 @@ describe('JobManager workflow methods', () => {
 		it('honours the interval floor when heartbeat_interval_min is misconfigured low', async () => {
 			const manager = createJobManager();
 
+			// Close any transaction left dangling by a prior test's background
+			// runAgent — its BEGIN can still be open when this test starts under
+			// CI load, and our DELETEs below would inherit the aborted state.
+			await db.query('ROLLBACK').catch(() => {});
+
 			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
 			await db.query('DELETE FROM agent_wakeup_requests');
 			await db.query(
