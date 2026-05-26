@@ -919,8 +919,26 @@ function TaskDetailPage() {
 									</button>
 								</div>
 							)}
-							<div className="flex items-center justify-between gap-2">
-								{task.assignee_id ? (
+							<div className="flex items-center justify-end gap-2">
+								{showProjectIntakeSkip && (
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={() => skipProjectIntake.mutate()}
+										disabled={skipProjectIntake.isPending}
+										data-testid="project-intake-skip"
+										className="mr-auto"
+									>
+										{skipProjectIntake.isPending ? (
+											<Loader2 className="w-3 h-3 animate-spin" />
+										) : (
+											<FastForward className="w-3 h-3" />
+										)}
+										Skip questions — propose now
+									</Button>
+								)}
+								{task.assignee_id && (
 									<label className="flex items-center gap-2 text-[13px] text-text-muted cursor-pointer select-none">
 										<input
 											type="checkbox"
@@ -931,26 +949,6 @@ function TaskDetailPage() {
 										/>
 										<span>Wake assignee</span>
 									</label>
-								) : (
-									<span />
-								)}
-								{showProjectIntakeSkip && (
-									<Button
-										type="button"
-										variant="ghost"
-										size="sm"
-										onClick={() => skipProjectIntake.mutate()}
-										disabled={skipProjectIntake.isPending}
-										data-testid="project-intake-skip"
-										className="ml-auto"
-									>
-										{skipProjectIntake.isPending ? (
-											<Loader2 className="w-3 h-3 animate-spin" />
-										) : (
-											<FastForward className="w-3 h-3" />
-										)}
-										Skip questions — propose now
-									</Button>
 								)}
 								<Button
 									type="submit"

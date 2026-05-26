@@ -234,6 +234,20 @@ describe('template resolver', () => {
 		expect(result).toContain('do not `@`-mention any agent in that comment');
 	});
 
+	it('mention discipline names the three structural-routing channels and the handoff carve-out', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain('### @-Mention Discipline');
+		// three structural channels that already wake the recipient
+		expect(result).toContain('`create_task` with `assignee_slug`');
+		expect(result).toContain('`blocked_by_task_ids`');
+		expect(result).toContain('cascade unblock');
+		// explicit handoff carve-out: use @@, not @
+		expect(result).toContain('Handoff comments specifically');
+		expect(result).toContain('reference the next role as `@@<slug>`, not `@<slug>`');
+		// rubric example shows the passive-handoff pattern
+		expect(result).toContain('@@architect — BE-4 and BE-5 unblock now');
+	});
+
 	it('injects Run Context with only team id when no project/task', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('## Run Context');

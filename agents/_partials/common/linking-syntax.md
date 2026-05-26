@@ -14,7 +14,7 @@ When your markdown (ticket descriptions, `progress_summary`, comments, project d
 
 - Only teammates get the `@` or `@@` prefix. Tickets, KB docs, and project docs are bare — the rendered UI detects them by shape (uppercase ID pattern for tickets, filename with extension for KB and project docs).
 - Always use the slug form for teammates, never the title. Write `@product-lead`, not `Product Lead` or `@Product Lead`. Slugs are lowercase, hyphenated, and unique; titles are display strings and don't resolve. The Teammates block injected at the end of your prompt is the authoritative slug list — even when a role section earlier in this prompt names a teammate by title, write the reference as `@<slug>` (active) or `@@<slug>` (passive).
-- Pick `@` vs `@@` by intent, not aesthetics. `@<slug>` is for direct asks, decisions, or handoffs that the teammate must triage *on this ticket*. `@@<slug>` is for everything else — naming, attribution, plan tables, summaries.
+- Pick `@` vs `@@` by intent, not aesthetics. `@<slug>` is for direct asks, decisions, or asks that the teammate must triage *on this ticket*. `@@<slug>` is for everything else — naming, attribution, plan tables, summaries, and **handoffs whose wake is already covered by a status transition or `blocked_by` cascade** (the structural wakeup fires on the recipient's own ticket; an `@` here would only wake them on yours).
 - No other prefix is valid. Never write `#kb/<filename>`, `#doc/<filename>`, `kb/<filename>`, or `doc/<filename>` — those forms are not recognised. Just the bare filename or identifier.
 - Never wrap any of these in backticks or fence them in a code block — inline code suppresses the link. Write them as bare prose.
 - Only link entities that actually exist. Available targets come from: the KB block in your context, the project-docs block in your context, teammates (you can `list_agents`), and tickets you have read, created, or that the board has referenced. Do not guess identifiers.
@@ -27,3 +27,5 @@ When your markdown (ticket descriptions, `progress_summary`, comments, project d
 - Bad (passive reference uses `@`, would wake everyone listed): `Planning chain: BE-2 → @researcher, BE-3 → @product-lead, BE-4 → @architect.`
 - Good: `Planning chain: BE-2 → @@researcher, BE-3 → @@product-lead, BE-4 → @@architect.`
 - Good (active address, you want product-lead to act on this ticket): `@product-lead — please confirm the PRD scope before the architect picks this up.`
+- Bad (handoff comment uses `@`, but the cascade unblock will wake the architect on BE-4 and BE-5 already): `Board approved. @architect — BE-4 (technical spec) and BE-5 (UI/UX design) are unblocked and ready for you.`
+- Good: `Board approved. @@architect — BE-4 (technical spec) and BE-5 (UI/UX design) unblock now.` Then mark this ticket `done` so the cascade fires; the architect wakes on BE-4 and BE-5, not on this PRD ticket.
