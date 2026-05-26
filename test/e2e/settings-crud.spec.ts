@@ -48,7 +48,10 @@ test('automations section exposes the wake-mentioner toggle and persists the cha
 	const toggle = automations.getByRole('checkbox', { name: /wake mentioner on reply/i });
 	await expect(toggle).toBeChecked();
 
-	await toggle.click();
+	const teamPatch = (r: import('@playwright/test').Response) =>
+		r.url().endsWith(`/teams/${team.slug}`) && r.request().method() === 'PATCH';
+
+	await Promise.all([page.waitForResponse(teamPatch), toggle.click()]);
 	await expect(toggle).not.toBeChecked({ timeout: 30000 });
 
 	const res = await page.request.get(`/api/teams/${team.id}`, {
@@ -57,7 +60,7 @@ test('automations section exposes the wake-mentioner toggle and persists the cha
 	const persisted = (await res.json()).data.settings;
 	expect(persisted.wake_mentioner_on_reply).toBe(false);
 
-	await toggle.click();
+	await Promise.all([page.waitForResponse(teamPatch), toggle.click()]);
 	await expect(toggle).toBeChecked({ timeout: 30000 });
 });
 
@@ -75,7 +78,12 @@ test('can add and delete a secret', async ({ page }) => {
 	await secretsSection.getByPlaceholder(/^Name/).fill('MY_SECRET');
 	await secretsSection.getByPlaceholder('Value').fill('supersecret');
 	await secretsSection.getByPlaceholder(/Allowed hosts/).fill('example.com');
-	await secretsSection.locator('form').getByRole('button', { name: 'Add' }).click();
+	await Promise.all([
+		page.waitForResponse(
+			(r) => r.url().endsWith(`/teams/${team.slug}/secrets`) && r.request().method() === 'POST',
+		),
+		secretsSection.locator('form').getByRole('button', { name: 'Add' }).click(),
+	]);
 
 	await expect(secretsSection.getByText('MY_SECRET')).toBeVisible({ timeout: 15000 });
 
@@ -98,7 +106,12 @@ test('can create and delete an api key', async ({ page }) => {
 
 	await apiKeysSection.getByRole('button', { name: 'Create' }).click();
 	await apiKeysSection.getByPlaceholder('Key name').fill('Test Key');
-	await apiKeysSection.locator('form').getByRole('button', { name: 'Create' }).click();
+	await Promise.all([
+		page.waitForResponse(
+			(r) => r.url().endsWith(`/teams/${team.slug}/api-keys`) && r.request().method() === 'POST',
+		),
+		apiKeysSection.locator('form').getByRole('button', { name: 'Create' }).click(),
+	]);
 
 	await expect(page.getByText('New API key created')).toBeVisible({ timeout: 15000 });
 	await expect(page.locator('code').filter({ hasText: 'hezo_' })).toBeVisible({ timeout: 15000 });

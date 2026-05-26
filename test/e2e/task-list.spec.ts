@@ -231,7 +231,7 @@ test.describe('Task list — running indicator', () => {
 			const body = await response.json();
 			const data = Array.isArray(body) ? body : body.data;
 			for (const row of data) {
-				if (row.id === busy.id) row.has_active_run = true;
+				row.has_active_run = row.id === busy.id;
 			}
 			await route.fulfill({
 				status: response.status(),

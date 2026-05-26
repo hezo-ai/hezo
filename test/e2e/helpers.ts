@@ -73,6 +73,60 @@ export async function clearAiProviders(page: Page, token: string) {
 }
 
 /**
+ * Force-close a planning task by terminating any active Captain run, then
+ * marking the task done. Retries because the wakeup cron can spin up a new
+ * run between the terminate and the close.
+ */
+async function closePlanningTask(
+	page: Page,
+	teamId: string,
+	taskId: string,
+	headers: Record<string, string>,
+): Promise<void> {
+	const deadline = Date.now() + 15_000;
+	let lastError = '';
+	while (Date.now() < deadline) {
+		const taskRes = await page.request.get(`/api/teams/${teamId}/tasks/${taskId}`, { headers });
+		const task = (
+			(await taskRes.json()) as { data?: { status: string; assignee_id: string | null } }
+		).data;
+		if (!task) throw new Error('closePlanningTask: task not found');
+		if (task.status === 'done' || task.status === 'closed' || task.status === 'cancelled') return;
+
+		if (task.assignee_id) {
+			const runsRes = await page.request.get(
+				`/api/teams/${teamId}/agents/${task.assignee_id}/heartbeat-runs`,
+				{ headers },
+			);
+			const runs =
+				(
+					(await runsRes.json()) as {
+						data?: Array<{ id: string; status: string; task_id: string | null }>;
+					}
+				).data ?? [];
+			for (const run of runs) {
+				if (run.task_id !== taskId) continue;
+				if (run.status === 'queued' || run.status === 'running') {
+					await page.request.post(
+						`/api/teams/${teamId}/agents/${task.assignee_id}/heartbeat-runs/${run.id}/terminate`,
+						{ headers },
+					);
+				}
+			}
+		}
+
+		const patchRes = await page.request.patch(`/api/teams/${teamId}/tasks/${taskId}`, {
+			headers,
+			data: { status: 'done' },
+		});
+		if (patchRes.ok()) return;
+		lastError = `${patchRes.status()} ${await patchRes.text()}`;
+		await new Promise((r) => setTimeout(r, 250));
+	}
+	throw new Error(`closePlanningTask: failed to close ${taskId} within 15s — ${lastError}`);
+}
+
+/**
  * Drive a project through the captain intake flow end-to-end:
  *   1. POST /projects to open the intake (creates pending approval + intake task).
  *   2. Resolve the approval as approved so the side-effect creates the project + planning task.
@@ -124,10 +178,7 @@ export async function createProjectAndClearPlanning(
 	if (!planningTask) {
 		throw new Error('createProjectAndClearPlanning: planning task not found after approval');
 	}
-	await page.request.patch(`/api/teams/${teamId}/tasks/${planningTask.id}`, {
-		headers,
-		data: { status: 'done' },
-	});
+	await closePlanningTask(page, teamId, planningTask.id, headers);
 	const merged = { ...project, planning_task_id: planningTask.id };
 	// Also expose a Response-like .json() / .ok() / .status so callers that hold
 	// the result as `projRes` can still do `(await projRes.json()).data` without

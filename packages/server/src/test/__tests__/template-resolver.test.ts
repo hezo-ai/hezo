@@ -478,8 +478,8 @@ describe('teammates block', () => {
 	it('appends a Teammates header and the slug-not-title directive to every prompt', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId: tbTeamId });
 		expect(result).toContain('## Teammates');
-		expect(result).toContain('write `@<slug>` from this list');
-		expect(result).toContain('Bare titles do not linkify and do not wake the teammate');
+		expect(result).toContain('write `@<slug>` (active) or `@@<slug>` (passive) from this list');
+		expect(result).toContain('Bare titles do not linkify.');
 	});
 
 	it('lists every enabled peer in @<slug> — Title form, sorted by title', async () => {

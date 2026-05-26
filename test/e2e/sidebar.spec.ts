@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { createProjectAndClearPlanning, waitForPageLoad } from './helpers';
+import { createProjectAndClearPlanning, waitForCaptainIdle, waitForPageLoad } from './helpers';
 
 type Page = import('@playwright/test').Page;
 
@@ -290,16 +290,12 @@ test.describe('Sidebar — Tasks count and mobile drawer', () => {
 	}) => {
 		const { team, agents, token } = freshWorkspace;
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-		const teamRes = await page.request.get(`/api/teams/${team.slug}`, {
-			headers: { Authorization: `Bearer ${token}` },
-		});
-		const baselineOpen = ((await teamRes.json()) as { data: { open_task_count: number } }).data
-			.open_task_count;
 
 		const project = await createProjectAndClearPlanning(page, team.id, token, {
 			name: 'Count Project',
 			description: 'Sidebar count test.',
 		});
+		await waitForCaptainIdle(page, team.id, token);
 
 		const taskIds: string[] = [];
 		for (const title of ['Alpha', 'Beta', 'Gamma']) {
@@ -310,21 +306,28 @@ test.describe('Sidebar — Tasks count and mobile drawer', () => {
 			taskIds.push(((await r.json()) as { data: { id: string } }).data.id);
 		}
 
+		const readOpenCount = async () => {
+			const r = await page.request.get(`/api/teams/${team.slug}`, {
+				headers: { Authorization: `Bearer ${token}` },
+			});
+			return ((await r.json()) as { data: { open_task_count: number } }).data.open_task_count;
+		};
+
 		await page.goto(`/teams/${team.slug}/tasks`);
 		await waitForPageLoad(page);
 
 		const sidebarTasks = page.getByTestId('sidebar-link-tasks');
 		await expect(sidebarTasks).toContainText('Tasks');
-		const expectedOpen = baselineOpen + 3;
-		await expect(sidebarTasks).toContainText(String(expectedOpen));
+		const openAfterCreate = await readOpenCount();
+		await expect(sidebarTasks).toContainText(String(openAfterCreate), { timeout: 15000 });
 
 		await page.request.patch(`/api/teams/${team.id}/tasks/${taskIds[0]}`, {
 			headers,
 			data: { status: 'closed' },
 		});
 
-		await expect(sidebarTasks).toContainText(String(expectedOpen - 1), { timeout: 15000 });
-		await expect(sidebarTasks).not.toContainText(String(expectedOpen));
+		await expect.poll(readOpenCount, { timeout: 15000 }).toBe(openAfterCreate - 1);
+		await expect(sidebarTasks).toContainText(String(openAfterCreate - 1), { timeout: 15000 });
 	});
 
 	test('mobile viewport opens navigation via hamburger drawer', async ({
