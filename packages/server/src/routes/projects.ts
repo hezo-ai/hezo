@@ -9,7 +9,6 @@ import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireTeamAccess } from '../middleware/auth';
 import {
 	type ContainerDeps,
 	type ProjectRow,
@@ -141,11 +140,8 @@ export async function resolveProjectTaskPrefix(
 export const projectsRoutes = new Hono<Env>();
 
 projectsRoutes.get('/teams/:teamId/projects', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const ts = terminalStatusParams(2);
 	const result = await db.query(
@@ -161,11 +157,8 @@ projectsRoutes.get('/teams/:teamId/projects', async (c) => {
 });
 
 projectsRoutes.post('/teams/:teamId/projects', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const body = await c.req.json<{
 		name: string;
@@ -218,11 +211,8 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 });
 
 projectsRoutes.get('/teams/:teamId/projects/:projectId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
@@ -248,11 +238,8 @@ projectsRoutes.get('/teams/:teamId/projects/:projectId', async (c) => {
 });
 
 projectsRoutes.patch('/teams/:teamId/projects/:projectId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
@@ -316,11 +303,8 @@ projectsRoutes.patch('/teams/:teamId/projects/:projectId', async (c) => {
 });
 
 projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
@@ -365,11 +349,8 @@ projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
 });
 
 projectsRoutes.post('/teams/:teamId/projects/:projectId/container/start', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
@@ -401,11 +382,8 @@ projectsRoutes.post('/teams/:teamId/projects/:projectId/container/start', async 
 });
 
 projectsRoutes.post('/teams/:teamId/projects/:projectId/container/stop', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
@@ -462,11 +440,8 @@ projectsRoutes.post('/teams/:teamId/projects/:projectId/container/stop', async (
 const REBUILD_TIMEOUT_MS = 5 * 60 * 1000;
 
 projectsRoutes.post('/teams/:teamId/projects/:projectId/container/rebuild', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
