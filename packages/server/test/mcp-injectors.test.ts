@@ -40,11 +40,10 @@ describe('claude-code adapter', () => {
 
 	it('emits --mcp-config / --strict-mcp-config CLI flags with the right shape', () => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
-			hostHomeDir: null,
-			containerHomeDir: null,
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
 		});
 
-		expect(injection.files).toEqual([]);
 		expect(injection.envEntries).toEqual([]);
 		expect(injection.cliArgs).toContain('--mcp-config');
 		expect(injection.cliArgs).toContain('--strict-mcp-config');
@@ -58,14 +57,56 @@ describe('claude-code adapter', () => {
 		expect(blob.mcpServers.hezo.headers?.Authorization).toBe(`Bearer ${TOKEN}`);
 	});
 
-	it('emits no MCP args for an empty descriptor list', () => {
-		const injection = adapter.build([], { hostHomeDir: null, containerHomeDir: null });
-		expect(injection.cliArgs).toEqual([]);
+	it('omits --mcp-config / --strict-mcp-config for an empty descriptor list but still emits --settings', () => {
+		const injection = adapter.build([], { hostHomeDir: HOME, containerHomeDir: HOME });
+		expect(injection.cliArgs).not.toContain('--mcp-config');
+		expect(injection.cliArgs).not.toContain('--strict-mcp-config');
+		expect(injection.cliArgs).toContain('--settings');
+		expect(injection.files.length).toBe(1);
 	});
 
-	it('declares no home dir is required', () => {
-		expect(adapter.capabilities.requiresHomeDir).toBe(false);
+	it('declares a home dir is required for the Stop-hook settings file', () => {
+		expect(adapter.capabilities.requiresHomeDir).toBe(true);
 		expect(adapter.capabilities.bearerTokenStorage).toBe('inline');
+	});
+
+	it('throws when no host home dir is provided', () => {
+		expect(() =>
+			adapter.build([HEZO_DESCRIPTOR], { hostHomeDir: null, containerHomeDir: null }),
+		).toThrow(/hostHomeDir/);
+	});
+
+	it('writes settings.json at <home>/settings.json with mode 0o600 and Stop hook config', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+
+		expect(injection.files.length).toBe(1);
+		const file = injection.files[0];
+		expect(file.hostPath).toBe(`${HOME}/settings.json`);
+		expect(file.mode).toBe(0o600);
+
+		const settings = JSON.parse(file.contents) as {
+			hooks: { Stop: Array<{ hooks: Array<{ type: string; model: string; prompt: string }> }> };
+		};
+		expect(settings.hooks.Stop.length).toBe(1);
+		const hookEntry = settings.hooks.Stop[0].hooks[0];
+		expect(hookEntry.type).toBe('prompt');
+		expect(hookEntry.model.length).toBeGreaterThan(0);
+		expect(hookEntry.prompt).toContain('quality gate');
+		expect(hookEntry.prompt).toContain('$ARGUMENTS');
+	});
+
+	it('passes --settings pointing at the container path for the settings file', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+
+		const settingsIndex = injection.cliArgs.indexOf('--settings');
+		expect(settingsIndex).toBeGreaterThanOrEqual(0);
+		expect(injection.cliArgs[settingsIndex + 1]).toBe(`${HOME}/settings.json`);
 	});
 });
 
@@ -79,9 +120,11 @@ describe('codex adapter', () => {
 		});
 
 		expect(injection.cliArgs).toEqual([]);
-		expect(injection.files.length).toBe(1);
-		const file = injection.files[0];
-		expect(file.hostPath).toBe(`${HOME}/config.toml`);
+		// 2 files: config.toml + stop-hook judge script
+		expect(injection.files.length).toBe(2);
+		const file = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		expect(file).toBeDefined();
+		if (!file) throw new Error('config.toml not emitted');
 		expect(file.mode).toBe(0o600);
 
 		// TOML body assertions — string match keeps the test transport-agnostic.
@@ -101,9 +144,41 @@ describe('codex adapter', () => {
 		).toThrow(/hostHomeDir/);
 	});
 
-	it('emits an empty injection for an empty descriptor list', () => {
+	it('still emits the Stop hook + judge script even with an empty descriptor list', () => {
 		const injection = adapter.build([], { hostHomeDir: HOME, containerHomeDir: HOME });
-		expect(injection).toEqual({ cliArgs: [], envEntries: [], files: [] });
+		expect(injection.cliArgs).toEqual([]);
+		expect(injection.envEntries).toEqual([]);
+		expect(injection.files.length).toBe(2);
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		const script = injection.files.find((f) => f.hostPath === `${HOME}/stop-hook-judge.mjs`);
+		expect(config?.contents).toContain('[[hooks.Stop]]');
+		expect(script?.contents).toContain('quality gate');
+	});
+
+	it('emits a Stop hook entry pointing at the judge script with the right shape', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		expect(config?.contents).toContain('[[hooks.Stop]]');
+		expect(config?.contents).toContain('[[hooks.Stop.hooks]]');
+		expect(config?.contents).toContain('type = "command"');
+		expect(config?.contents).toContain(`command = "node ${HOME}/stop-hook-judge.mjs"`);
+	});
+
+	it('writes the judge script at <home>/stop-hook-judge.mjs with mode 0o700 and the rule body', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const script = injection.files.find((f) => f.hostPath === `${HOME}/stop-hook-judge.mjs`);
+		expect(script).toBeDefined();
+		if (!script) throw new Error('judge script not emitted');
+		expect(script.mode).toBe(0o700);
+		expect(script.contents).toContain('quality gate');
+		expect(script.contents).toContain('last_assistant_message');
+		expect(script.contents).toContain('api.openai.com');
 	});
 
 	it('omits the bearer env entry when the descriptor has no token', () => {
@@ -112,7 +187,8 @@ describe('codex adapter', () => {
 			containerHomeDir: HOME,
 		});
 		expect(injection.envEntries).toEqual([]);
-		expect(injection.files[0].contents).not.toContain('bearer_token_env_var');
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		expect(config?.contents).not.toContain('bearer_token_env_var');
 	});
 
 	it('handles multiple descriptors with distinct env var names per server', () => {
@@ -127,8 +203,9 @@ describe('codex adapter', () => {
 			'HEZO_MCP_BEARER_TOKEN_HEZO=t1',
 			'HEZO_MCP_BEARER_TOKEN_EXTRAS=t2',
 		]);
-		expect(injection.files[0].contents).toContain('[mcp_servers.hezo]');
-		expect(injection.files[0].contents).toContain('[mcp_servers.extras]');
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		expect(config?.contents).toContain('[mcp_servers.hezo]');
+		expect(config?.contents).toContain('[mcp_servers.extras]');
 	});
 });
 
@@ -143,16 +220,22 @@ describe('gemini adapter', () => {
 
 		expect(injection.cliArgs).toEqual([]);
 		expect(injection.envEntries).toEqual([]);
-		expect(injection.files.length).toBe(1);
-		const file = injection.files[0];
-		expect(file.hostPath).toBe(`${HOME}/.gemini/settings.json`);
+		// 2 files: .gemini/settings.json + stop-hook judge script
+		expect(injection.files.length).toBe(2);
+		const file = injection.files.find((f) => f.hostPath === `${HOME}/.gemini/settings.json`);
+		expect(file).toBeDefined();
+		if (!file) throw new Error('settings.json not emitted');
 		expect(file.mode).toBe(0o600);
 
 		const parsed = JSON.parse(file.contents) as {
 			mcpServers: Record<string, { httpUrl: string; headers?: Record<string, string> }>;
+			hooks: { AfterAgent: Array<{ hooks: Array<{ type: string; command: string }> }> };
 		};
 		expect(parsed.mcpServers.hezo.httpUrl).toBe(URL);
 		expect(parsed.mcpServers.hezo.headers?.Authorization).toBe(`Bearer ${TOKEN}`);
+		expect(parsed.hooks.AfterAgent.length).toBe(1);
+		expect(parsed.hooks.AfterAgent[0].hooks[0].type).toBe('command');
+		expect(parsed.hooks.AfterAgent[0].hooks[0].command).toBe(`node ${HOME}/stop-hook-judge.mjs`);
 	});
 
 	it('throws when no host home dir is provided', () => {
@@ -161,9 +244,34 @@ describe('gemini adapter', () => {
 		).toThrow(/hostHomeDir/);
 	});
 
-	it('emits an empty injection for an empty descriptor list', () => {
+	it('still emits the AfterAgent hook + judge script even with an empty descriptor list', () => {
 		const injection = adapter.build([], { hostHomeDir: HOME, containerHomeDir: HOME });
-		expect(injection).toEqual({ cliArgs: [], envEntries: [], files: [] });
+		expect(injection.cliArgs).toEqual([]);
+		expect(injection.envEntries).toEqual([]);
+		expect(injection.files.length).toBe(2);
+		const settings = injection.files.find((f) => f.hostPath === `${HOME}/.gemini/settings.json`);
+		const script = injection.files.find((f) => f.hostPath === `${HOME}/stop-hook-judge.mjs`);
+		const parsed = JSON.parse(settings?.contents ?? '{}') as {
+			hooks: { AfterAgent: Array<{ hooks: Array<{ command: string }> }> };
+			mcpServers?: Record<string, unknown>;
+		};
+		expect(parsed.hooks.AfterAgent[0].hooks[0].command).toBe(`node ${HOME}/stop-hook-judge.mjs`);
+		expect(parsed.mcpServers).toBeUndefined();
+		expect(script?.contents).toContain('quality gate');
+	});
+
+	it('writes the judge script at <home>/stop-hook-judge.mjs with mode 0o700 and Google AI call', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const script = injection.files.find((f) => f.hostPath === `${HOME}/stop-hook-judge.mjs`);
+		expect(script).toBeDefined();
+		if (!script) throw new Error('judge script not emitted');
+		expect(script.mode).toBe(0o700);
+		expect(script.contents).toContain('quality gate');
+		expect(script.contents).toContain('prompt_response');
+		expect(script.contents).toContain('generativelanguage.googleapis.com');
 	});
 });
 

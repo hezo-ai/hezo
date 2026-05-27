@@ -237,6 +237,18 @@ Every route enforces authorization — never trust URL params alone.
 - WebSocket subscriptions verify team membership matches the room.
 - MCP tool handlers enforce the same authorization as their REST equivalents — pass caller identity in and validate team access.
 
+## AI runtime hooks
+
+Every agent run is gated by a completeness check that fires when the assistant decides to end its turn. The hook blocks the stop when the agent is bailing on failing tests, calling problems "out of scope", deferring with "leave it for later" without filing a sub-task or self-comment, or otherwise stopping with unfinished work. The block keeps the same headless exec alive for another turn — the run-completion path (`HeartbeatRunStatus.Succeeded` on exit 0) doesn't change. The hook is always on; there is no per-team or per-agent opt-out. The judge LLM runs inside the container against the team's existing primary-provider credential, through the same egress path as any other API call.
+
+Per-runtime wiring lives in three places:
+
+- **Claude Code** (Anthropic, DeepSeek, Z.ai per `PROVIDER_RUNTIME_ADAPTERS`): native `Stop` hook of `type: "prompt"` in a per-run `settings.json` Claude Code loads via `--settings`. Claude Code itself makes the judge sub-LLM call — no helper script needed. See `packages/server/src/services/mcp-injectors/claude-code.ts`.
+- **Codex** (OpenAI): native `Stop` hook of `type: "command"` in `config.toml` (Codex's `type: "prompt"` is parsed-but-skipped, so we have to run the judge ourselves). The command is a Node script written next to the config that reads Codex's StopCommandInput JSON from stdin, calls the OpenAI Chat Completions API with the judge prompt, and writes `{"decision":"block","reason":...}` to stdout when work is incomplete. See `mcp-injectors/codex.ts` and `buildCodexJudgeScript` in `stop-hook-prompt.ts`.
+- **Gemini** (Google): native `AfterAgent` hook (the analogue of Stop — fires once per turn after the model produces its final response). Same command-script pattern as Codex; calls Google's Generative AI API. See `mcp-injectors/gemini.ts` and `buildGeminiJudgeScript`.
+
+The judge prompt body (`STOP_HOOK_RULES` in `stop-hook-prompt.ts`) is identical across all three runtimes, so changes to the rules apply everywhere. The judge models are hardcoded per provider (Sonnet for Anthropic, gpt-4o-mini for OpenAI, gemini-1.5-flash for Google) and intended to be revisited after dogfooding. For providers using subscription auth (Codex / Gemini OAuth flows) the helper script has no API key in env and fails open — exits silently, the agent stops normally.
+
 ## Implementation phases
 
 When you complete a phase, mark it done with a completion date at the top of the phase section in `.dev/implementation-phases.md`. Keep the phase content intact. Every phase that adds backend functionality ships with UI for manual browser testing.

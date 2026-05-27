@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { buildClaudeCodeSettings } from '../stop-hook-prompt';
 import type {
 	McpDescriptor,
 	McpHttpDescriptor,
@@ -40,19 +42,37 @@ export const claudeCodeAdapter: RuntimeMcpAdapter = {
 	capabilities: {
 		transport: 'streamable-http',
 		bearerTokenStorage: 'inline',
-		requiresHomeDir: false,
+		requiresHomeDir: true,
 	},
-	build(descriptors: readonly McpDescriptor[]): McpInjection {
+	build(descriptors: readonly McpDescriptor[], ctx): McpInjection {
+		if (!ctx.hostHomeDir || !ctx.containerHomeDir) {
+			throw new Error('claude-code mcp adapter requires hostHomeDir and containerHomeDir');
+		}
+
 		const mcpServers: Record<string, ClaudeServerEntry> = {};
 		for (const d of descriptors) {
 			mcpServers[d.name] = d.kind === 'http' ? buildHttpEntry(d) : buildStdioEntry(d);
 		}
 
-		const cliArgs =
-			descriptors.length === 0
-				? []
-				: ['--mcp-config', JSON.stringify({ mcpServers }), '--strict-mcp-config'];
+		const settingsHostPath = join(ctx.hostHomeDir, 'settings.json');
+		const settingsContainerPath = join(ctx.containerHomeDir, 'settings.json');
+		const settingsContents = `${JSON.stringify(buildClaudeCodeSettings(), null, 2)}\n`;
 
-		return { cliArgs, envEntries: [], files: [] };
+		const cliArgs: string[] = ['--settings', settingsContainerPath];
+		if (descriptors.length > 0) {
+			cliArgs.push('--mcp-config', JSON.stringify({ mcpServers }), '--strict-mcp-config');
+		}
+
+		return {
+			cliArgs,
+			envEntries: [],
+			files: [
+				{
+					hostPath: settingsHostPath,
+					mode: 0o600,
+					contents: settingsContents,
+				},
+			],
+		};
 	},
 };
