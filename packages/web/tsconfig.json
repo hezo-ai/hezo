@@ -9,7 +9,12 @@
 		"forceConsistentCasingInFileNames": true,
 		"resolveJsonModule": true,
 		"jsx": "react-jsx",
-		"noEmit": true
+		"noEmit": true,
+		"baseUrl": ".",
+		"paths": {
+			"@hezo/shared": ["../shared/src/index.ts"],
+			"@hezo/shared/*": ["../shared/src/*"]
+		}
 	},
 	"include": ["src", "vite-env.d.ts"]
 }
