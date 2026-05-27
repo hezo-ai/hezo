@@ -1,22 +1,17 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { Copy, ExternalLink, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ExternalLink, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { RevisionsPanel } from '../../../../components/revisions-panel';
+import { ApiKeysSection } from '../../../../components/settings/api-keys-section';
 import { AutomationsSection } from '../../../../components/settings/automations-section';
+import { BudgetSection } from '../../../../components/settings/budget-section';
 import { GeneralSection } from '../../../../components/settings/general-section';
 import { SectionHeader } from '../../../../components/settings/helpers';
+import { McpServersSection } from '../../../../components/settings/mcp-section';
 import { SecretsSection } from '../../../../components/settings/secrets-section';
-import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { Tooltip } from '../../../../components/ui/tooltip';
-import { useApiKeys, useCreateApiKey, useDeleteApiKey } from '../../../../hooks/use-api-keys';
-import { useCosts } from '../../../../hooks/use-costs';
-import {
-	useCreateMcpConnection,
-	useDeleteMcpConnection,
-	useMcpConnections,
-} from '../../../../hooks/use-mcp-connections';
 import {
 	usePreferenceRevisions,
 	usePreferences,
@@ -105,120 +100,6 @@ function SettingsPage() {
 	);
 }
 
-function ApiKeysSection({ teamId }: { teamId: string }) {
-	const { data: apiKeys } = useApiKeys(teamId);
-	const createKey = useCreateApiKey(teamId);
-	const deleteKey = useDeleteApiKey(teamId);
-	const [showForm, setShowForm] = useState(false);
-	const [name, setName] = useState('');
-	const [newKey, setNewKey] = useState<string | null>(null);
-
-	async function handleCreate(e: React.FormEvent) {
-		e.preventDefault();
-		const result = await createKey.mutateAsync({ name });
-		setNewKey(result.key ?? null);
-		setName('');
-		setShowForm(false);
-	}
-
-	return (
-		<section>
-			<div className="flex items-center justify-between mb-4">
-				<SectionHeader title="API keys" />
-				<Button variant="secondary" size="sm" onClick={() => setShowForm(!showForm)}>
-					<Plus className="w-3 h-3" /> Create
-				</Button>
-			</div>
-			{newKey && (
-				<div className="border border-accent-green rounded-radius-md bg-accent-green-bg p-3 mb-3">
-					<p className="text-xs text-accent-green-text font-medium mb-1">
-						New API key created — copy it now, it won't be shown again:
-					</p>
-					<div className="flex items-center gap-2">
-						<code className="text-xs font-mono break-all flex-1">{newKey}</code>
-						<Button
-							variant="secondary"
-							size="sm"
-							onClick={() => navigator.clipboard.writeText(newKey)}
-						>
-							<Copy className="w-3 h-3" />
-						</Button>
-					</div>
-					<Button variant="secondary" size="sm" className="mt-2" onClick={() => setNewKey(null)}>
-						Dismiss
-					</Button>
-				</div>
-			)}
-			{showForm && (
-				<form onSubmit={handleCreate} className="flex flex-col sm:flex-row gap-2 mb-3">
-					<Input
-						placeholder="Key name"
-						value={name}
-						onChange={(e) => setName(e.target.value)}
-						required
-						className="flex-1"
-					/>
-					<Button type="submit" size="sm" disabled={createKey.isPending}>
-						Create
-					</Button>
-				</form>
-			)}
-			{apiKeys?.length === 0 ? (
-				<p className="text-[13px] text-text-subtle">No API keys.</p>
-			) : (
-				<div className="flex flex-col gap-1">
-					{apiKeys?.map((k) => (
-						<div
-							key={k.id}
-							className="flex items-center justify-between rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
-						>
-							<div className="flex items-center gap-2">
-								<span className="font-medium">{k.name}</span>
-								<span className="text-xs text-text-subtle font-mono">hezo_{k.prefix}...</span>
-							</div>
-							<button
-								type="button"
-								onClick={() => deleteKey.mutate(k.id)}
-								className="text-text-subtle hover:text-accent-red"
-							>
-								<Trash2 className="w-3.5 h-3.5" />
-							</button>
-						</div>
-					))}
-				</div>
-			)}
-		</section>
-	);
-}
-
-function BudgetSection({ teamId }: { teamId: string }) {
-	const { data: costs } = useCosts(teamId, { group_by: 'agent' });
-	return (
-		<section>
-			<SectionHeader title="Budget" desc="Spending overview across agents." />
-			{costs?.summary?.length === 0 ? (
-				<p className="text-[13px] text-text-subtle">No spend recorded.</p>
-			) : (
-				<div className="flex flex-col gap-1">
-					{costs?.summary?.map((s) => (
-						<div
-							key={s.label}
-							className="flex items-center justify-between rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
-						>
-							<span>{s.label}</span>
-							<span className="font-mono">${(s.total_cents / 100).toFixed(2)}</span>
-						</div>
-					))}
-					<div className="flex items-center justify-between px-3 py-2 text-[13px] font-medium border-t border-border mt-1 pt-2">
-						<span>Total</span>
-						<span className="font-mono">${((costs?.total_cents ?? 0) / 100).toFixed(2)}</span>
-					</div>
-				</div>
-			)}
-		</section>
-	);
-}
-
 function PreferencesSection({ teamId }: { teamId: string }) {
 	const { data: prefs } = usePreferences(teamId);
 	const { data: revisions } = usePreferenceRevisions(teamId);
@@ -276,168 +157,6 @@ function PreferencesSection({ teamId }: { teamId: string }) {
 						/>
 					)}
 				</>
-			)}
-		</section>
-	);
-}
-
-function McpServersSection({ teamId }: { teamId: string }) {
-	const { data: connections = [] } = useMcpConnections(teamId);
-	const createConn = useCreateMcpConnection(teamId);
-	const deleteConn = useDeleteMcpConnection(teamId);
-	const [showAdd, setShowAdd] = useState(false);
-	const [kind, setKind] = useState<'saas' | 'local'>('saas');
-	const [name, setName] = useState('');
-	const [url, setUrl] = useState('');
-	const [headersJson, setHeadersJson] = useState('');
-	const [command, setCommand] = useState('');
-	const [argsText, setArgsText] = useState('');
-	const [envJson, setEnvJson] = useState('');
-
-	function reset() {
-		setName('');
-		setUrl('');
-		setHeadersJson('');
-		setCommand('');
-		setArgsText('');
-		setEnvJson('');
-		setKind('saas');
-		setShowAdd(false);
-	}
-
-	async function handleAdd(e: React.FormEvent) {
-		e.preventDefault();
-		if (!name.trim()) return;
-		const config: Record<string, unknown> = {};
-		if (kind === 'saas') {
-			if (!url.trim()) return;
-			config.url = url.trim();
-			if (headersJson.trim()) {
-				try {
-					config.headers = JSON.parse(headersJson);
-				} catch {
-					alert('Headers must be valid JSON');
-					return;
-				}
-			}
-		} else {
-			if (!command.trim()) return;
-			config.command = command.trim();
-			const args = argsText
-				.split(/\s+/)
-				.map((s) => s.trim())
-				.filter(Boolean);
-			if (args.length > 0) config.args = args;
-			if (envJson.trim()) {
-				try {
-					config.env = JSON.parse(envJson);
-				} catch {
-					alert('Env must be valid JSON');
-					return;
-				}
-			}
-		}
-		await createConn.mutateAsync({ name: name.trim(), kind, config });
-		reset();
-	}
-
-	return (
-		<section>
-			<SectionHeader
-				title="MCP servers"
-				desc="Model Context Protocol servers available to every agent run in this team. Header values may include __HEZO_SECRET_<NAME>__ placeholders, substituted by the egress proxy at request time."
-			/>
-			{connections.length === 0 && !showAdd && (
-				<p className="text-[13px] text-text-muted mb-2">No MCP servers configured.</p>
-			)}
-			<div className="space-y-2 mb-3">
-				{connections.map((conn) => {
-					const config = conn.config as { url?: string; command?: string };
-					const target = conn.kind === 'saas' ? config.url : config.command;
-					return (
-						<div
-							key={conn.id}
-							className="border border-border rounded-radius-md p-3 flex items-center gap-3 bg-bg-subtle"
-						>
-							<Badge color={conn.kind === 'saas' ? 'blue' : 'gray'}>{conn.kind}</Badge>
-							<div className="flex-1 min-w-0">
-								<span className="text-[13px] font-medium">{conn.name}</span>
-								<span className="text-xs text-text-muted block font-mono truncate">{target}</span>
-							</div>
-							{conn.install_status !== 'installed' && (
-								<Badge color={conn.install_status === 'failed' ? 'danger' : 'warning'}>
-									{conn.install_status}
-								</Badge>
-							)}
-							<Button variant="danger-text" size="sm" onClick={() => deleteConn.mutate(conn.id)}>
-								<Trash2 className="w-3 h-3" />
-							</Button>
-						</div>
-					);
-				})}
-			</div>
-			{showAdd ? (
-				<form onSubmit={handleAdd} className="space-y-2 border border-border rounded-radius-md p-3">
-					<div className="flex gap-2">
-						<label className="flex items-center gap-1 text-[13px]">
-							<input type="radio" checked={kind === 'saas'} onChange={() => setKind('saas')} /> SaaS
-							HTTP
-						</label>
-						<label className="flex items-center gap-1 text-[13px]">
-							<input type="radio" checked={kind === 'local'} onChange={() => setKind('local')} />{' '}
-							Local stdio
-						</label>
-					</div>
-					<Input
-						value={name}
-						onChange={(e) => setName(e.target.value)}
-						placeholder="Server name (e.g. exa)"
-					/>
-					{kind === 'saas' ? (
-						<>
-							<Input
-								value={url}
-								onChange={(e) => setUrl(e.target.value)}
-								placeholder="URL (e.g. https://mcp.exa.ai/mcp)"
-							/>
-							<Input
-								value={headersJson}
-								onChange={(e) => setHeadersJson(e.target.value)}
-								placeholder='Headers JSON (e.g. {"x-api-key":"__HEZO_SECRET_EXA_KEY__"})'
-							/>
-						</>
-					) : (
-						<>
-							<Input
-								value={command}
-								onChange={(e) => setCommand(e.target.value)}
-								placeholder="Command (e.g. /workspace/.hezo/mcp/fs/node_modules/.bin/server-filesystem)"
-							/>
-							<Input
-								value={argsText}
-								onChange={(e) => setArgsText(e.target.value)}
-								placeholder="Args (space-separated)"
-							/>
-							<Input
-								value={envJson}
-								onChange={(e) => setEnvJson(e.target.value)}
-								placeholder='Env JSON (optional, e.g. {"FOO":"bar"})'
-							/>
-						</>
-					)}
-					<div className="flex gap-2">
-						<Button type="submit" size="sm" disabled={createConn.isPending}>
-							Add
-						</Button>
-						<Button type="button" variant="secondary" size="sm" onClick={reset}>
-							Cancel
-						</Button>
-					</div>
-				</form>
-			) : (
-				<Button variant="secondary" size="sm" onClick={() => setShowAdd(true)}>
-					<Plus className="w-3 h-3" /> Add MCP Server
-				</Button>
 			)}
 		</section>
 	);
