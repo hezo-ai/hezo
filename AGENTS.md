@@ -2,16 +2,31 @@
 
 ## Commands
 
-- `bun run test` — all tests (unit + integration + e2e) in parallel
-- `bun run test --skip-e2e` — skip Playwright
+- `bun run test` — server unit/integration (vitest) + web component tier (vitest) + e2e (Playwright), in that order
+- `bun run test --skip-e2e` — drop Playwright; runs server + web vitest only (~30s)
 - `bun run test --e2e` — Playwright only
-- `bun run test --pattern <substring>` — filter by file-path substring (works for both unit/integration and e2e; combine with `--e2e` to narrow e2e)
-- `bun run test --package <server>` — restrict unit/integration to one package
+- `bun run test --pattern <substring>` — filter by file-path substring (works across all tiers; combine with `--e2e` to narrow e2e)
+- `bun run test --package <server|web>` — restrict vitest run to one package
 - `bun run test --concurrency <n>` — override worker count (default 10)
 - `bun run test --bail` — stop on first failure
 - `bun run build` / `check` / `check:fix` / `typecheck` / `dev`
 
 `scripts/test.ts` is a commander CLI — it rejects unknown flags and `--` passthrough. To narrow by test name, use `test.only` / `describe.only` and revert before commit. Never call `npx playwright` or `npx vitest` directly (vitest's global `expect` clashes with Playwright outside the runner).
+
+### Running one file or one test
+
+- One vitest file: `cd packages/<pkg> && bunx vitest run <path>` (e.g. `cd packages/web && bunx vitest run test/task-comments.test.tsx`). Same flags as `bun run test`.
+- Filter by test name: `bunx vitest run <path> -t '<substring>'`.
+- Watch mode while iterating: drop `run` (`bunx vitest <path>`).
+- One Playwright spec: `bunx playwright test test/e2e/<spec>.spec.ts` from the root.
+- Headed Playwright for debugging: `bunx playwright test --headed --debug test/e2e/<spec>.spec.ts`.
+
+### Diagnosing failures fast
+
+- **vitest (server or web):** the failing assertion and its file:line print in the run summary. To re-run just the file with stack traces: `cd packages/<pkg> && bunx vitest run <path>`. Logs are inline.
+- **vitest writing a single line that doesn't tell you why** (timeouts, weird async): add `--reporter=verbose`; for a single test, prepend `console.log` and re-run with the test name filter.
+- **Playwright:** the trace zip lands under `playwright-report/` and `test-results/` on a failed CI run (`playwright.config.ts` is set to `retain-on-failure`). Download the `playwright-report` artifact from the GitHub Actions run, then `bunx playwright show-report playwright-report/` locally.
+- **CI showing which test failed across thousands of log lines:** `gh run view --job=<job-id> --log 2>&1 | grep -E "✘|FAIL"`.
 
 ## Layout
 
@@ -24,18 +39,46 @@ Pre-v1: modify `packages/server/migrations/001_initial_schema.sql` in place and 
 
 ## Testing
 
-All changes ship with tests that exercise functionality (not "code runs without throwing"). Backend → unit/integration; UI → e2e. Prefer integration over heavily-mocked unit tests.
+All changes ship with tests that exercise functionality (not "code runs without throwing"). Prefer integration over heavily-mocked unit tests. Three tiers:
 
-Each test file is fully isolated via `createTestContext()` / `destroyTestContext()` (`packages/server/src/test/helpers/context.ts`) — fresh PGlite + Hono app + HTTP server on port 0.
+| Tier | Where | Run cost | What it tests | When to use |
+|---|---|---|---|---|
+| Server unit/integration | `packages/server/src/test/**/*.test.ts` | ~ms each | API handlers, DB queries, services, MCP tools, agent run plumbing. Each test boots a fresh PGlite + Hono app via `createTestContext()`. | Everything backend. |
+| Web component | `packages/web/test/**/*.test.tsx` | ~100-700ms each | React tree rendered in happy-dom against an **in-process** Hono + PGlite backend via `renderApp()` in `packages/web/test/helpers/render.tsx`. Asserts on DOM, forms, React Query refetches, navigation, mention rendering. Stubs WebSocket (`reconnecting-websocket`'s constructor checks) and `IntersectionObserver`. | Anything render-driven that doesn't depend on a real browser layout engine or WebSocket stream. ~80% of what used to be e2e. |
+| Playwright e2e | `test/e2e/**/*.spec.ts` | ~10-30s each | Real Chromium. Mobile viewport (responsive checks at 375px), drag-drop file events, `boundingBox()` / sticky positioning, Virtuoso virtualization windows + scroll, scroll-to-bottom buttons, real `clientHeight`/`scrollHeight` comparisons, real WebSocket-streamed logs, the master-key gate flow before any token is set. | The thin slice that genuinely needs the browser. Default: write a component test instead. |
 
+### Server unit/integration rules
+
+- Each test file is fully isolated via `createTestContext()` / `destroyTestContext()` (`packages/server/src/test/helpers/context.ts`) — fresh PGlite + Hono app + HTTP server on port 0.
 - Use `ctx.app` / `ctx.baseUrl` / `ctx.port` — never a shared singleton, never hardcoded ports.
 - No mutable state shared between files.
 - Always `destroyTestContext()` in `afterAll` (resource leak otherwise).
 - Pure logic tests (crypto, parsing) can call functions directly.
+- GitHub OAuth/repo/SSH-key tests use the local simulator at `packages/server/src/test/helpers/github-sim.ts` — set `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the test context boots.
 
-GitHub OAuth/repo/SSH-key tests use the local simulator at `packages/server/src/test/helpers/github-sim.ts` — set `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the test context boots.
+### Web component rules
 
-E2E specs live in `test/e2e/` (Playwright). Root `playwright.config.ts` auto-starts server (:3100) and web (:5173). Use `authenticate(page)` to bypass the master-key gate when not testing auth itself. Every UI change ships with an e2e test for the affected flow.
+- Read `packages/web/test/helpers/render.tsx` and `helpers/seed.ts` before writing a new spec — the harness API is `renderApp({initialPath, seed?})` returning `{ ctx, router, container, user, findByText, getByRole, ... }`. `getTestContext()` reaches the in-process app/db mid-test.
+- Use `seedWorkspace()` / `seedProject(ws, { name })` / `seedTask(ws, project, { title })` / `seedComment(ws, task, body)` for setup; they drive the real API.
+- Navigate via `router.navigate({ to: '/teams/$teamId/tasks', params: { teamId: ws.team.slug } })` — memory history, no real URL.
+- Each test gets a fresh PGlite + Hono in `beforeEach`. The harness clears the singleton react-query cache between tests, but cross-spec state still leaks via module-level singletons (`api`, the queryClient), so keep `beforeEach` setup contained.
+- Dialogs / Radix popovers render into a portal on `document.body`. Query selectors against `document.body` (not `container`) when the element is inside a Radix `Portal`.
+- Auto-wait via Testing Library's `findBy*` / `waitFor`. Don't use `expect(...).toBeDisabled()` (jest-dom matchers aren't loaded) — read `disabled` directly off the element.
+
+### When to write Playwright vs component
+
+Default to a component test. Reach for Playwright only when one of these is true:
+
+- The test calls `page.setViewportSize` to a non-default width (mobile-only behavior).
+- The test dispatches drag-drop / `DataTransfer` events.
+- The test reads `scrollTop`, `scrollHeight`, `boundingBox()`, or asserts on Virtuoso's mounted-row window.
+- The test asserts on real CSS computed layout (`getComputedStyle`, `clientHeight` vs `scrollHeight`).
+- The test depends on a real WebSocket stream (agent run logs).
+- The test exercises the master-key gate or onboarding flow before any auth token exists.
+
+Each Playwright spec we still keep has a one-line comment at the top explaining which of these it needs.
+
+Root `playwright.config.ts` auto-starts server (:3101) and web (:5174). Use `authenticate(page)` to bypass the master-key gate when not testing auth itself. The `sharedWorkspace` fixture in `test/e2e/fixtures.ts` provisions a Startup-templated team once per worker; tests create their own per-test project under it via `createProjectAndClearPlanning`. Captain's coherence-review run is suppressed by `HEZO_E2E_SKIP_COHERENCE_REVIEW=1` in the test server env — without it, team setup blocks for ~30-60s.
 
 ### No spurious `[error]`/`[warn]` in unit-test output
 
@@ -54,20 +97,15 @@ Concretely, on `PATCH /tasks` the system comments that record the change (`recor
 
 Wrap the awaited call in `try/catch` and `log.error(...)` to keep the "log and continue" semantics — a failed side effect should not 500 the request.
 
-### E2E timing rules
+### E2E flake patterns
 
-CI runs the suite with two parallel Playwright workers, dev-mode Vite, a cold Bun cache, and a 1 Hz agent wakeup cron. That load surfaces races that never fire locally. Five patterns flake reliably under it — use the deterministic helpers in `test/e2e/helpers.ts` instead.
+The remaining Playwright suite is small but still subject to a 1 Hz agent wakeup cron and a dev-mode Vite. When a spec flakes:
 
-- **Scope every response matcher to the test's own IDs.** Use `taskMatcher` / `teamMatcher` / `agentMatcher` from `test/e2e/helpers.ts`. The bare `/api/teams/[^/]+/tasks/[^/]+/` regex is too loose: Captain's background planning-task PATCHes hit the same shape and will satisfy the matcher before the user's mutation has even left the browser. For tasks, `taskId` is the lowercase identifier (`target.identifier.toLowerCase()`), not the UUID — the route param and the mutation URL both use the identifier.
-- **For "click save → assert UI updated", wait for both the mutation AND the follow-up refetch GET.** Use `saveAndWaitForRefetch(page, locator, { mutation, refetch })`. Mutation landing ≠ UI rendering — React Query has to invalidate, refetch, and re-render before the new text is in the DOM. `clickAndWaitForResponse` is the older one-shot wrapper and is deprecated; new code uses `saveAndWaitForRefetch`.
-- **Scroll Virtuoso before asserting on a bottom-of-list item.** The comments list (and any other Virtuoso instance) only mounts items in the viewport range. A new system comment lands at the bottom of the ASC list; with the user at the top, it's in the query cache but not in the DOM and `toBeVisible` fails. Scroll the scroll container first:
-  ```ts
-  await page.locator('main').first().evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
-  ```
-- **Sequence `page.request` after in-flight UI mutations.** `page.request.<method>(...)` uses a separate Playwright APIRequestContext from the page's fetch; the two requests can land in either order on the server. Before firing `page.request.post(...)` to mutate state the UI also just mutated, `await page.waitForResponse(...)` the UI mutation's HTTP response so the two serialize.
-- **`page.route()` cleanup is already wired.** `freshWorkspace`, `lightWorkspace`, and `authedPage` (in `test/e2e/fixtures.ts`) call `unrouteAll({ behavior: 'ignoreErrors' })` on teardown so in-flight `route.fetch()` calls don't reject with "Target page has been closed". Don't manually unroute inside tests that use those fixtures.
-
-**Do not raise the timeout to mask a race. Find the missing wait.** Bumping `{ timeout: 30000 }` makes the next reader assume the operation is genuinely slow — it's almost always a missing matcher scope or a missing `await`.
+- **Scope every response matcher to the test's own IDs.** Use `taskMatcher` / `teamMatcher` / `agentMatcher` from `test/e2e/helpers.ts`. A bare `/api/teams/[^/]+/tasks/[^/]+/` regex can match Captain's background planning-task PATCH and satisfy the matcher before your mutation has even left the browser. For tasks, `taskId` is the lowercase identifier, not the UUID.
+- **For "click save → assert UI updated", use `saveAndWaitForRefetch(page, locator, { mutation, refetch })`.** Mutation landing ≠ UI rendering — React Query has to invalidate, refetch, and re-render before the new text is in the DOM.
+- **Scroll Virtuoso before asserting on a bottom-of-list item.** Virtuoso only mounts the viewport range. Scroll the container first: `await page.locator('main').first().evaluate((el) => el.scrollTo({ top: el.scrollHeight }))`.
+- **Sequence `page.request` after in-flight UI mutations.** `page.request.<method>` uses a separate APIRequestContext from the page's fetch; the two can land in either order. `await page.waitForResponse(...)` the UI mutation before firing the API mutation.
+- **Don't raise timeouts to mask a race.** A bumped timeout signals "this is genuinely slow" to the next reader; it's almost always a missing matcher scope or a missing `await`.
 
 ## Type safety
 
