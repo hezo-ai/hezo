@@ -127,7 +127,7 @@ function TaskDetailPage() {
 	const chooseOption = useChooseOption(teamId, taskId);
 	const createSubTask = useCreateSubTask(teamId, taskId);
 	const removeDep = useRemoveDependency(teamId, taskId);
-	const skipProjectIntake = useSkipProjectIntakeQuestions(teamId, task?.id ?? '');
+	const skipProjectIntake = useSkipProjectIntakeQuestions(teamId, taskId);
 	const isProjectIntake = useMemo(
 		() => (task?.labels ?? []).includes(PROJECT_INTAKE_LABEL),
 		[task?.labels],

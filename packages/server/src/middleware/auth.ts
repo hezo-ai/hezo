@@ -178,10 +178,39 @@ export function safeCompareHex(a: string, b: string): boolean {
 	return timingSafeEqual(bufA, bufB);
 }
 
-export async function requireTeamAccess(c: Context<Env>): Promise<{ teamId: string } | Response> {
-	const auth = c.get('auth');
-	const raw = c.req.param('teamId');
+/**
+ * Single source of truth for "does this auth principal have access to this team?".
+ * Returns `null` on success, or a 403 `Response` to short-circuit the handler.
+ */
+async function assertTeamAccess(
+	db: PGlite,
+	auth: AuthInfo,
+	c: Context<Env>,
+	teamId: string,
+): Promise<Response | null> {
+	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
+		if (auth.teamId !== teamId) {
+			return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
+		}
+		return null;
+	}
 
+	if (auth.isSuperuser) {
+		return null;
+	}
+
+	const result = await db.query(
+		'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
+		[auth.userId, teamId],
+	);
+	if (result.rows.length === 0) {
+		return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
+	}
+	return null;
+}
+
+export async function requireTeamAccess(c: Context<Env>): Promise<{ teamId: string } | Response> {
+	const raw = c.req.param('teamId');
 	if (!raw) {
 		return c.json({ error: { code: 'BAD_REQUEST', message: 'Missing teamId' } }, 400);
 	}
@@ -192,24 +221,8 @@ export async function requireTeamAccess(c: Context<Env>): Promise<{ teamId: stri
 		return c.json({ error: { code: 'NOT_FOUND', message: 'Team not found' } }, 404);
 	}
 
-	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
-		if (auth.teamId !== teamId) {
-			return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
-		}
-		return { teamId };
-	}
-
-	if (auth.isSuperuser) {
-		return { teamId };
-	}
-
-	const result = await db.query(
-		'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
-		[auth.userId, teamId],
-	);
-	if (result.rows.length === 0) {
-		return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
-	}
+	const denied = await assertTeamAccess(db, c.get('auth'), c, teamId);
+	if (denied) return denied;
 	return { teamId };
 }
 
@@ -218,28 +231,8 @@ export async function requireTeamAccessForResource(
 	c: Context<Env>,
 	resourceTeamId: string,
 ): Promise<{ teamId: string } | Response> {
-	const auth = c.get('auth');
-
-	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
-		if (auth.teamId !== resourceTeamId) {
-			return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
-		}
-		return { teamId: resourceTeamId };
-	}
-
-	// Superusers can access any team
-	if (auth.isSuperuser) {
-		return { teamId: resourceTeamId };
-	}
-
-	// Board auth
-	const result = await db.query(
-		'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
-		[auth.userId, resourceTeamId],
-	);
-	if (result.rows.length === 0) {
-		return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
-	}
+	const denied = await assertTeamAccess(db, c.get('auth'), c, resourceTeamId);
+	if (denied) return denied;
 	return { teamId: resourceTeamId };
 }
 

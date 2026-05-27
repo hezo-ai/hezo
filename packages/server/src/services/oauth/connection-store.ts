@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
 import { encrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
+import { withTransaction } from '../../lib/sql';
 import { logger } from '../../logger';
 
 const log = logger.child('oauth-connections');
@@ -77,8 +78,7 @@ export async function createConnection(
 		: null;
 	const allowedHosts = input.allowedHosts.length > 0 ? input.allowedHosts : [];
 
-	await deps.db.query('BEGIN');
-	try {
+	const row = await withTransaction(deps.db, async () => {
 		const accessSecret = await deps.db.query<{ id: string }>(
 			`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
 			 VALUES ($1, NULL, $2, $3, 'api_token', $4, false)
@@ -139,18 +139,15 @@ export async function createConnection(
 			],
 		);
 
-		await deps.db.query('COMMIT');
-		const row = { ...conn.rows[0], access_token_secret_name: accessName };
-		log.info('oauth connection created', {
-			id: row.id,
-			provider: row.provider,
-			account: row.provider_account_label,
-		});
-		return mapRow(row, accessName);
-	} catch (e) {
-		await deps.db.query('ROLLBACK');
-		throw e;
-	}
+		return { ...conn.rows[0], access_token_secret_name: accessName };
+	});
+
+	log.info('oauth connection created', {
+		id: row.id,
+		provider: row.provider,
+		account: row.provider_account_label,
+	});
+	return mapRow(row, accessName);
 }
 
 export async function getConnection(
@@ -220,8 +217,7 @@ export async function deleteConnection(
 	deps: ConnectionStoreDeps,
 	connectionId: string,
 ): Promise<boolean> {
-	await deps.db.query('BEGIN');
-	try {
+	const deleted = await withTransaction(deps.db, async () => {
 		const conn = await deps.db.query<{
 			access_token_secret_id: string;
 			refresh_token_secret_id: string | null;
@@ -230,10 +226,7 @@ export async function deleteConnection(
 			 FROM oauth_connections WHERE id = $1`,
 			[connectionId],
 		);
-		if (conn.rows.length === 0) {
-			await deps.db.query('ROLLBACK');
-			return false;
-		}
+		if (conn.rows.length === 0) return false;
 		const { access_token_secret_id, refresh_token_secret_id } = conn.rows[0];
 
 		await deps.db.query(
@@ -251,13 +244,11 @@ export async function deleteConnection(
 			await deps.db.query(`DELETE FROM secrets WHERE id = $1`, [refresh_token_secret_id]);
 		}
 
-		await deps.db.query('COMMIT');
-		log.info('oauth connection deleted', { id: connectionId });
 		return true;
-	} catch (e) {
-		await deps.db.query('ROLLBACK');
-		throw e;
-	}
+	});
+
+	if (deleted) log.info('oauth connection deleted', { id: connectionId });
+	return deleted;
 }
 
 export async function updateTokens(
@@ -270,8 +261,7 @@ export async function updateTokens(
 	const conn = await getConnection(deps, input.connectionId);
 	if (!conn) throw new Error(`oauth_connection ${input.connectionId} not found`);
 
-	await deps.db.query('BEGIN');
-	try {
+	await withTransaction(deps.db, async () => {
 		await deps.db.query(`UPDATE secrets SET encrypted_value = $1 WHERE id = $2`, [
 			encrypt(input.accessToken, key),
 			conn.accessTokenSecretId,
@@ -301,12 +291,7 @@ export async function updateTokens(
 			input.expiresAt ?? null,
 			conn.id,
 		]);
-
-		await deps.db.query('COMMIT');
-	} catch (e) {
-		await deps.db.query('ROLLBACK');
-		throw e;
-	}
+	});
 }
 
 interface RawConnRow {

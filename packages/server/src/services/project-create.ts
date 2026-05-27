@@ -1,5 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { TaskPriority, TaskStatus } from '@hezo/shared';
+import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 
 export interface CreateProjectWithPlanningInput {
@@ -28,8 +29,7 @@ export async function createProjectWithPlanningTask(
 	const projectDescription = input.description.trim();
 	const initialPrd = input.initialPrd?.trim() || null;
 
-	await db.query('BEGIN');
-	try {
+	return withTransaction(db, async () => {
 		await db.query('SELECT id FROM teams WHERE id = $1 FOR UPDATE', [input.teamId]);
 		const countResult = await db.query<{ count: string }>(
 			`SELECT count(*)::text AS count FROM projects
@@ -117,10 +117,6 @@ Container provisioning for this project is in progress. Focus on planning while 
 		);
 		const planningTask = taskResult.rows[0] as Record<string, unknown>;
 
-		await db.query('COMMIT');
 		return { project, planningTask, deferCaptainPlanningWake };
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+	});
 }

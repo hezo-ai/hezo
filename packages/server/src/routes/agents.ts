@@ -22,7 +22,7 @@ import { broadcastChange } from '../lib/broadcast';
 import { resolveActorMemberId, resolveAgentId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
-import { buildUpdateSet, isFkViolation, terminalStatusParams } from '../lib/sql';
+import { buildUpdateSet, isFkViolation, terminalStatusParams, withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -182,67 +182,67 @@ agentsRoutes.post('/teams/:teamId/agents', async (c) => {
 		return err(c, 'CONFLICT', `Agent with slug '${slug}' already exists in this team`, 409);
 	}
 
-	await db.query('BEGIN');
+	let memberId: string;
 	try {
-		const memberResult = await db.query<{ id: string }>(
-			`INSERT INTO members (team_id, member_type, display_name)
+		memberId = await withTransaction(db, async () => {
+			const memberResult = await db.query<{ id: string }>(
+				`INSERT INTO members (team_id, member_type, display_name)
        VALUES ($1, $2, $3)
        RETURNING id`,
-			[teamId, MemberType.Agent, body.title.trim()],
-		);
-		const memberId = memberResult.rows[0].id;
+				[teamId, MemberType.Agent, body.title.trim()],
+			);
+			const newMemberId = memberResult.rows[0].id;
 
-		await db.query(
-			`INSERT INTO member_agents (id, title, slug, role_description, reports_to, default_effort, heartbeat_interval_min, monthly_budget_cents, touches_code, mcp_servers)
+			await db.query(
+				`INSERT INTO member_agents (id, title, slug, role_description, reports_to, default_effort, heartbeat_interval_min, monthly_budget_cents, touches_code, mcp_servers)
        VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10::jsonb)`,
-			[
-				memberId,
-				body.title.trim(),
-				slug,
-				body.role_description ?? '',
-				body.reports_to ?? null,
-				body.default_effort ?? DEFAULT_EFFORT,
-				body.heartbeat_interval_min ?? 60,
-				body.monthly_budget_cents ?? 3000,
-				body.touches_code ?? false,
-				JSON.stringify(body.mcp_servers ?? []),
-			],
-		);
+				[
+					newMemberId,
+					body.title.trim(),
+					slug,
+					body.role_description ?? '',
+					body.reports_to ?? null,
+					body.default_effort ?? DEFAULT_EFFORT,
+					body.heartbeat_interval_min ?? 60,
+					body.monthly_budget_cents ?? 3000,
+					body.touches_code ?? false,
+					JSON.stringify(body.mcp_servers ?? []),
+				],
+			);
 
-		await initAgentSystemPrompt(db, teamId, memberId, body.system_prompt ?? '', null);
-
-		await db.query('COMMIT');
-
-		const result = await db.query(
-			`SELECT ${AGENT_BASE_COLUMNS}
-			 FROM members m
-			 JOIN member_agents ma ON ma.id = m.id
-			 WHERE m.id = $1`,
-			[memberId],
-		);
-
-		broadcastChange(
-			c,
-			wsRoom.team(teamId),
-			'member_agents',
-			'INSERT',
-			result.rows[0] as Record<string, unknown>,
-		);
-
-		trackBackground(
-			enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
-				log.error('Failed to enqueue team coherence review after agent create:', e),
-			),
-		);
-
-		return ok(c, result.rows[0], 201);
+			await initAgentSystemPrompt(db, teamId, newMemberId, body.system_prompt ?? '', null);
+			return newMemberId;
+		});
 	} catch (e) {
-		await db.query('ROLLBACK');
 		if (isFkViolation(e, 'member_agents_reports_to_fkey')) {
 			return err(c, 'INVALID_REQUEST', 'reports_to: agent does not exist', 400);
 		}
 		throw e;
 	}
+
+	const result = await db.query(
+		`SELECT ${AGENT_BASE_COLUMNS}
+		 FROM members m
+		 JOIN member_agents ma ON ma.id = m.id
+		 WHERE m.id = $1`,
+		[memberId],
+	);
+
+	broadcastChange(
+		c,
+		wsRoom.team(teamId),
+		'member_agents',
+		'INSERT',
+		result.rows[0] as Record<string, unknown>,
+	);
+
+	trackBackground(
+		enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
+			log.error('Failed to enqueue team coherence review after agent create:', e),
+		),
+	);
+
+	return ok(c, result.rows[0], 201);
 });
 
 agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
@@ -318,8 +318,7 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 	};
 
 	if (!hasCaptain || !hasOpsProject) {
-		await db.query('BEGIN');
-		try {
+		await withTransaction(db, async () => {
 			const memberResult = await db.query<{ id: string }>(
 				`INSERT INTO members (team_id, member_type, display_name)
 				 VALUES ($1, $2, $3)
@@ -347,12 +346,7 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 			);
 
 			await initAgentSystemPrompt(db, teamId, memberId, proposal.system_prompt, null);
-
-			await db.query('COMMIT');
-		} catch (e) {
-			await db.query('ROLLBACK');
-			throw e;
-		}
+		});
 
 		const agentResult = await db.query(
 			`SELECT ${AGENT_BASE_COLUMNS}
@@ -387,8 +381,7 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 		requestedByMemberId = me.rows[0]?.id ?? null;
 	}
 
-	await db.query('BEGIN');
-	try {
+	const { task, finalApproval } = await withTransaction(db, async () => {
 		const approvalResult = await db.query<Record<string, unknown>>(
 			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload, status)
 			 VALUES ($1, $2::approval_type, $3, $4::jsonb, $5::approval_status)
@@ -457,27 +450,24 @@ ${teamRoster}`;
 			`UPDATE approvals SET payload = payload || jsonb_build_object('task_id', $1::text) WHERE id = $2`,
 			[task.id, approvalId],
 		);
-		const finalApproval = await db.query<Record<string, unknown>>(
+		const finalApprovalResult = await db.query<Record<string, unknown>>(
 			'SELECT * FROM approvals WHERE id = $1',
 			[approvalId],
 		);
 
-		await db.query('COMMIT');
+		return { task, finalApproval: finalApprovalResult.rows[0] };
+	});
 
-		broadcastChange(c, wsRoom.team(teamId), 'approvals', 'INSERT', finalApproval.rows[0]);
-		broadcastChange(c, wsRoom.team(teamId), 'tasks', 'INSERT', task);
+	broadcastChange(c, wsRoom.team(teamId), 'approvals', 'INSERT', finalApproval);
+	broadcastChange(c, wsRoom.team(teamId), 'tasks', 'INSERT', task);
 
-		trackBackground(
-			createWakeup(db, captainId, teamId, WakeupSource.Assignment, {
-				task_id: task.id,
-			}).catch((e) => log.error('Failed to wake Captain for hire request:', e)),
-		);
+	trackBackground(
+		createWakeup(db, captainId, teamId, WakeupSource.Assignment, {
+			task_id: task.id as string,
+		}).catch((e) => log.error('Failed to wake Captain for hire request:', e)),
+	);
 
-		return ok(c, { agent: null, task, approval: finalApproval.rows[0], bootstrap: false }, 201);
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+	return ok(c, { agent: null, task, approval: finalApproval, bootstrap: false }, 201);
 });
 
 agentsRoutes.get('/teams/:teamId/agents/:agentId', async (c) => {

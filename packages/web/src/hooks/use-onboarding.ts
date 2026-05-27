@@ -1,8 +1,8 @@
+import type { OnboardingStageKey, OnboardingStageStatus } from '@hezo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 
-export type OnboardingStageKey = 'intake' | 'done';
-export type OnboardingStageStatus = 'complete' | 'current' | 'pending';
+export type { OnboardingStageKey, OnboardingStageStatus };
 
 export interface OnboardingGoalSummary {
 	id: string;

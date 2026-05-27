@@ -11,6 +11,7 @@ import {
 import type { MasterKeyManager } from '../crypto/master-key';
 import { trackBackground } from '../lib/background';
 import { toSlug, uniqueSlug } from '../lib/slug';
+import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ProjectRow, provisionContainer } from './containers';
@@ -69,9 +70,7 @@ export async function createTeam(
 			return r.rows.length > 0;
 		}));
 
-	let teamId: string;
-	await db.query('BEGIN');
-	try {
+	const teamId = await withTransaction(db, async () => {
 		const teamSummaryResult = input.templateId
 			? await db.query<{ default_summary: string }>(
 					'SELECT default_summary FROM team_templates WHERE id = $1',
@@ -93,7 +92,7 @@ export async function createTeam(
 					 RETURNING id`,
 					[name, slug, input.description ?? '', teamSummary],
 				);
-		teamId = teamResult.rows[0].id;
+		const teamId = teamResult.rows[0].id;
 
 		if (input.creatorUserId) {
 			const memberResult = await db.query<{ id: string }>(
@@ -127,11 +126,8 @@ export async function createTeam(
 			);
 		}
 
-		await db.query('COMMIT');
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+		return teamId;
+	});
 
 	if (input.templateId) {
 		await applyTemplateToTeam(db, teamId, input.templateId, { dataDir, wsManager });

@@ -84,10 +84,23 @@ export function useResolveApproval() {
 			teamSlug?: string;
 		}) => api.post(`/api/approvals/${approvalId}/resolve`, { status, resolution_note }),
 		onSuccess: (_data, variables) => {
-			queryClient.invalidateQueries({ queryKey: ['approvals'] });
+			// Always invalidate the cross-team aggregated pending list — it has no team scope.
+			queryClient.invalidateQueries({ queryKey: ['approvals', 'pending'] });
 			if (variables.teamSlug) {
+				queryClient.invalidateQueries({
+					queryKey: ['teams', variables.teamSlug, 'approvals'],
+				});
 				invalidateTeamAgentCaches(queryClient, variables.teamSlug);
 			} else {
+				// No team scope provided — fall back to a predicate that matches any team's
+				// approvals list, keyed `['teams', <slug>, 'approvals', ...]`.
+				queryClient.invalidateQueries({
+					predicate: (query) =>
+						Array.isArray(query.queryKey) &&
+						query.queryKey[0] === 'teams' &&
+						typeof query.queryKey[1] === 'string' &&
+						query.queryKey[2] === 'approvals',
+				});
 				invalidateAllTeamAgentCaches(queryClient);
 			}
 		},

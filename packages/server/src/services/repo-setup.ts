@@ -9,6 +9,7 @@ import {
 	WakeupSource,
 	WakeupStatus,
 } from '@hezo/shared';
+import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { createWakeup } from './wakeup';
 
@@ -33,89 +34,87 @@ export async function ensureRepoSetupAction(
 	db: PGlite,
 	ctx: RepoSetupGateCtx,
 ): Promise<EnsureResult> {
-	await db.query('BEGIN');
-	try {
-		const existingApproval = await findPendingApproval(db, ctx.teamId, ctx.projectId);
-		let approvalId = existingApproval;
-		let approvalCreated = false;
-		if (!approvalId) {
-			try {
+	const { approvalId, commentId, approvalCreated, commentCreated } = await withTransaction(
+		db,
+		async () => {
+			const existingApproval = await findPendingApproval(db, ctx.teamId, ctx.projectId);
+			let approvalId = existingApproval;
+			let approvalCreated = false;
+			if (!approvalId) {
+				try {
+					const ins = await db.query<{ id: string }>(
+						`INSERT INTO approvals (team_id, type, status, payload)
+						 VALUES ($1, $2::approval_type, $3::approval_status, $4::jsonb)
+						 RETURNING id`,
+						[
+							ctx.teamId,
+							ApprovalType.DesignatedRepoRequest,
+							ApprovalStatus.Pending,
+							JSON.stringify({
+								platform: PlatformType.GitHub,
+								reason: OAuthRequestReason.DesignatedRepo,
+								project_id: ctx.projectId,
+								task_id: ctx.taskId,
+							}),
+						],
+					);
+					approvalId = ins.rows[0].id;
+					approvalCreated = true;
+				} catch (e) {
+					const retry = await findPendingApproval(db, ctx.teamId, ctx.projectId);
+					if (!retry) throw e;
+					approvalId = retry;
+				}
+			}
+
+			const existingComment = await db.query<{ id: string }>(
+				`SELECT id FROM task_comments
+				 WHERE task_id = $1
+				   AND content_type = $2::comment_content_type
+				   AND content->>'kind' = $3
+				   AND content->>'approval_id' = $4
+				   AND chosen_option IS NULL
+				 LIMIT 1`,
+				[ctx.taskId, CommentContentType.Action, ActionCommentKind.SetupRepo, approvalId],
+			);
+
+			let commentId: string;
+			let commentCreated = false;
+			if (existingComment.rows.length > 0) {
+				commentId = existingComment.rows[0].id;
+			} else {
 				const ins = await db.query<{ id: string }>(
-					`INSERT INTO approvals (team_id, type, status, payload)
-					 VALUES ($1, $2::approval_type, $3::approval_status, $4::jsonb)
+					`INSERT INTO task_comments (task_id, content_type, content)
+					 VALUES ($1, $2::comment_content_type, $3::jsonb)
 					 RETURNING id`,
 					[
-						ctx.teamId,
-						ApprovalType.DesignatedRepoRequest,
-						ApprovalStatus.Pending,
-						JSON.stringify({
-							platform: PlatformType.GitHub,
-							reason: OAuthRequestReason.DesignatedRepo,
-							project_id: ctx.projectId,
-							task_id: ctx.taskId,
-						}),
+						ctx.taskId,
+						CommentContentType.Action,
+						JSON.stringify({ kind: ActionCommentKind.SetupRepo, approval_id: approvalId }),
 					],
 				);
-				approvalId = ins.rows[0].id;
-				approvalCreated = true;
-			} catch (e) {
-				const retry = await findPendingApproval(db, ctx.teamId, ctx.projectId);
-				if (!retry) throw e;
-				approvalId = retry;
+				commentId = ins.rows[0].id;
+				commentCreated = true;
 			}
-		}
 
-		const existingComment = await db.query<{ id: string }>(
-			`SELECT id FROM task_comments
-			 WHERE task_id = $1
-			   AND content_type = $2::comment_content_type
-			   AND content->>'kind' = $3
-			   AND content->>'approval_id' = $4
-			   AND chosen_option IS NULL
-			 LIMIT 1`,
-			[ctx.taskId, CommentContentType.Action, ActionCommentKind.SetupRepo, approvalId],
-		);
+			return { approvalId, commentId, approvalCreated, commentCreated };
+		},
+	);
 
-		let commentId: string;
-		let commentCreated = false;
-		if (existingComment.rows.length > 0) {
-			commentId = existingComment.rows[0].id;
-		} else {
-			const ins = await db.query<{ id: string }>(
-				`INSERT INTO task_comments (task_id, content_type, content)
-				 VALUES ($1, $2::comment_content_type, $3::jsonb)
-				 RETURNING id`,
-				[
-					ctx.taskId,
-					CommentContentType.Action,
-					JSON.stringify({ kind: ActionCommentKind.SetupRepo, approval_id: approvalId }),
-				],
-			);
-			commentId = ins.rows[0].id;
-			commentCreated = true;
-		}
-
-		await db.query('COMMIT');
-
-		const result: EnsureResult = { approvalId, commentId, approvalCreated, commentCreated };
-		if (approvalCreated) {
-			const r = await db.query<Record<string, unknown>>('SELECT * FROM approvals WHERE id = $1', [
-				approvalId,
-			]);
-			if (r.rows[0]) result.approvalRow = r.rows[0];
-		}
-		if (commentCreated) {
-			const r = await db.query<Record<string, unknown>>(
-				'SELECT * FROM task_comments WHERE id = $1',
-				[commentId],
-			);
-			if (r.rows[0]) result.commentRow = r.rows[0];
-		}
-		return result;
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
+	const result: EnsureResult = { approvalId, commentId, approvalCreated, commentCreated };
+	if (approvalCreated) {
+		const r = await db.query<Record<string, unknown>>('SELECT * FROM approvals WHERE id = $1', [
+			approvalId,
+		]);
+		if (r.rows[0]) result.approvalRow = r.rows[0];
 	}
+	if (commentCreated) {
+		const r = await db.query<Record<string, unknown>>('SELECT * FROM task_comments WHERE id = $1', [
+			commentId,
+		]);
+		if (r.rows[0]) result.commentRow = r.rows[0];
+	}
+	return result;
 }
 
 async function findPendingApproval(

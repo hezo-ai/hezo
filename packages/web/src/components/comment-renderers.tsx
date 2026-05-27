@@ -45,9 +45,9 @@ import { Tooltip } from './ui/tooltip';
 export interface CommentData {
 	id: string;
 	content_type: string;
-	// biome-ignore lint/suspicious/noExplicitAny: content varies by type
+	// biome-ignore lint/suspicious/noExplicitAny: content varies by content_type; renderers narrow per case
 	content: any;
-	// biome-ignore lint/suspicious/noExplicitAny: varies
+	// biome-ignore lint/suspicious/noExplicitAny: shape depends on the originating options comment
 	chosen_option?: any;
 	author_name?: string;
 	author_type?: string;
@@ -64,9 +64,9 @@ const AVAILABLE_REACTION_KINDS = ['ack'] as const;
 interface ToolCall {
 	id: string;
 	tool_name: string;
-	// biome-ignore lint/suspicious/noExplicitAny: varies
+	// biome-ignore lint/suspicious/noExplicitAny: per-tool shape; renderer narrows per tool_name
 	input: any;
-	// biome-ignore lint/suspicious/noExplicitAny: varies
+	// biome-ignore lint/suspicious/noExplicitAny: per-tool shape; renderer narrows per tool_name
 	output: any;
 	status: string;
 	duration_ms: number | null;

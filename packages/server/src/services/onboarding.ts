@@ -1,10 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { GoalStatus } from '@hezo/shared';
+import { GoalStatus, type OnboardingStageKey, type OnboardingStageStatus } from '@hezo/shared';
 import { terminalStatusParams } from '../lib/sql';
 import { ONBOARDING_INTAKE_LABEL } from './onboarding-intake';
 
-export type OnboardingStageKey = 'intake' | 'done';
-export type OnboardingStageStatus = 'complete' | 'current' | 'pending';
+export type { OnboardingStageKey, OnboardingStageStatus };
 
 export interface OnboardingGoalSummary {
 	id: string;
