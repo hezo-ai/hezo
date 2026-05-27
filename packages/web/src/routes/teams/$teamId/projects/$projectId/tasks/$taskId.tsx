@@ -34,8 +34,8 @@ import {
 } from '../../../../../../components/comment-renderers';
 import { MarkdownProse } from '../../../../../../components/markdown-prose';
 import { MentionTextarea } from '../../../../../../components/mention-textarea';
+import { CommentComposer } from '../../../../../../components/task-detail/comment-composer';
 import { DependenciesSection } from '../../../../../../components/task-detail/dependencies-section';
-import { ProjectIntakeBanner } from '../../../../../../components/task-detail/project-intake-banner';
 import { SubTasksSection } from '../../../../../../components/task-detail/sub-tasks-section';
 import { TaskHeader } from '../../../../../../components/task-detail/task-header';
 import { TaskSummary } from '../../../../../../components/task-detail/task-summary';
@@ -53,19 +53,6 @@ import {
 } from '../../../../../../hooks/use-comments';
 import { type ExecutionLock, useExecutionLock } from '../../../../../../hooks/use-execution-locks';
 import { useTask, useUpdateTask } from '../../../../../../hooks/use-tasks';
-
-function previewCommentText(c: Comment): string {
-	const raw = c.content as unknown;
-	let text = '';
-	if (typeof raw === 'string') text = raw;
-	else if (raw && typeof raw === 'object' && 'text' in raw) {
-		const t = (raw as { text?: unknown }).text;
-		text = typeof t === 'string' ? t : '';
-	}
-	text = text.trim().replace(/\s+/g, ' ');
-	if (!text) return '(non-text comment)';
-	return text.length > 60 ? `${text.slice(0, 60)}…` : text;
-}
 
 const EFFORT_LEVELS: { value: AgentEffort; label: string }[] = [
 	{ value: AgentEffort.Minimal, label: 'Minimal' },
@@ -85,13 +72,10 @@ function TaskDetailPage() {
 	const updateTask = useUpdateTask(teamId, taskId);
 	const createComment = useCreateComment(teamId, taskId);
 	const chooseOption = useChooseOption(teamId, taskId);
-	const [commentText, setCommentText] = useState('');
 	// Per-comment reasoning effort. `null` = user hasn't touched the dropdown, so
 	// leave effort unset on submit and let the server resolve the agent default.
 	const [commentEffort, setCommentEffort] = useState<AgentEffort | null>(null);
-	const [wakeAssignee, setWakeAssignee] = useState(true);
 	const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
-	const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
 	const commentFormRef = useRef<HTMLFormElement>(null);
 	const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
 	const [assigneeOpen, setAssigneeOpen] = useState(false);
@@ -261,23 +245,6 @@ function TaskDetailPage() {
 
 	if (isLoading || !task)
 		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;
-
-	async function handleComment(e: React.FormEvent) {
-		e.preventDefault();
-		if (!commentText.trim() && pendingAttachmentIds.length === 0) return;
-		await createComment.mutateAsync({
-			content: commentText,
-			...(commentEffort ? { effort: commentEffort } : {}),
-			...(task?.assignee_id ? { wake_assignee: wakeAssignee } : {}),
-			...(replyTarget ? { parent_comment_id: replyTarget.id } : {}),
-			...(pendingAttachmentIds.length > 0 ? { attachment_ids: pendingAttachmentIds } : {}),
-		});
-		setCommentText('');
-		setCommentEffort(null);
-		setWakeAssignee(true);
-		setReplyTarget(null);
-		setPendingAttachmentIds([]);
-	}
 
 	function startReply(c: Comment) {
 		setReplyTarget(c);
@@ -458,93 +425,21 @@ function TaskDetailPage() {
 						)}
 					</div>
 
-					<form ref={commentFormRef} onSubmit={handleComment} className="flex gap-2.5 scroll-mt-20">
-						<div className="w-[26px] shrink-0" aria-hidden />
-						<div className="flex-1 min-w-0 flex flex-col gap-2">
-							<CommentAttachmentsDrop
-								teamId={teamId}
-								taskId={task.id}
-								value={pendingAttachmentIds}
-								onChange={setPendingAttachmentIds}
-							>
-								<MentionTextarea
-									ref={commentTextareaRef}
-									teamId={teamId}
-									projectSlug={taskProjectSlug}
-									value={commentText}
-									onChange={(e) => setCommentText(e.target.value)}
-									onKeyDown={(e) => {
-										if (
-											e.key === 'Enter' &&
-											(e.metaKey || e.ctrlKey) &&
-											!e.nativeEvent.isComposing
-										) {
-											e.preventDefault();
-											commentFormRef.current?.requestSubmit();
-										}
-									}}
-									placeholder="Add a comment..."
-									className="min-h-[60px]"
-								/>
-							</CommentAttachmentsDrop>
-							{replyTarget && (
-								<div
-									className="flex items-center gap-2 text-[13px] text-text-muted"
-									data-testid="reply-indicator"
-								>
-									<CornerDownRight className="w-3.5 h-3.5 shrink-0" />
-									<span className="shrink-0">In response to</span>
-									<a
-										href={`#comment-${replyTarget.id}`}
-										onClick={jumpToComment(replyTarget.id)}
-										className="truncate text-accent-blue hover:underline"
-									>
-										{replyTarget.author_name}: {previewCommentText(replyTarget)}
-									</a>
-									<button
-										type="button"
-										onClick={() => setReplyTarget(null)}
-										className="text-text-subtle hover:text-text shrink-0"
-										aria-label="Clear reply target"
-										data-testid="clear-reply"
-									>
-										<Trash2 className="w-3.5 h-3.5" />
-									</button>
-								</div>
-							)}
-							<div className="flex items-center justify-end gap-2">
-								<ProjectIntakeBanner
-									task={task}
-									teamId={teamId}
-									taskId={taskId}
-									comments={comments}
-								/>
-								{task.assignee_id && (
-									<label className="flex items-center gap-2 text-[13px] text-text-muted cursor-pointer select-none">
-										<input
-											type="checkbox"
-											checked={wakeAssignee}
-											onChange={(e) => setWakeAssignee(e.target.checked)}
-											className="rounded"
-											aria-label="Wake assignee on submit"
-										/>
-										<span>Wake assignee</span>
-									</label>
-								)}
-								<Button
-									type="submit"
-									size="sm"
-									disabled={
-										(!commentText.trim() && pendingAttachmentIds.length === 0) ||
-										createComment.isPending
-									}
-								>
-									{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-									Comment
-								</Button>
-							</div>
-						</div>
-					</form>
+					<CommentComposer
+						task={task}
+						teamId={teamId}
+						taskId={taskId}
+						taskProjectSlug={taskProjectSlug}
+						comments={comments}
+						createComment={createComment}
+						commentEffort={commentEffort}
+						setCommentEffort={setCommentEffort}
+						replyTarget={replyTarget}
+						setReplyTarget={setReplyTarget}
+						jumpToComment={jumpToComment}
+						commentFormRef={commentFormRef}
+						commentTextareaRef={commentTextareaRef}
+					/>
 				</div>
 			</div>
 
