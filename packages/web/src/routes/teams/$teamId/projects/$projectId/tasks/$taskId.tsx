@@ -7,17 +7,8 @@ import {
 	TaskStatus,
 } from '@hezo/shared';
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
-import {
-	ArrowDown,
-	ChevronDown,
-	CornerDownRight,
-	Loader2,
-	Plus,
-	Reply,
-	Trash2,
-} from 'lucide-react';
+import { ArrowDown, ChevronDown, Loader2 } from 'lucide-react';
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import type { Task } from '../../../../../../hooks/use-tasks';
 import { api } from '../../../../../../lib/api';
 
@@ -25,32 +16,23 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 import { AgentStatusLabel } from '../../../../../../components/agent-status-label';
 import { CommentAttachmentsDrop } from '../../../../../../components/comment-attachments-drop';
-import {
-	type CommentData,
-	CommentReactions,
-	CommentRenderer,
-	inlineEventIcon,
-	isInlineEventType,
-} from '../../../../../../components/comment-renderers';
 import { MarkdownProse } from '../../../../../../components/markdown-prose';
 import { MentionTextarea } from '../../../../../../components/mention-textarea';
 import { CommentComposer } from '../../../../../../components/task-detail/comment-composer';
+import {
+	CommentsSection,
+	jumpToComment,
+} from '../../../../../../components/task-detail/comments-section';
 import { DependenciesSection } from '../../../../../../components/task-detail/dependencies-section';
 import { SubTasksSection } from '../../../../../../components/task-detail/sub-tasks-section';
 import { TaskHeader } from '../../../../../../components/task-detail/task-header';
 import { TaskSummary } from '../../../../../../components/task-detail/task-summary';
 import { TaskStatusBadge } from '../../../../../../components/task-status-badge';
-import { Avatar, avatarColorFromString } from '../../../../../../components/ui/avatar';
 import { Button } from '../../../../../../components/ui/button';
 import { ConfirmDialog } from '../../../../../../components/ui/confirm-dialog';
 import { InfoTooltip } from '../../../../../../components/ui/info-tooltip';
 import { useAgents } from '../../../../../../hooks/use-agents';
-import {
-	type Comment,
-	useChooseOption,
-	useComments,
-	useCreateComment,
-} from '../../../../../../hooks/use-comments';
+import { type Comment, useComments, useCreateComment } from '../../../../../../hooks/use-comments';
 import { type ExecutionLock, useExecutionLock } from '../../../../../../hooks/use-execution-locks';
 import { useTask, useUpdateTask } from '../../../../../../hooks/use-tasks';
 
@@ -71,7 +53,6 @@ function TaskDetailPage() {
 	const { data: lock } = useExecutionLock(teamId, taskId);
 	const updateTask = useUpdateTask(teamId, taskId);
 	const createComment = useCreateComment(teamId, taskId);
-	const chooseOption = useChooseOption(teamId, taskId);
 	// Per-comment reasoning effort. `null` = user hasn't touched the dropdown, so
 	// leave effort unset on submit and let the server resolve the agent default.
 	const [commentEffort, setCommentEffort] = useState<AgentEffort | null>(null);
@@ -81,10 +62,7 @@ function TaskDetailPage() {
 	const [assigneeOpen, setAssigneeOpen] = useState(false);
 	const [closeOpen, setCloseOpen] = useState(false);
 	const [reopenOpen, setReopenOpen] = useState(false);
-	const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
 	const assigneeRef = useRef<HTMLDivElement>(null);
-	const virtuosoRef = useRef<VirtuosoHandle>(null);
-	const didScrollToHashRef = useRef(false);
 	// The app shell wraps the route in `<main className="flex-1 overflow-auto">`
 	// (see __root.tsx). The window never scrolls — that <main> does — so
 	// Virtuoso needs `customScrollParent` pointing at it for measurement and
@@ -95,16 +73,6 @@ function TaskDetailPage() {
 		if (typeof document === 'undefined') return;
 		setScrollParent(document.querySelector('main'));
 	}, []);
-
-	const lastResetTaskIdRef = useRef<string | null>(null);
-	useLayoutEffect(() => {
-		if (!scrollParent) return;
-		if (lastResetTaskIdRef.current === taskId) return;
-		const hash = typeof window !== 'undefined' ? window.location.hash : '';
-		const hasJumpHash = hash.startsWith('#comment-') || hash === '#setup-repo';
-		if (!hasJumpHash) scrollParent.scrollTop = 0;
-		lastResetTaskIdRef.current = taskId;
-	}, [taskId, scrollParent]);
 
 	const [atBottom, setAtBottom] = useState(false);
 	useEffect(() => {
@@ -160,79 +128,6 @@ function TaskDetailPage() {
 		return () => document.removeEventListener('pointerdown', onPointerDown);
 	}, [assigneeOpen]);
 
-	useEffect(() => {
-		if (!comments || comments.length === 0) return;
-		if (typeof window === 'undefined') return;
-
-		// Resolve the current hash (a specific comment via `#comment-<id>`, or
-		// the unresolved setup-repo action card via `#setup-repo`) to its
-		// index in the loaded comments list and tell Virtuoso to scroll there.
-		// `scrollToIndex` is computed off estimated row heights, so iterate a
-		// few times: each pass mounts more rows, grows the measured document,
-		// and the next call lands closer to the target.
-		const scrollToHash = () => {
-			const hash = window.location.hash;
-			let idx = -1;
-			let highlightId: string | null = null;
-			if (hash.startsWith('#comment-')) {
-				const targetId = hash.slice('#comment-'.length);
-				idx = comments.findIndex((c) => c.id === targetId);
-				if (idx >= 0) highlightId = targetId;
-			} else if (hash === '#setup-repo') {
-				idx = comments.findIndex((c) => {
-					if (c.content_type !== 'action') return false;
-					const content = typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
-					return content?.kind === 'setup_repo' && !c.chosen_option;
-				});
-			}
-			if (idx < 0) return [] as ReturnType<typeof setTimeout>[];
-			const out: ReturnType<typeof setTimeout>[] = [];
-			// Each tick: first ask Virtuoso to mount the target row, then read
-			// the rendered element's real position and scroll precisely to it.
-			// Virtuoso's scrollToIndex alone underscrolls when the row's height
-			// grows after mount (LazyMount in run comments, async log body),
-			// because the offset is computed from stale estimates. The extra
-			// 3000ms tick absorbs the post-fetch height jump.
-			for (const delay of [16, 200, 600, 1500, 3000]) {
-				out.push(
-					setTimeout(() => {
-						virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center' });
-						if (highlightId) {
-							const el = document.getElementById(`comment-${highlightId}`);
-							el?.scrollIntoView({ block: 'center', behavior: 'auto' });
-						}
-					}, delay),
-				);
-			}
-			if (highlightId) {
-				setHighlightedCommentId(highlightId);
-				out.push(
-					setTimeout(() => {
-						setHighlightedCommentId(null);
-					}, 2000),
-				);
-				window.history.replaceState(null, '', window.location.pathname + window.location.search);
-			}
-			if (hash === '#setup-repo') {
-				window.history.replaceState(null, '', window.location.pathname + window.location.search);
-			}
-			return out;
-		};
-
-		const initialTimers = didScrollToHashRef.current ? [] : scrollToHash();
-		didScrollToHashRef.current = true;
-
-		const allTimers: ReturnType<typeof setTimeout>[] = [...initialTimers];
-		const onHashChange = () => {
-			allTimers.push(...scrollToHash());
-		};
-		window.addEventListener('hashchange', onHashChange);
-		return () => {
-			window.removeEventListener('hashchange', onHashChange);
-			for (const t of allTimers) clearTimeout(t);
-		};
-	}, [comments]);
-
 	const assignedAgent = agents?.find((a) => a.id === task?.assignee_id);
 	const effectiveDefaultEffort: AgentEffort =
 		assignedAgent?.slug === CAPTAIN_AGENT_SLUG
@@ -252,15 +147,6 @@ function TaskDetailPage() {
 			commentFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 			commentTextareaRef.current?.focus();
 		});
-	}
-
-	function jumpToComment(commentId: string) {
-		return (e: React.MouseEvent) => {
-			e.preventDefault();
-			const target = `#comment-${commentId}`;
-			window.history.pushState(null, '', target);
-			window.dispatchEvent(new HashChangeEvent('hashchange'));
-		};
 	}
 
 	const taskProjectSlug = task.project_slug ?? projectId;
@@ -296,134 +182,14 @@ function TaskDetailPage() {
 						</span>
 					</div>
 
-					<div className="mb-4" data-testid="comments-list">
-						{scrollParent && (
-							<Virtuoso
-								ref={virtuosoRef}
-								customScrollParent={scrollParent}
-								data={comments ?? []}
-								computeItemKey={(_, c) => c.id}
-								defaultItemHeight={120}
-								increaseViewportBy={{ top: 600, bottom: 600 }}
-								itemContent={(_, c) => {
-									const commentData = c as unknown as CommentData;
-									const authorName = c.author_name ?? 'Board';
-									const isAgent = c.author_type === 'agent';
-									const content =
-										typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
-									const isPendingSetupRepo =
-										c.content_type === 'action' &&
-										content?.kind === 'setup_repo' &&
-										!c.chosen_option;
-									const isHighlighted = highlightedCommentId === c.id;
-
-									if (isInlineEventType(c.content_type)) {
-										const Icon = inlineEventIcon(commentData);
-										return (
-											<div
-												id={`comment-${c.id}`}
-												className={`flex items-start gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-accent-blue/60 transition-shadow' : ''}`}
-												data-testid="comment-item"
-												data-comment-highlighted={isHighlighted ? 'true' : undefined}
-											>
-												<div className="w-[26px] h-[26px] flex items-center justify-center shrink-0 text-text-subtle">
-													<Icon className="w-3.5 h-3.5" />
-												</div>
-												<div className="flex-1 min-w-0">
-													<CommentRenderer
-														comment={commentData}
-														onChooseOption={(commentId, chosenId) =>
-															chooseOption.mutate({ commentId, chosen_id: chosenId })
-														}
-														teamId={teamId}
-														projectId={task?.project_id ?? undefined}
-														projectSlug={taskProjectSlug}
-														taskId={taskId}
-														inline
-													/>
-												</div>
-											</div>
-										);
-									}
-
-									return (
-										<div
-											id={`comment-${c.id}`}
-											className={`flex gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-accent-blue/60 transition-shadow' : ''}`}
-											data-testid="comment-item"
-											data-comment-highlighted={isHighlighted ? 'true' : undefined}
-											{...(isPendingSetupRepo ? { 'data-setup-repo-anchor': '' } : {})}
-										>
-											<Avatar
-												initials={authorName.slice(0, 2)}
-												size="sm"
-												color={avatarColorFromString(authorName)}
-											/>
-											<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-elevated overflow-hidden">
-												<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-muted">
-													<span
-														className={`text-xs font-medium ${isAgent ? 'text-text' : 'text-text-muted'}`}
-														data-testid="comment-author"
-													>
-														{authorName}
-													</span>
-													<span className="text-[11px] text-text-subtle">
-														{new Date(c.created_at).toLocaleString()}
-													</span>
-													{c.parent_comment_id &&
-														(() => {
-															const parent = comments?.find((x) => x.id === c.parent_comment_id);
-															if (!parent) return null;
-															return (
-																<a
-																	href={`#comment-${parent.id}`}
-																	onClick={jumpToComment(parent.id)}
-																	className="ml-auto flex items-center gap-1 text-[11px] text-text-subtle hover:text-text"
-																	data-testid="replying-to"
-																>
-																	<CornerDownRight className="w-3 h-3" />
-																	replying to {parent.author_name}
-																</a>
-															);
-														})()}
-												</div>
-												<div className="px-3 py-2.5">
-													<CommentRenderer
-														comment={commentData}
-														onChooseOption={(commentId, chosenId) =>
-															chooseOption.mutate({ commentId, chosen_id: chosenId })
-														}
-														teamId={teamId}
-														projectId={task?.project_id ?? undefined}
-														projectSlug={taskProjectSlug}
-														taskId={taskId}
-													/>
-													<div className="flex items-end justify-between gap-2">
-														<div className="min-w-0 flex-1">
-															<CommentReactions
-																comment={commentData}
-																teamId={teamId}
-																taskId={taskId}
-															/>
-														</div>
-														<button
-															type="button"
-															onClick={() => startReply(c)}
-															className="mt-2 text-text-subtle hover:text-text shrink-0 p-1 -m-1"
-															aria-label="Reply to comment"
-															data-testid="comment-reply"
-														>
-															<Reply className="w-3.5 h-3.5" />
-														</button>
-													</div>
-												</div>
-											</div>
-										</div>
-									);
-								}}
-							/>
-						)}
-					</div>
+					<CommentsSection
+						task={task}
+						teamId={teamId}
+						taskId={taskId}
+						taskProjectSlug={taskProjectSlug}
+						scrollParent={scrollParent}
+						onStartReply={startReply}
+					/>
 
 					<CommentComposer
 						task={task}
