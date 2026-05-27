@@ -89,17 +89,36 @@ export function buildClaudeCodeSettings(): ClaudeCodeSettings {
 }
 
 /**
- * Node script that runs inside the Codex container as the `Stop` hook
- * command. Reads Codex's StopCommandInput JSON from stdin, asks the
- * OpenAI Chat Completions API to judge completeness, writes a
- * `{"decision":"block","reason":"..."}` payload to stdout to block the
- * stop, or exits silently to allow it. Fails open on every error path.
+ * Per-runtime parameters for the judge script that runs inside the agent
+ * container. The script body is identical across Codex and Gemini — stdin
+ * read, JSON parse, fetch, verdict extraction, fail-open — only the input
+ * field, API call, and response extraction differ.
  */
-export function buildCodexJudgeScript(): string {
+interface JudgeRuntimeSpec {
+	/** API key env var(s), checked in order; first non-empty wins. */
+	apiKeyEnvVars: string[];
+	/** Field on the parsed stdin JSON that carries the agent's final message. */
+	inputField: string;
+	/** Judge model identifier passed to the upstream API. */
+	model: string;
+	/**
+	 * JS expression (as a string) evaluating to the fetch request. Receives
+	 * `apiKey`, `JUDGE_MODEL`, `SYSTEM_PROMPT`, and `message` in scope.
+	 */
+	fetchExpr: string;
+	/**
+	 * JS expression (as a string) extracting the verdict JSON text from the
+	 * parsed response `data`.
+	 */
+	extractTextExpr: string;
+}
+
+function buildJudgeScript(spec: JudgeRuntimeSpec): string {
+	const apiKeyExpr = spec.apiKeyEnvVars.map((v) => `process.env.${v}`).join(' || ');
 	return `#!/usr/bin/env node
 const SYSTEM_PROMPT = ${JSON.stringify(STOP_HOOK_RULES)};
-const JUDGE_MODEL = ${JSON.stringify(STOP_HOOK_JUDGE_MODEL_OPENAI)};
-const apiKey = process.env.OPENAI_API_KEY;
+const JUDGE_MODEL = ${JSON.stringify(spec.model)};
+const apiKey = ${apiKeyExpr};
 
 async function readStdin() {
 	let buf = '';
@@ -108,35 +127,20 @@ async function readStdin() {
 }
 
 async function main() {
-	if (!apiKey) return; // subscription auth — fail open
+	if (!apiKey) return; // no api key — fail open
 	const raw = await readStdin();
 	if (!raw.trim()) return;
 	let input;
 	try { input = JSON.parse(raw); } catch { return; }
-	const message = input.last_assistant_message;
+	const message = input[${JSON.stringify(spec.inputField)}];
 	if (!message) return;
-
-	const body = {
-		model: JUDGE_MODEL,
-		messages: [
-			{ role: 'system', content: SYSTEM_PROMPT },
-			{ role: 'user', content: 'Agent\\'s final response:\\n' + message },
-		],
-		response_format: { type: 'json_object' },
-		temperature: 0,
-	};
 
 	let verdict;
 	try {
-		const res = await fetch('https://api.openai.com/v1/chat/completions', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-			body: JSON.stringify(body),
-			signal: AbortSignal.timeout(25_000),
-		});
+		const res = await ${spec.fetchExpr};
 		if (!res.ok) return;
 		const data = await res.json();
-		const text = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+		const text = ${spec.extractTextExpr};
 		if (!text) return;
 		verdict = JSON.parse(text);
 	} catch { return; }
@@ -151,64 +155,53 @@ main().catch(() => {});
 }
 
 /**
- * Node script that runs inside the Gemini container as the
- * `AfterAgent` hook command. Reads the AfterAgent input JSON from
- * stdin, asks the Google Generative AI API to judge completeness on
- * the agent's `prompt_response`, writes a
- * `{"decision":"block","reason":"..."}` payload to stdout to block the
- * stop, or exits silently to allow. Fails open on every error path.
+ * Node script that runs inside the Codex container as the `Stop` hook
+ * command. Reads Codex's StopCommandInput JSON from stdin and asks the
+ * OpenAI Chat Completions API to judge completeness.
+ */
+export function buildCodexJudgeScript(): string {
+	return buildJudgeScript({
+		apiKeyEnvVars: ['OPENAI_API_KEY'],
+		inputField: 'last_assistant_message',
+		model: STOP_HOOK_JUDGE_MODEL_OPENAI,
+		fetchExpr: `fetch('https://api.openai.com/v1/chat/completions', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+			body: JSON.stringify({
+				model: JUDGE_MODEL,
+				messages: [
+					{ role: 'system', content: SYSTEM_PROMPT },
+					{ role: 'user', content: "Agent's final response:\\n" + message },
+				],
+				response_format: { type: 'json_object' },
+				temperature: 0,
+			}),
+			signal: AbortSignal.timeout(25_000),
+		})`,
+		extractTextExpr: `data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content`,
+	});
+}
+
+/**
+ * Node script that runs inside the Gemini container as the `AfterAgent`
+ * hook command. Reads the AfterAgent input JSON from stdin and asks the
+ * Google Generative AI API to judge completeness on `prompt_response`.
  */
 export function buildGeminiJudgeScript(): string {
-	return `#!/usr/bin/env node
-const SYSTEM_PROMPT = ${JSON.stringify(STOP_HOOK_RULES)};
-const JUDGE_MODEL = ${JSON.stringify(STOP_HOOK_JUDGE_MODEL_GOOGLE)};
-const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
-
-async function readStdin() {
-	let buf = '';
-	for await (const chunk of process.stdin) buf += chunk;
-	return buf;
-}
-
-async function main() {
-	if (!apiKey) return; // no api-key auth — fail open
-	const raw = await readStdin();
-	if (!raw.trim()) return;
-	let input;
-	try { input = JSON.parse(raw); } catch { return; }
-	const message = input.prompt_response;
-	if (!message) return;
-
-	const body = {
-		systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-		contents: [{ role: 'user', parts: [{ text: 'Agent\\'s final response:\\n' + message }] }],
-		generationConfig: {
-			responseMimeType: 'application/json',
-			temperature: 0,
-		},
-	};
-
-	let verdict;
-	try {
-		const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(JUDGE_MODEL) + ':generateContent?key=' + encodeURIComponent(apiKey);
-		const res = await fetch(url, {
+	return buildJudgeScript({
+		apiKeyEnvVars: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
+		inputField: 'prompt_response',
+		model: STOP_HOOK_JUDGE_MODEL_GOOGLE,
+		fetchExpr: `fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(JUDGE_MODEL) + ':generateContent?key=' + encodeURIComponent(apiKey), {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(body),
+			body: JSON.stringify({
+				systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+				contents: [{ role: 'user', parts: [{ text: "Agent's final response:\\n" + message }] }],
+				generationConfig: { responseMimeType: 'application/json', temperature: 0 },
+			}),
 			signal: AbortSignal.timeout(25_000),
-		});
-		if (!res.ok) return;
-		const data = await res.json();
-		const text = data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
-		if (!text) return;
-		verdict = JSON.parse(text);
-	} catch { return; }
-
-	if (verdict && verdict.decision === 'block' && typeof verdict.reason === 'string' && verdict.reason.length > 0) {
-		process.stdout.write(JSON.stringify({ decision: 'block', reason: verdict.reason }));
-	}
-}
-
-main().catch(() => {});
-`;
+		})`,
+		extractTextExpr: `data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text`,
+	});
 }

@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { DocumentType, wsRoom } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
+import { withTransaction } from '../lib/sql';
 import type { WebSocketManager } from './ws';
 
 export interface DocumentRow {
@@ -159,40 +160,32 @@ export async function upsertDocument(
 	);
 
 	const action: 'INSERT' | 'UPDATE' = existing.rows.length === 0 ? 'INSERT' : 'UPDATE';
-	let row: DocumentRow;
 
-	await db.query('BEGIN');
-	try {
+	const row = await withTransaction(db, async () => {
 		if (existing.rows.length === 0) {
-			const insert = await insertDocument(db, input);
-			row = insert;
-		} else {
-			const prior = existing.rows[0];
-			if (prior.content !== input.content) {
-				await recordRevision(
-					db,
-					prior.id,
-					prior.content,
-					input.changeSummary ?? '',
-					input.authorMemberId,
-				);
-			}
-			const updateResult = await db.query<DocumentRow>(
-				`UPDATE documents
-				 SET content = $1,
-				     title = COALESCE($2, title),
-				     last_updated_by_member_id = $3
-				 WHERE id = $4
-				 RETURNING *`,
-				[input.content, input.title ?? null, input.authorMemberId, prior.id],
-			);
-			row = updateResult.rows[0];
+			return await insertDocument(db, input);
 		}
-		await db.query('COMMIT');
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+		const prior = existing.rows[0];
+		if (prior.content !== input.content) {
+			await recordRevision(
+				db,
+				prior.id,
+				prior.content,
+				input.changeSummary ?? '',
+				input.authorMemberId,
+			);
+		}
+		const updateResult = await db.query<DocumentRow>(
+			`UPDATE documents
+			 SET content = $1,
+			     title = COALESCE($2, title),
+			     last_updated_by_member_id = $3
+			 WHERE id = $4
+			 RETURNING *`,
+			[input.content, input.title ?? null, input.authorMemberId, prior.id],
+		);
+		return updateResult.rows[0];
+	});
 
 	broadcastRowChange(
 		wsManager,
@@ -313,9 +306,7 @@ export async function restoreRevision(
 	);
 	if (target.rows.length === 0) return null;
 
-	let row: DocumentRow;
-	await db.query('BEGIN');
-	try {
+	const row = await withTransaction(db, async () => {
 		await recordRevision(
 			db,
 			input.documentId,
@@ -331,12 +322,8 @@ export async function restoreRevision(
 			 RETURNING *`,
 			[target.rows[0].content, input.restoredByMemberId, input.documentId],
 		);
-		row = updated.rows[0];
-		await db.query('COMMIT');
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+		return updated.rows[0];
+	});
 
 	broadcastRowChange(
 		wsManager,

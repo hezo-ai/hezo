@@ -3,6 +3,7 @@ import { type Context, Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { getProjectLocator, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
+import { isUniqueViolation, withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireTeamAccess } from '../middleware/auth';
@@ -140,7 +141,7 @@ reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
 	}
 	const repoIdentifier = `${owner}/${repoName}`;
 
-	let insertedRepo: {
+	type InsertedRepo = {
 		id: string;
 		project_id: string;
 		short_name: string;
@@ -149,8 +150,7 @@ reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
 		oauth_connection_id: string | null;
 		created_at: string;
 	};
-	let becameDesignated = false;
-	let finalizeResult: Awaited<ReturnType<typeof finalizePendingRepoSetup>> = {
+	const emptyFinalize: Awaited<ReturnType<typeof finalizePendingRepoSetup>> = {
 		resolvedApprovalId: null,
 		affectedTaskIds: [],
 		deferredWakeups: [],
@@ -159,46 +159,54 @@ reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
 		systemCommentRows: [],
 	};
 
-	await db.query('BEGIN');
+	let insertedRepo: InsertedRepo;
+	let becameDesignated = false;
+	let finalizeResult = emptyFinalize;
+
 	try {
-		const lockRes = await db.query<{ id: string; designated_repo_id: string | null }>(
-			'SELECT id, designated_repo_id FROM projects WHERE id = $1 FOR UPDATE',
-			[projectId],
-		);
-		if (lockRes.rows.length === 0) throw new Error('project disappeared during insert');
-		const projectRow = lockRes.rows[0];
+		const txResult = await withTransaction(db, async () => {
+			const lockRes = await db.query<{ id: string; designated_repo_id: string | null }>(
+				'SELECT id, designated_repo_id FROM projects WHERE id = $1 FOR UPDATE',
+				[projectId],
+			);
+			if (lockRes.rows.length === 0) throw new Error('project disappeared during insert');
+			const projectRow = lockRes.rows[0];
 
-		const insertRes = await db.query<typeof insertedRepo>(
-			`INSERT INTO repos (project_id, short_name, repo_identifier, host_type, oauth_connection_id)
-			 VALUES ($1, $2, $3, 'github'::repo_host_type, $4)
-			 RETURNING id, project_id, short_name, repo_identifier, host_type, oauth_connection_id, created_at`,
-			[projectId, body.short_name.trim(), repoIdentifier, conn.id],
-		);
-		insertedRepo = insertRes.rows[0];
+			const insertRes = await db.query<InsertedRepo>(
+				`INSERT INTO repos (project_id, short_name, repo_identifier, host_type, oauth_connection_id)
+				 VALUES ($1, $2, $3, 'github'::repo_host_type, $4)
+				 RETURNING id, project_id, short_name, repo_identifier, host_type, oauth_connection_id, created_at`,
+				[projectId, body.short_name.trim(), repoIdentifier, conn.id],
+			);
+			const inserted = insertRes.rows[0];
 
-		if (!projectRow.designated_repo_id) {
-			await db.query('UPDATE projects SET designated_repo_id = $1 WHERE id = $2', [
-				insertedRepo.id,
-				projectId,
-			]);
-			becameDesignated = true;
+			let becameDesignated = false;
+			let finalize = emptyFinalize;
+			if (!projectRow.designated_repo_id) {
+				await db.query('UPDATE projects SET designated_repo_id = $1 WHERE id = $2', [
+					inserted.id,
+					projectId,
+				]);
+				becameDesignated = true;
 
-			finalizeResult = await finalizePendingRepoSetup(db, {
-				teamId,
-				projectId,
-				repoId: insertedRepo.id,
-				repoIdentifier,
-				shortName: insertedRepo.short_name,
-			});
-		}
-
-		await db.query('COMMIT');
+				finalize = await finalizePendingRepoSetup(db, {
+					teamId,
+					projectId,
+					repoId: inserted.id,
+					repoIdentifier,
+					shortName: inserted.short_name,
+				});
+			}
+			return { inserted, becameDesignated, finalize };
+		});
+		insertedRepo = txResult.inserted;
+		becameDesignated = txResult.becameDesignated;
+		finalizeResult = txResult.finalize;
 	} catch (e) {
-		await db.query('ROLLBACK');
-		const msg = e instanceof Error ? e.message : 'Failed to insert repo';
-		if (msg.includes('unique') || msg.includes('duplicate')) {
+		if (isUniqueViolation(e)) {
 			return err(c, 'SHORT_NAME_TAKEN', `short_name "${body.short_name}" already used`, 409);
 		}
+		const msg = e instanceof Error ? e.message : 'Failed to insert repo';
 		return err(c, 'REPO_INSERT_FAILED', msg, 500);
 	}
 

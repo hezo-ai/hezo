@@ -7,6 +7,7 @@ import { broadcastChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
 import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
+import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireTeamAccess } from '../middleware/auth';
@@ -244,10 +245,8 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 	// regardless of the body field.
 	const wakeAssignee = auth.type === AuthType.Board && body.wake_assignee === true;
 
-	await db.query('BEGIN');
-	let result: Awaited<ReturnType<typeof db.query<{ id: string }>>>;
-	try {
-		result = await db.query<{ id: string }>(
+	const result = await withTransaction(db, async () => {
+		const inserted = await db.query<{ id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, parent_comment_id, content_type, content)
      VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
      RETURNING *`,
@@ -261,18 +260,15 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 		);
 
 		if (attachmentIds.length > 0) {
-			const newCommentId = result.rows[0].id;
+			const newCommentId = inserted.rows[0].id;
 			await db.query(
 				`INSERT INTO comment_attachments (comment_id, asset_id)
 				 SELECT $1::uuid, asset FROM UNNEST($2::uuid[]) AS asset`,
 				[newCommentId, attachmentIds],
 			);
 		}
-		await db.query('COMMIT');
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+		return inserted;
+	});
 
 	await fireCommentWakeups({
 		db,
@@ -345,10 +341,8 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments/:commentId/choose', a
 		return err(c, 'INVALID_REQUEST', 'Can only choose on options-type comments', 400);
 	}
 
-	await db.query('BEGIN');
-	let result: Awaited<ReturnType<typeof db.query>>;
-	try {
-		result = await db.query(
+	const result = await withTransaction(db, async () => {
+		const updated = await db.query(
 			'UPDATE task_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *',
 			[JSON.stringify({ chosen_id: body.chosen_id }), commentId],
 		);
@@ -362,11 +356,8 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments/:commentId/choose', a
 				JSON.stringify({ text: `Board selected option: ${body.chosen_id}` }),
 			],
 		);
-		await db.query('COMMIT');
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+		return updated;
+	});
 
 	const task = await db.query<{ assignee_id: string | null }>(
 		'SELECT assignee_id FROM tasks WHERE id = $1',
@@ -467,10 +458,7 @@ commentsRoutes.post(
 			return err(c, 'LOCKED', 'Master key not available', 503);
 		}
 
-		await db.query('BEGIN');
-		let secretId: string;
-		let updatedComment: Record<string, unknown>;
-		try {
+		const { secretId, updatedComment } = await withTransaction(db, async () => {
 			const encryptedValue = isConfirmation ? '' : encrypt(storedValue as string, encryptionKey);
 			const category = pickSecretCategory(kind);
 
@@ -485,7 +473,7 @@ commentsRoutes.post(
 				 RETURNING id`,
 				[teamId, projectId, name, encryptedValue, category, allowedHosts],
 			);
-			secretId = upsert.rows[0].id;
+			const secretId = upsert.rows[0].id;
 
 			if (requestingAgentId) {
 				await db.query(
@@ -506,7 +494,6 @@ commentsRoutes.post(
 					commentId,
 				],
 			);
-			updatedComment = updated.rows[0] as Record<string, unknown>;
 
 			await db.query(
 				`INSERT INTO task_comments (task_id, content_type, content)
@@ -520,11 +507,11 @@ commentsRoutes.post(
 					}),
 				],
 			);
-			await db.query('COMMIT');
-		} catch (e) {
-			await db.query('ROLLBACK');
-			throw e;
-		}
+			return {
+				secretId,
+				updatedComment: updated.rows[0] as Record<string, unknown>,
+			};
+		});
 
 		if (requestingAgentId) {
 			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [

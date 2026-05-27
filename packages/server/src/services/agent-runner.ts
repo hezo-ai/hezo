@@ -25,6 +25,7 @@ import {
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
+import { withTransaction } from '../lib/sql';
 import { signAgentJwt } from '../middleware/auth';
 import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
 import {
@@ -1437,17 +1438,14 @@ export async function createHeartbeatRun(
 	broadcast: HeartbeatRunBroadcast,
 	wakeupId: string,
 ): Promise<string> {
-	await db.query('BEGIN');
-	let runId: string;
-	let statusFlippedToInProgress = false;
-	try {
+	const { runId, statusFlippedToInProgress } = await withTransaction(db, async () => {
 		const runResult = await db.query<{ id: string }>(
 			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status)
 			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status)
 			 RETURNING id`,
 			[agent.id, agent.team_id, task.id, wakeupId, HeartbeatRunStatus.Queued],
 		);
-		runId = runResult.rows[0].id;
+		const runId = runResult.rows[0].id;
 
 		await db.query(
 			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
@@ -1460,6 +1458,7 @@ export async function createHeartbeatRun(
 			],
 		);
 
+		let statusFlippedToInProgress = false;
 		if (task.assignee_id === agent.id && task.status === TaskStatus.Backlog) {
 			const updated = await db.query<{ id: string }>(
 				`UPDATE tasks
@@ -1474,11 +1473,8 @@ export async function createHeartbeatRun(
 			}
 		}
 
-		await db.query('COMMIT');
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+		return { runId, statusFlippedToInProgress };
+	});
 
 	broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Queued, 'INSERT');
 	if (broadcast.wsManager) {

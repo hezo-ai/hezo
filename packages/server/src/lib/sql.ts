@@ -1,4 +1,25 @@
+import type { PGlite } from '@electric-sql/pglite';
 import { TERMINAL_TASK_STATUSES } from '@hezo/shared';
+
+/**
+ * Run `fn` inside a BEGIN/COMMIT block. ROLLBACK on any thrown error before
+ * rethrowing. Replaces hand-rolled `BEGIN`/try/COMMIT/catch/ROLLBACK scaffolding
+ * at call sites — forgetting ROLLBACK becomes impossible.
+ *
+ * PGlite has no nested transaction support, so do not call this from inside
+ * another `withTransaction`.
+ */
+export async function withTransaction<T>(db: PGlite, fn: () => Promise<T>): Promise<T> {
+	await db.query('BEGIN');
+	try {
+		const result = await fn();
+		await db.query('COMMIT');
+		return result;
+	} catch (e) {
+		await db.query('ROLLBACK');
+		throw e;
+	}
+}
 
 export interface TerminalStatusParams {
 	placeholders: string;
@@ -39,11 +60,20 @@ export function buildUpdateSet(fields: UpdateFieldSpec[], startIdx = 1): UpdateS
 }
 
 const PG_FK_VIOLATION = '23503';
+const PG_UNIQUE_VIOLATION = '23505';
 
 export function isFkViolation(err: unknown, constraintName?: string): boolean {
 	if (!err || typeof err !== 'object') return false;
 	const e = err as { code?: unknown; constraint?: unknown };
 	if (e.code !== PG_FK_VIOLATION) return false;
+	if (constraintName && e.constraint !== constraintName) return false;
+	return true;
+}
+
+export function isUniqueViolation(err: unknown, constraintName?: string): boolean {
+	if (!err || typeof err !== 'object') return false;
+	const e = err as { code?: unknown; constraint?: unknown };
+	if (e.code !== PG_UNIQUE_VIOLATION) return false;
 	if (constraintName && e.constraint !== constraintName) return false;
 	return true;
 }

@@ -1,5 +1,6 @@
 import { AuthType, MemberType } from '@hezo/shared';
 import { Hono } from 'hono';
+import { resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
@@ -122,8 +123,12 @@ teamsRoutes.post('/teams/:teamId/project-intake/:taskId/skip-questions', async (
 	const access = await requireTeamAccess(c);
 	if (access instanceof Response) return access;
 
-	const taskId = c.req.param('taskId');
-	const comment = await postSkipQuestionsSignalForProjectIntake(c.get('db'), access.teamId, taskId);
+	const db = c.get('db');
+	const taskId = await resolveTaskId(db, access.teamId, c.req.param('taskId'));
+	if (!taskId) {
+		return err(c, 'NOT_FOUND', 'Task not found', 404);
+	}
+	const comment = await postSkipQuestionsSignalForProjectIntake(db, access.teamId, taskId);
 	if (!comment) {
 		return err(c, 'NOT_FOUND', 'No open project intake found for this task', 404);
 	}

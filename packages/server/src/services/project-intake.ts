@@ -12,7 +12,7 @@ import {
 } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
 import { recomputeDownstreamReadiness } from '../lib/dependencies';
-import { terminalStatusParams } from '../lib/sql';
+import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import { loadCaptainInternalContext } from './internal-intake';
@@ -121,27 +121,24 @@ export async function createProjectIntake(
 		initial_prd: input.initialPrd,
 	};
 
-	await db.query('BEGIN');
-	let intakeTaskId: string;
-	let intakeTaskIdentifier: string;
-	let approvalId: string;
-	let projectSlug: string;
-	try {
-		const approvalResult = await db.query<{ id: string }>(
-			`INSERT INTO approvals (team_id, type, status, payload)
+	const { intakeTaskId, intakeTaskIdentifier, approvalId, projectSlug } = await withTransaction(
+		db,
+		async () => {
+			const approvalResult = await db.query<{ id: string }>(
+				`INSERT INTO approvals (team_id, type, status, payload)
 			 VALUES ($1, $2::approval_type, $3::approval_status, $4::jsonb)
 			 RETURNING id`,
-			[teamId, ApprovalType.ProjectCreation, ApprovalStatus.Pending, JSON.stringify(payload)],
-		);
-		approvalId = approvalResult.rows[0].id;
+				[teamId, ApprovalType.ProjectCreation, ApprovalStatus.Pending, JSON.stringify(payload)],
+			);
+			const approvalId = approvalResult.rows[0].id;
 
-		const { number: taskNumber, identifier } = await allocateTaskIdentifier(
-			db,
-			ctx.internalProjectId,
-		);
+			const { number: taskNumber, identifier } = await allocateTaskIdentifier(
+				db,
+				ctx.internalProjectId,
+			);
 
-		const taskResult = await db.query<{ id: string; identifier: string; project_slug: string }>(
-			`WITH inserted AS (
+			const taskResult = await db.query<{ id: string; identifier: string; project_slug: string }>(
+				`WITH inserted AS (
 			   INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
 			                      title, description, status, priority, labels)
 			   VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb)
@@ -149,61 +146,59 @@ export async function createProjectIntake(
 			 )
 			 SELECT inserted.id, inserted.identifier, p.slug AS project_slug
 			 FROM inserted JOIN projects p ON p.id = inserted.project_id`,
-			[
-				teamId,
-				ctx.internalProjectId,
-				ctx.captainMemberId,
-				taskNumber,
-				identifier,
-				`Open new project: ${input.name}`,
-				buildTaskDescription(input, approvalId),
-				TaskStatus.InProgress,
-				TaskPriority.High,
-				JSON.stringify([PROJECT_INTAKE_LABEL]),
-			],
-		);
-		intakeTaskId = taskResult.rows[0].id;
-		intakeTaskIdentifier = taskResult.rows[0].identifier;
-		projectSlug = taskResult.rows[0].project_slug;
+				[
+					teamId,
+					ctx.internalProjectId,
+					ctx.captainMemberId,
+					taskNumber,
+					identifier,
+					`Open new project: ${input.name}`,
+					buildTaskDescription(input, approvalId),
+					TaskStatus.InProgress,
+					TaskPriority.High,
+					JSON.stringify([PROJECT_INTAKE_LABEL]),
+				],
+			);
+			const intakeTaskId = taskResult.rows[0].id;
+			const intakeTaskIdentifier = taskResult.rows[0].identifier;
+			const projectSlug = taskResult.rows[0].project_slug;
 
-		await db.query(
-			`UPDATE approvals
+			await db.query(
+				`UPDATE approvals
 			 SET payload = payload || $1::jsonb
 			 WHERE id = $2`,
-			[JSON.stringify({ intake_task_id: intakeTaskId }), approvalId],
-		);
+				[JSON.stringify({ intake_task_id: intakeTaskId }), approvalId],
+			);
 
-		await db.query(
-			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
-			[
-				intakeTaskId,
-				ctx.captainMemberId,
-				CommentContentType.Text,
-				JSON.stringify({ text: buildGreetingText(input) }),
-			],
-		);
-
-		if (input.initialPrd) {
 			await db.query(
 				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-				 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
+			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
 				[
 					intakeTaskId,
 					ctx.captainMemberId,
 					CommentContentType.Text,
-					JSON.stringify({
-						text: `**Requirements document attached to this intake:**\n\n${input.initialPrd}`,
-					}),
+					JSON.stringify({ text: buildGreetingText(input) }),
 				],
 			);
-		}
 
-		await db.query('COMMIT');
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+			if (input.initialPrd) {
+				await db.query(
+					`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+				 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
+					[
+						intakeTaskId,
+						ctx.captainMemberId,
+						CommentContentType.Text,
+						JSON.stringify({
+							text: `**Requirements document attached to this intake:**\n\n${input.initialPrd}`,
+						}),
+					],
+				);
+			}
+
+			return { intakeTaskId, intakeTaskIdentifier, approvalId, projectSlug };
+		},
+	);
 
 	if (wsManager) {
 		const taskRow = await db.query<Record<string, unknown>>('SELECT * FROM tasks WHERE id = $1', [

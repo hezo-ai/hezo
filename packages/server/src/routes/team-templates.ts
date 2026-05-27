@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
+import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 
 export const teamTemplatesRoutes = new Hono<Env>();
@@ -53,36 +54,36 @@ teamTemplatesRoutes.post('/team-templates', async (c) => {
 
 	const db = c.get('db');
 
-	await db.query('BEGIN');
+	const teamTemplate = await withTransaction(db, async () => {
+		const ctResult = await db.query(
+			`INSERT INTO team_templates (name, description, kb_docs_config, skills_config, preferences_config, mcp_servers, mpp_config)
+			 VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb)
+			 RETURNING *`,
+			[
+				body.name.trim(),
+				body.description ?? '',
+				JSON.stringify(body.kb_docs_config ?? []),
+				JSON.stringify(body.skills_config ?? []),
+				JSON.stringify(body.preferences_config ?? {}),
+				JSON.stringify(body.mcp_servers ?? []),
+				JSON.stringify(body.mpp_config ?? { enabled: false }),
+			],
+		);
 
-	const ctResult = await db.query(
-		`INSERT INTO team_templates (name, description, kb_docs_config, skills_config, preferences_config, mcp_servers, mpp_config)
-		 VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb)
-		 RETURNING *`,
-		[
-			body.name.trim(),
-			body.description ?? '',
-			JSON.stringify(body.kb_docs_config ?? []),
-			JSON.stringify(body.skills_config ?? []),
-			JSON.stringify(body.preferences_config ?? {}),
-			JSON.stringify(body.mcp_servers ?? []),
-			JSON.stringify(body.mpp_config ?? { enabled: false }),
-		],
-	);
+		const row = ctResult.rows[0] as Record<string, unknown>;
 
-	const teamTemplate = ctResult.rows[0] as Record<string, unknown>;
-
-	if (body.agent_types?.length) {
-		for (const at of body.agent_types) {
-			await db.query(
-				`INSERT INTO team_template_agent_types (team_template_id, agent_type_id, reports_to_slug, sort_order)
-				 VALUES ($1, $2, $3, $4)`,
-				[teamTemplate.id, at.agent_type_id, at.reports_to_slug ?? null, at.sort_order ?? 0],
-			);
+		if (body.agent_types?.length) {
+			for (const at of body.agent_types) {
+				await db.query(
+					`INSERT INTO team_template_agent_types (team_template_id, agent_type_id, reports_to_slug, sort_order)
+					 VALUES ($1, $2, $3, $4)`,
+					[row.id, at.agent_type_id, at.reports_to_slug ?? null, at.sort_order ?? 0],
+				);
+			}
 		}
-	}
 
-	await db.query('COMMIT');
+		return row;
+	});
 
 	const full = await getTeamTemplateWithAgentTypes(db, teamTemplate.id as string);
 	return ok(c, full, 201);
@@ -119,45 +120,43 @@ teamTemplatesRoutes.patch('/team-templates/:id', async (c) => {
 		mpp_config?: Record<string, unknown>;
 	}>();
 
-	await db.query('BEGIN');
+	await withTransaction(db, async () => {
+		const sets: string[] = [];
+		const params: unknown[] = [];
+		let idx = 1;
 
-	const sets: string[] = [];
-	const params: unknown[] = [];
-	let idx = 1;
+		const addField = (field: string, value: unknown, jsonb = false) => {
+			if (value !== undefined) {
+				sets.push(`${field} = $${idx}${jsonb ? '::jsonb' : ''}`);
+				params.push(jsonb ? JSON.stringify(value) : value);
+				idx++;
+			}
+		};
 
-	const addField = (field: string, value: unknown, jsonb = false) => {
-		if (value !== undefined) {
-			sets.push(`${field} = $${idx}${jsonb ? '::jsonb' : ''}`);
-			params.push(jsonb ? JSON.stringify(value) : value);
-			idx++;
+		addField('name', body.name?.trim());
+		addField('description', body.description);
+		addField('kb_docs_config', body.kb_docs_config, true);
+		addField('skills_config', body.skills_config, true);
+		addField('preferences_config', body.preferences_config, true);
+		addField('mcp_servers', body.mcp_servers, true);
+		addField('mpp_config', body.mpp_config, true);
+
+		if (sets.length > 0) {
+			params.push(id);
+			await db.query(`UPDATE team_templates SET ${sets.join(', ')} WHERE id = $${idx}`, params);
 		}
-	};
 
-	addField('name', body.name?.trim());
-	addField('description', body.description);
-	addField('kb_docs_config', body.kb_docs_config, true);
-	addField('skills_config', body.skills_config, true);
-	addField('preferences_config', body.preferences_config, true);
-	addField('mcp_servers', body.mcp_servers, true);
-	addField('mpp_config', body.mpp_config, true);
-
-	if (sets.length > 0) {
-		params.push(id);
-		await db.query(`UPDATE team_templates SET ${sets.join(', ')} WHERE id = $${idx}`, params);
-	}
-
-	if (body.agent_types !== undefined) {
-		await db.query('DELETE FROM team_template_agent_types WHERE team_template_id = $1', [id]);
-		for (const at of body.agent_types) {
-			await db.query(
-				`INSERT INTO team_template_agent_types (team_template_id, agent_type_id, reports_to_slug, sort_order)
-				 VALUES ($1, $2, $3, $4)`,
-				[id, at.agent_type_id, at.reports_to_slug ?? null, at.sort_order ?? 0],
-			);
+		if (body.agent_types !== undefined) {
+			await db.query('DELETE FROM team_template_agent_types WHERE team_template_id = $1', [id]);
+			for (const at of body.agent_types) {
+				await db.query(
+					`INSERT INTO team_template_agent_types (team_template_id, agent_type_id, reports_to_slug, sort_order)
+					 VALUES ($1, $2, $3, $4)`,
+					[id, at.agent_type_id, at.reports_to_slug ?? null, at.sort_order ?? 0],
+				);
+			}
 		}
-	}
-
-	await db.query('COMMIT');
+	});
 
 	const full = await getTeamTemplateWithAgentTypes(db, id);
 	return ok(c, full);

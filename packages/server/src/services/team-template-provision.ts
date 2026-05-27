@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { MemberType } from '@hezo/shared';
 import { toSlug } from '../lib/slug';
+import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { initAgentSystemPrompt } from './documents';
 import { downloadSkillContent, SkillDownloadError } from './skill-downloader';
@@ -137,8 +138,7 @@ export async function provisionTeamTemplate(
 	const skippedSlugs: string[] = [];
 	const slugToMemberId = new Map<string, string>();
 
-	await db.query('BEGIN');
-	try {
+	await withTransaction(db, async () => {
 		for (const row of dedupedRows) {
 			if (skipExistingSlugs && existingSlugs.has(row.slug)) {
 				skippedSlugs.push(row.slug);
@@ -210,12 +210,7 @@ export async function provisionTeamTemplate(
 		);
 
 		await createKbDocsFromTemplate(db, teamId, templateId);
-
-		await db.query('COMMIT');
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+	});
 
 	if (options?.dataDir) {
 		await createSkillsFromTemplate(db, teamId, templateId);

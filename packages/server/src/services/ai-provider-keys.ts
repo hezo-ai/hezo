@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { type AiAuthMethod, type AiProvider, AiProviderStatus } from '@hezo/shared';
 import { decrypt, encrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { withTransaction } from '../lib/sql';
 
 export interface AiProviderCredential {
 	value: string;
@@ -170,8 +171,7 @@ export async function setDefaultAiProvider(db: PGlite, configId: string): Promis
 
 	const provider = config.rows[0].provider;
 
-	await db.query('BEGIN');
-	try {
+	await withTransaction(db, async () => {
 		await db.query(
 			`UPDATE ai_provider_configs SET is_default = false WHERE provider = $1::ai_provider AND id <> $2`,
 			[provider, configId],
@@ -180,11 +180,7 @@ export async function setDefaultAiProvider(db: PGlite, configId: string): Promis
 			`UPDATE ai_provider_configs SET is_default = true, updated_at = now() WHERE id = $1`,
 			[configId],
 		);
-		await db.query('COMMIT');
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+	});
 
 	return true;
 }
