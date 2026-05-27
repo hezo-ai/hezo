@@ -4,7 +4,6 @@ import { resolveActorMemberId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
-import { requireTeamAccess } from '../middleware/auth';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import {
 	deleteDocument,
@@ -18,23 +17,21 @@ import {
 export const kbDocsRoutes = new Hono<Env>();
 
 kbDocsRoutes.get('/teams/:teamId/kb-docs', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const docs = await listDocuments(c.get('db'), {
 		type: DocumentType.KbDoc,
-		teamId: access.teamId,
+		teamId,
 	});
 	return ok(c, docs);
 });
 
 kbDocsRoutes.get('/teams/:teamId/kb-docs/:slug', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const doc = await getDocument(c.get('db'), {
 		type: DocumentType.KbDoc,
-		teamId: access.teamId,
+		teamId,
 		slug: c.req.param('slug'),
 	});
 	if (!doc) return err(c, 'NOT_FOUND', 'KB document not found', 404);
@@ -43,9 +40,7 @@ kbDocsRoutes.get('/teams/:teamId/kb-docs/:slug', async (c) => {
 });
 
 kbDocsRoutes.post('/teams/:teamId/kb-docs', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const auth = c.get('auth');
 	const body = await c.req.json<{ title: string; content?: string; slug?: string }>();
@@ -58,16 +53,16 @@ kbDocsRoutes.post('/teams/:teamId/kb-docs', async (c) => {
 
 	const conflict = await getDocument(db, {
 		type: DocumentType.KbDoc,
-		teamId: access.teamId,
+		teamId,
 		slug,
 	});
 	if (conflict) {
 		return err(c, 'CONFLICT', `KB document with slug '${slug}' already exists`, 409);
 	}
 
-	const authorMemberId = await resolveActorMemberId(db, auth, access.teamId);
+	const authorMemberId = await resolveActorMemberId(db, auth, teamId);
 	const doc = await upsertDocument(db, c.get('wsManager'), {
-		scope: { type: DocumentType.KbDoc, teamId: access.teamId, slug },
+		scope: { type: DocumentType.KbDoc, teamId, slug },
 		title: body.title.trim(),
 		content: body.content ?? '',
 		authorMemberId,
@@ -77,16 +72,14 @@ kbDocsRoutes.post('/teams/:teamId/kb-docs', async (c) => {
 });
 
 kbDocsRoutes.patch('/teams/:teamId/kb-docs/:slug', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const slug = c.req.param('slug');
 	const auth = c.get('auth');
 
 	const existing = await getDocument(db, {
 		type: DocumentType.KbDoc,
-		teamId: access.teamId,
+		teamId,
 		slug,
 	});
 	if (!existing) return err(c, 'NOT_FOUND', 'KB document not found', 404);
@@ -103,7 +96,7 @@ kbDocsRoutes.patch('/teams/:teamId/kb-docs/:slug', async (c) => {
 			 VALUES ($1, $2::approval_type, $3, $4::jsonb)
 			 RETURNING *`,
 			[
-				access.teamId,
+				teamId,
 				ApprovalType.KbUpdate,
 				auth.memberId,
 				JSON.stringify({
@@ -117,7 +110,7 @@ kbDocsRoutes.patch('/teams/:teamId/kb-docs/:slug', async (c) => {
 		);
 		const row = approvalResult.rows[0];
 		if (row) {
-			broadcastApprovalChange(c.get('wsManager'), access.teamId, 'INSERT', row);
+			broadcastApprovalChange(c.get('wsManager'), teamId, 'INSERT', row);
 		}
 		return c.json({ data: { pending_approval: true, slug } }, 202);
 	}
@@ -126,9 +119,9 @@ kbDocsRoutes.patch('/teams/:teamId/kb-docs/:slug', async (c) => {
 		return ok(c, existing);
 	}
 
-	const authorMemberId = await resolveActorMemberId(db, auth, access.teamId);
+	const authorMemberId = await resolveActorMemberId(db, auth, teamId);
 	const doc = await upsertDocument(db, c.get('wsManager'), {
-		scope: { type: DocumentType.KbDoc, teamId: access.teamId, slug },
+		scope: { type: DocumentType.KbDoc, teamId, slug },
 		title: body.title?.trim(),
 		content: body.content ?? existing.content,
 		changeSummary: body.change_summary,
@@ -139,12 +132,11 @@ kbDocsRoutes.patch('/teams/:teamId/kb-docs/:slug', async (c) => {
 });
 
 kbDocsRoutes.delete('/teams/:teamId/kb-docs/:slug', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const removed = await deleteDocument(c.get('db'), c.get('wsManager'), {
 		type: DocumentType.KbDoc,
-		teamId: access.teamId,
+		teamId,
 		slug: c.req.param('slug'),
 	});
 	if (!removed) return err(c, 'NOT_FOUND', 'KB document not found', 404);
@@ -153,8 +145,7 @@ kbDocsRoutes.delete('/teams/:teamId/kb-docs/:slug', async (c) => {
 });
 
 kbDocsRoutes.post('/teams/:teamId/kb-docs/:slug/restore', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const auth = c.get('auth');
 	if (auth.type === AuthType.Agent) {
@@ -170,12 +161,12 @@ kbDocsRoutes.post('/teams/:teamId/kb-docs/:slug/restore', async (c) => {
 
 	const doc = await getDocument(db, {
 		type: DocumentType.KbDoc,
-		teamId: access.teamId,
+		teamId,
 		slug,
 	});
 	if (!doc) return err(c, 'NOT_FOUND', 'KB document not found', 404);
 
-	const restoredByMemberId = await resolveActorMemberId(db, auth, access.teamId);
+	const restoredByMemberId = await resolveActorMemberId(db, auth, teamId);
 	const restored = await restoreRevision(db, c.get('wsManager'), {
 		documentId: doc.id,
 		revisionNumber: body.revision_number,
@@ -187,12 +178,11 @@ kbDocsRoutes.post('/teams/:teamId/kb-docs/:slug/restore', async (c) => {
 });
 
 kbDocsRoutes.get('/teams/:teamId/kb-docs/:slug/revisions', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const doc = await getDocument(c.get('db'), {
 		type: DocumentType.KbDoc,
-		teamId: access.teamId,
+		teamId,
 		slug: c.req.param('slug'),
 	});
 	if (!doc) return err(c, 'NOT_FOUND', 'KB document not found', 404);

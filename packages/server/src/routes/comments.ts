@@ -10,7 +10,6 @@ import { err, ok } from '../lib/response';
 import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireTeamAccess } from '../middleware/auth';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
 import {
@@ -26,11 +25,8 @@ const log = logger.child('routes');
 export const commentsRoutes = new Hono<Env>();
 
 commentsRoutes.get('/teams/:teamId/tasks/:taskId/comments', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 	const includeToolCalls = c.req.query('include_tool_calls') === 'true';
@@ -85,11 +81,8 @@ commentsRoutes.get('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 commentsRoutes.put(
 	'/teams/:teamId/tasks/:taskId/comments/:commentId/reactions/:kind',
 	async (c) => {
-		const access = await requireTeamAccess(c);
-		if (access instanceof Response) return access;
-
+		const teamId = c.get('teamId') as string;
 		const db = c.get('db');
-		const { teamId } = access;
 		const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 		const commentId = c.req.param('commentId');
@@ -119,11 +112,8 @@ commentsRoutes.put(
 commentsRoutes.delete(
 	'/teams/:teamId/tasks/:taskId/comments/:commentId/reactions/:kind',
 	async (c) => {
-		const access = await requireTeamAccess(c);
-		if (access instanceof Response) return access;
-
+		const teamId = c.get('teamId') as string;
 		const db = c.get('db');
-		const { teamId } = access;
 		const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 		const commentId = c.req.param('commentId');
@@ -158,11 +148,8 @@ commentsRoutes.delete(
 );
 
 commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 	const auth = c.get('auth');
@@ -315,11 +302,8 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 });
 
 commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments/:commentId/choose', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 	const commentId = c.req.param('commentId');
@@ -389,12 +373,9 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments/:commentId/choose', a
 commentsRoutes.post(
 	'/teams/:teamId/tasks/:taskId/comments/:commentId/fulfill-credential',
 	async (c) => {
-		const access = await requireTeamAccess(c);
-		if (access instanceof Response) return access;
-
+		const teamId = c.get('teamId') as string;
 		const db = c.get('db');
 		const masterKeyManager = c.get('masterKeyManager');
-		const { teamId } = access;
 		const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 		const commentId = c.req.param('commentId');

@@ -4,7 +4,6 @@ import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireTeamAccess } from '../middleware/auth';
 import { enqueueGoalReviewTask } from '../services/goal-tickets';
 
 const log = logger.child('routes/goals');
@@ -38,10 +37,8 @@ async function requireBoardMemberId(
 }
 
 goalsRoutes.get('/teams/:teamId/goals', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const result = await db.query(
 		`SELECT g.*,
@@ -63,10 +60,8 @@ goalsRoutes.get('/teams/:teamId/goals', async (c) => {
 });
 
 goalsRoutes.get('/teams/:teamId/goals/:goalId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const goalId = c.req.param('goalId');
 
 	const result = await db.query(
@@ -85,10 +80,8 @@ goalsRoutes.get('/teams/:teamId/goals/:goalId', async (c) => {
 });
 
 goalsRoutes.post('/teams/:teamId/goals', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const board = await requireBoardMemberId(c, teamId);
 	if (board instanceof Response) return board;
@@ -136,10 +129,8 @@ goalsRoutes.post('/teams/:teamId/goals', async (c) => {
 });
 
 goalsRoutes.patch('/teams/:teamId/goals/:goalId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const goalId = c.req.param('goalId');
 
 	const board = await requireBoardMemberId(c, teamId);
@@ -237,10 +228,8 @@ goalsRoutes.patch('/teams/:teamId/goals/:goalId', async (c) => {
 });
 
 goalsRoutes.delete('/teams/:teamId/goals/:goalId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const goalId = c.req.param('goalId');
 
 	const board = await requireBoardMemberId(c, teamId);
