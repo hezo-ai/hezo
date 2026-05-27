@@ -1,5 +1,35 @@
 import { cleanup } from '@testing-library/react';
-import { afterEach } from 'vitest';
+import * as React from 'react';
+import { afterEach, vi } from 'vitest';
+
+// happy-dom has no layout, so react-virtuoso measures zero viewport and refuses
+// to mount any items. Component-tier tests don't care about virtualization;
+// stub Virtuoso to a plain mapped list so comments / sub-tasks / KB lists
+// actually render. Tests that need the real virtualization (windowing, scroll
+// behaviour) stay in Playwright.
+vi.mock('react-virtuoso', () => {
+	type ItemRenderer = (index: number, item: unknown) => React.ReactNode;
+	interface VirtuosoProps {
+		data?: unknown[];
+		itemContent?: ItemRenderer;
+		computeItemKey?: (index: number, item: unknown) => React.Key;
+	}
+	const Virtuoso = React.forwardRef<unknown, VirtuosoProps>((props, _ref) => {
+		const { data = [], itemContent, computeItemKey } = props;
+		return React.createElement(
+			'div',
+			{ 'data-virtuoso-stub': 'true' },
+			data.map((item, i) =>
+				React.createElement(
+					React.Fragment,
+					{ key: computeItemKey?.(i, item) ?? i },
+					itemContent?.(i, item),
+				),
+			),
+		);
+	});
+	return { Virtuoso, VirtuosoGrid: Virtuoso, VirtuosoHandle: class {} };
+});
 
 // React Testing Library unmounts components after each test; without this the
 // previous test's DOM still sits in document.body and the next test's queries
