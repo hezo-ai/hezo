@@ -36,12 +36,13 @@ test('sidebar exposes only Tasks and Container for the internal project', async 
 		params: { teamId: seeded.teamSlug, projectId: 'internal' },
 	});
 
-	// Wait for the project-scoped nav to render.
-	const tasksLinks = await findAllByRole('link', { name: 'Tasks' });
-	expect(tasksLinks.length).toBeGreaterThan(0);
-
-	const containerLinks = queryAllByRole('link', { name: 'Container' });
+	// Wait for the project-scoped nav (incl. Container link, which only
+	// renders after the projects query resolves) to render.
+	const containerLinks = await findAllByRole('link', { name: 'Container' });
 	expect(containerLinks.length).toBeGreaterThan(0);
+
+	const tasksLinks = queryAllByRole('link', { name: 'Tasks' });
+	expect(tasksLinks.length).toBeGreaterThan(0);
 
 	const docsLinks = queryAllByRole('link', { name: 'Documents' });
 	expect(docsLinks.length).toBe(0);

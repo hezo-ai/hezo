@@ -1,5 +1,6 @@
 import { fireEvent, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
+import { queryClient } from '../src/lib/query-client';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
 
@@ -186,7 +187,7 @@ test('agent disable and enable lifecycle reflects in detail view', async () => {
 	let teamId = '';
 	let agentId = '';
 
-	const { findByRole, findByText, getByRole, router } = await renderApp({
+	const { findByRole, getByRole, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -211,7 +212,12 @@ test('agent disable and enable lifecycle reflects in detail view', async () => {
 		name: /Disable agent/i,
 	});
 	fireEvent.click(disableBtn);
-	await findByText('(disabled)', undefined, { timeout: 15_000 });
+	await waitFor(
+		() => {
+			expect(document.querySelector('h1')?.textContent).toMatch(/\(disabled\)/);
+		},
+		{ timeout: 8_000 },
+	);
 
 	const enableBtn = await within(getByRole('main')).findByRole('button', {
 		name: /Enable agent/i,
@@ -220,11 +226,10 @@ test('agent disable and enable lifecycle reflects in detail view', async () => {
 
 	await waitFor(
 		() => {
-			expect(within(getByRole('main')).queryByText('(disabled)')).toBeNull();
+			expect(document.querySelector('h1')?.textContent).not.toMatch(/\(disabled\)/);
 		},
-		{ timeout: 10_000 },
+		{ timeout: 8_000 },
 	);
-
 	const { apiBase, token } = getTestContext();
 	const apiDisable = await apiBase(`/api/teams/${teamId}/agents/${agentId}/disable`, {
 		method: 'POST',
@@ -232,9 +237,18 @@ test('agent disable and enable lifecycle reflects in detail view', async () => {
 	});
 	expect(apiDisable.ok).toBe(true);
 
+	// Force a refetch so the cached agent reflects the just-issued API disable
+	// (no realtime socket subscription in the component test harness).
+	queryClient.invalidateQueries({ queryKey: ['teams', teamSlug, 'agents', agentId] });
+
 	await router.navigate({
 		to: '/teams/$teamId/agents/$agentId',
 		params: { teamId: teamSlug, agentId },
 	});
-	await findByText('(disabled)', undefined, { timeout: 15_000 });
+	await waitFor(
+		() => {
+			expect(document.querySelector('h1')?.textContent).toMatch(/\(disabled\)/);
+		},
+		{ timeout: 10_000 },
+	);
 });

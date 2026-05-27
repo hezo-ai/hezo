@@ -73,3 +73,42 @@ class StubWebSocket {
 	}
 }
 (globalThis as unknown as { WebSocket: typeof StubWebSocket }).WebSocket = StubWebSocket;
+
+// happy-dom has no layout, so IntersectionObserver never fires entries.
+// LazyMount and any other intersection-driven mount stays empty under that
+// model. Stub IO so it synchronously reports the observed node as intersecting
+// — tests don't care about lazy mounting and the real behaviour is identical
+// after first paint anyway.
+class StubIntersectionObserver {
+	private cb: IntersectionObserverCallback;
+	root: Element | Document | null = null;
+	rootMargin = '';
+	thresholds: ReadonlyArray<number> = [];
+	constructor(cb: IntersectionObserverCallback) {
+		this.cb = cb;
+	}
+	observe(target: Element): void {
+		this.cb(
+			[
+				{
+					isIntersecting: true,
+					target,
+					intersectionRatio: 1,
+					boundingClientRect: target.getBoundingClientRect(),
+					intersectionRect: target.getBoundingClientRect(),
+					rootBounds: null,
+					time: 0,
+				} as IntersectionObserverEntry,
+			],
+			this as unknown as IntersectionObserver,
+		);
+	}
+	unobserve(): void {}
+	disconnect(): void {}
+	takeRecords(): IntersectionObserverEntry[] {
+		return [];
+	}
+}
+(
+	globalThis as unknown as { IntersectionObserver: typeof StubIntersectionObserver }
+).IntersectionObserver = StubIntersectionObserver;

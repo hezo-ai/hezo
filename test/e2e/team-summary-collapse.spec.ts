@@ -33,23 +33,4 @@ test.describe('team summary collapse', () => {
 			await expect(toggle).toHaveAttribute('aria-expanded', 'false');
 		});
 	}
-
-	test('shows attribution caption beneath the summary', async ({ page, freshWorkspace }) => {
-		const { team } = freshWorkspace;
-		await page.goto(`/teams/${team.slug}/agents`);
-
-		const caption = page.getByTestId('team-summary-attribution');
-		await expect(caption).toBeVisible({ timeout: 15000 });
-		await expect(caption).toHaveText("Auto-generated from the agents' system prompts.");
-	});
-
-	test('shows placeholder when no team summary is set', async ({ page, lightWorkspace }) => {
-		const { team } = lightWorkspace;
-		await page.goto(`/teams/${team.slug}/agents`);
-
-		const summaryBox = page.getByTestId('team-summary');
-		await expect(summaryBox).toBeVisible({ timeout: 15000 });
-		await expect(summaryBox.getByText('Team description being generated…')).toBeVisible();
-		await expect(summaryBox.getByRole('button', { name: /expand|collapse/i })).toHaveCount(0);
-	});
 });

@@ -1,6 +1,13 @@
 import { createTestApp } from '@hezo/server/test/helpers/app';
 import { api } from '@hezo/web/lib/api';
+import { queryClient as singletonQueryClient } from '@hezo/web/lib/query-client';
 import { ThemeProvider } from '@hezo/web/lib/theme';
+// __root.tsx re-wraps the React tree with the singleton query client, so any
+// hooks that read via useQuery actually pull from that singleton (not the one
+// renderApp creates). To stop one test's cache (ui-state, projects, …) from
+// leaking into the next, drop entries for the cache keys whose stale data
+// flips component branches between tests — the renderApp QueryClient handles
+// the rest.
 import { routeTree } from '@hezo/web/routeTree.gen';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRouter, RouterProvider } from '@tanstack/react-router';
@@ -94,6 +101,12 @@ afterEach(async () => {
 		activeQueryClient.clear();
 		activeQueryClient = null;
 	}
+	// __root.tsx wraps the tree with the singleton query client, so its cache
+	// outlives the per-test activeQueryClient created above and survives the
+	// PGlite swap that beforeEach does. Flush it between tests so the next
+	// test doesn't read a stale team / project / settings response from the
+	// previous PGlite instance.
+	singletonQueryClient.clear();
 	localStorage.clear();
 	api.clearToken();
 	if (activeContext?.db) {

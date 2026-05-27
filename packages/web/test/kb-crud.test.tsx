@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest';
+import { queryClient } from '../src/lib/query-client';
 import { getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedWorkspace } from './helpers/seed';
 
@@ -155,6 +156,9 @@ test('can delete a kb document', async () => {
 			const ws = await seedTeam();
 			seeded.teamSlug = ws.team.slug;
 			await createKbDoc(ws, { title: 'Delete Me', content: 'Will be deleted' });
+			// Prior tests in the file leave kb-docs cached in the singleton
+			// queryClient; drop it so the new team's docs are fetched fresh.
+			queryClient.removeQueries({ queryKey: ['teams', ws.team.slug, 'kb-docs'] });
 		},
 	});
 

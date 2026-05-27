@@ -1,7 +1,31 @@
 import { within } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
-import { type SeededWorkspace, seedProject, seedWorkspace } from './helpers/seed';
+import { getTestContext, renderApp } from './helpers/render';
+import {
+	type SeededProject,
+	type SeededWorkspace,
+	seedProject,
+	seedWorkspace,
+} from './helpers/seed';
+
+async function closePlanningTask(ws: SeededWorkspace, project: SeededProject): Promise<void> {
+	const { apiBase } = getTestContext();
+	const tasksRes = await apiBase(`/api/teams/${ws.team.id}/tasks?project_id=${project.id}`, {
+		headers: ws.headers,
+	});
+	const tasks = (
+		(await tasksRes.json()) as {
+			data: Array<{ id: string; labels: string[] }>;
+		}
+	).data;
+	const planning = tasks.find((t) => (t.labels ?? []).includes('planning'));
+	if (!planning) return;
+	await apiBase(`/api/teams/${ws.team.id}/tasks/${planning.id}`, {
+		method: 'PATCH',
+		headers: ws.headers,
+		body: JSON.stringify({ status: 'done' }),
+	});
+}
 
 function uniqueName(base: string): string {
 	return `${base} ${Math.random().toString(36).slice(2, 8)}`;
@@ -62,7 +86,8 @@ test('project list shows task and repo counts', async () => {
 		initialPath: '/',
 		seed: async () => {
 			ws = await seedWorkspace();
-			await seedProject(ws, { name, description: 'Count test project.' });
+			const project = await seedProject(ws, { name, description: 'Count test project.' });
+			await closePlanningTask(ws, project);
 		},
 	});
 
@@ -72,8 +97,8 @@ test('project list shows task and repo counts', async () => {
 	});
 
 	// Scope to <main> — the same project name appears in the sidebar nav.
-	const main = document.querySelector('main') as HTMLElement;
 	await findByText(name, undefined, { timeout: 15_000 });
+	const main = document.querySelector('main') as HTMLElement;
 	const card = within(main).getByRole('link', { name: new RegExp(name) });
 	expect(card.textContent).toMatch(/0 tasks/);
 	expect(card.textContent).toMatch(/0 repos/);
@@ -131,11 +156,11 @@ test('initial PRD passed at creation is persisted as project doc', async () => {
 					}),
 				});
 				const intakeJson = (await intakeRes.json()) as {
-					data?: { approval_id: string; project_slug: string };
+					data?: { approval_id: string };
 					error?: unknown;
 				};
 				if (!intakeJson.data) throw new Error(`intake failed: ${JSON.stringify(intakeJson)}`);
-				const { approval_id, project_slug } = intakeJson.data;
+				const { approval_id } = intakeJson.data;
 
 				const resolveRes = await apiBase(`/api/approvals/${approval_id}/resolve`, {
 					method: 'POST',
@@ -146,18 +171,24 @@ test('initial PRD passed at creation is persisted as project doc', async () => {
 					throw new Error(`resolve failed: ${resolveRes.status} ${await resolveRes.text()}`);
 				}
 
-				const listRes = await apiBase(`/api/teams/${ws.team.id}/projects/${project_slug}/docs`, {
+				// The intake project_slug is the Internal project (where the intake
+				// task lives). Find the actual created project by matching the name.
+				const projectsRes = await apiBase(`/api/teams/${ws.team.id}/projects`, {
 					headers: { Authorization: `Bearer ${token}` },
 				});
-				const listBody = await listRes.json();
+				const projectsJson = (await projectsRes.json()) as {
+					data: Array<{ slug: string; name: string }>;
+				};
+				const project = projectsJson.data.find((p) => p.name === name);
+				if (!project) throw new Error(`project '${name}' not found after approval`);
+				const projectSlug = project.slug;
+
 				const docRes = await apiBase(
-					`/api/teams/${ws.team.id}/projects/${project_slug}/docs/initial-prd.md`,
+					`/api/teams/${ws.team.id}/projects/${projectSlug}/docs/initial-prd.md`,
 					{ headers: { Authorization: `Bearer ${token}` } },
 				);
 				if (!docRes.ok) {
-					throw new Error(
-						`doc fetch failed: ${docRes.status} ${await docRes.text()} | list=${JSON.stringify(listBody)}`,
-					);
+					throw new Error(`doc fetch failed: ${docRes.status} ${await docRes.text()}`);
 				}
 				docBody = ((await docRes.json()) as { data: { content: string; filename: string } }).data;
 			} catch (e) {

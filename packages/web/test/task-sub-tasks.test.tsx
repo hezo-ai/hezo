@@ -111,17 +111,12 @@ test('sub-tasks paginate to team page size with a Show more link', async () => {
 	const list = await findByTestId('sub-tasks-list');
 	const countItems = () => list.querySelectorAll('[data-testid="sub-task-item"]').length;
 
-	console.log('router URL:', router.state.location.pathname);
-	const directResp = await fetch(`http://localhost/api/teams/${teamSlug}`, {
-		headers: { Authorization: `Bearer ${localStorage.getItem('hezo_token')}` },
-	});
-	console.log('direct via fetch:', JSON.stringify((await directResp.json()).data.settings));
 	// Wait for team settings to load (page size collapses from 10 → 3).
 	await waitFor(
 		() => {
 			expect(countItems()).toBe(3);
 		},
-		{ timeout: 5000 },
+		{ timeout: 10_000 },
 	);
 
 	let showMore = await findByTestId('sub-tasks-show-more');

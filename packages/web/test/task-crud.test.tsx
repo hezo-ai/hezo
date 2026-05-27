@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
@@ -39,34 +40,42 @@ test('can create a task with required assignee', async () => {
 	const titleInput = await findByLabelText('Title');
 	await user.type(titleInput, 'Test Task');
 
-	const projectSelect = container.querySelector(
-		'select:has(option[value=""])',
-	) as HTMLSelectElement;
-	// Find by content: locate the project select that has "Select project"
-	const selects = Array.from(container.querySelectorAll('select')) as HTMLSelectElement[];
-	const projectSel = selects.find((s) =>
-		Array.from(s.options).some((o) => o.text === 'Select project'),
+	// The "More" disclosure (Priority + Project) is open by default when no
+	// defaultProjectId is passed in. Wait for the React Query that fills the
+	// project select to populate. The dialog is rendered into a Radix portal
+	// (document.body), so `container.querySelector` from the test root would
+	// miss it; query document.body directly.
+	await waitFor(
+		() => {
+			const optionsText = Array.from(document.body.querySelectorAll('option')).map(
+				(o) => o.textContent,
+			);
+			expect(optionsText).toContain('Test Project');
+		},
+		{ timeout: 5000 },
 	);
+
+	// Dialog renders into a Radix portal, so all <select>s live on document.body.
+	const selects = Array.from(document.body.querySelectorAll('select')) as HTMLSelectElement[];
+	const projectSel = selects.find((s) =>
+		Array.from(s.options).some((o) => o.text === 'Test Project'),
+	)!;
 	const assigneeSel = selects.find((s) =>
 		Array.from(s.options).some((o) => o.text === 'Select assignee'),
-	);
-	expect(projectSel).toBeTruthy();
-	expect(assigneeSel).toBeTruthy();
+	)!;
 
-	const projectOption = Array.from(projectSel!.options).find((o) => o.text === 'Test Project');
-	expect(projectOption).toBeTruthy();
-	await user.selectOptions(projectSel!, projectOption!.value);
+	const projectOption = Array.from(projectSel.options).find((o) => o.text === 'Test Project')!;
+	await user.selectOptions(projectSel, projectOption.value);
 
-	const createBtn = await findByRole('button', { name: 'Create' });
-	expect(createBtn).toBeDisabled();
+	const createBtn = (await findByRole('button', { name: 'Create' })) as HTMLButtonElement;
+	expect(createBtn.disabled).toBe(true);
 
-	const assigneeOption = Array.from(assigneeSel!.options).find((o) => o.value !== '');
-	await user.selectOptions(assigneeSel!, assigneeOption!.value);
+	const assigneeOption = Array.from(assigneeSel.options).find((o) => o.value !== '')!;
+	await user.selectOptions(assigneeSel, assigneeOption.value);
 
-	expect(createBtn).not.toBeDisabled();
+	expect(createBtn.disabled).toBe(false);
 	await user.click(createBtn);
 
-	// After creation the dialog closes and the user is navigated to the task page
 	const heading = await findByRole('heading', { name: 'Test Task' });
 	expect(heading).toBeTruthy();
 });
@@ -264,8 +273,11 @@ test('task detail shows assignee with status badge', async () => {
 	const sidebar = await findByTestId('task-sidebar');
 	expect(sidebar.textContent).toContain(seeded.agentTitle);
 
-	// Status badge should be one of Idle / Running / Paused
-	await findByText(/Idle|Running|Paused/);
+	// Status badge should be one of Idle / Running / Paused. Scope the query
+	// to the assignee chip — the sidebar agent rail also surfaces "Idle" text
+	// for every agent in the team and would otherwise match first.
+	const assignee = await findByTestId('task-assignee');
+	expect(assignee.textContent ?? '').toMatch(/Idle|Running|Paused/);
 });
 
 test('can change assignee via popover dropdown', async () => {
@@ -382,15 +394,28 @@ test('Internal project restricts assignee dropdown to the Captain', async () => 
 	const titleInput = await findByLabelText('Title');
 	await user.type(titleInput, 'Internal-only assignee check');
 
-	const selects = Array.from(container.querySelectorAll('select')) as HTMLSelectElement[];
-	const projectSel = selects.find((s) =>
-		Array.from(s.options).some((o) => o.text === 'Select project'),
-	)!;
-	const internalOption = Array.from(projectSel.options).find((o) => o.text === '(Internal)');
-	expect(internalOption).toBeTruthy();
-	await user.selectOptions(projectSel, internalOption!.value);
+	// Dialog renders into a Radix portal on document.body. Wait for the
+	// project list to populate before reading options.
+	await waitFor(
+		() => {
+			const optionsText = Array.from(document.body.querySelectorAll('option')).map(
+				(o) => o.textContent,
+			);
+			expect(optionsText).toContain('(Internal)');
+		},
+		{ timeout: 5000 },
+	);
 
-	const refreshedSelects = Array.from(container.querySelectorAll('select')) as HTMLSelectElement[];
+	const selects = Array.from(document.body.querySelectorAll('select')) as HTMLSelectElement[];
+	const projectSel = selects.find((s) =>
+		Array.from(s.options).some((o) => o.text === '(Internal)'),
+	)!;
+	const internalOption = Array.from(projectSel.options).find((o) => o.text === '(Internal)')!;
+	await user.selectOptions(projectSel, internalOption.value);
+
+	const refreshedSelects = Array.from(
+		document.body.querySelectorAll('select'),
+	) as HTMLSelectElement[];
 	const assigneeSel = refreshedSelects.find((s) =>
 		Array.from(s.options).some(
 			(o) => o.text === 'Select assignee' || o.text === seeded.captainTitle,
@@ -484,7 +509,7 @@ test('project badge and metadata label both link to the project page', async () 
 
 test('sidebar shows agent status badges', async () => {
 	const seeded = { teamSlug: '' };
-	const { findByText, router } = await renderApp({
+	const { router, container } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -497,5 +522,15 @@ test('sidebar shows agent status badges', async () => {
 		params: { teamId: seeded.teamSlug, agentId: 'captain' },
 	});
 
-	await findByText('Idle');
+	// The sidebar's Team section lists each agent with an "Idle" badge once
+	// the agent runtime status finishes loading. Wait for at least one Idle
+	// to appear in the sidebar nav (the main pane also shows Idle after
+	// load, but that arrives later).
+	await waitFor(
+		() => {
+			const nav = container.querySelector('nav');
+			expect(nav?.textContent ?? '').toContain('Idle');
+		},
+		{ timeout: 5000 },
+	);
 });

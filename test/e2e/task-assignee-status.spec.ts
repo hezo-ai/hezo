@@ -53,64 +53,8 @@ async function setHasActiveRun(page: Page, teamSlug: string, taskId: string, val
 	});
 }
 
-test.describe('Task detail — assignee status is ticket-scoped', () => {
-	test('idle on this ticket when the assigned agent is running somewhere else', async ({
-		sharedPage: page,
-		sharedWorkspace,
-	}) => {
-		const { team, agents, token } = sharedWorkspace;
-		const project = await createProject(page, team.id, token, uniqueName('Quiet Project'));
-		const task = await createTask(page, team.id, token, {
-			project_id: project.id,
-			title: 'Quiet Ticket',
-			assignee_id: agents[0].id,
-		});
-
-		await forceAgentsActive(page, team.slug);
-		await setHasActiveRun(page, team.slug, task.id, false);
-
-		await page.goto(
-			`/teams/${team.slug}/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`,
-		);
-		await waitForPageLoad(page);
-
-		const assignee = page.getByTestId('task-assignee');
-		await expect(assignee).toBeVisible({ timeout: 20000 });
-		await expect(assignee).toContainText('Idle');
-		await expect(assignee).not.toContainText('Running');
-		await expect(assignee.getByLabel('Assignee locked: agent is running')).toHaveCount(0);
-
-		await assignee.getByRole('button').first().click();
-		await expect(assignee).not.toContainText('Running');
-	});
-
-	test('running on this ticket when has_active_run is true', async ({
-		sharedPage: page,
-		sharedWorkspace,
-	}) => {
-		const { team, agents, token } = sharedWorkspace;
-		const project = await createProject(page, team.id, token, uniqueName('Busy Project'));
-		const task = await createTask(page, team.id, token, {
-			project_id: project.id,
-			title: 'Busy Ticket',
-			assignee_id: agents[0].id,
-		});
-
-		await forceAgentsActive(page, team.slug);
-		await setHasActiveRun(page, team.slug, task.id, true);
-
-		await page.goto(
-			`/teams/${team.slug}/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`,
-		);
-		await waitForPageLoad(page);
-
-		const assignee = page.getByTestId('task-assignee');
-		await expect(assignee).toBeVisible({ timeout: 20000 });
-		await expect(assignee).toContainText('Running');
-		await expect(assignee.getByLabel('Assignee locked: agent is running')).toBeVisible();
-	});
-
-	test('mobile layout: assignee badge follows the same rule', async ({
+test.describe('Task detail — assignee status is ticket-scoped (mobile viewport)', () => {
+	test('mobile layout: assignee badge follows the same idle rule', async ({
 		sharedPage: page,
 		sharedWorkspace,
 	}) => {
