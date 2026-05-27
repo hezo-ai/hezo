@@ -603,7 +603,6 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/system-prompt/restore', async 
 	}
 
 	const db = c.get('db');
-	const { teamId } = access;
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
