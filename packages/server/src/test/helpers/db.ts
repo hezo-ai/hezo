@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { BASE_SCHEMA } from '../../db/schema';
@@ -25,9 +26,28 @@ export async function createTestDbWithMigrations(): Promise<PGlite> {
     );
   `);
 
-	// Load migration SQL directly from filesystem
-	const currentDir = new URL('.', import.meta.url).pathname;
-	const migrationsDir = join(currentDir, '..', '..', '..', 'migrations');
+	// Load migration SQL directly from filesystem. fileURLToPath() (not
+	// .pathname) is required because Vite rewrites import.meta.url to a
+	// virtual `/@fs/...` URL whose .pathname doesn't match the on-disk path.
+	// Even fileURLToPath rejects that virtual URL, so when the test harness is
+	// running under vitest with a vite-rewritten URL we fall back to the env
+	// override the harness sets.
+	let currentDir: string;
+	try {
+		currentDir = fileURLToPath(new URL('.', import.meta.url));
+	} catch {
+		const override = process.env.HEZO_MIGRATIONS_DIR;
+		if (!override) {
+			throw new Error(
+				'createTestDbWithMigrations: import.meta.url is not a file:// URL and HEZO_MIGRATIONS_DIR is unset. ' +
+					'Set it to the absolute path of packages/server/migrations.',
+			);
+		}
+		currentDir = '';
+	}
+	const migrationsDir = process.env.HEZO_MIGRATIONS_DIR
+		? process.env.HEZO_MIGRATIONS_DIR
+		: join(currentDir, '..', '..', '..', 'migrations');
 
 	try {
 		const files = readdirSync(migrationsDir)
