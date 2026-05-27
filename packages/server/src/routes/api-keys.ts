@@ -4,7 +4,6 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireTeamAccess } from '../middleware/auth';
 
 export const apiKeysRoutes = new Hono<Env>();
 
@@ -13,11 +12,8 @@ function hashKey(key: string): string {
 }
 
 apiKeysRoutes.get('/teams/:teamId/api-keys', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const result = await db.query(
 		`SELECT id, team_id, name, prefix, last_used_at, created_at
@@ -30,11 +26,8 @@ apiKeysRoutes.get('/teams/:teamId/api-keys', async (c) => {
 });
 
 apiKeysRoutes.post('/teams/:teamId/api-keys', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const body = await c.req.json<{ name: string }>();
 	if (!body.name?.trim()) {
@@ -64,11 +57,8 @@ apiKeysRoutes.post('/teams/:teamId/api-keys', async (c) => {
 });
 
 apiKeysRoutes.delete('/teams/:teamId/api-keys/:apiKeyId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const apiKeyId = c.req.param('apiKeyId');
 
 	const existing = await db.query('SELECT id FROM api_keys WHERE id = $1 AND team_id = $2', [
