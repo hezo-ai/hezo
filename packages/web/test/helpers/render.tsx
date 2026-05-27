@@ -143,7 +143,11 @@ export async function renderApp(options: RenderOptions) {
 	});
 
 	const history = createMemoryHistory({ initialEntries: [options.initialPath] });
-	const router = createRouter({ routeTree, history });
+	const router = createRouter({
+		routeTree,
+		history,
+		context: { queryClient: activeQueryClient },
+	});
 
 	const utils = render(
 		<QueryClientProvider client={activeQueryClient}>
