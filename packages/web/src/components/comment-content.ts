@@ -9,10 +9,12 @@ import type { CommentContentType } from '@hezo/shared';
  * them. The discriminator is `CommentData["content_type"]`.
  */
 
-export interface TextContent {
-	/** Body text. Server inserts this as the markdown body. */
-	text?: string;
-}
+/**
+ * Body text. The composer sends a plain string; the seed and some API paths
+ * wrap it as `{ text }`. The server stores whichever form it received, so the
+ * renderer must handle both.
+ */
+export type TextContent = string | { text?: string };
 
 export interface OptionsContent {
 	prompt?: string;

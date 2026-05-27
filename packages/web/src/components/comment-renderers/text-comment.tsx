@@ -10,7 +10,14 @@ interface Props {
 
 export function TextComment({ comment, teamId, projectSlug }: Props) {
 	const raw = comment.content;
-	const content = raw?.text ?? (raw ? JSON.stringify(raw) : '');
+	const content =
+		typeof raw === 'string'
+			? raw
+			: raw && typeof raw === 'object'
+				? typeof raw.text === 'string'
+					? raw.text
+					: JSON.stringify(raw)
+				: '';
 	return (
 		<>
 			<MarkdownProse testId="text-comment-body" teamId={teamId} projectSlug={projectSlug}>
