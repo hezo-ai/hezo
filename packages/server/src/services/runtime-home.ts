@@ -26,6 +26,32 @@ export const SUBSCRIPTION_LAYOUTS: Partial<Record<AiProvider, SubscriptionLayout
 		envVarName: 'GEMINI_CLI_HOME',
 		rotates: false,
 	},
+	// Claude Code-driven providers (Anthropic, DeepSeek, Z.ai) need a per-run
+	// config dir so the runner can drop a settings.json with the Stop hook the
+	// agent CLI loads via `--settings`. The envVarName is a Hezo-internal
+	// marker, not consumed by Claude Code itself; HOME is intentionally not
+	// overridden so git/ssh keep finding the container's default $HOME. The
+	// authFileRelative is a placeholder — Anthropic-family providers don't yet
+	// have a subscription-auth path wired up in Hezo, and buildSubscriptionMount
+	// short-circuits when authMethod !== Subscription anyway.
+	[AiProvider.Anthropic]: {
+		dirName: 'claude-code-anthropic',
+		authFileRelative: '.placeholder',
+		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
+		rotates: false,
+	},
+	[AiProvider.DeepSeek]: {
+		dirName: 'claude-code-deepseek',
+		authFileRelative: '.placeholder',
+		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
+		rotates: false,
+	},
+	[AiProvider.ZAi]: {
+		dirName: 'claude-code-zai',
+		authFileRelative: '.placeholder',
+		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
+		rotates: false,
+	},
 };
 
 export function getContainerSubscriptionRoot(
@@ -105,12 +131,11 @@ export interface RuntimeHomeMount {
 }
 
 /**
- * Per-provider home directory used to host MCP server config and other CLI state.
- * Returns the existing subscription mount when one is provided, otherwise creates
- * a fresh per-run directory under the project workspace using the same layout
- * conventions as subscription mounts. Returns null for providers whose runtime
- * does not need a config home (e.g. Claude Code, which takes MCP config via CLI
- * flags — both Anthropic and DeepSeek).
+ * Per-provider home directory used to host runtime CLI config (MCP server
+ * config, settings.json, etc.). Returns the existing subscription mount when
+ * one is provided, otherwise creates a fresh per-run directory under the
+ * project workspace using the same layout conventions as subscription mounts.
+ * Returns null only for providers without a SUBSCRIPTION_LAYOUTS entry.
  */
 export function ensureRuntimeHomeDir(
 	provider: AiProvider,

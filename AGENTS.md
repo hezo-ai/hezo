@@ -237,6 +237,10 @@ Every route enforces authorization — never trust URL params alone.
 - WebSocket subscriptions verify team membership matches the room.
 - MCP tool handlers enforce the same authorization as their REST equivalents — pass caller identity in and validate team access.
 
+## AI runtime hooks
+
+Every Claude Code run gets a `Stop` hook injected by the server. The hook is written to a per-run `settings.json` that the CLI loads via `--settings` — see `packages/server/src/services/mcp-injectors/claude-code.ts` (file write) and `packages/server/src/services/stop-hook-prompt.ts` (prompt + judge model). On every assistant turn-end Claude Code runs the hook as a `type: "prompt"` sub-LLM call, which blocks the stop when the agent is bailing on failing tests, calling problems "out of scope", deferring with "leave it for later", or otherwise stopping with unfinished work. The block keeps the same `claude -p` exec alive for another turn — Hezo's run-completion path (`HeartbeatRunStatus.Succeeded` on exit 0) doesn't change. The hook is always on; there is no per-team or per-agent opt-out. The judge call is billed to the team's existing primary-provider credential through the same egress path as any other Claude API call. For non-Anthropic Claude Code providers (DeepSeek, Z.ai) the hook is still emitted; if the configured judge model isn't reachable through that upstream the hook fails open and the agent stops normally — Codex and Gemini runtimes have no equivalent hook surface yet.
+
 ## Implementation phases
 
 When you complete a phase, mark it done with a completion date at the top of the phase section in `.dev/implementation-phases.md`. Keep the phase content intact. Every phase that adds backend functionality ships with UI for manual browser testing.

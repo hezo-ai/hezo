@@ -40,11 +40,10 @@ describe('claude-code adapter', () => {
 
 	it('emits --mcp-config / --strict-mcp-config CLI flags with the right shape', () => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
-			hostHomeDir: null,
-			containerHomeDir: null,
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
 		});
 
-		expect(injection.files).toEqual([]);
 		expect(injection.envEntries).toEqual([]);
 		expect(injection.cliArgs).toContain('--mcp-config');
 		expect(injection.cliArgs).toContain('--strict-mcp-config');
@@ -58,14 +57,56 @@ describe('claude-code adapter', () => {
 		expect(blob.mcpServers.hezo.headers?.Authorization).toBe(`Bearer ${TOKEN}`);
 	});
 
-	it('emits no MCP args for an empty descriptor list', () => {
-		const injection = adapter.build([], { hostHomeDir: null, containerHomeDir: null });
-		expect(injection.cliArgs).toEqual([]);
+	it('omits --mcp-config / --strict-mcp-config for an empty descriptor list but still emits --settings', () => {
+		const injection = adapter.build([], { hostHomeDir: HOME, containerHomeDir: HOME });
+		expect(injection.cliArgs).not.toContain('--mcp-config');
+		expect(injection.cliArgs).not.toContain('--strict-mcp-config');
+		expect(injection.cliArgs).toContain('--settings');
+		expect(injection.files.length).toBe(1);
 	});
 
-	it('declares no home dir is required', () => {
-		expect(adapter.capabilities.requiresHomeDir).toBe(false);
+	it('declares a home dir is required for the Stop-hook settings file', () => {
+		expect(adapter.capabilities.requiresHomeDir).toBe(true);
 		expect(adapter.capabilities.bearerTokenStorage).toBe('inline');
+	});
+
+	it('throws when no host home dir is provided', () => {
+		expect(() =>
+			adapter.build([HEZO_DESCRIPTOR], { hostHomeDir: null, containerHomeDir: null }),
+		).toThrow(/hostHomeDir/);
+	});
+
+	it('writes settings.json at <home>/settings.json with mode 0o600 and Stop hook config', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+
+		expect(injection.files.length).toBe(1);
+		const file = injection.files[0];
+		expect(file.hostPath).toBe(`${HOME}/settings.json`);
+		expect(file.mode).toBe(0o600);
+
+		const settings = JSON.parse(file.contents) as {
+			hooks: { Stop: Array<{ hooks: Array<{ type: string; model: string; prompt: string }> }> };
+		};
+		expect(settings.hooks.Stop.length).toBe(1);
+		const hookEntry = settings.hooks.Stop[0].hooks[0];
+		expect(hookEntry.type).toBe('prompt');
+		expect(hookEntry.model.length).toBeGreaterThan(0);
+		expect(hookEntry.prompt).toContain('quality gate');
+		expect(hookEntry.prompt).toContain('$ARGUMENTS');
+	});
+
+	it('passes --settings pointing at the container path for the settings file', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+
+		const settingsIndex = injection.cliArgs.indexOf('--settings');
+		expect(settingsIndex).toBeGreaterThanOrEqual(0);
+		expect(injection.cliArgs[settingsIndex + 1]).toBe(`${HOME}/settings.json`);
 	});
 });
 
