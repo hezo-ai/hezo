@@ -2,11 +2,8 @@ import {
 	AgentEffort,
 	AgentRuntimeStatus,
 	CAPTAIN_AGENT_SLUG,
-	CommentContentType,
 	DEFAULT_EFFORT,
 	INTERNAL_PROJECT_SLUG,
-	PROJECT_INTAKE_LABEL,
-	PROJECT_INTAKE_SKIP_SIGNAL_TEXT,
 	TaskStatus,
 } from '@hezo/shared';
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
@@ -14,13 +11,12 @@ import {
 	ArrowDown,
 	ChevronDown,
 	CornerDownRight,
-	FastForward,
 	Loader2,
 	Plus,
 	Reply,
 	Trash2,
 } from 'lucide-react';
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import type { Task } from '../../../../../../hooks/use-tasks';
 import { api } from '../../../../../../lib/api';
@@ -38,6 +34,7 @@ import {
 } from '../../../../../../components/comment-renderers';
 import { MarkdownProse } from '../../../../../../components/markdown-prose';
 import { MentionTextarea } from '../../../../../../components/mention-textarea';
+import { ProjectIntakeBanner } from '../../../../../../components/task-detail/project-intake-banner';
 import { TaskStatusBadge } from '../../../../../../components/task-status-badge';
 import { Avatar, avatarColorFromString } from '../../../../../../components/ui/avatar';
 import { Badge } from '../../../../../../components/ui/badge';
@@ -52,7 +49,6 @@ import {
 	useCreateComment,
 } from '../../../../../../hooks/use-comments';
 import { type ExecutionLock, useExecutionLock } from '../../../../../../hooks/use-execution-locks';
-import { useSkipProjectIntakeQuestions } from '../../../../../../hooks/use-project-intake';
 import {
 	useCreateSubTask,
 	useRemoveDependency,
@@ -114,30 +110,6 @@ function TaskDetailPage() {
 	const chooseOption = useChooseOption(teamId, taskId);
 	const createSubTask = useCreateSubTask(teamId, taskId);
 	const removeDep = useRemoveDependency(teamId, taskId);
-	const skipProjectIntake = useSkipProjectIntakeQuestions(teamId, taskId);
-	const isProjectIntake = useMemo(
-		() => (task?.labels ?? []).includes(PROJECT_INTAKE_LABEL),
-		[task?.labels],
-	);
-	const projectIntakeSkipped = useMemo(
-		() =>
-			isProjectIntake &&
-			(comments ?? []).some(
-				(c) =>
-					c.content_type === CommentContentType.System &&
-					c.author_member_id === null &&
-					(() => {
-						const content = c.content as unknown;
-						if (typeof content === 'string') return content === PROJECT_INTAKE_SKIP_SIGNAL_TEXT;
-						if (typeof content === 'object' && content !== null && 'text' in content) {
-							return (content as { text?: unknown }).text === PROJECT_INTAKE_SKIP_SIGNAL_TEXT;
-						}
-						return false;
-					})(),
-			),
-		[comments, isProjectIntake],
-	);
-	const showProjectIntakeSkip = isProjectIntake && !projectIntakeSkipped;
 	const [commentText, setCommentText] = useState('');
 	// Per-comment reasoning effort. `null` = user hasn't touched the dropdown, so
 	// leave effort unset on submit and let the server resolve the agent default.
@@ -907,24 +879,12 @@ function TaskDetailPage() {
 								</div>
 							)}
 							<div className="flex items-center justify-end gap-2">
-								{showProjectIntakeSkip && (
-									<Button
-										type="button"
-										variant="ghost"
-										size="sm"
-										onClick={() => skipProjectIntake.mutate()}
-										disabled={skipProjectIntake.isPending}
-										data-testid="project-intake-skip"
-										className="mr-auto"
-									>
-										{skipProjectIntake.isPending ? (
-											<Loader2 className="w-3 h-3 animate-spin" />
-										) : (
-											<FastForward className="w-3 h-3" />
-										)}
-										Skip questions — propose now
-									</Button>
-								)}
+								<ProjectIntakeBanner
+									task={task}
+									teamId={teamId}
+									taskId={taskId}
+									comments={comments}
+								/>
 								{task.assignee_id && (
 									<label className="flex items-center gap-2 text-[13px] text-text-muted cursor-pointer select-none">
 										<input
