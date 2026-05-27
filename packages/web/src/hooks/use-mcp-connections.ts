@@ -34,7 +34,11 @@ export function useCreateMcpConnection(teamId: string) {
 	return useMutation({
 		mutationFn: (data: CreateMcpConnectionPayload) =>
 			api.post<McpConnection>(`/api/teams/${teamId}/mcp-connections`, data),
-		onSuccess: () => {
+		onSuccess: (created) => {
+			queryClient.setQueryData<McpConnection[]>(
+				['teams', teamId, 'mcp-connections', created.project_id ?? null],
+				(prev) => (prev ? [...prev.filter((c) => c.id !== created.id), created] : [created]),
+			);
 			queryClient.invalidateQueries({
 				queryKey: ['teams', teamId, 'mcp-connections'],
 			});
@@ -45,7 +49,11 @@ export function useCreateMcpConnection(teamId: string) {
 export function useDeleteMcpConnection(teamId: string) {
 	return useMutation({
 		mutationFn: (id: string) => api.delete(`/api/teams/${teamId}/mcp-connections/${id}`),
-		onSuccess: () => {
+		onSuccess: (_, id) => {
+			queryClient.setQueriesData<McpConnection[]>(
+				{ queryKey: ['teams', teamId, 'mcp-connections'] },
+				(prev) => (prev ? prev.filter((c) => c.id !== id) : prev),
+			);
 			queryClient.invalidateQueries({
 				queryKey: ['teams', teamId, 'mcp-connections'],
 			});

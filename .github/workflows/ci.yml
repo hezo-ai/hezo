@@ -30,7 +30,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
 
-  test-unit:
+  test-backend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -39,11 +39,22 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
-      - run: bun run test --skip-e2e
+      - run: bun run test --package server
 
-  test-e2e:
+  test-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun run test --package web
+
+  test-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -59,4 +70,13 @@ jobs:
         run: bunx playwright install --with-deps chromium
       - if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: bunx playwright install-deps chromium
-      - run: bun run test --e2e
+      - run: bun run test --browser
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore

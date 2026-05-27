@@ -1,0 +1,211 @@
+import type { PGlite } from '@electric-sql/pglite';
+import type { Hono } from 'hono';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Env } from '../src/lib/types';
+import { safeClose } from './helpers';
+import { authHeader, createTestApp, createTestProject } from './helpers/app';
+
+let app: Hono<Env>;
+let db: PGlite;
+let token: string;
+let teamId: string;
+let otherTeamId: string;
+let projectSlug: string;
+let otherProjectSlug: string;
+
+beforeAll(async () => {
+	const ctx = await createTestApp();
+	app = ctx.app;
+	db = ctx.db;
+	token = ctx.token;
+
+	const makeTeam = async (name: string) => {
+		const r = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name }),
+		});
+		return (await r.json()).data.id as string;
+	};
+
+	teamId = await makeTeam('Mentions Co');
+	otherTeamId = await makeTeam('Other Mentions Co');
+
+	await app.request(`/api/teams/${teamId}/agents`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title: 'Picker Bot' }),
+	});
+
+	const projA = await createTestProject(db, teamId, {
+		name: 'Operations Hub',
+		description: 'Ops project.',
+	});
+	const projAData = (await projA.json()).data as { id: string; slug: string };
+	projectSlug = projAData.slug;
+
+	const projB = await createTestProject(db, teamId, {
+		name: 'Beta Service',
+		description: 'Beta project.',
+	});
+	const projBData = (await projB.json()).data as { id: string; slug: string };
+	otherProjectSlug = projBData.slug;
+
+	await app.request(`/api/teams/${teamId}/kb-docs`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title: 'Onboarding Guide', content: 'Hello onboarding world' }),
+	});
+
+	await app.request(`/api/teams/${teamId}/projects/${projectSlug}/docs/notes.md`, {
+		method: 'PUT',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ content: 'Some ops notes.' }),
+	});
+
+	await app.request(`/api/teams/${teamId}/projects/${otherProjectSlug}/docs/spec.md`, {
+		method: 'PUT',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ content: 'Beta service spec.' }),
+	});
+});
+
+afterAll(async () => {
+	await safeClose(db);
+});
+
+describe('POST /teams/:teamId/docs/resolve', () => {
+	it('resolves kb docs with title, size, updated_at', async () => {
+		const r = await app.request(`/api/teams/${teamId}/docs/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ kb_slugs: ['onboarding-guide.md'] }),
+		});
+		expect(r.status).toBe(200);
+		const body = await r.json();
+		expect(body.data.kb_docs).toHaveLength(1);
+		const doc = body.data.kb_docs[0];
+		expect(doc.slug).toBe('onboarding-guide.md');
+		expect(doc.title).toBe('Onboarding Guide');
+		expect(doc.size).toBe('Hello onboarding world'.length);
+		expect(typeof doc.updated_at).toBe('string');
+	});
+
+	it('resolves project docs matching project_slug + filename', async () => {
+		const r = await app.request(`/api/teams/${teamId}/docs/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_docs: [
+					{ project_slug: projectSlug, filename: 'notes.md' },
+					{ project_slug: otherProjectSlug, filename: 'spec.md' },
+				],
+			}),
+		});
+		expect(r.status).toBe(200);
+		const body = await r.json();
+		expect(body.data.project_docs).toHaveLength(2);
+		const byKey = new Map<string, { size: number }>();
+		for (const d of body.data.project_docs as Array<{
+			project_slug: string;
+			filename: string;
+			size: number;
+		}>) {
+			byKey.set(`${d.project_slug}/${d.filename}`, { size: d.size });
+		}
+		expect(byKey.get(`${projectSlug}/notes.md`)?.size).toBe('Some ops notes.'.length);
+		expect(byKey.get(`${otherProjectSlug}/spec.md`)?.size).toBe('Beta service spec.'.length);
+	});
+
+	it('does not cross team boundaries', async () => {
+		const r = await app.request(`/api/teams/${otherTeamId}/docs/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				kb_slugs: ['onboarding-guide.md'],
+				project_docs: [{ project_slug: projectSlug, filename: 'notes.md' }],
+			}),
+		});
+		expect(r.status).toBe(200);
+		const body = await r.json();
+		expect(body.data.kb_docs).toHaveLength(0);
+		expect(body.data.project_docs).toHaveLength(0);
+	});
+
+	it('rejects oversize payloads', async () => {
+		const big = Array.from({ length: 101 }, (_, i) => `slug-${i}`);
+		const r = await app.request(`/api/teams/${teamId}/docs/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ kb_slugs: big }),
+		});
+		expect(r.status).toBe(400);
+	});
+});
+
+describe('GET /teams/:teamId/mentions/search', () => {
+	it('returns agents, kb docs, and project docs when project_slug is provided', async () => {
+		const r = await app.request(
+			`/api/teams/${teamId}/mentions/search?q=&kind=all&limit=10&project_slug=${encodeURIComponent(projectSlug)}`,
+			{ headers: authHeader(token) },
+		);
+		expect(r.status).toBe(200);
+		const body = await r.json();
+		const kinds = new Set((body.data as Array<{ kind: string }>).map((row) => row.kind));
+		expect(kinds.has('agent')).toBe(true);
+		expect(kinds.has('kb')).toBe(true);
+		expect(kinds.has('doc')).toBe(true);
+	});
+
+	it('filters by query string', async () => {
+		const r = await app.request(`/api/teams/${teamId}/mentions/search?q=onboard&kind=all`, {
+			headers: authHeader(token),
+		});
+		expect(r.status).toBe(200);
+		const body = await r.json();
+		const handles = (body.data as Array<{ handle: string }>).map((row) => row.handle);
+		expect(handles).toContain('onboarding-guide.md');
+	});
+
+	it('returns bare filenames for docs in the current project', async () => {
+		const r = await app.request(
+			`/api/teams/${teamId}/mentions/search?q=notes&kind=doc&project_slug=${encodeURIComponent(projectSlug)}`,
+			{ headers: authHeader(token) },
+		);
+		expect(r.status).toBe(200);
+		const body = await r.json();
+		const rows = body.data as Array<{ handle: string; kind: string }>;
+		expect(rows.some((row) => row.handle === 'notes.md')).toBe(true);
+	});
+
+	it('does not surface docs from other projects via bare search', async () => {
+		const r = await app.request(
+			`/api/teams/${teamId}/mentions/search?q=spec&kind=doc&project_slug=${encodeURIComponent(projectSlug)}`,
+			{ headers: authHeader(token) },
+		);
+		expect(r.status).toBe(200);
+		const body = await r.json();
+		const rows = body.data as Array<{ handle: string; kind: string }>;
+		expect(rows.every((row) => row.handle !== 'spec.md')).toBe(true);
+	});
+
+	it('omits docs entirely when project_slug is absent', async () => {
+		const r = await app.request(`/api/teams/${teamId}/mentions/search?q=notes&kind=doc`, {
+			headers: authHeader(token),
+		});
+		expect(r.status).toBe(200);
+		const body = await r.json();
+		const rows = body.data as Array<{ handle: string; kind: string }>;
+		expect(rows).toHaveLength(0);
+	});
+
+	it('does not leak results across teams', async () => {
+		const r = await app.request(`/api/teams/${otherTeamId}/mentions/search?q=onboard&kind=all`, {
+			headers: authHeader(token),
+		});
+		expect(r.status).toBe(200);
+		const body = await r.json();
+		const handles = (body.data as Array<{ handle: string }>).map((row) => row.handle);
+		expect(handles).not.toContain('onboarding-guide.md');
+	});
+});

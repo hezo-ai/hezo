@@ -72,7 +72,7 @@ Repo *access* (clone, fetch, push) uses this same key over SSH (`git@github.com:
 
 ## Tests
 
-`packages/server/src/test/__tests__/`:
+`packages/server/test/`:
 - `ssh-agent-protocol.test.ts` — wire format encoding/decoding.
 - `ssh-agent-server.test.ts` — Unix and TCP listeners, identities, sign challenges, token-auth positive and negative.
 - `ssh-agent-relay.test.ts` — relay command builder validation.

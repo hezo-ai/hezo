@@ -18,6 +18,7 @@ interface LogViewerProps {
 	testId?: string;
 	compact?: boolean;
 	headerAction?: ReactNode;
+	headerActionLeading?: ReactNode;
 }
 
 export function LogViewer({
@@ -29,6 +30,7 @@ export function LogViewer({
 	testId,
 	compact = false,
 	headerAction,
+	headerActionLeading,
 }: LogViewerProps) {
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [copied, setCopied] = useState(false);
@@ -102,6 +104,7 @@ export function LogViewer({
 					<span className="text-text-subtle font-normal">{lines.length} lines</span>
 				</div>
 				<div className="flex items-center gap-2">
+					{headerActionLeading}
 					<Button
 						variant="ghost"
 						size="sm"
@@ -110,15 +113,7 @@ export function LogViewer({
 						className="text-xs h-6 px-2"
 						aria-label="Copy logs to clipboard"
 					>
-						{copied ? (
-							<>
-								<Check className="w-3 h-3" /> Copied
-							</>
-						) : (
-							<>
-								<Copy className="w-3 h-3" /> Copy
-							</>
-						)}
+						{copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
 					</Button>
 					{!compact && (
 						<>
@@ -138,6 +133,7 @@ export function LogViewer({
 							)}
 						</>
 					)}
+					{headerAction}
 					<Button
 						variant="ghost"
 						size="sm"
@@ -147,7 +143,6 @@ export function LogViewer({
 					>
 						{isExpanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
 					</Button>
-					{headerAction}
 				</div>
 			</div>
 			<div ref={attachScrollRef} data-testid={testId} className={bodyClassName}>

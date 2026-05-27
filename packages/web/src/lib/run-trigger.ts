@@ -18,7 +18,7 @@ function commentHref(run: HeartbeatRun, teamSlug: string): string | undefined {
 	const projectSlug = run.trigger_comment_project_slug;
 	const commentId = run.trigger_comment_id;
 	if (!taskIdentifier || !projectSlug || !commentId) return undefined;
-	return `/teams/${teamSlug}/projects/${projectSlug}/tasks/${taskIdentifier}#c-${commentId}`;
+	return `/teams/${teamSlug}/projects/${projectSlug}/tasks/${taskIdentifier}#comment-${commentId}`;
 }
 
 function taskHref(run: HeartbeatRun, teamSlug: string): string | undefined {

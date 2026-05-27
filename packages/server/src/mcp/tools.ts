@@ -46,7 +46,7 @@ import {
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { fireCommentWakeups } from '../services/comment-wakeups';
-import { enqueueTeamContextTaskForAllAgents } from '../services/description-tasks';
+import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
 	getDocument,
@@ -2093,15 +2093,10 @@ export function registerTools(
 			);
 			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
-			// Other agents' team_context blobs reference this agent's summary,
-			// so they need to be regenerated to pick up the new wording.
 			trackBackground(
-				enqueueTeamContextTaskForAllAgents(
-					db,
-					args.team_id as string,
-					'summary_updated',
-					args.agent_id as string,
-				).catch((e) => log.error('Failed to enqueue team_context fan-out:', e)),
+				enqueueTeamCoherenceReviewTask(db, args.team_id as string, 'summary_updated').catch((e) =>
+					log.error('Failed to enqueue team coherence review after summary update:', e),
+				),
 			);
 
 			return { updated: true };

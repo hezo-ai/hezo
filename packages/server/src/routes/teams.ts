@@ -146,6 +146,7 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 		template_id?: string;
 		project_name?: string;
 		project_description?: string;
+		initial_prd?: string;
 	}>();
 	if (!body.template_id?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'template_id is required', 400);
@@ -159,6 +160,7 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 		templateId: body.template_id.trim(),
 		projectName: body.project_name.trim(),
 		projectDescription: body.project_description,
+		initialPrd: body.initial_prd,
 		dataDir: c.get('dataDir'),
 		wsManager: c.get('wsManager'),
 		docker: c.get('docker'),

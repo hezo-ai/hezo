@@ -19,7 +19,7 @@ import {
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
-import { resolveAgentId } from '../lib/resolve';
+import { resolveActorMemberId, resolveAgentId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import { buildUpdateSet, isFkViolation, terminalStatusParams } from '../lib/sql';
@@ -32,12 +32,7 @@ import {
 	fetchAgentSystemPromptForBatch,
 	type SystemPromptMode,
 } from '../services/agent-system-prompts';
-import {
-	enqueueAgentSummaryTask,
-	enqueueAgentTeamContextTask,
-	enqueueTeamContextTaskForAllAgents,
-	enqueueTeamSummaryTask,
-} from '../services/description-tasks';
+import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
 	getDocument,
 	initAgentSystemPrompt,
@@ -45,6 +40,7 @@ import {
 	restoreRevision,
 	upsertDocument,
 } from '../services/documents';
+import { terminateHeartbeatRun } from '../services/run-termination';
 import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
 
@@ -83,6 +79,7 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 	tii.id AS trigger_comment_task_id,
 	tii.identifier AS trigger_comment_task_identifier,
 	tip.slug AS trigger_comment_project_slug,
+	hrc.id AS run_comment_id,
 	COALESCE(
 		(SELECT jsonb_agg(
 			jsonb_build_object(
@@ -103,7 +100,10 @@ const HEARTBEAT_RUN_TRIGGER_JOINS = `LEFT JOIN agent_wakeup_requests aw ON aw.id
 	LEFT JOIN task_comments tic ON tic.id = NULLIF(aw.payload->>'comment_id', '')::uuid
 	LEFT JOIN member_agents tama ON tama.id = tic.author_member_id
 	LEFT JOIN tasks tii ON tii.id = tic.task_id
-	LEFT JOIN projects tip ON tip.id = tii.project_id`;
+	LEFT JOIN projects tip ON tip.id = tii.project_id
+	LEFT JOIN task_comments hrc ON hrc.task_id = hr.task_id
+		AND hrc.content_type = 'run'
+		AND hrc.content->>'run_id' = hr.id::text`;
 
 agentsRoutes.get('/teams/:teamId/agents', async (c) => {
 	const access = await requireTeamAccess(c);
@@ -230,23 +230,8 @@ agentsRoutes.post('/teams/:teamId/agents', async (c) => {
 		);
 
 		trackBackground(
-			enqueueAgentSummaryTask(db, teamId, memberId, 'created').catch((e) =>
-				log.error('Failed to enqueue agent summary task:', e),
-			),
-		);
-		trackBackground(
-			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-				log.error('Failed to enqueue team summary task:', e),
-			),
-		);
-		trackBackground(
-			enqueueAgentTeamContextTask(db, teamId, memberId, 'initial').catch((e) =>
-				log.error('Failed to enqueue team_context task for new agent:', e),
-			),
-		);
-		trackBackground(
-			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', memberId).catch((e) =>
-				log.error('Failed to fan out team_context tasks for existing agents:', e),
+			enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
+				log.error('Failed to enqueue team coherence review after agent create:', e),
 			),
 		);
 
@@ -380,23 +365,8 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 
 		broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'INSERT', agentRow);
 		trackBackground(
-			enqueueAgentSummaryTask(db, teamId, agentRow.id as string, 'created').catch((e) =>
-				log.error('Failed to enqueue agent summary task:', e),
-			),
-		);
-		trackBackground(
-			enqueueTeamSummaryTask(db, teamId, 'agent_added').catch((e) =>
-				log.error('Failed to enqueue team summary task:', e),
-			),
-		);
-		trackBackground(
-			enqueueAgentTeamContextTask(db, teamId, agentRow.id as string, 'initial').catch((e) =>
-				log.error('Failed to enqueue team_context task for bootstrapped agent:', e),
-			),
-		);
-		trackBackground(
-			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentRow.id as string).catch(
-				(e) => log.error('Failed to fan out team_context tasks for existing agents:', e),
+			enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
+				log.error('Failed to enqueue team coherence review after onboard:', e),
 			),
 		);
 
@@ -846,31 +816,16 @@ agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
 	if (body.system_prompt !== undefined || body.role_description !== undefined) {
 		const reason = body.system_prompt !== undefined ? 'prompt_updated' : 'role_updated';
 		trackBackground(
-			enqueueAgentSummaryTask(db, teamId, agentId, reason).catch((e) =>
-				log.error('Failed to enqueue agent summary task:', e),
-			),
-		);
-		trackBackground(
-			enqueueTeamSummaryTask(db, teamId, 'prompt_updated').catch((e) =>
-				log.error('Failed to enqueue team summary task:', e),
-			),
-		);
-		trackBackground(
-			enqueueAgentTeamContextTask(db, teamId, agentId, 'prompt_updated').catch((e) =>
-				log.error('Failed to enqueue team_context task on prompt change:', e),
+			enqueueTeamCoherenceReviewTask(db, teamId, reason).catch((e) =>
+				log.error('Failed to enqueue team coherence review on prompt/role change:', e),
 			),
 		);
 	}
 
 	if (body.reports_to !== undefined && (body.reports_to ?? null) !== (priorReportsTo ?? null)) {
 		trackBackground(
-			enqueueTeamSummaryTask(db, teamId, 'reports_to_changed').catch((e) =>
-				log.error('Failed to enqueue team summary task on reports_to change:', e),
-			),
-		);
-		trackBackground(
-			enqueueTeamContextTaskForAllAgents(db, teamId, 'reports_to_changed').catch((e) =>
-				log.error('Failed to fan out team_context tasks on reports_to change:', e),
+			enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed').catch((e) =>
+				log.error('Failed to enqueue team coherence review on reports_to change:', e),
 			),
 		);
 	}
@@ -912,13 +867,8 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/disable', async (c) => {
 	});
 
 	trackBackground(
-		enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
-			log.error('Failed to enqueue team summary task:', e),
-		),
-	);
-	trackBackground(
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_removed', agentId).catch((e) =>
-			log.error('Failed to fan out team_context tasks on disable:', e),
+		enqueueTeamCoherenceReviewTask(db, teamId, 'agent_removed').catch((e) =>
+			log.error('Failed to enqueue team coherence review on disable:', e),
 		),
 	);
 
@@ -953,18 +903,8 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/enable', async (c) => {
 	});
 
 	trackBackground(
-		enqueueTeamSummaryTask(db, teamId, 'enabled_changed').catch((e) =>
-			log.error('Failed to enqueue team summary task:', e),
-		),
-	);
-	trackBackground(
-		enqueueAgentTeamContextTask(db, teamId, agentId, 'agent_added').catch((e) =>
-			log.error('Failed to enqueue team_context task for re-enabled agent:', e),
-		),
-	);
-	trackBackground(
-		enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added', agentId).catch((e) =>
-			log.error('Failed to fan out team_context tasks on enable:', e),
+		enqueueTeamCoherenceReviewTask(db, teamId, 'enabled_changed').catch((e) =>
+			log.error('Failed to enqueue team coherence review on enable:', e),
 		),
 	);
 
@@ -1056,4 +996,45 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs/:runId', async (
 
 	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Run not found', 404);
 	return ok(c, result.rows[0]);
+});
+
+agentsRoutes.post('/teams/:teamId/agents/:agentId/heartbeat-runs/:runId/terminate', async (c) => {
+	const access = await requireTeamAccess(c);
+	if (access instanceof Response) return access;
+
+	const db = c.get('db');
+	const { teamId } = access;
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	const runId = c.req.param('runId');
+
+	const existing = await db.query<{ status: string }>(
+		'SELECT status FROM heartbeat_runs WHERE id = $1 AND team_id = $2 AND member_id = $3',
+		[runId, teamId, agentId],
+	);
+	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Run not found', 404);
+	const currentStatus = existing.rows[0].status;
+	if (currentStatus !== 'queued' && currentStatus !== 'running') {
+		return err(c, 'CONFLICT', `Run is already ${currentStatus} and cannot be terminated`, 409);
+	}
+
+	const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
+	const result = await terminateHeartbeatRun(
+		{ db, wsManager: c.get('wsManager'), jobManager: c.get('jobManager') },
+		runId,
+		'Terminated by user',
+		actorMemberId,
+	);
+
+	const refreshed = await db.query<Record<string, unknown>>(
+		`SELECT ${HEARTBEAT_RUN_COLUMNS}
+		 FROM heartbeat_runs hr
+		 LEFT JOIN tasks i ON i.id = hr.task_id
+		 LEFT JOIN projects p ON p.id = i.project_id
+		 ${HEARTBEAT_RUN_TRIGGER_JOINS}
+		 WHERE hr.id = $1 AND hr.member_id = $2`,
+		[runId, agentId],
+	);
+	const row = refreshed.rows[0] ?? {};
+	return ok(c, { ...row, terminated: result.terminated });
 });

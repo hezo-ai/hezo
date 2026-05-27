@@ -11,12 +11,14 @@ import {
 	TaskPriority,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
+	WakeupSkipReason,
 	WakeupSource,
 	WakeupStatus,
 	wsRoom,
 } from '@hezo/shared';
 import { Cron } from 'cron-async';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
@@ -92,6 +94,14 @@ export interface JobManagerDeps {
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
 const WAKEUP_CRON = process.env.HEZO_WAKEUP_CRON ?? '*/5 * * * * *';
 const HEARTBEAT_CRON = process.env.HEZO_HEARTBEAT_CRON ?? '*/5 * * * * *';
+// Lower bound on how often a heartbeat can fire, regardless of an agent's
+// configured `heartbeat_interval_min`. Defends against misconfigured low/zero
+// intervals producing a tight 5-second-cron loop on the same agent.
+const HEARTBEAT_INTERVAL_FLOOR_MIN = Number(process.env.HEZO_HEARTBEAT_FLOOR_MIN ?? 5);
+// Quiet window after a run completes before that agent is eligible for another
+// heartbeat. Prevents back-to-back runs when the configured interval is shorter
+// than the run itself.
+const HEARTBEAT_POST_RUN_COOLDOWN_SEC = Number(process.env.HEZO_HEARTBEAT_COOLDOWN_SEC ?? 60);
 
 export class JobManager {
 	private cron: Cron;
@@ -202,10 +212,12 @@ export class JobManager {
 			ac.abort();
 		}, timeoutMs);
 
-		const promise = fn(ac.signal).finally(() => {
-			clearTimeout(timeoutId);
-			this.runningTasks.delete(key);
-		});
+		const promise = trackBackground(
+			fn(ac.signal).finally(() => {
+				clearTimeout(timeoutId);
+				this.runningTasks.delete(key);
+			}),
+		);
 
 		this.runningTasks.set(key, {
 			key,
@@ -484,6 +496,47 @@ export class JobManager {
 		return active.rows.length > 0;
 	}
 
+	private async findBusyTaskOnProject(projectId: string): Promise<string | null> {
+		const { db } = this.deps;
+		const active = await db.query<{ task_id: string }>(
+			`SELECT r.task_id FROM heartbeat_runs r
+			 JOIN tasks t ON t.id = r.task_id
+			 WHERE t.project_id = $1
+			   AND r.status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)
+			 ORDER BY r.created_at ASC
+			 LIMIT 1`,
+			[projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
+		);
+		return active.rows[0]?.task_id ?? null;
+	}
+
+	private async markWakeupSkipped(
+		wakeupId: string,
+		reason: WakeupSkipReason,
+		taskId: string | null,
+		teamId: string,
+		blockerTaskId: string | null,
+	): Promise<void> {
+		const { db, wsManager } = this.deps;
+		await db.query(
+			`UPDATE agent_wakeup_requests
+			 SET last_skipped_at = now(),
+			     last_skipped_reason = $2,
+			     last_skipped_blocker_task_id = $3
+			 WHERE id = $1`,
+			[wakeupId, reason, blockerTaskId],
+		);
+		if (taskId) {
+			const refreshed = await db.query<Record<string, unknown>>(
+				'SELECT * FROM tasks WHERE id = $1',
+				[taskId],
+			);
+			if (refreshed.rows[0]) {
+				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'UPDATE', refreshed.rows[0]);
+			}
+		}
+	}
+
 	private async resolveProjectForTask(taskId: string): Promise<string | null> {
 		const { db } = this.deps;
 		const r = await db.query<{ project_id: string }>('SELECT project_id FROM tasks WHERE id = $1', [
@@ -522,12 +575,27 @@ export class JobManager {
 			if (wakeupTaskId) {
 				if (await this.isTaskBusy(wakeup.payload)) {
 					log.debug(`Skipping wakeup ${wakeup.id} — target task already has an active run`);
+					await this.markWakeupSkipped(
+						wakeup.id,
+						WakeupSkipReason.TaskBusy,
+						wakeupTaskId,
+						wakeup.team_id,
+						wakeupTaskId,
+					);
 					continue;
 				}
 				const projectId = await this.resolveProjectForTask(wakeupTaskId);
 				if (projectId && (await this.isProjectBusy(projectId))) {
 					log.debug(
 						`Skipping wakeup ${wakeup.id} — project ${projectId} already has an active run`,
+					);
+					const busyTaskId = await this.findBusyTaskOnProject(projectId);
+					await this.markWakeupSkipped(
+						wakeup.id,
+						WakeupSkipReason.ProjectBusy,
+						wakeupTaskId,
+						wakeup.team_id,
+						busyTaskId,
 					);
 					continue;
 				}
@@ -536,6 +604,13 @@ export class JobManager {
 				// activateAgent, so we can't pre-check a project lock. Fall back to
 				// per-agent dedup to avoid stacking idle pings.
 				log.debug(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
+				await this.markWakeupSkipped(
+					wakeup.id,
+					WakeupSkipReason.AgentRunning,
+					null,
+					wakeup.team_id,
+					null,
+				);
 				continue;
 			}
 
@@ -553,9 +628,30 @@ export class JobManager {
 			}
 
 			await db.query(
-				'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = now() WHERE id = $2',
+				`UPDATE agent_wakeup_requests
+				 SET status = $1::wakeup_status,
+				     claimed_at = now(),
+				     last_skipped_at = NULL,
+				     last_skipped_reason = NULL,
+				     last_skipped_blocker_task_id = NULL
+				 WHERE id = $2`,
 				[WakeupStatus.Claimed, wakeup.id],
 			);
+			if (wakeupTaskId) {
+				const refreshed = await db.query<Record<string, unknown>>(
+					'SELECT * FROM tasks WHERE id = $1',
+					[wakeupTaskId],
+				);
+				if (refreshed.rows[0]) {
+					broadcastRowChange(
+						this.deps.wsManager,
+						wsRoom.team(wakeup.team_id),
+						'tasks',
+						'UPDATE',
+						refreshed.rows[0],
+					);
+				}
+			}
 
 			try {
 				await this.activateAgent(
@@ -591,9 +687,20 @@ export class JobManager {
 			 WHERE ma.admin_status = $1
 			   AND ma.runtime_status != $2
 			   AND (ma.last_heartbeat_at IS NULL
-			        OR ma.last_heartbeat_at + (ma.heartbeat_interval_min || ' minutes')::interval < now())
+			        OR ma.last_heartbeat_at + (GREATEST(ma.heartbeat_interval_min, $3::int) || ' minutes')::interval < now())
+			   AND NOT EXISTS (
+			        SELECT 1 FROM heartbeat_runs hr
+			        WHERE hr.member_id = ma.id
+			          AND hr.finished_at IS NOT NULL
+			          AND hr.finished_at > now() - ($4::int || ' seconds')::interval
+			   )
 			 LIMIT 5`,
-			[AgentAdminStatus.Enabled, AgentRuntimeStatus.Paused],
+			[
+				AgentAdminStatus.Enabled,
+				AgentRuntimeStatus.Paused,
+				HEARTBEAT_INTERVAL_FLOOR_MIN,
+				HEARTBEAT_POST_RUN_COOLDOWN_SEC,
+			],
 		);
 
 		if (dueAgents.rows.length > 0) {
@@ -978,6 +1085,7 @@ export class JobManager {
 				} finally {
 					this.activeTaskRuns.delete(lockedTaskId);
 					this.activeProjectRuns.delete(projectId);
+					void trackBackground(this.guarded('wakeups', () => this.processWakeups()));
 				}
 			},
 			timeoutMs,
@@ -1150,6 +1258,13 @@ export class JobManager {
 		teamId: string,
 	): Promise<void> {
 		const { db } = this.deps;
+		// Pick the next non-terminal task for this agent that we aren't already
+		// covering: skip the just-completed task, anything the agent has an active
+		// run on (concurrent parallel runs), and anything that already has a
+		// queued/claimed wakeup for this agent. Without this dedupe, an agent with
+		// multiple concurrent runs creates a redundant chain wakeup for each
+		// sibling — those wakeups then cycle in the busy-skip queue and starve
+		// `Automation` wakeups (Coach) targeting the same project.
 		const next = await db.query<{ id: string }>(
 			`SELECT i.id FROM tasks i
 			 WHERE i.assignee_id = $1 AND i.team_id = $2 AND i.id != $3
@@ -1159,6 +1274,17 @@ export class JobManager {
 			     JOIN tasks b ON b.id = d.blocked_by_task_id
 			     WHERE d.task_id = i.id
 			       AND b.status NOT IN ($4::task_status, $5::task_status, $6::task_status)
+			   )
+			   AND NOT EXISTS (
+			     SELECT 1 FROM heartbeat_runs hr
+			     WHERE hr.task_id = i.id AND hr.member_id = $1
+			       AND hr.status IN ($11::heartbeat_run_status, $12::heartbeat_run_status)
+			   )
+			   AND NOT EXISTS (
+			     SELECT 1 FROM agent_wakeup_requests w
+			     WHERE w.member_id = $1
+			       AND w.status IN ($13::wakeup_status, $14::wakeup_status)
+			       AND w.payload->>'task_id' = i.id::text
 			   )
 			 ORDER BY
 			   CASE i.priority WHEN $7 THEN 0 WHEN $8 THEN 1 WHEN $9 THEN 2 WHEN $10 THEN 3 END,
@@ -1173,6 +1299,10 @@ export class JobManager {
 				TaskPriority.High,
 				TaskPriority.Medium,
 				TaskPriority.Low,
+				HeartbeatRunStatus.Queued,
+				HeartbeatRunStatus.Running,
+				WakeupStatus.Queued,
+				WakeupStatus.Claimed,
 			],
 		);
 		if (next.rows.length === 0) return;

@@ -37,7 +37,7 @@ Run the onboarding ticket in this order:
    - Create the user project with the agreed name and description, and wake you on its planning ticket.
    - Open a follow-up `team-coherence-review` ticket so you can verify the augmented team's prompts and reports_to are all coherent.
    - Close the onboarding-intake ticket automatically.
-5. **Coherence review.** On the follow-up coherence ticket, walk every agent's system prompt and reports_to and reconcile anything that looks off (orphan agents, stale prompts that reference roles no longer on the team, coverage gaps). Use `update_agent_system_prompt` / `set_agent_team_context` / `set_team_summary` to fix what you can; post a single comment for anything that needs board action (re-parenting, removing an agent, etc.).
+5. **Coherence review.** On the follow-up coherence ticket, walk every agent's system prompt and reports_to and reconcile anything that looks off (orphan agents, stale prompts that reference roles no longer on the team, coverage gaps). Use `update_agent_system_prompt` / `set_agent_team_context` / `set_team_summary` to fix what you can, then post a single summary comment on the ticket — what you audited, what you changed, and any items still needing board action (re-parenting, removing an agent, etc.). Always post the closing comment, even when nothing material needed updating.
 
 ## Hiring individual specialists later
 

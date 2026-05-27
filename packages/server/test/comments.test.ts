@@ -1,0 +1,344 @@
+import type { PGlite } from '@electric-sql/pglite';
+import type { Hono } from 'hono';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Env } from '../src/lib/types';
+import { safeClose } from './helpers';
+import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+
+let app: Hono<Env>;
+let db: PGlite;
+let token: string;
+let masterKeyManager: MasterKeyManager;
+let teamId: string;
+let projectId: string;
+let taskId: string;
+let agentId: string;
+let agentSlug: string;
+
+beforeAll(async () => {
+	const ctx = await createTestApp();
+	app = ctx.app;
+	db = ctx.db;
+	token = ctx.token;
+	masterKeyManager = ctx.masterKeyManager;
+
+	const teamRes = await app.request('/api/teams', {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name: 'Comment Co' }),
+	});
+	teamId = (await teamRes.json()).data.id;
+
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Main',
+		description: 'Test project.',
+	});
+	projectId = (await projectRes.json()).data.id;
+
+	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title: 'Comment Bot' }),
+	});
+	const agent = (await agentRes.json()).data;
+	agentId = agent.id;
+	agentSlug = agent.slug;
+
+	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ project_id: projectId, title: 'Test Task', assignee_id: agentId }),
+	});
+	taskId = (await taskRes.json()).data.id;
+});
+
+afterAll(async () => {
+	await safeClose(db);
+});
+
+describe('comments CRUD', () => {
+	it('creates a text comment', async () => {
+		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: 'Hello world' },
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.content_type).toBe('text');
+		expect(body.data.content.text).toBe('Hello world');
+	});
+
+	it('lists comments in order', async () => {
+		// Add another comment
+		await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: 'Second comment' },
+			}),
+		});
+
+		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.length).toBeGreaterThanOrEqual(2);
+		// Ordered by created_at ASC
+		expect(body.data[0].content.text).toBe('Hello world');
+	});
+
+	it('labels board-authored comments as "Board" and agent-authored as the agent title', async () => {
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: 'From the agent' },
+			}),
+		});
+
+		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		const agentComment = body.data.find(
+			(c: { content: { text?: string } }) => c.content.text === 'From the agent',
+		);
+		const boardComment = body.data.find(
+			(c: { content: { text?: string } }) => c.content.text === 'Hello world',
+		);
+		expect(agentComment.author_name).toBe('Comment Bot');
+		expect(boardComment.author_name).toBe('Board');
+	});
+
+	it('creates an options comment and chooses an option', async () => {
+		const createRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'options',
+				content: {
+					prompt: 'Which approach?',
+					options: [
+						{ id: 'a', label: 'Option A' },
+						{ id: 'b', label: 'Option B' },
+					],
+				},
+			}),
+		});
+		expect(createRes.status).toBe(201);
+		const comment = (await createRes.json()).data;
+
+		const chooseRes = await app.request(
+			`/api/teams/${teamId}/tasks/${taskId}/comments/${comment.id}/choose`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ chosen_id: 'a' }),
+			},
+		);
+		expect(chooseRes.status).toBe(200);
+		const chosenBody = await chooseRes.json();
+		expect(chosenBody.data.chosen_option.chosen_id).toBe('a');
+	});
+});
+
+describe('comment @mention wakeups', () => {
+	it('creates a mention wakeup when comment contains @agent-slug', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
+
+		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: `@${agentSlug} take a look at this` },
+			}),
+		});
+		expect(res.status).toBe(201);
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		const wakeups = await db.query(
+			"SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'",
+			[agentId],
+		);
+		expect(wakeups.rows.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('creates option_chosen wakeup when choosing option on task assigned to agent', async () => {
+		// Create a new task assigned to the agent
+		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Agent Assigned Task',
+				assignee_id: agentId,
+			}),
+		});
+		const assignedTaskId = (await taskRes.json()).data.id;
+
+		// Create an options comment
+		const commentRes = await app.request(`/api/teams/${teamId}/tasks/${assignedTaskId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'options',
+				content: {
+					prompt: 'Which?',
+					options: [
+						{ id: 'x', label: 'X' },
+						{ id: 'y', label: 'Y' },
+					],
+				},
+			}),
+		});
+		const optionsCommentId = (await commentRes.json()).data.id;
+
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
+
+		// Choose an option
+		await app.request(
+			`/api/teams/${teamId}/tasks/${assignedTaskId}/comments/${optionsCommentId}/choose`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ chosen_id: 'x' }),
+			},
+		);
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		const wakeups = await db.query(
+			"SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'option_chosen'",
+			[agentId],
+		);
+		expect(wakeups.rows.length).toBeGreaterThanOrEqual(1);
+	});
+});
+
+describe('comment wakeups on assigned tasks', () => {
+	let assignedTaskId: string;
+
+	beforeAll(async () => {
+		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Agent Assigned for Comment Test',
+				assignee_id: agentId,
+			}),
+		});
+		assignedTaskId = (await taskRes.json()).data.id;
+		// Wait for the fire-and-forget assignment wakeup to be committed
+		await new Promise((r) => setTimeout(r, 100));
+	});
+
+	it('does not wake the assignee when a plain board comment is posted', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
+
+		const res = await app.request(`/api/teams/${teamId}/tasks/${assignedTaskId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: 'Please prioritize this' },
+			}),
+		});
+		expect(res.status).toBe(201);
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		const wakeups = await db.query(
+			'SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND team_id = $2',
+			[agentId, teamId],
+		);
+		expect(wakeups.rows.length).toBe(0);
+	});
+
+	it('wakes the assigned agent only on a mention-bearing comment (mention source, no comment source)', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
+
+		const res = await app.request(`/api/teams/${teamId}/tasks/${assignedTaskId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: `@${agentSlug} please check this` },
+			}),
+		});
+		expect(res.status).toBe(201);
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		const mentionWakeups = await db.query(
+			"SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'",
+			[agentId],
+		);
+		expect(mentionWakeups.rows.length).toBe(1);
+
+		const commentWakeups = await db.query(
+			"SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'comment'",
+			[agentId],
+		);
+		expect(commentWakeups.rows.length).toBe(0);
+	});
+
+	it('propagates a per-comment effort override onto the mention wakeup payload', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
+
+		const res = await app.request(`/api/teams/${teamId}/tasks/${assignedTaskId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: `@${agentSlug} please think harder about this.` },
+				effort: 'max',
+			}),
+		});
+		expect(res.status).toBe(201);
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		const wakeups = await db.query<{ payload: Record<string, unknown> }>(
+			"SELECT payload FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'",
+			[agentId],
+		);
+		expect(wakeups.rows.length).toBe(1);
+		expect(wakeups.rows[0].payload.effort).toBe('max');
+	});
+
+	it('silently ignores an invalid effort value (does not block commenting)', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
+
+		const res = await app.request(`/api/teams/${teamId}/tasks/${assignedTaskId}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: `@${agentSlug} typical effort` },
+				effort: 'not-a-real-level',
+			}),
+		});
+		expect(res.status).toBe(201);
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		const wakeups = await db.query<{ payload: Record<string, unknown> }>(
+			"SELECT payload FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'",
+			[agentId],
+		);
+		expect(wakeups.rows.length).toBe(1);
+		expect(wakeups.rows[0].payload.effort).toBeUndefined();
+	});
+});

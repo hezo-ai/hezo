@@ -7,13 +7,22 @@
 	],
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.10",
-		"@playwright/test": "^1",
 		"@commitlint/cli": "^20.5.0",
 		"@commitlint/config-conventional": "^20.5.0",
+		"@electric-sql/pglite": "^0.4.6",
+		"@playwright/test": "^1",
+		"@tanstack/react-query": "^5",
+		"@tanstack/react-router": "^1",
+		"@testing-library/react": "^16.3.2",
+		"@testing-library/user-event": "^14.6.1",
+		"@vitejs/plugin-react": "^6.0.2",
 		"commander": "^14.0.3",
+		"happy-dom": "^20.9.0",
+		"hono": "^4.12.23",
 		"husky": "^9.1.7",
 		"turbo": "^2",
-		"typescript": "^5"
+		"typescript": "^5",
+		"vitest": "^3"
 	},
 	"scripts": {
 		"build": "bun run scripts/build.ts",
@@ -24,5 +33,12 @@
 		"test": "bun run scripts/test.ts",
 		"typecheck": "turbo typecheck",
 		"prepare": "husky"
+	},
+	"patchedDependencies": {
+		"http-mitm-proxy@1.1.0": "patches/http-mitm-proxy@1.1.0.patch"
+	},
+	"overrides": {
+		"react": "19.2.6",
+		"react-dom": "19.2.6"
 	}
 }

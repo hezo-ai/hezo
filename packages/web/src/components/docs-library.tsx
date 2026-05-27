@@ -1,5 +1,5 @@
 import { ArrowLeft, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { MarkdownProse } from './markdown-prose';
 import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
@@ -22,6 +22,8 @@ interface DocsLibraryProps {
 
 	docContent: string | null | undefined;
 	isLoadingDoc?: boolean;
+	/** Heading shown for the loaded doc; falls back to the items entry or selectedKey. */
+	docTitle?: ReactNode;
 
 	onSave: (content: string) => Promise<void> | void;
 	isSaving?: boolean;
@@ -47,6 +49,7 @@ export function DocsLibrary({
 	onSelect,
 	docContent,
 	isLoadingDoc,
+	docTitle,
 	onSave,
 	isSaving,
 	onDelete,
@@ -63,6 +66,7 @@ export function DocsLibrary({
 	const [modeKey, setModeKey] = useState<string | null>(selectedKey);
 	const [draft, setDraft] = useState('');
 	const [deleteOpen, setDeleteOpen] = useState(false);
+	const prevModeRef = useRef<'view' | 'edit'>('view');
 
 	if (modeKey !== selectedKey) {
 		setModeKey(selectedKey);
@@ -70,9 +74,10 @@ export function DocsLibrary({
 	}
 
 	useEffect(() => {
-		if (mode === 'edit' && docContent != null) {
-			setDraft(docContent);
+		if (mode === 'edit' && prevModeRef.current !== 'edit') {
+			setDraft(docContent ?? '');
 		}
+		prevModeRef.current = mode;
 	}, [mode, docContent]);
 
 	const showNewForm = isCreating && !!newForm;
@@ -166,7 +171,7 @@ export function DocsLibrary({
 					<div className="flex flex-col">
 						<div className="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-border-subtle">
 							<h2 className="text-base font-semibold text-text truncate">
-								{selectedItem?.label ?? selectedKey}
+								{docTitle ?? selectedItem?.label ?? selectedKey}
 							</h2>
 							<div className="flex items-center gap-2 shrink-0">
 								{mode === 'view' ? (

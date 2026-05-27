@@ -715,11 +715,12 @@ Backend:
 - Summaries copied to agents and team during provisioning
 - `set_agent_summary` MCP tool — any agent or board member in the team can set an agent's summary
 - `set_team_summary` MCP tool — Captain agent only, sets the team team summary
-- `description-update` label convention: task created in Internal project, assigned to the Captain, triggers regeneration
+- `set_agent_team_context` MCP tool — Captain only, sets an agent's per-agent team-relationships blob injected into its system prompt
+- `team-coherence-review` label convention: a single task created in Internal project per roster/prompt/summary change, assigned to the Captain. Covers org-chart audit plus all three descriptive-blob rewrites.
 
 **How to test:**
 - Create a team from built-in template — agents have pre-baked summaries, team has team summary
-- Captain processes a `description-update` task — calls MCP tools to update summaries
+- Captain processes a `team-coherence-review` task — audits the org chart and calls all three MCP tools to refresh summaries and per-agent team contexts
 - Non-Captain agent cannot call `set_team_summary` (rejected)
 - `bun run test --skip-e2e` passes
 
@@ -754,7 +755,7 @@ Frontend:
 - `useGithubOrgs` / `useGithubRepos` hooks
 
 Tests:
-- Local GitHub simulator in `packages/server/src/test/helpers/github-sim.ts` — Hono app on port 0 implementing the subset of GitHub API we call plus Connect's token-exchange endpoint
+- Local GitHub simulator in `packages/server/test/helpers/github-sim.ts` — Hono app on port 0 implementing the subset of GitHub API we call plus Connect's token-exchange endpoint
 - Integration: gate behavior (approval + comment + deferred wakeup, no execution lock); concurrent runs share one approval; immutability on delete; `mode=create` owner check; first-repo auto-designation race; `finalizePendingRepoSetup` idempotency; OAuth callback SSH-key idempotency; authorization on all new endpoints
 - E2E: full wizard flow end-to-end against the simulator, both `Create new` and `Select existing`, plus the disabled-delete path
 

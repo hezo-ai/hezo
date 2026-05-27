@@ -13,8 +13,8 @@ const program = new Command()
 	.option('--concurrency <n>', 'Number of parallel test workers', String(defaultConcurrency))
 	.option('--pattern <str>', 'Filter test files by substring match')
 	.option('--package <name>', 'Run tests only in a specific package')
-	.option('--skip-e2e', 'Skip Playwright e2e tests')
-	.option('--e2e', 'Run only Playwright e2e tests')
+	.option('--skip-browser', 'Skip Playwright browser tests')
+	.option('--browser', 'Run only Playwright browser tests')
 	.parse();
 
 const opts = program.opts();
@@ -22,10 +22,10 @@ const bail = opts.bail as boolean;
 const concurrency = Number.parseInt(opts.concurrency, 10);
 const pattern = opts.pattern as string | undefined;
 const packageFilter = opts.package as string | undefined;
-const skipE2E = opts.skipE2e as boolean;
-const e2eFlag = opts.e2e as boolean;
+const skipBrowser = opts.skipBrowser as boolean;
+const browserFlag = opts.browser as boolean;
 
-const TEST_PACKAGES = ['packages/server'];
+const TEST_PACKAGES = ['packages/server', 'packages/web'];
 
 async function buildShared() {
 	console.log('Building shared...');
@@ -83,8 +83,8 @@ async function runVitestForPackage(pkg: string): Promise<boolean> {
 	return passed;
 }
 
-async function runPlaywright(): Promise<boolean> {
-	console.log('\n── E2E Tests ──');
+async function runBrowserTests(): Promise<boolean> {
+	console.log('\n── Browser Tests ──');
 	const playwrightArgs = ['playwright', 'test'];
 	if (pattern) playwrightArgs.push(pattern);
 	const proc = Bun.spawn(['bunx', ...playwrightArgs], {
@@ -94,17 +94,17 @@ async function runPlaywright(): Promise<boolean> {
 		env: { ...process.env, NODE_ENV: 'test' },
 	});
 	const passed = (await proc.exited) === 0;
-	console.log(`\nE2E: ${passed ? 'passed' : 'FAILED'}`);
+	console.log(`\nBrowser: ${passed ? 'passed' : 'FAILED'}`);
 	return passed;
 }
 
 async function main() {
 	await Promise.all([buildShared(), buildAgentBundle()]);
 
-	const e2eOnly = e2eFlag;
-	let unitPassed = true;
+	const browserOnly = browserFlag;
+	let integrationPassed = true;
 
-	if (!e2eOnly) {
+	if (!browserOnly) {
 		const packages = packageFilter
 			? TEST_PACKAGES.filter((p) => p.endsWith(`/${packageFilter}`) || p === packageFilter)
 			: TEST_PACKAGES;
@@ -117,18 +117,18 @@ async function main() {
 		for (const pkg of packages) {
 			const passed = await runVitestForPackage(pkg);
 			if (!passed) {
-				unitPassed = false;
+				integrationPassed = false;
 				if (bail) break;
 			}
 		}
 	}
 
-	const runE2E = !skipE2E && (!packageFilter || e2eOnly);
-	const e2ePassed = runE2E ? await runPlaywright() : true;
+	const runBrowser = !skipBrowser && (!packageFilter || browserOnly);
+	const browserPassed = runBrowser ? await runBrowserTests() : true;
 
 	await cleanupDockerContainers();
 
-	if (!unitPassed || !e2ePassed) process.exit(1);
+	if (!integrationPassed || !browserPassed) process.exit(1);
 }
 
 async function cleanupDockerContainers() {

@@ -42,6 +42,13 @@ export async function loadFilesystemAgentRoles(agentsDir: string): Promise<Recor
 }
 
 export async function loadAgentRoles(): Promise<Record<string, string>> {
+	// Test harnesses (vitest under vite) can set HEZO_AGENTS_DIR to bypass the
+	// import.meta.url resolution that vite rewrites into a `/@fs/...` virtual
+	// URL the filesystem can't read.
+	if (process.env.HEZO_AGENTS_DIR) {
+		const raw = await loadFilesystemAgentRoles(process.env.HEZO_AGENTS_DIR);
+		return resolvePartials(raw);
+	}
 	try {
 		return await loadBundledAgentRoles();
 	} catch {

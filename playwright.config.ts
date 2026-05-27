@@ -8,14 +8,24 @@ const TEST_DATA_DIR = join(tmpdir(), 'hezo-e2e-test');
 
 export default defineConfig({
 	tsconfig: './tsconfig.json',
-	testDir: './test/e2e',
+	testDir: './test/browser',
 	timeout: 180_000,
 	retries: 1,
-	workers: 2,
+	workers: 4,
 	fullyParallel: true,
+	// `list` prints one line per test as it finishes, so a mid-suite hang
+	// is visible in CI logs immediately rather than hidden behind the
+	// dot reporter's line-buffered batches. CI additionally emits an HTML
+	// report so failed-run traces are browsable from the uploaded artifact.
+	reporter: process.env.CI
+		? [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]]
+		: 'list',
 	use: {
 		baseURL: `http://localhost:${WEB_PORT}`,
 		headless: true,
+		trace: 'retain-on-failure',
+		screenshot: 'only-on-failure',
+		video: 'retain-on-failure',
 	},
 	projects: [
 		{
@@ -62,6 +72,11 @@ export default defineConfig({
 				HEZO_WAKEUP_COALESCING_MS: '100',
 				HEZO_WAKEUP_CRON: '* * * * * *',
 				HEZO_HEARTBEAT_CRON: '* * * * * *',
+				// Skip the team coherence-review enqueue path that Captain processes
+				// on every team / agent-roster mutation. The review touches multiple
+				// agents synthetically (~30-60s per team setup) and no e2e test asserts
+				// on it. Turning it off keeps team-creation under 5s.
+				HEZO_E2E_SKIP_COHERENCE_REVIEW: '1',
 			},
 		},
 		{

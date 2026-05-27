@@ -1,14 +1,17 @@
-## Description maintenance
+## Team coherence review
 
-Tickets in the Internal project labeled `description-update` are routine internal tasks for keeping each agent's auto-generated artifacts (per-agent summary, team summary, per-agent team-relationships context) accurate. When you see one:
+Tickets in the Internal project labeled `team-coherence-review` are how you keep the team coherent after roster or prompt changes. One ticket per change covers everything: org-chart audit AND the descriptive blobs other agents read.
 
-- Follow the steps in the task description verbatim — they tell you which agent and which artifact to update.
-- Use `get_agent_system_prompt(team_id, agent_id)` to read the current prompt.
-- Use `set_agent_summary(team_id, agent_id, summary)` to save an agent description.
-- Use `set_team_summary(team_id, summary)` to save the team-level collaboration description.
-- Use `set_agent_team_context(team_id, agent_id, content)` to save an agent's per-agent team-relationships context. This blob is injected into the agent's system prompt at the start of every run so it doesn't need to derive the org chart itself. Use `get_agent_team_context` to inspect existing contexts when regenerating siblings.
-- **Agent summaries**: a single plain-prose paragraph, max five lines, written in the third person. No bullet lists. No greetings or filler. Lead with what the agent does; mention reporting and collaboration when load-bearing.
-- **Team summary**: up to twenty lines, plain prose, may use multiple paragraphs. Cover reporting structure, primary handoffs, escalation paths, and how work moves through the team end-to-end. If the team is just being built, cover who is on the team so far, how they collaborate, and the gaps the board still intends to fill.
-- **Agent team-relationships context**: up to ~30 lines, plain prose, **second-person ("you")** addressed to the agent whose context this is. Cover their manager and how to escalate, direct reports and how to delegate to each, peers and handoff patterns, indirect reports and the correct routing path, and humans on the board.
-- Mark the task as `done` once all artifacts the task asks for are saved.
-- These are low-priority background housekeeping — never block other work to do them, but do not let them pile up.
+When you see one:
+
+- Follow the steps in the task description verbatim.
+- Use `list_agents(team_id)` to enumerate the current roster and `get_agent_system_prompt(team_id, agent_id)` to read prompts.
+- Audit for orphans, cycles, stale prompts, coverage gaps, and conflicts. Reconcile what you can via `update_agent_system_prompt(agent_id, content)`. Note anything you cannot fix through MCP tools (re-parenting, removing an agent, hiring a new role) for the closing comment below — do not post a separate comment for it mid-run.
+- Then rewrite the three descriptive blobs for every affected agent:
+  - `set_agent_summary(team_id, agent_id, summary)` — single plain-prose paragraph, max five lines, third person, no bullets, no greetings. Leads with what the agent does.
+  - `set_agent_team_context(team_id, agent_id, content)` — up to ~30 lines, plain prose, **second-person ("you")** addressed to the agent whose context this is. Covers manager and how to escalate, direct reports and how to delegate to each, peers and handoff patterns, indirect reports and the correct routing path, and humans on the board. This blob is injected into the agent's own system prompt at the start of every run.
+  - `set_team_summary(team_id, summary)` — up to twenty lines, plain prose, may span paragraphs. Covers reporting structure, handoffs, escalation paths, and how work moves through the team end-to-end. While the team is still being built, cover who's there so far, how they collaborate, and the gaps the board still intends to fill.
+- Use `get_agent_team_context` to inspect existing contexts when regenerating siblings.
+- **End with exactly one `create_comment` on the ticket** summarising the review — what you audited, the reconciliations you applied (one line per change as `- @@<agent-slug>: <one-line summary>` when there are multiple — passive `@@` because this is a wrap-up summary, not an ask; using `@<slug>` here wakes every listed teammate and blocks the `done` transition that follows), and any items still requiring board action (re-parenting, removing an agent, hiring a new role). If nothing material needed updating, state that the team is coherent and no changes were required. Keep it concise (≤10 lines). This is the closing action of the review — do not mark the ticket `done` without posting it.
+- Mark the task as `done` once the audit, rewrites, and closing comment are complete.
+- These are high-priority because every other agent's system prompt depends on them being accurate — but multiple change events while one ticket is open are coalesced into the same ticket, so you only do the work once.

@@ -55,6 +55,10 @@ interface TaskRow {
 	assignee_name: string | null;
 	assignee_type: 'agent' | 'user' | null;
 	has_active_run: boolean;
+	queued_wakeup: {
+		reason: 'task_busy' | 'project_busy' | 'agent_running';
+		blocker_identifier: string | null;
+	} | null;
 }
 
 interface TaskListProps {
@@ -172,6 +176,17 @@ export function TaskList({ teamId, projectId }: TaskListProps) {
 							data-testid="task-running-dot"
 							title="Agent run in progress"
 							className="inline-block w-2 h-2 rounded-full bg-accent-amber animate-pulse shrink-0"
+						/>
+					)}
+					{!row.has_active_run && row.queued_wakeup && (
+						<span
+							data-testid="task-queued-dot"
+							title={
+								row.queued_wakeup.blocker_identifier
+									? `Run queued — waiting on ${row.queued_wakeup.blocker_identifier}`
+									: 'Run queued — waiting'
+							}
+							className="inline-block w-2 h-2 rounded-full bg-accent-blue shrink-0"
 						/>
 					)}
 					{row.identifier}

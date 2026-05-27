@@ -37,7 +37,12 @@ export function useCreateSecret(teamId: string) {
 	return useMutation({
 		mutationFn: (data: CreateSecretPayload) =>
 			api.post<Secret>(`/api/teams/${teamId}/secrets`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'secrets'] }),
+		onSuccess: (created) => {
+			queryClient.setQueryData<Secret[]>(['teams', teamId, 'secrets'], (prev) =>
+				prev ? [...prev.filter((s) => s.id !== created.id), created] : [created],
+			);
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'secrets'] });
+		},
 	});
 }
 
@@ -66,6 +71,11 @@ export function useUpdateSecret(teamId: string) {
 export function useDeleteSecret(teamId: string) {
 	return useMutation({
 		mutationFn: (secretId: string) => api.delete(`/api/teams/${teamId}/secrets/${secretId}`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'secrets'] }),
+		onSuccess: (_, secretId) => {
+			queryClient.setQueryData<Secret[]>(['teams', teamId, 'secrets'], (prev) =>
+				prev ? prev.filter((s) => s.id !== secretId) : prev,
+			);
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'secrets'] });
+		},
 	});
 }

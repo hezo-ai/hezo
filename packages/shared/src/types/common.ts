@@ -303,6 +303,13 @@ export const WakeupStatus = {
 } as const;
 export type WakeupStatus = (typeof WakeupStatus)[keyof typeof WakeupStatus];
 
+export const WakeupSkipReason = {
+	TaskBusy: 'task_busy',
+	ProjectBusy: 'project_busy',
+	AgentRunning: 'agent_running',
+} as const;
+export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];
+
 export const HeartbeatRunStatus = {
 	Queued: 'queued',
 	Running: 'running',
@@ -479,6 +486,24 @@ export interface ProviderRuntimeAdapter {
 	staticEnv?: Readonly<Record<string, string>>;
 	credentialEnvByAuthMethod: Partial<Record<AiAuthMethod, string>>;
 }
+
+/**
+ * Claude Code emits background traffic (Statsig feature-flag polling, OTel,
+ * auto-update checks, Sentry) to api.anthropic.com regardless of
+ * ANTHROPIC_BASE_URL. None of it serves Hezo's headless flow — for
+ * non-Anthropic providers it's noise that hammers the egress proxy at a
+ * host nobody is paying for, and for the Anthropic provider itself it
+ * still bypasses NO_PROXY in several Claude Code subsystems (undici fetch,
+ * Sentry transport) and lands in the MITM proxy. Stamp these flags into
+ * env for every Claude Code runtime.
+ */
+export const CLAUDE_CODE_QUIET_ENV = {
+	DISABLE_TELEMETRY: '1',
+	DISABLE_ERROR_REPORTING: '1',
+	DISABLE_AUTOUPDATER: '1',
+	DISABLE_NON_ESSENTIAL_MODEL_CALLS: '1',
+	DISABLE_BUG_COMMAND: '1',
+} as const;
 
 export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapter> = {
 	[AiProvider.Anthropic]: {

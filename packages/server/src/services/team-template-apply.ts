@@ -1,11 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { BUILTIN_AGENT_SLUGS, DocumentType, MemberType } from '@hezo/shared';
-import { trackBackground } from '../lib/background';
 import { logger } from '../logger';
-import {
-	enqueueTeamCoherenceReviewTask,
-	enqueueTeamContextTaskForAllAgents,
-} from './description-tasks';
+import { enqueueTeamCoherenceReviewTask } from './description-tasks';
 import { initAgentSystemPrompt, upsertDocument } from './documents';
 import { type ProvisionTeamTemplateResult, provisionTeamTemplate } from './team-template-provision';
 import type { WebSocketManager } from './ws';
@@ -71,8 +67,8 @@ export async function ensureBuiltinAgents(db: PGlite, teamId: string): Promise<s
  *   3. Additively inserts any non-builtin agents from the template that the
  *      team doesn't already have. Existing non-builtin slugs are left alone.
  *   4. Records the assignment, copies KB docs, provisions skills if dataDir is
- *      set, fans out team_context regeneration, and enqueues a Captain
- *      coherence-review ticket when the roster actually changed.
+ *      set, and enqueues a Captain coherence-review ticket when the roster
+ *      actually changed.
  *
  * Safe to call multiple times across different templates.
  */
@@ -102,11 +98,6 @@ export async function applyTemplateToTeam(
 		provisionResult.created_slugs.length > 0 || builtinResult.updated_slugs.length > 0;
 
 	if (rosterChanged) {
-		trackBackground(
-			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added').catch((e) =>
-				log.error('Failed to fan out team_context tasks after template apply:', e),
-			),
-		);
 		try {
 			await enqueueTeamCoherenceReviewTask(db, teamId, 'template_applied');
 		} catch (e) {

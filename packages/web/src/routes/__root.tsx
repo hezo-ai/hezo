@@ -155,9 +155,13 @@ function TeamSidebarShell() {
 				onClick={() => updateUiState.mutate({ sidebar: { collapsed: !collapsed } })}
 				aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
 				data-testid="sidebar-toggle"
-				className="absolute top-3 -right-3 z-50 w-6 h-6 rounded-full border border-border bg-bg text-text-muted hover:text-text hover:bg-bg-subtle flex items-center justify-center shadow-sm transition-colors"
+				className={
+					collapsed
+						? 'absolute top-3 -right-3.5 z-50 w-7 h-7 rounded-full border border-border-hover bg-bg-elevated text-text hover:bg-bg-subtle flex items-center justify-center shadow-md transition-colors'
+						: 'absolute top-3 -right-3 z-50 w-6 h-6 rounded-full border border-border bg-bg-elevated text-text-muted hover:text-text hover:bg-bg-subtle flex items-center justify-center shadow-sm transition-colors'
+				}
 			>
-				{collapsed ? <ChevronsRight className="w-3 h-3" /> : <ChevronsLeft className="w-3 h-3" />}
+				{collapsed ? <ChevronsRight className="w-4 h-4" /> : <ChevronsLeft className="w-3 h-3" />}
 			</button>
 		</div>
 	);

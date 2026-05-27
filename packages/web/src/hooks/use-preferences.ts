@@ -55,7 +55,8 @@ export function useRestorePreferenceRevision(teamId: string) {
 			api.post<Preferences>(`/api/teams/${teamId}/preferences/restore`, {
 				revision_number: revisionNumber,
 			}),
-		onSuccess: () => {
+		onSuccess: (restored) => {
+			queryClient.setQueryData<Preferences | null>(['teams', teamId, 'preferences'], restored);
 			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'preferences'] });
 			queryClient.invalidateQueries({
 				queryKey: ['teams', teamId, 'preferences', 'revisions'],

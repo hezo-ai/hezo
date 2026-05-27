@@ -22,13 +22,24 @@ export function useApiKeys(teamId: string) {
 export function useCreateApiKey(teamId: string) {
 	return useMutation({
 		mutationFn: (data: { name: string }) => api.post<ApiKey>(`/api/teams/${teamId}/api-keys`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'api-keys'] }),
+		onSuccess: (created) => {
+			const { key: _key, ...row } = created;
+			queryClient.setQueryData<ApiKey[]>(['teams', teamId, 'api-keys'], (prev) =>
+				prev ? [...prev.filter((k) => k.id !== row.id), row as ApiKey] : [row as ApiKey],
+			);
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'api-keys'] });
+		},
 	});
 }
 
 export function useDeleteApiKey(teamId: string) {
 	return useMutation({
 		mutationFn: (apiKeyId: string) => api.delete(`/api/teams/${teamId}/api-keys/${apiKeyId}`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'api-keys'] }),
+		onSuccess: (_, apiKeyId) => {
+			queryClient.setQueryData<ApiKey[]>(['teams', teamId, 'api-keys'], (prev) =>
+				prev ? prev.filter((k) => k.id !== apiKeyId) : prev,
+			);
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'api-keys'] });
+		},
 	});
 }

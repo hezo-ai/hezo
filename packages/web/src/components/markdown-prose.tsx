@@ -115,6 +115,7 @@ export function MarkdownProse({
 				const attrs = props as {
 					'data-mention-agent-slug'?: string;
 					'data-mention-agent-title'?: string;
+					'data-mention-passive'?: string;
 					'data-mention-task-identifier'?: string;
 					'data-mention-task-title'?: string;
 					'data-mention-project-slug'?: string;
@@ -202,6 +203,7 @@ export function MarkdownProse({
 
 				const agentSlug = attrs['data-mention-agent-slug'];
 				const agentTitle = attrs['data-mention-agent-title'];
+				const agentPassive = attrs['data-mention-passive'] === 'true';
 				if (agentSlug && teamId) {
 					return (
 						<Tooltip content={agentTitle ?? `@${agentSlug}`}>
@@ -210,6 +212,7 @@ export function MarkdownProse({
 								params={{ teamId, agentId: agentSlug }}
 								className={MENTION_CLASSES}
 								data-testid="agent-mention-link"
+								data-mention-passive={agentPassive ? 'true' : undefined}
 							>
 								{props.children}
 							</Link>

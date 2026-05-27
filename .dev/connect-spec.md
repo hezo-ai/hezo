@@ -392,7 +392,7 @@ Both the Connect service (`packages/connect/src/providers/github.ts`) and the He
 - `GITHUB_OAUTH_BASE_URL` — defaults to `https://github.com`
 - `GITHUB_API_BASE_URL` — defaults to `https://api.github.com`
 
-Tests override these to point at the local simulator in `packages/server/src/test/helpers/github-sim.ts`. In production neither variable is set and the defaults apply.
+Tests override these to point at the local simulator in `packages/server/test/helpers/github-sim.ts`. In production neither variable is set and the defaults apply.
 
 ---
 

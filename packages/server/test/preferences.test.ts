@@ -1,0 +1,138 @@
+import type { PGlite } from '@electric-sql/pglite';
+import type { Hono } from 'hono';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Env } from '../src/lib/types';
+import { safeClose } from './helpers';
+import { authHeader, createTestApp } from './helpers/app';
+
+let app: Hono<Env>;
+let db: PGlite;
+let token: string;
+let teamId: string;
+
+beforeAll(async () => {
+	const ctx = await createTestApp();
+	app = ctx.app;
+	db = ctx.db;
+	token = ctx.token;
+
+	const teamRes = await app.request('/api/teams', {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name: 'Pref Test Co' }),
+	});
+	teamId = (await teamRes.json()).data.id;
+});
+
+afterAll(async () => {
+	await safeClose(db);
+});
+
+describe('Team preferences', () => {
+	it('returns null when no preferences exist', async () => {
+		const res = await app.request(`/api/teams/${teamId}/preferences`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data).toBeNull();
+	});
+
+	it('creates preferences on first PATCH', async () => {
+		const res = await app.request(`/api/teams/${teamId}/preferences`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content: '# Preferences\n\nPrefer functional patterns.',
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.content).toContain('functional patterns');
+	});
+
+	it('reads preferences after creation', async () => {
+		const res = await app.request(`/api/teams/${teamId}/preferences`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.content).toContain('functional patterns');
+	});
+
+	it('updates preferences and creates revision', async () => {
+		const res = await app.request(`/api/teams/${teamId}/preferences`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content: '# Preferences\n\nPrefer functional patterns.\nUse dark themes.',
+				change_summary: 'Added dark themes preference',
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.content).toContain('dark themes');
+
+		// Check revision was created with previous content
+		const revRes = await app.request(`/api/teams/${teamId}/preferences/revisions`, {
+			headers: authHeader(token),
+		});
+		expect(revRes.status).toBe(200);
+		const revBody = await revRes.json();
+		expect(revBody.data.length).toBe(1);
+		expect(revBody.data[0].content).toContain('functional patterns');
+		expect(revBody.data[0].content).not.toContain('dark themes');
+		expect(revBody.data[0].change_summary).toBe('Added dark themes preference');
+	});
+
+	it('returns empty revisions when no preferences exist', async () => {
+		const coRes = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Empty Prefs Co' }),
+		});
+		const emptyCoId = (await coRes.json()).data.id;
+
+		const res = await app.request(`/api/teams/${emptyCoId}/preferences/revisions`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data).toEqual([]);
+	});
+
+	it('restores preferences to a prior revision', async () => {
+		await app.request(`/api/teams/${teamId}/preferences`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content: '# Preferences\n\nReverted body',
+				change_summary: 'pre-restore checkpoint',
+			}),
+		});
+
+		const restoreRes = await app.request(`/api/teams/${teamId}/preferences/restore`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ revision_number: 1 }),
+		});
+		expect(restoreRes.status).toBe(200);
+		const restored = await restoreRes.json();
+		expect(restored.data.content).toContain('functional patterns');
+		expect(restored.data.content).not.toContain('Reverted body');
+
+		const revRes = await app.request(`/api/teams/${teamId}/preferences/revisions`, {
+			headers: authHeader(token),
+		});
+		const revs = (await revRes.json()).data;
+		expect(revs[0].change_summary).toBe('Restored to revision 1');
+	});
+
+	it('returns 404 when restoring an unknown revision number', async () => {
+		const res = await app.request(`/api/teams/${teamId}/preferences/restore`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ revision_number: 9999 }),
+		});
+		expect(res.status).toBe(404);
+	});
+});

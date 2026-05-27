@@ -97,7 +97,7 @@ The implementation uses `http-mitm-proxy` rather than `mockttp`. Mockttp's TLS s
 
 ## Tests
 
-`packages/server/src/test/__tests__/`:
+`packages/server/test/`:
 - `egress-substitution.test.ts` — pure substitution logic
 - `egress-port-allocator.test.ts` — port allocator behaviour
 - `egress-ca.test.ts` — CA generation + idempotent reload

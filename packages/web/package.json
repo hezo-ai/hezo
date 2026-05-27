@@ -7,6 +7,7 @@
 		"dev": "vite",
 		"build": "vite build",
 		"preview": "vite preview",
+		"test": "vitest run",
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
@@ -34,14 +35,19 @@
 		"remark-gfm": "^4"
 	},
 	"devDependencies": {
+		"@hezo/server": "workspace:*",
 		"@tailwindcss/typography": "^0.5.19",
 		"@tailwindcss/vite": "^4",
 		"@tanstack/router-plugin": "^1",
+		"@testing-library/react": "^16.3.2",
+		"@testing-library/user-event": "^14.6.1",
 		"@types/react": "^19",
 		"@types/react-dom": "^19",
 		"@vitejs/plugin-react": "^4",
+		"happy-dom": "^20.9.0",
 		"tailwindcss": "^4",
 		"typescript": "^5",
-		"vite": "^6"
+		"vite": "^6",
+		"vitest": "^3"
 	}
 }

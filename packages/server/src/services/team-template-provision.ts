@@ -1,9 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { MemberType } from '@hezo/shared';
-import { trackBackground } from '../lib/background';
 import { toSlug } from '../lib/slug';
 import { logger } from '../logger';
-import { enqueueTeamContextTaskForAllAgents } from './description-tasks';
 import { initAgentSystemPrompt } from './documents';
 import { downloadSkillContent, SkillDownloadError } from './skill-downloader';
 
@@ -223,24 +221,5 @@ export async function provisionTeamTemplate(
 		await createSkillsFromTemplate(db, teamId, templateId);
 	}
 
-	if (createdSlugs.length > 0) {
-		trackBackground(
-			enqueueTeamContextTaskForAllAgents(db, teamId, 'agent_added').catch((e) =>
-				log.error('Failed to fan out team_context tasks after template provision:', e),
-			),
-		);
-	}
-
 	return { created_slugs: createdSlugs, skipped_slugs: skippedSlugs };
-}
-
-/** Used when creating a new team (no skip — template is authoritative). */
-export async function provisionAgentsFromTeamTypes(
-	db: PGlite,
-	teamId: string,
-	teamTypeIds: string[],
-): Promise<void> {
-	for (const templateId of teamTypeIds) {
-		await provisionTeamTemplate(db, teamId, templateId, { skipExistingSlugs: false });
-	}
 }

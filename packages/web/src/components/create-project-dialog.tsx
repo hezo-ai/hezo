@@ -1,8 +1,9 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from '@tanstack/react-router';
-import { FileText, Loader2, Upload, X } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { Loader2 } from 'lucide-react';
+import { useState } from 'react';
 import { useCreateProject } from '../hooks/use-projects';
+import { PrdUpload } from './prd-upload';
 import { Button } from './ui/button';
 import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 import { Input } from './ui/input';
@@ -33,24 +34,11 @@ export function CreateProjectDialog({ teamId, open, onOpenChange }: CreateProjec
 	const [prdFilename, setPrdFilename] = useState<string | null>(null);
 	const [taskPrefix, setTaskPrefix] = useState('');
 	const [prefixTouched, setPrefixTouched] = useState(false);
-	const fileInputRef = useRef<HTMLInputElement>(null);
 	const createProject = useCreateProject(teamId);
 	const navigate = useNavigate();
 
 	const derivedPrefix = derivePrefix(name);
 	const effectivePrefix = prefixTouched ? taskPrefix : derivedPrefix;
-
-	const handleFileUpload = useCallback((file: File) => {
-		const reader = new FileReader();
-		reader.onload = (ev) => {
-			const content = ev.target?.result;
-			if (typeof content === 'string') {
-				setInitialPrd(content);
-				setPrdFilename(file.name);
-			}
-		};
-		reader.readAsText(file);
-	}, []);
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
@@ -113,66 +101,14 @@ export function CreateProjectDialog({ teamId, open, onOpenChange }: CreateProjec
 							rows={4}
 							placeholder="What is this project? Domain, users, and the core problem it solves."
 						/>
-						<div className="flex flex-col gap-1.5">
-							<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
-								Requirements Document (optional)
-							</span>
-							{initialPrd ? (
-								<div className="rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]">
-									<div className="flex items-center justify-between mb-2">
-										<span className="flex items-center gap-1.5 text-text-muted">
-											<FileText className="w-3.5 h-3.5" />
-											{prdFilename || 'Pasted content'}
-										</span>
-										<button
-											type="button"
-											onClick={() => {
-												setInitialPrd('');
-												setPrdFilename(null);
-											}}
-											className="text-text-subtle hover:text-text p-0.5"
-										>
-											<X className="w-3.5 h-3.5" />
-										</button>
-									</div>
-									<p className="text-text-subtle text-xs truncate">
-										{initialPrd.slice(0, 120)}
-										{initialPrd.length > 120 ? '…' : ''}
-									</p>
-								</div>
-							) : (
-								<button
-									type="button"
-									className="rounded-radius-md border border-dashed border-border bg-bg px-3 py-4 text-[13px] text-center cursor-pointer hover:border-border-hover transition-colors w-full"
-									onClick={() => fileInputRef.current?.click()}
-									onDragOver={(e) => {
-										e.preventDefault();
-										e.stopPropagation();
-									}}
-									onDrop={(e) => {
-										e.preventDefault();
-										e.stopPropagation();
-										const file = e.dataTransfer.files[0];
-										if (file) handleFileUpload(file);
-									}}
-								>
-									<Upload className="w-4 h-4 mx-auto mb-1 text-text-subtle" />
-									<p className="text-text-subtle">Drop a file here or click to upload</p>
-									<p className="text-text-subtle text-xs mt-1">.md or .txt</p>
-								</button>
-							)}
-							<input
-								ref={fileInputRef}
-								type="file"
-								accept=".md,.txt,.markdown"
-								className="hidden"
-								onChange={(e) => {
-									const file = e.target.files?.[0];
-									if (file) handleFileUpload(file);
-									e.target.value = '';
-								}}
-							/>
-						</div>
+						<PrdUpload
+							value={initialPrd}
+							filename={prdFilename}
+							onChange={(value, filename) => {
+								setInitialPrd(value);
+								setPrdFilename(filename);
+							}}
+						/>
 						<div className="flex justify-end gap-2 mt-2">
 							<Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
 								Cancel

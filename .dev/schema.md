@@ -399,11 +399,14 @@ description of how the team collaborates (≤20 lines).
 `member_agents.summary` and `teams.summary` during team
 provisioning.
 
-**Runtime updates:** The Captain agent can regenerate descriptions at runtime by
-processing `description-update` tasks (created in the Internal project).
-Two MCP tools — `set_agent_summary` and `set_team_summary` — write the new
-text directly to the database. Only agents and board members within the
-team can set agent summaries; only the Captain agent can set the team summary.
+**Runtime updates:** The Captain agent regenerates descriptions at runtime by
+processing `team-coherence-review` tasks (created in the Internal project on
+every roster, prompt, or summary change). One task covers the org-chart audit
+AND the descriptive blobs for every affected agent. Three MCP tools —
+`set_agent_summary`, `set_agent_team_context`, and `set_team_summary` — write
+the new text directly to the database. Only agents and board members within
+the team can set agent summaries; only the Captain agent can set the team
+summary.
 
 ### Agent system prompts
 

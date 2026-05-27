@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { LogViewer } from '../../../../../../components/log-viewer';
+import { TerminateRunButton } from '../../../../../../components/terminate-run-button';
 import { Badge } from '../../../../../../components/ui/badge';
 import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
 import { getRunWaitingMessage, useHeartbeatRun } from '../../../../../../hooks/use-heartbeat-runs';
@@ -58,6 +59,16 @@ function ExecutionDetailPage() {
 			<div className="flex items-center gap-2 mb-4">
 				<h2 className="text-sm font-medium">Run {run.id.slice(0, 8)}</h2>
 				<Badge color={statusColor(run.status) as 'green'}>{run.status}</Badge>
+				<div className="ml-auto">
+					<TerminateRunButton
+						teamId={teamId}
+						agentId={agentId}
+						runId={runId}
+						status={run.status}
+						taskId={run.task_id}
+						variant="standalone"
+					/>
+				</div>
 			</div>
 
 			{(() => {
@@ -130,6 +141,7 @@ function ExecutionDetailPage() {
 								projectId: run.project_slug,
 								taskId: run.task_identifier.toLowerCase(),
 							}}
+							{...(run.run_comment_id ? { hash: `comment-${run.run_comment_id}` } : {})}
 							className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted hover:text-text"
 						>
 							<span>Task:</span>
@@ -140,6 +152,7 @@ function ExecutionDetailPage() {
 						<Link
 							to="/teams/$teamId/tasks/$taskId"
 							params={{ teamId, taskId: run.task_identifier.toLowerCase() }}
+							{...(run.run_comment_id ? { hash: `comment-${run.run_comment_id}` } : {})}
 							className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted hover:text-text"
 						>
 							<span>Task:</span>

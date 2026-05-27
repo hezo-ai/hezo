@@ -85,9 +85,14 @@ export class EgressProxy {
 		const upstreamHttpsAgent = this.deps.extraUpstreamTrustedCAs
 			? new HttpsAgent({ keepAlive: true, ca: this.deps.extraUpstreamTrustedCAs })
 			: undefined;
-		proxy.onError((_ctx, err, errorKind) => {
+		proxy.onError((ctx, err, errorKind) => {
 			if (!err) return;
-			log.warn('mitm proxy error', { runId, kind: errorKind, error: err.message });
+			log.warn('mitm proxy error', {
+				runId,
+				kind: errorKind,
+				error: err.message,
+				...describeErrorContext(proxy, ctx, err),
+			});
 		});
 		proxy.onRequest((ctx, callback) => {
 			this.handleRequest(runId, scope, ctx)
@@ -299,4 +304,37 @@ function headersContainProbe(headers: Record<string, string>): boolean {
 		if (typeof v === 'string' && PLACEHOLDER_PROBE_REGEX.test(v)) return true;
 	}
 	return false;
+}
+
+interface ErrorContext {
+	method?: string;
+	url?: string;
+	hostname?: string;
+	port?: number;
+}
+
+function describeErrorContext(proxy: IProxy, ctx: IContext | null, err: Error): ErrorContext {
+	if (ctx?.proxyToServerRequestOptions) {
+		const opts = ctx.proxyToServerRequestOptions;
+		const host = (opts.host ?? '').toLowerCase();
+		const method = opts.method ?? 'GET';
+		const urlPath = opts.path ?? '/';
+		const protocol = ctx.isSSL ? 'https' : 'http';
+		return { method, url: `${protocol}://${host}${urlPath}` };
+	}
+
+	const errPort = (err as { port?: unknown }).port;
+	const failedPort = typeof errPort === 'number' ? errPort : undefined;
+	if (failedPort === undefined) return {};
+
+	const sslServers = (proxy as unknown as { sslServers?: Record<string, { port: number }> })
+		.sslServers;
+	if (!sslServers) return { port: failedPort };
+
+	for (const [hostname, entry] of Object.entries(sslServers)) {
+		if (entry?.port === failedPort) {
+			return { hostname, port: failedPort };
+		}
+	}
+	return { port: failedPort };
 }

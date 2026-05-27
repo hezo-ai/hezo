@@ -853,17 +853,20 @@ CREATE INDEX idx_skill_revisions_skill ON skill_revisions(skill_id);
 -------------------------------------------------------------------------------
 
 CREATE TABLE agent_wakeup_requests (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    member_id       UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
-    team_id         UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    source          wakeup_source NOT NULL,
-    status          wakeup_status NOT NULL DEFAULT 'queued',
-    idempotency_key TEXT,
-    coalesced_count INTEGER NOT NULL DEFAULT 0,
-    payload         JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    claimed_at      TIMESTAMPTZ,
-    completed_at    TIMESTAMPTZ
+    id                            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    member_id                     UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    team_id                       UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    source                        wakeup_source NOT NULL,
+    status                        wakeup_status NOT NULL DEFAULT 'queued',
+    idempotency_key               TEXT,
+    coalesced_count               INTEGER NOT NULL DEFAULT 0,
+    payload                       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    claimed_at                    TIMESTAMPTZ,
+    completed_at                  TIMESTAMPTZ,
+    last_skipped_at               TIMESTAMPTZ,
+    last_skipped_reason           TEXT,
+    last_skipped_blocker_task_id  UUID REFERENCES tasks(id) ON DELETE SET NULL
 );
 
 CREATE INDEX idx_wakeups_member ON agent_wakeup_requests(member_id);

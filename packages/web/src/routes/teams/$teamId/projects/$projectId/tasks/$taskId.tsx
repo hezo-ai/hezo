@@ -284,10 +284,20 @@ function TaskDetailPage() {
 			}
 			if (idx < 0) return [] as ReturnType<typeof setTimeout>[];
 			const out: ReturnType<typeof setTimeout>[] = [];
-			for (const delay of [16, 200, 600, 1500]) {
+			// Each tick: first ask Virtuoso to mount the target row, then read
+			// the rendered element's real position and scroll precisely to it.
+			// Virtuoso's scrollToIndex alone underscrolls when the row's height
+			// grows after mount (LazyMount in run comments, async log body),
+			// because the offset is computed from stale estimates. The extra
+			// 3000ms tick absorbs the post-fetch height jump.
+			for (const delay of [16, 200, 600, 1500, 3000]) {
 				out.push(
 					setTimeout(() => {
 						virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center' });
+						if (highlightId) {
+							const el = document.getElementById(`comment-${highlightId}`);
+							el?.scrollIntoView({ block: 'center', behavior: 'auto' });
+						}
 					}, delay),
 				);
 			}
@@ -399,6 +409,29 @@ function TaskDetailPage() {
 						>
 							<Badge color="info">{task.project_name}</Badge>
 						</Link>
+					)}
+					{!task.has_active_run && task.queued_wakeup && (
+						<Badge color="blue" className="gap-1" data-testid="task-queued-badge">
+							<span className="inline-block w-1.5 h-1.5 rounded-full bg-accent-blue-text" />
+							{task.queued_wakeup.blocker_identifier && task.queued_wakeup.blocker_project_slug ? (
+								<>
+									Queued behind{' '}
+									<Link
+										to="/teams/$teamId/projects/$projectId/tasks/$taskId"
+										params={{
+											teamId,
+											projectId: task.queued_wakeup.blocker_project_slug,
+											taskId: task.queued_wakeup.blocker_identifier.toLowerCase(),
+										}}
+										className="underline"
+									>
+										{task.queued_wakeup.blocker_identifier}
+									</Link>
+								</>
+							) : (
+								'Run queued'
+							)}
+						</Badge>
 					)}
 				</div>
 
@@ -886,8 +919,26 @@ function TaskDetailPage() {
 									</button>
 								</div>
 							)}
-							<div className="flex items-center justify-between gap-2">
-								{task.assignee_id ? (
+							<div className="flex items-center justify-end gap-2">
+								{showProjectIntakeSkip && (
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={() => skipProjectIntake.mutate()}
+										disabled={skipProjectIntake.isPending}
+										data-testid="project-intake-skip"
+										className="mr-auto"
+									>
+										{skipProjectIntake.isPending ? (
+											<Loader2 className="w-3 h-3 animate-spin" />
+										) : (
+											<FastForward className="w-3 h-3" />
+										)}
+										Skip questions — propose now
+									</Button>
+								)}
+								{task.assignee_id && (
 									<label className="flex items-center gap-2 text-[13px] text-text-muted cursor-pointer select-none">
 										<input
 											type="checkbox"
@@ -898,26 +949,6 @@ function TaskDetailPage() {
 										/>
 										<span>Wake assignee</span>
 									</label>
-								) : (
-									<span />
-								)}
-								{showProjectIntakeSkip && (
-									<Button
-										type="button"
-										variant="ghost"
-										size="sm"
-										onClick={() => skipProjectIntake.mutate()}
-										disabled={skipProjectIntake.isPending}
-										data-testid="project-intake-skip"
-										className="ml-auto"
-									>
-										{skipProjectIntake.isPending ? (
-											<Loader2 className="w-3 h-3 animate-spin" />
-										) : (
-											<FastForward className="w-3 h-3" />
-										)}
-										Skip questions — propose now
-									</Button>
 								)}
 								<Button
 									type="submit"

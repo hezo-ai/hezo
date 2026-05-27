@@ -7,7 +7,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { logger } from '../logger';
-import { recordStatusChange } from '../services/task-events';
+import { type CascadeContext, recordStatusChange } from '../services/task-events';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
 import { broadcastRowChange } from './broadcast';
@@ -120,6 +120,28 @@ export async function recomputeDownstreamReadiness(
 		'SELECT DISTINCT task_id FROM task_dependencies WHERE blocked_by_task_id = $1',
 		[blockerTaskId],
 	);
+	if (downstream.rows.length === 0) return;
+
+	const blocker = await db.query<{ identifier: string; project_slug: string; status: string }>(
+		`SELECT t.identifier, t.status, p.slug AS project_slug
+		   FROM tasks t JOIN projects p ON p.id = t.project_id
+		  WHERE t.id = $1`,
+		[blockerTaskId],
+	);
+	const blockerRow = blocker.rows[0];
+	const blockerTerminal =
+		blockerRow !== undefined &&
+		(TERMINAL_TASK_STATUSES as readonly string[]).includes(blockerRow.status);
+	const cascade: CascadeContext | undefined =
+		blockerRow && blockerTerminal
+			? {
+					kind: 'auto_unblock',
+					triggeredByTaskId: blockerTaskId,
+					triggeredByIdentifier: blockerRow.identifier,
+					triggeredByProjectSlug: blockerRow.project_slug,
+				}
+			: undefined;
+
 	for (const row of downstream.rows) {
 		const newStatus = await reconcileBlockedStatus(
 			db,
@@ -127,6 +149,7 @@ export async function recomputeDownstreamReadiness(
 			row.task_id,
 			actorMemberId,
 			wsManager,
+			cascade,
 		);
 		if (newStatus === TaskStatus.Backlog || newStatus === null) {
 			await wakeIfReady(db, row.task_id);
@@ -164,6 +187,7 @@ export async function reconcileBlockedStatus(
 	taskId: string,
 	actorMemberId: string | null,
 	wsManager: WebSocketManager | undefined,
+	cascade?: CascadeContext,
 ): Promise<string | null> {
 	const r = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [taskId]);
 	const current = r.rows[0]?.status;
@@ -183,7 +207,17 @@ export async function reconcileBlockedStatus(
 	const row = updated.rows[0];
 	if (!row) return null;
 
-	await recordStatusChange(db, teamId, taskId, current, target, actorMemberId, wsManager);
+	const effectiveCascade = target === TaskStatus.Backlog ? cascade : undefined;
+	await recordStatusChange(
+		db,
+		teamId,
+		taskId,
+		current,
+		target,
+		actorMemberId,
+		wsManager,
+		effectiveCascade,
+	);
 	broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'UPDATE', row);
 	return target;
 }
@@ -201,7 +235,7 @@ export async function wakeIfReady(db: PGlite, taskId: string): Promise<void> {
 		[taskId],
 	);
 	const row = task.rows[0];
-	if (!row || !row.assignee_id) return;
+	if (!row?.assignee_id) return;
 
 	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [row.assignee_id]);
 	if (isAgent.rows.length === 0) return;

@@ -6,6 +6,7 @@ export interface OnboardingDirectInput {
 	template_id: string;
 	project_name: string;
 	project_description?: string;
+	initial_prd?: string;
 }
 
 export interface OnboardingDirectResult {
