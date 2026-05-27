@@ -4,7 +4,6 @@ import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
-import { requireTeamAccess } from '../middleware/auth';
 import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
 
 export const skillsRoutes = new Hono<Env>();
@@ -25,11 +24,8 @@ function downloadErrorStatus(reason: SkillDownloadError['reason']): 400 | 404 | 
 }
 
 skillsRoutes.get('/teams/:teamId/skills', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const result = await db.query<Omit<SkillRecord, 'content'>>(
 		`SELECT id, team_id, name, slug, description, source_url, content_hash,
@@ -44,11 +40,8 @@ skillsRoutes.get('/teams/:teamId/skills', async (c) => {
 });
 
 skillsRoutes.get('/teams/:teamId/skills/:slug', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const slug = c.req.param('slug');
 
 	const result = await db.query<SkillRecord>(
@@ -64,11 +57,8 @@ skillsRoutes.get('/teams/:teamId/skills/:slug', async (c) => {
 });
 
 skillsRoutes.post('/teams/:teamId/skills', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const body = await c.req.json<{
 		name: string;
@@ -137,11 +127,8 @@ skillsRoutes.post('/teams/:teamId/skills', async (c) => {
 });
 
 skillsRoutes.patch('/teams/:teamId/skills/:slug', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const slug = c.req.param('slug');
 
 	const body = await c.req.json<{
@@ -212,11 +199,8 @@ skillsRoutes.patch('/teams/:teamId/skills/:slug', async (c) => {
 });
 
 skillsRoutes.post('/teams/:teamId/skills/:slug/sync', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const slug = c.req.param('slug');
 
 	const existing = await db.query<{ id: string; source_url: string | null }>(
@@ -266,11 +250,8 @@ skillsRoutes.post('/teams/:teamId/skills/:slug/sync', async (c) => {
 });
 
 skillsRoutes.delete('/teams/:teamId/skills/:slug', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const slug = c.req.param('slug');
 
 	const result = await db.query(
