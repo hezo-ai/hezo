@@ -13,7 +13,6 @@ import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireTeamAccess } from '../middleware/auth';
 import { AttachmentTooLargeError, writeAsset } from '../services/asset-storage';
 import { getAssetPath } from '../services/workspace';
 
@@ -28,11 +27,8 @@ assetsRoutes.post(
 		onError: (c) => err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400),
 	}),
 	async (c) => {
-		const access = await requireTeamAccess(c);
-		if (access instanceof Response) return access;
-
+		const teamId = c.get('teamId') as string;
 		const db = c.get('db');
-		const { teamId } = access;
 		const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 

@@ -6,7 +6,6 @@ import { err, ok } from '../lib/response';
 import { isUniqueViolation, withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireTeamAccess } from '../middleware/auth';
 import { provisionContainer } from '../services/containers';
 import { createGitHubRepo, parseGitHubUrl, validateRepoAccess } from '../services/github';
 import { getConnectionForTeam } from '../services/oauth/connection-store';
@@ -18,11 +17,8 @@ const log = logger.child('routes');
 export const reposRoutes = new Hono<Env>();
 
 reposRoutes.get('/teams/:teamId/projects/:projectId/repos', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
@@ -50,12 +46,9 @@ reposRoutes.get('/teams/:teamId/projects/:projectId/repos', async (c) => {
  * the access-token placeholder at request time.
  */
 reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const { teamId } = access;
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
@@ -287,11 +280,8 @@ reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
 });
 
 reposRoutes.delete('/teams/:teamId/projects/:projectId/repos/:repoId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 	const repoId = c.req.param('repoId');
@@ -331,15 +321,10 @@ reposRoutes.delete('/teams/:teamId/projects/:projectId/repos/:repoId', async (c)
 });
 
 reposRoutes.get('/teams/:teamId/oauth-connections/:id/orgs', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const conn = await getConnectionForTeam(
-		{ db, masterKeyManager },
-		access.teamId,
-		c.req.param('id'),
-	);
+	const conn = await getConnectionForTeam({ db, masterKeyManager }, teamId, c.req.param('id'));
 	if (!conn || conn.provider !== 'github')
 		return err(c, 'NOT_FOUND', 'github connection not found', 404);
 
@@ -352,18 +337,13 @@ reposRoutes.get('/teams/:teamId/oauth-connections/:id/orgs', async (c) => {
 });
 
 reposRoutes.get('/teams/:teamId/oauth-connections/:id/repos', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 	const owner = c.req.query('owner');
 	const query = c.req.query('q') ?? undefined;
 	if (!owner) return err(c, 'INVALID_REQUEST', 'owner query parameter is required', 400);
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const conn = await getConnectionForTeam(
-		{ db, masterKeyManager },
-		access.teamId,
-		c.req.param('id'),
-	);
+	const conn = await getConnectionForTeam({ db, masterKeyManager }, teamId, c.req.param('id'));
 	if (!conn || conn.provider !== 'github')
 		return err(c, 'NOT_FOUND', 'github connection not found', 404);
 	const token = await loadOAuthAccessToken(db, masterKeyManager, conn.id);

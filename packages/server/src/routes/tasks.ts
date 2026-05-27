@@ -30,7 +30,6 @@ import { err, ok } from '../lib/response';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
 import type { AuthInfo, Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireTeamAccess } from '../middleware/auth';
 import { removeTaskWorktrees } from '../services/repo-sync';
 import { terminateRunsForTask } from '../services/run-termination';
 import { triggerStatusAutomations } from '../services/task-automation';
@@ -89,11 +88,8 @@ async function resolveActorMemberId(c: Context<Env>, teamId: string): Promise<st
 export const tasksRoutes = new Hono<Env>();
 
 tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const { page, perPage, offset } = parsePagination(c);
 
 	const conditions: string[] = ['i.team_id = $1'];
@@ -221,11 +217,8 @@ tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
 });
 
 tasksRoutes.post('/teams/:teamId/tasks', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const body = await c.req.json<CreateTaskInput>();
 	const caller = await buildCreateTaskCaller(c, teamId);
@@ -243,11 +236,8 @@ tasksRoutes.post('/teams/:teamId/tasks', async (c) => {
 });
 
 tasksRoutes.post('/teams/:teamId/tasks/batch', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const body = await c.req.json<{ items?: unknown }>();
 	const raw = body.items;
@@ -288,11 +278,8 @@ tasksRoutes.post('/teams/:teamId/tasks/batch', async (c) => {
 });
 
 tasksRoutes.get('/teams/:teamId/tasks/:taskId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
@@ -349,11 +336,8 @@ tasksRoutes.get('/teams/:teamId/tasks/:taskId', async (c) => {
 });
 
 tasksRoutes.post('/teams/:teamId/tasks/resolve', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const body = await c.req.json<{ identifiers?: unknown }>();
 	const raw = body.identifiers;
@@ -387,11 +371,8 @@ tasksRoutes.post('/teams/:teamId/tasks/resolve', async (c) => {
 });
 
 tasksRoutes.get('/teams/:teamId/tasks/:taskId/latest-run', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
@@ -416,11 +397,8 @@ tasksRoutes.get('/teams/:teamId/tasks/:taskId/latest-run', async (c) => {
 });
 
 tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
@@ -694,11 +672,8 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 });
 
 tasksRoutes.post('/teams/:teamId/tasks/:taskId/sub-tasks', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const parentTaskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!parentTaskId) return err(c, 'NOT_FOUND', 'Parent task not found', 404);
 
@@ -736,11 +711,8 @@ tasksRoutes.post('/teams/:teamId/tasks/:taskId/sub-tasks', async (c) => {
 });
 
 tasksRoutes.get('/teams/:teamId/tasks/:taskId/ancestors', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
@@ -772,11 +744,8 @@ tasksRoutes.get('/teams/:teamId/tasks/:taskId/ancestors', async (c) => {
 });
 
 tasksRoutes.get('/teams/:teamId/tasks/:taskId/dependencies', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
@@ -794,11 +763,8 @@ tasksRoutes.get('/teams/:teamId/tasks/:taskId/dependencies', async (c) => {
 });
 
 tasksRoutes.post('/teams/:teamId/tasks/:taskId/dependencies', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 	const body = await c.req.json<{ blocked_by_task_id: string }>();
@@ -839,11 +805,8 @@ tasksRoutes.post('/teams/:teamId/tasks/:taskId/dependencies', async (c) => {
 });
 
 tasksRoutes.delete('/teams/:teamId/tasks/:taskId/dependencies/:depId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 	const depId = c.req.param('depId');

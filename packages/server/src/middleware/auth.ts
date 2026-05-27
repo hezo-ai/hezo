@@ -226,6 +226,31 @@ export async function requireTeamAccess(c: Context<Env>): Promise<{ teamId: stri
 	return { teamId };
 }
 
+/**
+ * Hono middleware variant of {@link requireTeamAccess} for routes mounted under
+ * `/api/teams/:teamId/*`. Resolves the `:teamId` URL param (slug or UUID),
+ * runs the shared team-access check, and exposes the resolved UUID at
+ * `c.var.teamId` for downstream handlers to read via `c.get('teamId')`.
+ */
+export const requireTeamAccessMiddleware = createMiddleware<Env>(async (c, next) => {
+	const raw = c.req.param('teamId');
+	if (!raw) {
+		return c.json({ error: { code: 'BAD_REQUEST', message: 'Missing teamId' } }, 400);
+	}
+
+	const db = c.get('db');
+	const teamId = await resolveTeamId(db, raw);
+	if (!teamId) {
+		return c.json({ error: { code: 'NOT_FOUND', message: 'Team not found' } }, 404);
+	}
+
+	const denied = await assertTeamAccess(db, c.get('auth'), c, teamId);
+	if (denied) return denied;
+
+	c.set('teamId', teamId);
+	return next();
+});
+
 export async function requireTeamAccessForResource(
 	db: PGlite,
 	c: Context<Env>,

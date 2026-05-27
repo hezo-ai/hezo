@@ -3,7 +3,6 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireTeamAccess } from '../middleware/auth';
 
 export const secretsRoutes = new Hono<Env>();
 
@@ -14,11 +13,8 @@ export const secretsRoutes = new Hono<Env>();
  * stale credentials safe to revoke.
  */
 secretsRoutes.get('/teams/:teamId/credentials', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const result = await db.query(
 		`SELECT s.id, s.team_id, s.project_id, s.name, s.category,
@@ -51,11 +47,8 @@ secretsRoutes.get('/teams/:teamId/credentials', async (c) => {
 });
 
 secretsRoutes.get('/teams/:teamId/secrets', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const projectId = c.req.query('project_id');
 
 	let query = `
@@ -79,11 +72,8 @@ secretsRoutes.get('/teams/:teamId/secrets', async (c) => {
 });
 
 secretsRoutes.post('/teams/:teamId/secrets', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const masterKeyManager = c.get('masterKeyManager');
 
 	const body = await c.req.json<{
@@ -136,11 +126,8 @@ secretsRoutes.post('/teams/:teamId/secrets', async (c) => {
 });
 
 secretsRoutes.patch('/teams/:teamId/secrets/:secretId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const secretId = c.req.param('secretId');
 	const masterKeyManager = c.get('masterKeyManager');
 
@@ -210,11 +197,8 @@ secretsRoutes.patch('/teams/:teamId/secrets/:secretId', async (c) => {
 });
 
 secretsRoutes.delete('/teams/:teamId/secrets/:secretId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const secretId = c.req.param('secretId');
 
 	const existing = await db.query('SELECT id FROM secrets WHERE id = $1 AND team_id = $2', [
@@ -231,11 +215,8 @@ secretsRoutes.delete('/teams/:teamId/secrets/:secretId', async (c) => {
 });
 
 secretsRoutes.get('/teams/:teamId/secrets/:secretId/grants', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const secretId = c.req.param('secretId');
 
 	const result = await db.query(
@@ -252,11 +233,8 @@ secretsRoutes.get('/teams/:teamId/secrets/:secretId/grants', async (c) => {
 });
 
 secretsRoutes.post('/teams/:teamId/secrets/:secretId/grants', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const secretId = c.req.param('secretId');
 
 	const secretCheck = await db.query('SELECT id FROM secrets WHERE id = $1 AND team_id = $2', [
@@ -288,11 +266,8 @@ secretsRoutes.post('/teams/:teamId/secrets/:secretId/grants', async (c) => {
 });
 
 secretsRoutes.delete('/teams/:teamId/secret-grants/:grantId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const grantId = c.req.param('grantId');
 
 	const result = await db.query(

@@ -1,16 +1,12 @@
 import { Hono } from 'hono';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import type { Env } from '../lib/types';
-import { requireTeamAccess } from '../middleware/auth';
 
 export const auditLogRoutes = new Hono<Env>();
 
 auditLogRoutes.get('/teams/:teamId/audit-log', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const { page, perPage, offset } = parsePagination(c);
 
 	const conditions: string[] = ['al.team_id = $1'];

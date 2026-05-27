@@ -5,7 +5,6 @@ import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireTeamAccess } from '../middleware/auth';
 import { installLocalMcpById } from '../services/mcp-installer';
 
 const log = logger.child('mcp-connections-route');
@@ -13,11 +12,8 @@ const log = logger.child('mcp-connections-route');
 export const mcpConnectionsRoutes = new Hono<Env>();
 
 mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const projectId = c.req.query('project_id') ?? null;
 
 	const params: unknown[] = [teamId];
@@ -39,11 +35,8 @@ mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections', async (c) => {
 });
 
 mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const body = await c.req.json<{
 		name: string;
@@ -160,11 +153,8 @@ async function kickoffLocalInstall(
 }
 
 mcpConnectionsRoutes.delete('/teams/:teamId/mcp-connections/:id', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const id = c.req.param('id');
 
 	const result = await db.query<{ id: string }>(

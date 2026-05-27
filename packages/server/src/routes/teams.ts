@@ -5,7 +5,7 @@ import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
-import { requireSuperuser, requireTeamAccess } from '../middleware/auth';
+import { requireSuperuser } from '../middleware/auth';
 import { getOnboardingStatus } from '../services/onboarding';
 import { runOnboardingDirect } from '../services/onboarding-direct';
 import {
@@ -90,13 +90,12 @@ teamsRoutes.post('/teams', async (c) => {
 });
 
 teamsRoutes.get('/teams/:teamId/onboarding-intake', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const ensure = c.req.query('ensure') === 'true';
 	const intake = ensure
-		? await ensureOnboardingIntakeTask(c.get('db'), access.teamId, c.get('wsManager'))
-		: await getOpenOnboardingIntakeTask(c.get('db'), access.teamId);
+		? await ensureOnboardingIntakeTask(c.get('db'), teamId, c.get('wsManager'))
+		: await getOpenOnboardingIntakeTask(c.get('db'), teamId);
 	if (!intake) {
 		return err(c, 'NOT_FOUND', 'Onboarding intake is not available for this team', 404);
 	}
@@ -104,15 +103,14 @@ teamsRoutes.get('/teams/:teamId/onboarding-intake', async (c) => {
 });
 
 teamsRoutes.post('/teams/:teamId/onboarding-intake/skip-questions', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
-	const intake = await getOpenOnboardingIntakeTask(c.get('db'), access.teamId);
+	const intake = await getOpenOnboardingIntakeTask(c.get('db'), teamId);
 	if (!intake) {
 		return err(c, 'NOT_FOUND', 'No open onboarding intake to skip', 404);
 	}
 
-	const comment = await postSkipQuestionsSignal(c.get('db'), access.teamId, intake.task_id);
+	const comment = await postSkipQuestionsSignal(c.get('db'), teamId, intake.task_id);
 	if (!comment) {
 		return err(c, 'INTERNAL', 'Failed to post skip signal', 500);
 	}
@@ -120,15 +118,14 @@ teamsRoutes.post('/teams/:teamId/onboarding-intake/skip-questions', async (c) =>
 });
 
 teamsRoutes.post('/teams/:teamId/project-intake/:taskId/skip-questions', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const db = c.get('db');
-	const taskId = await resolveTaskId(db, access.teamId, c.req.param('taskId'));
+	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) {
 		return err(c, 'NOT_FOUND', 'Task not found', 404);
 	}
-	const comment = await postSkipQuestionsSignalForProjectIntake(db, access.teamId, taskId);
+	const comment = await postSkipQuestionsSignalForProjectIntake(db, teamId, taskId);
 	if (!comment) {
 		return err(c, 'NOT_FOUND', 'No open project intake found for this task', 404);
 	}
@@ -136,16 +133,14 @@ teamsRoutes.post('/teams/:teamId/project-intake/:taskId/skip-questions', async (
 });
 
 teamsRoutes.get('/teams/:teamId/onboarding', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
-	const status = await getOnboardingStatus(c.get('db'), access.teamId);
+	const status = await getOnboardingStatus(c.get('db'), teamId);
 	return ok(c, status);
 });
 
 teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const body = await c.req.json<{
 		template_id?: string;
@@ -161,7 +156,7 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 	}
 
 	const result = await runOnboardingDirect(c.get('db'), {
-		teamId: access.teamId,
+		teamId: teamId,
 		templateId: body.template_id.trim(),
 		projectName: body.project_name.trim(),
 		projectDescription: body.project_description,
@@ -184,11 +179,8 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 });
 
 teamsRoutes.get('/teams/:teamId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const ts2 = terminalStatusParams(3);
 	const result = await db.query(
@@ -207,11 +199,8 @@ teamsRoutes.get('/teams/:teamId', async (c) => {
 });
 
 teamsRoutes.patch('/teams/:teamId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const existing = await db.query('SELECT id FROM teams WHERE id = $1', [teamId]);
 	if (existing.rows.length === 0) {
@@ -270,11 +259,8 @@ teamsRoutes.patch('/teams/:teamId', async (c) => {
 });
 
 teamsRoutes.delete('/teams/:teamId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const existing = await db.query('SELECT id FROM teams WHERE id = $1', [teamId]);
 	if (existing.rows.length === 0) {

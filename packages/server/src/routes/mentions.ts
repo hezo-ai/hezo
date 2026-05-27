@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireTeamAccess } from '../middleware/auth';
 
 export const mentionsRoutes = new Hono<Env>();
 
@@ -15,11 +14,8 @@ interface SearchResult {
 }
 
 mentionsRoutes.post('/teams/:teamId/docs/resolve', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const body = await c.req.json<{
 		kb_slugs?: unknown;
@@ -112,11 +108,8 @@ mentionsRoutes.post('/teams/:teamId/docs/resolve', async (c) => {
 });
 
 mentionsRoutes.get('/teams/:teamId/mentions/search', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const q = (c.req.query('q') ?? '').trim();
 	const kind = (c.req.query('kind') ?? 'all') as MentionKind | 'all';

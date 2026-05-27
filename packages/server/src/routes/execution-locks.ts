@@ -4,16 +4,12 @@ import { broadcastChange } from '../lib/broadcast';
 import { resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireTeamAccess } from '../middleware/auth';
 
 export const executionLocksRoutes = new Hono<Env>();
 
 executionLocksRoutes.get('/teams/:teamId/tasks/:taskId/lock', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
@@ -31,11 +27,8 @@ executionLocksRoutes.get('/teams/:teamId/tasks/:taskId/lock', async (c) => {
 });
 
 executionLocksRoutes.post('/teams/:teamId/tasks/:taskId/lock', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
@@ -70,11 +63,8 @@ executionLocksRoutes.post('/teams/:teamId/tasks/:taskId/lock', async (c) => {
 });
 
 executionLocksRoutes.delete('/teams/:teamId/tasks/:taskId/lock', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 

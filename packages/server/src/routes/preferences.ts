@@ -3,26 +3,22 @@ import { Hono } from 'hono';
 import { resolveActorMemberId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireTeamAccess } from '../middleware/auth';
 import { getDocument, listRevisions, restoreRevision, upsertDocument } from '../services/documents';
 
 export const preferencesRoutes = new Hono<Env>();
 
 preferencesRoutes.get('/teams/:teamId/preferences', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const doc = await getDocument(c.get('db'), {
 		type: DocumentType.TeamPreferences,
-		teamId: access.teamId,
+		teamId,
 	});
 	return ok(c, doc);
 });
 
 preferencesRoutes.patch('/teams/:teamId/preferences', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const auth = c.get('auth');
 	const body = await c.req.json<{ content: string; change_summary?: string }>();
@@ -31,14 +27,14 @@ preferencesRoutes.patch('/teams/:teamId/preferences', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
 
-	const authorMemberId = await resolveActorMemberId(db, auth, access.teamId);
+	const authorMemberId = await resolveActorMemberId(db, auth, teamId);
 	const existing = await getDocument(db, {
 		type: DocumentType.TeamPreferences,
-		teamId: access.teamId,
+		teamId,
 	});
 
 	const doc = await upsertDocument(db, c.get('wsManager'), {
-		scope: { type: DocumentType.TeamPreferences, teamId: access.teamId },
+		scope: { type: DocumentType.TeamPreferences, teamId },
 		content: body.content,
 		changeSummary: body.change_summary,
 		authorMemberId,
@@ -48,12 +44,11 @@ preferencesRoutes.patch('/teams/:teamId/preferences', async (c) => {
 });
 
 preferencesRoutes.get('/teams/:teamId/preferences/revisions', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const doc = await getDocument(c.get('db'), {
 		type: DocumentType.TeamPreferences,
-		teamId: access.teamId,
+		teamId,
 	});
 	if (!doc) return ok(c, []);
 
@@ -62,8 +57,7 @@ preferencesRoutes.get('/teams/:teamId/preferences/revisions', async (c) => {
 });
 
 preferencesRoutes.post('/teams/:teamId/preferences/restore', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const auth = c.get('auth');
 	if (auth.type === AuthType.Agent) {
@@ -78,11 +72,11 @@ preferencesRoutes.post('/teams/:teamId/preferences/restore', async (c) => {
 
 	const doc = await getDocument(db, {
 		type: DocumentType.TeamPreferences,
-		teamId: access.teamId,
+		teamId,
 	});
 	if (!doc) return err(c, 'NOT_FOUND', 'Preferences not found', 404);
 
-	const restoredByMemberId = await resolveActorMemberId(db, auth, access.teamId);
+	const restoredByMemberId = await resolveActorMemberId(db, auth, teamId);
 	const restored = await restoreRevision(db, c.get('wsManager'), {
 		documentId: doc.id,
 		revisionNumber: body.revision_number,

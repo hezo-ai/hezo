@@ -2,7 +2,6 @@ import { AuthType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireTeamAccess } from '../middleware/auth';
 
 export const uiStateRoutes = new Hono<Env>();
 
@@ -21,10 +20,9 @@ async function resolveMemberUser(c: import('hono').Context<Env>, teamId: string)
 }
 
 uiStateRoutes.get('/teams/:teamId/ui-state', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
-	const member = await resolveMemberUser(c, access.teamId);
+	const member = await resolveMemberUser(c, teamId);
 	if (!member) {
 		return err(c, 'FORBIDDEN', 'Only board users have UI state', 403);
 	}
@@ -33,10 +31,9 @@ uiStateRoutes.get('/teams/:teamId/ui-state', async (c) => {
 });
 
 uiStateRoutes.patch('/teams/:teamId/ui-state', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
-	const member = await resolveMemberUser(c, access.teamId);
+	const member = await resolveMemberUser(c, teamId);
 	if (!member) {
 		return err(c, 'FORBIDDEN', 'Only board users have UI state', 403);
 	}

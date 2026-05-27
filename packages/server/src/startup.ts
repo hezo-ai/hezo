@@ -13,7 +13,7 @@ import { BASE_SCHEMA } from './db/schema';
 import type { Env } from './lib/types';
 import { getToolDefs, handleMcpRequest, initMcpServer } from './mcp/server';
 import { generateSkillFile } from './mcp/skill-file';
-import { authMiddleware } from './middleware/auth';
+import { authMiddleware, requireTeamAccessMiddleware } from './middleware/auth';
 import { agentApiRoutes } from './routes/agent-api';
 import { agentTypesRoutes } from './routes/agent-types';
 import { agentsRoutes } from './routes/agents';
@@ -258,6 +258,11 @@ export function buildApp(
 	// Auth middleware for all /api/* and /agent-api/* routes
 	app.use('/api/*', authMiddleware);
 	app.use('/agent-api/*', authMiddleware);
+
+	// Team-scoped routes: resolve :teamId slug/UUID + assert access once.
+	// Handlers read c.get('teamId') for the resolved UUID. Agent-api paths
+	// derive teamId from the JWT, not the URL, so they are not covered here.
+	app.use('/api/teams/:teamId/*', requireTeamAccessMiddleware);
 
 	// Agent API routes
 	app.route('/agent-api', agentApiRoutes);

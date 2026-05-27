@@ -3,17 +3,14 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireTeamAccess, requireTeamAccessForResource } from '../middleware/auth';
+import { requireTeamAccessForResource } from '../middleware/auth';
 import { resolveApproval } from '../services/approval-resolve';
 
 export const approvalsRoutes = new Hono<Env>();
 
 approvalsRoutes.get('/teams/:teamId/approvals', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const statusFilter = c.req.query('status') || ApprovalStatus.Pending;
 
 	const result = await db.query(
@@ -48,11 +45,8 @@ approvalsRoutes.get('/teams/:teamId/approvals', async (c) => {
 });
 
 approvalsRoutes.get('/teams/:teamId/approvals/:approvalId/blocked-tickets', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const approvalId = c.req.param('approvalId');
 
 	const approval = await db.query<{ id: string; type: string }>(
@@ -129,11 +123,8 @@ approvalsRoutes.get('/teams/:teamId/approvals/:approvalId/blocked-tickets', asyn
 });
 
 approvalsRoutes.post('/teams/:teamId/approvals', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const body = await c.req.json<{
 		type: string;
