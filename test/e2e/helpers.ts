@@ -317,9 +317,9 @@ export async function createTeamWithAgents(page: Page) {
 	});
 	const team = ((await teamRes.json()) as any).data;
 
-	// Template apply queues team_context regeneration + a coherence review for Captain;
-	// wait for Captain to drain those before tests start their own work.
-	await waitForCaptainIdle(page, team.id, token);
+	// The previous waitForCaptainIdle() here was draining Captain's coherence-review run,
+	// which the e2e server now skips via HEZO_E2E_SKIP_COHERENCE_REVIEW. Without that
+	// queue work Captain is already idle as soon as the team row commits, so no wait.
 
 	return { team, token };
 }

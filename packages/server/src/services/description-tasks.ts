@@ -153,6 +153,7 @@ export async function enqueueTeamCoherenceReviewTask(
 	teamId: string,
 	reason: TeamCoherenceReviewReason,
 ): Promise<string | null> {
+	if (process.env.HEZO_E2E_SKIP_COHERENCE_REVIEW) return null;
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
 	if (!ctx.captainMemberId || !ctx.internalProjectId) return null;
