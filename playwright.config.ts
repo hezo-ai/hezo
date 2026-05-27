@@ -8,7 +8,7 @@ const TEST_DATA_DIR = join(tmpdir(), 'hezo-e2e-test');
 
 export default defineConfig({
 	tsconfig: './tsconfig.json',
-	testDir: './test/e2e',
+	testDir: './test/browser',
 	timeout: 180_000,
 	retries: 1,
 	workers: 4,
