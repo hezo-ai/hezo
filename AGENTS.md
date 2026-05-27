@@ -65,18 +65,68 @@ All changes ship with tests that exercise functionality (not "code runs without 
 - Dialogs / Radix popovers render into a portal on `document.body`. Query selectors against `document.body` (not `container`) when the element is inside a Radix `Portal`.
 - Auto-wait via Testing Library's `findBy*` / `waitFor`. Don't use `expect(...).toBeDisabled()` (jest-dom matchers aren't loaded) — read `disabled` directly off the element.
 
-### When to write Playwright vs component
+### When to write Playwright vs component (decision tree)
 
-Default to a component test. Reach for Playwright only when one of these is true:
+**Default is a component test.** Component tests cost ~500ms each and exercise the same React tree + real backend as Playwright; they just skip Chromium. Before reaching for Playwright, walk this checklist for the behavior you're testing:
 
-- The test calls `page.setViewportSize` to a non-default width (mobile-only behavior).
-- The test dispatches drag-drop / `DataTransfer` events.
-- The test reads `scrollTop`, `scrollHeight`, `boundingBox()`, or asserts on Virtuoso's mounted-row window.
-- The test asserts on real CSS computed layout (`getComputedStyle`, `clientHeight` vs `scrollHeight`).
-- The test depends on a real WebSocket stream (agent run logs).
-- The test exercises the master-key gate or onboarding flow before any auth token exists.
+1. **Does the assertion depend on real CSS layout?** Anything reading `clientHeight`, `scrollHeight`, `scrollTop`, `boundingBox()`, `getComputedStyle()`, position changing on scroll, sticky/fixed positioning, line-clamp truncation. → **Playwright.** happy-dom returns 0 / unset values for these.
 
-Each Playwright spec we still keep has a one-line comment at the top explaining which of these it needs.
+2. **Does the assertion depend on viewport-conditional behavior?** Anything that only renders / behaves differently at a specific viewport size — mobile drawer, hamburger menu, responsive grid switching column count, tap-target sizes. → **Playwright.** happy-dom doesn't run media queries against a real layout pass.
+
+3. **Does the assertion need to fire native input events the test runner can't synthesize?** Drag-drop with `DataTransfer`, file input via OS picker, paste events with rich clipboard content. → **Playwright.**
+
+4. **Does the assertion depend on Virtuoso (or any windowed list) mounting the right rows?** Asserting that a row at index N is in the DOM after a scroll, that virtualization windows shrink under load, that scroll-to-comment via URL hash moves the viewport. → **Playwright.**
+
+5. **Does the assertion depend on a real WebSocket stream from the server?** Agent run logs, realtime broadcast invalidations. The component harness stubs WebSocket to a no-op constructor. → **Playwright.**
+
+6. **Does the assertion depend on the master-key gate / instance setup flow before any token is set?** The harness always seeds a master key + token, so the gate is bypassed. → **Playwright.**
+
+If **none** of 1–6 match, write a component test. That covers the long tail: form submissions, mutations, react-query refetches, navigation, mention rendering, markdown, popover/dropdown behavior, dialogs, sidebar / breadcrumb / metadata rendering, link targets, dropdown options, optimistic updates, status badges, error states.
+
+**Concrete examples for common change types:**
+
+| Change | Tier | Notes |
+|---|---|---|
+| Add a new task field + form input | Component | `seedTask`, render task page, `user.type` into the input, assert via `findByText` |
+| Change how a mention renders inline | Component | Seed a comment with the mention text, render, assert on link href |
+| Add a new sidebar nav link | Component | Crib from `packages/web/test/sidebar.test.tsx` |
+| Add a new keyboard shortcut | Component | `user.keyboard('{Control>}{Enter}')` against the focused input |
+| New mobile-only collapsed view | Playwright | `page.setViewportSize({width: 375, height: 800})` then assert |
+| New drag-and-drop affordance | Playwright | Use the existing `dropFile` helper pattern in `task-comment-attachments.spec.ts` |
+| Change a sticky-header behavior on scroll | Playwright | `boundingBox()` before + after `el.scrollBy(...)` |
+
+Every existing Playwright spec has a one-line comment at the top explaining which of 1–6 keeps it there — read those before adding a new Playwright test to see if there's an existing pattern that fits.
+
+**Component test starter template:**
+
+```tsx
+import { expect, test } from 'vitest';
+import { renderApp } from './helpers/render';
+import { seedWorkspace, seedProject, seedTask } from './helpers/seed';
+
+test('<what changed>', async () => {
+  let ctx: { teamSlug: string; taskId: string };
+  const { findByText, user, router } = await renderApp({
+    initialPath: '/',
+    seed: async () => {
+      const ws = await seedWorkspace();
+      const project = await seedProject(ws, { name: 'Demo' });
+      const task = await seedTask(ws, project, { title: 'Demo Task' });
+      ctx = { teamSlug: ws.team.slug, taskId: task.id };
+    },
+  });
+  await router.navigate({
+    to: '/teams/$teamId/tasks/$taskId',
+    params: { teamId: ctx!.teamSlug, taskId: ctx!.taskId },
+  });
+  // Drive the change: user.click / user.type / etc.
+  // Assert: await findByText(...) auto-waits for refetches.
+});
+```
+
+`packages/web/test/task-create.test.tsx`, `task-comments.test.tsx`, and `project-crud.test.tsx` are good real-world examples to crib from.
+
+### Playwright environment
 
 Root `playwright.config.ts` auto-starts server (:3101) and web (:5174). Use `authenticate(page)` to bypass the master-key gate when not testing auth itself. The `sharedWorkspace` fixture in `test/e2e/fixtures.ts` provisions a Startup-templated team once per worker; tests create their own per-test project under it via `createProjectAndClearPlanning`. Captain's coherence-review run is suppressed by `HEZO_E2E_SKIP_COHERENCE_REVIEW=1` in the test server env — without it, team setup blocks for ~30-60s.
 
