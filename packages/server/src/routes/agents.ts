@@ -26,7 +26,6 @@ import { buildUpdateSet, isFkViolation, terminalStatusParams, withTransaction } 
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireTeamAccess } from '../middleware/auth';
 import {
 	AgentSystemPromptError,
 	fetchAgentSystemPromptForBatch,
@@ -106,11 +105,8 @@ const HEARTBEAT_RUN_TRIGGER_JOINS = `LEFT JOIN agent_wakeup_requests aw ON aw.id
 		AND hrc.content->>'run_id' = hr.id::text`;
 
 agentsRoutes.get('/teams/:teamId/agents', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const adminFilter = c.req.query('admin_status');
 
 	const ts = terminalStatusParams(2);
@@ -139,11 +135,8 @@ agentsRoutes.get('/teams/:teamId/agents', async (c) => {
 });
 
 agentsRoutes.post('/teams/:teamId/agents', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const teamCheck = await db.query('SELECT id FROM teams WHERE id = $1', [teamId]);
 	if (teamCheck.rows.length === 0) {
@@ -246,11 +239,8 @@ agentsRoutes.post('/teams/:teamId/agents', async (c) => {
 });
 
 agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const body = await c.req.json<{
 		title: string;
@@ -471,11 +461,8 @@ ${teamRoster}`;
 });
 
 agentsRoutes.get('/teams/:teamId/agents/:agentId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
@@ -494,11 +481,8 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId', async (c) => {
 });
 
 agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
@@ -511,11 +495,8 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt', async (c) => {
 });
 
 agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt/preview', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
@@ -535,11 +516,8 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt/preview', async (
 });
 
 agentsRoutes.post('/teams/:teamId/agents/system-prompts/batch', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const body = await c.req.json<{ items?: unknown }>();
 	const raw = body.items;
@@ -600,11 +578,8 @@ agentsRoutes.post('/teams/:teamId/agents/system-prompts/batch', async (c) => {
 });
 
 agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt/revisions', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
@@ -620,8 +595,7 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt/revisions', async
 });
 
 agentsRoutes.post('/teams/:teamId/agents/:agentId/system-prompt/restore', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const auth = c.get('auth');
 	if (auth.type === AuthType.Agent) {
@@ -656,11 +630,8 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/system-prompt/restore', async 
 });
 
 agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
@@ -824,11 +795,8 @@ agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
 });
 
 agentsRoutes.post('/teams/:teamId/agents/:agentId/disable', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
@@ -866,11 +834,8 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/disable', async (c) => {
 });
 
 agentsRoutes.post('/teams/:teamId/agents/:agentId/enable', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
@@ -902,11 +867,8 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/enable', async (c) => {
 });
 
 agentsRoutes.get('/teams/:teamId/org-chart', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const result = await db.query(
 		`SELECT m.id, ma.title, ma.slug, ma.role_description, ma.runtime_status, ma.admin_status, ma.reports_to
@@ -941,11 +903,8 @@ agentsRoutes.get('/teams/:teamId/org-chart', async (c) => {
 });
 
 agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
@@ -965,11 +924,8 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs', async (c) => {
 });
 
 agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs/:runId', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 	const runId = c.req.param('runId');
@@ -989,11 +945,8 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs/:runId', async (
 });
 
 agentsRoutes.post('/teams/:teamId/agents/:agentId/heartbeat-runs/:runId/terminate', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 	const runId = c.req.param('runId');
