@@ -17,6 +17,8 @@ let coachId: string;
 let engineerId: string;
 let engineerToken: string;
 let architectId: string;
+let captainId: string;
+let captainToken: string;
 let masterKeyManager: MasterKeyManager;
 
 beforeAll(async () => {
@@ -53,16 +55,20 @@ beforeAll(async () => {
 	const coach = agents.find((a: any) => a.slug === 'coach');
 	const engineer = agents.find((a: any) => a.slug === 'engineer');
 	const architect = agents.find((a: any) => a.slug === 'architect');
+	const captain = agents.find((a: any) => a.slug === 'captain');
 
 	expect(coach).toBeTruthy();
 	expect(engineer).toBeTruthy();
 	expect(architect).toBeTruthy();
+	expect(captain).toBeTruthy();
 
 	coachId = coach.id;
 	engineerId = engineer.id;
 	architectId = architect.id;
+	captainId = captain.id;
 
 	({ token: engineerToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId));
+	({ token: captainToken } = await mintAgentToken(db, masterKeyManager, captainId, teamId));
 
 	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
@@ -231,7 +237,7 @@ describe('Agent system-prompt access', () => {
 		expect(res.status).toBe(404);
 	});
 
-	it('non-coach agents cannot call update_agent_system_prompt via MCP', async () => {
+	it('agents other than Coach and Captain cannot call update_agent_system_prompt via MCP', async () => {
 		const res = await app.request('/mcp', {
 			method: 'POST',
 			headers: { ...authHeader(engineerToken), 'Content-Type': 'application/json' },
@@ -254,6 +260,40 @@ describe('Agent system-prompt access', () => {
 		const body = await res.json();
 		const content = body.result.content?.[0]?.text ?? '';
 		expect(content).toMatch(/Access denied/);
+	});
+
+	it('Captain can call update_agent_system_prompt via MCP', async () => {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(captainToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				id: 1,
+				params: {
+					name: 'update_agent_system_prompt',
+					arguments: {
+						team_id: teamId,
+						agent_id: architectId,
+						new_system_prompt: 'Captain coherence rewrite',
+						change_summary: 'team coherence review',
+					},
+				},
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		const text = body.result.content?.[0]?.text ?? '';
+		const payload = JSON.parse(text);
+		expect(payload.applied).toBe(true);
+		expect(payload.document_id).toBeTruthy();
+
+		const promptRes = await app.request(
+			`/api/teams/${teamId}/agents/${architectId}/system-prompt`,
+			{ headers: authHeader(boardToken) },
+		);
+		const promptDoc = (await promptRes.json()).data;
+		expect(promptDoc.content).toBe('Captain coherence rewrite');
 	});
 });
 

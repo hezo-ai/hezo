@@ -2019,7 +2019,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_agent_system_prompt',
-		'Apply a system prompt change for an agent. Only the Coach agent can call this. The change is applied immediately and a revision snapshot is stored so the board can restore previous versions.',
+		'Apply a system prompt change for an agent. Callable by the Coach agent (for after-task learned-rules updates) or by the Captain of the same team (during team-coherence reviews). The change is applied immediately and a revision snapshot is stored so the board can restore previous versions.',
 		{
 			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -2030,8 +2030,12 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			if (!(await isCoach(db, auth))) {
-				return { error: 'Access denied: only the Coach agent can update system prompts' };
+			const allowed =
+				(await isCoach(db, auth)) || (await isCaptainOfTeam(db, auth, args.team_id as string));
+			if (!allowed) {
+				return {
+					error: 'Access denied: only the Coach or the Captain can update system prompts',
+				};
 			}
 
 			const agentCheck = await db.query<{ id: string }>(
@@ -2053,6 +2057,13 @@ export function registerTools(
 				changeSummary: args.change_summary as string,
 				authorMemberId: callerMemberId,
 			});
+
+			trackBackground(
+				enqueueTeamCoherenceReviewTask(db, args.team_id as string, 'prompt_updated').catch((e) =>
+					log.error('Failed to enqueue team coherence review after prompt update:', e),
+				),
+			);
+
 			return { applied: true, document_id: doc.id };
 		},
 		db,
