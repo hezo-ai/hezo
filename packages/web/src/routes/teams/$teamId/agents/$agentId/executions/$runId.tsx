@@ -215,6 +215,15 @@ function ExecutionDetailPage() {
 					liveLabel={isActive ? <span className="text-accent-amber">(live)</span> : null}
 					heightClassName="max-h-[60vh]"
 					testId="run-log"
+					headerActionLeading={
+						<TerminateRunButton
+							teamId={teamId}
+							agentId={agentId}
+							runId={runId}
+							status={run.status}
+							taskId={run.task_id}
+						/>
+					}
 				/>
 			</div>
 		</div>

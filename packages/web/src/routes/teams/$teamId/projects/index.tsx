@@ -7,6 +7,7 @@ import { Avatar, avatarColorFromString } from '../../../../components/ui/avatar'
 import { Button } from '../../../../components/ui/button';
 import { Card } from '../../../../components/ui/card';
 import { EmptyState } from '../../../../components/ui/empty-state';
+import { Tooltip } from '../../../../components/ui/tooltip';
 import { useProjects } from '../../../../hooks/use-projects';
 
 type ProjectListSearch = { create?: boolean };
@@ -84,12 +85,13 @@ function ProjectListPage() {
 												{p.name}
 											</h2>
 											{p.container_status && p.container_status !== 'running' && (
-												<span
-													role="img"
-													title={`Container ${p.container_status}`}
-													aria-label={`Container ${p.container_status}`}
-													className="w-2 h-2 rounded-full bg-accent-red shrink-0"
-												/>
+												<Tooltip content={`Container ${p.container_status}`}>
+													<span
+														role="img"
+														aria-label={`Container ${p.container_status}`}
+														className="w-2 h-2 rounded-full bg-accent-red shrink-0"
+													/>
+												</Tooltip>
 											)}
 										</div>
 										{p.description && (

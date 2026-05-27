@@ -15,6 +15,7 @@ import type { CommentAttachment } from '../hooks/use-comments';
 import { useUploadAttachment } from '../hooks/use-upload-attachment';
 import type { ApiError } from '../lib/api';
 import { InfoTooltip } from './ui/info-tooltip';
+import { Tooltip } from './ui/tooltip';
 
 interface Props {
 	teamId: string;
@@ -200,17 +201,18 @@ export function CommentAttachmentsDrop({ teamId, taskId, value, onChange, childr
 							data-testid="comment-attachment-chip"
 						>
 							{iconFor(a.content_type)}
-							<a
-								href={a.url}
-								target="_blank"
-								rel="noopener noreferrer"
-								title={a.original_filename}
-								className="flex items-center gap-1 text-text hover:underline"
-								data-testid="comment-attachment-preview"
-							>
-								<span className="max-w-[140px] truncate">{a.original_filename}</span>
-								<ExternalLink className="h-3 w-3 shrink-0" />
-							</a>
+							<Tooltip content={a.original_filename}>
+								<a
+									href={a.url}
+									target="_blank"
+									rel="noopener noreferrer"
+									className="flex items-center gap-1 text-text hover:underline"
+									data-testid="comment-attachment-preview"
+								>
+									<span className="max-w-[140px] truncate">{a.original_filename}</span>
+									<ExternalLink className="h-3 w-3 shrink-0" />
+								</a>
+							</Tooltip>
 							<button
 								type="button"
 								aria-label="Remove attachment"
