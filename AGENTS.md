@@ -2,10 +2,10 @@
 
 ## Commands
 
-- `bun run test` — server unit/integration (vitest) + web component tier (vitest) + e2e (Playwright), in that order
-- `bun run test --skip-e2e` — drop Playwright; runs server + web vitest only (~30s)
-- `bun run test --e2e` — Playwright only
-- `bun run test --pattern <substring>` — filter by file-path substring (works across all tiers; combine with `--e2e` to narrow e2e)
+- `bun run test` — server unit/integration (vitest) + web component tier (vitest) + browser (Playwright), in that order
+- `bun run test --skip-browser` — drop Playwright; runs server + web vitest only (~30s)
+- `bun run test --browser` — Playwright only
+- `bun run test --pattern <substring>` — filter by file-path substring (works across all tiers; combine with `--browser` to narrow browser tests)
 - `bun run test --package <server|web>` — restrict vitest run to one package
 - `bun run test --concurrency <n>` — override worker count (default 10)
 - `bun run test --bail` — stop on first failure
@@ -18,8 +18,8 @@
 - One vitest file: `cd packages/<pkg> && bunx vitest run <path>` (e.g. `cd packages/web && bunx vitest run test/task-comments.test.tsx`). Same flags as `bun run test`.
 - Filter by test name: `bunx vitest run <path> -t '<substring>'`.
 - Watch mode while iterating: drop `run` (`bunx vitest <path>`).
-- One Playwright spec: `bunx playwright test test/e2e/<spec>.spec.ts` from the root.
-- Headed Playwright for debugging: `bunx playwright test --headed --debug test/e2e/<spec>.spec.ts`.
+- One Playwright spec: `bunx playwright test test/browser/<spec>.spec.ts` from the root.
+- Headed Playwright for debugging: `bunx playwright test --headed --debug test/browser/<spec>.spec.ts`.
 
 ### Diagnosing failures fast
 
@@ -44,8 +44,8 @@ All changes ship with tests that exercise functionality (not "code runs without 
 | Tier | Where | Run cost | What it tests | When to use |
 |---|---|---|---|---|
 | Server unit/integration | `packages/server/test/**/*.test.ts` | ~ms each | API handlers, DB queries, services, MCP tools, agent run plumbing. Each test boots a fresh PGlite + Hono app via `createTestContext()`. | Everything backend. |
-| Web component | `packages/web/test/**/*.test.tsx` | ~100-700ms each | React tree rendered in happy-dom against an **in-process** Hono + PGlite backend via `renderApp()` in `packages/web/test/helpers/render.tsx`. Asserts on DOM, forms, React Query refetches, navigation, mention rendering. Stubs WebSocket (`reconnecting-websocket`'s constructor checks) and `IntersectionObserver`. | Anything render-driven that doesn't depend on a real browser layout engine or WebSocket stream. ~80% of what used to be e2e. |
-| Playwright e2e | `test/e2e/**/*.spec.ts` | ~10-30s each | Real Chromium. Mobile viewport (responsive checks at 375px), drag-drop file events, `boundingBox()` / sticky positioning, Virtuoso virtualization windows + scroll, scroll-to-bottom buttons, real `clientHeight`/`scrollHeight` comparisons, real WebSocket-streamed logs, the master-key gate flow before any token is set. | The thin slice that genuinely needs the browser. Default: write a component test instead. |
+| Web component | `packages/web/test/**/*.test.tsx` | ~100-700ms each | React tree rendered in happy-dom against an **in-process** Hono + PGlite backend via `renderApp()` in `packages/web/test/helpers/render.tsx`. Asserts on DOM, forms, React Query refetches, navigation, mention rendering. Stubs WebSocket (`reconnecting-websocket`'s constructor checks) and `IntersectionObserver`. | Anything render-driven that doesn't depend on a real browser layout engine or WebSocket stream. ~80% of what would otherwise be a browser test. |
+| Playwright browser | `test/browser/**/*.spec.ts` | ~10-30s each | Real Chromium. Mobile viewport (responsive checks at 375px), drag-drop file events, `boundingBox()` / sticky positioning, Virtuoso virtualization windows + scroll, scroll-to-bottom buttons, real `clientHeight`/`scrollHeight` comparisons, real WebSocket-streamed logs, the master-key gate flow before any token is set. | The thin slice that genuinely needs the browser. Default: write a component test instead. |
 
 ### Server unit/integration rules
 
@@ -128,7 +128,7 @@ test('<what changed>', async () => {
 
 ### Playwright environment
 
-Root `playwright.config.ts` auto-starts server (:3101) and web (:5174). Use `authenticate(page)` to bypass the master-key gate when not testing auth itself. The `sharedWorkspace` fixture in `test/e2e/fixtures.ts` provisions a Startup-templated team once per worker; tests create their own per-test project under it via `createProjectAndClearPlanning`. Captain's coherence-review run is suppressed by `HEZO_E2E_SKIP_COHERENCE_REVIEW=1` in the test server env — without it, team setup blocks for ~30-60s.
+Root `playwright.config.ts` auto-starts server (:3101) and web (:5174). Use `authenticate(page)` to bypass the master-key gate when not testing auth itself. The `sharedWorkspace` fixture in `test/browser/fixtures.ts` provisions a Startup-templated team once per worker; tests create their own per-test project under it via `createProjectAndClearPlanning`. Captain's coherence-review run is suppressed by `HEZO_E2E_SKIP_COHERENCE_REVIEW=1` in the test server env — without it, team setup blocks for ~30-60s.
 
 ### No spurious `[error]`/`[warn]` in unit-test output
 
@@ -147,11 +147,11 @@ Concretely, on `PATCH /tasks` the system comments that record the change (`recor
 
 Wrap the awaited call in `try/catch` and `log.error(...)` to keep the "log and continue" semantics — a failed side effect should not 500 the request.
 
-### E2E flake patterns
+### Browser test flake patterns
 
 The remaining Playwright suite is small but still subject to a 1 Hz agent wakeup cron and a dev-mode Vite. When a spec flakes:
 
-- **Scope every response matcher to the test's own IDs.** Use `taskMatcher` / `teamMatcher` / `agentMatcher` from `test/e2e/helpers.ts`. A bare `/api/teams/[^/]+/tasks/[^/]+/` regex can match Captain's background planning-task PATCH and satisfy the matcher before your mutation has even left the browser. For tasks, `taskId` is the lowercase identifier, not the UUID.
+- **Scope every response matcher to the test's own IDs.** Use `taskMatcher` / `teamMatcher` / `agentMatcher` from `test/browser/helpers.ts`. A bare `/api/teams/[^/]+/tasks/[^/]+/` regex can match Captain's background planning-task PATCH and satisfy the matcher before your mutation has even left the browser. For tasks, `taskId` is the lowercase identifier, not the UUID.
 - **For "click save → assert UI updated", use `saveAndWaitForRefetch(page, locator, { mutation, refetch })`.** Mutation landing ≠ UI rendering — React Query has to invalidate, refetch, and re-render before the new text is in the DOM.
 - **Scroll Virtuoso before asserting on a bottom-of-list item.** Virtuoso only mounts the viewport range. Scroll the container first: `await page.locator('main').first().evaluate((el) => el.scrollTo({ top: el.scrollHeight }))`.
 - **Sequence `page.request` after in-flight UI mutations.** `page.request.<method>` uses a separate APIRequestContext from the page's fetch; the two can land in either order. `await page.waitForResponse(...)` the UI mutation before firing the API mutation.
@@ -204,7 +204,7 @@ Three breakpoints:
 - **Tablet** (768–1023px): team rail visible (60px), text sidebar hidden, 2-column form grids at `sm:`, centered modals, 24px padding.
 - **Desktop** (1024px+): full rail + sidebar (260px), all table columns, 2–3 column grids, 32px padding.
 
-Base Tailwind targets mobile; use `sm:`/`md:`/`lg:` to enhance. Every UI change must work at all three breakpoints, and every e2e test for a UI change must verify the mobile layout.
+Base Tailwind targets mobile; use `sm:`/`md:`/`lg:` to enhance. Every UI change must work at all three breakpoints, and every browser test for a UI change must verify the mobile layout.
 
 ## Database transactions
 
