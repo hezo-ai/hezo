@@ -15,9 +15,6 @@ import { api } from '../../../../../../lib/api';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 import { AgentStatusLabel } from '../../../../../../components/agent-status-label';
-import { CommentAttachmentsDrop } from '../../../../../../components/comment-attachments-drop';
-import { MarkdownProse } from '../../../../../../components/markdown-prose';
-import { MentionTextarea } from '../../../../../../components/mention-textarea';
 import { CommentComposer } from '../../../../../../components/task-detail/comment-composer';
 import {
 	CommentsSection,
@@ -27,7 +24,6 @@ import { DependenciesSection } from '../../../../../../components/task-detail/de
 import { SubTasksSection } from '../../../../../../components/task-detail/sub-tasks-section';
 import { TaskHeader } from '../../../../../../components/task-detail/task-header';
 import { TaskSummary } from '../../../../../../components/task-detail/task-summary';
-import { TaskStatusBadge } from '../../../../../../components/task-status-badge';
 import { Button } from '../../../../../../components/ui/button';
 import { ConfirmDialog } from '../../../../../../components/ui/confirm-dialog';
 import { InfoTooltip } from '../../../../../../components/ui/info-tooltip';
