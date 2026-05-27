@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { type SeededWorkspace, seedProject, seedWorkspace } from './helpers/seed';
@@ -29,9 +30,13 @@ test('displays project name and description', async () => {
 	});
 
 	const breadcrumb = await findByTestId('breadcrumb', undefined, { timeout: 15_000 });
-	// The project name lands in the breadcrumb once useProject resolves.
-	await findByText(projectName, undefined, { timeout: 15_000 });
-	expect(breadcrumb.textContent).toMatch(new RegExp(projectName));
+	// The sidebar's project-list query resolves earlier than the route layout's
+	// useProject, so polling on findByText(projectName) can match the sidebar
+	// while the breadcrumb still shows the slug fallback. Wait on the
+	// breadcrumb itself.
+	await waitFor(() => expect(breadcrumb.textContent).toMatch(new RegExp(projectName)), {
+		timeout: 15_000,
+	});
 	await findByText('Test project settings.', undefined, { timeout: 10_000 });
 });
 

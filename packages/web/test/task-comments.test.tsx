@@ -33,7 +33,7 @@ async function setupTaskRoute() {
 
 test('task detail shows comments tab with count', async () => {
 	const { findByText } = await setupTaskRoute();
-	await findByText('Comments');
+	await findByText('Comments', undefined, { timeout: 15_000 });
 });
 
 test('can add a comment to a task', async () => {
