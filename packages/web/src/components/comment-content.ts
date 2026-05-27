@@ -29,50 +29,51 @@ export interface TraceContent {
 	summary?: string;
 }
 
-export type SystemCommentKind =
-	| 'status_change'
-	| 'title_change'
-	| 'assignee_change'
-	| 'task_link'
-	| 'run_failed'
-	| 'run_terminated'
-	| (string & { readonly __brand?: never });
-
-export interface SystemContentBase {
-	kind?: SystemCommentKind;
-	text?: string;
-}
-
-export interface SystemStatusChangeContent extends SystemContentBase {
+export interface SystemStatusChangeContent {
 	kind: 'status_change';
 	from?: string;
 	to?: string;
 	cascade?: string | null;
 	triggered_by_identifier?: string;
 	triggered_by_project_slug?: string;
+	text?: string;
 }
 
-export interface SystemTaskLinkContent extends SystemContentBase {
+export interface SystemTaskLinkContent {
 	kind: 'task_link';
 	source_identifier?: string;
 	source_project_slug?: string;
 	actor_name?: string;
 	actor_kind?: 'agent' | 'user' | 'board';
 	actor_slug?: string | null;
+	text?: string;
 }
 
-export interface SystemRunFailedContent extends SystemContentBase {
+export interface SystemRunFailedContent {
 	kind: 'run_failed';
 	agent_slug?: string;
 	status?: string;
 	error?: string;
+	text?: string;
+}
+
+/**
+ * Catch-all for system events that don't have a dedicated renderer branch
+ * (`title_change`, `assignee_change`, `run_terminated`, future kinds). Renderers
+ * fall back to rendering the `text` field or stringifying the payload. The
+ * `kind` literal is intentionally distinct from the dedicated variants so the
+ * discriminated union narrows correctly on `content.kind === '...'`.
+ */
+export interface SystemGenericContent {
+	kind?: 'title_change' | 'assignee_change' | 'run_terminated' | (string & Record<never, never>);
+	text?: string;
 }
 
 export type SystemContent =
 	| SystemStatusChangeContent
 	| SystemTaskLinkContent
 	| SystemRunFailedContent
-	| SystemContentBase;
+	| SystemGenericContent;
 
 export interface RunContent {
 	run_id?: string;
