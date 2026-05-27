@@ -2,6 +2,37 @@ import { cleanup } from '@testing-library/react';
 import * as React from 'react';
 import { afterEach, vi } from 'vitest';
 
+// TanStack Router's internal components (Transitioner, MatchesInner, MatchImpl)
+// run useState/startTransition updates asynchronously after mount and after
+// every router.navigate, even when navigate is awaited. React Testing Library
+// sets IS_REACT_ACT_ENVIRONMENT, so each of those updates produces a noisy
+// "not wrapped in act" warning that has no corresponding fix on the router
+// side. Filter only those exact warnings; any other act warning still
+// surfaces. React passes the component name as the second printf arg, so the
+// format string holds %s rather than the literal name.
+const ROUTER_ACT_COMPONENTS = new Set([
+	'Transitioner',
+	'MatchesInner',
+	'MatchImpl',
+	'Matches',
+	'Match',
+	'RouterProvider',
+]);
+const originalConsoleError = console.error;
+console.error = (...args: unknown[]) => {
+	const first = args[0];
+	const second = args[1];
+	if (
+		typeof first === 'string' &&
+		first.includes('not wrapped in act') &&
+		typeof second === 'string' &&
+		ROUTER_ACT_COMPONENTS.has(second)
+	) {
+		return;
+	}
+	originalConsoleError(...args);
+};
+
 // happy-dom has no layout, so react-virtuoso measures zero viewport and refuses
 // to mount any items. Component-tier tests don't care about virtualization;
 // stub Virtuoso to a plain mapped list so comments / sub-tasks / KB lists

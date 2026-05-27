@@ -102,7 +102,7 @@ async function main() {
 	await Promise.all([buildShared(), buildAgentBundle()]);
 
 	const e2eOnly = e2eFlag;
-	let unitPassed = true;
+	let integrationPassed = true;
 
 	if (!e2eOnly) {
 		const packages = packageFilter
@@ -117,7 +117,7 @@ async function main() {
 		for (const pkg of packages) {
 			const passed = await runVitestForPackage(pkg);
 			if (!passed) {
-				unitPassed = false;
+				integrationPassed = false;
 				if (bail) break;
 			}
 		}
@@ -128,7 +128,7 @@ async function main() {
 
 	await cleanupDockerContainers();
 
-	if (!unitPassed || !e2ePassed) process.exit(1);
+	if (!integrationPassed || !e2ePassed) process.exit(1);
 }
 
 async function cleanupDockerContainers() {

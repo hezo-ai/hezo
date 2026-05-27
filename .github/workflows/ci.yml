@@ -30,7 +30,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
 
-  test-unit:
+  test-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
