@@ -16,7 +16,10 @@ export default defineConfig({
 		alias: {
 			// Workspace packages have no `exports` field, so subpath imports like
 			// `@hezo/server/test/helpers/app` don't resolve through the workspace
-			// dep alone. Alias bare specifiers to the source trees.
+			// dep alone. Alias bare specifiers to the source trees. The
+			// `@hezo/server/test` entry must come first so it wins over the
+			// broader `@hezo/server` prefix.
+			'@hezo/server/test': resolve(ROOT, 'packages/server/test'),
 			'@hezo/server': resolve(ROOT, 'packages/server/src'),
 			'@hezo/web': resolve(__dir, 'src'),
 			'@hezo/shared': resolve(ROOT, 'packages/shared/src/index.ts'),

@@ -87,7 +87,7 @@ Local MCPs live under `${workspace}/.hezo/mcp/<name>/`. The workspace is host-bi
 
 ## Tests
 
-`packages/server/src/test/__tests__/`:
+`packages/server/test/`:
 - `mcp-connections.test.ts` — REST + service-layer unit tests including project-scoped overrides of team-wide entries.
 - `mcp-connections-docker.test.ts` — Docker e2e against a custom test MCP server (`fixtures/test-mcp-stdio-server.mjs` and `helpers/test-mcp-http-server.ts`):
   1. SaaS substitution path: connection row with placeholder header → loader → egress proxy → real MCP server sees the real header value.

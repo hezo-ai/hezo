@@ -755,7 +755,7 @@ Frontend:
 - `useGithubOrgs` / `useGithubRepos` hooks
 
 Tests:
-- Local GitHub simulator in `packages/server/src/test/helpers/github-sim.ts` — Hono app on port 0 implementing the subset of GitHub API we call plus Connect's token-exchange endpoint
+- Local GitHub simulator in `packages/server/test/helpers/github-sim.ts` — Hono app on port 0 implementing the subset of GitHub API we call plus Connect's token-exchange endpoint
 - Integration: gate behavior (approval + comment + deferred wakeup, no execution lock); concurrent runs share one approval; immutability on delete; `mode=create` owner check; first-repo auto-designation race; `finalizePendingRepoSetup` idempotency; OAuth callback SSH-key idempotency; authorization on all new endpoints
 - E2E: full wizard flow end-to-end against the simulator, both `Create new` and `Select existing`, plus the disabled-delete path
 

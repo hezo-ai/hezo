@@ -43,18 +43,18 @@ All changes ship with tests that exercise functionality (not "code runs without 
 
 | Tier | Where | Run cost | What it tests | When to use |
 |---|---|---|---|---|
-| Server unit/integration | `packages/server/src/test/**/*.test.ts` | ~ms each | API handlers, DB queries, services, MCP tools, agent run plumbing. Each test boots a fresh PGlite + Hono app via `createTestContext()`. | Everything backend. |
+| Server unit/integration | `packages/server/test/**/*.test.ts` | ~ms each | API handlers, DB queries, services, MCP tools, agent run plumbing. Each test boots a fresh PGlite + Hono app via `createTestContext()`. | Everything backend. |
 | Web component | `packages/web/test/**/*.test.tsx` | ~100-700ms each | React tree rendered in happy-dom against an **in-process** Hono + PGlite backend via `renderApp()` in `packages/web/test/helpers/render.tsx`. Asserts on DOM, forms, React Query refetches, navigation, mention rendering. Stubs WebSocket (`reconnecting-websocket`'s constructor checks) and `IntersectionObserver`. | Anything render-driven that doesn't depend on a real browser layout engine or WebSocket stream. ~80% of what used to be e2e. |
 | Playwright e2e | `test/e2e/**/*.spec.ts` | ~10-30s each | Real Chromium. Mobile viewport (responsive checks at 375px), drag-drop file events, `boundingBox()` / sticky positioning, Virtuoso virtualization windows + scroll, scroll-to-bottom buttons, real `clientHeight`/`scrollHeight` comparisons, real WebSocket-streamed logs, the master-key gate flow before any token is set. | The thin slice that genuinely needs the browser. Default: write a component test instead. |
 
 ### Server unit/integration rules
 
-- Each test file is fully isolated via `createTestContext()` / `destroyTestContext()` (`packages/server/src/test/helpers/context.ts`) — fresh PGlite + Hono app + HTTP server on port 0.
+- Each test file is fully isolated via `createTestContext()` / `destroyTestContext()` (`packages/server/test/helpers/context.ts`) — fresh PGlite + Hono app + HTTP server on port 0.
 - Use `ctx.app` / `ctx.baseUrl` / `ctx.port` — never a shared singleton, never hardcoded ports.
 - No mutable state shared between files.
 - Always `destroyTestContext()` in `afterAll` (resource leak otherwise).
 - Pure logic tests (crypto, parsing) can call functions directly.
-- GitHub OAuth/repo/SSH-key tests use the local simulator at `packages/server/src/test/helpers/github-sim.ts` — set `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the test context boots.
+- GitHub OAuth/repo/SSH-key tests use the local simulator at `packages/server/test/helpers/github-sim.ts` — set `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the test context boots.
 
 ### Web component rules
 
@@ -135,7 +135,7 @@ Root `playwright.config.ts` auto-starts server (:3101) and web (:5174). Use `aut
 A green test run should have a quiet log. If a test produces `[error]` or `[warn]` lines that are not the test itself asserting on an error path, fix the source — don't leave it as background noise. The two patterns that bite:
 
 - **Fire-and-forget background work must be tracked.** Any `xxx(...).catch((e) => log.error(...))` left orphaned at a route or service boundary races test teardown — the DB closes under it and you get `PGlite is closing/closed` errors. Wrap every such call in `trackBackground(...)` from `packages/server/src/lib/background.ts`. `safeClose` (used by `destroyTestContext` and every test's `afterAll`) drains the tracker before closing the DB. The `.catch(...)` stays inside the wrapper so a rejection still becomes a settled promise.
-- **Inline docker mocks must extend `createStubDocker()`.** Tests that build an ad-hoc `mockDocker` with only the methods they care about will trigger `TypeError: docker.containerLogs is not a function` (or similar) when production code that runs as a side-effect calls a method the stub omitted. Always go through `createStubDocker({ ... })` (exported from `packages/server/src/test/helpers/app.ts`) and pass the overrides as the argument — never hand-roll a partial object. The same rule applies for any other interface: start from a complete stub.
+- **Inline docker mocks must extend `createStubDocker()`.** Tests that build an ad-hoc `mockDocker` with only the methods they care about will trigger `TypeError: docker.containerLogs is not a function` (or similar) when production code that runs as a side-effect calls a method the stub omitted. Always go through `createStubDocker({ ... })` (exported from `packages/server/test/helpers/app.ts`) and pass the overrides as the argument — never hand-roll a partial object. The same rule applies for any other interface: start from a complete stub.
 
 When the global `app.onError` handler logs a `Route error on ...` line for an expected-failure test, the route is using a 500 where a 4xx would be honest. Catch known constraint codes locally (see `isFkViolation` in `packages/server/src/lib/sql.ts`) and return a `4xx` with `err(c, ...)` instead of letting the error propagate.
 
