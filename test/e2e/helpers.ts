@@ -364,6 +364,16 @@ export async function waitForPageLoad(page: Page, timeout = 15000) {
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout });
 }
 
+/**
+ * Suffix a base string with a short random uid so per-test resources created
+ * under the worker-scoped sharedWorkspace don't collide with prior tests or
+ * retries that re-enter the same worker. Use for project / task / doc names
+ * that the test later looks up by name.
+ */
+export function uniqueName(base: string): string {
+	return `${base} ${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export type HttpMethod = 'GET' | 'PATCH' | 'POST' | 'DELETE' | 'PUT';
 
 export type ResponseMatcher = (url: URL, method: string) => boolean;

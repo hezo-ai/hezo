@@ -1,17 +1,17 @@
-import { expect, test } from '@playwright/test';
-import { authenticate, createProjectAndClearPlanning, createTeamWithAgents } from './helpers';
+import { expect, test } from './fixtures';
+import { createProjectAndClearPlanning, uniqueName } from './helpers';
 
-test('run comment shows created tickets as links to their pages', async ({ page }) => {
-	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
+test('run comment shows created tickets as links to their pages', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Spawned Tickets Project',
+		name: uniqueName('Spawned Tickets Project'),
 		description: 'Test project.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
@@ -116,17 +116,17 @@ test('run comment shows created tickets as links to their pages', async ({ page 
 	);
 });
 
-test('run comment omits created tickets section when list is empty', async ({ page }) => {
-	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
+test('run comment omits created tickets section when list is empty', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Empty Project',
+		name: uniqueName('Empty Project'),
 		description: 'Test project.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string } }).data;

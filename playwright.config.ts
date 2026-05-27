@@ -15,11 +15,17 @@ export default defineConfig({
 	fullyParallel: true,
 	// `list` prints one line per test as it finishes, so a mid-suite hang
 	// is visible in CI logs immediately rather than hidden behind the
-	// dot reporter's line-buffered batches.
-	reporter: 'list',
+	// dot reporter's line-buffered batches. CI additionally emits an HTML
+	// report so failed-run traces are browsable from the uploaded artifact.
+	reporter: process.env.CI
+		? [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]]
+		: 'list',
 	use: {
 		baseURL: `http://localhost:${WEB_PORT}`,
 		headless: true,
+		trace: 'retain-on-failure',
+		screenshot: 'only-on-failure',
+		video: 'retain-on-failure',
 	},
 	projects: [
 		{

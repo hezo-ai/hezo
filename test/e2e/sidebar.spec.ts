@@ -19,7 +19,6 @@ async function createProject(
 	token: string,
 	name: string,
 ): Promise<{ id: string; slug: string; name: string }> {
-	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 	const res = await createProjectAndClearPlanning(page, teamId, token, {
 		name,
 		description: 'Test project.',

@@ -1,78 +1,85 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import {
-	authenticate,
 	createProjectAndClearPlanning,
-	createTeamWithAgents,
+	uniqueName,
 	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
 
+type Page = import('@playwright/test').Page;
+type Team = { id: string; slug: string };
+type Agent = { id: string; slug: string };
+
+async function createProjectAndTask(page: Page, team: Team, token: string, agents: Agent[]) {
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+	const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: uniqueName('Comment Project'),
+		description: 'Test project.',
+	});
+	const project = ((await projRes.json()) as any).data;
+
+	const agent = agents[0];
+
+	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
+		headers,
+		data: { project_id: project.id, title: 'Comment Test Task', assignee_id: agent.id },
+	});
+	const task = ((await taskRes.json()) as any).data;
+
+	await waitForAgentIdle(page, team.id, agent.id, token);
+
+	return { team, token, project, task, agent, headers };
+}
+
 test.describe('Task Comments', () => {
-	async function createProjectAndTask(page: import('@playwright/test').Page) {
-		const { team, token } = await createTeamWithAgents(page);
-		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-
-		// Create project
-		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'Comment Project',
-			description: 'Test project.',
-		});
-		const project = ((await projRes.json()) as any).data;
-
-		// Get an agent for assignment
-		const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
-			headers: { Authorization: `Bearer ${token}` },
-		});
-		const agents = ((await agentsRes.json()) as any).data;
-		const agent = agents[0];
-
-		// Create task
-		const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
-			headers,
-			data: { project_id: project.id, title: 'Comment Test Task', assignee_id: agent.id },
-		});
-		const task = ((await taskRes.json()) as any).data;
-
-		// Drain assignment-driven wakeup so the comment thread isn't churning
-		// while the test types into the composer.
-		await waitForAgentIdle(page, team.id, agent.id, token);
-
-		return { team, token, project, task, agent, headers };
-	}
-
-	test('task detail shows comments tab with count', async ({ page }) => {
-		await authenticate(page);
-		const { team, task } = await createProjectAndTask(page);
+	test('task detail shows comments tab with count', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, task } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 
-		// Comments tab should be visible
 		await expect(page.getByText('Comments')).toBeVisible({ timeout: 15000 });
 	});
 
-	test('can add a comment to an task', async ({ page }) => {
-		await authenticate(page);
-		const { team, task } = await createProjectAndTask(page);
+	test('can add a comment to an task', async ({ sharedPage: page, sharedWorkspace }) => {
+		const { team, task } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 
-		// Type a comment
 		const commentInput = page.getByPlaceholder('Add a comment...');
 		await expect(commentInput).toBeVisible({ timeout: 20000 });
 		await commentInput.fill('This is a test comment');
 
-		// Submit the comment
 		await page.getByRole('button', { name: 'Comment', exact: true }).click();
 
-		// Verify comment appears
 		await expect(page.getByText('This is a test comment')).toBeVisible({ timeout: 15000 });
 	});
 
-	test('submits comment via Cmd/Ctrl+Enter shortcut', async ({ page }) => {
-		await authenticate(page);
-		const { team, task } = await createProjectAndTask(page);
+	test('submits comment via Cmd/Ctrl+Enter shortcut', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, task } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
@@ -86,11 +93,14 @@ test.describe('Task Comments', () => {
 		await expect(commentInput).toHaveValue('');
 	});
 
-	test('comments persist after page reload', async ({ page }) => {
-		await authenticate(page);
-		const { team, task, headers } = await createProjectAndTask(page);
+	test('comments persist after page reload', async ({ sharedPage: page, sharedWorkspace }) => {
+		const { team, task, headers } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
-		// Create a comment via API
 		await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
 			headers,
 			data: { content: 'API-created comment' },
@@ -99,15 +109,20 @@ test.describe('Task Comments', () => {
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 
-		// Verify the comment is visible
 		await expect(page.getByText('API-created comment')).toBeVisible({ timeout: 15000 });
 	});
 
-	test('comment count updates after adding comment', async ({ page }) => {
-		await authenticate(page);
-		const { team, task, headers } = await createProjectAndTask(page);
+	test('comment count updates after adding comment', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, task, headers } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
-		// Create two comments via API
 		await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
 			headers,
 			data: { content: 'First comment' },
@@ -120,14 +135,20 @@ test.describe('Task Comments', () => {
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 
-		// Both comments should be visible
 		await expect(page.getByText('First comment')).toBeVisible({ timeout: 15000 });
 		await expect(page.getByText('Second comment')).toBeVisible();
 	});
 
-	test('renders markdown in comment bodies and shows author label', async ({ page }) => {
-		await authenticate(page);
-		const { team, task, headers } = await createProjectAndTask(page);
+	test('renders markdown in comment bodies and shows author label', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, task, headers } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		const markdownBody =
 			'## Execution Plan\n\nFirst paragraph of the plan.\n\nSecond paragraph after a blank line.\n\n**Objective:** Ship it.\n\n- one\n- two';
@@ -152,10 +173,15 @@ test.describe('Task Comments', () => {
 	});
 
 	test('effort dropdown marks the agent default and omits it from the submit body', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team, task, agent } = await createProjectAndTask(page);
+		const { team, task, agent } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		const expectedDefault =
 			agent.slug === 'captain'
@@ -166,7 +192,7 @@ test.describe('Task Comments', () => {
 						medium: 'Medium',
 						high: 'High',
 						max: 'Max (ultrathink)',
-					}[agent.default_effort as 'minimal' | 'low' | 'medium' | 'high' | 'max'];
+					}[(agent as any).default_effort as 'minimal' | 'low' | 'medium' | 'high' | 'max'];
 
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
@@ -198,9 +224,16 @@ test.describe('Task Comments', () => {
 		expect(postBodies[0]).not.toHaveProperty('effort');
 	});
 
-	test('agent mentions render as bold anchor-colored links to agent page', async ({ page }) => {
-		await authenticate(page);
-		const { team, task, headers, agent } = await createProjectAndTask(page);
+	test('agent mentions render as bold anchor-colored links to agent page', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, task, headers, agent } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		const body = `Hey @${agent.slug} please check this. Also @not-a-real-agent-xyz stays plain.`;
 		await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
@@ -228,10 +261,15 @@ test.describe('Task Comments', () => {
 	});
 
 	test('wake-assignee checkbox is visible, default-checked, and reflected in submit body', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team, task } = await createProjectAndTask(page);
+		const { team, task } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
@@ -278,9 +316,16 @@ test.describe('Task Comments', () => {
 		await expect(checkbox).toBeChecked();
 	});
 
-	test('comment items render as bordered cards with a tinted header', async ({ page }) => {
-		await authenticate(page);
-		const { team, task, headers } = await createProjectAndTask(page);
+	test('comment items render as bordered cards with a tinted header', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, task, headers } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
 			headers,
@@ -290,10 +335,6 @@ test.describe('Task Comments', () => {
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 
-		// Scope to the user comment we just posted; inline event comments from
-		// the assignee agent's run share the `comment-item` testid but use a
-		// different (icon + flex-1) layout that the bordered-card assertions
-		// below don't apply to.
 		const item = page
 			.getByTestId('comment-item')
 			.filter({ has: page.getByText('A boxed comment.') })
@@ -309,14 +350,20 @@ test.describe('Task Comments', () => {
 		await expect(header.getByTestId('comment-author')).toBeVisible();
 	});
 
-	test('virtualizes a large comment thread and scrolls to deep-link target', async ({ page }) => {
+	test('virtualizes a large comment thread and scrolls to deep-link target', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
 		test.setTimeout(60_000);
-		await authenticate(page);
-		const { team, task, headers } = await createProjectAndTask(page);
+		const { team, task, headers } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		const TOTAL = 120;
 		const created: { id: string; index: number }[] = [];
-		// Seed comments in parallel batches to keep the setup fast.
 		const BATCH = 12;
 		for (let start = 0; start < TOTAL; start += BATCH) {
 			const batch = Array.from({ length: Math.min(BATCH, TOTAL - start) }, (_, i) => start + i);
@@ -337,28 +384,15 @@ test.describe('Task Comments', () => {
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 
-		// Wait for the comments list and at least one row to mount — without a
-		// concrete "comments rendered" signal a slow page can race the
-		// assertions below and leave us asserting on an empty document.
 		await expect(page.getByTestId('comments-list')).toBeVisible({ timeout: 20_000 });
 		const items = page.getByTestId('comment-item');
 		await expect(items.first()).toBeVisible({ timeout: 20_000 });
 
-		// Virtualization: only a window of rows is mounted once Virtuoso settles.
-		// Poll instead of snapshotting so a slow CI runner can shrink the initial
-		// over-render window before we assert on it.
 		await expect.poll(() => items.count(), { timeout: 10_000 }).toBeLessThan(TOTAL);
 		await expect.poll(() => items.count()).toBeGreaterThan(0);
 		await expect(page.getByText(`seeded-comment-${TOTAL - 1}`)).toHaveCount(0);
-		// A late-thread comment well outside the initial render window also
-		// must not be in the DOM. We check `seeded-comment-${TOTAL - 5}` too
-		// in case Virtuoso's overscan happens to include the very last row.
 		await expect(page.getByText(`seeded-comment-${TOTAL - 5}`)).toHaveCount(0);
 
-		// Hash deep-link to a comment that is past the initial viewport:
-		// Virtuoso must mount and scroll to it. We pick an index near the
-		// middle of the thread which lies outside the initial render window
-		// but is reliably reachable in a single scrollToIndex pass.
 		const target = created[Math.floor(TOTAL / 2)];
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}#comment-${target.id}`);
 		await waitForPageLoad(page);
@@ -368,10 +402,15 @@ test.describe('Task Comments', () => {
 	});
 
 	test('reply icon focuses composer, shows in-response-to, and persists parent link', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team, task, headers } = await createProjectAndTask(page);
+		const { team, task, headers } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		const parentRes = await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
 			headers,
@@ -413,10 +452,14 @@ test.describe('Task Comments', () => {
 		await expect(replyingTo).toContainText('replying to');
 	});
 
-	test('reply flow works on mobile viewport', async ({ page }) => {
+	test('reply flow works on mobile viewport', async ({ sharedPage: page, sharedWorkspace }) => {
 		await page.setViewportSize({ width: 390, height: 844 });
-		await authenticate(page);
-		const { team, task, headers } = await createProjectAndTask(page);
+		const { team, task, headers } = await createProjectAndTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		const parentRes = await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
 			headers,

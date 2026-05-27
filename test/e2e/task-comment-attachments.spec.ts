@@ -1,8 +1,7 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import {
-	authenticate,
 	createProjectAndClearPlanning,
-	createTeamWithAgents,
+	uniqueName,
 	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
@@ -16,20 +15,19 @@ const PNG_BYTES = Uint8Array.from([
 ]);
 
 test.describe('Task Comment Attachments', () => {
-	async function createTask(page: import('@playwright/test').Page) {
-		const { team, token } = await createTeamWithAgents(page);
+	async function createTask(
+		page: import('@playwright/test').Page,
+		team: { id: string; slug: string },
+		token: string,
+		agents: Array<{ id: string }>,
+	) {
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
 		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'Attachments Project',
+			name: uniqueName('Attachments Project'),
 			description: 'Test project.',
 		});
 		const project = ((await projRes.json()) as { data: { id: string } }).data;
-
-		const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
-			headers: { Authorization: `Bearer ${token}` },
-		});
-		const agents = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data;
 
 		const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 			headers,
@@ -37,8 +35,6 @@ test.describe('Task Comment Attachments', () => {
 		});
 		const task = ((await taskRes.json()) as { data: { id: string } }).data;
 
-		// Drain assignment-driven wakeup so the comment thread isn't churning while
-		// the test drags files and asserts on attachment chips.
 		await waitForAgentIdle(page, team.id, agents[0].id, token);
 
 		return { team, token, task, headers };
@@ -70,11 +66,16 @@ test.describe('Task Comment Attachments', () => {
 	}
 
 	test('drag-drop adds a chip, sends, renders an icon thumb, opens in new tab', async ({
-		page,
+		sharedPage: page,
 		context,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team, task } = await createTask(page);
+		const { team, task } = await createTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
@@ -107,10 +108,15 @@ test.describe('Task Comment Attachments', () => {
 	});
 
 	test('hint with tooltip shows when empty, hides once a chip appears, returns after removal', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team, task } = await createTask(page);
+		const { team, task } = await createTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
@@ -147,9 +153,16 @@ test.describe('Task Comment Attachments', () => {
 		await expect(hint).toBeVisible();
 	});
 
-	test('pending chip exposes a preview link with the signed asset URL', async ({ page }) => {
-		await authenticate(page);
-		const { team, task } = await createTask(page);
+	test('pending chip exposes a preview link with the signed asset URL', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, task } = await createTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
@@ -174,9 +187,16 @@ test.describe('Task Comment Attachments', () => {
 		expect(href).toContain('/api/assets/');
 	});
 
-	test('rejects an unsupported extension with an inline error chip', async ({ page }) => {
-		await authenticate(page);
-		const { team, task } = await createTask(page);
+	test('rejects an unsupported extension with an inline error chip', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, task } = await createTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
@@ -196,11 +216,16 @@ test.describe('Task Comment Attachments', () => {
 	});
 
 	test('mobile viewport — hint visible, chips wrap and overlay still triggers', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
 		await page.setViewportSize({ width: 375, height: 812 });
-		await authenticate(page);
-		const { team, task } = await createTask(page);
+		const { team, task } = await createTask(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);

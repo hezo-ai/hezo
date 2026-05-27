@@ -1,26 +1,23 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import {
-	authenticate,
 	createProjectAndClearPlanning,
-	createTeamWithAgents,
 	saveAndWaitForRefetch,
 	taskMatcher,
+	uniqueName,
 	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
 
-test('board member can close and re-open an task via themed modal', async ({ page }) => {
-	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
+test('board member can close and re-open an task via themed modal', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
-		headers: { Authorization: `Bearer ${token}` },
-	});
-	const agent = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data[0];
+	const agent = agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Close Project',
+		name: uniqueName('Close Project'),
 		description: 'Test project.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
@@ -31,8 +28,6 @@ test('board member can close and re-open an task via themed modal', async ({ pag
 	});
 	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
 
-	// Drain the assignment-driven wakeup so close/reopen PATCHes aren't racing
-	// the agent's own status-change activity on this same task.
 	await waitForAgentIdle(page, team.id, agent.id, token);
 
 	await page.goto(
@@ -78,18 +73,16 @@ test('board member can close and re-open an task via themed modal', async ({ pag
 	await expect(page.getByTestId('task-close-button')).toBeVisible({ timeout: 20000 });
 });
 
-test('task detail no longer shows a delete button or status pill row', async ({ page }) => {
-	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
+test('task detail no longer shows a delete button or status pill row', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
-		headers: { Authorization: `Bearer ${token}` },
-	});
-	const agent = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data[0];
+	const agent = agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'No Delete Project',
+		name: uniqueName('No Delete Project'),
 		description: 'Test project.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;

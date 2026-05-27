@@ -1,25 +1,26 @@
-import { expect, test } from '@playwright/test';
-import { authenticate, createProjectAndClearPlanning, createTeamWithAgents } from './helpers';
+import { expect, test } from './fixtures';
+import { createProjectAndClearPlanning, uniqueName } from './helpers';
 
-test('can create, view, edit, and delete a project document', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team, token } = await createTeamWithAgents(page);
+test('can create, view, edit, and delete a project document', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token } = sharedWorkspace;
 	const project = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Docs Test Project',
+		name: uniqueName('Docs Test Project'),
 		description: 'Project for testing the documents tab.',
 	});
 
 	await page.goto(`/teams/${team.slug}/projects/${project.slug}/documents`);
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 15000 });
 
+	const filename = `notes-${Math.random().toString(36).slice(2, 8)}.md`;
 	await page.getByRole('button', { name: 'New document' }).click();
-	await page.getByLabel('Filename').fill('notes.md');
+	await page.getByLabel('Filename').fill(filename);
 	await page.locator('textarea').fill('# Project Notes\n\nSome **markdown** content.');
 	await page.getByRole('button', { name: 'Create', exact: true }).click();
 
-	await expect(page.getByRole('heading', { name: 'notes.md' })).toBeVisible({ timeout: 15000 });
+	await expect(page.getByRole('heading', { name: filename })).toBeVisible({ timeout: 15000 });
 	await expect(page.getByRole('heading', { name: 'Project Notes' })).toBeVisible({
 		timeout: 15000,
 	});
@@ -33,31 +34,28 @@ test('can create, view, edit, and delete a project document', async ({ page }) =
 	page.on('dialog', (dialog) => dialog.accept());
 	await page.getByRole('button', { name: 'Delete document' }).click();
 
-	await expect(page.getByRole('button', { name: 'notes.md' })).toBeHidden({ timeout: 15000 });
+	await expect(page.getByRole('button', { name: filename })).toBeHidden({ timeout: 15000 });
 });
 
-test('shows revision history and restores a previous version', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team, token } = await createTeamWithAgents(page);
+test('shows revision history and restores a previous version', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token } = sharedWorkspace;
 	const project = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Revision Project',
+		name: uniqueName('Revision Project'),
 		description: 'Project for testing project doc revisions.',
 	});
 
-	// Seed the doc + a revision through the API so the test isn't racing the
-	// UI's fire-and-forget mutation against background agent activity. The UI
-	// path is already covered by the "create, view, edit, and delete" test
-	// above; this test focuses on the revision-history viewer + restore flow.
+	const filename = `plan-${Math.random().toString(36).slice(2, 8)}.md`;
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const docPath = `/api/teams/${team.id}/projects/${project.slug}/docs/plan.md`;
+	const docPath = `/api/teams/${team.id}/projects/${project.slug}/docs/${filename}`;
 	const create = await page.request.put(docPath, { headers, data: { content: 'Original plan' } });
 	expect(create.ok()).toBe(true);
 	const update = await page.request.put(docPath, { headers, data: { content: 'Second draft' } });
 	expect(update.ok()).toBe(true);
 
-	await page.goto(`/teams/${team.slug}/projects/${project.slug}/documents?file=plan.md`);
+	await page.goto(`/teams/${team.slug}/projects/${project.slug}/documents?file=${filename}`);
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout: 15000 });
 	await expect(page.getByText('Second draft')).toBeVisible({ timeout: 15000 });
 
@@ -70,7 +68,8 @@ test('shows revision history and restores a previous version', async ({ page }) 
 		.click();
 	const docRefetched = page.waitForResponse(
 		(r) =>
-			r.request().method() === 'GET' && r.url().endsWith(`/projects/${project.slug}/docs/plan.md`),
+			r.request().method() === 'GET' &&
+			r.url().endsWith(`/projects/${project.slug}/docs/${filename}`),
 		{ timeout: 30000 },
 	);
 	await page.getByTestId('confirm-dialog-confirm').click();
@@ -78,13 +77,13 @@ test('shows revision history and restores a previous version', async ({ page }) 
 	await expect(page.getByText('Original plan')).toBeVisible({ timeout: 15000 });
 });
 
-test('rejects invalid filename when creating a document', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team, token } = await createTeamWithAgents(page);
+test('rejects invalid filename when creating a document', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token } = sharedWorkspace;
 	const project = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Filename Test',
+		name: uniqueName('Filename Test'),
 		description: 'Tests filename validation.',
 	});
 

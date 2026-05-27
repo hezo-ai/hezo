@@ -1,21 +1,20 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import {
-	authenticate,
 	createProjectAndClearPlanning,
-	createTeamWithAgents,
 	saveAndWaitForRefetch,
+	uniqueName,
 	waitForPageLoad,
 } from './helpers';
 
 test.describe('Goals', () => {
 	test('creates a team-wide goal from the Goals page and opens a Captain ticket', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team, token } = await createTeamWithAgents(page);
+		const { team, token } = sharedWorkspace;
 
 		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'Goals Product',
+			name: uniqueName('Goals Product'),
 			description: 'Primary product workstream for goals e2e.',
 		});
 		expect(projRes.ok()).toBe(true);
@@ -23,9 +22,11 @@ test.describe('Goals', () => {
 		await page.goto(`/teams/${team.slug}/goals`);
 		await waitForPageLoad(page);
 
+		const goalTitle = uniqueName('Raise seed round');
+
 		await page.getByRole('button', { name: 'New goal' }).click();
 
-		await page.getByLabel('Title').fill('Raise seed round');
+		await page.getByLabel('Title').fill(goalTitle);
 		await page.getByLabel('Description').fill('Close a $2M seed by end of Q3.');
 
 		const goalsUrl = `/teams/${team.slug}/goals`;
@@ -40,23 +41,25 @@ test.describe('Goals', () => {
 		expect(createResp.ok(), `POST /goals failed: ${await createResp.text()}`).toBe(true);
 
 		const main = page.getByRole('main');
-		await expect(main.getByText('Raise seed round')).toBeVisible({ timeout: 30000 });
+		await expect(main.getByText(goalTitle)).toBeVisible({ timeout: 30000 });
 		await expect(main.getByText('Team-wide').first()).toBeVisible();
 
-		// The Captain ticket lives in the Internal project.
 		await page.goto(`/teams/${team.slug}/projects/internal/tasks`);
 		await waitForPageLoad(page);
 		await expect(
-			page.getByRole('main').getByText('Review plans for goal: "Raise seed round"'),
+			page.getByRole('main').getByText(`Review plans for goal: "${goalTitle}"`),
 		).toBeVisible({ timeout: 15000 });
 	});
 
-	test('project-scoped goal routes the Captain ticket into that project', async ({ page }) => {
-		await authenticate(page);
-		const { team, token } = await createTeamWithAgents(page);
+	test('project-scoped goal routes the Captain ticket into that project', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, token } = sharedWorkspace;
+		const projectName = uniqueName('Growth');
 
 		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'Growth',
+			name: projectName,
 			description: 'Growth engineering workstream.',
 		});
 		const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
@@ -64,10 +67,12 @@ test.describe('Goals', () => {
 		await page.goto(`/teams/${team.slug}/goals`);
 		await waitForPageLoad(page);
 
+		const goalTitle = uniqueName('Launch public v1');
+
 		await page.getByRole('button', { name: 'New goal' }).click();
-		await page.getByLabel('Title').fill('Launch public v1');
+		await page.getByLabel('Title').fill(goalTitle);
 		await page.getByLabel('Description').fill('Ship the API to the public.');
-		await page.getByLabel('Scope').selectOption({ label: 'Growth' });
+		await page.getByLabel('Scope').selectOption({ label: projectName });
 		const goalsUrl = `/teams/${team.slug}/goals`;
 		const { mutation: createResp } = await saveAndWaitForRefetch(
 			page,
@@ -79,14 +84,14 @@ test.describe('Goals', () => {
 		);
 		expect(createResp.ok(), `POST /goals failed: ${await createResp.text()}`).toBe(true);
 
-		await expect(page.getByRole('main').getByText('Launch public v1')).toBeVisible({
+		await expect(page.getByRole('main').getByText(goalTitle)).toBeVisible({
 			timeout: 30000,
 		});
 
 		await page.goto(`/teams/${team.slug}/projects/${project.slug}/tasks`);
 		await waitForPageLoad(page);
 		await expect(
-			page.getByRole('main').getByText('Review plans for goal: "Launch public v1"'),
+			page.getByRole('main').getByText(`Review plans for goal: "${goalTitle}"`),
 		).toBeVisible({ timeout: 15000 });
 	});
 });

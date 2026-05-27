@@ -1,27 +1,22 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import {
-	authenticate,
 	clickAndWaitForResponse,
 	createProjectAndClearPlanning,
-	createTeamWithAgents,
+	uniqueName,
 	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
 
 test('status changes and cross-task mentions appear as system entries on the timeline', async ({
-	page,
+	sharedPage: page,
+	sharedWorkspace,
 }) => {
-	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
+	const { team, token, agents } = sharedWorkspace;
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
-		headers: { Authorization: `Bearer ${token}` },
-	});
-	const agent = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data[0];
+	const agent = agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'History Project',
+		name: uniqueName('History Project'),
 		description: 'Project for history events.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
@@ -38,8 +33,6 @@ test('status changes and cross-task mentions appear as system entries on the tim
 	});
 	const source = ((await sourceRes.json()) as { data: { id: string; identifier: string } }).data;
 
-	// Drain the assignment-driven wakeups so the agent's own status/system
-	// comments aren't competing with the close/reopen PATCH matchers below.
 	await waitForAgentIdle(page, team.id, agent.id, token);
 
 	const targetUrl = `/teams/${team.slug}/projects/${project.slug}/tasks/${target.identifier.toLowerCase()}`;
@@ -49,10 +42,6 @@ test('status changes and cross-task mentions appear as system entries on the tim
 	const closeButton = page.getByTestId('task-close-button');
 	await expect(closeButton).toBeVisible({ timeout: 20000 });
 	await closeButton.click();
-	// Scope the matcher to *this* task — the bare `/tasks/[^/]+` regex would
-	// also satisfy any Captain planning-task PATCH that lands in the same
-	// window, returning before the user's actual close has even left the
-	// browser.
 	const targetPath = `/api/teams/${team.slug}/tasks/${target.identifier.toLowerCase()}`;
 	const closeResponse = await clickAndWaitForResponse(
 		page,
@@ -63,9 +52,6 @@ test('status changes and cross-task mentions appear as system entries on the tim
 
 	await expect(page.getByTestId('task-reopen-button')).toBeVisible({ timeout: 20000 });
 
-	// Verify the status_change comment is actually in the DB before asserting on the
-	// rendered chip — separates "server didn't record it" failures from "client
-	// didn't render it" failures.
 	const commentsPath = `/api/teams/${team.id}/tasks/${target.id}/comments`;
 	await expect
 		.poll(
@@ -84,14 +70,9 @@ test('status changes and cross-task mentions appear as system entries on the tim
 		)
 		.toBe(true);
 
-	// Hard reload after the API poll above has confirmed the entry exists
-	// server-side: the page's React Query cache + Virtuoso scroll position can
-	// race the post-mutation refetch under CI load, so just reload and let the
-	// freshly-mounted page render the timeline from scratch.
 	await page.reload();
 	await waitForPageLoad(page);
 
-	// Scroll the comments scroll container so Virtuoso mounts the bottom item.
 	await page
 		.locator('main')
 		.first()
@@ -130,18 +111,16 @@ test('status changes and cross-task mentions appear as system entries on the tim
 	await expect(allLinkEntries).toHaveCount(1);
 });
 
-test('title renames appear as system entries on the timeline', async ({ page }) => {
-	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
+test('title renames appear as system entries on the timeline', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
-		headers: { Authorization: `Bearer ${token}` },
-	});
-	const agent = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data[0];
+	const agent = agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Rename Project',
+		name: uniqueName('Rename Project'),
 		description: 'Project for rename events.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
@@ -152,9 +131,6 @@ test('title renames appear as system entries on the timeline', async ({ page }) 
 	});
 	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
 
-	// Wait for assignment-wakeup-driven activity to drain so the rename PATCH
-	// (and its system-comment side-effect) doesn't race the agent's own
-	// status-change comments on the same task.
 	await waitForAgentIdle(page, team.id, agent.id, token);
 
 	await page.request.patch(`/api/teams/${team.id}/tasks/${task.id}`, {
@@ -171,20 +147,18 @@ test('title renames appear as system entries on the timeline', async ({ page }) 
 	).toBeVisible({ timeout: 15000 });
 });
 
-test('auto-unblock cascade renders as system attribution, not the patcher', async ({ page }) => {
-	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
+test('auto-unblock cascade renders as system attribution, not the patcher', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
-		headers: { Authorization: `Bearer ${token}` },
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; title: string }> }).data;
 	expect(agents.length).toBeGreaterThanOrEqual(2);
 	const [closer, owner] = agents;
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Cascade Project',
+		name: uniqueName('Cascade Project'),
 		description: 'Project for cascade attribution.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
@@ -231,20 +205,18 @@ test('auto-unblock cascade renders as system attribution, not the patcher', asyn
 	await expect(cascadeEntry).not.toContainText(/changed status/i);
 });
 
-test('reassignments appear as system entries on the timeline', async ({ page }) => {
-	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
+test('reassignments appear as system entries on the timeline', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
-		headers: { Authorization: `Bearer ${token}` },
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data;
 	expect(agents.length).toBeGreaterThanOrEqual(2);
 	const [first, second] = agents;
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Reassign Project',
+		name: uniqueName('Reassign Project'),
 		description: 'Project for reassignment events.',
 	});
 	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;

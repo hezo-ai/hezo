@@ -1,15 +1,10 @@
-import { expect, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents } from './helpers';
+import { expect, test } from './fixtures';
 
 test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', async ({
-	page,
+	sharedPage: page,
+	sharedWorkspace,
 }) => {
-	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const { team, agents } = sharedWorkspace;
 	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const runId = '99999999-9999-9999-9999-000000000abc';

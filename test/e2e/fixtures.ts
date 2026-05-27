@@ -8,7 +8,13 @@ import {
 } from './helpers';
 
 type Team = { id: string; slug: string; name: string };
-type Agent = { id: string; slug: string };
+type Agent = {
+	id: string;
+	slug: string;
+	title: string;
+	default_effort?: string;
+	admin_status?: string;
+};
 
 type Workspace = {
 	team: Team;
@@ -28,6 +34,7 @@ type WorkerFixtures = {
 
 type TestFixtures = {
 	authedPage: import('@playwright/test').Page;
+	sharedPage: import('@playwright/test').Page;
 	freshWorkspace: Workspace;
 	lightWorkspace: LightWorkspace;
 };
@@ -61,6 +68,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 		{ scope: 'worker' },
 	],
 
+	// Worker-scoped team-with-agents, created once per worker. Tests that don't
+	// mutate team-level or global agent state can take this fixture and create
+	// their own per-test project/task/comment under it. Captain's template-apply
+	// drain runs once per worker (not per test), saving ~30-60s per test.
 	sharedWorkspace: [
 		async ({ browser }, use) => {
 			const ctx = await browser.newContext();
@@ -77,6 +88,18 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 		await page.addInitScript((t: string) => {
 			localStorage.setItem('hezo_token', t);
 		}, apiToken);
+		await use(page);
+		await page.unrouteAll({ behavior: 'ignoreErrors' }).catch(() => {});
+	},
+
+	// Authed page wired to the worker-scoped sharedWorkspace. The token in the
+	// page's localStorage matches sharedWorkspace.token (both come from the
+	// same master-key auth flow), so page.goto(`/teams/${team.slug}/...`) just
+	// works without any per-test seeding.
+	sharedPage: async ({ page, sharedWorkspace }, use) => {
+		await page.addInitScript((t: string) => {
+			localStorage.setItem('hezo_token', t);
+		}, sharedWorkspace.token);
 		await use(page);
 		await page.unrouteAll({ behavior: 'ignoreErrors' }).catch(() => {});
 	},

@@ -1,21 +1,15 @@
-import { expect, test } from '@playwright/test';
-import {
-	authenticate,
-	createProjectAndClearPlanning,
-	createTeamWithAgents,
-	waitForPageLoad,
-} from './helpers';
+import { expect, test } from './fixtures';
+import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 
 test.describe('Container Management', () => {
 	test('container page renders rebuild button and is reachable from project nav', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team, token } = await createTeamWithAgents(page);
-		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+		const { team, token } = sharedWorkspace;
 
 		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'Container Project',
+			name: uniqueName('Container Project'),
 			description: 'Test container management project.',
 		});
 		const project = ((await projRes.json()) as { data: { slug: string } }).data;
@@ -41,11 +35,11 @@ test.describe('Container Management', () => {
 	});
 
 	test('container page shows "Waiting for container output…" when status is running but no logs yet (mobile)', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
 		await page.setViewportSize({ width: 375, height: 800 });
-		await authenticate(page);
-		const { team } = await createTeamWithAgents(page);
+		const { team } = sharedWorkspace;
 
 		const fakeProject = {
 			id: '22222222-2222-2222-2222-000000000001',
@@ -83,10 +77,10 @@ test.describe('Container Management', () => {
 	});
 
 	test('banner consolidates multiple unhealthy projects with + N others format and rebuild all button', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team } = await createTeamWithAgents(page);
+		const { team } = sharedWorkspace;
 
 		const fakeProjects = [
 			{ id: '11111111-1111-1111-1111-000000000001', slug: 'alpha-banner', name: 'Alpha Banner' },

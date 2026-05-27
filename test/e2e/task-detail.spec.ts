@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { createProjectAndClearPlanning, waitForPageLoad } from './helpers';
+import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 
 type Page = import('@playwright/test').Page;
 
@@ -10,7 +10,6 @@ async function createProjectViaApi(
 	name: string,
 	description: string,
 ): Promise<{ id: string; slug: string }> {
-	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 	const res = await createProjectAndClearPlanning(page, teamId, token, { name, description });
 	return ((await res.json()) as { data: { id: string; slug: string } }).data;
 }
@@ -46,15 +45,18 @@ async function createSubTaskViaApi(
 }
 
 test.describe('Task detail — breadcrumbs and depth', () => {
-	test('breadcrumb walks the parent chain on a sub-sub-task', async ({ page, freshWorkspace }) => {
-		const { team, agents, token } = freshWorkspace;
+	test('breadcrumb walks the parent chain on a sub-sub-task', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, agents, token } = sharedWorkspace;
 		const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
 		const project = await createProjectViaApi(
 			page,
 			team.id,
 			token,
-			'Breadcrumb Project',
+			uniqueName('Breadcrumb Project'),
 			'Seeded for breadcrumb test.',
 		);
 
@@ -93,15 +95,18 @@ test.describe('Task detail — breadcrumbs and depth', () => {
 		});
 	});
 
-	test('breadcrumb on a top-level task shows no ancestors', async ({ page, freshWorkspace }) => {
-		const { team, agents, token } = freshWorkspace;
+	test('breadcrumb on a top-level task shows no ancestors', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, agents, token } = sharedWorkspace;
 		const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
 		const project = await createProjectViaApi(
 			page,
 			team.id,
 			token,
-			'Top Project',
+			uniqueName('Top Project'),
 			'Top-level breadcrumb check.',
 		);
 		const task = await createTaskViaApi(page, team.id, token, {
@@ -126,16 +131,16 @@ test.describe('Task detail — breadcrumbs and depth', () => {
 
 	test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 ticket', async ({
 		page,
-		freshWorkspace,
+		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = freshWorkspace;
+		const { team, agents, token } = sharedWorkspace;
 		const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
 		const project = await createProjectViaApi(
 			page,
 			team.id,
 			token,
-			'Depth Project',
+			uniqueName('Depth Project'),
 			'Depth-cap UI check.',
 		);
 		const root = await createTaskViaApi(page, team.id, token, {
@@ -171,13 +176,13 @@ test.describe('Task detail — breadcrumbs and depth', () => {
 test.describe('Task detail — friendly URLs and mentions', () => {
 	test('canonical task URL is project-scoped; short and UUID forms redirect', async ({
 		page,
-		freshWorkspace,
+		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = freshWorkspace;
+		const { team, agents, token } = sharedWorkspace;
 		const captain = agents.find((a) => a.slug === 'captain')!;
 
 		const project = await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'URL Test Project',
+			name: uniqueName('URL Test Project'),
 			description: 'Validates friendly task URLs.',
 		});
 		const task = await createTaskViaApi(page, team.id, token, {
@@ -209,17 +214,17 @@ test.describe('Task detail — friendly URLs and mentions', () => {
 
 	test('bare ticket identifier renders as a tooltip-ed link and navigates to the target task', async ({
 		page,
-		freshWorkspace,
+		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = freshWorkspace;
+		const { team, agents, token } = sharedWorkspace;
 		const captain = agents.find((a) => a.slug === 'captain')!;
 
 		const projA = await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'Mention Source',
+			name: uniqueName('Mention Source'),
 			description: 'Source project for mention test.',
 		});
 		const projB = await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'Mention Target',
+			name: uniqueName('Mention Target'),
 			description: 'Target project for mention test.',
 		});
 
@@ -257,9 +262,9 @@ test.describe('Task detail — friendly URLs and mentions', () => {
 test.describe('Task detail — right sidebar', () => {
 	test('right sidebar floats sticky on desktop scroll and houses the Effort control while wake-assignee lives in the comment form', async ({
 		page,
-		freshWorkspace,
+		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = freshWorkspace;
+		const { team, agents, token } = sharedWorkspace;
 		await page.setViewportSize({ width: 1280, height: 720 });
 
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -267,7 +272,7 @@ test.describe('Task detail — right sidebar', () => {
 			page,
 			team.id,
 			token,
-			'Sidebar Project',
+			uniqueName('Sidebar Project'),
 			'Sidebar test project.',
 		);
 		const task = await createTaskViaApi(page, team.id, token, {
@@ -321,16 +326,16 @@ test.describe('Task detail — right sidebar', () => {
 test.describe('Task detail — info tooltips on pinned cards', () => {
 	test('Progress Summary and Rules labels expose info icons with help text at mobile viewport', async ({
 		page,
-		freshWorkspace,
+		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = freshWorkspace;
+		const { team, agents, token } = sharedWorkspace;
 		await page.setViewportSize({ width: 375, height: 720 });
 
 		const project = await createProjectViaApi(
 			page,
 			team.id,
 			token,
-			'Tooltip Project',
+			uniqueName('Tooltip Project'),
 			'Info tooltip coverage.',
 		);
 		const task = await createTaskViaApi(page, team.id, token, {
@@ -368,9 +373,9 @@ test.describe('Task detail — info tooltips on pinned cards', () => {
 test.describe('Task detail — initial scroll and scroll-to-bottom button', () => {
 	test('lands at top of ticket page and floating button scrolls to bottom on demand', async ({
 		page,
-		freshWorkspace,
+		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = freshWorkspace;
+		const { team, agents, token } = sharedWorkspace;
 		await page.setViewportSize({ width: 1280, height: 720 });
 
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -378,7 +383,7 @@ test.describe('Task detail — initial scroll and scroll-to-bottom button', () =
 			page,
 			team.id,
 			token,
-			'Scroll Project',
+			uniqueName('Scroll Project'),
 			'Scroll behavior test.',
 		);
 		const task = await createTaskViaApi(page, team.id, token, {
@@ -416,8 +421,11 @@ test.describe('Task detail — initial scroll and scroll-to-bottom button', () =
 		await expect(page.getByPlaceholder('Add a comment...')).toBeInViewport();
 	});
 
-	test('button is also functional at mobile viewport', async ({ page, freshWorkspace }) => {
-		const { team, agents, token } = freshWorkspace;
+	test('button is also functional at mobile viewport', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, agents, token } = sharedWorkspace;
 		await page.setViewportSize({ width: 375, height: 720 });
 
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -425,7 +433,7 @@ test.describe('Task detail — initial scroll and scroll-to-bottom button', () =
 			page,
 			team.id,
 			token,
-			'Mobile Scroll Project',
+			uniqueName('Mobile Scroll Project'),
 			'Mobile scroll behavior test.',
 		);
 		const task = await createTaskViaApi(page, team.id, token, {

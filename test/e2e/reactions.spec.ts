@@ -1,12 +1,14 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import {
-	authenticate,
-	clickAndWaitForResponse,
 	createProjectAndClearPlanning,
-	createTeamWithAgents,
+	saveAndWaitForRefetch,
+	taskMatcher,
+	uniqueName,
 	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
+
+type Page = import('@playwright/test').Page;
 
 interface SeededTask {
 	team: { id: string; slug: string };
@@ -16,20 +18,20 @@ interface SeededTask {
 	headers: Record<string, string>;
 }
 
-async function seedTaskWithComment(page: Page): Promise<SeededTask> {
-	const { team, token } = await createTeamWithAgents(page);
+async function seedTaskWithComment(
+	page: Page,
+	team: { id: string; slug: string },
+	token: string,
+	agents: Array<{ id: string }>,
+): Promise<SeededTask> {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
 	const projRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Reactions Project',
+		name: uniqueName('Reactions Project'),
 		description: 'x',
 	});
 	const project = ((await projRes.json()) as { data: { id: string } }).data;
 
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
-		headers: { Authorization: `Bearer ${token}` },
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data;
 	const assigneeId = agents[0].id;
 
 	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
@@ -52,12 +54,16 @@ async function seedTaskWithComment(page: Page): Promise<SeededTask> {
 }
 
 test.describe('Comment reactions', () => {
-	// Shared e2e server + parallel workers can delay comment thread paint; allow an extra retry.
-	test.describe.configure({ retries: 2 });
-
-	test('add and remove a ✓ reaction toggles the chip', async ({ page }) => {
-		await authenticate(page);
-		const { team, taskId } = await seedTaskWithComment(page);
+	test('add and remove a ✓ reaction toggles the chip', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, taskId } = await seedTaskWithComment(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.goto(`/teams/${team.slug}/tasks/${taskId}`);
 		await waitForPageLoad(page);
@@ -68,12 +74,18 @@ test.describe('Comment reactions', () => {
 		await addButton.click();
 		const picker = page.getByTestId('reaction-picker');
 		await expect(picker).toBeVisible();
-		const addResponse = await clickAndWaitForResponse(
-			page,
-			picker.locator('[data-reaction-kind="ack"]'),
-			(url, method) => method === 'PUT' && /\/reactions\/ack$/.test(url.pathname),
-		);
-		expect(addResponse.ok()).toBe(true);
+
+		// Wait for both the PUT mutation and the GET refetch that React Query's
+		// onSettled triggers, so the chip is in the DOM before we assert on it.
+		await saveAndWaitForRefetch(page, picker.locator('[data-reaction-kind="ack"]'), {
+			mutation: (url, method) => method === 'PUT' && /\/reactions\/ack$/.test(url.pathname),
+			refetch: taskMatcher({
+				teamId: team.slug,
+				taskId: taskId,
+				subResource: 'comments',
+				method: 'GET',
+			}),
+		});
 
 		const chip = page
 			.getByTestId('comment-reactions')
@@ -83,20 +95,31 @@ test.describe('Comment reactions', () => {
 		await expect(chip).toHaveAttribute('data-you-reacted', 'true');
 		await expect(chip).toContainText('1');
 
-		const removeResponse = await clickAndWaitForResponse(
-			page,
-			chip,
-			(url, method) => method === 'DELETE' && /\/reactions\/ack$/.test(url.pathname),
-		);
-		expect(removeResponse.ok()).toBe(true);
+		await saveAndWaitForRefetch(page, chip, {
+			mutation: (url, method) => method === 'DELETE' && /\/reactions\/ack$/.test(url.pathname),
+			refetch: taskMatcher({
+				teamId: team.slug,
+				taskId: taskId,
+				subResource: 'comments',
+				method: 'GET',
+			}),
+		});
+
 		await expect(
 			page.getByTestId('comment-reactions').locator('[data-reaction-kind="ack"]'),
 		).toHaveCount(0, { timeout: 25_000 });
 	});
 
-	test('reactions seeded via API render on page load', async ({ page }) => {
-		await authenticate(page);
-		const { team, taskId, commentId, token } = await seedTaskWithComment(page);
+	test('reactions seeded via API render on page load', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, taskId, commentId, token } = await seedTaskWithComment(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.request.put(
 			`/api/teams/${team.id}/tasks/${taskId}/comments/${commentId}/reactions/ack`,
@@ -115,9 +138,16 @@ test.describe('Comment reactions', () => {
 		await expect(chip).toHaveAttribute('data-you-reacted', 'true');
 	});
 
-	test('reacting does not fire any agent wakeups', async ({ page }) => {
-		await authenticate(page);
-		const { team, taskId, commentId, headers } = await seedTaskWithComment(page);
+	test('reacting does not fire any agent wakeups', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, taskId, commentId, headers } = await seedTaskWithComment(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents,
+		);
 
 		await page.goto(`/teams/${team.slug}/tasks/${taskId}`);
 		await waitForPageLoad(page);
@@ -133,12 +163,19 @@ test.describe('Comment reactions', () => {
 		expect(before.status()).toBe(200);
 
 		await addButton.click();
-		const addResponse = await clickAndWaitForResponse(
+		await saveAndWaitForRefetch(
 			page,
 			page.getByTestId('reaction-picker').locator('[data-reaction-kind="ack"]'),
-			(url, method) => method === 'PUT' && /\/reactions\/ack$/.test(url.pathname),
+			{
+				mutation: (url, method) => method === 'PUT' && /\/reactions\/ack$/.test(url.pathname),
+				refetch: taskMatcher({
+					teamId: team.slug,
+					taskId: taskId,
+					subResource: 'comments',
+					method: 'GET',
+				}),
+			},
 		);
-		expect(addResponse.ok()).toBe(true);
 
 		const chip = page
 			.getByTestId('comment-reactions')

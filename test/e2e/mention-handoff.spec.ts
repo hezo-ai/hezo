@@ -1,31 +1,26 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import {
-	authenticate,
 	createProjectAndClearPlanning,
-	createTeamWithAgents,
+	uniqueName,
 	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
 
 test.describe('Mention handoff', () => {
-	async function setup(page: import('@playwright/test').Page) {
-		const { team, token } = await createTeamWithAgents(page);
+	async function setup(
+		page: import('@playwright/test').Page,
+		team: { id: string; slug: string },
+		token: string,
+		agents: Array<{ id: string; slug: string; title: string }>,
+	) {
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
 		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'Handoff Project',
+			name: uniqueName('Handoff Project'),
 			description: 'Test project.',
 		});
 		const project = ((await projRes.json()) as any).data;
 
-		const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
-			headers: { Authorization: `Bearer ${token}` },
-		});
-		const agents = ((await agentsRes.json()) as any).data as Array<{
-			id: string;
-			slug: string;
-			title: string;
-		}>;
 		const captain = agents.find((a) => a.slug === 'captain');
 		const architect = agents.find((a) => a.slug === 'architect');
 		if (!captain || !architect) throw new Error('Captain and architect agents required');
@@ -61,10 +56,15 @@ test.describe('Mention handoff', () => {
 	}
 
 	test('posting an @architect mention in a comment renders as a link to the architect page', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team, architect, ceoTask } = await setup(page);
+		const { team, architect, ceoTask } = await setup(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents as Array<{ id: string; slug: string; title: string }>,
+		);
 
 		await page.goto(`/teams/${team.slug}/tasks/${ceoTask.id}`);
 		await waitForPageLoad(page);
@@ -89,10 +89,15 @@ test.describe('Mention handoff', () => {
 	});
 
 	test('comment with @mention inside a fenced code block does not render a mention link', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team, architect, ceoTask, headers } = await setup(page);
+		const { team, architect, ceoTask, headers } = await setup(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents as Array<{ id: string; slug: string; title: string }>,
+		);
 
 		const body = `Here is the template we discussed:\n\`\`\`\n@${architect.slug}\n\`\`\`\nThat's it.`;
 		await page.request.post(`/api/teams/${team.id}/tasks/${ceoTask.id}/comments`, {
@@ -114,10 +119,15 @@ test.describe('Mention handoff', () => {
 	});
 
 	test('architect agent page is reachable via the mention link from a comment', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team, architect, ceoTask, headers } = await setup(page);
+		const { team, architect, ceoTask, headers } = await setup(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents as Array<{ id: string; slug: string; title: string }>,
+		);
 
 		await page.request.post(`/api/teams/${team.id}/tasks/${ceoTask.id}/comments`, {
 			headers,
@@ -133,9 +143,16 @@ test.describe('Mention handoff', () => {
 		await expect(page.getByRole('heading', { name: architect.title })).toBeVisible();
 	});
 
-	test('mentioning multiple agents in one comment renders all mentions', async ({ page }) => {
-		await authenticate(page);
-		const { team, captain, architect, ceoTask, headers } = await setup(page);
+	test('mentioning multiple agents in one comment renders all mentions', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, captain, architect, ceoTask, headers } = await setup(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents as Array<{ id: string; slug: string; title: string }>,
+		);
 
 		await page.request.post(`/api/teams/${team.id}/tasks/${ceoTask.id}/comments`, {
 			headers,
@@ -161,10 +178,15 @@ test.describe('Mention handoff', () => {
 	});
 
 	test('passive @@<slug> renders a clickable chip but creates no mention wakeup', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team, architect, captain, ceoTask, headers } = await setup(page);
+		const { team, architect, captain, ceoTask, headers } = await setup(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			sharedWorkspace.agents as Array<{ id: string; slug: string; title: string }>,
+		);
 
 		await page.request.post(`/api/teams/${team.id}/tasks/${ceoTask.id}/comments`, {
 			headers,

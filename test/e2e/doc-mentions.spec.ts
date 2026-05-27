@@ -1,35 +1,34 @@
-import { expect, test } from '@playwright/test';
-import { authenticate, createProjectAndClearPlanning, createTeamWithAgents } from './helpers';
+import { expect, test } from './fixtures';
+import { createProjectAndClearPlanning, uniqueName } from './helpers';
 
 test('bare kb and project-doc references render as tooltip-ed links and navigate to the doc editor', async ({
-	page,
+	sharedPage: page,
+	sharedWorkspace,
 }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team, token } = await createTeamWithAgents(page);
+	const { team, token, agents } = sharedWorkspace;
 	const headers = { Authorization: `Bearer ${token}` };
 	const json = { ...headers, 'Content-Type': 'application/json' };
 
 	const project = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Doc Mention Project',
+		name: uniqueName('Doc Mention Project'),
 		description: 'Project for doc-mention e2e test.',
 	});
 
-	const kbContent = 'Hello onboarding world';
+	const kbSuffix = Math.random().toString(36).slice(2, 8);
+	const kbTitle = `Onboarding Guide ${kbSuffix}`;
+	const kbSlug = `onboarding-guide-${kbSuffix}.md`;
+	const docFilename = `runbook-${kbSuffix}.md`;
+
 	await page.request.post(`/api/teams/${team.id}/kb-docs`, {
 		headers: json,
-		data: { title: 'Onboarding Guide', content: kbContent },
+		data: { title: kbTitle, content: 'Hello onboarding world' },
 	});
 
-	const docContent = 'Runbook step A.\nRunbook step B.';
-	await page.request.put(`/api/teams/${team.id}/projects/${project.slug}/docs/runbook.md`, {
+	await page.request.put(`/api/teams/${team.id}/projects/${project.slug}/docs/${docFilename}`, {
 		headers: json,
-		data: { content: docContent },
+		data: { content: 'Runbook step A.\nRunbook step B.' },
 	});
 
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const captain = agents.find((a) => a.slug === 'captain');
 	if (!captain) throw new Error('Captain agent not found');
 
@@ -38,7 +37,7 @@ test('bare kb and project-doc references render as tooltip-ed links and navigate
 		data: {
 			project_id: project.id,
 			title: 'Doc mention host task',
-			description: `See onboarding-guide.md and runbook.md for context.`,
+			description: `See ${kbSlug} and ${docFilename} for context.`,
 			assignee_id: captain.id,
 		},
 	});
@@ -51,40 +50,41 @@ test('bare kb and project-doc references render as tooltip-ed links and navigate
 
 	const kbLink = page.getByTestId('kb-mention-link').first();
 	await expect(kbLink).toBeVisible();
-	await expect(kbLink).toContainText('onboarding-guide.md');
+	await expect(kbLink).toContainText(kbSlug);
 	await kbLink.hover();
-	await expect(page.getByText('Onboarding Guide', { exact: true }).first()).toBeVisible();
+	await expect(page.getByText(kbTitle, { exact: true }).first()).toBeVisible();
 
 	const docLink = page.getByTestId('doc-mention-link').first();
 	await expect(docLink).toBeVisible();
-	await expect(docLink).toContainText('runbook.md');
+	await expect(docLink).toContainText(docFilename);
 
 	await kbLink.click();
 	await expect(page).toHaveURL(
-		new RegExp(`/teams/${team.slug}/kb\\?slug=onboarding-guide(\\.md|%2Emd)`),
+		new RegExp(`/teams/${team.slug}/kb\\?slug=onboarding-guide-${kbSuffix}(\\.md|%2Emd)`),
 	);
 });
 
-test('mention picker opens on @ and inserts the selected handle', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team, token } = await createTeamWithAgents(page);
+test('mention picker opens on @ and inserts the selected handle', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
 	const headers = { Authorization: `Bearer ${token}` };
 	const json = { ...headers, 'Content-Type': 'application/json' };
 
 	const project = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Picker Project',
+		name: uniqueName('Picker Project'),
 		description: 'Project for mention-picker e2e.',
 	});
 
+	const kbSuffix = Math.random().toString(36).slice(2, 8);
+	const kbTitle = `Picker Doc ${kbSuffix}`;
+	const kbSlug = `picker-doc-${kbSuffix}.md`;
 	await page.request.post(`/api/teams/${team.id}/kb-docs`, {
 		headers: json,
-		data: { title: 'Picker Doc', content: 'Picker content.' },
+		data: { title: kbTitle, content: 'Picker content.' },
 	});
 
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const captain = agents.find((a) => a.slug === 'captain');
 	if (!captain) throw new Error('Captain agent not found');
 
@@ -101,48 +101,48 @@ test('mention picker opens on @ and inserts the selected handle', async ({ page 
 
 	const commentBox = page.getByPlaceholder('Add a comment...');
 	await commentBox.click();
-	await commentBox.type('Reference @picker');
+	await commentBox.type(`Reference @picker-doc-${kbSuffix.slice(0, 3)}`);
 
 	const picker = page.getByTestId('mention-picker');
 	await expect(picker).toBeVisible();
 
 	const option = page.getByTestId('mention-option-kb').first();
-	await expect(option).toContainText('Picker Doc');
+	await expect(option).toContainText(kbTitle);
 	await option.click();
 
-	await expect(commentBox).toHaveValue(/(?<!@)picker-doc\.md /);
+	await expect(commentBox).toHaveValue(new RegExp(`(?<!@)${kbSlug.replace(/\./g, '\\.')} `));
 });
 
 test('rendered markdown autolinks only real entities and leaves look-alikes as text', async ({
-	page,
+	sharedPage: page,
+	sharedWorkspace,
 }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team, token } = await createTeamWithAgents(page);
+	const { team, token, agents } = sharedWorkspace;
 	const headers = { Authorization: `Bearer ${token}` };
 	const json = { ...headers, 'Content-Type': 'application/json' };
 
 	const project = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Mixed Mentions',
+		name: uniqueName('Mixed Mentions'),
 		description: 'Host project for mixed-mention e2e.',
 	});
+
+	const kbSuffix = Math.random().toString(36).slice(2, 8);
+	const kbSlug = `coding-standards-${kbSuffix}.md`;
+	const docFilename = `spec-${kbSuffix}.md`;
 
 	await page.request.post(`/api/teams/${team.id}/kb-docs`, {
 		headers: json,
 		data: {
-			title: 'Coding Standards',
-			slug: 'coding-standards.md',
+			title: `Coding Standards ${kbSuffix}`,
+			slug: kbSlug,
 			content: 'Prefer early returns.',
 		},
 	});
-	await page.request.put(`/api/teams/${team.id}/projects/${project.slug}/docs/spec.md`, {
+	await page.request.put(`/api/teams/${team.id}/projects/${project.slug}/docs/${docFilename}`, {
 		headers: json,
 		data: { content: 'Spec body.' },
 	});
 
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const captain = agents.find((a) => a.slug === 'captain');
 	if (!captain) throw new Error('Captain agent not found');
 
@@ -157,8 +157,8 @@ test('rendered markdown autolinks only real entities and leaves look-alikes as t
 	).data;
 
 	const body = [
-		`See ${targetTask.identifier} and spec.md and coding-standards.md with @captain.`,
-		`Look-alikes that must stay plain text: UTF-8, ${targetTask.identifier}x, \`${targetTask.identifier}\` and \`spec.md\`.`,
+		`See ${targetTask.identifier} and ${docFilename} and ${kbSlug} with @captain.`,
+		`Look-alikes that must stay plain text: UTF-8, ${targetTask.identifier}x, \`${targetTask.identifier}\` and \`${docFilename}\`.`,
 	].join('\n\n');
 
 	const hostRes = await page.request.post(`/api/teams/${team.id}/tasks`, {

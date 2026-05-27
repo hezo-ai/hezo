@@ -1,25 +1,18 @@
-import { expect, test } from '@playwright/test';
-import {
-	authenticate,
-	createProjectAndClearPlanning,
-	createTeamWithAgents,
-	waitForPageLoad,
-} from './helpers';
+import { expect, test } from './fixtures';
+import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 
-test('sub-tasks panel is expanded by default and collapses on click', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
+test('sub-tasks panel is expanded by default and collapses on click', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string; slug: string }[];
 	const captain = agents.find((a) => a.slug === 'captain')!;
 	const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Sub-Tasks Project',
+		name: uniqueName('Sub-Tasks Project'),
 		description: 'Seeded for sub-tasks test.',
 	});
 	const project = (await projectRes.json()).data;
@@ -30,22 +23,14 @@ test('sub-tasks panel is expanded by default and collapses on click', async ({ p
 	});
 	const parent = (await parentRes.json()).data;
 
-	const childAPayload = {
-		title: 'Child Task Alpha',
-		assignee_id: engineer.id,
-	};
-	const childBPayload = {
-		title: 'Child Task Beta',
-		assignee_id: engineer.id,
-	};
 	const childARes = await page.request.post(`/api/teams/${team.id}/tasks/${parent.id}/sub-tasks`, {
 		headers,
-		data: childAPayload,
+		data: { title: 'Child Task Alpha', assignee_id: engineer.id },
 	});
 	expect(childARes.ok()).toBeTruthy();
 	const childBRes = await page.request.post(`/api/teams/${team.id}/tasks/${parent.id}/sub-tasks`, {
 		headers,
-		data: childBPayload,
+		data: { title: 'Child Task Beta', assignee_id: engineer.id },
 	});
 	expect(childBRes.ok()).toBeTruthy();
 
@@ -63,33 +48,28 @@ test('sub-tasks panel is expanded by default and collapses on click', async ({ p
 	await expect(list.getByText('Child Task Alpha')).toBeVisible();
 	await expect(list.getByText('Child Task Beta')).toBeVisible();
 
-	// With only 2 sub-tasks and a default page size of 10, no "Show more" should appear.
 	await expect(page.getByTestId('sub-tasks-show-more')).toHaveCount(0);
 
 	await toggle.click();
 	await expect(toggle).toHaveAttribute('aria-expanded', 'false');
 	await expect(list).toBeHidden();
 
-	// Captain agent variable retained to validate presence in the seeded team.
 	expect(captain).toBeDefined();
 });
 
-test('sub-tasks paginate to team page size with a Show more link', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
+test('sub-tasks paginate to team page size with a Show more link', async ({
+	page,
+	freshWorkspace,
+}) => {
+	const { team, token, agents } = freshWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	// Set the page size to 3 for this team so we don't have to seed dozens of sub-tasks.
 	const patchRes = await page.request.patch(`/api/teams/${team.id}`, {
 		headers,
 		data: { settings: { subtask_page_size: 3 } },
 	});
 	expect(patchRes.ok()).toBeTruthy();
 
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string; slug: string }[];
 	const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
@@ -122,36 +102,31 @@ test('sub-tasks paginate to team page size with a Show more link', async ({ page
 	const list = page.getByTestId('sub-tasks-list');
 	await expect(list).toBeVisible();
 
-	// First batch — 3 visible, 4 hidden.
 	await expect(list.getByTestId('sub-task-item')).toHaveCount(3);
 	const showMore = page.getByTestId('sub-tasks-show-more');
 	await expect(showMore).toBeVisible();
 	await expect(showMore).toContainText('4 hidden');
 
-	// Second batch — 6 visible, 1 hidden.
 	await showMore.click();
 	await expect(list.getByTestId('sub-task-item')).toHaveCount(6);
 	await expect(showMore).toContainText('1 hidden');
 
-	// Final batch — all 7 visible, link gone.
 	await showMore.click();
 	await expect(list.getByTestId('sub-task-item')).toHaveCount(7);
 	await expect(page.getByTestId('sub-tasks-show-more')).toHaveCount(0);
 });
 
-test('sub-tasks panel sits between description card and comments', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
+test('sub-tasks panel sits between description card and comments', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string; slug: string }[];
 	const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Layout Project',
+		name: uniqueName('Layout Project'),
 		description: 'Seeded for layout check.',
 	});
 	const project = (await projectRes.json()).data;

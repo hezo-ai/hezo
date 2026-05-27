@@ -1,18 +1,11 @@
-import { expect, test } from '@playwright/test';
-import { authenticate, createTeamWithAgents } from './helpers';
+import { expect, test } from './fixtures';
+import { agentMatcher } from './helpers';
 
 test('agent settings page shows system prompt textarea, edits persist, revisions panel lists history', async ({
 	page,
+	freshWorkspace,
 }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team, token } = await createTeamWithAgents(page);
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
-		headers: { Authorization: `Bearer ${token}` },
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const { team, agents } = freshWorkspace;
 	const engineer = agents.find((a) => a.slug === 'engineer')!;
 
 	await page.goto(`/teams/${team.id}/agents/${engineer.id}/settings`);
@@ -24,11 +17,16 @@ test('agent settings page shows system prompt textarea, edits persist, revisions
 	expect(original).toContain('You are an Engineer at');
 
 	await promptTextarea.fill(`${original}\n- New rule added by e2e test`);
-	// Wait for the PATCH to land before reloading — otherwise the reload races
-	// the save and the revision panel comes up empty.
-	const savePromise = page.waitForResponse(
-		(r) => /\/agents\/[^/]+$/.test(new URL(r.url()).pathname) && r.request().method() === 'PATCH',
-	);
+	// Scope the matcher to the specific agent's PATCH so Captain's background
+	// activity on other agents doesn't satisfy the wait before our save lands.
+	const matchPatch = agentMatcher({ teamId: team.id, agentId: engineer.id, method: 'PATCH' });
+	const savePromise = page.waitForResponse((r) => {
+		try {
+			return matchPatch(new URL(r.url()), r.request().method());
+		} catch {
+			return false;
+		}
+	});
 	await page.getByRole('button', { name: 'Save Changes' }).click();
 	await savePromise;
 
@@ -40,16 +38,9 @@ test('agent settings page shows system prompt textarea, edits persist, revisions
 
 test('agent settings preview tab resolves placeholders and edit tab keeps the raw template', async ({
 	page,
+	freshWorkspace,
 }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team, token } = await createTeamWithAgents(page);
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
-		headers: { Authorization: `Bearer ${token}` },
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const { team, agents } = freshWorkspace;
 	const engineer = agents.find((a) => a.slug === 'engineer')!;
 
 	await page.goto(`/teams/${team.id}/agents/${engineer.id}/settings`);

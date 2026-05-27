@@ -1,10 +1,8 @@
-import { expect, type Page, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './fixtures';
 import {
-	authenticate,
-	clickAndWaitForResponse,
 	createProjectAndClearPlanning,
-	createTeamWithAgents,
-	getToken,
+	uniqueName,
 	waitForAgentIdle,
 	waitForPageLoad,
 } from './helpers';
@@ -19,26 +17,16 @@ async function suppressAiModal(page: Page) {
 	);
 }
 
-test('can create an task with required assignee', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
+test('can create an task with required assignee', async ({ sharedPage: page, sharedWorkspace }) => {
+	const { team, token, agents } = sharedWorkspace;
+	const agent = agents[0] as { id: string; title: string };
 
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	// Get agents for assignee selection
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
-	expect(agents.length).toBeGreaterThan(0);
-	const agent = agents[0];
-
-	// Create a project via API
+	const projectName = uniqueName('Test Project');
 	await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Test Project',
+		name: projectName,
 		description: 'Test project.',
 	});
 
-	// Navigate to tasks
 	await suppressAiModal(page);
 	await page.goto(`/teams/${team.slug}/tasks`);
 	await waitForPageLoad(page);
@@ -50,56 +38,33 @@ test('can create an task with required assignee', async ({ page }) => {
 	await page
 		.locator('select')
 		.filter({ hasText: 'Select project' })
-		.selectOption({ label: 'Test Project' });
+		.selectOption({ label: projectName });
 
-	// Verify Create button is disabled without assignee
 	await expect(page.getByRole('button', { name: 'Create' })).toBeDisabled();
 
-	// Select assignee
 	await page
 		.locator('select')
 		.filter({ hasText: 'Select assignee' })
 		.selectOption({ label: agent.title });
 
-	// Now Create button should be enabled
 	await expect(page.getByRole('button', { name: 'Create' })).toBeEnabled();
 	await page.getByRole('button', { name: 'Create' }).click();
 
 	await expect(page.getByText('Test Task')).toBeVisible({ timeout: 20000 });
 });
 
-test('task detail shows execution lock banner when locked', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const token = await getToken(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	// Create team with agents (need agent for lock)
-	const typesRes = await page.request.get('/api/team-templates', { headers });
-	const types = (await typesRes.json()).data as { id: string; name: string }[];
-	const typeId = types.find((t) => t.name === 'Startup')?.id;
-
-	const teamRes = await page.request.post('/api/teams', {
-		headers,
-		data: {
-			name: `Lock Test ${Date.now()}`,
-			template_id: typeId,
-		},
-	});
-	const team = (await teamRes.json()).data;
+test('task detail shows execution lock banner when locked', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Lock Project',
+		name: uniqueName('Lock Project'),
 		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
-
-	// Get an agent for assignee and lock
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	expect(agentsRes.ok()).toBeTruthy();
-	const agents = (await agentsRes.json()).data;
-	expect(agents.length).toBeGreaterThan(0);
 	const agent = agents[0];
 
 	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
@@ -108,7 +73,6 @@ test('task detail shows execution lock banner when locked', async ({ page }) => 
 	});
 	const task = (await taskRes.json()).data;
 
-	// Acquire the execution lock
 	const lockRes = await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/lock`, {
 		headers,
 		data: { member_id: agent.id },
@@ -123,36 +87,21 @@ test('task detail shows execution lock banner when locked', async ({ page }) => 
 	await expect(sidebar.getByText('is running')).toBeVisible();
 });
 
-test('task detail lists every agent running concurrently on a ticket', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const token = await getToken(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const typesRes = await page.request.get('/api/team-templates', { headers });
-	const types = (await typesRes.json()).data as { id: string; name: string }[];
-	const typeId = types.find((t) => t.name === 'Startup')?.id;
-
-	const teamRes = await page.request.post('/api/teams', {
-		headers,
-		data: {
-			name: `Concurrent Lock ${Date.now()}`,
-			template_id: typeId,
-		},
-	});
-	const team = (await teamRes.json()).data;
+test('task detail lists every agent running concurrently on a ticket', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Concurrent Project',
+		name: uniqueName('Concurrent Project'),
 		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
 
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
 	expect(agents.length).toBeGreaterThanOrEqual(2);
-	const [firstAgent, secondAgent] = agents;
+	const [firstAgent, secondAgent] = agents as Array<{ id: string; title: string }>;
 
 	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers,
@@ -189,33 +138,18 @@ test('task detail lists every agent running concurrently on a ticket', async ({ 
 });
 
 test('running-agents line links each name to its run comment and scrolls into view', async ({
-	page,
+	sharedPage: page,
+	sharedWorkspace,
 }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const token = await getToken(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const typesRes = await page.request.get('/api/team-templates', { headers });
-	const types = (await typesRes.json()).data as { id: string; name: string }[];
-	const typeId = types.find((t) => t.name === 'Startup')?.id;
-
-	const teamRes = await page.request.post('/api/teams', {
-		headers,
-		data: { name: `Running Link ${Date.now()}`, template_id: typeId },
-	});
-	const team = (await teamRes.json()).data;
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Running Link Project',
+		name: uniqueName('Running Link Project'),
 		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
-	const agent = agents[0];
+	const agent = agents[0] as { id: string; title: string };
 
 	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
 		headers,
@@ -243,7 +177,6 @@ test('running-agents line links each name to its run comment and scrolls into vi
 		author_member_id: agent.id,
 	};
 
-	// Pad with filler text comments so the run comment sits below the fold.
 	const filler = Array.from({ length: 20 }, (_, i) => ({
 		id: `dddd0000-0000-0000-0000-${String(i).padStart(12, '0')}`,
 		task_id: task.id,
@@ -281,19 +214,14 @@ test('running-agents line links each name to its run comment and scrolls into vi
 	await expect(targetComment).toBeInViewport({ timeout: 15000 });
 });
 
-test('can edit task rules and progress summary', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
+test('can edit task rules and progress summary', async ({ sharedPage: page, sharedWorkspace }) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string }[];
 	const agent = agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Rules Project',
+		name: uniqueName('Rules Project'),
 		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
@@ -304,8 +232,6 @@ test('can edit task rules and progress summary', async ({ page }) => {
 	});
 	const task = (await taskRes.json()).data as { id: string; identifier: string };
 
-	// Drain the assignment-driven wakeup so the agent's PATCHes/GETs aren't
-	// competing with the test's mutation matchers on the same task.
 	await waitForAgentIdle(page, team.id, agent.id, token);
 
 	await page.goto(`/teams/${team.id}/tasks/${task.id}`);
@@ -314,13 +240,6 @@ test('can edit task rules and progress summary', async ({ page }) => {
 		timeout: 20000,
 	});
 
-	// Drive the saves via `page.request.patch` (a separate APIRequestContext)
-	// so the assignee agent's heartbeat-run can't intercept the user's PATCH
-	// via shared connection-pool / React-Query in-flight contention, and so a
-	// slow refetch GET from the previous save can't block the next mutation's
-	// `cancelQueries`. The UI flow (Edit → fill → Save click) is still
-	// exercised — we just don't depend on the optimistic mutate making it
-	// through the network before `page.reload()` below tears the fetch down.
 	const taskPath = `/api/teams/${team.id}/tasks/${task.identifier.toLowerCase()}`;
 
 	const rulesSection = page.getByTestId('pinned-rules');
@@ -328,11 +247,8 @@ test('can edit task rules and progress summary', async ({ page }) => {
 	await rulesSection.locator('textarea').fill('Consult architect before changes');
 	await rulesSection.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 30000 });
-	// Mirror the same value through the test's own request context so persistence
-	// is guaranteed regardless of whether the UI mutate completed before the
-	// later reload.
 	const rulesPatch = await page.request.patch(taskPath, {
-		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+		headers,
 		data: { rules: 'Consult architect before changes' },
 	});
 	expect(rulesPatch.ok()).toBe(true);
@@ -343,12 +259,11 @@ test('can edit task rules and progress summary', async ({ page }) => {
 	await summarySection.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Implementation started')).toBeVisible({ timeout: 30000 });
 	const summaryPatch = await page.request.patch(taskPath, {
-		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+		headers,
 		data: { progress_summary: 'Implementation started' },
 	});
 	expect(summaryPatch.ok()).toBe(true);
 
-	// Verify persistence after reload
 	await page.reload();
 	await waitForPageLoad(page);
 	await expect(page.getByText('Consult architect before changes')).toBeVisible({ timeout: 15000 });
@@ -360,19 +275,17 @@ test('can edit task rules and progress summary', async ({ page }) => {
 	await expect(pinnedRules).toBeVisible();
 });
 
-test('task rules and progress summary render markdown formatting', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
+test('task rules and progress summary render markdown formatting', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string }[];
 	const agent = agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Markdown Project',
+		name: uniqueName('Markdown Project'),
 		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
@@ -383,8 +296,6 @@ test('task rules and progress summary render markdown formatting', async ({ page
 	});
 	const task = (await taskRes.json()).data as { id: string; identifier: string };
 
-	// Drain the assignment-driven wakeup so the agent's PATCHes/GETs aren't
-	// competing with the test's mutation matchers on the same task.
 	await waitForAgentIdle(page, team.id, agent.id, token);
 
 	await page.goto(`/teams/${team.id}/tasks/${task.id}`);
@@ -393,8 +304,6 @@ test('task rules and progress summary render markdown formatting', async ({ page
 		timeout: 20000,
 	});
 
-	// See comment on the previous test for why we mirror the save via
-	// `page.request.patch` after the UI assertion.
 	const taskPath = `/api/teams/${team.id}/tasks/${task.identifier.toLowerCase()}`;
 	const rulesBody =
 		'Use **bold** guidance.\n\n- first bullet\n- second bullet\n\nRun `bun test` before merge.';
@@ -410,7 +319,7 @@ test('task rules and progress summary render markdown formatting', async ({ page
 	await expect(pinnedRules.locator('ul li', { hasText: 'second bullet' })).toBeVisible();
 	await expect(pinnedRules.locator('code', { hasText: 'bun test' })).toBeVisible();
 	const rulesPatch = await page.request.patch(taskPath, {
-		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+		headers,
 		data: { rules: rulesBody },
 	});
 	expect(rulesPatch.ok()).toBe(true);
@@ -427,7 +336,7 @@ test('task rules and progress summary render markdown formatting', async ({ page
 	await expect(pinnedSummary.locator('ol li', { hasText: 'Wired up DB' })).toBeVisible();
 	await expect(pinnedSummary.locator('ol li', { hasText: 'Added tests' })).toBeVisible();
 	const summaryPatch = await page.request.patch(taskPath, {
-		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+		headers,
 		data: { progress_summary: summaryBody },
 	});
 	expect(summaryPatch.ok()).toBe(true);
@@ -438,22 +347,16 @@ test('task rules and progress summary render markdown formatting', async ({ page
 	await expect(pinnedSummary.locator('ol li', { hasText: 'Scaffolded routes' })).toBeVisible();
 });
 
-test('task detail shows assignee with status badge', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
+test('task detail shows assignee with status badge', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+	const agent = agents[0] as { id: string; title: string };
 
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	// Get agents
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
-	expect(agents.length).toBeGreaterThan(0);
-	const agent = agents[0];
-
-	// Create project and task assigned to agent
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Assignee Project',
+		name: uniqueName('Assignee Project'),
 		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
@@ -467,34 +370,26 @@ test('task detail shows assignee with status badge', async ({ page }) => {
 	await page.goto(`/teams/${team.id}/tasks/${task.id}`);
 	await waitForPageLoad(page);
 
-	// Verify agent name is displayed in the sidebar
 	const sidebar = page.locator('.grid > div:last-child');
 	await expect(sidebar.getByText(agent.title)).toBeVisible({ timeout: 20000 });
 
-	// Verify a status badge (Idle/Running/Paused) is shown
 	await expect(
 		sidebar.getByText('Idle').or(sidebar.getByText('Running')).or(sidebar.getByText('Paused')),
 	).toBeVisible();
 
-	// Verify chevron button exists
 	await expect(sidebar.locator('button svg.lucide-chevron-down')).toBeVisible();
 });
 
-test('can change assignee via popover dropdown', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
+test('can change assignee via popover dropdown', async ({ sharedPage: page, sharedWorkspace }) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
 	expect(agents.length).toBeGreaterThanOrEqual(2);
-	const agent1 = agents[0];
-	const agent2 = agents[1];
+	const agent1 = agents[0] as { id: string; title: string };
+	const agent2 = agents[1] as { id: string; title: string };
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Change Assignee Project',
+		name: uniqueName('Change Assignee Project'),
 		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
@@ -513,36 +408,28 @@ test('can change assignee via popover dropdown', async ({ page }) => {
 	const sidebar = page.locator('.grid > div:last-child');
 	await expect(sidebar.getByText(agent1.title)).toBeVisible({ timeout: 20000 });
 
-	// Click the assignee button to open dropdown
 	await sidebar.locator('button', { has: page.locator('svg.lucide-chevron-down') }).click();
 
-	// Dropdown should appear with agents
 	const dropdown = sidebar.locator('.absolute');
 	await expect(dropdown).toBeVisible();
 	await expect(dropdown.getByText(agent2.title)).toBeVisible();
 
-	// useUpdateTask is optimistic, so the new assignee text appears in the sidebar
-	// as soon as the click lands — observe the rendered text rather than the PATCH
-	// response (which races the assignee agent's own background activity).
 	await dropdown.locator('button', { hasText: agent2.title }).click();
 
 	await expect(dropdown).toBeHidden();
 	await expect(sidebar.getByText(agent2.title)).toBeVisible({ timeout: 20000 });
 });
 
-test('assignee dropdown closes on outside click and has no unassign option', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string; title: string }[];
+test('assignee dropdown closes on outside click and has no unassign option', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 	const agent = agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Outside Click Project',
+		name: uniqueName('Outside Click Project'),
 		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
@@ -560,33 +447,29 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 
 	const sidebar = page.locator('.grid > div:last-child');
 
-	// Open dropdown
 	await sidebar.locator('button', { has: page.locator('svg.lucide-chevron-down') }).click();
 	const dropdown = sidebar.locator('.absolute');
 	await expect(dropdown).toBeVisible();
 
-	// Verify no "Unassigned" option exists in the dropdown
 	await expect(dropdown.getByText('Unassigned')).toBeHidden();
 
-	// Click outside (on the main content area)
 	await page.getByRole('heading', { name: 'Outside Click Task' }).click();
 
-	// Dropdown should close
 	await expect(dropdown).toBeHidden();
 });
 
-test('Internal project restricts assignee dropdown to the Captain', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string; title: string; slug: string }[];
-	const captain = agents.find((a) => a.slug === 'captain');
+test('Internal project restricts assignee dropdown to the Captain', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, agents } = sharedWorkspace;
+	const captain = agents.find((a) => (a as any).slug === 'captain') as
+		| { title: string; slug: string }
+		| undefined;
 	expect(captain).toBeDefined();
-	const engineer = agents.find((a) => a.slug === 'engineer');
+	const engineer = agents.find((a) => (a as any).slug === 'engineer') as
+		| { title: string; slug: string }
+		| undefined;
 	expect(engineer).toBeDefined();
 
 	await suppressAiModal(page);
@@ -612,19 +495,13 @@ test('Internal project restricts assignee dropdown to the Captain', async ({ pag
 	expect(agentLabels.length).toBe(1);
 });
 
-test('task description renders markdown', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string }[];
+test('task description renders markdown', async ({ sharedPage: page, sharedWorkspace }) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 	const agent = agents[0];
 
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Markdown Project',
+		name: uniqueName('Markdown Desc Project'),
 		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
@@ -666,19 +543,17 @@ test('task description renders markdown', async ({ page }) => {
 	await expect(desc.locator('p', { hasText: '# Heading One' })).toHaveCount(0);
 });
 
-test('project badge and metadata label both link to the project page', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
-
-	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
-	const agents = (await agentsRes.json()).data as { id: string }[];
+test('project badge and metadata label both link to the project page', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { team, token, agents } = sharedWorkspace;
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 	const agent = agents[0];
 
+	const linkableName = uniqueName('Linkable Project');
 	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-		name: 'Linkable Project',
+		name: linkableName,
 		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data as { id: string; slug: string };
@@ -698,25 +573,22 @@ test('project badge and metadata label both link to the project page', async ({ 
 	const expectedHref = `/teams/${team.slug}/projects/${project.slug}`;
 
 	const mainContent = page.locator('.grid > div').first();
-	const badgeLink = mainContent.getByRole('link', { name: 'Linkable Project' });
+	const badgeLink = mainContent.getByRole('link', { name: linkableName });
 	await expect(badgeLink).toHaveAttribute('href', expectedHref);
 
 	const metadataPanel = page.locator('.grid > div').last();
-	const metadataLink = metadataPanel.getByRole('link', { name: 'Linkable Project' });
+	const metadataLink = metadataPanel.getByRole('link', { name: linkableName });
 	await expect(metadataLink).toHaveAttribute('href', expectedHref);
 
 	await metadataLink.click();
 	await expect(page).toHaveURL(`${expectedHref}/tasks`);
-	await expect(page.getByTestId('breadcrumb').getByText('Linkable Project')).toBeVisible({
+	await expect(page.getByTestId('breadcrumb').getByText(linkableName)).toBeVisible({
 		timeout: 20000,
 	});
 });
 
-test('sidebar shows agent status badges', async ({ page }) => {
-	await page.goto('/');
-	await authenticate(page);
-
-	const { team } = await createTeamWithAgents(page);
+test('sidebar shows agent status badges', async ({ sharedPage: page, sharedWorkspace }) => {
+	const { team } = sharedWorkspace;
 
 	await page.goto(`/teams/${team.slug}/agents/captain`);
 	await waitForPageLoad(page);

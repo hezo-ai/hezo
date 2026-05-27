@@ -1,24 +1,20 @@
-import { expect, test } from '@playwright/test';
-import {
-	authenticate,
-	createProjectAndClearPlanning,
-	createTeamWithAgents,
-	waitForPageLoad,
-} from './helpers';
+import { expect, test } from './fixtures';
+import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 
 test.describe('Project CRUD', () => {
 	test('creates a project via dialog and opens a Captain intake ticket in Internal', async ({
-		page,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		await authenticate(page);
-		const { team } = await createTeamWithAgents(page);
+		const { team } = sharedWorkspace;
+		const name = uniqueName('Marketing Campaign');
 
 		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
 		await page.getByRole('main').getByRole('button', { name: 'New project' }).click();
 
-		await page.getByLabel('Name').fill('Marketing Campaign');
+		await page.getByLabel('Name').fill(name);
 		await page
 			.getByLabel('Description')
 			.fill('Q3 brand push aimed at existing users to drive upsells.');
@@ -31,16 +27,18 @@ test.describe('Project CRUD', () => {
 		).toHaveURL(new RegExp(`/teams/${team.slug}/projects/internal/tasks/[a-z0-9-]+(?:#.*)?$`), {
 			timeout: 15000,
 		});
-		await expect(
-			page.getByRole('main').getByText('Open new project: Marketing Campaign'),
-		).toBeVisible({ timeout: 15000 });
+		await expect(page.getByRole('main').getByText(`Open new project: ${name}`)).toBeVisible({
+			timeout: 15000,
+		});
 		await expect(page.getByText("I'm the Captain")).toBeVisible({ timeout: 15000 });
 		await expect(page.getByTestId('project-intake-skip')).toBeVisible({ timeout: 15000 });
 	});
 
-	test('project list shows default (Internal) project', async ({ page }) => {
-		await authenticate(page);
-		const { team } = await createTeamWithAgents(page);
+	test('project list shows default (Internal) project', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team } = sharedWorkspace;
 
 		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
@@ -48,52 +46,54 @@ test.describe('Project CRUD', () => {
 		await expect(page.getByRole('heading', { name: '(Internal)' })).toBeVisible({ timeout: 15000 });
 	});
 
-	test('project list shows task and repo counts', async ({ page }) => {
-		await authenticate(page);
-		const { team, token } = await createTeamWithAgents(page);
+	test('project list shows task and repo counts', async ({ sharedPage: page, sharedWorkspace }) => {
+		const { team, token } = sharedWorkspace;
+		const name = uniqueName('Count Test');
 
 		await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'Count Test',
+			name,
 			description: 'Count test project.',
 		});
 
 		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
-		const card = page.getByRole('main').locator('a', { hasText: 'Count Test' });
+		const card = page.getByRole('main').locator('a', { hasText: name });
 		await expect(card).toBeVisible({ timeout: 15000 });
 		await expect(card.getByText('0 tasks')).toBeVisible();
 		await expect(card.getByText('0 repos')).toBeVisible();
 	});
 
-	test('project card links to project detail', async ({ page }) => {
-		await authenticate(page);
-		const { team, token } = await createTeamWithAgents(page);
+	test('project card links to project detail', async ({ sharedPage: page, sharedWorkspace }) => {
+		const { team, token } = sharedWorkspace;
+		const name = uniqueName('Linkable Project');
 
 		const project = await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'Linkable Project',
+			name,
 			description: 'Linkable project description.',
 		});
 
 		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);
 
-		await page.getByRole('main').getByRole('heading', { name: 'Linkable Project' }).click();
+		await page.getByRole('main').getByRole('heading', { name }).click();
 
 		await expect(page).toHaveURL(new RegExp(`/teams/${team.slug}/projects/${project.slug}`), {
 			timeout: 15000,
 		});
 	});
 
-	test('creates a project with initial PRD and saves it as project doc', async ({ page }) => {
-		await authenticate(page);
-		const { team, token } = await createTeamWithAgents(page);
+	test('creates a project with initial PRD and saves it as project doc', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, token } = sharedWorkspace;
 		const headers = { Authorization: `Bearer ${token}` };
 
 		const prdContent = '# Widget App\n\nA tool for managing widgets efficiently.';
 
 		const project = await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'PRD Test Project',
+			name: uniqueName('PRD Test Project'),
 			description: 'Testing initial PRD upload.',
 			initial_prd: prdContent,
 		});
@@ -108,9 +108,8 @@ test.describe('Project CRUD', () => {
 		expect(doc.filename).toBe('initial-prd.md');
 	});
 
-	test('create button is disabled without name', async ({ page }) => {
-		await authenticate(page);
-		const { team } = await createTeamWithAgents(page);
+	test('create button is disabled without name', async ({ sharedPage: page, sharedWorkspace }) => {
+		const { team } = sharedWorkspace;
 
 		await page.goto(`/teams/${team.slug}/projects`);
 		await waitForPageLoad(page);

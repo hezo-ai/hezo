@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { createProjectAndClearPlanning, waitForPageLoad } from './helpers';
+import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 
 type Page = import('@playwright/test').Page;
 
@@ -42,11 +42,11 @@ async function patchTaskStatus(
 
 test.describe('Task list — filtering', () => {
 	test('default view shows non-terminal tasks with status badges and a collapsed filter bar with New Task button', async ({
-		page,
-		freshWorkspace,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = freshWorkspace;
-		const project = await createProject(page, team.id, token, 'Filter Project A');
+		const { team, agents, token } = sharedWorkspace;
+		const project = await createProject(page, team.id, token, uniqueName('Filter Project A'));
 		const agentId = agents[0].id;
 
 		const tasks = await Promise.all([
@@ -93,11 +93,11 @@ test.describe('Task list — filtering', () => {
 	});
 
 	test('multi-select status filter narrows results and reset restores defaults', async ({
-		page,
-		freshWorkspace,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = freshWorkspace;
-		const project = await createProject(page, team.id, token, 'Filter Project B');
+		const { team, agents, token } = sharedWorkspace;
+		const project = await createProject(page, team.id, token, uniqueName('Filter Project B'));
 		const agentId = agents[0].id;
 
 		const created = await Promise.all([
@@ -158,11 +158,11 @@ test.describe('Task list — filtering', () => {
 	});
 
 	test('filter bar collapses/expands and applies search + sort', async ({
-		page,
-		freshWorkspace,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = freshWorkspace;
-		const project = await createProject(page, team.id, token, 'Filter Project C');
+		const { team, agents, token } = sharedWorkspace;
+		const project = await createProject(page, team.id, token, uniqueName('Filter Project C'));
 		const agentId = agents[0].id;
 
 		for (const title of ['Authentication bug', 'Payment flow', 'Sign-up form']) {
@@ -208,11 +208,11 @@ test.describe('Task list — running indicator', () => {
 	});
 
 	test('running dot is hidden by default and shown when has_active_run is true', async ({
-		page,
-		freshWorkspace,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = freshWorkspace;
-		const project = await createProject(page, team.id, token, 'Indicator Project');
+		const { team, agents, token } = sharedWorkspace;
+		const project = await createProject(page, team.id, token, uniqueName('Indicator Project'));
 		const agentId = agents[0].id;
 
 		await createTask(page, team.id, token, {
@@ -255,11 +255,11 @@ test.describe('Task list — running indicator', () => {
 	});
 
 	test('tasks with active runs pin to the top regardless of sort order', async ({
-		page,
-		freshWorkspace,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = freshWorkspace;
-		const project = await createProject(page, team.id, token, 'Pin Project');
+		const { team, agents, token } = sharedWorkspace;
+		const project = await createProject(page, team.id, token, uniqueName('Pin Project'));
 		const agentId = agents[0].id;
 
 		const oldTask = await createTask(page, team.id, token, {

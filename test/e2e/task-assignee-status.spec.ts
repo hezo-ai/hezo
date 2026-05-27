@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { createProjectAndClearPlanning, waitForPageLoad } from './helpers';
+import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 
 type Page = import('@playwright/test').Page;
 
@@ -9,7 +9,6 @@ async function createProject(
 	token: string,
 	name: string,
 ): Promise<{ id: string; slug: string }> {
-	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 	const res = await createProjectAndClearPlanning(page, teamId, token, {
 		name,
 		description: 'Assignee-status test project.',
@@ -56,11 +55,11 @@ async function setHasActiveRun(page: Page, teamSlug: string, taskId: string, val
 
 test.describe('Task detail — assignee status is ticket-scoped', () => {
 	test('idle on this ticket when the assigned agent is running somewhere else', async ({
-		page,
-		freshWorkspace,
+		sharedPage: page,
+		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = freshWorkspace;
-		const project = await createProject(page, team.id, token, 'Quiet Project');
+		const { team, agents, token } = sharedWorkspace;
+		const project = await createProject(page, team.id, token, uniqueName('Quiet Project'));
 		const task = await createTask(page, team.id, token, {
 			project_id: project.id,
 			title: 'Quiet Ticket',
@@ -85,9 +84,12 @@ test.describe('Task detail — assignee status is ticket-scoped', () => {
 		await expect(assignee).not.toContainText('Running');
 	});
 
-	test('running on this ticket when has_active_run is true', async ({ page, freshWorkspace }) => {
-		const { team, agents, token } = freshWorkspace;
-		const project = await createProject(page, team.id, token, 'Busy Project');
+	test('running on this ticket when has_active_run is true', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, agents, token } = sharedWorkspace;
+		const project = await createProject(page, team.id, token, uniqueName('Busy Project'));
 		const task = await createTask(page, team.id, token, {
 			project_id: project.id,
 			title: 'Busy Ticket',
@@ -108,11 +110,14 @@ test.describe('Task detail — assignee status is ticket-scoped', () => {
 		await expect(assignee.getByLabel('Assignee locked: agent is running')).toBeVisible();
 	});
 
-	test('mobile layout: assignee badge follows the same rule', async ({ page, freshWorkspace }) => {
+	test('mobile layout: assignee badge follows the same rule', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
 		await page.setViewportSize({ width: 375, height: 720 });
 
-		const { team, agents, token } = freshWorkspace;
-		const project = await createProject(page, team.id, token, 'Mobile Quiet');
+		const { team, agents, token } = sharedWorkspace;
+		const project = await createProject(page, team.id, token, uniqueName('Mobile Quiet'));
 		const task = await createTask(page, team.id, token, {
 			project_id: project.id,
 			title: 'Mobile Ticket',

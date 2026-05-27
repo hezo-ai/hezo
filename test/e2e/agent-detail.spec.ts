@@ -82,7 +82,7 @@ for (const viewport of [
 		freshWorkspace,
 	}) => {
 		await page.setViewportSize({ width: viewport.width, height: viewport.height });
-		const { team, agents, token } = freshWorkspace;
+		const { team, token } = freshWorkspace;
 		const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
 			headers: { Authorization: `Bearer ${token}` },
 		});
@@ -108,7 +108,7 @@ for (const viewport of [
 		const saveResponse = await clickAndWaitForResponse(
 			page,
 			page.getByRole('button', { name: 'Save Changes' }),
-			(url, method) => method === 'PATCH' && /\/agents\/[^/]+$/.test(url.pathname),
+			agentMatcher({ teamId: team.slug, agentId: agent.id, method: 'PATCH' }),
 		);
 		expect(saveResponse.ok()).toBe(true);
 
@@ -124,7 +124,7 @@ test('agent settings tab edits the title and persists across reload', async ({
 	page,
 	freshWorkspace,
 }) => {
-	const { team, agents, token } = freshWorkspace;
+	const { team, token } = freshWorkspace;
 	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
 		headers: { Authorization: `Bearer ${token}` },
 	});

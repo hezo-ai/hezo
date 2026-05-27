@@ -1,16 +1,19 @@
 import { expect, test } from './fixtures';
-import { createProjectAndClearPlanning, waitForPageLoad } from './helpers';
+import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 
 test.describe('Task blocked-by links', () => {
 	test.use({ viewport: { width: 390, height: 844 } });
 
-	test('Blocked By row links to the blocking task', async ({ page, freshWorkspace }) => {
-		const { team, token, agents } = freshWorkspace;
+	test('Blocked By row links to the blocking task', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		const { team, token, agents } = sharedWorkspace;
 		const engineer = agents.find((a) => a.slug === 'engineer') ?? agents[0];
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
 		const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
-			name: 'Blocking Project',
+			name: uniqueName('Blocking Project'),
 			description: 'Seeded for blocked-by test.',
 		});
 		const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
