@@ -4,7 +4,6 @@ import { Hono } from 'hono';
 import { resolveProjectId } from '../lib/resolve';
 import { err } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireTeamAccess } from '../middleware/auth';
 import { getWorkspacePath } from '../services/workspace';
 
 export const previewRoutes = new Hono<Env>();
@@ -26,12 +25,9 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 previewRoutes.get('/teams/:teamId/projects/:projectId/preview/*', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
-	const { teamId } = access;
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 

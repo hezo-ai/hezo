@@ -3,16 +3,12 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireTeamAccess } from '../middleware/auth';
 
 export const costsRoutes = new Hono<Env>();
 
 costsRoutes.get('/teams/:teamId/costs', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 	const agentId = c.req.query('agent_id');
 	const projectId = c.req.query('project_id');
 	const taskId = c.req.query('task_id');
@@ -104,11 +100,8 @@ costsRoutes.get('/teams/:teamId/costs', async (c) => {
 });
 
 costsRoutes.post('/teams/:teamId/costs', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
-
+	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const { teamId } = access;
 
 	const body = await c.req.json<{
 		member_id: string;
