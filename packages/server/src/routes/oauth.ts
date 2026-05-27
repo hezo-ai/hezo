@@ -5,7 +5,6 @@ import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireTeamAccess } from '../middleware/auth';
 import {
 	createConnection,
 	deleteConnection,
@@ -52,8 +51,7 @@ function pruneDeviceFlows(): void {
 }
 
 oauthRoutes.post('/teams/:teamId/oauth/github/device-start', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	pruneDeviceFlows();
 
@@ -71,7 +69,7 @@ oauthRoutes.post('/teams/:teamId/oauth/github/device-start', async (c) => {
 	const flowId = randomBytes(16).toString('hex');
 	deviceFlows.set(flowId, {
 		deviceCode: started.deviceCode,
-		teamId: access.teamId,
+		teamId: teamId,
 		scopes,
 		expiresAt: Date.now() + DEVICE_FLOW_TTL_MS,
 	});
@@ -86,8 +84,7 @@ oauthRoutes.post('/teams/:teamId/oauth/github/device-start', async (c) => {
 });
 
 oauthRoutes.post('/teams/:teamId/oauth/github/device-poll', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const body = (await c.req.json().catch(() => ({}))) as { flow_id?: string };
 	const flowId = body.flow_id;
@@ -95,7 +92,7 @@ oauthRoutes.post('/teams/:teamId/oauth/github/device-poll', async (c) => {
 
 	const entry = deviceFlows.get(flowId);
 	if (!entry) return err(c, 'NOT_FOUND', 'unknown or expired flow_id', 404);
-	if (entry.teamId !== access.teamId)
+	if (entry.teamId !== teamId)
 		return err(c, 'FORBIDDEN', 'flow does not belong to this team', 403);
 
 	const result = await pollDeviceFlow(entry.deviceCode);
@@ -121,7 +118,7 @@ oauthRoutes.post('/teams/:teamId/oauth/github/device-poll', async (c) => {
 
 	const existing = await findConnectionByAccount(
 		{ db, masterKeyManager },
-		access.teamId,
+		teamId,
 		'github',
 		String(account.id),
 	);
@@ -129,7 +126,7 @@ oauthRoutes.post('/teams/:teamId/oauth/github/device-poll', async (c) => {
 	const conn = await createConnection(
 		{ db, masterKeyManager },
 		{
-			teamId: access.teamId,
+			teamId: teamId,
 			provider: 'github',
 			providerAccountId: String(account.id),
 			providerAccountLabel: account.login,
@@ -153,7 +150,7 @@ oauthRoutes.post('/teams/:teamId/oauth/github/device-poll', async (c) => {
 	await ensureTeamKeyRegisteredOnGitHub(
 		db,
 		masterKeyManager,
-		access.teamId,
+		teamId,
 		result.accessToken,
 	).catch((e) =>
 		log.warn('team-key registration failed (non-fatal)', { error: (e as Error).message }),
@@ -161,7 +158,7 @@ oauthRoutes.post('/teams/:teamId/oauth/github/device-poll', async (c) => {
 
 	broadcastChange(
 		c,
-		wsRoom.team(access.teamId),
+		wsRoom.team(teamId),
 		'oauth_connections',
 		existing ? 'UPDATE' : 'INSERT',
 		{
@@ -266,8 +263,7 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 });
 
 oauthRoutes.post('/teams/:teamId/oauth/auth-code/start', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const masterKeyManager = c.get('masterKeyManager');
 
@@ -331,7 +327,7 @@ oauthRoutes.post('/teams/:teamId/oauth/auth-code/start', async (c) => {
 	const redirectUri = `${protocol}://${host}/api/oauth/callback`;
 
 	const { state, codeChallenge } = await signState(masterKeyManager, {
-		teamId: access.teamId,
+		teamId: teamId,
 		provider: body.provider,
 		redirectUri,
 		returnTo: body.return_to ?? '/',
@@ -361,12 +357,11 @@ oauthRoutes.post('/teams/:teamId/oauth/auth-code/start', async (c) => {
 });
 
 oauthRoutes.get('/teams/:teamId/oauth-connections', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const list = await listConnectionsForTeam({ db, masterKeyManager }, access.teamId);
+	const list = await listConnectionsForTeam({ db, masterKeyManager }, teamId);
 
 	return ok(
 		c,
@@ -385,14 +380,13 @@ oauthRoutes.get('/teams/:teamId/oauth-connections', async (c) => {
 });
 
 oauthRoutes.get('/teams/:teamId/oauth-connections/:id/scope-status', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const id = c.req.param('id');
 
-	const conn = await getConnectionForTeam({ db, masterKeyManager }, access.teamId, id);
+	const conn = await getConnectionForTeam({ db, masterKeyManager }, teamId, id);
 	if (!conn) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
 	if (conn.provider !== 'github') {
 		return err(c, 'INVALID_REQUEST', 'scope-status is only supported for github connections', 400);
@@ -402,20 +396,19 @@ oauthRoutes.get('/teams/:teamId/oauth-connections/:id/scope-status', async (c) =
 });
 
 oauthRoutes.delete('/teams/:teamId/oauth-connections/:id', async (c) => {
-	const access = await requireTeamAccess(c);
-	if (access instanceof Response) return access;
+	const teamId = c.get('teamId') as string;
 
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const id = c.req.param('id');
 
-	const conn = await getConnectionForTeam({ db, masterKeyManager }, access.teamId, id);
+	const conn = await getConnectionForTeam({ db, masterKeyManager }, teamId, id);
 	if (!conn) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
 
 	const ok2 = await deleteConnection({ db, masterKeyManager }, id);
 	if (!ok2) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
 
-	broadcastChange(c, wsRoom.team(access.teamId), 'oauth_connections', 'DELETE', { id });
+	broadcastChange(c, wsRoom.team(teamId), 'oauth_connections', 'DELETE', { id });
 
 	return ok(c, { deleted: true });
 });
