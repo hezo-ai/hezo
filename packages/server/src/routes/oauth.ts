@@ -92,8 +92,7 @@ oauthRoutes.post('/teams/:teamId/oauth/github/device-poll', async (c) => {
 
 	const entry = deviceFlows.get(flowId);
 	if (!entry) return err(c, 'NOT_FOUND', 'unknown or expired flow_id', 404);
-	if (entry.teamId !== teamId)
-		return err(c, 'FORBIDDEN', 'flow does not belong to this team', 403);
+	if (entry.teamId !== teamId) return err(c, 'FORBIDDEN', 'flow does not belong to this team', 403);
 
 	const result = await pollDeviceFlow(entry.deviceCode);
 	if (result.status === 'pending') {
@@ -147,26 +146,15 @@ oauthRoutes.post('/teams/:teamId/oauth/github/device-poll', async (c) => {
 	// a no-op, so this is idempotent. Critical for the re-auth path where a
 	// pre-existing connection is upgraded to broader scopes (write:public_key);
 	// without this, the newly-required auth key would never get registered.
-	await ensureTeamKeyRegisteredOnGitHub(
-		db,
-		masterKeyManager,
-		teamId,
-		result.accessToken,
-	).catch((e) =>
-		log.warn('team-key registration failed (non-fatal)', { error: (e as Error).message }),
+	await ensureTeamKeyRegisteredOnGitHub(db, masterKeyManager, teamId, result.accessToken).catch(
+		(e) => log.warn('team-key registration failed (non-fatal)', { error: (e as Error).message }),
 	);
 
-	broadcastChange(
-		c,
-		wsRoom.team(teamId),
-		'oauth_connections',
-		existing ? 'UPDATE' : 'INSERT',
-		{
-			id: conn.id,
-			provider: conn.provider,
-			provider_account_label: conn.providerAccountLabel,
-		},
-	);
+	broadcastChange(c, wsRoom.team(teamId), 'oauth_connections', existing ? 'UPDATE' : 'INSERT', {
+		id: conn.id,
+		provider: conn.provider,
+		provider_account_label: conn.providerAccountLabel,
+	});
 
 	return ok(c, {
 		status: 'success',

@@ -324,11 +324,7 @@ reposRoutes.get('/teams/:teamId/oauth-connections/:id/orgs', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const conn = await getConnectionForTeam(
-		{ db, masterKeyManager },
-		teamId,
-		c.req.param('id'),
-	);
+	const conn = await getConnectionForTeam({ db, masterKeyManager }, teamId, c.req.param('id'));
 	if (!conn || conn.provider !== 'github')
 		return err(c, 'NOT_FOUND', 'github connection not found', 404);
 
@@ -347,11 +343,7 @@ reposRoutes.get('/teams/:teamId/oauth-connections/:id/repos', async (c) => {
 	if (!owner) return err(c, 'INVALID_REQUEST', 'owner query parameter is required', 400);
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const conn = await getConnectionForTeam(
-		{ db, masterKeyManager },
-		teamId,
-		c.req.param('id'),
-	);
+	const conn = await getConnectionForTeam({ db, masterKeyManager }, teamId, c.req.param('id'));
 	if (!conn || conn.provider !== 'github')
 		return err(c, 'NOT_FOUND', 'github connection not found', 404);
 	const token = await loadOAuthAccessToken(db, masterKeyManager, conn.id);
