@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { buildCodexJudgeScript } from '../stop-hook-prompt';
 import type {
 	McpDescriptor,
 	McpHttpDescriptor,
@@ -75,6 +76,18 @@ function renderStdioBlock(d: McpStdioDescriptor): string {
 	return lines.join('\n');
 }
 
+function renderStopHookBlock(judgeScriptContainerPath: string): string {
+	return [
+		'[[hooks.Stop]]',
+		'[[hooks.Stop.hooks]]',
+		'type = "command"',
+		`command = ${escapeTomlBasicString(`node ${judgeScriptContainerPath}`)}`,
+		'timeout = 30',
+	].join('\n');
+}
+
+const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
+
 export const codexAdapter: RuntimeMcpAdapter = {
 	capabilities: {
 		transport: 'streamable-http',
@@ -82,16 +95,18 @@ export const codexAdapter: RuntimeMcpAdapter = {
 		requiresHomeDir: true,
 	},
 	build(descriptors: readonly McpDescriptor[], ctx): McpInjection {
-		if (descriptors.length === 0) {
-			return { cliArgs: [], envEntries: [], files: [] };
-		}
-		if (!ctx.hostHomeDir) {
-			throw new Error('codex mcp adapter requires hostHomeDir');
+		if (!ctx.hostHomeDir || !ctx.containerHomeDir) {
+			throw new Error('codex mcp adapter requires hostHomeDir and containerHomeDir');
 		}
 
-		const blocks = descriptors.map((d) =>
-			d.kind === 'http' ? renderHttpBlock(d) : renderStdioBlock(d),
-		);
+		const judgeScriptHostPath = join(ctx.hostHomeDir, JUDGE_SCRIPT_BASENAME);
+		const judgeScriptContainerPath = join(ctx.containerHomeDir, JUDGE_SCRIPT_BASENAME);
+
+		const blocks: string[] = [];
+		for (const d of descriptors) {
+			blocks.push(d.kind === 'http' ? renderHttpBlock(d) : renderStdioBlock(d));
+		}
+		blocks.push(renderStopHookBlock(judgeScriptContainerPath));
 		const contents = `${blocks.join('\n\n')}\n`;
 
 		const envEntries: string[] = [];
@@ -109,6 +124,11 @@ export const codexAdapter: RuntimeMcpAdapter = {
 					hostPath: join(ctx.hostHomeDir, 'config.toml'),
 					mode: 0o600,
 					contents,
+				},
+				{
+					hostPath: judgeScriptHostPath,
+					mode: 0o700,
+					contents: buildCodexJudgeScript(),
 				},
 			],
 		};
