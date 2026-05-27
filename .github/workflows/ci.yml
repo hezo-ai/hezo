@@ -30,6 +30,17 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
 
+  test-backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun run test --package server
+
   test-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -39,7 +50,7 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
-      - run: bun run test --skip-e2e
+      - run: bun run test --package web
 
   test-e2e:
     runs-on: ubuntu-latest
