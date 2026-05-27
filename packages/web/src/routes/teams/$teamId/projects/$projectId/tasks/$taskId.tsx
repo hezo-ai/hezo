@@ -34,6 +34,7 @@ import {
 } from '../../../../../../components/comment-renderers';
 import { MarkdownProse } from '../../../../../../components/markdown-prose';
 import { MentionTextarea } from '../../../../../../components/mention-textarea';
+import { DependenciesSection } from '../../../../../../components/task-detail/dependencies-section';
 import { ProjectIntakeBanner } from '../../../../../../components/task-detail/project-intake-banner';
 import { TaskHeader } from '../../../../../../components/task-detail/task-header';
 import { TaskSummary } from '../../../../../../components/task-detail/task-summary';
@@ -52,9 +53,7 @@ import {
 import { type ExecutionLock, useExecutionLock } from '../../../../../../hooks/use-execution-locks';
 import {
 	useCreateSubTask,
-	useRemoveDependency,
 	useTask,
-	useTaskDependencies,
 	useTasks,
 	useUpdateTask,
 } from '../../../../../../hooks/use-tasks';
@@ -86,7 +85,6 @@ function TaskDetailPage() {
 	const { data: task, isLoading } = useTask(teamId, taskId);
 
 	const { data: comments } = useComments(teamId, taskId);
-	const { data: deps } = useTaskDependencies(teamId, taskId);
 	const { data: team } = useTeam(teamId);
 	const subTaskPageSize = Math.max(
 		1,
@@ -103,7 +101,6 @@ function TaskDetailPage() {
 	const createComment = useCreateComment(teamId, taskId);
 	const chooseOption = useChooseOption(teamId, taskId);
 	const createSubTask = useCreateSubTask(teamId, taskId);
-	const removeDep = useRemoveDependency(teamId, taskId);
 	const [commentText, setCommentText] = useState('');
 	// Per-comment reasoning effort. `null` = user hasn't touched the dropdown, so
 	// leave effort unset on submit and let the server resolve the agent default.
@@ -462,43 +459,7 @@ function TaskDetailPage() {
 					)}
 				</div>
 
-				{/* Blocked by */}
-				{(deps?.length || 0) > 0 && (
-					<div className="mb-5">
-						<h3 className="text-xs font-medium uppercase tracking-wider text-text-muted mb-2">
-							Blocked By
-						</h3>
-						<div className="flex flex-col gap-1">
-							{deps?.map((d) => (
-								<div key={d.id} className="flex items-center gap-2">
-									<Link
-										to="/teams/$teamId/projects/$projectId/tasks/$taskId"
-										params={{
-											teamId,
-											projectId: d.blocked_by_project_slug,
-											taskId: d.blocked_by_identifier.toLowerCase(),
-										}}
-										className="flex items-center gap-2 text-[13px] hover:bg-bg-subtle rounded px-2 py-1 flex-1 min-w-0"
-										data-testid="blocked-by-item"
-									>
-										<TaskStatusBadge status={d.blocked_by_status} />
-										<span className="font-mono text-xs text-text-muted">
-											{d.blocked_by_identifier}
-										</span>
-										<span className="truncate">{d.blocked_by_title}</span>
-									</Link>
-									<button
-										type="button"
-										onClick={() => removeDep.mutate(d.id)}
-										className="text-text-subtle hover:text-accent-red"
-									>
-										<Trash2 className="w-3 h-3" />
-									</button>
-								</div>
-							))}
-						</div>
-					</div>
-				)}
+				<DependenciesSection teamId={teamId} taskId={taskId} />
 
 				{/* Comments */}
 				<div className="border-t border-border pt-4">
