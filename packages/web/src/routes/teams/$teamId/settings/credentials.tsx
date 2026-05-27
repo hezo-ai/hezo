@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { Trash2 } from 'lucide-react';
 import { Badge } from '../../../../components/ui/badge';
 import { type Column, DataTable } from '../../../../components/ui/data-table';
+import { Tooltip } from '../../../../components/ui/tooltip';
 import { type CredentialUsage, useCredentials } from '../../../../hooks/use-credentials';
 import { useDeleteSecret } from '../../../../hooks/use-secrets';
 
@@ -53,7 +54,13 @@ function CredentialsPage() {
 			header: 'Last used',
 			render: (r) => (
 				<span className="text-xs">
-					<span title={r.last_used_at ?? ''}>{formatRelative(r.last_used_at)}</span>
+					{r.last_used_at ? (
+						<Tooltip content={r.last_used_at}>
+							<span>{formatRelative(r.last_used_at)}</span>
+						</Tooltip>
+					) : (
+						<span>{formatRelative(r.last_used_at)}</span>
+					)}
 					{r.last_host && <span className="text-text-subtle ml-2 font-mono">{r.last_host}</span>}
 				</span>
 			),
@@ -68,22 +75,24 @@ function CredentialsPage() {
 			key: 'actions',
 			header: '',
 			render: (r) => (
-				<button
-					type="button"
-					onClick={() => {
-						if (
-							confirm(
-								`Revoke secret "${r.name}"? Any in-flight runs that try to use it will get a 400 unknown_secret response.`,
-							)
-						) {
-							deleteSecret.mutate(r.id);
-						}
-					}}
-					className="text-text-subtle hover:text-accent-red"
-					title="Revoke"
-				>
-					<Trash2 className="w-3.5 h-3.5" />
-				</button>
+				<Tooltip content="Revoke">
+					<button
+						type="button"
+						onClick={() => {
+							if (
+								confirm(
+									`Revoke secret "${r.name}"? Any in-flight runs that try to use it will get a 400 unknown_secret response.`,
+								)
+							) {
+								deleteSecret.mutate(r.id);
+							}
+						}}
+						aria-label="Revoke"
+						className="text-text-subtle hover:text-accent-red"
+					>
+						<Trash2 className="w-3.5 h-3.5" />
+					</button>
+				</Tooltip>
 			),
 		},
 	];

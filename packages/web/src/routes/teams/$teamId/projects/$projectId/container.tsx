@@ -5,6 +5,7 @@ import { LogViewer, type LogViewerLine } from '../../../../../components/log-vie
 import { Badge } from '../../../../../components/ui/badge';
 import { Button } from '../../../../../components/ui/button';
 import { ConfirmDialog } from '../../../../../components/ui/confirm-dialog';
+import { Tooltip } from '../../../../../components/ui/tooltip';
 import {
 	useRebuildContainer,
 	useStartContainer,
@@ -62,48 +63,51 @@ function ContainerPage() {
 					</span>
 				)}
 				<div className="ml-auto flex items-center gap-2">
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => startContainer.mutate()}
-						disabled={anyPending || isActive || !hasContainer}
-						title="Start container"
-					>
-						{startContainer.isPending ? (
-							<Loader2 className="w-3 h-3 animate-spin" />
-						) : (
-							<Play className="w-3 h-3" />
-						)}
-						Start
-					</Button>
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => setStopOpen(true)}
-						disabled={anyPending || isStopping || (!isRunning && !isCreating)}
-						title="Stop container"
-					>
-						{stopContainer.isPending || isStopping ? (
-							<Loader2 className="w-3 h-3 animate-spin" />
-						) : (
-							<Square className="w-3 h-3" />
-						)}
-						Stop
-					</Button>
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => setRebuildOpen(true)}
-						disabled={anyPending || isCreating || isStopping}
-						title="Rebuild container from scratch"
-					>
-						{rebuildContainer.isPending ? (
-							<Loader2 className="w-3 h-3 animate-spin" />
-						) : (
-							<RefreshCw className="w-3 h-3" />
-						)}
-						Rebuild
-					</Button>
+					<Tooltip content="Start container">
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => startContainer.mutate()}
+							disabled={anyPending || isActive || !hasContainer}
+						>
+							{startContainer.isPending ? (
+								<Loader2 className="w-3 h-3 animate-spin" />
+							) : (
+								<Play className="w-3 h-3" />
+							)}
+							Start
+						</Button>
+					</Tooltip>
+					<Tooltip content="Stop container">
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => setStopOpen(true)}
+							disabled={anyPending || isStopping || (!isRunning && !isCreating)}
+						>
+							{stopContainer.isPending || isStopping ? (
+								<Loader2 className="w-3 h-3 animate-spin" />
+							) : (
+								<Square className="w-3 h-3" />
+							)}
+							Stop
+						</Button>
+					</Tooltip>
+					<Tooltip content="Rebuild container from scratch">
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => setRebuildOpen(true)}
+							disabled={anyPending || isCreating || isStopping}
+						>
+							{rebuildContainer.isPending ? (
+								<Loader2 className="w-3 h-3 animate-spin" />
+							) : (
+								<RefreshCw className="w-3 h-3" />
+							)}
+							Rebuild
+						</Button>
+					</Tooltip>
 				</div>
 			</div>
 

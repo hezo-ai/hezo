@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Badge } from '../../../../../../components/ui/badge';
+import { Tooltip } from '../../../../../../components/ui/tooltip';
 import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
 import { type HeartbeatRun, useHeartbeatRuns } from '../../../../../../hooks/use-heartbeat-runs';
 import { formatTriggerReason } from '../../../../../../lib/run-trigger';
@@ -53,9 +54,9 @@ function ExecutionRow({
 				</span>
 			)}
 
-			<span className="text-text-subtle truncate" title={trigger.text}>
-				{trigger.text}
-			</span>
+			<Tooltip content={trigger.text}>
+				<span className="text-text-subtle truncate">{trigger.text}</span>
+			</Tooltip>
 
 			<span className="text-text-muted ml-auto whitespace-nowrap">
 				{run.started_at ? new Date(run.started_at).toLocaleString() : 'queued'}

@@ -40,6 +40,7 @@ import { MarkdownProse } from './markdown-prose';
 import { TerminateRunButton } from './terminate-run-button';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { Tooltip } from './ui/tooltip';
 
 export interface CommentData {
 	id: string;
@@ -363,15 +364,16 @@ function RunCommentBody({
 							/>
 						}
 						headerAction={
-							<Link
-								to="/teams/$teamId/agents/$agentId/executions/$runId"
-								params={{ teamId, agentId, runId }}
-								title="View full run"
-								aria-label="View full run"
-								className="inline-flex items-center justify-center h-6 px-2 text-xs text-text-muted hover:text-text hover:bg-bg-muted rounded-radius-md transition-colors"
-							>
-								<DoorOpen className="w-3 h-3" />
-							</Link>
+							<Tooltip content="View full run">
+								<Link
+									to="/teams/$teamId/agents/$agentId/executions/$runId"
+									params={{ teamId, agentId, runId }}
+									aria-label="View full run"
+									className="inline-flex items-center justify-center h-6 px-2 text-xs text-text-muted hover:text-text hover:bg-bg-muted rounded-radius-md transition-colors"
+								>
+									<DoorOpen className="w-3 h-3" />
+								</Link>
+							</Tooltip>
 						}
 					/>
 				</div>
@@ -918,24 +920,24 @@ export function CommentReactions({
 	return (
 		<div className="flex flex-wrap items-center gap-1.5 mt-2" data-testid="comment-reactions">
 			{groups.map((g) => (
-				<button
-					key={g.kind}
-					type="button"
-					onClick={() => toggle(g.kind, g.you_reacted)}
-					disabled={busy}
-					title={reactorsTooltip(g)}
-					aria-pressed={g.you_reacted}
-					data-reaction-kind={g.kind}
-					data-you-reacted={g.you_reacted ? 'true' : 'false'}
-					className={`inline-flex items-center gap-1 min-h-[28px] px-2 rounded-full border text-xs leading-none transition-colors ${
-						g.you_reacted
-							? 'border-accent-blue bg-accent-blue-bg text-accent-blue-text'
-							: 'border-border bg-bg-subtle text-text-muted hover:border-border-hover'
-					} disabled:opacity-60`}
-				>
-					<span aria-hidden="true">{REACTION_GLYPH[g.kind] ?? g.kind}</span>
-					<span className="tabular-nums">{g.members.length}</span>
-				</button>
+				<Tooltip key={g.kind} content={reactorsTooltip(g)}>
+					<button
+						type="button"
+						onClick={() => toggle(g.kind, g.you_reacted)}
+						disabled={busy}
+						aria-pressed={g.you_reacted}
+						data-reaction-kind={g.kind}
+						data-you-reacted={g.you_reacted ? 'true' : 'false'}
+						className={`inline-flex items-center gap-1 min-h-[28px] px-2 rounded-full border text-xs leading-none transition-colors ${
+							g.you_reacted
+								? 'border-accent-blue bg-accent-blue-bg text-accent-blue-text'
+								: 'border-border bg-bg-subtle text-text-muted hover:border-border-hover'
+						} disabled:opacity-60`}
+					>
+						<span aria-hidden="true">{REACTION_GLYPH[g.kind] ?? g.kind}</span>
+						<span className="tabular-nums">{g.members.length}</span>
+					</button>
+				</Tooltip>
 			))}
 			{availableToAdd.length > 0 && (
 				<div className="relative">
@@ -956,19 +958,20 @@ export function CommentReactions({
 							data-testid="reaction-picker"
 						>
 							{availableToAdd.map((kind) => (
-								<button
-									key={kind}
-									type="button"
-									onClick={() => {
-										setPickerOpen(false);
-										toggle(kind, false);
-									}}
-									title={REACTION_LABEL[kind] ?? kind}
-									className="inline-flex items-center justify-center min-w-[32px] min-h-[32px] px-2 rounded text-sm hover:bg-bg-subtle"
-									data-reaction-kind={kind}
-								>
-									{REACTION_GLYPH[kind] ?? kind}
-								</button>
+								<Tooltip key={kind} content={REACTION_LABEL[kind] ?? kind}>
+									<button
+										type="button"
+										onClick={() => {
+											setPickerOpen(false);
+											toggle(kind, false);
+										}}
+										aria-label={REACTION_LABEL[kind] ?? kind}
+										className="inline-flex items-center justify-center min-w-[32px] min-h-[32px] px-2 rounded text-sm hover:bg-bg-subtle"
+										data-reaction-kind={kind}
+									>
+										{REACTION_GLYPH[kind] ?? kind}
+									</button>
+								</Tooltip>
 							))}
 						</div>
 					)}

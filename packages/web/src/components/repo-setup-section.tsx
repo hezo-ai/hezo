@@ -6,6 +6,7 @@ import { GitHubDeviceFlowDialog } from './github-device-flow-dialog';
 import { RepoPickerModal } from './repo-picker-modal';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { Tooltip } from './ui/tooltip';
 
 interface RepoSetupSectionProps {
 	teamId: string;
@@ -171,13 +172,16 @@ export function RepoSetupSection({ teamId, projectId }: RepoSetupSectionProps) {
 									{r.is_designated && <Badge color="blue">Designated</Badge>}
 								</div>
 								{r.is_designated ? (
-									<span
-										className="text-text-subtle"
-										title="Designated repository cannot be removed"
-										data-testid={`repo-locked-${r.short_name}`}
-									>
-										<Lock className="w-3.5 h-3.5" />
-									</span>
+									<Tooltip content="Designated repository cannot be removed">
+										<span
+											role="img"
+											aria-label="Designated repository cannot be removed"
+											className="text-text-subtle"
+											data-testid={`repo-locked-${r.short_name}`}
+										>
+											<Lock className="w-3.5 h-3.5" />
+										</span>
+									</Tooltip>
 								) : (
 									<button
 										type="button"

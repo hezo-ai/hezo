@@ -11,6 +11,7 @@ import { Button } from './ui/button';
 import { type Column, DataTable } from './ui/data-table';
 import { EmptyState } from './ui/empty-state';
 import { MultiSelect, type MultiSelectOption } from './ui/multi-select';
+import { Tooltip } from './ui/tooltip';
 
 const priorityColors: Record<string, string> = {
 	urgent: 'danger',
@@ -172,22 +173,34 @@ export function TaskList({ teamId, projectId }: TaskListProps) {
 			render: (row) => (
 				<span className="inline-flex items-center gap-1.5">
 					{row.has_active_run && (
-						<span
-							data-testid="task-running-dot"
-							title="Agent run in progress"
-							className="inline-block w-2 h-2 rounded-full bg-accent-amber animate-pulse shrink-0"
-						/>
+						<Tooltip content="Agent run in progress">
+							<span
+								role="img"
+								aria-label="Agent run in progress"
+								data-testid="task-running-dot"
+								className="inline-block w-2 h-2 rounded-full bg-accent-amber animate-pulse shrink-0"
+							/>
+						</Tooltip>
 					)}
 					{!row.has_active_run && row.queued_wakeup && (
-						<span
-							data-testid="task-queued-dot"
-							title={
+						<Tooltip
+							content={
 								row.queued_wakeup.blocker_identifier
 									? `Run queued — waiting on ${row.queued_wakeup.blocker_identifier}`
 									: 'Run queued — waiting'
 							}
-							className="inline-block w-2 h-2 rounded-full bg-accent-blue shrink-0"
-						/>
+						>
+							<span
+								role="img"
+								aria-label={
+									row.queued_wakeup.blocker_identifier
+										? `Run queued — waiting on ${row.queued_wakeup.blocker_identifier}`
+										: 'Run queued — waiting'
+								}
+								data-testid="task-queued-dot"
+								className="inline-block w-2 h-2 rounded-full bg-accent-blue shrink-0"
+							/>
+						</Tooltip>
 					)}
 					{row.identifier}
 				</span>

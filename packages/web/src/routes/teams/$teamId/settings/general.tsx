@@ -5,6 +5,7 @@ import { RevisionsPanel } from '../../../../components/revisions-panel';
 import { Badge } from '../../../../components/ui/badge';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
+import { Tooltip } from '../../../../components/ui/tooltip';
 import { useApiKeys, useCreateApiKey, useDeleteApiKey } from '../../../../hooks/use-api-keys';
 import { useCosts } from '../../../../hooks/use-costs';
 import {
@@ -777,24 +778,28 @@ function SkillsSection({ teamId }: { teamId: string }) {
 							</div>
 							<div className="flex items-center gap-1">
 								{s.source_url && (
+									<Tooltip content="Re-download">
+										<button
+											type="button"
+											onClick={() => syncSkill.mutate(s.slug)}
+											disabled={syncSkill.isPending}
+											aria-label="Re-download"
+											className="text-text-subtle hover:text-text p-1"
+										>
+											<RefreshCw className="w-3.5 h-3.5" />
+										</button>
+									</Tooltip>
+								)}
+								<Tooltip content="Delete">
 									<button
 										type="button"
-										onClick={() => syncSkill.mutate(s.slug)}
-										disabled={syncSkill.isPending}
-										className="text-text-subtle hover:text-text p-1"
-										title="Re-download"
+										onClick={() => deleteSkill.mutate(s.slug)}
+										aria-label="Delete"
+										className="text-text-subtle hover:text-accent-red p-1"
 									>
-										<RefreshCw className="w-3.5 h-3.5" />
+										<Trash2 className="w-3.5 h-3.5" />
 									</button>
-								)}
-								<button
-									type="button"
-									onClick={() => deleteSkill.mutate(s.slug)}
-									className="text-text-subtle hover:text-accent-red p-1"
-									title="Delete"
-								>
-									<Trash2 className="w-3.5 h-3.5" />
-								</button>
+								</Tooltip>
 							</div>
 						</div>
 					))}

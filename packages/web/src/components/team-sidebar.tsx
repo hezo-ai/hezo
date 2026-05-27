@@ -146,7 +146,6 @@ export function TeamSidebar() {
 					<Link
 						to="/settings"
 						className="inline-flex items-center gap-2 px-2 py-1 rounded-radius-md text-[13px] text-text-muted hover:text-text hover:bg-bg-subtle transition-colors"
-						title="Settings"
 					>
 						<Settings className="w-4 h-4" />
 						<span>Settings</span>

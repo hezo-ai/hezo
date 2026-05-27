@@ -1,7 +1,8 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { Check, Copy, Maximize2, Minimize2, Trash2 } from 'lucide-react';
+import { Check, Copy, Maximize2, Minimize2, MoveVertical, Trash2 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from './ui/button';
+import { Tooltip } from './ui/tooltip';
 
 export interface LogViewerLine {
 	id: number;
@@ -105,44 +106,55 @@ export function LogViewer({
 				</div>
 				<div className="flex items-center gap-2">
 					{headerActionLeading}
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={handleCopy}
-						disabled={lines.length === 0}
-						className="text-xs h-6 px-2"
-						aria-label="Copy logs to clipboard"
-					>
-						{copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-					</Button>
-					{!compact && (
-						<>
-							<label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
-								<input
-									type="checkbox"
-									checked={autoScroll}
-									onChange={(e) => setAutoScroll(e.target.checked)}
-									className="rounded"
-								/>
-								Auto-scroll
-							</label>
-							{onClear && (
-								<Button variant="ghost" size="sm" onClick={onClear} className="text-xs h-6 px-2">
-									<Trash2 className="w-3 h-3" /> Clear
-								</Button>
-							)}
-						</>
+					<Tooltip content="Copy logs">
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={handleCopy}
+							disabled={lines.length === 0}
+							className="text-xs h-6 px-2"
+							aria-label="Copy logs to clipboard"
+						>
+							{copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+						</Button>
+					</Tooltip>
+					<Tooltip content={autoScroll ? 'Auto-scroll on' : 'Auto-scroll off'}>
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => setAutoScroll((v) => !v)}
+							aria-pressed={autoScroll}
+							aria-label="Toggle auto-scroll"
+							className={`text-xs h-6 px-2 ${autoScroll ? 'bg-bg-muted text-text' : ''}`}
+						>
+							<MoveVertical className="w-3 h-3" />
+						</Button>
+					</Tooltip>
+					{!compact && onClear && (
+						<Tooltip content="Clear logs">
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={onClear}
+								className="text-xs h-6 px-2"
+								aria-label="Clear logs"
+							>
+								<Trash2 className="w-3 h-3" /> Clear
+							</Button>
+						</Tooltip>
 					)}
 					{headerAction}
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={toggleExpanded}
-						className="text-xs h-6 px-2"
-						aria-label={isExpanded ? 'Collapse log viewer' : 'Expand log viewer'}
-					>
-						{isExpanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
-					</Button>
+					<Tooltip content={isExpanded ? 'Collapse' : 'Expand'}>
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={toggleExpanded}
+							className="text-xs h-6 px-2"
+							aria-label={isExpanded ? 'Collapse log viewer' : 'Expand log viewer'}
+						>
+							{isExpanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+						</Button>
+					</Tooltip>
 				</div>
 			</div>
 			<div ref={attachScrollRef} data-testid={testId} className={bodyClassName}>

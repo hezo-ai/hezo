@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { isActiveRunStatus, type RunStatus } from '../hooks/use-heartbeat-runs';
 import { useTerminateRun } from '../hooks/use-terminate-run';
 import { ConfirmDialog } from './ui/confirm-dialog';
+import { Tooltip } from './ui/tooltip';
 
 interface TerminateRunButtonProps {
 	teamId: string;
@@ -33,18 +34,19 @@ export function TerminateRunButton({
 
 	return (
 		<>
-			<button
-				type="button"
-				onClick={() => setOpen(true)}
-				title="Terminate run"
-				aria-label="Terminate run"
-				data-testid="terminate-run-button"
-				disabled={mutation.isPending}
-				className={triggerClass}
-			>
-				<Square className="w-3 h-3" fill="currentColor" />
-				{variant === 'standalone' && <span>Terminate</span>}
-			</button>
+			<Tooltip content="Terminate run">
+				<button
+					type="button"
+					onClick={() => setOpen(true)}
+					aria-label="Terminate run"
+					data-testid="terminate-run-button"
+					disabled={mutation.isPending}
+					className={triggerClass}
+				>
+					<Square className="w-3 h-3" fill="currentColor" />
+					{variant === 'standalone' && <span>Terminate</span>}
+				</button>
+			</Tooltip>
 			<ConfirmDialog
 				open={open}
 				onOpenChange={setOpen}
