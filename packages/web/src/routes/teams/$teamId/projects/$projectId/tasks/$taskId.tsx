@@ -9,7 +9,7 @@ import {
 	PROJECT_INTAKE_SKIP_SIGNAL_TEXT,
 	TaskStatus,
 } from '@hezo/shared';
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
+import { createFileRoute, Link, redirect } from '@tanstack/react-router';
 import {
 	ArrowDown,
 	ChevronDown,
@@ -22,6 +22,8 @@ import {
 } from 'lucide-react';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import type { Task } from '../../../../../../hooks/use-tasks';
+import { api } from '../../../../../../lib/api';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -91,23 +93,8 @@ const EFFORT_LEVELS: { value: AgentEffort; label: string }[] = [
 
 function TaskDetailPage() {
 	const { teamId, projectId, taskId } = Route.useParams();
-	const navigate = useNavigate();
 	const { data: task, isLoading } = useTask(teamId, taskId);
 
-	useEffect(() => {
-		if (!task?.identifier || !task?.project_slug) return;
-		const friendlyId = task.identifier.toLowerCase();
-		const canonicalProject = task.project_slug;
-		const needsIdNormalization = UUID_RE.test(taskId) && taskId !== friendlyId;
-		const needsProjectNormalization = projectId !== canonicalProject;
-		if (needsIdNormalization || needsProjectNormalization) {
-			navigate({
-				to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
-				params: { teamId, projectId: canonicalProject, taskId: friendlyId },
-				replace: true,
-			});
-		}
-	}, [task?.identifier, task?.project_slug, taskId, projectId, teamId, navigate]);
 	const { data: comments } = useComments(teamId, taskId);
 	const { data: deps } = useTaskDependencies(teamId, taskId);
 	const { data: team } = useTeam(teamId);
@@ -1243,5 +1230,43 @@ function RunningAgentsLine({
 }
 
 export const Route = createFileRoute('/teams/$teamId/projects/$projectId/tasks/$taskId')({
+	// Canonicalize the URL before the page renders so the route never paints
+	// with the UUID form or a stale project slug. Previously a useEffect on
+	// `task?.identifier` / `task?.project_slug` called `navigate({ replace })`
+	// after the first paint, producing a one-frame flash of the wrong URL.
+	// Priming via `ensureQueryData` keeps the page's later `useTask(...)` call
+	// reading from cache so we don't double-fetch.
+	beforeLoad: async ({ params, context }) => {
+		const { teamId, projectId, taskId } = params;
+		// Only redirect when the param IS a UUID or the project slug doesn't
+		// match — never for any other non-canonical taskId. A stale friendly
+		// identifier would still match a server lookup but isn't worth a hop.
+		const isUuid = UUID_RE.test(taskId);
+		let task: Task;
+		try {
+			task = await context.queryClient.ensureQueryData({
+				queryKey: ['teams', teamId, 'tasks', taskId],
+				queryFn: () => api.get<Task>(`/api/teams/${teamId}/tasks/${taskId}`),
+			});
+		} catch {
+			// 404 / auth error — let the component render its loading/empty state
+			// and surface the error through the normal query path.
+			return;
+		}
+		const friendlyId = task.identifier.toLowerCase();
+		const canonicalProject = task.project_slug ?? projectId;
+		const needsIdNormalization = isUuid && taskId !== friendlyId;
+		const needsProjectNormalization = projectId !== canonicalProject;
+		if (needsIdNormalization || needsProjectNormalization) {
+			// Prime the cache under the canonical key so the redirected route's
+			// useTask call hits the cache directly without an extra round-trip.
+			context.queryClient.setQueryData(['teams', teamId, 'tasks', friendlyId], task);
+			throw redirect({
+				to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+				params: { teamId, projectId: canonicalProject, taskId: friendlyId },
+				replace: true,
+			});
+		}
+	},
 	component: TaskDetailPage,
 });
