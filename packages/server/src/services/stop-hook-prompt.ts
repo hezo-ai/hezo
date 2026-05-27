@@ -23,13 +23,13 @@ export const STOP_HOOK_PROMPT = `You are a quality gate. The agent is about to s
 Block the stop (output JSON with "decision":"block" and a "reason") if ANY of the following are true:
 1. There are still failing tests that haven't been fixed.
 2. The agent is claiming an issue is "out of scope" / "pre-existing" / "unrelated" to avoid fixing it.
-3. The agent says it will "leave that for later" / "the user can fix that manually" / "as a follow-up" without actually filing a follow-up task via an MCP tool.
+3. The agent says it will "leave that for later" / "the user can fix that manually" / "as a follow-up" without either (a) doing the work in this turn or (b) creating a SUB-TASK via the create_task MCP tool with parent_task_id set to the current task. A new TOP-LEVEL task is NOT an acceptable deferral — it would let the current task close while the deferred work disappears from this task's lifecycle.
 4. Code changes were made but tests were not run after them.
 5. The agent acknowledges a problem but stops without resolving it.
 6. The agent stopped because it needed a credential or secret but did not call the request_credential MCP tool.
 7. The agent marked a task as done while leaving unresolved review comments or unanswered questions from another participant in the thread.
 
-Allow the stop (output JSON with "decision":"allow") only if the work appears genuinely complete, has been appropriately handed off (concrete next action recorded as a comment or follow-up task), or the agent is correctly waiting on input it cannot proceed without.
+Allow the stop (output JSON with "decision":"allow") only if the work appears genuinely complete, or every unfinished thread has been captured as a sub-task (parent_task_id = current task) that keeps the current task open until it lands, or the agent is correctly waiting on input it cannot proceed without.
 
 Agent's final context:
 $ARGUMENTS`;
