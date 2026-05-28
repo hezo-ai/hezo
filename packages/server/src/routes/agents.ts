@@ -10,6 +10,7 @@ import {
 	DocumentType,
 	INTERNAL_PROJECT_SLUG,
 	isAgentEffort,
+	isReservedAgentSlug,
 	MemberType,
 	TaskPriority,
 	TaskStatus,
@@ -165,6 +166,10 @@ agentsRoutes.post('/teams/:teamId/agents', async (c) => {
 
 	const slug = toSlug(body.title);
 
+	if (isReservedAgentSlug(slug)) {
+		return err(c, 'INVALID_REQUEST', `Agent slug '${slug}' is reserved`, 400);
+	}
+
 	const slugCheck = await db.query(
 		`SELECT ma.id FROM member_agents ma
      JOIN members m ON m.id = ma.id
@@ -261,6 +266,11 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 	}
 
 	const slug = toSlug(body.title);
+
+	if (isReservedAgentSlug(slug)) {
+		return err(c, 'INVALID_REQUEST', `Agent slug '${slug}' is reserved`, 400);
+	}
+
 	const slugCheck = await db.query(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id

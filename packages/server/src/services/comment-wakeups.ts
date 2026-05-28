@@ -1,8 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CommentContentType, WakeupSource } from '@hezo/shared';
+import { BOARD_MENTION_SLUG, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
+import { broadcastRowChange } from '../lib/broadcast';
 import { extractMentionSlugs } from '../lib/mentions';
 import { logger } from '../logger';
 import { createWakeup } from './wakeup';
+import type { WebSocketManager } from './ws';
 
 const log = logger.child('comment-wakeups');
 
@@ -14,10 +16,12 @@ export interface FireCommentWakeupsParams {
 	content: unknown;
 	contentType: string;
 	authorMemberId: string | null;
+	authorUserId?: string | null;
 	authorRunId?: string | null;
 	effort?: string | null;
 	wakeAssignee?: boolean;
 	parentCommentId?: string | null;
+	wsManager?: WebSocketManager;
 }
 
 export async function fireCommentWakeups(params: FireCommentWakeupsParams): Promise<void> {
@@ -29,9 +33,11 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 		content,
 		contentType,
 		authorMemberId,
+		authorUserId,
 		effort,
 		wakeAssignee,
 		parentCommentId,
+		wsManager,
 	} = params;
 
 	if (contentType !== CommentContentType.Text) return;
@@ -41,6 +47,17 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 	const wakeupPromises: Array<Promise<unknown>> = [];
 
 	for (const slug of extractMentionSlugs(content)) {
+		if (slug === BOARD_MENTION_SLUG) {
+			await fireBoardMention({
+				db,
+				teamId,
+				taskId,
+				commentId,
+				authorUserId: authorUserId ?? null,
+				wsManager,
+			}).catch((e) => log.error('Failed to fan out @board mention:', e));
+			continue;
+		}
 		const mentioned = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
@@ -166,5 +183,57 @@ async function fireExplicitReplyWakeup(ctx: ReplyWakeupCtx): Promise<void> {
 		);
 	} catch (e) {
 		log.error('Failed to create reply wakeup:', e);
+	}
+}
+
+interface FireBoardMentionParams {
+	db: PGlite;
+	teamId: string;
+	taskId: string;
+	commentId: string;
+	authorUserId: string | null;
+	wsManager?: WebSocketManager;
+}
+
+async function fireBoardMention(params: FireBoardMentionParams): Promise<void> {
+	const { db, teamId, taskId, commentId, authorUserId, wsManager } = params;
+
+	const boardUsers = await db.query<{ user_id: string }>(
+		`SELECT mu.user_id FROM member_users mu
+		 JOIN members m ON m.id = mu.id
+		 WHERE m.team_id = $1 AND mu.role = 'board'`,
+		[teamId],
+	);
+	if (boardUsers.rows.length === 0) return;
+
+	const recipients = boardUsers.rows.map((r) => r.user_id).filter((uid) => uid !== authorUserId);
+	if (recipients.length === 0) return;
+
+	const inserted = await db.query<{
+		id: string;
+		team_id: string;
+		task_id: string;
+		comment_id: string;
+		user_id: string;
+		created_at: string;
+		read_at: string | null;
+	}>(
+		`INSERT INTO board_mentions (team_id, task_id, comment_id, user_id)
+		 SELECT $1::uuid, $2::uuid, $3::uuid, uid
+		 FROM UNNEST($4::uuid[]) AS uid
+		 ON CONFLICT (comment_id, user_id) DO NOTHING
+		 RETURNING *`,
+		[teamId, taskId, commentId, recipients],
+	);
+
+	if (!wsManager) return;
+	for (const row of inserted.rows) {
+		broadcastRowChange(
+			wsManager,
+			wsRoom.team(teamId),
+			'board_mentions',
+			'INSERT',
+			row as unknown as Record<string, unknown>,
+		);
 	}
 }

@@ -1594,8 +1594,10 @@ export function registerTools(
 				content,
 				contentType: CommentContentType.Text,
 				authorMemberId,
+				authorUserId: auth.type === AuthType.Board ? auth.userId : null,
 				authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
 				parentCommentId,
+				wsManager,
 			});
 			trackBackground(
 				recordTaskLinks(

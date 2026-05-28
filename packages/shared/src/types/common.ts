@@ -243,6 +243,22 @@ export const ApprovalStatus = {
 } as const;
 export type ApprovalStatus = (typeof ApprovalStatus)[keyof typeof ApprovalStatus];
 
+export interface BoardMentionItem {
+	id: string;
+	team_id: string;
+	team_slug: string;
+	task_id: string;
+	task_identifier: string;
+	task_title: string;
+	comment_id: string;
+	snippet: string;
+	author_member_id: string | null;
+	author_display_name: string;
+	author_slug: string | null;
+	created_at: string;
+	read_at: string | null;
+}
+
 export const MembershipRole = { Board: 'board', Member: 'member' } as const;
 export type MembershipRole = (typeof MembershipRole)[keyof typeof MembershipRole];
 

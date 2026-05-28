@@ -43,7 +43,7 @@ Block the stop (output JSON with "decision":"block" and a "reason") if ANY of th
 6. The agent stopped because it needed a credential or secret but did not call the request_credential MCP tool.
 7. The agent marked a task as done while leaving unresolved review comments or unanswered questions from another participant in the thread.
 
-Allow the stop (output JSON with "decision":"allow") only if the work appears genuinely complete, or every unfinished thread is captured either as a sub-task (parent_task_id = current task) or as a concrete self-comment on the current task with the task left in a non-terminal status, or the agent is correctly waiting on input it cannot proceed without.`;
+Allow the stop (output JSON with "decision":"allow") only if the work appears genuinely complete, or every unfinished thread is captured either as a sub-task (parent_task_id = current task) or as a concrete self-comment on the current task with the task left in a non-terminal status, or the agent is correctly waiting on input it cannot proceed without. Posting a comment containing the literal mention "@board" on the current task and stopping with the task left in a non-terminal status counts as correctly waiting on input — the board's reply wakes the agent automatically.`;
 
 export const STOP_HOOK_PROMPT = `${STOP_HOOK_RULES}
 

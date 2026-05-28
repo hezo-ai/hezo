@@ -28,6 +28,7 @@ import { costsRoutes } from './routes/costs';
 import { executionLocksRoutes } from './routes/execution-locks';
 import { goalsRoutes } from './routes/goals';
 import { healthRoutes } from './routes/health';
+import { inboxRoutes } from './routes/inbox';
 import { kbDocsRoutes } from './routes/kb-docs';
 import { mcpConnectionsRoutes } from './routes/mcp-connections';
 import { mentionsRoutes } from './routes/mentions';
@@ -279,6 +280,7 @@ export function buildApp(
 	app.route('/api', assetsRoutes);
 	app.route('/api', secretsRoutes);
 	app.route('/api', approvalsRoutes);
+	app.route('/api', inboxRoutes);
 	app.route('/api', costsRoutes);
 	app.route('/api', apiKeysRoutes);
 	app.route('/api', kbDocsRoutes);

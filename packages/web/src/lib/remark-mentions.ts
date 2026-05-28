@@ -1,3 +1,5 @@
+import { BOARD_MENTION_SLUG } from '@hezo/shared';
+
 interface TextNode {
 	type: 'text';
 	value: string;
@@ -64,13 +66,6 @@ const SKIP_TYPES = new Set(['code', 'inlineCode', 'link']);
 
 export function remarkMentions(opts: Options) {
 	return (tree: ParentNode) => {
-		if (
-			opts.agents.size === 0 &&
-			opts.tasks.size === 0 &&
-			opts.kbDocs.size === 0 &&
-			opts.projectDocs.size === 0
-		)
-			return;
 		walk(tree, opts);
 	};
 }
@@ -134,6 +129,19 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 
 	if (passiveAgentToken) {
 		const slug = passiveAgentToken.toLowerCase();
+		if (slug === BOARD_MENTION_SLUG) {
+			return {
+				type: 'link',
+				url: `/teams/${teamId}/inbox`,
+				children: [{ type: 'text', value: `@${passiveAgentToken}` }],
+				data: {
+					hProperties: {
+						'data-mention-board': 'true',
+						'data-mention-passive': 'true',
+					},
+				},
+			};
+		}
 		const data = agents.get(slug);
 		if (!data) return null;
 		return {
@@ -152,6 +160,18 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 
 	if (agentToken) {
 		const slug = agentToken.toLowerCase();
+		if (slug === BOARD_MENTION_SLUG) {
+			return {
+				type: 'link',
+				url: `/teams/${teamId}/inbox`,
+				children: [{ type: 'text', value: display }],
+				data: {
+					hProperties: {
+						'data-mention-board': 'true',
+					},
+				},
+			};
+		}
 		const data = agents.get(slug);
 		if (!data) return null;
 		return {

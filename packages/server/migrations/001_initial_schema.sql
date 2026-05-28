@@ -1014,6 +1014,28 @@ CREATE TABLE notification_preferences (
 );
 
 -------------------------------------------------------------------------------
+-- BOARD MENTIONS
+-------------------------------------------------------------------------------
+
+CREATE TABLE board_mentions (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_id     UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    task_id     UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    comment_id  UUID NOT NULL REFERENCES task_comments(id) ON DELETE CASCADE,
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    read_at     TIMESTAMPTZ,
+    UNIQUE (comment_id, user_id)
+);
+
+CREATE INDEX idx_board_mentions_user_unread
+    ON board_mentions (user_id, team_id, created_at DESC)
+    WHERE read_at IS NULL;
+CREATE INDEX idx_board_mentions_team_unread
+    ON board_mentions (team_id, created_at DESC)
+    WHERE read_at IS NULL;
+
+-------------------------------------------------------------------------------
 -- TRIGGERS: auto-update updated_at
 -------------------------------------------------------------------------------
 
