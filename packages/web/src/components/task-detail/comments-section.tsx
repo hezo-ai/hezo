@@ -51,6 +51,7 @@ export function CommentsSection({
 	const { data: comments } = useComments(teamId, taskId);
 	const chooseOption = useChooseOption(teamId, taskId);
 	const virtuosoRef = useRef<VirtuosoHandle>(null);
+	const listContainerRef = useRef<HTMLDivElement>(null);
 	const didScrollToHashRef = useRef(false);
 	const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
 	const lastResetTaskIdRef = useRef<string | null>(null);
@@ -91,6 +92,20 @@ export function CommentsSection({
 			}
 			if (idx < 0) return [] as ReturnType<typeof setTimeout>[];
 			const out: ReturnType<typeof setTimeout>[] = [];
+			// Virtuoso with `customScrollParent` only mounts items once its
+			// container intersects the parent's viewport. On a fresh task page
+			// load, the comments list starts far below the fold (header,
+			// description, sidebar, etc.) and Virtuoso's IntersectionObserver
+			// never fires — so itemContent is never called, no row exists in
+			// the DOM, and `scrollToIndex` has no measured rows to land on.
+			// Force the parent to scroll the list container into view first;
+			// that wakes the IntersectionObserver and Virtuoso starts mounting.
+			if (listContainerRef.current && scrollParent) {
+				const listTop = listContainerRef.current.getBoundingClientRect().top;
+				const parentTop = scrollParent.getBoundingClientRect().top;
+				const offset = scrollParent.scrollTop + listTop - parentTop;
+				scrollParent.scrollTo({ top: Math.max(0, offset - 80), behavior: 'auto' });
+			}
 			// Each tick: first ask Virtuoso to mount the target row, then read
 			// the rendered element's real position and scroll precisely to it.
 			// Virtuoso's scrollToIndex alone underscrolls when the row's height
@@ -140,10 +155,10 @@ export function CommentsSection({
 			window.removeEventListener('hashchange', onHashChange);
 			for (const t of allTimers) clearTimeout(t);
 		};
-	}, [comments]);
+	}, [comments, scrollParent]);
 
 	return (
-		<div className="mb-4" data-testid="comments-list">
+		<div ref={listContainerRef} className="mb-4" data-testid="comments-list">
 			{scrollParent && (
 				<Virtuoso
 					ref={virtuosoRef}
