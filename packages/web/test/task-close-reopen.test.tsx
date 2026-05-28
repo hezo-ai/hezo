@@ -21,7 +21,10 @@ test('board member can close and re-open a task via themed modal', async () => {
 		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
 	});
 
-	const closeButton = await findByTestId('task-close-button');
+	// First page render after the shortcut-route redirect can take several
+	// seconds under the full-suite fork-pool load on CI runners, well past
+	// Testing Library's 1s default.
+	const closeButton = await findByTestId('task-close-button', undefined, { timeout: 10_000 });
 	await user.click(closeButton);
 
 	const dialog = await findByTestId('confirm-dialog');
@@ -31,7 +34,7 @@ test('board member can close and re-open a task via themed modal', async () => {
 	const confirm = await findByTestId('confirm-dialog-confirm');
 	await user.click(confirm);
 
-	await findByTestId('task-reopen-button');
+	await findByTestId('task-reopen-button', undefined, { timeout: 5_000 });
 	expect(queryByTestId('task-close-button')).toBeNull();
 
 	const reopenButton = await findByTestId('task-reopen-button');
@@ -41,7 +44,7 @@ test('board member can close and re-open a task via themed modal', async () => {
 	const reopenConfirm = await findByTestId('confirm-dialog-confirm');
 	await user.click(reopenConfirm);
 
-	await findByTestId('task-close-button');
+	await findByTestId('task-close-button', undefined, { timeout: 5_000 });
 	expect(queryByTestId('task-reopen-button')).toBeNull();
 });
 
@@ -63,7 +66,7 @@ test('task detail no longer shows a delete button or status pill row', async () 
 		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
 	});
 
-	await findByTestId('task-close-button');
+	await findByTestId('task-close-button', undefined, { timeout: 10_000 });
 	expect(queryByRole('button', { name: /Delete Task/i })).toBeNull();
 	expect(queryByRole('button', { name: 'in progress' })).toBeNull();
 	expect(queryByRole('button', { name: 'review' })).toBeNull();

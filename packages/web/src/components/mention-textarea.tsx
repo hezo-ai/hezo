@@ -154,9 +154,27 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 			[open, results, highlightedIndex, handleSelect, onKeyDown],
 		);
 
+		// Tracks the blur-close timer so we can cancel it on unmount. Without
+		// this the timer fires after the component is gone — in happy-dom
+		// teardown that throws "window is not defined" and breaks the test
+		// scheduled right after.
+		const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+		useEffect(() => {
+			return () => {
+				if (blurTimerRef.current !== null) {
+					clearTimeout(blurTimerRef.current);
+					blurTimerRef.current = null;
+				}
+			};
+		}, []);
+
 		const handleBlur = useCallback(
 			(e: React.FocusEvent<HTMLTextAreaElement>) => {
-				setTimeout(() => setOpen(false), 100);
+				if (blurTimerRef.current !== null) clearTimeout(blurTimerRef.current);
+				blurTimerRef.current = setTimeout(() => {
+					blurTimerRef.current = null;
+					setOpen(false);
+				}, 100);
 				onBlur?.(e);
 			},
 			[onBlur],
