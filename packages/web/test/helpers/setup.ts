@@ -1,6 +1,15 @@
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import * as React from 'react';
 import { afterEach, vi } from 'vitest';
+
+// Testing Library's default `findBy*` / `waitFor` timeout of 1s races CI's
+// fork-pool concurrency on smaller runners: navigation + initial render +
+// PGlite cold-start can easily exceed 1s under load, surfacing as random
+// "Unable to find an element" failures on whichever test happens to be
+// scheduled when the box is most contended. 5s gives enough headroom
+// without slowing the happy path (a passing `findBy*` returns the moment
+// the element appears).
+configure({ asyncUtilTimeout: 5000 });
 
 // "An update to X inside a test was not wrapped in act(...)" warnings are
 // pure test-environment noise here: TanStack Router internals
