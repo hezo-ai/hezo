@@ -1,5 +1,5 @@
-import { type QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createRootRouteWithContext, Outlet, useNavigate } from '@tanstack/react-router';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createRootRoute, Outlet, useNavigate } from '@tanstack/react-router';
 import { ChevronsLeft, ChevronsRight, Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { MasterKeyGate } from '../components/master-key-gate';
@@ -167,10 +167,6 @@ function TeamSidebarShell() {
 	);
 }
 
-export interface RouterContext {
-	queryClient: QueryClient;
-}
-
-export const Route = createRootRouteWithContext<RouterContext>()({
+export const Route = createRootRoute({
 	component: RootLayout,
 });

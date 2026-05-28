@@ -6,10 +6,9 @@ import {
 	INTERNAL_PROJECT_SLUG,
 	TaskStatus,
 } from '@hezo/shared';
-import { createFileRoute, Link, redirect, useNavigate } from '@tanstack/react-router';
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ArrowDown, ChevronDown, Loader2 } from 'lucide-react';
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { Task } from '../../../../../../hooks/use-tasks';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -500,30 +499,5 @@ function RunningAgentsLine({
 }
 
 export const Route = createFileRoute('/teams/$teamId/projects/$projectId/tasks/$taskId')({
-	// Cache-only URL canonicalization. If the task is already in the React
-	// Query cache (clicked from a list, navigated from another mention),
-	// redirect synchronously before render so the UUID URL never paints. If
-	// the data isn't cached yet, fall through — the post-render useEffect
-	// below redirects once the data lands, with a one-frame URL flash. We
-	// don't `ensureQueryData` here because that would block route resolution
-	// on the network round-trip and stall the page render under load.
-	beforeLoad: ({ params, context }) => {
-		const { teamId, projectId, taskId } = params;
-		const cached = context.queryClient.getQueryData<Task>(['teams', teamId, 'tasks', taskId]);
-		if (!cached?.identifier) return;
-		const friendlyId = cached.identifier.toLowerCase();
-		const canonicalProject = cached.project_slug ?? projectId;
-		const isUuid = UUID_RE.test(taskId);
-		const needsIdNormalization = isUuid && taskId !== friendlyId;
-		const needsProjectNormalization = projectId !== canonicalProject;
-		if (needsIdNormalization || needsProjectNormalization) {
-			context.queryClient.setQueryData(['teams', teamId, 'tasks', friendlyId], cached);
-			throw redirect({
-				to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
-				params: { teamId, projectId: canonicalProject, taskId: friendlyId },
-				replace: true,
-			});
-		}
-	},
 	component: TaskDetailPage,
 });
