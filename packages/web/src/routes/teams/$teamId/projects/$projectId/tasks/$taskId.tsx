@@ -6,11 +6,10 @@ import {
 	INTERNAL_PROJECT_SLUG,
 	TaskStatus,
 } from '@hezo/shared';
-import { createFileRoute, Link, redirect } from '@tanstack/react-router';
+import { createFileRoute, Link, redirect, useNavigate } from '@tanstack/react-router';
 import { ArrowDown, ChevronDown, Loader2 } from 'lucide-react';
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Task } from '../../../../../../hooks/use-tasks';
-import { api } from '../../../../../../lib/api';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -42,7 +41,27 @@ const EFFORT_LEVELS: { value: AgentEffort; label: string }[] = [
 
 function TaskDetailPage() {
 	const { teamId, projectId, taskId } = Route.useParams();
+	const navigate = useNavigate();
 	const { data: task, isLoading } = useTask(teamId, taskId);
+
+	// Fallback canonicalization for the cold-load case: the cache-only check
+	// in `beforeLoad` only redirects when the task is already cached, so a
+	// direct URL hit with a UUID still renders the wrong URL for one frame.
+	// Once the task data lands, redirect to the canonical URL.
+	useEffect(() => {
+		if (!task?.identifier || !task?.project_slug) return;
+		const friendlyId = task.identifier.toLowerCase();
+		const canonicalProject = task.project_slug;
+		const needsIdNormalization = UUID_RE.test(taskId) && taskId !== friendlyId;
+		const needsProjectNormalization = projectId !== canonicalProject;
+		if (needsIdNormalization || needsProjectNormalization) {
+			navigate({
+				to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+				params: { teamId, projectId: canonicalProject, taskId: friendlyId },
+				replace: true,
+			});
+		}
+	}, [task?.identifier, task?.project_slug, taskId, projectId, teamId, navigate]);
 
 	const { data: comments } = useComments(teamId, taskId);
 	const { data: agents } = useAgents(teamId);
@@ -481,37 +500,24 @@ function RunningAgentsLine({
 }
 
 export const Route = createFileRoute('/teams/$teamId/projects/$projectId/tasks/$taskId')({
-	// Canonicalize the URL before the page renders so the route never paints
-	// with the UUID form or a stale project slug. Previously a useEffect on
-	// `task?.identifier` / `task?.project_slug` called `navigate({ replace })`
-	// after the first paint, producing a one-frame flash of the wrong URL.
-	// Priming via `ensureQueryData` keeps the page's later `useTask(...)` call
-	// reading from cache so we don't double-fetch.
-	beforeLoad: async ({ params, context }) => {
+	// Cache-only URL canonicalization. If the task is already in the React
+	// Query cache (clicked from a list, navigated from another mention),
+	// redirect synchronously before render so the UUID URL never paints. If
+	// the data isn't cached yet, fall through — the post-render useEffect
+	// below redirects once the data lands, with a one-frame URL flash. We
+	// don't `ensureQueryData` here because that would block route resolution
+	// on the network round-trip and stall the page render under load.
+	beforeLoad: ({ params, context }) => {
 		const { teamId, projectId, taskId } = params;
-		// Only redirect when the param IS a UUID or the project slug doesn't
-		// match — never for any other non-canonical taskId. A stale friendly
-		// identifier would still match a server lookup but isn't worth a hop.
+		const cached = context.queryClient.getQueryData<Task>(['teams', teamId, 'tasks', taskId]);
+		if (!cached?.identifier) return;
+		const friendlyId = cached.identifier.toLowerCase();
+		const canonicalProject = cached.project_slug ?? projectId;
 		const isUuid = UUID_RE.test(taskId);
-		let task: Task;
-		try {
-			task = await context.queryClient.ensureQueryData({
-				queryKey: ['teams', teamId, 'tasks', taskId],
-				queryFn: () => api.get<Task>(`/api/teams/${teamId}/tasks/${taskId}`),
-			});
-		} catch {
-			// 404 / auth error — let the component render its loading/empty state
-			// and surface the error through the normal query path.
-			return;
-		}
-		const friendlyId = task.identifier.toLowerCase();
-		const canonicalProject = task.project_slug ?? projectId;
 		const needsIdNormalization = isUuid && taskId !== friendlyId;
 		const needsProjectNormalization = projectId !== canonicalProject;
 		if (needsIdNormalization || needsProjectNormalization) {
-			// Prime the cache under the canonical key so the redirected route's
-			// useTask call hits the cache directly without an extra round-trip.
-			context.queryClient.setQueryData(['teams', teamId, 'tasks', friendlyId], task);
+			context.queryClient.setQueryData(['teams', teamId, 'tasks', friendlyId], cached);
 			throw redirect({
 				to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
 				params: { teamId, projectId: canonicalProject, taskId: friendlyId },
