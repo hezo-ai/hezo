@@ -97,7 +97,8 @@ export function CommentsSection({
 			// grows after mount (LazyMount in run comments, async log body),
 			// because the offset is computed from stale estimates. The extra
 			// 3000ms tick absorbs the post-fetch height jump.
-			for (const delay of [16, 200, 600, 1500, 3000]) {
+			const scrollDelays = [16, 200, 600, 1500, 3000];
+			for (const delay of scrollDelays) {
 				out.push(
 					setTimeout(() => {
 						virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center' });
@@ -110,10 +111,14 @@ export function CommentsSection({
 			}
 			if (highlightId) {
 				setHighlightedCommentId(highlightId);
+				// Clear the highlight 2s AFTER the last scroll attempt — under load,
+				// Virtuoso may not mount the target row until that final attempt, so
+				// the highlight must outlive row mount or it flashes invisibly.
+				const lastScrollDelay = scrollDelays[scrollDelays.length - 1];
 				out.push(
 					setTimeout(() => {
 						setHighlightedCommentId(null);
-					}, 2000),
+					}, lastScrollDelay + 2000),
 				);
 				window.history.replaceState(null, '', window.location.pathname + window.location.search);
 			}
