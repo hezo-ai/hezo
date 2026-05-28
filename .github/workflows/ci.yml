@@ -50,7 +50,9 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
-      - run: bun run test --package web
+      # ubuntu-latest is 4 cores; 10 forks each owning a PGlite + Hono boot
+      # produces enough contention that random `findBy*` queries time out.
+      - run: bun run test --package web --concurrency 4
 
   test-browser:
     runs-on: ubuntu-latest
