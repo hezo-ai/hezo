@@ -265,10 +265,12 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 		content: body.content,
 		contentType: body.content_type ?? CommentContentType.Text,
 		authorMemberId,
+		authorUserId: auth.type === AuthType.Board ? auth.userId : null,
 		authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
 		effort: commentEffort,
 		wakeAssignee,
 		parentCommentId,
+		wsManager: c.get('wsManager'),
 	});
 
 	const commentText = typeof body.content?.text === 'string' ? body.content.text : '';

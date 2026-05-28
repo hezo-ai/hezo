@@ -196,6 +196,7 @@ agentApiRoutes.post('/tasks/:taskId/comments', async (c) => {
 		authorMemberId: auth.memberId,
 		authorRunId: auth.runId,
 		parentCommentId,
+		wsManager: c.get('wsManager'),
 	});
 
 	return ok(c, result.rows[0], 201);

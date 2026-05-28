@@ -1,3 +1,4 @@
+import { BOARD_MENTION_SLUG } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -5,6 +6,13 @@ import type { Env } from '../lib/types';
 export const mentionsRoutes = new Hono<Env>();
 
 type MentionKind = 'agent' | 'task' | 'kb' | 'doc';
+
+const BOARD_SUGGESTION: SearchResult = {
+	kind: 'agent',
+	handle: BOARD_MENTION_SLUG,
+	label: 'the board',
+	sublabel: '@board · notifies all project owners',
+};
 
 interface SearchResult {
 	kind: MentionKind;
@@ -126,6 +134,10 @@ mentionsRoutes.get('/teams/:teamId/mentions/search', async (c) => {
 	const results: SearchResult[] = [];
 
 	if (kinds.includes('agent')) {
+		const lq = q.toLowerCase();
+		if (q === '' || BOARD_MENTION_SLUG.startsWith(lq) || BOARD_MENTION_SLUG.includes(lq)) {
+			results.push(BOARD_SUGGESTION);
+		}
 		const r = await db.query<{ slug: string; title: string }>(
 			`SELECT ma.slug, ma.title
 			 FROM member_agents ma

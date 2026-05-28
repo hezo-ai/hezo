@@ -5,6 +5,12 @@ export const CANARY_PLAINTEXT = 'CANARY';
 export const CAPTAIN_AGENT_SLUG = 'captain';
 export const COACH_AGENT_SLUG = 'coach';
 export const BUILTIN_AGENT_SLUGS = [CAPTAIN_AGENT_SLUG, COACH_AGENT_SLUG] as const;
+
+export const BOARD_MENTION_SLUG = 'board';
+export const RESERVED_AGENT_SLUGS = [BOARD_MENTION_SLUG] as const;
+export function isReservedAgentSlug(slug: string): boolean {
+	return (RESERVED_AGENT_SLUGS as readonly string[]).includes(slug);
+}
 export const INTERNAL_PROJECT_SLUG = 'internal';
 export const INTERNAL_PROJECT_TASK_PREFIX = 'IN';
 
