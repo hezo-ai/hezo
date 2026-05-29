@@ -102,6 +102,7 @@ export const CommentContentType = {
 	Run: 'run',
 	Action: 'action',
 	CredentialRequest: 'credential_request',
+	ConnectRequired: 'connect_required',
 } as const;
 export type CommentContentType = (typeof CommentContentType)[keyof typeof CommentContentType];
 
@@ -363,6 +364,7 @@ export const DocumentType = {
 	KbDoc: 'kb_doc',
 	TeamPreferences: 'team_preferences',
 	AgentSystemPrompt: 'agent_system_prompt',
+	McpSkill: 'mcp_skill',
 } as const;
 export type DocumentType = (typeof DocumentType)[keyof typeof DocumentType];
 

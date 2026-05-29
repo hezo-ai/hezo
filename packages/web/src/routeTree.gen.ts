@@ -16,6 +16,7 @@ import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as TeamsTeamIdRouteRouteImport } from './routes/teams/$teamId/route'
 import { Route as TeamsTeamIdIndexRouteImport } from './routes/teams/$teamId/index'
+import { Route as TeamsTeamIdConnectorsRouteImport } from './routes/teams/$teamId/connectors'
 import { Route as TeamsTeamIdTasksIndexRouteImport } from './routes/teams/$teamId/tasks/index'
 import { Route as TeamsTeamIdProjectsIndexRouteImport } from './routes/teams/$teamId/projects/index'
 import { Route as TeamsTeamIdKbIndexRouteImport } from './routes/teams/$teamId/kb/index'
@@ -74,6 +75,11 @@ const TeamsTeamIdRouteRoute = TeamsTeamIdRouteRouteImport.update({
 const TeamsTeamIdIndexRoute = TeamsTeamIdIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => TeamsTeamIdRouteRoute,
+} as any)
+const TeamsTeamIdConnectorsRoute = TeamsTeamIdConnectorsRouteImport.update({
+  id: '/connectors',
+  path: '/connectors',
   getParentRoute: () => TeamsTeamIdRouteRoute,
 } as any)
 const TeamsTeamIdTasksIndexRoute = TeamsTeamIdTasksIndexRouteImport.update({
@@ -221,6 +227,7 @@ export interface FileRoutesByFullPath {
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/teams/': typeof TeamsIndexRoute
+  '/teams/$teamId/connectors': typeof TeamsTeamIdConnectorsRoute
   '/teams/$teamId/': typeof TeamsTeamIdIndexRoute
   '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
   '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
@@ -253,6 +260,7 @@ export interface FileRoutesByTo {
   '/home': typeof HomeIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/teams': typeof TeamsIndexRoute
+  '/teams/$teamId/connectors': typeof TeamsTeamIdConnectorsRoute
   '/teams/$teamId': typeof TeamsTeamIdIndexRoute
   '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
   '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
@@ -285,6 +293,7 @@ export interface FileRoutesById {
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/teams/': typeof TeamsIndexRoute
+  '/teams/$teamId/connectors': typeof TeamsTeamIdConnectorsRoute
   '/teams/$teamId/': typeof TeamsTeamIdIndexRoute
   '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
   '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
@@ -320,6 +329,7 @@ export interface FileRouteTypes {
     | '/home/'
     | '/settings/'
     | '/teams/'
+    | '/teams/$teamId/connectors'
     | '/teams/$teamId/'
     | '/teams/$teamId/agents/$agentId'
     | '/teams/$teamId/projects/$projectId'
@@ -352,6 +362,7 @@ export interface FileRouteTypes {
     | '/home'
     | '/settings'
     | '/teams'
+    | '/teams/$teamId/connectors'
     | '/teams/$teamId'
     | '/teams/$teamId/agents/hire'
     | '/teams/$teamId/settings/audit-log'
@@ -383,6 +394,7 @@ export interface FileRouteTypes {
     | '/home/'
     | '/settings/'
     | '/teams/'
+    | '/teams/$teamId/connectors'
     | '/teams/$teamId/'
     | '/teams/$teamId/agents/$agentId'
     | '/teams/$teamId/projects/$projectId'
@@ -468,6 +480,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/teams/$teamId/'
       preLoaderRoute: typeof TeamsTeamIdIndexRouteImport
+      parentRoute: typeof TeamsTeamIdRouteRoute
+    }
+    '/teams/$teamId/connectors': {
+      id: '/teams/$teamId/connectors'
+      path: '/connectors'
+      fullPath: '/teams/$teamId/connectors'
+      preLoaderRoute: typeof TeamsTeamIdConnectorsRouteImport
       parentRoute: typeof TeamsTeamIdRouteRoute
     }
     '/teams/$teamId/tasks/': {
@@ -695,6 +714,7 @@ const TeamsTeamIdProjectsProjectIdRouteRouteWithChildren =
   )
 
 interface TeamsTeamIdRouteRouteChildren {
+  TeamsTeamIdConnectorsRoute: typeof TeamsTeamIdConnectorsRoute
   TeamsTeamIdIndexRoute: typeof TeamsTeamIdIndexRoute
   TeamsTeamIdAgentsAgentIdRouteRoute: typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
   TeamsTeamIdProjectsProjectIdRouteRoute: typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
@@ -713,6 +733,7 @@ interface TeamsTeamIdRouteRouteChildren {
 }
 
 const TeamsTeamIdRouteRouteChildren: TeamsTeamIdRouteRouteChildren = {
+  TeamsTeamIdConnectorsRoute: TeamsTeamIdConnectorsRoute,
   TeamsTeamIdIndexRoute: TeamsTeamIdIndexRoute,
   TeamsTeamIdAgentsAgentIdRouteRoute:
     TeamsTeamIdAgentsAgentIdRouteRouteWithChildren,

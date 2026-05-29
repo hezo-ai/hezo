@@ -9,6 +9,18 @@ const log = logger.child('mcp-connections');
 export interface SaasMcpConfig {
 	url: string;
 	headers?: Record<string, string>;
+	/**
+	 * DCR (RFC 7591) registration metadata stored after the connector's first
+	 * auth-start. Lets re-authorization (after revoke/expiry) reuse the same
+	 * client_id at the same Authorization Server without re-registering.
+	 */
+	dcr?: {
+		client_id: string;
+		authorization_server_url: string;
+		authorization_endpoint: string;
+		token_endpoint: string;
+		scopes_supported?: string[];
+	};
 }
 
 export interface LocalMcpConfig {
@@ -44,6 +56,11 @@ export async function loadMcpConnectionsForRun(
 	teamId: string,
 	projectId: string,
 ): Promise<McpConnectionRow[]> {
+	// Filters: skip revoked (user disconnected); skip our connector-flow rows
+	// that haven't completed OAuth yet (saas + created_by_task_id IS NOT NULL
+	// + oauth_connection_id IS NULL). Operator-created saas rows without
+	// created_by_task_id continue to be included regardless of OAuth state
+	// (existing behavior for public MCPs).
 	const result = await db.query<McpConnectionRow>(
 		`SELECT id, team_id, project_id, name, kind::text AS kind,
 		        config, oauth_connection_id, install_status::text AS install_status, install_error,
@@ -51,6 +68,8 @@ export async function loadMcpConnectionsForRun(
 		 FROM mcp_connections
 		 WHERE team_id = $1
 		   AND (project_id IS NULL OR project_id = $2)
+		   AND revoked_at IS NULL
+		   AND NOT (kind = 'saas' AND created_by_task_id IS NOT NULL AND oauth_connection_id IS NULL)
 		 ORDER BY project_id NULLS FIRST`,
 		[teamId, projectId],
 	);

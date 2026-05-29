@@ -106,3 +106,28 @@ The OAuth App client_id is selected automatically: `NODE_ENV=production` → pro
 - `oauth-github-routes.test.ts` — full device flow end-to-end against `github-sim`, list, delete, cross-team isolation
 - `oauth-generic-provider.test.ts` — metadata discovery, authorize URL building, code exchange, error handling
 - `oauth-mcp-injection.test.ts` — `mcp_connections.oauth_connection_id` → injector emits placeholder Authorization header
+
+## MCP connectors (third-party MCP servers, post-2026-05)
+
+When an agent needs a third-party MCP server, the path is **not** the legacy `auth-code/start` route (which requires `manual_config.client_id`). Instead:
+
+1. `register_connector` MCP tool — agent posts the MCP URL; Hezo writes a pending row in `mcp_connections` and a `connect_required` comment on the task. Agent exits with a wakeup attached.
+2. Human clicks **Connect** (task comment or `/teams/:teamId/connectors` page) → `POST /api/teams/:teamId/connectors/:id/auth-start`. Hezo:
+   - Probes the MCP URL for `WWW-Authenticate: Bearer resource_metadata="…"` (PRM, RFC 9728).
+   - Fetches PRM → Authorization Server URL → AS metadata (RFC 8414) via `discoverMcpAuthorization`.
+   - **Dynamic Client Registration** (RFC 7591) via `registerClient` — POSTs `{ redirect_uris: ["https://<this-host>/api/oauth/mcp-callback"], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }`. The issued `client_id` (and optional `registration_access_token`) cache in `mcp_connections.config.dcr` for re-auth.
+   - PKCE-signs state (existing `signState`), returns `auth_url` to the UI.
+3. Browser pop-up to provider's authorize endpoint → user authorizes → AS redirects to `GET /api/oauth/mcp-callback` on Hezo's own host.
+4. Callback handler verifies state, exchanges code at AS token endpoint (PKCE + DCR-issued client_id, no client_secret), persists tokens via `createConnection`, calls `markActive(connectorId, oauthConnectionId)`, fires `CredentialProvided` wakeup on the calling task's assignee.
+
+**Trust boundaries**:
+- No central Hezo Connect relay. Callbacks land on the individual Hezo instance's own URL — same host the user is already on for the UI.
+- No Hezo-team-owned OAuth apps. DCR per-instance, per-connector, public-client.
+- DCR-issued tokens flow through the existing `oauth_connections` + `secrets` + egress-substitution pipeline; no new substrate.
+
+**Failure modes**:
+- AS doesn't support DCR (no `registration_endpoint` in metadata) → 400, surfaced as `auth_error` on the connector.
+- Token exchange fails (AS rejects PKCE / redirect_uri mismatch) → connector marked `failed` with the AS's error message in `auth_error`; user can click Retry.
+- MCP server doesn't issue 401 with PRM → discovery fails; not a connector-flow provider.
+
+The legacy `manual_config`-based auth-code path stays around for any external operator-supplied MCP that doesn't follow the PRM/DCR pattern (rare); it does not gate the new flow.

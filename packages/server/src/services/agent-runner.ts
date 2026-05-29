@@ -33,6 +33,7 @@ import {
 	getProviderCredentialAndModel,
 	updateAiProviderCredential,
 } from './ai-provider-keys';
+import { loadSkillFilesForTeam } from './connectors/lifecycle';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -338,9 +339,11 @@ async function buildRunContext(
 		...(await loadMcpConnectionDescriptors(deps.db, agent.team_id, project.id)),
 	];
 
+	const skillFiles = await loadSkillFilesForTeam(deps.db, agent.team_id);
 	const mcpInjection = adapter.build(mcpDescriptors, {
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
+		skillFiles,
 	});
 	validateInjection(adapter, mcpInjection);
 

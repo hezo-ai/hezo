@@ -1,10 +1,13 @@
 import { randomBytes } from 'node:crypto';
-import { wsRoom } from '@hezo/shared';
+import { WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { getConnector, markActive, markFailed } from '../services/connectors/lifecycle';
+import { pushConnectorToTeamContainers } from '../services/connectors/live-push';
 import {
 	createConnection,
 	deleteConnection,
@@ -12,6 +15,8 @@ import {
 	getConnectionForTeam,
 	listConnectionsForTeam,
 } from '../services/oauth/connection-store';
+import { registerClient } from '../services/oauth/dcr';
+import { discoverMcpAuthorization } from '../services/oauth/prm-discovery';
 import {
 	buildAuthorizationUrl,
 	discoverMetadata,
@@ -28,6 +33,7 @@ import {
 } from '../services/oauth/provider-github';
 import { type ManualOAuthConfig, signState, verifyState } from '../services/oauth/state';
 import { generateTeamSSHKey, getTeamSSHKey } from '../services/ssh-keys';
+import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('oauth-route');
 
@@ -342,6 +348,263 @@ oauthRoutes.post('/teams/:teamId/oauth/auth-code/start', async (c) => {
 	});
 
 	return ok(c, { auth_url: authUrl });
+});
+
+/**
+ * Connector-driven MCP OAuth: start a flow for a pending connector. Discovers
+ * the MCP server's Authorization Server via PRM (RFC 9728), registers this
+ * Hezo instance as a public OAuth client via DCR (RFC 7591), generates a
+ * PKCE-signed state envelope, and returns the authorize URL for the UI to
+ * open in a popup.
+ */
+oauthRoutes.post('/teams/:teamId/connectors/:id/auth-start', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const connectorId = c.req.param('id');
+
+	const db = c.get('db');
+	const masterKeyManager = c.get('masterKeyManager');
+
+	const connector = await getConnector(db, connectorId);
+	if (!connector) return err(c, 'NOT_FOUND', 'connector not found', 404);
+	if (connector.team_id !== teamId)
+		return err(c, 'FORBIDDEN', 'connector does not belong to this team', 403);
+	if (connector.revoked_at)
+		return err(
+			c,
+			'CONNECTOR_REVOKED',
+			'connector has been revoked; create a new one to reconnect',
+			400,
+		);
+	if (connector.kind !== 'saas')
+		return err(c, 'INVALID_REQUEST', 'auth-start only applies to saas MCP connectors', 400);
+
+	const config = connector.config as {
+		url?: string;
+		dcr?: {
+			client_id: string;
+			authorization_server_url: string;
+			authorization_endpoint: string;
+			token_endpoint: string;
+			scopes_supported?: string[];
+		};
+	};
+	if (!config.url) return err(c, 'INVALID_REQUEST', 'connector has no MCP server url', 400);
+
+	const protocol = c.req.header('x-forwarded-proto') ?? 'http';
+	const host = c.req.header('host') ?? 'localhost';
+	const redirectUri = `${protocol}://${host}/api/oauth/mcp-callback`;
+
+	// Reuse cached DCR client if it points at the same AS; otherwise discover + register.
+	let dcr = config.dcr;
+	let scopesSupported: string[] = config.dcr?.scopes_supported ?? [];
+
+	if (!dcr) {
+		let discovery: Awaited<ReturnType<typeof discoverMcpAuthorization>>;
+		try {
+			discovery = await discoverMcpAuthorization(config.url);
+		} catch (e) {
+			await markFailed(db, connector.id, `discovery: ${(e as Error).message}`);
+			return err(c, 'OAUTH_DISCOVERY_FAILED', (e as Error).message, 503);
+		}
+		if (!discovery.asMetadata.registration_endpoint) {
+			await markFailed(
+				db,
+				connector.id,
+				'AS does not advertise registration_endpoint (DCR unsupported)',
+			);
+			return err(
+				c,
+				'OAUTH_DCR_UNSUPPORTED',
+				'Authorization Server does not support Dynamic Client Registration; manual client_id setup is not yet implemented',
+				400,
+			);
+		}
+		let registered: Awaited<ReturnType<typeof registerClient>>;
+		try {
+			registered = await registerClient({
+				registrationEndpoint: discovery.asMetadata.registration_endpoint,
+				redirectUri,
+				clientName: `Hezo (${connector.display_name ?? connector.name})`,
+				scope: discovery.asMetadata.scopes_supported?.join(' '),
+			});
+		} catch (e) {
+			await markFailed(db, connector.id, `DCR: ${(e as Error).message}`);
+			return err(c, 'OAUTH_DCR_FAILED', (e as Error).message, 503);
+		}
+		dcr = {
+			client_id: registered.clientId,
+			authorization_server_url: discovery.authorizationServerUrl,
+			authorization_endpoint: discovery.asMetadata.authorization_endpoint,
+			token_endpoint: discovery.asMetadata.token_endpoint,
+			scopes_supported: discovery.asMetadata.scopes_supported,
+		};
+		scopesSupported = discovery.asMetadata.scopes_supported ?? [];
+		const newConfig = { ...config, dcr };
+		await db.query(
+			`UPDATE mcp_connections SET config = $1::jsonb, updated_at = now() WHERE id = $2`,
+			[JSON.stringify(newConfig), connector.id],
+		);
+	}
+
+	const { state, codeChallenge } = await signState(masterKeyManager, {
+		teamId,
+		provider: `mcp:${connector.id}`,
+		redirectUri,
+		returnTo: `/teams/${teamId}/connectors?focus=${connector.id}`,
+		mcpConnectionId: connector.id,
+		mcpConnectionName: connector.display_name ?? connector.name,
+		manualConfig: {
+			authorize_url: dcr.authorization_endpoint,
+			token_url: dcr.token_endpoint,
+			client_id: dcr.client_id,
+			scopes: scopesSupported,
+		},
+		resourceUrl: config.url,
+	});
+
+	const authUrl = buildAuthorizationUrl({
+		authorizeUrl: dcr.authorization_endpoint,
+		clientId: dcr.client_id,
+		scopes: scopesSupported,
+		redirectUri,
+		state,
+		codeChallenge,
+		resource: config.url,
+	});
+
+	return ok(c, { auth_url: authUrl });
+});
+
+/**
+ * Callback for the connector-driven MCP OAuth flow. Verifies state, exchanges
+ * code at the AS token endpoint, stores the access (+ refresh) token in
+ * `oauth_connections`, marks the connector active, pushes the new config to
+ * the parent task's container synchronously and to other team containers
+ * best-effort, and fires a CredentialProvided wakeup so any agent that was
+ * waiting on this connector resumes.
+ */
+oauthRoutes.get('/oauth/mcp-callback', async (c) => {
+	const masterKeyManager = c.get('masterKeyManager');
+	const db = c.get('db');
+	const docker = c.get('docker');
+
+	const code = c.req.query('code');
+	const stateParam = c.req.query('state');
+	const errorCode = c.req.query('error');
+
+	if (errorCode) {
+		log.warn('mcp oauth callback received error from provider', { error: errorCode });
+		return c.html(buildCallbackPage('error', errorCode), 200);
+	}
+	if (!code || !stateParam) {
+		return c.html(buildCallbackPage('error', 'missing_code_or_state'), 200);
+	}
+
+	const payload = await verifyState(masterKeyManager, stateParam);
+	if (!payload) return c.html(buildCallbackPage('error', 'invalid_state'), 200);
+	if (!payload.mcpConnectionId)
+		return c.html(buildCallbackPage('error', 'missing_connector_id'), 200);
+	if (!payload.manualConfig)
+		return c.html(buildCallbackPage('error', 'missing_provider_config'), 200);
+
+	const connector = await getConnector(db, payload.mcpConnectionId);
+	if (!connector) return c.html(buildCallbackPage('error', 'connector_not_found'), 200);
+	if (connector.team_id !== payload.teamId)
+		return c.html(buildCallbackPage('error', 'team_mismatch'), 200);
+
+	let token: Awaited<ReturnType<typeof exchangeCode>>;
+	try {
+		token = await exchangeCode({
+			tokenUrl: payload.manualConfig.token_url,
+			clientId: payload.manualConfig.client_id,
+			code,
+			codeVerifier: payload.codeVerifier,
+			redirectUri: payload.redirectUri,
+		});
+	} catch (e) {
+		log.warn('mcp oauth code exchange failed', { error: (e as Error).message });
+		await markFailed(db, connector.id, `exchange: ${(e as Error).message}`);
+		return c.html(buildCallbackPage('error', 'exchange_failed'), 200);
+	}
+
+	const allowedHosts = inferAllowedHosts(payload.resourceUrl, payload.manualConfig.token_url);
+	const accountId = `${payload.provider}:${randomBytes(8).toString('hex')}`;
+	const conn = await createConnection(
+		{ db, masterKeyManager },
+		{
+			teamId: payload.teamId,
+			provider: payload.provider,
+			providerAccountId: accountId,
+			providerAccountLabel: payload.mcpConnectionName ?? payload.provider,
+			accessToken: token.accessToken,
+			refreshToken: token.refreshToken,
+			scopes: token.scope
+				? token.scope.split(/[,\s]+/).filter(Boolean)
+				: payload.manualConfig.scopes,
+			expiresAt: token.expiresAt ?? null,
+			allowedHosts,
+			metadata: {
+				resource_url: payload.resourceUrl,
+				token_url: payload.manualConfig.token_url,
+				authorize_url: payload.manualConfig.authorize_url,
+				connector_id: connector.id,
+			},
+		},
+	);
+
+	await markActive(db, connector.id, conn.id);
+
+	// Sync push to the parent task's container so the calling agent sees the
+	// MCP on its next tool call; other team containers updated best-effort.
+	try {
+		await pushConnectorToTeamContainers(
+			{ db, docker },
+			{
+				teamId: payload.teamId,
+				connectorId: connector.id,
+				syncTaskId: connector.created_by_task_id,
+			},
+		);
+	} catch (e) {
+		log.warn('live-push failed (non-fatal)', { error: (e as Error).message });
+	}
+
+	// Fire CredentialProvided wakeup on the calling task's assignee, if any.
+	if (connector.created_by_task_id) {
+		const row = await db.query<{ assignee_id: string | null }>(
+			`SELECT assignee_id FROM tasks WHERE id = $1`,
+			[connector.created_by_task_id],
+		);
+		const assigneeId = row.rows[0]?.assignee_id;
+		if (assigneeId) {
+			trackBackground(
+				createWakeup(
+					db,
+					assigneeId,
+					payload.teamId,
+					WakeupSource.CredentialProvided,
+					{ connector_id: connector.id, task_id: connector.created_by_task_id },
+					`connector:${connector.id}`,
+				).catch((e) =>
+					log.warn('wakeup enqueue failed (non-fatal)', { error: (e as Error).message }),
+				),
+			);
+		}
+	}
+
+	broadcastChange(c, wsRoom.team(payload.teamId), 'mcp_connections', 'UPDATE', {
+		id: connector.id,
+		team_id: payload.teamId,
+		oauth_connection_id: conn.id,
+		status: 'active',
+	});
+	broadcastChange(c, wsRoom.team(payload.teamId), 'oauth_connections', 'INSERT', {
+		id: conn.id,
+		provider: conn.provider,
+		provider_account_label: conn.providerAccountLabel,
+	});
+
+	return c.html(buildCallbackPage('success', undefined, payload.returnTo), 200);
 });
 
 oauthRoutes.get('/teams/:teamId/oauth-connections', async (c) => {

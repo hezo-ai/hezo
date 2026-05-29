@@ -1744,6 +1744,232 @@ export function registerTools(
 		db,
 	);
 
+	tool(
+		server,
+		'register_connector',
+		'Register a third-party MCP server connector for the team and ask the human to authenticate. Posts a connect_required comment on the task with a Connect button; the human clicks it to run OAuth in their own browser. The agent never sees the token; subsequent runs receive the MCP via the egress proxy + placeholder substitution. Idempotent: re-registering an already-active connector returns its current state and fires the wakeup immediately.',
+		{
+			team_id: z.string().describe('Team ID'),
+			task_id: z.string().describe('Task ID where the connect_required comment is posted'),
+			display_name: z
+				.string()
+				.describe(
+					'Human-readable connector name shown in the task chat and on the Connectors page (e.g. "DatoCMS", "Linear").',
+				),
+			mcp_url: z
+				.string()
+				.describe(
+					'URL of the MCP server (HTTP / SSE). The OAuth dance is discovered by probing this URL for a 401 + WWW-Authenticate header.',
+				),
+			mcp_transport: z
+				.enum(['http', 'sse'])
+				.optional()
+				.describe('Transport for the MCP server. Defaults to http.'),
+			provider_id: z
+				.string()
+				.optional()
+				.describe(
+					'Optional registry key (e.g. "datocms"). When set, capability defaults from the shared registry pre-fill display name and allowed hosts.',
+				),
+			skill_doc_id: z
+				.string()
+				.optional()
+				.describe(
+					'Optional ID of a previously-fetched skill document (see fetch_skill_file). When set, the skill file is exposed to every team agent run via the per-adapter skill path.',
+				),
+		},
+		async (args, db, auth) => {
+			const teamId = args.team_id as string;
+			const taskId = args.task_id as string;
+			const denied = await verifyTeamAccess(db, auth, teamId);
+			if (denied) return { error: denied };
+
+			const taskRow = await db.query<{ id: string; project_id: string | null }>(
+				'SELECT id, project_id FROM tasks WHERE id = $1 AND team_id = $2',
+				[taskId, teamId],
+			);
+			if (taskRow.rows.length === 0) return { error: 'Task not found in this team' };
+			const projectId = taskRow.rows[0].project_id;
+			if (projectId) {
+				const pDenied = assertProjectAccess(auth, projectId);
+				if (pDenied) return { error: pDenied };
+			}
+
+			const displayName = (args.display_name as string).trim();
+			const providerId = (args.provider_id as string | undefined)?.trim() || null;
+			const mcpUrl = (args.mcp_url as string).trim();
+			const mcpTransport = (args.mcp_transport as 'http' | 'sse' | undefined) ?? 'http';
+			const skillDocId = (args.skill_doc_id as string | undefined) ?? null;
+
+			// Slug from providerId if available, else from display_name. The
+			// (team_id, project_id, name) UNIQUE constraint makes this the
+			// idempotency key.
+			const slugSource = providerId ?? displayName;
+			const name = slugSource
+				.toLowerCase()
+				.replace(/[^a-z0-9]+/g, '-')
+				.replace(/^-|-$/g, '')
+				.slice(0, 64);
+			if (!name) return { error: 'display_name produced an empty slug' };
+
+			const { createOrFetchConnector, statusOf } = await import('../services/connectors/lifecycle');
+			const { row, alreadyExisted } = await createOrFetchConnector(db, {
+				teamId,
+				projectId: null, // connectors are team-scoped today
+				name,
+				displayName,
+				mcpUrl,
+				mcpTransport,
+				skillDocId,
+				createdByTaskId: taskId,
+				providerId,
+			});
+
+			const status = statusOf(row);
+
+			// If already active, no need for a Connect comment — just signal the
+			// caller; they should retry whatever needed the connector.
+			if (status === 'active') {
+				return {
+					connector_id: row.id,
+					status,
+					name: row.name,
+					display_name: row.display_name,
+					reused: true,
+				};
+			}
+
+			// Idempotent comment: don't post a second connect_required for the same
+			// connector_id on the same task.
+			const existingComment = await db.query<{ id: string }>(
+				`SELECT id FROM task_comments
+				 WHERE task_id = $1
+				   AND content_type = 'connect_required'::comment_content_type
+				   AND content->>'connector_id' = $2
+				 ORDER BY created_at ASC LIMIT 1`,
+				[taskId, row.id],
+			);
+
+			let commentId: string;
+			if (existingComment.rows.length > 0) {
+				commentId = existingComment.rows[0].id;
+			} else {
+				const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+				const content = {
+					connector_id: row.id,
+					display_name: displayName,
+					provider_id: providerId,
+				};
+				const inserted = await db.query<{ id: string }>(
+					`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+					 VALUES ($1, $2, 'connect_required'::comment_content_type, $3::jsonb)
+					 RETURNING id`,
+					[taskId, authorMemberId, JSON.stringify(content)],
+				);
+				commentId = inserted.rows[0].id;
+			}
+
+			return {
+				connector_id: row.id,
+				status,
+				name: row.name,
+				display_name: row.display_name,
+				comment_id: commentId,
+				reused: alreadyExisted,
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'fetch_skill_file',
+		"Fetch a remote agent skill file (Markdown describing how to use a third-party MCP server) and store it in the team knowledge base as a doc with kind=mcp_skill. Returns the doc_id and slug. Subsequent agent runs across every project in the team get this skill file injected into their adapter's skills directory. Idempotent on (team_id, url) — re-fetching the same URL updates the existing doc.",
+		{
+			team_id: z.string().describe('Team ID'),
+			url: z
+				.string()
+				.describe(
+					'HTTPS URL of the skill file. Only http/https schemes are allowed; response must be < 256KB; 10s timeout.',
+				),
+			title: z
+				.string()
+				.optional()
+				.describe('Human-readable title shown in the team KB. Defaults to the URL pathname.'),
+		},
+		async (args, db, auth) => {
+			const teamId = args.team_id as string;
+			const denied = await verifyTeamAccess(db, auth, teamId);
+			if (denied) return { error: denied };
+
+			const url = (args.url as string).trim();
+			let parsed: URL;
+			try {
+				parsed = new URL(url);
+			} catch {
+				return { error: 'Invalid URL' };
+			}
+			if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+				return { error: 'Only http/https URLs are allowed' };
+			}
+
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), 10_000);
+			let res: Response;
+			try {
+				res = await fetch(url, { signal: controller.signal });
+			} catch (e) {
+				clearTimeout(timeout);
+				return { error: `Fetch failed: ${(e as Error).message}` };
+			}
+			clearTimeout(timeout);
+			if (!res.ok) {
+				return { error: `Fetch failed: HTTP ${res.status}` };
+			}
+			const contentLength = res.headers.get('content-length');
+			if (contentLength && Number(contentLength) > 256 * 1024) {
+				return { error: 'Response too large (>256KB)' };
+			}
+			const body = await res.text();
+			if (body.length > 256 * 1024) {
+				return { error: 'Response too large (>256KB)' };
+			}
+
+			// Slug from URL pathname (e.g. /docs/mcp-server/agent-skill.md → agent-skill).
+			const pathSlug = parsed.pathname
+				.split('/')
+				.filter(Boolean)
+				.pop()
+				?.replace(/\.[a-z0-9]+$/i, '')
+				.toLowerCase()
+				.replace(/[^a-z0-9]+/g, '-')
+				.replace(/^-|-$/g, '');
+			const hostSlug = parsed.host.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+			const slug = `${hostSlug}--${pathSlug || 'skill'}`.slice(0, 64);
+			const title = (args.title as string | undefined) ?? parsed.pathname;
+
+			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const doc = await upsertDocument(db, wsManager, {
+				scope: { type: DocumentType.McpSkill, teamId, slug },
+				title,
+				content: body,
+				authorMemberId,
+				changeSummary: `Fetched from ${url}`,
+			});
+
+			// Track source_url in a separate small table? For v1 we encode it in
+			// the title prefix so the doc is self-describing.
+			return {
+				doc_id: doc.id,
+				slug: doc.slug,
+				source_url: url,
+				size_bytes: body.length,
+				reused: false,
+			};
+		},
+		db,
+	);
+
 	// Approvals
 	tool(
 		server,

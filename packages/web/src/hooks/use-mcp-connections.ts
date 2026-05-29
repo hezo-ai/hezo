@@ -7,12 +7,56 @@ export interface McpConnection {
 	team_id: string;
 	project_id: string | null;
 	name: string;
+	display_name: string | null;
 	kind: 'saas' | 'local';
 	config: Record<string, unknown>;
+	oauth_connection_id: string | null;
 	install_status: 'pending' | 'installed' | 'failed';
 	install_error: string | null;
+	skill_doc_id: string | null;
+	created_by_task_id: string | null;
+	activated_at: string | null;
+	revoked_at: string | null;
+	auth_error: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+export type ConnectorStatus = 'pending' | 'active' | 'failed' | 'revoked';
+
+export function connectorStatus(c: McpConnection): ConnectorStatus {
+	if (c.revoked_at) return 'revoked';
+	if (c.auth_error && !c.activated_at) return 'failed';
+	if (c.oauth_connection_id && c.activated_at) return 'active';
+	return 'pending';
+}
+
+export function useMcpConnection(teamId: string, connectorId: string | undefined) {
+	return useQuery({
+		queryKey: ['teams', teamId, 'mcp-connections', 'detail', connectorId ?? null],
+		queryFn: () => api.get<McpConnection>(`/api/teams/${teamId}/mcp-connections/${connectorId}`),
+		enabled: !!connectorId,
+	});
+}
+
+export function useConnectorAuthStart(teamId: string) {
+	return useMutation({
+		mutationFn: (connectorId: string) =>
+			api.post<{ auth_url: string }>(
+				`/api/teams/${teamId}/connectors/${connectorId}/auth-start`,
+				{},
+			),
+	});
+}
+
+export function useRevokeConnector(teamId: string) {
+	return useMutation({
+		mutationFn: (connectorId: string) =>
+			api.post<McpConnection>(`/api/teams/${teamId}/mcp-connections/${connectorId}/revoke`, {}),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] });
+		},
+	});
 }
 
 export interface CreateMcpConnectionPayload {

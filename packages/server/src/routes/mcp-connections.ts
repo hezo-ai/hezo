@@ -23,8 +23,9 @@ mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections', async (c) => {
 		params.push(projectId);
 	}
 	const result = await db.query(
-		`SELECT id, team_id, project_id, name, kind::text AS kind,
+		`SELECT id, team_id, project_id, name, display_name, kind::text AS kind,
 		        config, oauth_connection_id, install_status::text AS install_status, install_error,
+		        skill_doc_id, created_by_task_id, activated_at, revoked_at, auth_error,
 		        created_at, updated_at
 		 FROM mcp_connections
 		 WHERE ${where}
@@ -32,6 +33,52 @@ mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections', async (c) => {
 		params,
 	);
 	return ok(c, result.rows);
+});
+
+mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections/:id', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const id = c.req.param('id');
+	const result = await db.query(
+		`SELECT id, team_id, project_id, name, display_name, kind::text AS kind,
+		        config, oauth_connection_id, install_status::text AS install_status, install_error,
+		        skill_doc_id, created_by_task_id, activated_at, revoked_at, auth_error,
+		        created_at, updated_at
+		 FROM mcp_connections
+		 WHERE id = $1 AND team_id = $2`,
+		[id, teamId],
+	);
+	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
+	return ok(c, result.rows[0]);
+});
+
+mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections/:id/revoke', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const id = c.req.param('id');
+	const { markRevoked } = await import('../services/connectors/lifecycle');
+	const existing = await db.query<{ team_id: string; oauth_connection_id: string | null }>(
+		`SELECT team_id, oauth_connection_id FROM mcp_connections WHERE id = $1`,
+		[id],
+	);
+	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
+	if (existing.rows[0].team_id !== teamId)
+		return err(c, 'FORBIDDEN', 'connector does not belong to this team', 403);
+	const row = await markRevoked(db, id);
+	if (existing.rows[0].oauth_connection_id) {
+		const { deleteConnection } = await import('../services/oauth/connection-store');
+		const masterKeyManager = c.get('masterKeyManager');
+		await deleteConnection({ db, masterKeyManager }, existing.rows[0].oauth_connection_id).catch(
+			(e) =>
+				log.warn('failed to delete oauth_connection on revoke', { error: (e as Error).message }),
+		);
+	}
+	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
+		id,
+		team_id: teamId,
+		status: 'revoked',
+	});
+	return ok(c, row);
 });
 
 mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections', async (c) => {

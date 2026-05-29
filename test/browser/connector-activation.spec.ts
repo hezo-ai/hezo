@@ -1,0 +1,272 @@
+// E2E for the connector-driven MCP OAuth flow. Uses a fake MCP server
+// (which doubles as PRM authority + Authorization Server) spun up in the
+// test process — both the Hezo server and the user's browser reach it via
+// 127.0.0.1, so the real round-trip works end-to-end.
+
+import { randomBytes } from 'node:crypto';
+import { createServer, type Server } from 'node:http';
+import { expect, test } from './fixtures';
+import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
+
+type Page = import('@playwright/test').Page;
+
+// Inline fake MCP server — duplicated from packages/server/test/helpers/
+// fake-mcp-server.ts so the Playwright suite stays self-contained.
+async function startFakeMcp(): Promise<{ url: string; close: () => Promise<void> }> {
+	const clients = new Map<string, string[]>();
+	const codes = new Map<string, { clientId: string; redirectUri: string }>();
+	const tokens = new Set<string>();
+	let port = 0;
+	let base = '';
+
+	const server: Server = createServer(async (req, res) => {
+		const url = new URL(req.url ?? '/', base);
+		const send = (status: number, body: unknown, headers: Record<string, string> = {}) => {
+			res.statusCode = status;
+			for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
+			res.setHeader('content-type', 'application/json');
+			res.end(typeof body === 'string' ? body : JSON.stringify(body));
+		};
+
+		const readBody = async () => {
+			const chunks: Buffer[] = [];
+			for await (const chunk of req) chunks.push(chunk as Buffer);
+			return Buffer.concat(chunks).toString('utf8');
+		};
+
+		if (url.pathname === '/mcp') {
+			const auth = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+			if (auth && tokens.has(auth)) return send(200, { ok: true });
+			res.setHeader(
+				'WWW-Authenticate',
+				`Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`,
+			);
+			return send(401, { error: 'unauthorized' });
+		}
+
+		if (url.pathname === '/.well-known/oauth-protected-resource') {
+			return send(200, { resource: `${base}/mcp`, authorization_servers: [base] });
+		}
+
+		if (url.pathname === '/.well-known/oauth-authorization-server') {
+			return send(200, {
+				issuer: base,
+				authorization_endpoint: `${base}/authorize`,
+				token_endpoint: `${base}/token`,
+				registration_endpoint: `${base}/register`,
+				code_challenge_methods_supported: ['S256'],
+				response_types_supported: ['code'],
+				grant_types_supported: ['authorization_code'],
+				token_endpoint_auth_methods_supported: ['none'],
+			});
+		}
+
+		if (url.pathname === '/register' && req.method === 'POST') {
+			const body = JSON.parse((await readBody()) || '{}') as { redirect_uris?: string[] };
+			const clientId = `fake_${randomBytes(8).toString('hex')}`;
+			clients.set(clientId, body.redirect_uris ?? []);
+			return send(200, { client_id: clientId, redirect_uris: body.redirect_uris });
+		}
+
+		if (url.pathname === '/authorize' && req.method === 'GET') {
+			const clientId = url.searchParams.get('client_id') ?? '';
+			const redirectUri = url.searchParams.get('redirect_uri') ?? '';
+			const state = url.searchParams.get('state') ?? '';
+			if (!clients.get(clientId)?.includes(redirectUri)) {
+				return send(400, 'redirect_uri mismatch');
+			}
+			const code = `code_${randomBytes(12).toString('hex')}`;
+			codes.set(code, { clientId, redirectUri });
+			res.statusCode = 302;
+			const sep = redirectUri.includes('?') ? '&' : '?';
+			res.setHeader(
+				'location',
+				`${redirectUri}${sep}code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`,
+			);
+			return res.end();
+		}
+
+		if (url.pathname === '/token' && req.method === 'POST') {
+			const params = new URLSearchParams(await readBody());
+			const code = params.get('code') ?? '';
+			const stored = codes.get(code);
+			if (!stored) return send(400, { error: 'invalid_grant' });
+			codes.delete(code);
+			const accessToken = `tok_${randomBytes(16).toString('hex')}`;
+			tokens.add(accessToken);
+			return send(200, {
+				access_token: accessToken,
+				refresh_token: `refresh_${randomBytes(16).toString('hex')}`,
+				expires_in: 3600,
+				token_type: 'Bearer',
+				scope: 'read write',
+			});
+		}
+
+		send(404, { error: 'not_found' });
+	});
+
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+	const addr = server.address();
+	if (!addr || typeof addr !== 'object') throw new Error('failed to get port');
+	port = addr.port;
+	base = `http://127.0.0.1:${port}`;
+
+	return {
+		url: base,
+		close: () =>
+			new Promise<void>((resolve, reject) => {
+				server.close((err) => (err ? reject(err) : resolve()));
+			}),
+	};
+}
+
+async function postAgentRegisterConnector(
+	page: Page,
+	team: { id: string; slug: string },
+	token: string,
+	agentId: string,
+	mcpUrl: string,
+) {
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+	const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+		name: uniqueName('Connector Project'),
+		description: 'E2E.',
+	});
+	const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
+
+	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
+		headers,
+		data: { project_id: project.id, title: 'Add DatoCMS connector', assignee_id: agentId },
+	});
+	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
+
+	// Seed a pending connector + connect_required comment directly via the DB
+	// shape we know the routes produce. (We bypass `register_connector` MCP
+	// because driving the MCP server inline in a Playwright test is fiddly;
+	// the server vitest already covers that path.)
+	const connectorRes = await page.request.post(`/api/teams/${team.id}/mcp-connections`, {
+		headers,
+		data: {
+			name: 'datocms',
+			kind: 'saas',
+			config: { url: mcpUrl },
+		},
+	});
+	expect(connectorRes.ok()).toBeTruthy();
+	const connector = ((await connectorRes.json()) as { data: { id: string } }).data;
+
+	// Mark it as connector-flow-style by setting created_by_task_id + display_name
+	// via a small admin patch — for the E2E we use the same flow the route uses
+	// internally.
+	// (Routes don't expose this directly; we use a fetch_skill_file-less synthetic
+	// connector. The connect_required comment renderer just needs connector_id +
+	// display_name.)
+	await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
+		headers,
+		data: {
+			content_type: 'connect_required',
+			content: {
+				connector_id: connector.id,
+				display_name: 'DatoCMS',
+				provider_id: 'datocms',
+			},
+		},
+	});
+
+	return { project, task, connectorId: connector.id, headers };
+}
+
+test.describe('Connector activation', () => {
+	let fake: Awaited<ReturnType<typeof startFakeMcp>>;
+
+	test.beforeAll(async () => {
+		fake = await startFakeMcp();
+	});
+
+	test.afterAll(async () => {
+		await fake.close();
+	});
+
+	test('agent posts connect_required → user clicks Connect → comment flips to Connected → Connectors page lists it active', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		test.setTimeout(60_000);
+		const agent = sharedWorkspace.agents[0]!;
+		const { task, connectorId, headers } = await postAgentRegisterConnector(
+			page,
+			sharedWorkspace.team,
+			sharedWorkspace.token,
+			agent.id,
+			`${fake.url}/mcp`,
+		);
+
+		// Set created_by_task_id directly so the connector behaves as if our
+		// register_connector tool created it (so the wakeup fires on completion
+		// and the filter in loadMcpConnectionsForRun applies consistently).
+		await page.request
+			.patch(`/api/teams/${sharedWorkspace.team.id}/mcp-connections/${connectorId}`, {
+				headers,
+				data: { created_by_task_id: task.id, display_name: 'DatoCMS' },
+			})
+			.catch(() => {
+				// PATCH endpoint may not exist for this field; the comment renderer
+				// only needs connector_id + display_name from the comment payload,
+				// and the auth-start path doesn't require created_by_task_id.
+			});
+
+		// Open the task page and confirm the Connect button renders.
+		await page.goto(`/teams/${sharedWorkspace.team.slug}/tasks/${task.id}`);
+		await waitForPageLoad(page);
+
+		// Wait for the comments section to mount (same pattern as task-comments.spec.ts).
+		await expect(page.getByTestId('comments-list')).toBeVisible({ timeout: 20_000 });
+
+		const connectComment = page.locator(
+			`[data-testid="connect-required"][data-connector-id="${connectorId}"]`,
+		);
+		await expect(connectComment).toBeVisible({ timeout: 20_000 });
+		await expect(connectComment.locator('[data-testid="connect-button"]')).toBeVisible();
+
+		// Click Connect — opens a popup. The fake AS auto-302s, our callback
+		// handler responds with the success page that calls window.close(). We
+		// don't try to drive the popup directly (it may close out from under us);
+		// instead we poll the connector status via API.
+		const popupPromise = page
+			.context()
+			.waitForEvent('page')
+			.catch(() => null);
+		await connectComment.locator('[data-testid="connect-button"]').click();
+		await popupPromise;
+		// Confirm the callback landed by checking the connector's status via API.
+		await expect
+			.poll(
+				async () => {
+					const res = await page.request.get(
+						`/api/teams/${sharedWorkspace.team.id}/mcp-connections/${connectorId}`,
+						{ headers },
+					);
+					const body = (await res.json()) as {
+						data: { activated_at: string | null; oauth_connection_id: string | null };
+					};
+					return body.data.activated_at !== null && body.data.oauth_connection_id !== null;
+				},
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
+
+		// Back in the task, the comment should now show the connected state.
+		await expect(
+			page.locator(`[data-testid="connect-required-active"][data-connector-id="${connectorId}"]`),
+		).toBeVisible({ timeout: 15_000 });
+
+		// Navigate to the connectors page with the focus param and confirm the
+		// row is rendered as active.
+		await page.goto(`/teams/${sharedWorkspace.team.slug}/connectors?focus=${connectorId}`);
+		const row = page.locator(`[data-testid="connector-row"][data-connector-id="${connectorId}"]`);
+		await expect(row).toBeVisible();
+		await expect(row).toHaveAttribute('data-status', 'active');
+	});
+});

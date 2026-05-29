@@ -57,6 +57,13 @@ const TABLE_TO_QUERY_KEY: Record<
 		}
 	},
 	secrets: (cid) => [['teams', cid, 'secrets']],
+	mcp_connections: (cid, row) => {
+		const keys: string[][] = [['teams', cid, 'mcp-connections']];
+		if (row.id) {
+			keys.push(['teams', cid, 'mcp-connections', 'detail', row.id as string]);
+		}
+		return keys;
+	},
 	api_keys: (cid) => [['teams', cid, 'api-keys']],
 	cost_entries: (cid) => [['teams', cid, 'costs']],
 	execution_locks: (cid) => [['teams', cid, 'execution-locks']],
