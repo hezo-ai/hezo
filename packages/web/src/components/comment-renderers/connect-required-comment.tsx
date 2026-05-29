@@ -27,8 +27,11 @@ export function ConnectRequiredComment({ comment, teamId }: Props) {
 	// the callback success page (see routes/oauth.ts:buildCallbackPage).
 	useEffect(() => {
 		if (!teamId) return;
+		// The callback page lives on the server origin (e.g. localhost:3101)
+		// while we're on the web origin (e.g. localhost:5174), so we can't
+		// require e.origin === window.location.origin. We gate on message type
+		// instead — the payload is just a type tag, not credentials.
 		const onMessage = (e: MessageEvent) => {
-			if (e.origin !== window.location.origin) return;
 			if (!e.data || typeof e.data !== 'object') return;
 			if ((e.data as { type?: string }).type !== 'hezo-oauth-success') return;
 			queryClient.invalidateQueries({

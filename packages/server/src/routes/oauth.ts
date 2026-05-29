@@ -683,10 +683,16 @@ function buildCallbackPage(
 	returnTo?: string,
 ): string {
 	const safeReturn = returnTo && /^\/[a-zA-Z0-9_/?=&%-]*$/.test(returnTo) ? returnTo : '/';
+	// targetOrigin is '*' because the callback page lives on the server origin
+	// (e.g. localhost:3101) while the opener is on the web origin (e.g.
+	// localhost:5174 in dev / CI). Browsers silently drop postMessages whose
+	// targetOrigin doesn't match the receiver's origin, so '*' is the only
+	// portable choice. The payload carries no sensitive data — just a type
+	// tag the opener uses to trigger a refetch — so wildcard delivery is safe.
 	if (status === 'success') {
 		return `<!doctype html><html><head><title>Connected</title></head><body><script>
 			if (window.opener) {
-				window.opener.postMessage({ type: 'hezo-oauth-success' }, window.location.origin);
+				window.opener.postMessage({ type: 'hezo-oauth-success' }, '*');
 				window.close();
 			} else {
 				location.href = ${JSON.stringify(safeReturn)};
@@ -695,7 +701,7 @@ function buildCallbackPage(
 	}
 	return `<!doctype html><html><head><title>OAuth failed</title></head><body><script>
 		if (window.opener) {
-			window.opener.postMessage({ type: 'hezo-oauth-error', error: ${JSON.stringify(message ?? 'unknown')} }, window.location.origin);
+			window.opener.postMessage({ type: 'hezo-oauth-error', error: ${JSON.stringify(message ?? 'unknown')} }, '*');
 		}
 	</script><p>OAuth failed: ${message ?? 'unknown'}</p></body></html>`;
 }
