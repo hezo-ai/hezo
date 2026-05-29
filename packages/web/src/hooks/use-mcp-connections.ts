@@ -36,6 +36,15 @@ export function useMcpConnection(teamId: string, connectorId: string | undefined
 		queryKey: ['teams', teamId, 'mcp-connections', 'detail', connectorId ?? null],
 		queryFn: () => api.get<McpConnection>(`/api/teams/${teamId}/mcp-connections/${connectorId}`),
 		enabled: !!connectorId,
+		// While the connector is pending or failed, poll every 2s so the UI flips
+		// to Connected even if the WebSocket invalidation / OAuth-popup postMessage
+		// is delayed. Stops polling once active or revoked.
+		refetchInterval: (query) => {
+			const data = query.state.data as McpConnection | undefined;
+			if (!data) return 2_000;
+			const status = connectorStatus(data);
+			return status === 'pending' || status === 'failed' ? 2_000 : false;
+		},
 	});
 }
 
