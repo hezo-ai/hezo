@@ -230,17 +230,35 @@ test.describe('Connector activation', () => {
 		await expect(connectComment).toBeVisible({ timeout: 20_000 });
 		await expect(connectComment.locator('[data-testid="connect-button"]')).toBeVisible();
 
-		// Click Connect — opens a popup. The fake AS auto-302s, our callback
-		// handler responds with the success page that calls window.close(). We
-		// don't try to drive the popup directly (it may close out from under us);
-		// instead we poll the connector status via API.
-		const popupPromise = page
-			.context()
-			.waitForEvent('page')
-			.catch(() => null);
-		await connectComment.locator('[data-testid="connect-button"]').click();
-		await popupPromise;
-		// Confirm the callback landed by checking the connector's status via API.
+		// Drive OAuth end-to-end via API. Skips the popup mechanic (CI Chromium
+		// blocks `window.open` from synthetic clicks and won't replay the postMessage
+		// path reliably) and instead replays the same HTTP flow the popup would have
+		// taken: auth-start → follow authorize URL → callback. The post-activation
+		// UI assertion below is the real subject of the test.
+		const authStartRes = await page.request.post(
+			`/api/teams/${sharedWorkspace.team.id}/connectors/${connectorId}/auth-start`,
+			{ headers, data: {} },
+		);
+		expect(authStartRes.ok()).toBeTruthy();
+		const { data: authStartData } = (await authStartRes.json()) as {
+			data: { auth_url: string };
+		};
+
+		// Follow the authorize URL: fake AS auto-302s back to the Hezo callback
+		// with code + state. Disable redirects so we can capture the bounce.
+		const authorizeRes = await page.request.get(authStartData.auth_url, {
+			maxRedirects: 0,
+		});
+		expect(authorizeRes.status()).toBe(302);
+		const callbackUrl = authorizeRes.headers().location;
+		expect(callbackUrl).toBeTruthy();
+
+		// Drive the callback. Hezo exchanges the code, marks the connector active,
+		// and fires CredentialProvided + the mcp_connections WS broadcast.
+		const callbackRes = await page.request.get(callbackUrl);
+		expect(callbackRes.status()).toBe(200);
+
+		// Confirm activation server-side.
 		await expect
 			.poll(
 				async () => {
