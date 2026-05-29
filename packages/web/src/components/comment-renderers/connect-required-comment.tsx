@@ -1,5 +1,6 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { Check, Plug } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
 	connectorStatus,
 	useConnectorAuthStart,
@@ -17,7 +18,26 @@ export function ConnectRequiredComment({ comment, teamId }: Props) {
 	const { connector_id, display_name, provider_id } = comment.content;
 	const connectorQuery = useMcpConnection(teamId ?? '', connector_id);
 	const authStart = useConnectorAuthStart(teamId ?? '');
+	const queryClient = useQueryClient();
 	const [error, setError] = useState<string | null>(null);
+
+	// Refetch the connector immediately when the OAuth popup signals success,
+	// without waiting for the WebSocket invalidation round-trip. The popup
+	// posts {type: 'hezo-oauth-success'} via window.opener.postMessage from
+	// the callback success page (see routes/oauth.ts:buildCallbackPage).
+	useEffect(() => {
+		if (!teamId) return;
+		const onMessage = (e: MessageEvent) => {
+			if (e.origin !== window.location.origin) return;
+			if (!e.data || typeof e.data !== 'object') return;
+			if ((e.data as { type?: string }).type !== 'hezo-oauth-success') return;
+			queryClient.invalidateQueries({
+				queryKey: ['teams', teamId, 'mcp-connections'],
+			});
+		};
+		window.addEventListener('message', onMessage);
+		return () => window.removeEventListener('message', onMessage);
+	}, [teamId, queryClient]);
 
 	if (!teamId) {
 		return (
