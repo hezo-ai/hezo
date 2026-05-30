@@ -1,9 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { McpConnectionKind } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
+import { type FakeMcpServer, startFakeMcpServer } from './helpers/fake-mcp-server';
 import { createGitHubSim, type GitHubSim } from './helpers/github-sim';
 
 let app: Hono<Env>;
@@ -11,19 +13,24 @@ let db: PGlite;
 let token: string;
 let teamId: string;
 let sim: GitHubSim;
+let fakeAS: FakeMcpServer;
 
 let prevApi: string | undefined;
-let prevOauth: string | undefined;
-let prevClient: string | undefined;
+const issuedToken = 'gho_unified_test_token';
 
 beforeAll(async () => {
 	sim = await createGitHubSim();
 	prevApi = process.env.GITHUB_API_BASE_URL;
-	prevOauth = process.env.GITHUB_OAUTH_BASE_URL;
-	prevClient = process.env.GITHUB_OAUTH_CLIENT_ID;
 	process.env.GITHUB_API_BASE_URL = sim.baseUrl;
-	process.env.GITHUB_OAUTH_BASE_URL = sim.baseUrl;
-	process.env.GITHUB_OAUTH_CLIENT_ID = 'test-client-id';
+
+	sim.seed({
+		token: issuedToken,
+		user: { id: 7, login: 'octo-e2e', avatar_url: 'http://av/octo.png', email: 'octo@e2e' },
+		signingKeys: [],
+		authKeys: [],
+	});
+
+	fakeAS = await startFakeMcpServer({ issueToken: issuedToken });
 
 	const ctx = await createTestApp();
 	app = ctx.app;
@@ -44,91 +51,109 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	process.env.GITHUB_API_BASE_URL = prevApi;
-	process.env.GITHUB_OAUTH_BASE_URL = prevOauth;
-	process.env.GITHUB_OAUTH_CLIENT_ID = prevClient;
 	await sim.destroy();
+	await fakeAS.close();
 	await safeClose(db);
 });
 
-describe('GitHub device-flow routes', () => {
-	it('drives the full device flow end-to-end: start → pending → approve → success persists a connection and registers signing key', async () => {
-		sim.seed({
-			token: 'gho_e2e_token',
-			user: { id: 7, login: 'octo-e2e', avatar_url: 'http://av/octo.png', email: 'octo@e2e' },
-			signingKeys: [],
-			authKeys: [],
-		});
+describe('GitHub unified connector (auth-code via MCP server)', () => {
+	it('drives the full auth-code flow: ensure → auth-start (registry scopes) → callback (oauth row + SSH key)', async () => {
+		// Override the GitHub MCP URL to point at our fake AS for this test —
+		// the production registry points at https://api.githubcopilot.com/mcp/
+		// which we can't reach from CI.
+		await db.query(
+			`INSERT INTO mcp_connections (team_id, name, display_name, kind, config, install_status)
+			 VALUES ($1, 'github', 'GitHub', $2::mcp_connection_kind, $3::jsonb, 'installed')`,
+			[teamId, McpConnectionKind.Saas, JSON.stringify({ url: `${fakeAS.url}/mcp` })],
+		);
+		const connRow = await db.query<{ id: string }>(
+			`SELECT id FROM mcp_connections WHERE team_id = $1 AND name = 'github'`,
+			[teamId],
+		);
+		const connectorId = connRow.rows[0].id;
 
-		const startRes = await app.request(`/api/teams/${teamId}/oauth/github/device-start`, {
+		// auth-start must produce an authorize URL with the capability registry's
+		// scope list — not the AS's broad `scopes_supported`.
+		const startRes = await app.request(`/api/teams/${teamId}/auth-start`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({}),
+			body: JSON.stringify({ connector_id: connectorId }),
 		});
 		expect(startRes.status).toBe(200);
-		const startBody = (await startRes.json()) as { data: { flow_id: string; user_code: string } };
-		const { flow_id: flowId, user_code: userCode } = startBody.data;
+		const { data: startData } = (await startRes.json()) as { data: { auth_url: string } };
 
-		const pendingRes = await app.request(`/api/teams/${teamId}/oauth/github/device-poll`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ flow_id: flowId }),
+		const startUrl = new URL(startData.auth_url);
+		const requestedScopes = (startUrl.searchParams.get('scope') ?? '').split(' ');
+		expect(requestedScopes).toEqual([
+			'repo',
+			'workflow',
+			'read:org',
+			'write:ssh_signing_key',
+			'write:public_key',
+		]);
+
+		// Follow the authorize URL — fake AS auto-approves and 302s with code+state.
+		const authorizeRes = await fetch(startData.auth_url, { redirect: 'manual' });
+		expect(authorizeRes.status).toBe(302);
+		const location = authorizeRes.headers.get('location')!;
+		const locUrl = new URL(location);
+		const code = locUrl.searchParams.get('code')!;
+		const state = locUrl.searchParams.get('state')!;
+
+		const cbRes = await app.request(
+			`/api/oauth/mcp-callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`,
+		);
+		expect(cbRes.status).toBe(200);
+		const html = await cbRes.text();
+		expect(html).toContain('OAuth connection complete');
+
+		// oauth_connections row landed with provider='github' and the user identity
+		// from github-sim, not a synthetic mcp:* account id.
+		const conn = await db.query<{
+			provider: string;
+			provider_account_id: string;
+			provider_account_label: string;
+		}>(
+			`SELECT provider, provider_account_id, provider_account_label
+			 FROM oauth_connections WHERE team_id = $1`,
+			[teamId],
+		);
+		expect(conn.rows.length).toBe(1);
+		expect(conn.rows[0]).toMatchObject({
+			provider: 'github',
+			provider_account_id: '7',
+			provider_account_label: 'octo-e2e',
 		});
-		expect(pendingRes.status).toBe(202);
-		expect(((await pendingRes.json()) as { data: { status: string } }).data.status).toBe('pending');
 
-		sim.approveDeviceFlow(userCode);
+		// The capability registry's allowed_hosts lands on the secret (egress proxy).
+		const secret = await db.query<{ allowed_hosts: string[] }>(
+			`SELECT s.allowed_hosts FROM oauth_connections oc
+			 JOIN secrets s ON s.id = oc.access_token_secret_id
+			 WHERE oc.team_id = $1`,
+			[teamId],
+		);
+		expect(secret.rows[0].allowed_hosts).toEqual([
+			'api.githubcopilot.com',
+			'api.github.com',
+			'github.com',
+		]);
 
-		const successRes = await app.request(`/api/teams/${teamId}/oauth/github/device-poll`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ flow_id: flowId }),
-		});
-		expect(successRes.status).toBe(200);
-		const successBody = (await successRes.json()) as {
-			data: {
-				status: string;
-				connection: {
-					provider: string;
-					provider_account_id: string;
-					provider_account_label: string;
-					metadata: Record<string, unknown>;
-				};
-			};
-		};
-		expect(successBody.data.status).toBe('success');
-		expect(successBody.data.connection.provider).toBe('github');
-		expect(successBody.data.connection.provider_account_id).toBe('7');
-		expect(successBody.data.connection.provider_account_label).toBe('octo-e2e');
-		expect(successBody.data.connection.metadata).toMatchObject({ login: 'octo-e2e' });
-
+		// SSH keys registered on the user's GitHub account.
 		expect(sim.state.signingKeys.length).toBe(1);
 		expect(sim.state.signingKeys[0].title).toBe('Hezo signing key');
-
 		expect(sim.state.authKeys.length).toBe(1);
 		expect(sim.state.authKeys[0].title).toBe('Hezo authentication key');
 		expect(sim.state.authKeys[0].key).toBe(sim.state.signingKeys[0].key);
 
-		const conn = await db.query<{ id: string }>(
-			`SELECT id FROM oauth_connections WHERE team_id = $1`,
-			[teamId],
-		);
-		expect(conn.rows.length).toBe(1);
-
-		const secret = await db.query<{ name: string; allowed_hosts: string[] }>(
-			`SELECT name, allowed_hosts FROM secrets WHERE team_id = $1 AND name LIKE 'OAUTH_GITHUB_%'`,
-			[teamId],
-		);
-		expect(secret.rows.length).toBe(1);
-		expect(secret.rows[0].allowed_hosts).toEqual(['github.com', 'api.github.com']);
-	});
-
-	it('rejects a poll with an unknown flow_id', async () => {
-		const res = await app.request(`/api/teams/${teamId}/oauth/github/device-poll`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ flow_id: 'bad' }),
-		});
-		expect(res.status).toBe(404);
+		// Connector marked active.
+		const conRow = await db.query<{
+			oauth_connection_id: string | null;
+			activated_at: string | null;
+		}>(`SELECT oauth_connection_id, activated_at FROM mcp_connections WHERE id = $1`, [
+			connectorId,
+		]);
+		expect(conRow.rows[0].oauth_connection_id).toBeTruthy();
+		expect(conRow.rows[0].activated_at).toBeTruthy();
 	});
 
 	it('lists connections — does not leak token values', async () => {
@@ -138,7 +163,7 @@ describe('GitHub device-flow routes', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { data: Array<Record<string, unknown>> };
 		expect(body.data.length).toBe(1);
-		expect(JSON.stringify(body.data[0])).not.toContain('gho_e2e_token');
+		expect(JSON.stringify(body.data[0])).not.toContain(issuedToken);
 		expect(body.data[0]).toMatchObject({
 			provider: 'github',
 			provider_account_label: 'octo-e2e',

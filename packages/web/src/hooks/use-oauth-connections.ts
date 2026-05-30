@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import type { McpConnection } from './use-mcp-connections';
 
 export interface OAuthConnection {
 	id: string;
@@ -14,25 +15,9 @@ export interface OAuthConnection {
 	updated_at: string;
 }
 
-export interface DeviceFlowStart {
-	flow_id: string;
-	user_code: string;
-	verification_uri: string;
-	expires_in: number;
-	interval: number;
+export interface AuthStartResult {
+	auth_url: string;
 }
-
-export interface DeviceFlowSuccess {
-	status: 'success';
-	connection: OAuthConnection;
-}
-
-export interface DeviceFlowPending {
-	status: 'pending';
-	retry_after: number;
-}
-
-export type DeviceFlowPollResult = DeviceFlowSuccess | DeviceFlowPending;
 
 export function useOAuthConnections(teamId: string) {
 	return useQuery({
@@ -52,12 +37,31 @@ export function useDeleteOAuthConnection(teamId: string) {
 	});
 }
 
-export function useStartGitHubDeviceFlow(teamId: string) {
+export function useAuthStart(teamId: string) {
 	return useMutation({
-		mutationFn: (scopes?: string[]) =>
-			api.post<DeviceFlowStart>(`/api/teams/${teamId}/oauth/github/device-start`, {
-				scopes: scopes ?? [],
+		mutationFn: (connectorId: string) =>
+			api.post<AuthStartResult>(`/api/teams/${teamId}/auth-start`, {
+				connector_id: connectorId,
 			}),
+	});
+}
+
+/**
+ * Idempotently materializes a connector row from the capability registry,
+ * returning the existing or newly-created row. Used by the project-settings
+ * GitHub section and the Connectors-page GitHub row so neither has to know
+ * how to construct the connector — they just say "ensure github" then call
+ * useAuthStart with the resulting id.
+ */
+export function useEnsureConnector(teamId: string) {
+	return useMutation({
+		mutationFn: (providerId: string) =>
+			api.post<McpConnection>(`/api/teams/${teamId}/connectors/ensure`, {
+				provider_id: providerId,
+			}),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] });
+		},
 	});
 }
 
@@ -74,27 +78,4 @@ export function useConnectionScopeStatus(teamId: string, connectionId: string | 
 			api.get<ScopeStatus>(`/api/teams/${teamId}/oauth-connections/${connectionId}/scope-status`),
 		enabled: !!connectionId,
 	});
-}
-
-export async function pollGitHubDeviceFlow(
-	teamId: string,
-	flowId: string,
-): Promise<DeviceFlowPollResult> {
-	const token = api.getToken();
-	const res = await fetch(`/api/teams/${teamId}/oauth/github/device-poll`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			...(token ? { Authorization: `Bearer ${token}` } : {}),
-		},
-		body: JSON.stringify({ flow_id: flowId }),
-	});
-	const json = (await res.json()) as { data?: DeviceFlowPollResult; error?: { message: string } };
-	if (!res.ok && res.status !== 202) {
-		throw new Error(json.error?.message ?? `device poll failed (${res.status})`);
-	}
-	if (json.data?.status === 'success') {
-		queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'oauth-connections'] });
-	}
-	return json.data as DeviceFlowPollResult;
 }

@@ -1,11 +1,11 @@
 # OAuth
 
-Hezo backend acts as a confidential OAuth client for both:
+Every third-party connection — GitHub included — is an **MCP connector** authorized via **authorization-code + PKCE** with Dynamic Client Registration (RFC 7591) against the provider's own Authorization Server. There is one code path; GitHub is not special-cased at the transport level, only at the post-OAuth side-effect level (SSH-key registration).
 
-1. **GitHub** — repo clone/fetch/push and signing-key registration. Uses **device flow** (no redirect URI, no client_secret).
-2. **MCP servers** that publish OAuth metadata per the MCP authorization spec (DatoCMS, Linear, Notion, etc.). Uses **authorization-code + PKCE** with a localhost callback.
+- **GitHub** — connects to the official remote GitHub MCP server (`https://api.githubcopilot.com/mcp/`). The issued token is a standard GitHub OAuth token, so it serves both the MCP tool surface (issues, PRs, search) **and** the REST helpers (repo listing/creation, SSH-key registration). One connection, both purposes.
+- **Other MCP servers** that publish OAuth metadata per the MCP authorization spec (DatoCMS, Linear, Notion, etc.) — same flow, no GitHub-specific side effects.
 
-There is **no separate hosted callback service**. The Hezo backend running locally (default `:3100`) handles every callback at `http://127.0.0.1:3100/api/oauth/callback`.
+There is **no separate hosted callback service** and **no Hezo-team-owned OAuth app**. Each Hezo instance self-registers as a public OAuth client via DCR and handles its own callback at `<this-host>/api/oauth/mcp-callback`.
 
 ## Storage
 
@@ -29,35 +29,32 @@ Tokens themselves never have their own column — they ride the existing `secret
 - name pattern: `OAUTH_<PROVIDER>_<8 hex prefix of connection id>` (and `_REFRESH` suffix for refresh tokens)
 - `category = 'api_token'`
 - `allowed_hosts` set automatically from the provider:
-  - github → `['github.com', 'api.github.com']`
-  - generic → host of the resource URL + token URL
+  - registry-backed connectors (e.g. github) → the capability's `allowedHosts` (github → `['api.githubcopilot.com', 'api.github.com', 'github.com']`)
+  - other → host of the resource URL + token URL
 - `allow_all_hosts = false` always
 
 That means OAuth tokens flow through the same egress placeholder mechanism as raw `request_credential` secrets. Agents emit `Authorization: Bearer __HEZO_SECRET_OAUTH_GITHUB_AB12CD34__`; the egress proxy substitutes at request time and audits the substitution by name.
 
 `mcp_connections.oauth_connection_id` and `repos.oauth_connection_id` are nullable FKs to `oauth_connections`. Deleting an OAuth connection cascades to nullify those FKs and removes the access/refresh secrets.
 
-## GitHub flow (device)
+## Unified connector flow (auth-code + PKCE + DCR)
 
-1. `POST /api/teams/:teamId/oauth/github/device-start` — backend calls `POST https://github.com/login/device/code` with the configured `client_id` (`GITHUB_OAUTH_CLIENT_ID` env, falls back to a public Hezo client_id). Persists the device_code server-side keyed by a short `flow_id`. Returns `{ flow_id, user_code, verification_uri, interval, expires_in }`.
-2. UI opens `verification_uri` in a new tab and shows `user_code` for the user to paste.
-3. UI polls `POST /api/teams/:teamId/oauth/github/device-poll { flow_id }`. Backend calls `POST /login/oauth/access_token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code`. While the user hasn't approved yet, returns 202 + `{ status: 'pending', retry_after }`.
-4. On success: backend calls `GET https://api.github.com/user` to get the GitHub login + user_id, creates (or upserts) an `oauth_connections` row, and registers the team's Ed25519 public key on the connecting user's GitHub account as **both** a signing key (`POST /user/ssh_signing_keys`) and an authentication key (`POST /user/keys`). Both registrations are idempotent — GitHub returns 422 "key is already in use" on repeat calls, which is treated as a no-op. The UI receives `{ status: 'success', connection: {...} }`.
+All connectors — GitHub and other MCP servers alike — go through this path.
 
-No `client_secret`. No redirect URI registration with GitHub.
+1. **Materialize the connector row.** For UI-initiated connects, `POST /api/teams/:teamId/connectors/ensure { provider_id }` idempotently creates (or returns) the `mcp_connections` row from the capability registry (`packages/shared/src/types/connector-capabilities.ts`). For agent-initiated connectors, `register_connector` writes the row. Either way the row carries the MCP server URL.
+2. `POST /api/teams/:teamId/auth-start { connector_id }`. Backend:
+   - Probes the MCP URL / discovers the Authorization Server via PRM (RFC 9728) + AS metadata (RFC 8414) through `discoverMcpAuthorization`, or reuses the cached `config.dcr`.
+   - **Dynamic Client Registration** (RFC 7591) via `registerClient` if not already cached — self-registers as a public client with `redirect_uri = <this-host>/api/oauth/mcp-callback`.
+   - **Scope selection**: if the connector's registry capability defines an explicit `scopes` list, that overrides the AS's advertised `scopes_supported`. GitHub's entry requests `repo workflow read:org write:ssh_signing_key write:public_key` — without the override, GitHub's AS advertises every OAuth scope and the consent screen is unreviewable.
+   - PKCE-signs an HMAC state envelope (`signState` in `services/oauth/state.ts`) carrying `teamId`, the PKCE `code_verifier`, the provider config, and the `mcpConnectionId` link target. Returns `{ auth_url }`.
+3. UI opens `auth_url` in a pop-up. User authorizes at the provider; provider redirects to `GET /api/oauth/mcp-callback?code=…&state=…` (public route — auth is the signed state).
+4. Backend verifies state, exchanges the code at the AS token endpoint (`grant_type=authorization_code` + PKCE verifier + DCR-issued `client_id`, no `client_secret`), creates an `oauth_connections` row, and calls `markActive(connectorId, oauthConnectionId)`.
+5. **GitHub carve-out**: when the connector resolves to the `github` capability, the callback additionally calls `GET /user` to populate the `oauth_connections` row with the GitHub identity (so `provider = 'github'` and downstream `provider === 'github'` filters match), and registers the team's Ed25519 public key on the connecting user's account as **both** a signing key (`POST /user/ssh_signing_keys`) and an authentication key (`POST /user/keys`). Both registrations are idempotent — GitHub returns 422 "key is already in use" on repeat calls, treated as a no-op. This is the only provider-specific branch in the callback.
+6. Backend fires a `CredentialProvided` wakeup on the calling task's assignee (if any), then returns an HTML page that posts `hezo-oauth-success` / `hezo-oauth-error` to `window.opener` and closes itself. If there's no opener, redirects to `state.return_to`.
 
-## Generic auth-code + PKCE flow (MCP, etc.)
+State is short-lived (15 minutes) and tamper-proof: any modification to the payload invalidates the HMAC. No `client_secret` anywhere — every client is a DCR-registered public client.
 
-1. `POST /api/teams/:teamId/oauth/auth-code/start { provider, server_url?, manual_config?, scopes?, return_to?, mcp_connection_id?, mcp_connection_name? }`.
-   - `server_url`: backend fetches `<base>/.well-known/oauth-authorization-server` (RFC 8414) and falls back to `/.well-known/openid-configuration` to discover `authorization_endpoint` and `token_endpoint`.
-   - `manual_config`: `{ authorize_url, token_url, client_id, client_secret?, scopes }` for non-spec-compliant providers. Required even with `server_url` until Dynamic Client Registration is implemented (we still need a `client_id` to register).
-2. Backend signs an HMAC state envelope (`signState` in `services/oauth/state.ts`) using `MasterKeyManager.deriveKey('oauth_state')`. The envelope carries `teamId`, `provider`, the PKCE `code_verifier`, the discovered/manual provider config, and the optional `mcp_connection_id` link target. Returns `{ auth_url }` to open in a new browser tab.
-3. User authorizes at the provider; provider redirects to `GET /api/oauth/callback?code=…&state=…` (public route — auth is the signed state).
-4. Backend verifies state, calls the token endpoint with `grant_type=authorization_code` + the PKCE verifier, parses `access_token`/`refresh_token`/`expires_in`, creates an `oauth_connections` row.
-5. If the state's payload includes `mcp_connection_id`, backend updates `mcp_connections.oauth_connection_id` to point at the new row.
-6. Callback returns an HTML page that posts a message to `window.opener` (`hezo-oauth-success` or `hezo-oauth-error`) and closes itself. If there's no opener, redirects to `state.return_to`.
-
-State is short-lived (15 minutes) and tamper-proof: any modification to the payload invalidates the HMAC.
+The legacy `manual_config`-based `POST /api/teams/:teamId/oauth/auth-code/start` + `GET /api/oauth/callback` path stays for any external operator-supplied MCP that doesn't follow the PRM/DCR pattern (rare); it does not gate the unified flow.
 
 ## Refresh
 
@@ -77,10 +74,11 @@ Secret allowed_hosts gate substitution: a leak attempt to the wrong host (e.g. e
 
 | route | purpose |
 |---|---|
-| `POST /api/teams/:teamId/oauth/github/device-start` | begin GitHub device flow |
-| `POST /api/teams/:teamId/oauth/github/device-poll` | poll the device flow until token is issued |
-| `POST /api/teams/:teamId/oauth/auth-code/start` | begin auth-code+PKCE for a generic/MCP provider |
-| `GET  /api/oauth/callback` | public callback for auth-code; redirects to `state.return_to` on success |
+| `POST /api/teams/:teamId/connectors/ensure` | idempotently materialize a connector row from the capability registry (UI "Connect" buttons) |
+| `POST /api/teams/:teamId/auth-start` | begin auth-code+PKCE+DCR for an MCP connector; returns `{ auth_url }` |
+| `GET  /api/oauth/mcp-callback` | public callback for the connector flow; exchanges code, marks connector active, fires wakeup |
+| `POST /api/teams/:teamId/oauth/auth-code/start` | legacy `manual_config` auth-code start (operator-supplied non-DCR MCPs) |
+| `GET  /api/oauth/callback` | legacy public callback for the `manual_config` path |
 | `GET  /api/teams/:teamId/oauth-connections` | list connections (no token values) |
 | `DELETE /api/teams/:teamId/oauth-connections/:id` | revoke + cascade-null FKs |
 | `GET  /api/teams/:teamId/oauth-connections/:id/orgs` | list GitHub orgs the connection can access |
@@ -89,20 +87,34 @@ Secret allowed_hosts gate substitution: a leak attempt to the wrong host (e.g. e
 
 ## Config
 
-The OAuth App client_id is selected automatically: `NODE_ENV=production` → prod App, otherwise dev App. Both client_ids are hardcoded in `provider-github.ts` (`DEV_CLIENT_ID` / `PROD_CLIENT_ID`) — OAuth client_ids on public device-flow clients are not secrets. Both Apps must have **Enable Device Flow** ticked in their GitHub settings; otherwise `POST /login/device/code` returns 404 + `{"error":"Not Found"}`. The OAuth App requests `repo`, `workflow`, `read:org`, `write:ssh_signing_key`, and `write:public_key` scopes (`DEFAULT_SCOPES`). The last two are required to register the team's Ed25519 key as a GitHub signing key and authentication key, respectively. `repo` and `read:org` are used for REST API calls (listing/creating repos and orgs).
+There is no operator-created GitHub OAuth App. Each Hezo instance self-registers as a public OAuth client against the GitHub MCP server's Authorization Server via DCR; the registered client_id caches in `mcp_connections.config.dcr`. The GitHub connector requests `repo`, `workflow`, `read:org`, `write:ssh_signing_key`, and `write:public_key` scopes (the `github` capability's `scopes` list). The last two register the team's Ed25519 key as a GitHub signing key and authentication key respectively; `repo` and `read:org` drive REST API calls (listing/creating repos and orgs).
+
+> **Note**: the GitHub MCP server gates some tools on a GitHub Copilot subscription. The OAuth flow and SSH-based git ops (which use the REST API, not the MCP) work without one; MCP *tool calls* return 402/403 if the account lacks Copilot.
 
 | env var | default | purpose |
 |---|---|---|
-| `GITHUB_OAUTH_CLIENT_ID` | unset | override the auto-selected client_id (use when testing OAuth flow changes against a throwaway App, or self-hosting with your own App) |
-| `GITHUB_OAUTH_BASE_URL` | `https://github.com` | overridden in tests by `github-sim` |
-| `GITHUB_API_BASE_URL` | `https://api.github.com` | same |
+| `GITHUB_API_BASE_URL` | `https://api.github.com` | REST base for account fetch + key registration; overridden in tests by `github-sim` |
 
 ## Tests
 
 - `oauth-connection-store.test.ts` — CRUD, secret encryption, cascade-null, upsert
 - `oauth-token-resolver.test.ts` — refresh on expiry, no-refresh without refresh_token, far-from-expiry skip, concurrent coalescing, swallow upstream errors
 - `oauth-state.test.ts` — sign/verify round-trip, tampering rejection, expiry
-- `oauth-github-provider.test.ts` — device start/poll, account fetch, signing-key registration
-- `oauth-github-routes.test.ts` — full device flow end-to-end against `github-sim`, list, delete, cross-team isolation
+- `oauth-github-provider.test.ts` — GitHub REST helpers: account fetch, signing-/auth-key registration, idempotent re-registration
+- `oauth-github-routes.test.ts` — full GitHub auth-code flow end-to-end (ensure → auth-start with registry scopes → callback creates `provider='github'` row + registers SSH keys), list, delete, cross-team isolation, all against `github-sim` + a fake AS
+- `connectors.test.ts` — DCR + auth-start + callback for a generic MCP connector against the fake MCP server
+- `mcp-connections.test.ts` — `connectors/ensure` idempotency + unknown-provider rejection
 - `oauth-generic-provider.test.ts` — metadata discovery, authorize URL building, code exchange, error handling
 - `oauth-mcp-injection.test.ts` — `mcp_connections.oauth_connection_id` → injector emits placeholder Authorization header
+
+## Trust boundaries
+
+- No central Hezo Connect relay. Callbacks land on the individual Hezo instance's own URL — same host the user is already on for the UI.
+- No Hezo-team-owned OAuth apps. DCR per-instance, per-connector, public-client — including GitHub.
+- DCR-issued tokens flow through the existing `oauth_connections` + `secrets` + egress-substitution pipeline; no new substrate.
+
+**Failure modes**:
+- AS doesn't support DCR (no `registration_endpoint` in metadata) → 400, surfaced as `auth_error` on the connector.
+- Token exchange fails (AS rejects PKCE / redirect_uri mismatch) → connector marked `failed` with the AS's error message in `auth_error`; user can click Retry.
+- GitHub account fetch fails after token exchange → connector marked `failed`; the partial token is discarded.
+- MCP server doesn't issue 401 with PRM → discovery falls back to the well-known PRM path; if that 404s too, discovery fails and the connector is not auth-able.

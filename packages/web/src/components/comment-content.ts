@@ -99,6 +99,13 @@ export interface CredentialRequestContent {
 	scope?: string;
 }
 
+export interface ConnectRequiredContent {
+	connector_id: string;
+	display_name: string;
+	provider_id?: string;
+	skill_doc_slug?: string;
+}
+
 /**
  * Discriminated map: content shape per `content_type`. Adding a new
  * `CommentContentType` here is a compile error in the renderer registry
@@ -113,6 +120,7 @@ export type CommentContentByType = {
 	[CommentContentType.Run]: RunContent;
 	[CommentContentType.Action]: ActionContent;
 	[CommentContentType.CredentialRequest]: CredentialRequestContent;
+	[CommentContentType.ConnectRequired]: ConnectRequiredContent;
 };
 
 /**
@@ -147,6 +155,7 @@ export type CommentChosenByType = {
 	[CommentContentType.Run]: null;
 	[CommentContentType.Action]: ActionChosen | null;
 	[CommentContentType.CredentialRequest]: CredentialRequestChosen | null;
+	[CommentContentType.ConnectRequired]: null;
 };
 
 /** Per-tool input/output shape — JSONB; renderers don't narrow further. */

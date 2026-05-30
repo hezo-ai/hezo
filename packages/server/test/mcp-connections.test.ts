@@ -1,5 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { MasterKeyManager } from '../src/crypto/master-key';
 import {
 	loadMcpConnectionDescriptors,
 	loadMcpConnectionsForRun,
@@ -11,11 +12,13 @@ let db: PGlite;
 let teamId: string;
 let projectId: string;
 let token: string;
+let masterKeyManager: MasterKeyManager;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
 	db = ctx.db;
 	token = ctx.token;
+	masterKeyManager = ctx.masterKeyManager;
 
 	const teamRes = await ctx.app.request('/api/teams', {
 		method: 'POST',
@@ -114,6 +117,61 @@ describe('mcp_connections REST routes', () => {
 	});
 });
 
+describe('POST /teams/:teamId/connectors/ensure', () => {
+	it('creates a connector from the registry on first call, returns the same row on second', async () => {
+		const ctx = await createTestApp();
+		const co = await ctx.app.request('/api/teams', {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Ensure Co' }),
+		});
+		const cid = (await co.json()).data.id;
+
+		const first = await ctx.app.request(`/api/teams/${cid}/connectors/ensure`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider_id: 'github' }),
+		});
+		expect(first.status).toBe(200);
+		const firstRow = (await first.json()).data as {
+			id: string;
+			name: string;
+			config: { url: string };
+		};
+		expect(firstRow.name).toBe('github');
+		expect(firstRow.config.url).toBe('https://api.githubcopilot.com/mcp/');
+
+		const second = await ctx.app.request(`/api/teams/${cid}/connectors/ensure`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider_id: 'github' }),
+		});
+		expect(second.status).toBe(200);
+		const secondRow = (await second.json()).data as { id: string };
+		expect(secondRow.id).toBe(firstRow.id);
+
+		await safeClose(ctx.db);
+	});
+
+	it('rejects unknown provider_id', async () => {
+		const ctx = await createTestApp();
+		const co = await ctx.app.request('/api/teams', {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Unknown Co' }),
+		});
+		const cid = (await co.json()).data.id;
+
+		const res = await ctx.app.request(`/api/teams/${cid}/connectors/ensure`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider_id: 'not-a-real-provider' }),
+		});
+		expect(res.status).toBe(404);
+		await safeClose(ctx.db);
+	});
+});
+
 describe('loadMcpConnectionDescriptors', () => {
 	it('returns saas connections as http descriptors', async () => {
 		await db.query(
@@ -121,7 +179,7 @@ describe('loadMcpConnectionDescriptors', () => {
 			 VALUES ($1, NULL, 'service-a', 'saas', $2::jsonb, 'installed')`,
 			[teamId, JSON.stringify({ url: 'https://service-a.example/mcp', headers: { 'x-key': 'v' } })],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId);
+		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
 		const a = descriptors.find((d) => d.name === 'service-a');
 		expect(a).toBeDefined();
 		expect(a?.kind).toBe('http');
@@ -137,7 +195,7 @@ describe('loadMcpConnectionDescriptors', () => {
 			 VALUES ($1, NULL, 'pending-local', 'local', $2::jsonb, 'pending')`,
 			[teamId, JSON.stringify({ command: 'npx', args: ['-y', 'pkg'] })],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId);
+		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
 		expect(descriptors.find((d) => d.name === 'pending-local')).toBeUndefined();
 	});
 
@@ -147,7 +205,7 @@ describe('loadMcpConnectionDescriptors', () => {
 			 VALUES ($1, NULL, 'installed-local', 'local', $2::jsonb, 'installed')`,
 			[teamId, JSON.stringify({ command: '/usr/bin/foo', args: ['x'], env: { K: 'v' } })],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId);
+		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
 		const local = descriptors.find((d) => d.name === 'installed-local');
 		expect(local?.kind).toBe('stdio');
 		if (local?.kind === 'stdio') {

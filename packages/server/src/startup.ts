@@ -36,6 +36,7 @@ import { preferencesRoutes } from './routes/preferences';
 import { previewRoutes } from './routes/preview';
 import { projectDocsRoutes } from './routes/project-docs';
 import { projectsRoutes } from './routes/projects';
+import { queuedWakeupsRoutes } from './routes/queued-wakeups';
 import { reposRoutes } from './routes/repos';
 import { searchRoutes } from './routes/search';
 import { secretsRoutes } from './routes/secrets';
@@ -290,6 +291,7 @@ export function buildApp(
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', reposRoutes);
 	app.route('/api', executionLocksRoutes);
+	app.route('/api', queuedWakeupsRoutes);
 	app.route('/api', auditLogRoutes);
 	app.route('/api', mcpConnectionsRoutes);
 	app.route('/api', oauthRoutes);

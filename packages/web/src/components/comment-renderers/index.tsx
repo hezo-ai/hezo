@@ -2,6 +2,7 @@ import { CommentContentType } from '@hezo/shared';
 import type { ComponentType } from 'react';
 import { ActionComment } from './action-comment';
 import type { CommentData, CommentDataOf } from './comment-data';
+import { ConnectRequiredComment } from './connect-required-comment';
 import { CredentialRequestComment } from './credential-request-comment';
 import { OptionsComment } from './options-comment';
 import { PreviewComment } from './preview-comment';
@@ -63,6 +64,9 @@ const renderers: RendererRegistry = {
 	[CommentContentType.CredentialRequest]: ({ comment, teamId, taskId }) => (
 		<CredentialRequestComment comment={comment} teamId={teamId} taskId={taskId} />
 	),
+	[CommentContentType.ConnectRequired]: ({ comment, teamId }) => (
+		<ConnectRequiredComment comment={comment} teamId={teamId} />
+	),
 };
 
 export function CommentRenderer(props: RenderProps) {
@@ -105,6 +109,10 @@ function dispatch(props: RenderProps) {
 		}
 		case CommentContentType.CredentialRequest: {
 			const C = renderers[CommentContentType.CredentialRequest];
+			return <C {...props} comment={comment} />;
+		}
+		case CommentContentType.ConnectRequired: {
+			const C = renderers[CommentContentType.ConnectRequired];
 			return <C {...props} comment={comment} />;
 		}
 		default: {

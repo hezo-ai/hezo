@@ -1,6 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { McpConnectionKind, type McpInstallStatus } from '@hezo/shared';
-import { credentialPlaceholder } from '../lib/credential-placeholder';
+import type { MasterKeyManager } from '../crypto/master-key';
 import { logger } from '../logger';
 import type { McpDescriptor } from './mcp-injectors';
 
@@ -9,6 +9,18 @@ const log = logger.child('mcp-connections');
 export interface SaasMcpConfig {
 	url: string;
 	headers?: Record<string, string>;
+	/**
+	 * DCR (RFC 7591) registration metadata stored after the connector's first
+	 * auth-start. Lets re-authorization (after revoke/expiry) reuse the same
+	 * client_id at the same Authorization Server without re-registering.
+	 */
+	dcr?: {
+		client_id: string;
+		authorization_server_url: string;
+		authorization_endpoint: string;
+		token_endpoint: string;
+		scopes_supported?: string[];
+	};
 }
 
 export interface LocalMcpConfig {
@@ -44,6 +56,11 @@ export async function loadMcpConnectionsForRun(
 	teamId: string,
 	projectId: string,
 ): Promise<McpConnectionRow[]> {
+	// Filters: skip revoked (user disconnected); skip our connector-flow rows
+	// that haven't completed OAuth yet (saas + created_by_task_id IS NOT NULL
+	// + oauth_connection_id IS NULL). Operator-created saas rows without
+	// created_by_task_id continue to be included regardless of OAuth state
+	// (existing behavior for public MCPs).
 	const result = await db.query<McpConnectionRow>(
 		`SELECT id, team_id, project_id, name, kind::text AS kind,
 		        config, oauth_connection_id, install_status::text AS install_status, install_error,
@@ -51,6 +68,8 @@ export async function loadMcpConnectionsForRun(
 		 FROM mcp_connections
 		 WHERE team_id = $1
 		   AND (project_id IS NULL OR project_id = $2)
+		   AND revoked_at IS NULL
+		   AND NOT (kind = 'saas' AND created_by_task_id IS NOT NULL AND oauth_connection_id IS NULL)
 		 ORDER BY project_id NULLS FIRST`,
 		[teamId, projectId],
 	);
@@ -60,32 +79,58 @@ export async function loadMcpConnectionsForRun(
 	return [...out.values()];
 }
 
-interface OAuthSecretLookup {
-	connectionId: string;
-	secretName: string;
-}
-
 /**
- * Build a lookup map oauthConnectionId → access token secret name. Used by
- * the descriptor builder so each MCP injection can substitute the correct
- * placeholder header at proxy time.
+ * Build a lookup map oauthConnectionId → {secretName, decryptedAccessToken}.
+ * We materialize the token at descriptor-build time and emit it directly in
+ * the MCP descriptor's Authorization header rather than relying on an
+ * egress-proxy placeholder substitution: Claude Code (and similar adapters)
+ * make their MCP-startup HTTP calls through an `undici` client whose
+ * `EnvHttpProxyAgent` activation we can't always guarantee in CI/container
+ * environments. The AI-adapter API key follows the same materialize-at-launch
+ * carve-out (see services/agent-runner.ts:buildProviderEnv); the run-scoped
+ * container is ephemeral, the vault remains the long-term store, and each
+ * run materializes a fresh value (so revocation still cascades on next run).
  */
-async function loadOAuthSecretNamesForTeam(
+async function loadOAuthSecretsForTeam(
 	db: PGlite,
 	teamId: string,
-): Promise<Map<string, string>> {
-	const out = new Map<string, string>();
-	const result = await db.query<OAuthSecretLookup>(
-		`SELECT oc.id AS connection_id, s.name AS secret_name
+	masterKeyManager: MasterKeyManager,
+): Promise<Map<string, { secretName: string; accessToken: string | null }>> {
+	const out = new Map<string, { secretName: string; accessToken: string | null }>();
+	const key = masterKeyManager.getKey();
+	const result = await db.query<{
+		connection_id: string;
+		secret_name: string;
+		encrypted_value: string;
+	}>(
+		`SELECT oc.id AS connection_id, s.name AS secret_name, s.encrypted_value
 		 FROM oauth_connections oc
 		 JOIN secrets s ON s.id = oc.access_token_secret_id
 		 WHERE oc.team_id = $1`,
 		[teamId],
 	);
+	if (!key) {
+		// Master key locked: log per-row and emit no token. Caller falls through
+		// to placeholder mode (which is also broken in this state, but at least
+		// the descriptor is still built so the failure mode is "401 from upstream"
+		// rather than "MCP missing from config entirely").
+		for (const row of result.rows) {
+			out.set(row.connection_id, { secretName: row.secret_name, accessToken: null });
+		}
+		return out;
+	}
+	const { decrypt } = await import('../crypto/encryption');
 	for (const row of result.rows) {
-		const connectionId = (row as unknown as { connection_id: string }).connection_id;
-		const secretName = (row as unknown as { secret_name: string }).secret_name;
-		out.set(connectionId, secretName);
+		let accessToken: string | null = null;
+		try {
+			accessToken = decrypt(row.encrypted_value, key);
+		} catch (e) {
+			log.warn('could not decrypt oauth access token; descriptor will use placeholder', {
+				connection_id: row.connection_id,
+				error: (e as Error).message,
+			});
+		}
+		out.set(row.connection_id, { secretName: row.secret_name, accessToken });
 	}
 	return out;
 }
@@ -99,9 +144,10 @@ export async function loadMcpConnectionDescriptors(
 	db: PGlite,
 	teamId: string,
 	projectId: string,
+	masterKeyManager: MasterKeyManager,
 ): Promise<McpDescriptor[]> {
 	const rows = await loadMcpConnectionsForRun(db, teamId, projectId);
-	const oauthSecretNames = await loadOAuthSecretNamesForTeam(db, teamId);
+	const oauthSecrets = await loadOAuthSecretsForTeam(db, teamId, masterKeyManager);
 	const descriptors: McpDescriptor[] = [];
 	for (const row of rows) {
 		if (row.kind === McpConnectionKind.Saas) {
@@ -111,18 +157,44 @@ export async function loadMcpConnectionDescriptors(
 				continue;
 			}
 			let headers = { ...(config.headers ?? {}) };
+			let host = '';
+			try {
+				host = new URL(config.url).host;
+			} catch {
+				log.warn('skipping saas mcp connection with malformed url', {
+					id: row.id,
+					name: row.name,
+					url: config.url,
+				});
+				continue;
+			}
 			if (row.oauth_connection_id) {
-				const secretName = oauthSecretNames.get(row.oauth_connection_id);
-				if (secretName) {
+				const entry = oauthSecrets.get(row.oauth_connection_id);
+				if (entry && entry.accessToken) {
 					headers = stripExistingAuth(headers);
-					headers.Authorization = `Bearer ${credentialPlaceholder(secretName)}`;
+					headers.Authorization = `Bearer ${entry.accessToken}`;
+					log.info('mcp descriptor built with materialized oauth token', {
+						name: row.name,
+						url: config.url,
+						host,
+						secret_name: entry.secretName,
+						token_prefix: entry.accessToken.slice(0, 8),
+						token_length: entry.accessToken.length,
+					});
 				} else {
-					log.warn('mcp connection references missing oauth_connection_id; skipping', {
+					log.warn('mcp connection references missing oauth secret; skipping', {
 						id: row.id,
 						oauth_connection_id: row.oauth_connection_id,
+						secret_name: entry?.secretName,
 					});
 					continue;
 				}
+			} else {
+				log.info('mcp descriptor built without oauth (no oauth_connection_id)', {
+					name: row.name,
+					url: config.url,
+					host,
+				});
 			}
 			descriptors.push({
 				kind: 'http',

@@ -1,10 +1,11 @@
-import { McpConnectionKind, wsRoom } from '@hezo/shared';
+import { getConnectorCapability, McpConnectionKind, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { createOrFetchConnector } from '../services/connectors/lifecycle';
 import { installLocalMcpById } from '../services/mcp-installer';
 
 const log = logger.child('mcp-connections-route');
@@ -23,8 +24,9 @@ mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections', async (c) => {
 		params.push(projectId);
 	}
 	const result = await db.query(
-		`SELECT id, team_id, project_id, name, kind::text AS kind,
+		`SELECT id, team_id, project_id, name, display_name, kind::text AS kind,
 		        config, oauth_connection_id, install_status::text AS install_status, install_error,
+		        skill_doc_id, created_by_task_id, activated_at, revoked_at, auth_error,
 		        created_at, updated_at
 		 FROM mcp_connections
 		 WHERE ${where}
@@ -32,6 +34,52 @@ mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections', async (c) => {
 		params,
 	);
 	return ok(c, result.rows);
+});
+
+mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections/:id', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const id = c.req.param('id');
+	const result = await db.query(
+		`SELECT id, team_id, project_id, name, display_name, kind::text AS kind,
+		        config, oauth_connection_id, install_status::text AS install_status, install_error,
+		        skill_doc_id, created_by_task_id, activated_at, revoked_at, auth_error,
+		        created_at, updated_at
+		 FROM mcp_connections
+		 WHERE id = $1 AND team_id = $2`,
+		[id, teamId],
+	);
+	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
+	return ok(c, result.rows[0]);
+});
+
+mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections/:id/revoke', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const id = c.req.param('id');
+	const { markRevoked } = await import('../services/connectors/lifecycle');
+	const existing = await db.query<{ team_id: string; oauth_connection_id: string | null }>(
+		`SELECT team_id, oauth_connection_id FROM mcp_connections WHERE id = $1`,
+		[id],
+	);
+	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
+	if (existing.rows[0].team_id !== teamId)
+		return err(c, 'FORBIDDEN', 'connector does not belong to this team', 403);
+	const row = await markRevoked(db, id);
+	if (existing.rows[0].oauth_connection_id) {
+		const { deleteConnection } = await import('../services/oauth/connection-store');
+		const masterKeyManager = c.get('masterKeyManager');
+		await deleteConnection({ db, masterKeyManager }, existing.rows[0].oauth_connection_id).catch(
+			(e) =>
+				log.warn('failed to delete oauth_connection on revoke', { error: (e as Error).message }),
+		);
+	}
+	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
+		id,
+		team_id: teamId,
+		status: 'revoked',
+	});
+	return ok(c, row);
 });
 
 mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections', async (c) => {
@@ -151,6 +199,39 @@ async function kickoffLocalInstall(
 		}
 	}
 }
+
+/**
+ * Idempotently materialize a connector row from the capability registry.
+ * Used by the UI's "Connect <provider>" buttons (project settings page,
+ * connectors page) so the user never has to manually create the row before
+ * starting auth. Same shape as the `register_connector` MCP tool, just
+ * keyed on the registry id instead of free-form input.
+ */
+mcpConnectionsRoutes.post('/teams/:teamId/connectors/ensure', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const body = (await c.req.json().catch(() => ({}))) as { provider_id?: string };
+	const providerId = body.provider_id?.trim();
+	if (!providerId) return err(c, 'INVALID_REQUEST', 'provider_id is required', 400);
+	const capability = getConnectorCapability(providerId);
+	if (!capability)
+		return err(c, 'NOT_FOUND', `no registered capability for provider_id=${providerId}`, 404);
+	if (!capability.mcpServer.url)
+		return err(c, 'INVALID_REQUEST', `provider ${providerId} has no MCP server url`, 400);
+
+	const { row, alreadyExisted } = await createOrFetchConnector(db, {
+		teamId,
+		name: capability.id,
+		displayName: capability.displayName,
+		mcpUrl: capability.mcpServer.url,
+		mcpTransport: capability.mcpServer.transport,
+		providerId: capability.id,
+	});
+	if (!alreadyExisted) {
+		broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'INSERT', { id: row.id });
+	}
+	return ok(c, row);
+});
 
 mcpConnectionsRoutes.delete('/teams/:teamId/mcp-connections/:id', async (c) => {
 	const teamId = c.get('teamId') as string;

@@ -46,6 +46,30 @@ The agent's next env emits `STRIPE_API_KEY=__HEZO_SECRET_STRIPE_API_KEY__` (or w
 
 GitHub access (clone/fetch/push) and SaaS-MCP authentication go through OAuth, not `request_credential`. The full design is in `.dev/oauth.md`. Mechanically, an OAuth connection persists its access token (and any refresh token) into the same `secrets` table — name pattern `OAUTH_<PROVIDER>_<8 hex>`, automatically `allowed_hosts`-locked to the provider's hosts. From the egress proxy's perspective, OAuth tokens are just secrets like any other; the placeholder substitution path is identical, the audit log records them by name, and revoking the OAuth connection deletes the underlying secret rows.
 
+## MCP server connectors (third-party MCPs with OAuth)
+
+When an agent needs a third-party MCP server (DatoCMS, Linear, Vercel, …), it calls `register_connector` with the MCP URL and optionally a `skill_doc_id` from `fetch_skill_file`. The tool:
+
+1. Creates a row in `mcp_connections` (kind=`saas`, `created_by_task_id` set, `oauth_connection_id` NULL — i.e. **pending**).
+2. Posts a `connect_required` comment on the agent's task with a **Connect** button.
+3. Returns the placeholder + status; the agent ends its turn waiting on a `credential_provided` wakeup.
+
+The human clicks Connect (in the task chat, or on the team Connectors page at `/teams/:teamId/connectors`). Hezo's backend runs the full OAuth dance in the user's actual browser:
+
+- **PRM discovery** (RFC 9728) — probe the MCP URL, parse `WWW-Authenticate: Bearer resource_metadata="…"`, fetch the resource metadata document.
+- **AS metadata** (RFC 8414) — fetch `/.well-known/oauth-authorization-server` for `authorization_endpoint`, `token_endpoint`, `registration_endpoint`.
+- **Dynamic Client Registration** (RFC 7591) — POST to `registration_endpoint` with `redirect_uris: ["https://<this-hezo-host>/api/oauth/mcp-callback"]`, `token_endpoint_auth_method: "none"` (public client + PKCE). The issued `client_id` is cached in `mcp_connections.config.dcr` so re-auth reuses the same registration.
+- **PKCE authorize + token exchange** — same envelope helpers as the existing OAuth path (`services/oauth/state.ts`, `services/oauth/provider-generic.ts`).
+- **Activation** — token stored as a secret, `mcp_connections.oauth_connection_id` set, `activated_at` stamped, `credential_provided` wakeup fired on the calling task's assignee.
+
+Subsequent agent runs (any project in the team) get the MCP injected into their adapter's config via the existing `loadMcpConnectionDescriptors` path. The header carries the `__HEZO_SECRET_OAUTH_…__` placeholder; the egress proxy substitutes at request time.
+
+**Why this needs no central relay**: DCR removes the "must pre-register a callback URL per OAuth app" constraint. Each Hezo instance acts as its own OAuth client; the callback URL is whatever host the user is already on for the UI (`localhost:3100`, `hezo.mycompany.com`, …). Browser-reachable by definition.
+
+Pending and revoked connectors are excluded from the agent runtime by `loadMcpConnectionsForRun` so an agent never sees an MCP it can't authenticate against.
+
+Agent skill files (`AGENTS.md`-style markdown a provider ships alongside its MCP server) are fetched via `fetch_skill_file`, stored as `documents` of `type='mcp_skill'`, and written into the adapter's skills directory at each run start (Claude Code: `~/.claude/skills/<slug>.md`).
+
 The egress proxy's `loadSecretsForScope` calls `refreshExpiringTokensForTeam` on every outbound request — tokens within 60s of expiry refresh through their provider's registered refresh function before the substitution fires.
 
 ## Why placeholders, not real values in env

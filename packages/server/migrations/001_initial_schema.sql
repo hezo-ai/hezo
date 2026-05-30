@@ -48,7 +48,7 @@ CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopping', 'stopped', 'error');
 CREATE TYPE task_status AS ENUM ('backlog', 'in_progress', 'review', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE task_priority AS ENUM ('urgent', 'high', 'medium', 'low');
-CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run', 'action', 'credential_request');
+CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run', 'action', 'credential_request', 'connect_required');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'team');
@@ -415,16 +415,26 @@ CREATE TABLE mcp_connections (
     team_id              UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
     name                 TEXT NOT NULL,
+    display_name         TEXT,
     kind                 mcp_connection_kind NOT NULL,
     config               JSONB NOT NULL DEFAULT '{}'::jsonb,
     oauth_connection_id  UUID REFERENCES oauth_connections(id) ON DELETE SET NULL,
     install_status       mcp_install_status NOT NULL DEFAULT 'pending',
     install_error        TEXT,
+    -- skill_doc_id and created_by_task_id FKs added later (forward refs to documents/tasks)
+    skill_doc_id         UUID,
+    created_by_task_id   UUID,
+    activated_at         TIMESTAMPTZ,
+    revoked_at           TIMESTAMPTZ,
+    auth_error           TEXT,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     UNIQUE (team_id, project_id, name)
 );
+CREATE INDEX idx_mcp_connections_pending_auth
+    ON mcp_connections (team_id)
+    WHERE oauth_connection_id IS NULL AND revoked_at IS NULL AND kind = 'saas';
 
 CREATE INDEX idx_mcp_connections_team ON mcp_connections(team_id);
 CREATE INDEX idx_mcp_connections_project ON mcp_connections(project_id);
@@ -684,10 +694,10 @@ CREATE INDEX idx_audit_created ON audit_log(team_id, created_at);
 CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 
 -------------------------------------------------------------------------------
--- DOCUMENTS (unified: project docs, team preferences, agent system prompts)
+-- DOCUMENTS (unified: project docs, team preferences, agent system prompts, mcp skills)
 -------------------------------------------------------------------------------
 
-CREATE TYPE document_type AS ENUM ('project_doc', 'team_preferences', 'agent_system_prompt');
+CREATE TYPE document_type AS ENUM ('project_doc', 'team_preferences', 'agent_system_prompt', 'mcp_skill');
 
 CREATE TABLE documents (
     id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -715,12 +725,26 @@ CREATE UNIQUE INDEX idx_documents_team_preferences
 CREATE UNIQUE INDEX idx_documents_agent_system_prompt
     ON documents (member_agent_id)
     WHERE type = 'agent_system_prompt';
+CREATE UNIQUE INDEX idx_documents_mcp_skill
+    ON documents (team_id, slug)
+    WHERE type = 'mcp_skill';
 
 CREATE INDEX idx_documents_team ON documents (team_id);
 CREATE INDEX idx_documents_type_team ON documents (type, team_id);
 CREATE INDEX idx_documents_project ON documents (project_id) WHERE project_id IS NOT NULL;
 CREATE INDEX idx_documents_member_agent ON documents (member_agent_id) WHERE member_agent_id IS NOT NULL;
 CREATE INDEX idx_documents_embedding ON documents USING hnsw (embedding vector_cosine_ops);
+
+-- Deferred FKs on mcp_connections (forward references resolved here).
+ALTER TABLE mcp_connections
+    ADD CONSTRAINT fk_mcp_connections_skill_doc
+        FOREIGN KEY (skill_doc_id) REFERENCES documents(id) ON DELETE SET NULL,
+    ADD CONSTRAINT fk_mcp_connections_created_by_task
+        FOREIGN KEY (created_by_task_id) REFERENCES tasks(id) ON DELETE SET NULL;
+CREATE INDEX idx_mcp_connections_skill_doc
+    ON mcp_connections(skill_doc_id) WHERE skill_doc_id IS NOT NULL;
+CREATE INDEX idx_mcp_connections_created_by_task
+    ON mcp_connections(created_by_task_id) WHERE created_by_task_id IS NOT NULL;
 
 CREATE TABLE document_revisions (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
