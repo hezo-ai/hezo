@@ -185,7 +185,7 @@ mentionsRoutes.get('/teams/:teamId/mentions/search', async (c) => {
 			`SELECT slug, name AS title
 			 FROM skills
 			 WHERE team_id = $1
-			   AND ($2 = '' OR slug ILIKE $3 OR title ILIKE $3)
+			   AND ($2 = '' OR slug ILIKE $3 OR name ILIKE $3)
 			 ORDER BY name
 			 LIMIT $4`,
 			[teamId, q, pattern, perKind],
@@ -195,7 +195,7 @@ mentionsRoutes.get('/teams/:teamId/mentions/search', async (c) => {
 				kind: 'kb',
 				handle: row.slug,
 				label: row.title,
-				sublabel: 'KB doc',
+				sublabel: 'Skill',
 			});
 		}
 	}
